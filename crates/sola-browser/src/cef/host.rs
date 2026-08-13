@@ -58,16 +58,25 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
     }
 
     let sock = profiles::engine_sock_path(profile_id);
+    let frame_sock = profiles::engine_frame_sock_path(profile_id);
     let pid_path = profiles::engine_pid_path(profile_id);
     if let Some(parent) = sock.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::remove_file(&sock);
+    let _ = fs::remove_file(&frame_sock);
 
     let listener = match UnixListener::bind(&sock) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(error = %e, path = %sock.display(), "engine helper: bind socket");
+            return ExitCode::FAILURE;
+        }
+    };
+    let frame_listener = match UnixListener::bind(&frame_sock) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, path = %frame_sock.display(), "engine helper: bind frame socket");
             return ExitCode::FAILURE;
         }
     };
@@ -83,12 +92,24 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
         Err(e) => {
             tracing::error!(error = %e, "engine helper: accept failed");
             let _ = fs::remove_file(&sock);
+            let _ = fs::remove_file(&frame_sock);
             let _ = fs::remove_file(&pid_path);
             return ExitCode::FAILURE;
         }
     };
-    // Only one chrome client; drop the listener so a stale socket is obvious.
+    let (frame_stream, _) = match frame_listener.accept() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "engine helper: accept frame failed");
+            let _ = fs::remove_file(&sock);
+            let _ = fs::remove_file(&frame_sock);
+            let _ = fs::remove_file(&pid_path);
+            return ExitCode::FAILURE;
+        }
+    };
+    // Only one chrome client; drop the listeners so a stale socket is obvious.
     drop(listener);
+    drop(frame_listener);
 
     let mut reader = match stream.try_clone() {
         Ok(s) => s,
@@ -97,9 +118,8 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // One lock for all writes — frame payloads are multi-megabyte and
-    // must not interleave with tab/cursor messages on the same socket.
     let writer = Arc::new(Mutex::new(stream));
+    let mut frame_writer = frame_stream;
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd<CefEngine>>();
     let frames = FrameMailbox::<crate::cef::engine::CefFrame>::new();
@@ -138,21 +158,26 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
         .expect("spawn engine-ipc-read");
 
     let frames_w = frames.clone();
-    let writer_f = writer.clone();
     thread::Builder::new()
         .name("engine-ipc-frames".into())
         .spawn(move || {
             loop {
                 match frames_w.recv() {
                     Ok(tagged) => {
-                        let msg = FromEngine::Frame {
+                        let meta = ipc::FrameMeta {
                             tab_id: tagged.tab_id.0,
                             width: tagged.frame.width,
                             height: tagged.frame.height,
-                            pixels: (*tagged.frame.pixels).clone(),
+                            dirty: tagged.frame.dirty.clone(),
                         };
-                        let mut g = writer_f.lock().unwrap();
-                        if ipc::write_msg(&mut g, &msg).is_err() {
+                        // Write the Arc slice directly — no extra 8 MiB clone.
+                        if ipc::write_frame(
+                            &mut frame_writer,
+                            &meta,
+                            tagged.frame.pixels.as_slice(),
+                        )
+                        .is_err()
+                        {
                             break;
                         }
                     }
@@ -218,6 +243,7 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
     );
 
     let _ = fs::remove_file(&sock);
+    let _ = fs::remove_file(&frame_sock);
     if let Ok(s) = fs::read_to_string(&pid_path) {
         if s.trim() == std::process::id().to_string() {
             let _ = fs::remove_file(&pid_path);
@@ -239,6 +265,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         },
         ToEngine::Input(ev) => Cmd::Input(ev),
         ToEngine::Focus(f) => Cmd::Focus(f),
+        ToEngine::SetFront(f) => Cmd::SetFront(f),
         ToEngine::Nav(n) => Cmd::Nav(n),
         ToEngine::Edit(e) => Cmd::Edit(e),
         ToEngine::PasteText(s) => Cmd::PasteText(s),
@@ -298,6 +325,7 @@ pub fn reap_stale_browser_procs() {
         for ent in dir.flatten() {
             let p = ent.path();
             let _ = fs::remove_file(p.join("engine.sock"));
+            let _ = fs::remove_file(p.join("engine.frame.sock"));
             let _ = fs::remove_file(p.join("instance.pid"));
         }
     }

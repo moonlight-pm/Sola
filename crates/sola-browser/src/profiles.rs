@@ -14,6 +14,11 @@ const REGISTRY_VERSION: u32 = 1;
 const DEFAULT_NAME: &str = "Primary";
 
 static ACTIVE: OnceLock<RwLock<ActiveProfile>> = OnceLock::new();
+static REGISTRY: OnceLock<RwLock<Option<ProfilesRegistry>>> = OnceLock::new();
+
+fn registry_cache() -> &'static RwLock<Option<ProfilesRegistry>> {
+    REGISTRY.get_or_init(|| RwLock::new(None))
+}
 
 /// Resolved active profile for this process.
 #[derive(Debug, Clone)]
@@ -360,8 +365,17 @@ fn fill_random(buf: &mut [u8]) {
 }
 
 fn read_registry(path: &Path) -> Option<ProfilesRegistry> {
+    if let Ok(g) = registry_cache().read() {
+        if let Some(r) = g.as_ref() {
+            return Some(r.clone());
+        }
+    }
     let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    let r: ProfilesRegistry = serde_json::from_str(&raw).ok()?;
+    if let Ok(mut g) = registry_cache().write() {
+        *g = Some(r.clone());
+    }
+    Some(r)
 }
 
 fn write_registry(path: &Path, reg: &ProfilesRegistry) -> std::io::Result<()> {
@@ -371,7 +385,11 @@ fn write_registry(path: &Path, reg: &ProfilesRegistry) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_string_pretty(reg).map_err(std::io::Error::other)?;
     std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path)?;
+    if let Ok(mut g) = registry_cache().write() {
+        *g = Some(reg.clone());
+    }
+    Ok(())
 }
 
 /// Remove pre-D8 flat WebKit trees and dead config files (no migration).
@@ -453,6 +471,11 @@ pub fn session_path_for(id: &str) -> PathBuf {
 /// Unix socket the chrome process uses to talk to a headless CEF helper.
 pub fn engine_sock_path(id: &str) -> PathBuf {
     profile_data_dir(id).join("engine.sock")
+}
+
+/// Dedicated pixel-frame socket (kept off the control channel).
+pub fn engine_frame_sock_path(id: &str) -> PathBuf {
+    profile_data_dir(id).join("engine.frame.sock")
 }
 
 /// Pid file for the headless CEF helper of this profile.

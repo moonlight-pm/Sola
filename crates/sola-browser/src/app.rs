@@ -4,7 +4,7 @@
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -294,6 +294,9 @@ pub struct App<E: Engine> {
     workspace_cache: std::collections::HashMap<String, crate::tab_cache::WorkspaceSnapshot>,
     /// Sidebar profile name is a select; true while the menu is open.
     profile_picker_open: bool,
+    /// Cached registry rows — `profiles::list()` used to re-read the JSON
+    /// from disk on every `view()` (60 Hz while a page animated).
+    profile_options: Vec<crate::profiles::ProfileEntry>,
 }
 
 impl<E: Engine> App<E> {
@@ -376,6 +379,7 @@ impl<E: Engine> App<E> {
             profile_dialog_error: None,
             workspace_cache: std::collections::HashMap::new(),
             profile_picker_open: false,
+            profile_options: crate::profiles::list(),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -613,6 +617,7 @@ impl<E: Engine> App<E> {
                 self.evict_workspace_parks();
                 crate::integration::republish_menus(self.app_id);
                 self.session_fp.clear();
+                self.profile_options = crate::profiles::list();
                 self.persist_session();
                 return;
             }
@@ -629,6 +634,7 @@ impl<E: Engine> App<E> {
         self.evict_workspace_parks();
         crate::integration::republish_menus(self.app_id);
         self.session_fp.clear();
+        self.profile_options = crate::profiles::list();
         self.persist_session();
     }
 
@@ -1035,10 +1041,14 @@ impl<E: Engine> App<E> {
                 return self.switch_profile(&id);
             }
             Msg::NewFrame => {
-                // Allow the next frame stream wakeup (coalesced redraw).
+                // Allow the next kick if the shader pump stops. While the
+                // shader is request_redraw-pumping, frame_stream skips this.
                 self.slot
                     .redraw_queued
                     .store(false, std::sync::atomic::Ordering::Release);
+                self.slot
+                    .pumping
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
             Msg::NavBack => {
                 self.set_active_loading(true);
@@ -1201,6 +1211,7 @@ impl<E: Engine> App<E> {
                     self.last_seen_url = seen;
                 }
                 self.persist_session();
+                self.profile_options = crate::profiles::list();
                 // Drain any page-selection text the engine extracted for a copy
                 // and put it on the system clipboard via iced. The engine's own
                 // clipboard can't reach Wayland (headless display); iced's can.
@@ -1225,9 +1236,10 @@ impl<E: Engine> App<E> {
             }
             Msg::DividerPress => {
                 self.dragging_divider = true;
-                if let Some(x) = self.last_cursor_x {
-                    self.drag_anchor = Some((x, self.sidebar_w));
-                }
+                DIVIDER_DRAGGING.store(true, Ordering::Relaxed);
+                let x = f32::from_bits(CURSOR_X_BITS.load(Ordering::Relaxed));
+                self.last_cursor_x = Some(x);
+                self.drag_anchor = Some((x, self.sidebar_w));
             }
             Msg::CursorMoved(x) => {
                 self.last_cursor_x = Some(x);
@@ -1246,6 +1258,7 @@ impl<E: Engine> App<E> {
                     self.dragging_divider = false;
                     self.drag_anchor = None;
                 }
+                DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
             }
             Msg::TabHover(i) => self.hovered_tab = i,
             Msg::WebViewFocused => {
@@ -1583,9 +1596,13 @@ impl<E: Engine> App<E> {
     /// Identity select — kit `select`, enamel mark per profile.
     fn view_profile_picker(&self) -> Element<'_, Msg> {
         let active = crate::profiles::active();
-        let options = crate::profiles::list().into_iter().map(|p| {
-            SelectOption::new(p.name, p.id == active.id, Msg::ProfileSwitch(p.id.clone()))
-                .mark(p.id)
+        let options = self.profile_options.iter().map(|p| {
+            SelectOption::new(
+                p.name.clone(),
+                p.id == active.id,
+                Msg::ProfileSwitch(p.id.clone()),
+            )
+            .mark(p.id.clone())
         });
         let inner = (self.sidebar_w - 12.0).max(140.0);
         select_sized(
@@ -2574,7 +2591,14 @@ impl<E: Engine> App<E> {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             event::listen_with(|event, status, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::CursorMoved(position.x))
+                    CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
+                    // Rebuilding chrome on every pixel move starved menus and
+                    // typing. Only the divider drag needs a message.
+                    if DIVIDER_DRAGGING.load(Ordering::Relaxed) {
+                        Some(Msg::CursorMoved(position.x))
+                    } else {
+                        None
+                    }
                 }
                 // A left press anywhere: resolve whether it focused the URL bar
                 // (for click-to-select-all). Received regardless of which widget
@@ -2607,6 +2631,12 @@ impl<E: Engine> App<E> {
         ])
     }
 }
+
+/// Divider drag: `listen_with` is a fn pointer and cannot close over App.
+static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
+/// Last pointer x (bits) so DividerPress has a current anchor without
+/// emitting CursorMoved on every pixel.
+static CURSOR_X_BITS: AtomicU32 = AtomicU32::new(0);
 
 /// Process-wide flag so `event::listen_with` (fn pointer) can see panel state.
 #[cfg(feature = "bitwarden")]

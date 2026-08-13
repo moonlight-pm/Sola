@@ -137,6 +137,11 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                             .and_capture(),
                         );
                     }
+                    if should_pump(&self.slot) {
+                        return Some(
+                            iced::widget::shader::Action::request_redraw().and_capture(),
+                        );
+                    }
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
@@ -160,6 +165,11 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 };
                 if let Some(e) = translated {
                     let _ = self.slot.cmd_tx.send(Cmd::Input(e));
+                    if should_pump(&self.slot) {
+                        return Some(
+                            iced::widget::shader::Action::request_redraw().and_capture(),
+                        );
+                    }
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
@@ -171,6 +181,11 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     }
                     WE::Unfocused => {
                         let _ = self.slot.cmd_tx.send(Cmd::Focus(false));
+                    }
+                    WE::RedrawRequested(_) => {
+                        if should_pump(&self.slot) {
+                            return Some(iced::widget::shader::Action::request_redraw());
+                        }
                     }
                     _ => {}
                 }
@@ -197,6 +212,9 @@ impl shader::Program<crate::app::Msg> for CefProgram {
 struct CefImporter {
     /// Reused texture across frames of the same size.
     texture: Option<UploadedFrame>,
+    bind_group: Option<wgpu::BindGroup>,
+    /// 256-byte-aligned row staging — reused so we do not alloc per frame.
+    staging: Vec<u8>,
 }
 
 impl CefImporter {
@@ -210,7 +228,6 @@ impl CefImporter {
     ) -> Option<ImportedTexture> {
         let need_new = match &self.texture {
             Some(cur) => {
-                // size tracked via texture size
                 let size = cur.texture.size();
                 size.width != frame.width || size.height != frame.height
             }
@@ -219,30 +236,52 @@ impl CefImporter {
         if need_new {
             let texture = cpu_import::create_texture(device, frame.width, frame.height);
             self.texture = Some(UploadedFrame { texture });
+            self.bind_group = None;
         }
         let uploaded = self.texture.as_ref()?;
-        cpu_import::upload(queue, &uploaded.texture, &frame);
-        let view = uploaded
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cef-shader bg"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
+        cpu_import::upload(queue, &uploaded.texture, &frame, &mut self.staging, need_new);
+        if self.bind_group.is_none() {
+            let view = uploaded
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("cef-shader bg"),
+                layout: bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            }));
+        }
         Some(ImportedTexture {
-            bind_group,
+            bind_group: self.bind_group.clone()?,
             size: (frame.width, frame.height),
         })
+    }
+}
+
+fn should_pump(slot: &FrameSlot<CefEngine>) -> bool {
+    use std::sync::atomic::Ordering;
+    let pending = slot.pending.lock().unwrap().is_some();
+    let last = slot.last_frame_ms.load(Ordering::Relaxed);
+    let recent = last != 0
+        && crate::engine::monotonic_ms().saturating_sub(last) < crate::engine::FRAME_PUMP_HANGOVER_MS;
+    if pending || recent {
+        slot.pumping.store(true, Ordering::Relaxed);
+        return true;
+    }
+    slot.pumping.store(false, Ordering::Relaxed);
+    if slot.pending.lock().unwrap().is_some() {
+        slot.pumping.store(true, Ordering::Relaxed);
+        true
+    } else {
+        false
     }
 }
 
@@ -347,7 +386,11 @@ impl shader::Pipeline for CefPipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         Self {
             sample: SamplePipeline::new(device, queue, format, "cef"),
-            importer: CefImporter { texture: None },
+            importer: CefImporter {
+                texture: None,
+                bind_group: None,
+                staging: Vec::new(),
+            },
             painted_tab: u64::MAX,
         }
     }

@@ -88,7 +88,15 @@ pub fn frame_stream<E: Engine>(
                 tab_id: tagged.tab_id,
                 frame: tagged.frame,
             });
+            slot.last_frame_ms
+                .store(crate::engine::monotonic_ms(), Ordering::Relaxed);
             let _ = &active;
+            // If the shader is already request_redraw-pumping, do not enqueue
+            // NewFrame — that rebuilds the whole chrome tree at 60 Hz and
+            // starves input / menus.
+            if slot.pumping.load(Ordering::Relaxed) {
+                continue;
+            }
             // Coalesce wakeups: if iced hasn't processed the last NewFrame yet,
             // don't enqueue another — keyboard/input must stay ahead of paints.
             if slot
@@ -215,6 +223,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         parked_frames: Mutex::new(std::collections::HashMap::new()),
         blank_content: std::sync::atomic::AtomicBool::new(false),
         redraw_queued: std::sync::atomic::AtomicBool::new(false),
+        pumping: std::sync::atomic::AtomicBool::new(false),
+        last_frame_ms: std::sync::atomic::AtomicU64::new(0),
     });
 
     // Browser + Edit + Profiles (dynamic profile list with active check).

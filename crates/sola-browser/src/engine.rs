@@ -4,7 +4,17 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
+
+/// Shader keeps requesting redraws this long after the last paint so
+/// animations do not kick `Msg::NewFrame` (and rebuild chrome) every frame.
+pub const FRAME_PUMP_HANGOVER_MS: u64 = 50;
+
+pub fn monotonic_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -67,6 +77,9 @@ pub enum Cmd<E: Engine> {
     Release { token: E::Token },
     Input(E::Input),
     Focus(bool),
+    /// Profile helper is / is not the painted identity. `false` hides every
+    /// tab so a parked profile stops compositing (and stops sending frames).
+    SetFront(bool),
     Nav(NavCmd),
     /// `title` seeds the tab strip before WebKit reports one (session restore).
     OpenTab { id: TabId, url: String, title: String },
@@ -209,6 +222,11 @@ pub struct FrameSlot<E: Engine> {
     /// this, 60+ NewFrame/s fill the queue ahead of keyboard events (typing
     /// lag, frozen caret, slow placeholder animation).
     pub redraw_queued: AtomicBool,
+    /// Shader is already request_redraw-pumping; frame stream should not
+    /// enqueue another `NewFrame` (that rebuilds chrome).
+    pub pumping: AtomicBool,
+    /// Monotonic ms of the last accepted paint (shader hangover / kick).
+    pub last_frame_ms: AtomicU64,
 }
 
 impl<E: Engine> FrameSlot<E> {

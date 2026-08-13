@@ -104,6 +104,8 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
     *shared.current.lock().unwrap() = live.clone();
     if let Err(e) = attach(&helpers, &shared, &live) {
         tracing::error!(error = %e, profile = %live, "router: failed to start active engine");
+    } else if let Some(h) = helpers.lock().unwrap().map.get(&live) {
+        let _ = h.to_engine.send(ToEngine::SetFront(true));
     }
     // Warm other profiles without blocking the first tab's OpenTab.
     let others: Vec<String> = profiles::list()
@@ -145,10 +147,16 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                 }
                 {
                     let mut cur = shared.current.lock().unwrap();
-                    *cur = resume_profile_id.clone();
+                    let prev = std::mem::replace(&mut *cur, resume_profile_id.clone());
+                    if prev != resume_profile_id {
+                        if let Some(old) = helpers.lock().unwrap().map.get(&prev) {
+                            let _ = old.to_engine.send(ToEngine::SetFront(false));
+                        }
+                    }
                 }
                 let set = helpers.lock().unwrap();
                 let helper = set.map.get(&resume_profile_id).unwrap();
+                let _ = helper.to_engine.send(ToEngine::SetFront(true));
                 let helper_tabs = helper.tabs.lock().unwrap().clone();
                 if helper_tabs.is_empty() {
                     *shared.tabs.lock().unwrap() = Vec::new();
@@ -312,6 +320,8 @@ fn spawn_helper(
     };
 
     let stream = wait_connect(&sock, Duration::from_secs(25))?;
+    let frame_sock = profiles::engine_frame_sock_path(profile_id);
+    let mut frame_reader = wait_connect(&frame_sock, Duration::from_secs(25))?;
     let helper_tabs: Arc<Mutex<Vec<TabInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let mut writer = stream
         .try_clone()
@@ -367,6 +377,40 @@ fn spawn_helper(
         })
         .map_err(|e| format!("spawn reader: {e}"))?;
 
+    let shared_f = Arc::clone(shared);
+    let profile_f = profile_id.to_string();
+    thread::Builder::new()
+        .name(format!("eng-frame-{:.8}", profile_id))
+        .spawn(move || {
+            loop {
+                match ipc::read_frame(&mut frame_reader) {
+                    Ok((meta, pixels)) => {
+                        let is_front = {
+                            let cur = shared_f.current.lock().unwrap();
+                            cur.is_empty() || cur.as_str() == profile_f
+                        };
+                        if !is_front {
+                            continue;
+                        }
+                        shared_f.frames.push(crate::engine::TaggedFrame {
+                            tab_id: TabId(meta.tab_id),
+                            frame: CefFrame {
+                                pixels: Arc::new(pixels),
+                                width: meta.width,
+                                height: meta.height,
+                                dirty: meta.dirty,
+                            },
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(profile = %profile_f, error = %e, "helper frame reader ended");
+                        break;
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("spawn frame reader: {e}"))?;
+
     ready_rx
         .recv_timeout(Duration::from_secs(30))
         .map_err(|_| "engine helper Ready timed out".to_string())??;
@@ -408,24 +452,6 @@ fn handle_from(
                 *announced = true;
                 let _ = ready_tx.send(Ok(()));
             }
-        }
-        FromEngine::Frame {
-            tab_id,
-            width,
-            height,
-            pixels,
-        } => {
-            if !is_front {
-                return;
-            }
-            shared.frames.push(crate::engine::TaggedFrame {
-                tab_id: TabId(tab_id),
-                frame: CefFrame {
-                    pixels: Arc::new(pixels),
-                    width,
-                    height,
-                },
-            });
         }
         FromEngine::Tabs(tabs) => {
             if let Some(max) = tabs.iter().map(|t| t.id.0).max() {
@@ -500,6 +526,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         }),
         Cmd::Input(ev) => Some(ToEngine::Input(ev)),
         Cmd::Focus(f) => Some(ToEngine::Focus(f)),
+        Cmd::SetFront(f) => Some(ToEngine::SetFront(f)),
         Cmd::Nav(n) => Some(ToEngine::Nav(n)),
         Cmd::Edit(e) => Some(ToEngine::Edit(e)),
         Cmd::PasteText(s) => Some(ToEngine::PasteText(s)),

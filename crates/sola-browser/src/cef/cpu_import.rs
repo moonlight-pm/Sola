@@ -48,40 +48,107 @@ const COPY_ALIGN: u32 = 256;
 
 /// Copy `frame.pixels` into `texture` via the queue. Texture must
 /// already be sized to `(frame.width, frame.height)`.
-pub fn upload(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &CefFrame) {
-    let unpadded = frame.width.saturating_mul(4);
+///
+/// `staging` is reused for 256-byte row padding so we do not allocate
+/// a second full frame every paint. Dirty rects upload only the damage
+/// when the texture already holds the previous composite (`full` = false).
+pub fn upload(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    frame: &CefFrame,
+    staging: &mut Vec<u8>,
+    force_full: bool,
+) {
+    let dirty = if force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height)
+    {
+        None
+    } else {
+        Some(frame.dirty.as_slice())
+    };
+    match dirty {
+        None => upload_rect(
+            queue,
+            texture,
+            frame.pixels.as_slice(),
+            frame.width,
+            0,
+            0,
+            frame.width,
+            frame.height,
+            staging,
+        ),
+        Some(rects) => {
+            for r in rects {
+                upload_rect(
+                    queue,
+                    texture,
+                    frame.pixels.as_slice(),
+                    frame.width,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h,
+                    staging,
+                );
+            }
+        }
+    }
+}
+
+fn upload_rect(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    src: &[u8],
+    src_w: u32,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    staging: &mut Vec<u8>,
+) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let unpadded = w.saturating_mul(4);
     let padded = unpadded.div_ceil(COPY_ALIGN).max(1) * COPY_ALIGN;
     let layout = wgpu::TexelCopyBufferLayout {
         offset: 0,
         bytes_per_row: Some(padded),
-        rows_per_image: Some(frame.height),
+        rows_per_image: Some(h),
     };
     let extent = wgpu::Extent3d {
-        width: frame.width,
-        height: frame.height,
+        width: w,
+        height: h,
         depth_or_array_layers: 1,
     };
     let dest = wgpu::TexelCopyTextureInfo {
         texture,
         mip_level: 0,
-        origin: wgpu::Origin3d::ZERO,
+        origin: wgpu::Origin3d { x, y, z: 0 },
         aspect: wgpu::TextureAspect::All,
     };
-    if padded == unpadded {
-        queue.write_texture(dest, frame.pixels.as_slice(), layout, extent);
-        return;
-    }
-    let mut staging = vec![0u8; padded as usize * frame.height as usize];
-    let src = frame.pixels.as_slice();
-    for y in 0..frame.height as usize {
-        let s = y * unpadded as usize;
-        let d = y * padded as usize;
-        let n = unpadded as usize;
-        if s + n <= src.len() {
-            staging[d..d + n].copy_from_slice(&src[s..s + n]);
+    let src_row = src_w as usize * 4;
+    let copy_bytes = unpadded as usize;
+    if padded == unpadded && x == 0 && w == src_w {
+        let start = y as usize * src_row;
+        let end = start + h as usize * src_row;
+        if end <= src.len() {
+            queue.write_texture(dest, &src[start..end], layout, extent);
+            return;
         }
     }
-    queue.write_texture(dest, &staging, layout, extent);
+    let need = padded as usize * h as usize;
+    if staging.len() < need {
+        staging.resize(need, 0);
+    }
+    for row in 0..h as usize {
+        let s = (y as usize + row) * src_row + x as usize * 4;
+        let d = row * padded as usize;
+        if s + copy_bytes <= src.len() && d + copy_bytes <= staging.len() {
+            staging[d..d + copy_bytes].copy_from_slice(&src[s..s + copy_bytes]);
+        }
+    }
+    queue.write_texture(dest, &staging[..need], layout, extent);
 }
 
 /// Headless / software CEF sometimes delivers ARGB (A first) instead of

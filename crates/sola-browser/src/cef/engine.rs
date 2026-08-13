@@ -9,8 +9,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
+
+use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, Engine, FrameReceiver,
@@ -35,6 +38,8 @@ pub struct CefFrame {
     pub pixels: Arc<Vec<u8>>,
     pub width: u32,
     pub height: u32,
+    /// Empty = full buffer is new. Otherwise chrome may upload only these.
+    pub dirty: Vec<crate::cef::paint::DirtyRect>,
 }
 
 /// CEF-specific input event. Uses CEF's integer-pixel coordinates and
@@ -256,6 +261,13 @@ struct CefThreadState {
     pending_recycle: RefCell<Option<PendingRecycle>>,
     /// Optional chrome IPC (headless helper). Ready + tab snapshots.
     ipc_events: Option<std::sync::mpsc::Sender<crate::cef::ipc::FromEngine>>,
+    /// This helper is the painted profile. Parked helpers stay `false` so
+    /// CEF stops compositing them.
+    is_front: Cell<bool>,
+    /// Cmds posted from the waiter thread; drained on the CEF UI thread.
+    pending_cmds: Arc<Mutex<Vec<Cmd<CefEngine>>>>,
+    drain_posted: Arc<AtomicBool>,
+    shutting_down: Cell<bool>,
 }
 
 /// Tabs to recreate after CEF recycle (new profile as root_cache_path).
@@ -292,6 +304,8 @@ struct CefTabState {
     /// chrome can paint immediately while CEF invalidates for a fresh
     /// frame (static pages often never re-`on_paint` without that).
     last_frame: RefCell<Option<CefFrame>>,
+    /// Recycled pixel buffers so `on_paint` does not allocate 8 MiB/frame.
+    paint_bufs: RefCell<PixelRing>,
 }
 
 thread_local! {
@@ -333,6 +347,10 @@ pub(super) fn run_worker(
         recycle: std::cell::Cell::new(false),
         pending_recycle: RefCell::new(None),
         ipc_events,
+        is_front: Cell::new(false),
+        pending_cmds: Arc::new(Mutex::new(Vec::new())),
+        drain_posted: Arc::new(AtomicBool::new(false)),
+        shutting_down: Cell::new(false),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
@@ -348,11 +366,23 @@ pub(super) fn run_worker(
         });
     }
 
-    let mut pump = CmdPumpTask::new();
+    let cmd_rx = state
+        .cmd_rx
+        .borrow_mut()
+        .take()
+        .expect("cmd_rx already taken");
+    let pending = state.pending_cmds.clone();
+    let drain_posted = state.drain_posted.clone();
+    std::thread::Builder::new()
+        .name("cef-cmd-wait".into())
+        .spawn(move || cmd_waiter(cmd_rx, pending, drain_posted))
+        .expect("spawn cef-cmd-wait");
+
+    let mut flush = CookieFlushTask::new();
     cef::post_delayed_task(
         cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
-        Some(&mut pump),
-        16,
+        Some(&mut flush),
+        10_000,
     );
 
     tracing::info!("CEF engine entering run_message_loop");
@@ -502,7 +532,7 @@ cef::wrap_render_handler! {
             &self,
             browser: Option<&mut cef::Browser>,
             type_: cef::PaintElementType,
-            _dirty_rects: Option<&[cef::Rect]>,
+            dirty_rects: Option<&[cef::Rect]>,
             buffer: *const u8,
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
@@ -515,33 +545,42 @@ cef::wrap_render_handler! {
             if width <= 0 || height <= 0 || buffer.is_null() {
                 return;
             }
-            // Identify which tab this paint belongs to. CEF gives
-            // us the source Browser; we map its identifier to our
-            // TabId. If the tab has been closed but a paint is
-            // still in-flight, drop the frame.
             let state = cef_state();
+            // Parked profile, or a background tab CEF still composited:
+            // do not memcpy 8 MiB on the CEF UI thread (that stalls input).
+            if !state.is_front.get() {
+                return;
+            }
             let Some(browser) = browser else { return };
             let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
                 return;
             };
-            let len = (width as usize) * (height as usize) * 4;
-            let mut bytes = unsafe { std::slice::from_raw_parts(buffer, len) }.to_vec();
-            crate::cef::cpu_import::ensure_bgra(&mut bytes);
-            tracing::trace!(w = width, h = height, bytes = len, ?tab_id, "CEF on_paint");
-            let frame = CefFrame {
-                pixels: Arc::new(bytes),
-                width: width as u32,
-                height: height as u32,
+            if state.active.get() != tab_id {
+                return;
+            }
+            let w = width as u32;
+            let h = height as u32;
+            let len = (w as usize) * (h as usize) * 4;
+            let src = unsafe { std::slice::from_raw_parts(buffer, len) };
+            let dirty = dirty_from_cef(dirty_rects, w, h);
+            let Some(tab) = tab_state_by_id(&state, tab_id) else {
+                return;
             };
-            let state = cef_state();
-            // Always park — inactive tabs still need a snapshot for switch.
-            if let Some(tab) = tab_state_by_id(&state, tab_id) {
-                *tab.last_frame.borrow_mut() = Some(frame.clone());
-            }
-            // Only the active tab feeds iced; background paints stay parked.
-            if state.active.get() == tab_id {
-                state.frames.push(TaggedFrame { tab_id, frame });
-            }
+            let mut ring = tab.paint_bufs.borrow_mut();
+            let mut bytes = ring.take(len);
+            paint::apply_paint(&mut bytes, src, w, h, &dirty);
+            paint::ensure_bgra_dirty(&mut bytes, w, h, &dirty);
+            let pixels = ring.publish(bytes);
+            drop(ring);
+            tracing::trace!(w, h, bytes = len, dirty = dirty.len(), ?tab_id, "CEF on_paint");
+            let frame = CefFrame {
+                pixels,
+                width: w,
+                height: h,
+                dirty,
+            };
+            *tab.last_frame.borrow_mut() = Some(frame.clone());
+            state.frames.push(TaggedFrame { tab_id, frame });
         }
 
         // Block dma-buf path. We picked the CPU path deliberately
@@ -849,69 +888,118 @@ cef::wrap_client! {
     }
 }
 
-// ── Cmd pump task ─────────────────────────────────────────────────
+// ── Cmd drain (posted immediately from the waiter thread) ─────────
+
+fn cmd_waiter(
+    rx: Receiver<Cmd<CefEngine>>,
+    pending: Arc<Mutex<Vec<Cmd<CefEngine>>>>,
+    drain_posted: Arc<AtomicBool>,
+) {
+    loop {
+        let first = match rx.recv() {
+            Ok(c) => c,
+            Err(_) => {
+                pending.lock().unwrap().push(Cmd::Quit);
+                post_drain(&drain_posted);
+                break;
+            }
+        };
+        {
+            let mut g = pending.lock().unwrap();
+            g.push(first);
+            while let Ok(c) = rx.try_recv() {
+                g.push(c);
+            }
+        }
+        post_drain(&drain_posted);
+    }
+}
+
+fn post_drain(drain_posted: &AtomicBool) {
+    if drain_posted
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
+        let mut task = CmdDrainTask::new();
+        let _ = cef::post_task(
+            cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+            Some(&mut task),
+        );
+    }
+}
+
+fn dirty_from_cef(rects: Option<&[cef::Rect]>, width: u32, height: u32) -> Vec<DirtyRect> {
+    let Some(rects) = rects else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(rects.len());
+    for r in rects {
+        if r.width <= 0 || r.height <= 0 {
+            continue;
+        }
+        let x = r.x.max(0) as u32;
+        let y = r.y.max(0) as u32;
+        let w = r.width as u32;
+        let h = r.height as u32;
+        if x == 0 && y == 0 && w >= width && h >= height {
+            return Vec::new();
+        }
+        out.push(DirtyRect { x, y, w, h });
+    }
+    out
+}
+
+fn set_host_hidden(host: &cef::BrowserHost, hidden: bool) {
+    host.set_focus(if hidden { 0 } else { 1 });
+    host.was_hidden(if hidden { 1 } else { 0 });
+    host.set_windowless_frame_rate(if hidden { 1 } else { 60 });
+}
 
 cef::wrap_task! {
-    pub struct CmdPumpTask {}
+    pub struct CmdDrainTask {}
 
     impl Task {
         fn execute(&self) {
             let state = cef_state();
-
-            // Drain the main Cmd channel (resize, nav, tab ops, quit).
-            let cmd_rx_guard = state.cmd_rx.borrow();
-            let Some(rx) = cmd_rx_guard.as_ref() else {
-                return;
-            };
-
-            let mut should_continue = true;
-            loop {
-                match rx.try_recv() {
-                    Ok(cmd) => {
-                        if !process_cmd(&state, cmd) {
-                            should_continue = false;
-                            break;
-                        }
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        cef::quit_message_loop();
-                        should_continue = false;
-                        break;
-                    }
+            state.drain_posted.store(false, Ordering::Release);
+            let cmds = std::mem::take(&mut *state.pending_cmds.lock().unwrap());
+            let mut keep_running = true;
+            for cmd in cmds {
+                if !process_cmd(&state, cmd) {
+                    keep_running = false;
+                    break;
                 }
             }
-            drop(cmd_rx_guard);
-
             if state.snapshot_dirty.replace(false) {
                 rebuild_snapshot(&state);
             }
-
-            // CookieMonster flushes about every 30s; we also flush on a
-            // slower cadence so a hard kill (install self-watch) still
-            // leaves auth cookies on disk when possible.
-            {
-                thread_local! {
-                    static FLUSH_TICKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-                }
-                FLUSH_TICKS.with(|t| {
-                    let n = t.get().wrapping_add(1);
-                    t.set(n);
-                    // ~16ms * 625 ≈ 10s
-                    if n % 625 == 0 {
-                        flush_all_cookie_stores(&state);
-                    }
-                });
+            if !keep_running {
+                return;
             }
-
-            if should_continue {
-                let mut next = CmdPumpTask::new();
-                cef::post_delayed_task(
-                    cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
-                    Some(&mut next),
-                    16,
-                );
+            // Cmds that landed while we ran: one more drain.
+            if !state.pending_cmds.lock().unwrap().is_empty() {
+                post_drain(&state.drain_posted);
             }
+        }
+    }
+}
+
+cef::wrap_task! {
+    pub struct CookieFlushTask {}
+
+    impl Task {
+        fn execute(&self) {
+            let state = cef_state();
+            if state.shutting_down.get() {
+                return;
+            }
+            flush_all_cookie_stores(&state);
+            let mut next = CookieFlushTask::new();
+            cef::post_delayed_task(
+                cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+                Some(&mut next),
+                10_000,
+            );
         }
     }
 }
@@ -933,12 +1021,19 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 // Keep last_frames (even if stale size). Chrome will not
                 // display a mismatch; wiping here is what made every
                 // tab switch wait on a fresh CEF paint.
-                if let Some(tab) = active_tab(state) {
-                    if let Some(host) = tab.browser.host() {
-                        host.was_resized();
+                // Parked helpers only store the size — was_resized would
+                // wake a hidden compositor for a profile we are not showing.
+                if state.is_front.get() {
+                    if let Some(tab) = active_tab(state) {
+                        if let Some(host) = tab.browser.host() {
+                            host.was_resized();
+                        }
                     }
                 }
             }
+        }
+        Cmd::SetFront(front) => {
+            set_front(state, front);
         }
         Cmd::Input(ev) => {
             // CEF-native input (engine::InputEvent: integer pixels,
@@ -1031,6 +1126,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             drop_parked_profile(state, &profile_id);
         }
         Cmd::Quit => {
+            state.shutting_down.set(true);
             // Close browsers first so network/cookie backends settle,
             // then flush every profile store (live + parked + global).
             hide_all_tabs(state);
@@ -1198,8 +1294,7 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
             if let Some(host) = prev_tab.browser.host() {
                 // OSR multi-browser: hide inactive so CEF stops painting them
                 // and treats the next show as needing a full frame.
-                host.set_focus(0);
-                host.was_hidden(1);
+                set_host_hidden(&host, true);
             }
         }
     }
@@ -1214,9 +1309,12 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
     // is the half-width "slender" flash on tab switch.
     if let Some(tab) = tab_state_by_id(state, id) {
         let want = *state.size.lock().unwrap();
-        let replayed = if let Some(frame) = tab.last_frame.borrow().clone() {
+        let replayed = if let Some(mut frame) = tab.last_frame.borrow().clone() {
             let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
             if ok {
+                // Parked buffer is a complete composite — never a dirty patch
+                // against the previous tab's GPU texture.
+                frame.dirty.clear();
                 state.frames.push(TaggedFrame { tab_id: id, frame });
             }
             ok
@@ -1224,8 +1322,7 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
             false
         };
         if let Some(host) = tab.browser.host() {
-            host.was_hidden(0);
-            host.set_focus(1);
+            set_host_hidden(&host, false);
             // Same-size was_resized after profile switch was discarding
             // the parked compositor (tabs looked like they reloaded).
             if !replayed {
@@ -1312,9 +1409,25 @@ fn flush_all_cookie_stores(state: &CefThreadState) {
 fn hide_all_tabs(state: &CefThreadState) {
     for tab in state.tabs.borrow().iter() {
         if let Some(host) = tab.browser.host() {
-            host.set_focus(0);
-            host.was_hidden(1);
+            set_host_hidden(&host, true);
         }
+    }
+}
+
+fn set_front(state: &CefThreadState, front: bool) {
+    let was = state.is_front.get();
+    state.is_front.set(front);
+    if !front {
+        hide_all_tabs(state);
+        tracing::debug!("helper parked (not front)");
+        return;
+    }
+    if !was {
+        tracing::debug!("helper front — showing active tab");
+    }
+    let id = state.active.get();
+    if state.tabs.borrow().iter().any(|t| t.id == id) {
+        activate_tab(state, id);
     }
 }
 
@@ -1455,13 +1568,10 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     // Background tabs start hidden so only the active OSR surface paints.
     let is_active = state.active.get() == id;
     if let Some(host) = browser.host() {
-        if is_active {
-            host.was_hidden(0);
-            host.set_focus(1);
-        } else {
-            host.was_hidden(1);
-            host.set_focus(0);
-        }
+        // Even the "active" tab stays hidden until this helper is front.
+        // (Prewarm / parked profiles must not composite.)
+        let show = is_active && state.is_front.get();
+        set_host_hidden(&host, !show);
     }
 
     state.tabs.borrow_mut().push(CefTabState {
@@ -1475,6 +1585,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         can_go_forward: Cell::new(false),
         load_progress: Cell::new(0.0),
         last_frame: RefCell::new(None),
+        paint_bufs: RefCell::new(PixelRing::default()),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
