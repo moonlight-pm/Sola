@@ -1,7 +1,7 @@
 # sola-browser vault — create login
 
 **Date:** 2026-08-13  
-**Status:** **Frozen** — implemented and dogfooded on `naturalethic/cef-browser`  
+**Status:** **Frozen** — implemented and dogfooded (landed on master 2026-08-13)  
 **Related:** vault module (`crates/sola-browser/src/vault/`); [profiles](2026-08-10-sola-browser-profiles-design.md); [manual](../manual/sola-browser.md)
 
 ## Intent

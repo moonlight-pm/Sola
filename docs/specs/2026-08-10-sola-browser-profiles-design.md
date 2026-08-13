@@ -1,10 +1,11 @@
 # sola-browser profiles — design freeze
 
 **Date:** 2026-08-10  
-**Status:** **Frozen** — layout + Profiles menubar + chrome-bar select on
-`naturalethic/cef-browser` (2026-08-13); CEF helpers; parked last-frames
+**Status:** **Frozen** — layout + Profiles menubar + chrome-bar select
+landed on master (2026-08-13); CEF helpers; parked last-frames
 for instant switch (miss blanks)  
-**Branch context:** `naturalethic/cef-browser` (was `naturalethic/browser`)  
+**Branch context:** landed on master (was `naturalethic/cef-browser`, earlier
+`naturalethic/browser`)  
 **Related:** [hardening plan](../plans/2026-08-09-sola-browser-hardening.md) P1.3;
 open-questions D8.
 
