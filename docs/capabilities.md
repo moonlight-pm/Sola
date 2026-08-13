@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-09 (FFM: title-only Windows skip + focus/composition dedup)
+**As of:** 2026-08-13 (parked idea: sola-agent-terminal; pickup on this branch)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -62,7 +62,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
 | browser-wpe | Browser chrome + WPE engine | partial | browser freezes | local | Chrome features incomplete vs plan; engine quirks | no |
 | browser-cef | Parallel CEF engine | partial | [cef port](specs/2026-05-04-cef-port-design.md) | local | Secondary path; not default for all users | no |
-| agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only | no |
+| agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only. **Not** the starting point for agent-terminal. | no |
+| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | idea | [ideas](ideas/2026-08-12-sola-agent-terminal.md) | — | Parked; not built. Distinct from `sola-agent`. Spawn sibling + design law decided (see idea). Pickup: `CURRENT.md` Now §1 on this branch. | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
 | preview | sola-preview + selection capture | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Zoom; image clipboard; solactl --region | no |

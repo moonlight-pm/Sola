@@ -9,17 +9,23 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-09 (shell Windows hygiene + ordered install on master)
+**As of:** 2026-08-13 (this branch: parked sola-agent-terminal idea + pickup path)
 
 ---
 
 ## Now
 
-1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+1. **sola-agent-terminal** — **idea, not built** (this branch / this Orca workspace)  
+   **Pickup:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](docs/ideas/2026-08-12-sola-agent-terminal.md)  
+   Rule: [`.grok/rules/agent-terminal-design.md`](.grok/rules/agent-terminal-design.md)  
+   Capability: `agent-terminal` in [`docs/capabilities.md`](docs/capabilities.md) (`idea`).  
+   **Decided:** spawn sibling is v1 (UI + `sat`, `--prompt` is the handoff); design law (impeccable Operate + frontend-design before any UI; kit is open to refine); **not** `crates/sola-agent`.  
+   **Next if you say go:** promote to a freeze, then build-order step 1 (skeleton app). Remaining forks stay in the idea — ask, do not invent.  
+2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on **master**)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
-2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-3. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
+4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
    unmerged), etc.  
    Orca Grok pane flash reclassified off Sola; shell Windows/composition
@@ -41,7 +47,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`master`** (post–windowed-gamescope merge) | Feature work in worktrees / Orca workspaces |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (idea docs only). Master dogfood: **`master`** (post–windowed-gamescope) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
@@ -68,5 +74,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
-| Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
+| Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents. **`sola-agent` is not the start of agent-terminal.** |
+| Agent-terminal | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
+| Agent-terminal UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |
