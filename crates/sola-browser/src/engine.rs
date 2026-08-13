@@ -15,10 +15,13 @@ pub struct TabInfo {
     pub id: TabId,
     pub url: String,
     pub title: String,
-    /// True while WebKit is loading this tab (reload ↔ stop chrome).
+    /// True while this tab is loading (reload ↔ stop + omnibox progress).
     pub is_loading: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
+    /// CEF overall load progress in `0.0..=1.0`. Meaningful while `is_loading`.
+    #[serde(default)]
+    pub load_progress: f32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

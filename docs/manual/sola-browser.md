@@ -59,6 +59,24 @@ Manage (new / rename / delete) stays under **Menubar → Profiles**.
 
 **Cold start** with an empty session opens a single **blank** tab.
 
+## Tabs
+
+The left strip is the tab list (`⌘T` for a new blank). Close removes the
+row immediately — no flash back. Closing the tab you are looking at
+selects the neighbor to the right (or the left if it was last). The last
+tab is replaced by a blank rather than closing the window.
+
+## Omnibox
+
+Type a URL or a search and press Enter. Search text goes to Kagi.
+
+- The field **unfocuses on submit** so the caret is gone while the page
+  loads. The text swaps from what you typed to the resolved URL, then
+  to the page’s canonical URL — it does not flash empty in between.
+- While a real page is loading, a **thin accent line** grows along the
+  bottom of the field. Reload becomes **Stop**; back / forward follow
+  the engine. Escape also stops the load.
+
 ## Bitwarden vault
 
 Toolbar lock / key icon opens the vault panel.
@@ -90,7 +108,7 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 ## Not in this manual yet
 
 - Full keyboard chrome reference  
-- Engine quirks (loading flags, OSR input/scroll)  
+- Engine quirks (OSR caret / scroll / IME)  
 - Passkey **registration**  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)

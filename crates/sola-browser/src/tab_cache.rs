@@ -101,6 +101,7 @@ mod tests {
                     is_loading: false,
                     can_go_back: false,
                     can_go_forward: false,
+                    load_progress: 0.0,
                 })
                 .collect(),
             active: TabId(0),

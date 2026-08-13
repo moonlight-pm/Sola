@@ -3,6 +3,7 @@
 //! `Msg` and the consts were stubbed out in Task 1 and are kept here. Task 2
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
@@ -20,7 +21,7 @@ use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
-use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM};
+use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::divider::DIVIDER_HIT_PX;
 
@@ -204,6 +205,9 @@ pub struct App<E: Engine> {
     /// re-lock the engine's Mutex on every frame.
     pub cached_tabs: Vec<TabInfo>,
     pub cached_active: TabId,
+    /// Tabs chrome has already dropped. Tick merge must not resurrect them
+    /// from a lagging engine snapshot (close would flash gone → back → gone).
+    closed_tabs: HashSet<TabId>,
     /// Editable contents of the URL bar.
     pub url_field: String,
     /// The URL we last copied from the engine into `url_field`,
@@ -317,6 +321,7 @@ impl<E: Engine> App<E> {
             active_handle,
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
+            closed_tabs: HashSet::new(),
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
@@ -470,6 +475,7 @@ impl<E: Engine> App<E> {
                 is_loading: url != BLANK_URL && !url.is_empty(),
                 can_go_back: false,
                 can_go_forward: false,
+                load_progress: 0.0,
             });
             // One background frame may be imported to seed park cache.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);
@@ -653,6 +659,7 @@ impl<E: Engine> App<E> {
                 is_loading: url != BLANK_URL && !url.is_empty(),
                 can_go_back: false,
                 can_go_forward: false,
+                load_progress: 0.0,
             });
             open_list.push((id, url, title));
         }
@@ -665,6 +672,7 @@ impl<E: Engine> App<E> {
                 is_loading: false,
                 can_go_back: false,
                 can_go_forward: false,
+                load_progress: 0.0,
             });
             open_list.push((id, BLANK_URL.to_string(), "New Tab".into()));
         }
@@ -780,12 +788,13 @@ impl<E: Engine> App<E> {
 
     /// Write session to disk if the tab list / active / sidebar changed.
     pub fn persist_session(&mut self) {
-        // Prefer engine snapshot when available (authoritative URLs/titles).
+        // Merge so a mid-navigation engine `about:blank` does not persist
+        // over the URL we just committed.
         let live = self.tabs_handle.lock().unwrap().clone();
         let tabs = if live.is_empty() {
             self.cached_tabs.clone()
         } else {
-            live
+            merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs)
         };
         if tabs.is_empty() {
             return;
@@ -1081,8 +1090,11 @@ impl<E: Engine> App<E> {
                 if url.is_empty() {
                     return Task::none();
                 }
+                // Instant typed → resolved, then drop the caret so the field
+                // is not an editable well while CEF settles the canonical URL.
                 self.url_field = url.clone();
                 self.last_seen_url = url.clone();
+                self.url_bar_focused = false;
                 // Optimistic: update cached tab url so session persists immediately.
                 if let Some(t) = self
                     .cached_tabs
@@ -1091,9 +1103,12 @@ impl<E: Engine> App<E> {
                 {
                     t.url = url.clone();
                     t.is_loading = true;
+                    t.load_progress = 0.0;
                 }
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+                let _ = self.cmd_tx.send(Cmd::Focus(true));
                 self.persist_session();
+                return crate::integration::unfocus_chrome();
             }
             Msg::CloseTab(id) => {
                 // Never drop below one tab: open a blank replacement first.
@@ -1110,12 +1125,22 @@ impl<E: Engine> App<E> {
                         self.switch_active_tab(new_active);
                     }
                 }
+                let closed_idx = self.cached_tabs.iter().position(|t| t.id == id);
                 self.slot.forget_tab(id);
                 self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
                 self.slot.need_park_prime.lock().unwrap().remove(&id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
-                // Drop from optimistic cache immediately so persist sees it.
+                // Drop from optimistic cache immediately so persist sees it
+                // and Tick cannot paint the row again.
+                self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
+                if let (Some(idx), Some(h)) = (closed_idx, self.hovered_tab) {
+                    if h > idx {
+                        self.hovered_tab = Some(h - 1);
+                    } else if h == idx && h >= self.cached_tabs.len() {
+                        self.hovered_tab = self.cached_tabs.len().checked_sub(1);
+                    }
+                }
                 self.persist_session();
             }
             Msg::ActivateTab(id) => {
@@ -1144,27 +1169,36 @@ impl<E: Engine> App<E> {
                 // not blank out after session restore.
                 let live = self.tabs_handle.lock().unwrap().clone();
                 if !live.is_empty() {
-                    self.cached_tabs = merge_tab_snapshot(&self.cached_tabs, &live);
+                    self.cached_tabs =
+                        merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs);
+                    self.closed_tabs
+                        .retain(|id| live.iter().any(|t| t.id == *id));
                 }
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
                 // clobbering optimistic activate (new-tab had no highlight).
                 let paint = self.slot.paint_tab.load(Ordering::Relaxed);
-                if paint != u64::MAX {
-                    self.cached_active = TabId(paint);
+                let candidate = if paint != u64::MAX {
+                    TabId(paint)
                 } else {
-                    let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
-                    if engine_active.0 != u64::MAX {
-                        self.cached_active = engine_active;
-                    }
+                    TabId(self.active_handle.load(Ordering::Relaxed))
+                };
+                if candidate.0 != u64::MAX
+                    && self.cached_tabs.iter().any(|t| t.id == candidate)
+                    && !self.closed_tabs.contains(&candidate)
+                {
+                    self.cached_active = candidate;
                 }
                 let active_url = self.active_tab_info().map(|t| t.url.clone());
                 if let Some(url) = active_url {
-                    if url != self.last_seen_url {
-                        self.last_seen_url = url.clone();
-                        // A blank tab shows an empty URL bar, not "about:blank".
-                        self.url_field = if url == BLANK_URL { String::new() } else { url };
-                    }
+                    let (field, seen) = apply_omnibar_url(
+                        &self.url_field,
+                        &self.last_seen_url,
+                        &url,
+                        self.url_bar_focused,
+                    );
+                    self.url_field = field;
+                    self.last_seen_url = seen;
                 }
                 self.persist_session();
                 // Drain any page-selection text the engine extracted for a copy
@@ -1354,6 +1388,7 @@ impl<E: Engine> App<E> {
             is_loading: url != BLANK_URL && !url.is_empty(),
             can_go_back: false,
             can_go_forward: false,
+            load_progress: 0.0,
         });
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
@@ -1379,6 +1414,9 @@ impl<E: Engine> App<E> {
             .find(|t| t.id == self.cached_active)
         {
             t.is_loading = loading;
+            if !loading {
+                t.load_progress = 0.0;
+            }
         }
     }
 
@@ -1636,13 +1674,7 @@ impl<E: Engine> App<E> {
             back,
             forward,
             reload_or_stop,
-            text_input("Search or enter URL", &self.url_field)
-                .id(crate::integration::url_input_id())
-                .on_input(Msg::UrlInput)
-                .on_submit(Msg::UrlSubmit)
-                .size(13)
-                .style(sola_kit::components::text_input::style)
-                .width(Length::Fill),
+            self.view_omnibox(),
             vault_btn,
         ]
         .spacing(SPACE_SM)
@@ -1657,6 +1689,32 @@ impl<E: Engine> App<E> {
                 ..Default::default()
             })
             .into()
+    }
+
+    fn view_omnibox(&self) -> Element<'_, Msg> {
+        let field = text_input("Search or enter URL", &self.url_field)
+            .id(crate::integration::url_input_id())
+            .on_input(Msg::UrlInput)
+            .on_submit(Msg::UrlSubmit)
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fill);
+        match self.active_load_frac() {
+            Some(frac) => stack![field, omnibox_progress_overlay(frac)].into(),
+            None => field.into(),
+        }
+    }
+
+    /// Determinate load fraction for the omnibox hairline, if the active tab
+    /// is loading. A small floor so the line appears the moment navigation
+    /// starts (CEF often sits at 0 for the first callback).
+    fn active_load_frac(&self) -> Option<f32> {
+        let info = self.active_tab_info()?;
+        // A fresh about:blank tab loads internally; don't paint a bar on it.
+        if !info.is_loading || is_transient_nav_url(&info.url) {
+            return None;
+        }
+        Some(info.load_progress.clamp(0.0, 1.0).max(0.08))
     }
 
     fn nav_icon_btn(
@@ -2669,28 +2727,253 @@ impl<E: Engine> Drop for App<E> {
     }
 }
 
-/// Prefer live engine url; keep previous title when engine still has "".
-fn merge_tab_snapshot(prev: &[TabInfo], live: &[TabInfo]) -> Vec<TabInfo> {
-    live.iter()
-        .map(|t| {
-            let kept_title = prev
-                .iter()
-                .find(|p| p.id == t.id)
-                .map(|p| p.title.as_str())
-                .unwrap_or("");
-            let title = if t.title.is_empty() && !kept_title.is_empty() {
-                kept_title.to_string()
-            } else {
-                t.title.clone()
-            };
-            TabInfo {
-                id: t.id,
-                url: t.url.clone(),
-                title,
-                is_loading: t.is_loading,
-                can_go_back: t.can_go_back,
-                can_go_forward: t.can_go_forward,
+/// Empty / `about:blank` mid-navigation — do not flash these in the omnibar
+/// over a URL the user just committed.
+fn is_transient_nav_url(url: &str) -> bool {
+    url.is_empty() || url == BLANK_URL
+}
+
+/// Apply an engine URL to the omnibar. Never blanks a committed field, and
+/// never overwrites while the user is typing.
+fn apply_omnibar_url(
+    url_field: &str,
+    last_seen_url: &str,
+    engine_url: &str,
+    url_bar_focused: bool,
+) -> (String, String) {
+    if url_bar_focused {
+        return (url_field.to_string(), last_seen_url.to_string());
+    }
+    if is_transient_nav_url(engine_url) {
+        return (url_field.to_string(), last_seen_url.to_string());
+    }
+    if engine_url == last_seen_url {
+        return (url_field.to_string(), last_seen_url.to_string());
+    }
+    (engine_url.to_string(), engine_url.to_string())
+}
+
+/// 2px accent hairline along the bottom of the omnibox well.
+fn omnibox_progress_overlay<'a>(frac: f32) -> Element<'a, Msg> {
+    let fill_w = ((frac * 1000.0) as u16).max(1);
+    let rest_w = ((1.0 - frac) * 1000.0).max(1.0) as u16;
+    let fill = container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+        .width(Length::FillPortion(fill_w))
+        .height(Length::Fixed(2.0))
+        .style(|theme: &iced::Theme| {
+            let accent = theme.extended_palette().primary.base.color;
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(accent)),
+                border: iced::Border {
+                    radius: iced::border::Radius::new(0.0).bottom(RADIUS_MD),
+                    ..Default::default()
+                },
+                ..Default::default()
             }
+        });
+    column![
+        Space::new().height(Length::Fill),
+        row![
+            fill,
+            Space::new()
+                .width(Length::FillPortion(rest_w))
+                .height(Length::Fixed(2.0)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(2.0)),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Chrome owns which tabs exist and their order. Engine owns field updates
+/// (url / title / loading). Engine-only ids (popups) are appended unless
+/// chrome already closed them.
+fn merge_tab_snapshot(
+    prev: &[TabInfo],
+    live: &[TabInfo],
+    closed: &HashSet<TabId>,
+) -> Vec<TabInfo> {
+    let mut out: Vec<TabInfo> = prev
+        .iter()
+        .filter(|p| !closed.contains(&p.id))
+        .map(|p| match live.iter().find(|t| t.id == p.id) {
+            Some(t) => merge_tab_fields(p, t),
+            None => p.clone(),
         })
-        .collect()
+        .collect();
+    for t in live {
+        if closed.contains(&t.id) {
+            continue;
+        }
+        if prev.iter().any(|p| p.id == t.id) {
+            continue;
+        }
+        out.push(t.clone());
+    }
+    out
+}
+
+fn merge_tab_fields(prior: &TabInfo, live: &TabInfo) -> TabInfo {
+    let title = if live.title.is_empty() && !prior.title.is_empty() {
+        prior.title.clone()
+    } else {
+        live.title.clone()
+    };
+    let url = if is_transient_nav_url(&live.url) && !is_transient_nav_url(&prior.url) {
+        prior.url.clone()
+    } else {
+        live.url.clone()
+    };
+    let is_loading =
+        live.is_loading || (prior.is_loading && is_transient_nav_url(&live.url));
+    let load_progress = if is_loading {
+        live.load_progress.max(prior.load_progress)
+    } else {
+        0.0
+    };
+    TabInfo {
+        id: prior.id,
+        url,
+        title,
+        is_loading,
+        can_go_back: live.can_go_back,
+        can_go_forward: live.can_go_forward,
+        load_progress,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tab(id: u64, url: &str, title: &str) -> TabInfo {
+        TabInfo {
+            id: TabId(id),
+            url: url.to_string(),
+            title: title.to_string(),
+            is_loading: false,
+            can_go_back: false,
+            can_go_forward: false,
+            load_progress: 0.0,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_committed_url_over_blank() {
+        let prev = vec![{
+            let mut t = tab(1, "https://example.com/", "Example");
+            t.is_loading = true;
+            t
+        }];
+        let live = vec![tab(1, BLANK_URL, "")];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out[0].url, "https://example.com/");
+        assert_eq!(out[0].title, "Example");
+        assert!(out[0].is_loading);
+    }
+
+    #[test]
+    fn merge_takes_canonical_url() {
+        let prev = vec![{
+            let mut t = tab(1, "https://example.com/", "");
+            t.is_loading = true;
+            t
+        }];
+        let live = vec![{
+            let mut t = tab(1, "https://www.example.com/", "Example Domain");
+            t.is_loading = true;
+            t.load_progress = 0.4;
+            t
+        }];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out[0].url, "https://www.example.com/");
+        assert_eq!(out[0].title, "Example Domain");
+        assert_eq!(out[0].load_progress, 0.4);
+    }
+
+    #[test]
+    fn merge_leaves_genuine_blank_tab() {
+        let prev = vec![tab(1, BLANK_URL, "New Tab")];
+        let live = vec![tab(1, BLANK_URL, "")];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out[0].url, BLANK_URL);
+        assert_eq!(out[0].title, "New Tab");
+        assert!(!out[0].is_loading);
+    }
+
+    #[test]
+    fn merge_does_not_resurrect_closed_tab() {
+        let prev = vec![tab(1, "https://keep.example/", "Keep")];
+        let live = vec![
+            tab(1, "https://keep.example/", "Keep"),
+            tab(2, "https://gone.example/", "Gone"),
+        ];
+        let closed = HashSet::from([TabId(2)]);
+        let out = merge_tab_snapshot(&prev, &live, &closed);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, TabId(1));
+    }
+
+    #[test]
+    fn merge_keeps_chrome_new_tab_before_engine() {
+        let prev = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, BLANK_URL, "New Tab"),
+        ];
+        let live = vec![tab(1, "https://a.example/", "A")];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].id, TabId(2));
+        assert_eq!(out[1].title, "New Tab");
+    }
+
+    #[test]
+    fn merge_appends_engine_popup() {
+        let prev = vec![tab(1, "https://a.example/", "A")];
+        let live = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(3, "https://popup.example/", "Popup"),
+        ];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].id, TabId(3));
+    }
+
+    #[test]
+    fn omnibar_does_not_blank_mid_navigation() {
+        let (field, seen) = apply_omnibar_url(
+            "https://example.com/",
+            "https://example.com/",
+            BLANK_URL,
+            false,
+        );
+        assert_eq!(field, "https://example.com/");
+        assert_eq!(seen, "https://example.com/");
+    }
+
+    #[test]
+    fn omnibar_swaps_to_canonical_instantly() {
+        let (field, seen) = apply_omnibar_url(
+            "https://example.com/",
+            "https://example.com/",
+            "https://www.example.com/",
+            false,
+        );
+        assert_eq!(field, "https://www.example.com/");
+        assert_eq!(seen, "https://www.example.com/");
+    }
+
+    #[test]
+    fn omnibar_ignores_engine_while_focused() {
+        let (field, seen) = apply_omnibar_url(
+            "exa",
+            BLANK_URL,
+            "https://elsewhere.example/",
+            true,
+        );
+        assert_eq!(field, "exa");
+        assert_eq!(seen, BLANK_URL);
+    }
 }

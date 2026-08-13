@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (parked last-frames; instant tab/profile paint)
+**As of:** 2026-08-13 (instant tab close; omnibox load line)
 
 ---
 
@@ -22,6 +22,9 @@ Do not invent product policy.
      (menubar + kit identity select in the full-width chrome bar;
      visited tabs/profiles paint instantly from parked last-frames;
      uncached tabs blank immediately);
+     omnibox unfocuses on submit (typed → resolved, no blank flash);
+     thin accent load line in the omnibox; back/forward/stop from CEF;
+     tab close is instant (strip does not flash the row back);
      YouTube signed in after full quit; colors OK after ARGB→BGRA
      swizzle; Bitwarden unlock (**`--release`**); fill after unlock;
      passkey get on Google.  
@@ -30,7 +33,7 @@ Do not invent product policy.
      own CEF cookie root. Chrome-bar select is the quick switcher.  
    - Manual: `docs/manual/sola-browser.md`.  
    - **Not shipped:** passkey **registration**; remaining OSR quirks
-     (loading/history flags; first-visit session tabs).  
+     (caret/scroll/IME); first-visit session tabs.  
    - **Next:** remaining OSR (caret/scroll/IME) and passkey registration.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -57,7 +60,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); YouTube persists after quit; Bitwarden unlock/fill; passkey **get** (Google) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; passkey **get** (Google) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

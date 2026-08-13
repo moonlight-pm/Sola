@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -284,6 +284,10 @@ struct CefTabState {
     browser: cef::Browser,
     url: Arc<Mutex<String>>,
     title: Arc<Mutex<String>>,
+    is_loading: Cell<bool>,
+    can_go_back: Cell<bool>,
+    can_go_forward: Cell<bool>,
+    load_progress: Cell<f32>,
     /// Last CPU OSR frame for this tab. Replayed on `SetActiveTab` so
     /// chrome can paint immediately while CEF invalidates for a fresh
     /// frame (static pages often never re-`on_paint` without that).
@@ -683,6 +687,19 @@ cef::wrap_display_handler! {
             }
         }
 
+        fn on_loading_progress_change(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            progress: f64,
+        ) {
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let bid = browser.identifier();
+            if set_tab_load_progress_by_browser_id(&state, bid, progress as f32) {
+                state.snapshot_dirty.set(true);
+            }
+        }
+
         fn on_title_change(
             &self,
             browser: Option<&mut cef::Browser>,
@@ -760,6 +777,27 @@ cef::wrap_load_handler! {
     pub struct BrowserLoadHandler {}
 
     impl LoadHandler {
+        fn on_loading_state_change(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            is_loading: ::std::os::raw::c_int,
+            can_go_back: ::std::os::raw::c_int,
+            can_go_forward: ::std::os::raw::c_int,
+        ) {
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let bid = browser.identifier();
+            if set_tab_nav_state_by_browser_id(
+                &state,
+                bid,
+                is_loading != 0,
+                can_go_back != 0,
+                can_go_forward != 0,
+            ) {
+                state.snapshot_dirty.set(true);
+            }
+        }
+
         fn on_load_end(
             &self,
             browser: Option<&mut cef::Browser>,
@@ -1095,6 +1133,55 @@ fn set_tab_url_title_by_browser_id(
     false
 }
 
+fn for_tab_by_browser_id(
+    state: &CefThreadState,
+    browser_id: i32,
+    f: impl FnOnce(&CefTabState),
+) -> bool {
+    for tab in state.tabs.borrow().iter() {
+        if tab.browser_id == browser_id {
+            f(tab);
+            return true;
+        }
+    }
+    for park in state.parked.borrow().values() {
+        for tab in &park.tabs {
+            if tab.browser_id == browser_id {
+                f(tab);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn set_tab_nav_state_by_browser_id(
+    state: &CefThreadState,
+    browser_id: i32,
+    is_loading: bool,
+    can_go_back: bool,
+    can_go_forward: bool,
+) -> bool {
+    for_tab_by_browser_id(state, browser_id, |tab| {
+        tab.is_loading.set(is_loading);
+        tab.can_go_back.set(can_go_back);
+        tab.can_go_forward.set(can_go_forward);
+        if !is_loading {
+            tab.load_progress.set(0.0);
+        }
+    })
+}
+
+fn set_tab_load_progress_by_browser_id(
+    state: &CefThreadState,
+    browser_id: i32,
+    progress: f32,
+) -> bool {
+    for_tab_by_browser_id(state, browser_id, |tab| {
+        tab.load_progress.set(progress.clamp(0.0, 1.0));
+    })
+}
+
 /// Make `id` the OSR front tab: hide the previous browser, show + focus +
 /// invalidate the new one, and immediately re-push a parked frame so iced
 /// does not keep sampling the previous tab's texture while waiting for
@@ -1302,6 +1389,7 @@ fn cef_evict_parks(state: &CefThreadState) {
                             is_loading: false,
                             can_go_back: false,
                             can_go_forward: false,
+                            load_progress: 0.0,
                         })
                         .collect(),
                     active: TabId(0),
@@ -1382,6 +1470,10 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         browser,
         url,
         title,
+        is_loading: Cell::new(false),
+        can_go_back: Cell::new(false),
+        can_go_forward: Cell::new(false),
+        load_progress: Cell::new(0.0),
         last_frame: RefCell::new(None),
     });
     rebuild_snapshot(state);
@@ -1416,9 +1508,10 @@ fn rebuild_snapshot(state: &CefThreadState) {
             id: t.id,
             url: t.url.lock().unwrap().clone(),
             title: t.title.lock().unwrap().clone(),
-            is_loading: false,
-            can_go_back: false,
-            can_go_forward: false,
+            is_loading: t.is_loading.get(),
+            can_go_back: t.can_go_back.get(),
+            can_go_forward: t.can_go_forward.get(),
+            load_progress: t.load_progress.get(),
         })
         .collect();
     *state.tabs_snapshot.lock().unwrap() = new.clone();
