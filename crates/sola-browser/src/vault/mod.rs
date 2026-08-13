@@ -9,6 +9,7 @@
 pub mod bridge;
 mod client;
 mod fill_js;
+mod generate;
 mod identity;
 mod match_uri;
 mod memory_repo;
@@ -23,8 +24,9 @@ pub use bridge as passkey_bridge;
 pub use client::{
     FillMaterial, LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
 };
-pub use fill_js::fill_credentials_script;
-pub use match_uri::uri_matches;
+pub use fill_js::{fill_credentials_script, fill_credentials_script_ex};
+pub use generate::password as generate_password;
+pub use match_uri::{apex_domain, uri_matches};
 pub use prefs::VaultPrefs;
 pub use passkey::PasskeyCandidate;
 pub use webauthn_js::{inject_webauthn_intercept_script, resolve_webauthn_script};

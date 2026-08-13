@@ -1,7 +1,8 @@
 # sola-browser
 
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / passkey **get** dogfooded.
+fill / **Create login** / passkey **get**. Page ⌘C / ⌘V and triple-click
+select work on form fields and body text.
 
 ## What it is
 
@@ -86,6 +87,13 @@ Toolbar lock / key icon opens the vault panel.
   (unless a passkey ceremony is already waiting).
 - **Fill login** lists URI-matching items (tall list; items with a passkey show
   a **passkey** badge). Click to fill username / password into the page.
+- **Create login** is always on the unlocked card (primary when this site has
+  no matches). Username is the last one you used, selected so typing replaces
+  it. Password is a fresh 16-character generated value (visible; **Regenerate**
+  if you want another). URL is the page’s apex domain (`google.com`, no
+  `https://`). **Create** or Enter writes the item to Bitwarden **first**, then
+  fills every username and password field on the page (including confirm).
+  If the page has no fields yet, the item is still saved.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
   passkeys** — pick one to complete sign-in. Dogfooded on Google accounts.
@@ -104,6 +112,13 @@ debug, still slower than full release).
 
 Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 (shared across profiles).
+
+## Copy, paste, and click
+
+⌘C / ⌘V on the page go through chrome (River steals the chords). Copy
+extracts the selection in the engine helper and writes the system
+clipboard; paste inserts into the focused field without emptying the
+clipboard. Triple-click selects a line / field the way Chromium expects.
 
 ## Not in this manual yet
 

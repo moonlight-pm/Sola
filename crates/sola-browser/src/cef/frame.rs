@@ -39,6 +39,9 @@ pub struct ProgramState {
     modifiers: keyboard::Modifiers,
     last_scale: f32,
     held_button_mods: u32,
+    /// Last *press*: button, x, y, time, count.
+    last_press: Option<(u32, i32, i32, Instant, u32)>,
+    last_click_count: u32,
     _started: Option<Instant>,
 }
 
@@ -88,6 +91,12 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     mouse::Event::ButtonPressed(b) => {
                         input::button_number(*b).map(|button| {
                             state.held_button_mods |= input::button_to_modifier(button);
+                            let prev = state.last_press.map(|(pb, px, py, at, count)| {
+                                (pb, px, py, at.elapsed().as_millis(), count)
+                            });
+                            let count = input::next_click_count(prev, button, x, y);
+                            state.last_press = Some((button, x, y, Instant::now(), count));
+                            state.last_click_count = count;
                             input::pointer_button(
                                 true,
                                 button,
@@ -95,6 +104,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                                 y,
                                 state.held_button_mods,
                                 kbd_mods,
+                                count,
                             )
                         })
                     }
@@ -108,6 +118,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                                 y,
                                 state.held_button_mods,
                                 kbd_mods,
+                                state.last_click_count.max(1),
                             )
                         })
                     }

@@ -14,6 +14,9 @@ pub struct VaultPrefs {
     /// Cipher id → unix seconds of last fill / passkey use in this browser.
     #[serde(default)]
     pub last_used: std::collections::HashMap<String, i64>,
+    /// Last username filled or created — prefill for New login.
+    #[serde(default)]
+    pub last_username: Option<String>,
 }
 
 impl JsonConfigIn for VaultPrefs {
@@ -60,5 +63,25 @@ impl VaultPrefs {
 
     pub fn last_used_map() -> std::collections::HashMap<String, i64> {
         Self::load().last_used
+    }
+
+    pub fn load_last_username() -> Option<String> {
+        Self::load()
+            .last_username
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn save_last_username(username: &str) {
+        let username = username.trim();
+        if username.is_empty() {
+            return;
+        }
+        let mut prefs = Self::load();
+        if prefs.last_username.as_deref() == Some(username) {
+            return;
+        }
+        prefs.last_username = Some(username.to_string());
+        prefs.save();
     }
 }

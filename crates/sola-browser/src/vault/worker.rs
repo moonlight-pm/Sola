@@ -32,6 +32,13 @@ pub enum VaultCmd {
     Sync,
     Matches { url: String },
     Fill { id: String },
+    /// Persist a new login then return fill material.
+    CreateLogin {
+        name: String,
+        username: String,
+        password: String,
+        uri: String,
+    },
     /// List passkeys for a WebAuthn get() RP so chrome can show a picker.
     PasskeyList {
         req_id: u64,
@@ -72,6 +79,12 @@ pub enum VaultEvent {
     SyncFailed { message: String },
     Matches(Vec<MatchSummary>),
     FillReady {
+        username: Option<String>,
+        password: Option<String>,
+    },
+    /// New login is on the server — fill the page (same payload as FillReady).
+    Created {
+        id: Option<String>,
         username: Option<String>,
         password: Option<String>,
     },
@@ -301,9 +314,57 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     });
                 }
             },
+            VaultCmd::CreateLogin {
+                name,
+                username,
+                mut password,
+                uri,
+            } => {
+                let user = if username.trim().is_empty() {
+                    None
+                } else {
+                    Some(username)
+                };
+                let pass = if password.trim().is_empty() {
+                    None
+                } else {
+                    Some(password.clone())
+                };
+                match svc
+                    .create_login(name, user, pass, Some(uri).filter(|s| !s.trim().is_empty()))
+                    .await
+                {
+                    Ok((id, mut material)) => {
+                        if let Some(ref id) = id {
+                            crate::vault::VaultPrefs::touch_cipher(id);
+                        }
+                        if let Some(ref u) = material.username {
+                            crate::vault::VaultPrefs::save_last_username(u);
+                        }
+                        let username = material.username.take();
+                        let password = material.password.take();
+                        tracing::info!(id = id.as_deref(), "vault: created login");
+                        let _ = event_tx.send(VaultEvent::Created {
+                            id,
+                            username,
+                            password,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "vault: create login failed");
+                        let _ = event_tx.send(VaultEvent::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+                password.zeroize();
+            }
             VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
                 Ok(mut material) => {
                     crate::vault::VaultPrefs::touch_cipher(&id);
+                    if let Some(ref u) = material.username {
+                        crate::vault::VaultPrefs::save_last_username(u);
+                    }
                     let username = material.username.take();
                     let password = material.password.take();
                     let _ = event_tx.send(VaultEvent::FillReady {

@@ -8217,6 +8217,8 @@ dependencies = [
  "bitwarden-sync",
  "bitwarden-vault",
  "cef",
+ "chrono",
+ "getrandom 0.2.17",
  "iced",
  "iced_futures",
  "reqwest 0.12.28",

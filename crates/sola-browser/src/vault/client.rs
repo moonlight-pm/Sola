@@ -8,7 +8,10 @@ use bitwarden_core::key_management::MasterPasswordAuthenticationData;
 use bitwarden_core::{ClientSettings, DeviceType};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncRequest};
-use bitwarden_vault::{CipherType, CipherView};
+use bitwarden_api_api::models::CipherRequestModel;
+use bitwarden_vault::{
+    CipherRepromptType, CipherType, CipherView, LoginUriView, LoginView, UriMatchType,
+};
 use thiserror::Error;
 use zeroize::Zeroize;
 
@@ -323,6 +326,125 @@ impl VaultService {
             username: login.username,
             password: login.password,
         })
+    }
+
+    /// Encrypt + POST a personal login, then sync so match lists see it.
+    pub async fn create_login(
+        &self,
+        name: String,
+        username: Option<String>,
+        password: Option<String>,
+        uri: Option<String>,
+    ) -> Result<(Option<String>, FillMaterial), VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let name = {
+            let t = name.trim();
+            if t.is_empty() {
+                "Login".to_string()
+            } else {
+                t.to_string()
+            }
+        };
+        let mut login = LoginView {
+            username: username.clone().filter(|s| !s.is_empty()),
+            password: password.clone().filter(|s| !s.is_empty()),
+            password_revision_date: None,
+            uris: None,
+            totp: None,
+            autofill_on_page_load: None,
+            fido2_credentials: None,
+        };
+        if let Some(uri) = uri
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            login.uris = Some(vec![LoginUriView {
+                uri: Some(uri),
+                r#match: Some(UriMatchType::Domain),
+                uri_checksum: None,
+            }]);
+        }
+        login.generate_checksums();
+
+        let now = chrono::Utc::now();
+        let view = CipherView {
+            id: None,
+            organization_id: None,
+            folder_id: None,
+            collection_ids: Vec::new(),
+            key: None,
+            name,
+            notes: None,
+            r#type: CipherType::Login,
+            login: Some(login),
+            identity: None,
+            card: None,
+            secure_note: None,
+            ssh_key: None,
+            bank_account: None,
+            drivers_license: None,
+            passport: None,
+            favorite: false,
+            reprompt: CipherRepromptType::None,
+            organization_use_totp: false,
+            edit: true,
+            permissions: None,
+            view_password: true,
+            local_data: None,
+            attachments: None,
+            attachment_decryption_failures: None,
+            fields: None,
+            password_history: None,
+            creation_date: now,
+            deleted_date: None,
+            revision_date: now,
+            archived_date: None,
+        };
+
+        let ctx = self
+            .client
+            .vault()
+            .ciphers()
+            .encrypt(view)
+            .await
+            .map_err(|e| VaultError::Other(format!("encrypt login: {e}")))?;
+
+        let mut req: CipherRequestModel = ctx
+            .cipher
+            .try_into()
+            .map_err(|e| VaultError::Other(format!("cipher request: {e}")))?;
+        req.encrypted_for = Some(ctx.encrypted_for.into());
+
+        let created = self
+            .client
+            .0
+            .internal
+            .get_api_configurations()
+            .api_client
+            .ciphers_api()
+            .post(Some(req))
+            .await
+            .map_err(|e| VaultError::Other(format!("create login: {e}")))?;
+        let id = created.id.map(|id| id.to_string());
+
+        if let Err(e) = self.sync().await {
+            tracing::warn!(error = %e, "vault: created login but sync failed");
+        }
+
+        Ok((
+            id,
+            FillMaterial {
+                username,
+                password,
+            },
+        ))
     }
 }
 

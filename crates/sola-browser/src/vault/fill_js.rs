@@ -3,10 +3,26 @@
 //! Values are embedded as JSON string literals so quotes / newlines / `</script>`
 //! in the secret cannot break out of the JS string.
 
-/// Return an IIFE that fills the most likely username + password fields.
+/// Return an IIFE that fills the most likely username + every visible password.
+///
+/// When `report` is true, the script also `console.info`s
+/// `__sola_vault_fill__:1` or `:0` so chrome can tell if any field was found.
 pub fn fill_credentials_script(username: Option<&str>, password: Option<&str>) -> String {
+    fill_credentials_script_ex(username, password, false)
+}
+
+pub fn fill_credentials_script_ex(
+    username: Option<&str>,
+    password: Option<&str>,
+    report: bool,
+) -> String {
     let user = serde_json::to_string(username.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
     let pass = serde_json::to_string(password.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
+    let report_js = if report {
+        "try{ console.info('__sola_vault_fill__:'+(ok?1:0)); }catch(e){}"
+    } else {
+        ""
+    };
 
     // Keep this self-contained: no external deps, works on typical login forms.
     // Dispatches input/change so React/Vue-style controlled inputs update.
@@ -42,7 +58,11 @@ pub fn fill_credentials_script(username: Option<&str>, password: Option<&str>) -
     return s;
   }}
   var pwds=Array.prototype.slice.call(document.querySelectorAll('input[type="password"]')).filter(visible);
-  var pwd=pwds[0]||document.querySelector('input[type="password"]');
+  if(!pwds.length){{
+    var one=document.querySelector('input[type="password"]');
+    if(one) pwds=[one];
+  }}
+  var pwd=pwds[0]||null;
   var userEl=null;
   var scope=pwd&&pwd.form?pwd.form:document;
   var candidates=Array.prototype.slice.call(scope.querySelectorAll(
@@ -54,8 +74,10 @@ pub fn fill_credentials_script(username: Option<&str>, password: Option<&str>) -
     userEl=document.querySelector('input[autocomplete="username"],input[type="email"],input[name*="user" i],input[name*="email" i],input[id*="user" i],input[id*="email" i]');
   }}
   if(user) setVal(userEl,user);
-  if(pass) setVal(pwd,pass);
-  return !!(userEl||pwd);
+  if(pass){{ for(var i=0;i<pwds.length;i++) setVal(pwds[i],pass); }}
+  var ok=!!(userEl||pwds.length);
+  {report_js}
+  return ok;
 }})();"#
     )
 }
@@ -70,5 +92,14 @@ mod tests {
         assert!(s.contains(r#"a\"b"#) || s.contains("a\\\"b"));
         assert!(s.contains("p'ass") || s.contains("p\\'ass") || s.contains("\"p'ass\""));
         assert!(!s.contains("\0"));
+    }
+
+    #[test]
+    fn fills_every_password_and_can_report() {
+        let s = fill_credentials_script_ex(Some("u"), Some("p"), true);
+        assert!(s.contains("for(var i=0;i<pwds.length;i++)"));
+        assert!(s.contains("__sola_vault_fill__"));
+        let quiet = fill_credentials_script(Some("u"), Some("p"));
+        assert!(!quiet.contains("__sola_vault_fill__"));
     }
 }

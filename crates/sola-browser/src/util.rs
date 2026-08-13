@@ -23,6 +23,22 @@ pub fn editing_command_name(cmd: EditCmd) -> &'static str {
     }
 }
 
+/// Clipboard text that is safe to apply to a field. Drops `None`, empty,
+/// and control-only payloads so a failed / consumed Wayland read cannot
+/// wipe the field or get written back as an empty selection.
+pub fn usable_clipboard_text(text: Option<String>) -> Option<String> {
+    let cleaned: String = text?
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -160,6 +176,21 @@ mod tests {
         assert!(!is_new_tab_click(2, true, true));
         // Right-click is the context menu, not a new tab.
         assert!(!is_new_tab_click(3, true, true));
+    }
+
+    #[test]
+    fn usable_clipboard_text_rejects_empty() {
+        assert_eq!(usable_clipboard_text(None), None);
+        assert_eq!(usable_clipboard_text(Some(String::new())), None);
+        assert_eq!(usable_clipboard_text(Some(" \t\n".into())), None);
+        assert_eq!(
+            usable_clipboard_text(Some("hello".into())),
+            Some("hello".into())
+        );
+        assert_eq!(
+            usable_clipboard_text(Some("a\u{0}b".into())),
+            Some("ab".into())
+        );
     }
 
     #[test]

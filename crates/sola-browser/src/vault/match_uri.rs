@@ -119,7 +119,19 @@ fn equivalent_domains(a: &str, b: &str) -> bool {
     false
 }
 
-fn base_domain(host: &str) -> String {
+/// Registrable domain of `page_url` (bare host, no scheme). Empty when the
+/// URL is blank / unparseable.
+pub fn apex_domain(page_url: &str) -> String {
+    let trimmed = page_url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    parse_url(trimmed)
+        .and_then(|u| u.host_str().map(base_domain))
+        .unwrap_or_default()
+}
+
+pub(crate) fn base_domain(host: &str) -> String {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     // IPv4 / IPv6: require exact host match path — here return whole host.
     if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') {
@@ -211,5 +223,16 @@ mod tests {
             "https://google.com",
             None,
         ));
+    }
+
+    #[test]
+    fn apex_from_page_url() {
+        assert_eq!(
+            apex_domain("https://accounts.google.com/signup?x=1"),
+            "google.com"
+        );
+        assert_eq!(apex_domain("github.com/login"), "github.com");
+        assert_eq!(apex_domain(""), "");
+        assert_eq!(apex_domain("about:blank"), "");
     }
 }

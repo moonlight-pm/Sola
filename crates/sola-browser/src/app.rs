@@ -15,7 +15,7 @@ use iced::widget::{
 use sola_kit::components::text_input::text_input;
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
-    TabDescriptor, TabSize, horizontal_divider, vertical_divider_with, vertical_tabs_sized,
+    TabDescriptor, TabSize, field, horizontal_divider, vertical_divider_with, vertical_tabs_sized,
 };
 use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::button as kit_button;
@@ -31,7 +31,8 @@ use crate::session::{self, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
     MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent,
-    VaultHandle, VaultStatus, fill_credentials_script,
+    VaultHandle, VaultStatus, apex_domain, fill_credentials_script, fill_credentials_script_ex,
+    generate_password,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -122,6 +123,21 @@ pub enum Msg {
     /// Re-query matches for the active tab URL.
     #[cfg(feature = "bitwarden")]
     VaultRefreshMatches,
+    /// Open the create-login form on the unlocked card.
+    #[cfg(feature = "bitwarden")]
+    VaultCreateOpen,
+    #[cfg(feature = "bitwarden")]
+    VaultCreateCancel,
+    #[cfg(feature = "bitwarden")]
+    VaultCreateSubmit,
+    #[cfg(feature = "bitwarden")]
+    VaultCreateUsername(String),
+    #[cfg(feature = "bitwarden")]
+    VaultCreatePassword(String),
+    #[cfg(feature = "bitwarden")]
+    VaultCreateUrl(String),
+    #[cfg(feature = "bitwarden")]
+    VaultCreateRegenerate,
     /// Tab / Shift+Tab while vault panel is open.
     VaultFocusNext,
     VaultFocusPrev,
@@ -161,6 +177,10 @@ enum VaultPanelPhase {
     },
     /// Site asked for a passkey — pick one from the vault.
     PasskeyPick,
+    /// Compose a new login (username / generated password / apex URL).
+    CreateLogin,
+    /// Cipher saved; page had no fields to fill.
+    CreateSaved,
 }
 
 /// In-flight WebAuthn get() waiting for the user to pick a passkey.
@@ -181,6 +201,9 @@ enum VaultPasteTarget {
     Email,
     Password,
     Otp,
+    CreateUsername,
+    CreatePassword,
+    CreateUrl,
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -284,6 +307,18 @@ pub struct App<E: Engine> {
     /// Page WebAuthn get() waiting for passkey selection.
     #[cfg(feature = "bitwarden")]
     pending_passkey: Option<PendingPasskey>,
+    #[cfg(feature = "bitwarden")]
+    vault_create_username: String,
+    #[cfg(feature = "bitwarden")]
+    vault_create_password: String,
+    #[cfg(feature = "bitwarden")]
+    vault_create_url: String,
+    /// Waiting for `__sola_vault_fill__` after a create.
+    #[cfg(feature = "bitwarden")]
+    vault_awaiting_fill: bool,
+    /// Tick count while waiting (close after ~2s if the page never reports).
+    #[cfg(feature = "bitwarden")]
+    vault_awaiting_fill_ticks: u8,
     /// Profiles menubar manage dialog (new / rename / delete confirm).
     pub profile_dialog: Option<ProfileDialog>,
     /// Name field for new/rename profile dialogs.
@@ -374,6 +409,16 @@ impl<E: Engine> App<E> {
             vault_icon_unlocked: icon_handle("lucide/key-round"),
             #[cfg(feature = "bitwarden")]
             pending_passkey: None,
+            #[cfg(feature = "bitwarden")]
+            vault_create_username: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_create_password: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_create_url: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_awaiting_fill: false,
+            #[cfg(feature = "bitwarden")]
+            vault_awaiting_fill_ticks: 0,
             profile_dialog: None,
             profile_name_field: String::new(),
             profile_dialog_error: None,
@@ -420,6 +465,72 @@ impl<E: Engine> App<E> {
         }
         self.vault_matches_loading = true;
         self.vault.send(VaultCmd::Matches { url });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn open_create_login(&mut self) {
+        let page_url = self
+            .active_tab_info()
+            .map(|t| t.url.as_str())
+            .unwrap_or("");
+        self.vault_create_url = if page_url.is_empty() || page_url == BLANK_URL {
+            String::new()
+        } else {
+            apex_domain(page_url)
+        };
+        self.vault_create_username = crate::vault::VaultPrefs::load_last_username().unwrap_or_default();
+        self.vault_create_password = generate_password();
+        self.vault_error = None;
+        self.vault_busy = false;
+        self.vault_awaiting_fill = false;
+        self.vault_awaiting_fill_ticks = 0;
+        crate::vault::passkey_bridge::drain_fill_results();
+        self.vault_phase = VaultPanelPhase::CreateLogin;
+        self.vault_paste_target = VaultPasteTarget::CreateUsername;
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn submit_create_login(&mut self) {
+        if self.vault_busy || !self.vault_status.unlocked {
+            return;
+        }
+        if self.vault_create_password.trim().is_empty() {
+            self.vault_error = Some("Password is required.".into());
+            return;
+        }
+        let uri = self.vault_create_url.trim().to_string();
+        let name = if uri.is_empty() {
+            "Login".to_string()
+        } else {
+            let apex = apex_domain(&uri);
+            if apex.is_empty() {
+                uri.clone()
+            } else {
+                apex
+            }
+        };
+        self.vault_busy = true;
+        self.vault_error = None;
+        self.vault.send(VaultCmd::CreateLogin {
+            name,
+            username: self.vault_create_username.clone(),
+            password: self.vault_create_password.clone(),
+            uri,
+        });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn finish_create_fill(&mut self, found_fields: bool) {
+        self.vault_awaiting_fill = false;
+        self.vault_awaiting_fill_ticks = 0;
+        self.vault_busy = false;
+        crate::vault::passkey_bridge::drain_fill_results();
+        if found_fields {
+            self.set_vault_panel_open(false);
+            self.vault_phase = VaultPanelPhase::Credentials;
+        } else {
+            self.vault_phase = VaultPanelPhase::CreateSaved;
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -889,6 +1000,69 @@ impl<E: Engine> App<E> {
                     self.request_vault_matches();
                 }
             }
+            Msg::VaultCreateOpen => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if !self.vault_status.unlocked {
+                        return Task::none();
+                    }
+                    self.open_create_login();
+                    return Task::batch([
+                        iced::widget::operation::focus(vault_create_username_id()),
+                        iced::advanced::widget::operate(
+                            iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                                vault_create_username_id(),
+                            ),
+                        ),
+                    ]);
+                }
+            }
+            Msg::VaultCreateCancel => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_awaiting_fill = false;
+                    self.vault_awaiting_fill_ticks = 0;
+                    self.vault_busy = false;
+                    self.vault_error = None;
+                    self.vault_phase = VaultPanelPhase::Credentials;
+                    self.request_vault_matches();
+                }
+            }
+            Msg::VaultCreateSubmit => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.submit_create_login();
+                }
+            }
+            Msg::VaultCreateUsername(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_create_username = s;
+                    self.vault_paste_target = VaultPasteTarget::CreateUsername;
+                }
+            }
+            Msg::VaultCreatePassword(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_create_password = s;
+                    self.vault_paste_target = VaultPasteTarget::CreatePassword;
+                }
+            }
+            Msg::VaultCreateUrl(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_create_url = s;
+                    self.vault_paste_target = VaultPasteTarget::CreateUrl;
+                }
+            }
+            Msg::VaultCreateRegenerate => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if !self.vault_busy {
+                        self.vault_create_password = generate_password();
+                    }
+                }
+            }
             Msg::VaultEmail(s) => {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -955,7 +1129,10 @@ impl<E: Engine> App<E> {
                     };
                     let kind = match &self.vault_phase {
                         VaultPanelPhase::TwoFactor { kind, .. } => *kind,
-                        VaultPanelPhase::Credentials | VaultPanelPhase::PasskeyPick => {
+                        VaultPanelPhase::Credentials
+                        | VaultPanelPhase::PasskeyPick
+                        | VaultPanelPhase::CreateLogin
+                        | VaultPanelPhase::CreateSaved => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -986,7 +1163,10 @@ impl<E: Engine> App<E> {
                     };
                     let kind = match &self.vault_phase {
                         VaultPanelPhase::TwoFactor { kind, .. } => *kind,
-                        VaultPanelPhase::Credentials | VaultPanelPhase::PasskeyPick => {
+                        VaultPanelPhase::Credentials
+                        | VaultPanelPhase::PasskeyPick
+                        | VaultPanelPhase::CreateLogin
+                        | VaultPanelPhase::CreateSaved => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -1007,6 +1187,10 @@ impl<E: Engine> App<E> {
                     if self.pending_passkey.is_some() {
                         self.cancel_pending_passkey("User cancelled.");
                     } else {
+                        if matches!(self.vault_phase, VaultPanelPhase::CreateSaved) {
+                            self.vault_phase = VaultPanelPhase::Credentials;
+                        }
+                        self.vault_awaiting_fill = false;
                         self.set_vault_panel_open(false);
                     }
                 }
@@ -1172,6 +1356,18 @@ impl<E: Engine> App<E> {
                     while let Some(req) = crate::vault::passkey_bridge::try_recv() {
                         self.dispatch_passkey_request(req);
                     }
+                    if self.vault_awaiting_fill {
+                        if let Some(found) = crate::vault::passkey_bridge::try_recv_fill() {
+                            self.finish_create_fill(found);
+                        } else {
+                            self.vault_awaiting_fill_ticks =
+                                self.vault_awaiting_fill_ticks.saturating_add(1);
+                            // 250ms tick × 8 ≈ 2s — page never reported.
+                            if self.vault_awaiting_fill_ticks >= 8 {
+                                self.finish_create_fill(true);
+                            }
+                        }
+                    }
                 }
                 // Merge engine snapshot with prior cache: WebKit often reports
                 // empty title until the page finishes loading (esp. inactive
@@ -1215,7 +1411,14 @@ impl<E: Engine> App<E> {
                 // Drain any page-selection text the engine extracted for a copy
                 // and put it on the system clipboard via iced. The engine's own
                 // clipboard can't reach Wayland (headless display); iced's can.
-                if let Some(text) = self.engine.clipboard_handle().lock().unwrap().take() {
+                if let Some(text) = self
+                    .engine
+                    .clipboard_handle()
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .and_then(|t| crate::util::usable_clipboard_text(Some(t)))
+                {
                     tracing::debug!(len = text.len(), "draining page selection → system clipboard");
                     #[cfg(feature = "bitwarden")]
                     if focus_otp {
@@ -1306,23 +1509,47 @@ impl<E: Engine> App<E> {
                             VaultPasteTarget::Otp => {
                                 iced::widget::operation::focus(vault_otp_id())
                             }
-                        },
-                        EditCmd::Copy => match self.vault_paste_target {
-                            VaultPasteTarget::Email => {
-                                iced::clipboard::write(self.vault_email.clone())
+                            VaultPasteTarget::CreateUsername => {
+                                iced::widget::operation::focus(vault_create_username_id())
                             }
-                            VaultPasteTarget::Password => Task::none(),
-                            VaultPasteTarget::Otp => {
-                                iced::clipboard::write(self.vault_otp.clone())
+                            VaultPasteTarget::CreatePassword => {
+                                iced::widget::operation::focus(vault_create_password_id())
+                            }
+                            VaultPasteTarget::CreateUrl => {
+                                iced::widget::operation::focus(vault_create_url_id())
                             }
                         },
+                        EditCmd::Copy => {
+                            let raw = match self.vault_paste_target {
+                                VaultPasteTarget::Email => self.vault_email.clone(),
+                                VaultPasteTarget::Password => return Task::none(),
+                                VaultPasteTarget::Otp => self.vault_otp.clone(),
+                                VaultPasteTarget::CreateUsername => {
+                                    self.vault_create_username.clone()
+                                }
+                                VaultPasteTarget::CreatePassword => {
+                                    self.vault_create_password.clone()
+                                }
+                                VaultPasteTarget::CreateUrl => self.vault_create_url.clone(),
+                            };
+                            match crate::util::usable_clipboard_text(Some(raw)) {
+                                Some(t) => iced::clipboard::write(t),
+                                None => Task::none(),
+                            }
+                        }
                         EditCmd::Cut | EditCmd::Undo | EditCmd::Redo => Task::none(),
                     };
                 }
                 if url_bar_focused {
                     tracing::debug!(?cmd, "edit → URL bar (iced clipboard)");
                     return match cmd {
-                        EditCmd::Copy => iced::clipboard::write(self.url_field.clone()),
+                        EditCmd::Copy => {
+                            match crate::util::usable_clipboard_text(Some(self.url_field.clone()))
+                            {
+                                Some(t) => iced::clipboard::write(t),
+                                None => Task::none(),
+                            }
+                        }
                         EditCmd::Cut => {
                             let task = iced::clipboard::write(self.url_field.clone());
                             self.url_field.clear();
@@ -1335,31 +1562,49 @@ impl<E: Engine> App<E> {
                     };
                 }
                 tracing::debug!(?cmd, "edit → engine (web content)");
-                // Paste-into-page: read iced's Wayland clipboard and ship the
-                // text (WPE headless has no clipboard backend).
+                // ⌘V: chrome reads (it has seat focus), restores the offer,
+                // then injects into the focused page field. CEF `paste()`
+                // after a chrome read hits an empty clipboard and can *set*
+                // that empty selection as the new source.
                 if cmd == EditCmd::Paste {
                     return iced::clipboard::read().map(Msg::PagePasted);
+                }
+                if cmd == EditCmd::Copy || cmd == EditCmd::Cut {
+                    // frame.copy() only fills Chromium's clipboard. Extract
+                    // the selection via JS and write it to Wayland ourselves.
+                    let _ = self
+                        .cmd_tx
+                        .send(Cmd::EvaluateJs(crate::paste_js::copy_selection_script()));
+                    if cmd == EditCmd::Cut {
+                        let _ = self.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
+                    }
+                    return Task::none();
                 }
                 let _ = self.cmd_tx.send(Cmd::Edit(cmd));
             }
             Msg::UrlPasted(text) => {
-                if let Some(s) = text {
-                    // Best-effort: iced exposes no caret/selection, so append
-                    // at the end (cursor-at-end assumption).
-                    self.url_field.push_str(&s);
-                }
+                let Some(s) = crate::util::usable_clipboard_text(text) else {
+                    return Task::none();
+                };
+                // Best-effort: iced exposes no caret/selection, so append
+                // at the end (cursor-at-end assumption).
+                self.url_field.push_str(&s);
+                // Restore: smithay receive can drop the original offer.
+                return iced::clipboard::write(s);
             }
             Msg::PagePasted(text) => {
-                if let Some(s) = text {
-                    let _ = self.cmd_tx.send(Cmd::PasteText(s));
-                }
+                let Some(s) = crate::util::usable_clipboard_text(text) else {
+                    return Task::none();
+                };
+                let script = crate::paste_js::paste_into_focused_script(&s);
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                return iced::clipboard::write(s);
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultClipboardPaste(text) => {
-                let Some(raw) = text else {
+                let Some(cleaned) = crate::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                let cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
                 match self.vault_phase {
                     VaultPanelPhase::TwoFactor { .. } => {
                         self.vault_otp =
@@ -1368,16 +1613,32 @@ impl<E: Engine> App<E> {
                     }
                     VaultPanelPhase::Credentials => match self.vault_paste_target {
                         VaultPasteTarget::Email => {
-                            self.vault_email = cleaned;
+                            self.vault_email = cleaned.clone();
                             self.vault_paste_target = VaultPasteTarget::Email;
                         }
                         VaultPasteTarget::Password | VaultPasteTarget::Otp => {
-                            self.vault_password = cleaned;
+                            self.vault_password = cleaned.clone();
                             self.vault_paste_target = VaultPasteTarget::Password;
                         }
+                        _ => {}
                     },
-                    VaultPanelPhase::PasskeyPick => {}
+                    VaultPanelPhase::CreateLogin => match self.vault_paste_target {
+                        VaultPasteTarget::CreatePassword => {
+                            self.vault_create_password = cleaned.clone();
+                        }
+                        VaultPasteTarget::CreateUrl => {
+                            self.vault_create_url = cleaned.clone();
+                        }
+                        _ => {
+                            self.vault_create_username = cleaned.clone();
+                            self.vault_paste_target = VaultPasteTarget::CreateUsername;
+                        }
+                    },
+                    VaultPanelPhase::PasskeyPick | VaultPanelPhase::CreateSaved => {
+                        return Task::none();
+                    }
                 }
+                return iced::clipboard::write(cleaned);
             }
         }
         Task::none()
@@ -1854,6 +2115,29 @@ impl<E: Engine> App<E> {
                 // Close panel so the user can submit the form immediately.
                 self.set_vault_panel_open(false);
             }
+            VaultEvent::Created {
+                id: _,
+                mut username,
+                mut password,
+            } => {
+                crate::vault::passkey_bridge::drain_fill_results();
+                let script = fill_credentials_script_ex(
+                    username.as_deref(),
+                    password.as_deref(),
+                    true,
+                );
+                if let Some(ref mut p) = password {
+                    p.zeroize();
+                }
+                if let Some(ref mut u) = username {
+                    u.zeroize();
+                }
+                self.vault_create_password.clear();
+                self.vault_awaiting_fill = true;
+                self.vault_awaiting_fill_ticks = 0;
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                tracing::info!("vault: created login — fill injected");
+            }
             VaultEvent::PasskeyCandidates { req_id, candidates } => {
                 if let Some(ref mut pending) = self.pending_passkey {
                     if pending.req.id != req_id {
@@ -2276,6 +2560,92 @@ impl<E: Engine> App<E> {
             .on_press(Msg::VaultPasskeyCancel);
             col = col.push(cancel);
             col.into()
+        } else if self.vault_status.unlocked
+            && matches!(self.vault_phase, VaultPanelPhase::CreateSaved)
+        {
+            let title = text("Saved to vault")
+                .size(15)
+                .font(sola_kit::fonts::ui_medium());
+            let mut col = column![
+                title,
+                soft("No username or password field on this page.".into()),
+            ]
+            .spacing(SPACE_SM)
+            .width(Length::Fixed(340.0));
+            if let Some(err) = err_line {
+                col = col.push(err);
+            }
+            col = col.push(
+                kit_button::labeled("Close", kit_button::primary).on_press(Msg::VaultPanelClose),
+            );
+            col.into()
+        } else if self.vault_status.unlocked
+            && matches!(self.vault_phase, VaultPanelPhase::CreateLogin)
+        {
+            let title = text("New login")
+                .size(15)
+                .font(sola_kit::fonts::ui_medium());
+            let busy = self.vault_busy;
+            let mut username = text_input("Username", &self.vault_create_username)
+                .id(vault_create_username_id())
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            let mut password = text_input("Password", &self.vault_create_password)
+                .id(vault_create_password_id())
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            let mut url = text_input("URL", &self.vault_create_url)
+                .id(vault_create_url_id())
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            if !busy {
+                username = username
+                    .on_input(Msg::VaultCreateUsername)
+                    .on_submit(Msg::VaultCreateSubmit);
+                password = password
+                    .on_input(Msg::VaultCreatePassword)
+                    .on_submit(Msg::VaultCreateSubmit);
+                url = url
+                    .on_input(Msg::VaultCreateUrl)
+                    .on_submit(Msg::VaultCreateSubmit);
+            }
+            let mut regen = kit_button::labeled_sm("Regenerate", kit_button::ghost);
+            if !busy {
+                regen = regen.on_press(Msg::VaultCreateRegenerate);
+            }
+            let password_row = column![
+                field("Password", password, None, None),
+                regen,
+            ]
+            .spacing(4.0);
+            let mut create = kit_button::labeled(
+                if busy { "Creating…" } else { "Create" },
+                kit_button::primary,
+            );
+            if !busy {
+                create = create.on_press(Msg::VaultCreateSubmit);
+            }
+            let cancel = kit_button::labeled("Cancel", kit_button::ghost)
+                .on_press(Msg::VaultCreateCancel);
+            let mut col = column![title]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(340.0));
+            if let Some(err) = err_line {
+                col = col.push(err);
+            }
+            col = col
+                .push(field("Username", username, None, None))
+                .push(password_row)
+                .push(field("URL", url, None, None))
+                .push(
+                    row![create, cancel]
+                        .spacing(SPACE_SM)
+                        .align_y(Alignment::Center),
+                );
+            col.into()
         } else if self.vault_status.unlocked {
             // Fill picker only — not a status card. Unlock already closed the panel.
             let title = text("Fill login")
@@ -2310,10 +2680,7 @@ impl<E: Engine> App<E> {
             } else if page_url.is_empty() || page_url == BLANK_URL {
                 col = col.push(text("Open a website to fill a login.").size(13));
             } else if self.vault_matches.is_empty() {
-                col = col.push(text("No saved logins for this page.").size(13));
-                col = col.push(soft_sm(
-                    "Add one in Bitwarden, then Refresh.".into(),
-                ));
+                col = col.push(text("No saved login for this site.").size(13));
             } else {
                 let mut list = column![].spacing(4.0);
                 for m in &self.vault_matches {
@@ -2383,14 +2750,26 @@ impl<E: Engine> App<E> {
                 );
             }
 
-            let mut refresh = kit_button::labeled("Refresh", kit_button::ghost);
+            let empty = self.vault_matches.is_empty() && !self.vault_matches_loading;
+            let mut create = kit_button::labeled(
+                "Create login",
+                if empty {
+                    kit_button::primary
+                } else {
+                    kit_button::ghost
+                },
+            );
+            if !self.vault_busy {
+                create = create.on_press(Msg::VaultCreateOpen);
+            }
+            let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
             if !self.vault_busy && !self.vault_matches_loading {
                 refresh = refresh.on_press(Msg::VaultRefreshMatches);
             }
             let close = kit_button::labeled("Close", kit_button::secondary)
                 .on_press(Msg::VaultPanelClose);
             col = col.push(
-                row![refresh, close]
+                row![create, refresh, close]
                     .spacing(SPACE_SM)
                     .align_y(Alignment::Center),
             );
@@ -2400,6 +2779,9 @@ impl<E: Engine> App<E> {
                 VaultPanelPhase::PasskeyPick => {
                     // Locked but phase stuck — fall through to credentials.
                     text("Unlock the vault to use a passkey.").size(13).into()
+                }
+                VaultPanelPhase::CreateLogin | VaultPanelPhase::CreateSaved => {
+                    text("Unlock the vault to create a login.").size(13).into()
                 }
                 VaultPanelPhase::Credentials => {
                     // While a request is in flight, freeze the form (no on_input
@@ -2746,6 +3128,21 @@ fn vault_password_id() -> iced::widget::Id {
 #[cfg(feature = "bitwarden")]
 fn vault_otp_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-otp")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_create_username_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-create-username")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_create_password_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-create-password")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_create_url_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-create-url")
 }
 
 impl<E: Engine> Drop for App<E> {

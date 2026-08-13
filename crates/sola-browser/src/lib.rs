@@ -8,6 +8,7 @@ pub mod cef;
 pub mod engine;
 pub mod input;
 pub mod integration;
+pub mod paste_js;
 pub mod profiles;
 pub mod run;
 pub mod session;

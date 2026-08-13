@@ -54,6 +54,9 @@ pub enum InputEvent {
         y: i32,
         button: u32, /* 1=L, 2=M, 3=R — see input::button_to_modifier */
         modifiers: u32,
+        /// 1 = single, 2 = double, 3 = triple. OSR does not infer this.
+        #[serde(default = "default_click_count")]
+        click_count: u32,
     },
     Scroll {
         x: i32,
@@ -74,6 +77,10 @@ pub enum InputEvent {
         character: Option<u16>,
         modifiers: u32,
     },
+}
+
+fn default_click_count() -> u32 {
+    1
 }
 
 
@@ -761,9 +768,17 @@ cef::wrap_display_handler! {
             _source: Option<&cef::CefString>,
             _line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
+            let msg = message.map(|m| m.to_string()).unwrap_or_default();
+            if let Some(rest) = msg.strip_prefix(crate::paste_js::COPY_PREFIX) {
+                let text = crate::paste_js::parse_js_json_string(rest);
+                tracing::info!(len = text.len(), "page copy selection extracted");
+                if let Some(tx) = &cef_state().ipc_events {
+                    let _ = tx.send(crate::cef::ipc::FromEngine::Clipboard(text));
+                }
+                return 1;
+            }
             #[cfg(feature = "bitwarden")]
             {
-                let msg = message.map(|m| m.to_string()).unwrap_or_default();
                 const PREFIX: &str = "__sola_webauthn__";
                 if let Some(rest) = msg.strip_prefix(PREFIX) {
                     // Credential assembly breadcrumb from the polyfill.
@@ -802,6 +817,11 @@ cef::wrap_display_handler! {
                 }
                 if let Some(detail) = msg.strip_prefix("__sola_webauthn_cred__") {
                     tracing::info!(detail = %detail.trim(), "webauthn page credential assembled");
+                    return 1;
+                }
+                if let Some(rest) = msg.strip_prefix("__sola_vault_fill__:") {
+                    let found = rest.trim().starts_with('1');
+                    crate::vault::passkey_bridge::push_fill_result(found);
                     return 1;
                 }
             }
@@ -1646,7 +1666,14 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             let me = MouseEvent { x, y, modifiers };
             host.send_mouse_move_event(Some(&me), 0);
         }
-        InputEvent::PointerButton { down, x, y, button, modifiers } => {
+        InputEvent::PointerButton {
+            down,
+            x,
+            y,
+            button,
+            modifiers,
+            click_count,
+        } => {
             if down && modifiers != 0 {
                 // Diagnostic for ⌘/Ctrl-click → new tab: confirms which
                 // modifier bits CEF actually receives (CONTROL = 0x4 must be
@@ -1660,10 +1687,10 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
                 3 => MouseButtonType::RIGHT,
                 _ => return,
             };
-            // CEF wants click_count > 0 (typically 1 for single,
-            // 2 for double); it does its own double-click detection
-            // by time/position. 1 is a safe default.
-            host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, 1);
+            // OSR does not infer multi-click. Pass 1/2/3 so Chromium
+            // can word-select (double) and line/all-select (triple).
+            let n = click_count.max(1) as i32;
+            host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, n);
         }
         InputEvent::Scroll { x, y, delta_x, delta_y, precise, modifiers } => {
             let mut me = MouseEvent { x, y, modifiers };

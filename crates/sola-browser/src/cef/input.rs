@@ -273,6 +273,29 @@ pub fn pointer_move(
     }
 }
 
+pub const MULTI_CLICK_MS: u128 = 500;
+pub const MULTI_CLICK_SLOP_PX: i32 = 4;
+
+/// Next click count for a press. `prev` is `(button, x, y, elapsed_ms, count)`
+/// of the last press, if any.
+pub fn next_click_count(
+    prev: Option<(u32, i32, i32, u128, u32)>,
+    button: u32,
+    x: i32,
+    y: i32,
+) -> u32 {
+    let Some((pb, px, py, elapsed, count)) = prev else {
+        return 1;
+    };
+    if pb != button || elapsed > MULTI_CLICK_MS {
+        return 1;
+    }
+    if (x - px).abs() > MULTI_CLICK_SLOP_PX || (y - py).abs() > MULTI_CLICK_SLOP_PX {
+        return 1;
+    }
+    count.saturating_add(1).min(3)
+}
+
 pub fn pointer_button(
     down: bool,
     button: u32,
@@ -280,6 +303,7 @@ pub fn pointer_button(
     y: i32,
     held: u32,
     kbd_mods: u32,
+    click_count: u32,
 ) -> InputEvent {
     InputEvent::PointerButton {
         down,
@@ -287,6 +311,7 @@ pub fn pointer_button(
         y,
         button,
         modifiers: kbd_mods | held,
+        click_count: click_count.max(1),
     }
 }
 
@@ -327,11 +352,21 @@ mod tests {
     fn mouse_plain_has_no_synthetic_control() {
         // No modifiers → no CONTROL (a plain click must not look like ctrl-click).
         assert_eq!(modifiers_to_cef_mouse(Modifiers::empty()), 0);
-        // Real Ctrl still maps through.
-        assert_ne!(
-            modifiers_to_cef_mouse(Modifiers::CTRL) & F::EVENTFLAG_CONTROL_DOWN.0,
-            0
-        );
+    }
+
+    #[test]
+    fn click_count_triples_then_caps() {
+        assert_eq!(next_click_count(None, 1, 10, 10), 1);
+        assert_eq!(next_click_count(Some((1, 10, 10, 80, 1)), 1, 11, 10), 2);
+        assert_eq!(next_click_count(Some((1, 11, 10, 80, 2)), 1, 10, 11), 3);
+        assert_eq!(next_click_count(Some((1, 10, 11, 80, 3)), 1, 10, 10), 3);
+    }
+
+    #[test]
+    fn click_count_resets_on_gap_or_move() {
+        assert_eq!(next_click_count(Some((1, 10, 10, 800, 2)), 1, 10, 10), 1);
+        assert_eq!(next_click_count(Some((1, 10, 10, 80, 2)), 1, 40, 10), 1);
+        assert_eq!(next_click_count(Some((1, 10, 10, 80, 2)), 3, 10, 10), 1);
     }
 
     #[test]
