@@ -71,6 +71,38 @@ pub fn ensure_active() -> ActiveProfile {
     lock.read().expect("profile lock").clone()
 }
 
+/// Write `profiles.json` active id without changing this process's CEF bind.
+pub fn set_registry_active(id: &str) -> Result<(), String> {
+    let mut reg = load_registry_or_empty();
+    if !reg.profiles.iter().any(|p| p.id == id) {
+        return Err("profile not found".into());
+    }
+    if reg.active != id {
+        reg.active = id.to_string();
+        write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Registry's active profile id (may differ from this process's CEF bind).
+pub fn registry_active_id() -> String {
+    load_registry_or_empty().active
+}
+
+/// Bind this process to `id` without changing `profiles.json`.
+/// Used by per-profile CEF engine helpers so they don't steal the registry active.
+pub fn bind_process_only(id: &str) -> Result<ActiveProfile, String> {
+    let reg = load_registry_or_empty();
+    let entry = reg
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .cloned()
+        .ok_or_else(|| "profile not found".to_string())?;
+    ensure_profile_dirs(&entry.id);
+    set_process_active(resolve_entry(&entry))
+}
+
 /// Active profile (panics if [`ensure_active`] was never called).
 pub fn active() -> ActiveProfile {
     ACTIVE
@@ -409,8 +441,23 @@ fn registry_path() -> PathBuf {
     browser_data_root().join("profiles.json")
 }
 
-fn profile_data_dir(id: &str) -> PathBuf {
+pub fn profile_data_dir(id: &str) -> PathBuf {
     browser_data_root().join("profiles").join(id)
+}
+
+/// Per-profile `session.json` (does not require this process to be bound).
+pub fn session_path_for(id: &str) -> PathBuf {
+    profile_data_dir(id).join("session.json")
+}
+
+/// Unix socket the chrome process uses to talk to a headless CEF helper.
+pub fn engine_sock_path(id: &str) -> PathBuf {
+    profile_data_dir(id).join("engine.sock")
+}
+
+/// Pid file for the headless CEF helper of this profile.
+pub fn engine_pid_path(id: &str) -> PathBuf {
+    profile_data_dir(id).join("engine.pid")
 }
 
 fn profile_cache_dir(id: &str) -> PathBuf {

@@ -32,6 +32,8 @@ pub struct MatchSummary {
     pub uri: Option<String>,
     /// Cipher has at least one FIDO2 / passkey credential.
     pub has_passkey: bool,
+    /// Best-effort last-used unix seconds (0 = unknown).
+    pub last_used: i64,
 }
 
 /// Credentials for page fill — zeroize on drop.
@@ -272,12 +274,16 @@ impl VaultService {
 
         let n_ok = listed.successes.len();
         let n_fail = listed.failures.len();
+        let mru = super::prefs::VaultPrefs::last_used_map();
         let mut out = Vec::new();
         for view in listed.successes {
-            if let Some(summary) = match_summary_if_login(&view, page_url) {
+            if let Some(summary) = match_summary_if_login(&view, page_url, &mru) {
                 out.push(summary);
             }
         }
+        // Most recently used first (our fill/passkey clock, then Bitwarden
+        // local last-used, then cipher revision).
+        out.sort_by(|a, b| b.last_used.cmp(&a.last_used));
         if n_fail > 0 {
             tracing::warn!(n = n_fail, "vault: some ciphers failed to decrypt");
         }
@@ -326,7 +332,11 @@ impl Default for VaultService {
     }
 }
 
-fn match_summary_if_login(view: &CipherView, page_url: &str) -> Option<MatchSummary> {
+fn match_summary_if_login(
+    view: &CipherView,
+    page_url: &str,
+    mru: &std::collections::HashMap<String, i64>,
+) -> Option<MatchSummary> {
     if view.r#type != CipherType::Login {
         return None;
     }
@@ -359,11 +369,23 @@ fn match_summary_if_login(view: &CipherView, page_url: &str) -> Option<MatchSumm
         .map(|c| !c.is_empty())
         .unwrap_or(false);
 
+    let bw_used = view.local_data.as_ref().and_then(|ld| {
+        let v = serde_json::to_value(ld).ok()?;
+        v.get("lastUsedDate")?.as_i64()
+    });
+    let ours = mru.get(&id).copied();
+    let last_used = ours
+        .into_iter()
+        .chain(bw_used)
+        .max()
+        .unwrap_or_else(|| view.revision_date.timestamp());
+
     Some(MatchSummary {
         id,
         name: view.name.clone(),
         username: login.username.clone(),
         uri: matched_uri,
         has_passkey,
+        last_used,
     })
 }

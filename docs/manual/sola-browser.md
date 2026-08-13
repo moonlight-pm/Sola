@@ -24,6 +24,12 @@ A **profile** is a separate web identity + tab workspace (D8).
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
 
+Site logins (cookies) live under that profile CEF dir. The engine uses
+Chromium’s **basic** password store so cookie encryption works without a
+desktop keyring (Sola runs from a TTY). After updating the browser binary,
+sign in once more if an older session does not restore — cookies written
+under a failed keyring backend cannot be re-read.
+
 ### Menubar → Profiles
 
 1. **Profile list** — click a name to switch. The active profile shows a
@@ -35,13 +41,11 @@ A **profile** is a separate web identity + tab workspace (D8).
    if it is the only one). Data dirs are removed; the window reloads the
    next profile’s tabs.
 
-Switching or creating a profile **keeps the window open**. The previous
-profile’s workspace is **parked** (CEF tabs stay warm in memory so form
-state and SPA work are not reloaded) and also written to `session.json`.
-Returning to a parked profile resumes those same tabs. Parks follow a
-shared eviction policy (idle timeout, max parked profiles, total tab
-budget) — same rules whether the workspace was left via Profiles or
-would be under memory pressure later.
+Switching profiles is **instant** in the **same window**. The shell
+still shows one **Browser** app. Each profile keeps its own CEF cookie
+store in a headless engine process (no extra switcher entries). Closing
+the window quits the browser and those helpers. Tabs restore from
+`session.json`.
 
 **Cold start** with an empty session opens a single **blank** tab.
 

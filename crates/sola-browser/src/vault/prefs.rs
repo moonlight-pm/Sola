@@ -11,6 +11,9 @@ pub struct VaultPrefs {
     /// Last successfully used Bitwarden account email.
     #[serde(default)]
     pub last_email: Option<String>,
+    /// Cipher id → unix seconds of last fill / passkey use in this browser.
+    #[serde(default)]
+    pub last_used: std::collections::HashMap<String, i64>,
 }
 
 impl JsonConfigIn for VaultPrefs {
@@ -37,5 +40,25 @@ impl VaultPrefs {
         }
         prefs.last_email = Some(email.to_string());
         prefs.save();
+    }
+
+    /// Record that this cipher was used (fill or passkey).
+    pub fn touch_cipher(id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        let mut prefs = Self::load();
+        prefs.last_used.insert(
+            id.to_string(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        );
+        prefs.save();
+    }
+
+    pub fn last_used_map() -> std::collections::HashMap<String, i64> {
+        Self::load().last_used
     }
 }

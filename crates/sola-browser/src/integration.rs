@@ -115,9 +115,9 @@ fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinit
     }
 }
 
-/// Profiles menubar: list (checked active) + New / Rename / Delete.
+/// Profiles menubar: list (checked **registry** active) + New / Rename / Delete.
 pub fn profiles_menu() -> MenuDefinition {
-    let active_id = profiles::active().id.clone();
+    let active_id = profiles::registry_active_id();
     let entries = profiles::list();
     let only_one = entries.len() <= 1;
 
@@ -199,7 +199,7 @@ pub enum BrowserIntent {
     FocusUrl,
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
-    /// Switch to profile `id` (save session, set active, re-exec).
+    /// Switch to profile `id` (save session, set active, same window).
     SwitchProfile { id: String },
     /// Open the new-profile name dialog.
     NewProfile,
@@ -258,6 +258,7 @@ pub fn handle_bus<E: Engine>(
     }
     // Self-addressed quit (MenuAction "quit" or CloseApp).
     if sola_kit::app::is_self_quit(&message, app_id) {
+        app.persist_session();
         return iced::exit();
     }
     match Topic::parse(&message) {
@@ -266,7 +267,11 @@ pub fn handle_bus<E: Engine>(
             run_intent(app, intent_for_open_url(&req))
         }
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
-            tracing::debug!(action_id = %m.action_id, "menu action received");
+            tracing::info!(
+                action_id = %m.action_id,
+                profile = %crate::profiles::active().name,
+                "menu action received"
+            );
             run_intent(app, intent_for_menu_action(&m.action_id))
         }
         _ => Task::none(),
@@ -317,10 +322,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
                 url_bar_focused,
             })
         }
-        BrowserIntent::SwitchProfile { id } => {
-            app.switch_profile(&id);
-            Task::none()
-        }
+        BrowserIntent::SwitchProfile { id } => app.switch_profile(&id),
         BrowserIntent::NewProfile => {
             app.open_profile_dialog(ProfileDialog::New);
             focus_profile_name()

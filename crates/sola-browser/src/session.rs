@@ -81,6 +81,10 @@ impl BrowserSession {
     /// - Non-empty session → restore those tabs.
     /// - Optional CLI URL → open as a **new** tab and focus it (session kept).
     /// - Empty session and no CLI → one default tab.
+    ///
+    /// CLI flags (`--…`) must never become tabs: Chromium/CEF switches
+    /// (and any leftover `--password-store=basic` on argv after re-exec)
+    /// used to be passed through `normalize_url` → `https://--password-store=…`.
     pub fn bootstrap(
         mut self,
         argv_url: Option<String>,
@@ -90,11 +94,12 @@ impl BrowserSession {
             .sidebar_w
             .clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX);
 
-        self.tabs.retain(|t| !t.url.trim().is_empty());
+        self.tabs
+            .retain(|t| !t.url.trim().is_empty() && !is_spurious_switch_url(&t.url));
 
-        if let Some(raw) = argv_url {
+        if let Some(raw) = argv_url.filter(|s| is_cli_open_url(s)) {
             let url = crate::util::normalize_url(&raw);
-            if !url.is_empty() {
+            if !url.is_empty() && !is_spurious_switch_url(&url) {
                 self.tabs.push(SessionTab {
                     url,
                     title: String::new(),
@@ -117,6 +122,36 @@ impl BrowserSession {
 
         (self.tabs, self.active_index, sidebar_w)
     }
+}
+
+/// True if this argv token is meant as a page to open (not a CLI/CEF switch).
+pub fn is_cli_open_url(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.is_empty() || t.starts_with('-') {
+        return false;
+    }
+    // CEF subprocess / utility args never open as pages.
+    if t.starts_with("--type=") {
+        return false;
+    }
+    true
+}
+
+/// Tabs accidentally created from CLI switches (`https://--password-store=…`).
+fn is_spurious_switch_url(url: &str) -> bool {
+    let u = url.trim();
+    if u.is_empty() {
+        return false;
+    }
+    // normalize_url prepends https:// to bare `--flag` tokens.
+    let rest = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .unwrap_or(u);
+    rest.starts_with("--")
+        || rest.starts_with("password-store")
+        || rest.contains("password-store=")
+        || rest.contains("persist-session-cookies")
 }
 
 /// Build a session from chrome's cached tab list.
@@ -197,6 +232,31 @@ mod tests {
         assert_eq!(tabs.len(), 3);
         assert_eq!(tabs[2].url, "https://c.example/");
         assert_eq!(active, 2);
+    }
+
+    #[test]
+    fn bootstrap_ignores_cli_switches_and_scrubs_bad_tabs() {
+        let session = BrowserSession {
+            tabs: vec![
+                SessionTab {
+                    url: "https://ok.example/".into(),
+                    title: "Ok".into(),
+                },
+                SessionTab {
+                    url: "https://--password-store=basic".into(),
+                    title: "junk".into(),
+                },
+            ],
+            active_index: 1,
+            sidebar_w: 200.0,
+        };
+        let (tabs, active, _) =
+            session.bootstrap(Some("--password-store=basic".into()), "about:blank");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].url, "https://ok.example/");
+        assert_eq!(active, 0);
+        assert!(!is_cli_open_url("--password-store=basic"));
+        assert!(is_cli_open_url("https://example.com"));
     }
 
     #[test]

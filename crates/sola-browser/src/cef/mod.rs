@@ -9,6 +9,9 @@
 pub mod cpu_import;
 pub mod engine;
 pub mod frame;
+pub mod host;
 pub mod input;
+pub mod ipc;
+pub mod router;
 
 pub use engine::CefEngine;

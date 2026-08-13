@@ -303,6 +303,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
             },
             VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
                 Ok(mut material) => {
+                    crate::vault::VaultPrefs::touch_cipher(&id);
                     let username = material.username.take();
                     let password = material.password.take();
                     let _ = event_tx.send(VaultEvent::FillReady {
@@ -355,6 +356,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                 .await
                 {
                     Ok(assertion) => {
+                        crate::vault::VaultPrefs::touch_cipher(&cipher_id);
                         let payload = serde_json::to_string(&assertion).unwrap_or_else(|e| {
                             format!(r#"{{"error":"{e}"}}"#)
                         });

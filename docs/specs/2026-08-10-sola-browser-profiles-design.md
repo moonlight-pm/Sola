@@ -15,9 +15,10 @@ A **profile** is a separate **web identity + workspace**:
 - Distinct **open tabs** (tabs *are* bookmarks — no classic bookmark or reading-list UI)
 - **Not** a full second browser for every preference
 
-**Runtime:** one active profile at a time. Switch / create / delete-active
-rewrites the registry, then **replaces tabs + CEF request context in-process**
-(window stays up).
+**Runtime:** one active profile at a time (one iced window). Switch /
+create / delete-active rewrites the registry. The chrome process stays
+up; CEF for each profile lives in a headless helper so cookie roots stay
+isolated and switch does not reload pages.
 
 ## Identity
 
@@ -135,7 +136,7 @@ User re-signs into sites once after the cutover.
 7. Vault prefs from `~/.config/sola/browser/vault.json` (shared).
 
 **Switcher UI:** Profiles menubar — list (checked active), New / Rename /
-Delete… dialogs; switch and create re-exec.
+Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 
 ## Implementation notes
 
@@ -156,12 +157,14 @@ Delete… dialogs; switch and create re-exec.
 | First-run wipe of flat/legacy paths | **done** |
 | CEF user data under profile | **done** (`…/cef/`) |
 | Profiles menubar switch + manage | **done** (2026-08-12) |
+| One-window instant switch + per-profile CEF helpers | **done** (2026-08-12) |
 | History / downloads under `shared/` | **not yet** |
 
 ## Gaps (explicit)
 
 - History / downloads storage under `shared/`.
-- No in-process profile switch without re-exec (engine identity is process-scoped).
+- First visit to a profile this session still opens its session tabs (later switches resume the helper).
+- Confirm cookie restore after a full chrome+helper quit (OSCrypt basic is in; helper split is new).
 
 ## Decision log
 
@@ -176,4 +179,4 @@ Delete… dialogs; switch and create re-exec.
 | 2026-08-10 | No classic bookmarks — tabs are bookmarks |
 | 2026-08-10 | Shared durable non-WebKit data under `share/.../browser/shared/` |
 | 2026-08-10 | Config under `~/.config/sola/browser/` (not flat `browser-*.json`) |
-| 2026-08-12 | Profiles menubar + dialogs; switch/create/delete-active re-exec; CEF under profile |
+| 2026-08-12 | Profiles menubar + dialogs; switch/create/delete-active in one window; CEF under profile helpers |

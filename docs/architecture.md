@@ -145,9 +145,10 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 | Piece | Role |
 |-------|------|
 | `crates/sola-browser` | **Product browser** — iced chrome (tabs, omnibox, session, profiles, vault) + CEF CPU OSR under `src/cef/` |
-| App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry) |
+| App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window) |
+| Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Unix socket `profiles/<uuid>/engine.sock`. CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
-| Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json`; CEF request-context `profiles/<uuid>/cef/`; switch **parks** live CEF tabs (no reload) and resumes parks; eviction: `tab_cache` (idle 30m, max 4 parks, max 48 tabs total) |
+| Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json`; chrome parks tab-strip snapshots; switch points the router at the target helper (pages stay loaded). Eviction: `tab_cache` (idle 30m, max 4 parks, max 48 tabs total) |
 | Tab switch | Hide inactive OSR hosts (`was_hidden`); show + `invalidate(VIEW)` active; park last CPU frame per tab for instant swap |
 
 Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE

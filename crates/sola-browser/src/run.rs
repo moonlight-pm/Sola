@@ -148,23 +148,40 @@ pub fn frame_subscription<E: Engine>(
 ///     crate::run::run::<MyEngine>("my-browser-app-id")
 /// }
 /// ```
-pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
-    if let Some(code) = E::dispatch_subprocess(app_id) {
+pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
+    if let Some(code) = E::dispatch_subprocess(base_id) {
+        return code;
+    }
+
+    // Headless CEF helper: no Wayland window, no kit startup.
+    if let Some(code) = crate::cef::host::try_run(base_id) {
         return code;
     }
 
     // Wayland/GPU env, fonts, and watch_own_binary (re-exec on
     // /opt/sola/bin/<app> change — same as other kit apps). Without this
     // the browser never auto-restarts after `cargo make install`.
-    let _socket = sola_kit::app::startup(app_id);
+    let _socket = sola_kit::app::startup(base_id);
 
     // D8: registry + active profile dirs; wipe pre-profile flat data.
-    let _profile = crate::profiles::ensure_active();
+    let _ = crate::profiles::ensure_active();
+    // Kill leftover two-window fleet / stale helpers from the last binary.
+    crate::cef::host::reap_stale_browser_procs();
+    let app_id = base_id;
+    tracing::info!(
+        %app_id,
+        profile = %crate::profiles::active().name,
+        "browser chrome (one window; CEF in helpers)"
+    );
 
     #[cfg(feature = "bitwarden")]
     crate::vault::passkey_bridge::install();
 
-    let argv = std::env::args().nth(1);
+    // First non-flag argv token only — never treat `--password-store=…` /
+    // CEF switches as open-URL (they become `https://--…` tabs otherwise).
+    let argv = std::env::args()
+        .skip(1)
+        .find(|a| crate::session::is_cli_open_url(a));
     let (boot_tabs, boot_active, sidebar_w) =
         crate::session::BrowserSession::load().bootstrap(argv, DEFAULT_URL);
     tracing::info!(
@@ -193,9 +210,8 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     });
 
     // Browser + Edit + Profiles (dynamic profile list with active check).
-    let menus = crate::integration::browser_app_menu(app_id).menus;
     let mut bus = sola_kit::app::BusSetup::new(app_id).subscribe(crate::integration::SUBSCRIBE);
-    for def in menus {
+    for def in crate::integration::browser_app_menu(app_id).menus {
         bus = bus.app_menu_definition(def);
     }
     bus.install();
@@ -234,10 +250,13 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         App::<E>::update,
         App::<E>::view,
     )
-    .title(move |app: &App<E>| match app.active_tab_info() {
-        Some(t) if !t.title.is_empty() => format!("{app_id} — {}", t.title),
-        Some(t) if !t.url.is_empty() => format!("{app_id} — {}", t.url),
-        _ => app_id.to_string(),
+    .title(move |app: &App<E>| {
+        let profile = crate::profiles::active().name;
+        match app.active_tab_info() {
+            Some(t) if !t.title.is_empty() => format!("{profile} — {}", t.title),
+            Some(t) if !t.url.is_empty() => format!("{profile} — {}", t.url),
+            _ => profile,
+        }
     })
     .subscription(App::<E>::subscription)
     .theme(App::<E>::theme)

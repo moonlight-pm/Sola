@@ -521,21 +521,24 @@ impl<E: Engine> App<E> {
         self.profile_dialog_error = None;
     }
 
-    /// Switch profile: park live workspace (keep CEF pages warm), resume
-    /// target park or cold-load from session — window stays up.
-    pub fn switch_profile(&mut self, id: &str) {
-        if id == crate::profiles::active().id {
-            return;
+    /// Instant switch: park this window's tab chrome, activate `id`,
+    /// point the engine router at that profile's helper (spawn if needed).
+    pub fn switch_profile(&mut self, id: &str) -> Task<Msg> {
+        let from = crate::profiles::active().id;
+        if id == from {
+            return Task::none();
         }
         self.persist_session();
-        let from = crate::profiles::active().id.clone();
         match crate::profiles::activate(id) {
-            Ok(profile) => {
-                tracing::info!(id = %profile.id, name = %profile.name, "switching profile (park/resume)");
+            Ok(_) => {
+                tracing::info!(from = %from, to = %id, "switching profile (same window)");
                 self.enter_profile_workspace(from, false);
             }
-            Err(e) => tracing::warn!(error = %e, id, "switch profile failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, id, "switch profile failed");
+            }
         }
+        Task::none()
     }
 
     /// Park current chrome snapshot, then resume park or create from session.
@@ -544,7 +547,6 @@ impl<E: Engine> App<E> {
         use crate::tab_cache::WorkspaceSnapshot;
         use std::time::Instant;
 
-        // Snapshot chrome for the profile we're leaving.
         if !park_as_profile_id.is_empty() && !self.cached_tabs.is_empty() {
             self.workspace_cache.insert(
                 park_as_profile_id.clone(),
@@ -568,7 +570,7 @@ impl<E: Engine> App<E> {
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
                 self.apply_workspace_chrome_focus();
-                // Resume park — CEF keeps the same browsers (no reload).
+                // Helper already has these browsers; resume without reload.
                 let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
                     park_as_profile_id,
                     resume_profile_id: resume_id,
@@ -584,7 +586,6 @@ impl<E: Engine> App<E> {
             }
         }
 
-        // Cold: load session from disk (or empty → blank), mint tab ids.
         let (create_tabs, active) = self.cold_workspace_from_session();
         let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
@@ -654,6 +655,10 @@ impl<E: Engine> App<E> {
 
     fn apply_workspace_chrome_focus(&mut self) {
         let active = self.cached_active;
+        // Force the next shader prepare to re-send Resize. The router
+        // would otherwise leave a newly-front helper at 1280×800 because
+        // chrome last_size already matches the widget.
+        *self.slot.last_size.lock().unwrap() = (0, 0);
         self.slot
             .paint_tab
             .store(active.0, std::sync::atomic::Ordering::Relaxed);
@@ -672,7 +677,6 @@ impl<E: Engine> App<E> {
         }
     }
 
-    /// Drop chrome parks (and tell CEF) per shared [`crate::tab_cache`] policy.
     fn evict_workspace_parks(&mut self) {
         use crate::tab_cache::eviction_victims;
         use std::time::Instant;
@@ -697,8 +701,8 @@ impl<E: Engine> App<E> {
                     Ok(profile) => {
                         tracing::info!(id = %profile.id, name = %profile.name, "new profile");
                         self.close_profile_dialog();
-                        // New profile: always cold (empty session).
                         self.enter_profile_workspace(from, true);
+                        return Task::none();
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -719,16 +723,15 @@ impl<E: Engine> App<E> {
             }
             Some(ProfileDialog::DeleteConfirm) => {
                 let id = crate::profiles::active().id.clone();
-                // Drop park for the profile we're deleting (active or not).
                 self.workspace_cache.remove(&id);
-                let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
-                    profile_id: id.clone(),
-                });
                 match crate::profiles::delete(&id) {
                     Ok(Some(_new_active)) => {
                         self.close_profile_dialog();
-                        // Active deleted — enter the new active (may be parked).
-                        self.enter_profile_workspace(String::new(), false);
+                        let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
+                            profile_id: id.clone(),
+                        });
+                        self.enter_profile_workspace(id, false);
+                        return Task::none();
                     }
                     Ok(None) => {
                         self.close_profile_dialog();
@@ -787,8 +790,9 @@ impl<E: Engine> App<E> {
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
             Msg::TitleClose => {
+                self.persist_session();
                 sola_kit::close_app(self.app_id);
-                return Task::none();
+                return iced::exit();
             }
             Msg::VaultToggle => {
                 #[cfg(feature = "bitwarden")]
@@ -1460,7 +1464,7 @@ impl<E: Engine> App<E> {
 
         sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
-            "Browser",
+            crate::profiles::active().name.as_str(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
@@ -1502,7 +1506,16 @@ impl<E: Engine> App<E> {
             })
             .collect();
 
-        vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large).into()
+        let name = crate::profiles::active().name;
+        column![
+            text(name)
+                .size(12)
+                .font(sola_kit::fonts::ui_medium())
+                .color(self.theme.extended_palette().background.base.text),
+            vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large),
+        ]
+        .spacing(6)
+        .into()
     }
 
     /// Top navigation bar: back / forward / reload·stop + the URL field. All

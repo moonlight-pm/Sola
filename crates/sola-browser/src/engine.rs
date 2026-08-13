@@ -5,10 +5,11 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct TabId(pub u64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TabInfo {
     pub id: TabId,
     pub url: String,
@@ -19,7 +20,7 @@ pub struct TabInfo {
     pub can_go_forward: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum NavCmd {
     Back,
     Forward,
@@ -35,7 +36,7 @@ pub enum NavCmd {
 /// Paste of system-clipboard text into page content uses
 /// [`Cmd::PasteText`] instead — headless WPE has no Wayland clipboard, so
 /// the chrome must read iced's clipboard and ship the string in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EditCmd {
     Copy,
     Cut,
