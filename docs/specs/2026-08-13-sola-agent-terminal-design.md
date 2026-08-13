@@ -7,9 +7,9 @@
 **Product record:** [`crates/sola-agent-terminal/PRODUCT.md`](../../crates/sola-agent-terminal/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/agent-terminal-design.md`](../../.grok/rules/agent-terminal-design.md)
 
-**Implementation:** skeleton (kit boot + one pane) in flight  
+**Implementation:** skeleton compiles (`cargo make build sola-agent-terminal`)  
 **Dogfood:** not installed  
-**Gaps:** projects persist, spawn sibling, hooks/status, `sat`, toast-on-done — see below
+**Gaps:** persist, spawn sibling, hooks/status, `sat`, toast-on-done; one hardcoded project/workspace; idle mark only
 
 ---
 

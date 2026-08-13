@@ -91,8 +91,9 @@ crates/
   sola-session/        # User-app session manager
   sola-settings/       # Settings panel (incl. mail config)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
-  sola-terminal/       # Terminal emulator (alacritty grid + iced)
-  sola-agent/          # Coding agent (iced + ACP / Grok leader)
+  sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
+  sola-agent-terminal/ # Project / workspace rail + agent-aware PTYs (this branch)
+  sola-agent/          # Coding agent (iced + ACP / Grok leader) — not agent-terminal
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Image preview / selection capture

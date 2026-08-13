@@ -39,7 +39,8 @@ bus, and multi-process **Iced** apps sharing `sola-kit`.
          │                   │  Unix socket (sola-bus)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
-         │              │  browser · agent · mail · …  │
+         │              │  agent-terminal · browser    │
+         │              │  agent · mail · …            │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```

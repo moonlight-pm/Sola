@@ -11,10 +11,12 @@ socket. No install from agents.
 
 ## Steps
 
-1. Expose `sola-terminal` as a library; parameterize tmux socket.
-2. New crate `sola-agent-terminal` — kit boot, bus, sidebar, one pane.
-3. Extend kit `SidebarIndicator` enough for a reserved idle/working/waiting/done slot (idle used now).
-4. Progress docs: capability `spec’d` → `partial` with gaps; CURRENT; architecture.
+1. [x] Expose `sola-terminal` as a library; parameterize tmux socket.
+2. [x] New crate `sola-agent-terminal` — kit boot, bus, sidebar, one pane.
+3. [x] Extend kit `SidebarIndicator` enough for a reserved idle/working/waiting/done slot (idle used now).
+4. [x] Progress docs: capability `spec’d` → `partial` with gaps; CURRENT; architecture.
+
+**Done** (2026-08-13). Next freeze build-order step: status chrome.
 
 ## Not this plan
 
