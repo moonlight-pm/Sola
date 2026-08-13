@@ -1,6 +1,6 @@
 # sola-agent-terminal — a native, Orca-shaped workspace tool
 
-**Status:** parked idea. Not a freeze. Not built.  
+**Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Skeleton compiles; not installed.  
 **Name:** `sola-agent-terminal` (working title).  
 **Out of scope by request:** `crates/sola-agent` (ACP / Grok-leader chat). That crate is a different product and is not a starting point.  
 **Living focus pointer:** root [`CURRENT.md`](../../CURRENT.md) **Now** item 1 (this branch).  
@@ -10,9 +10,9 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 ### Where a new session left off (2026-08-13)
 
-Researched Orca (`stablyai/orca`) + `crates/sola-terminal`. Wrote this sketch. Human confirmed **spawn sibling** as v1 and the **design law** (impeccable + frontend-design; kit is open). No crate, no freeze, no install.
+Promoted to freeze. Skeleton crate compiles (`cargo make build sola-agent-terminal`): one project / one workspace / one PTY on tmux socket `sola-at`. `sola-terminal` is now a library (`tmux::configure`). Kit `SidebarIndicator` has Working/Waiting/Done. Not installed.
 
-**Next:** wait for “go” / promote → freeze → skeleton app (build order below). Ask remaining open questions; do not invent them.
+**Next:** status chrome with live marks, then Grok hooks. Ask D3; do not invent.
 
 **Decided here (not still a fork):**
 

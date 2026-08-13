@@ -1,6 +1,40 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-const TMUX_SOCKET: &str = "sola";
+/// Which tmux server this process talks to.
+///
+/// `sola-terminal` keeps the historical defaults (`sola` / `sola-tmux.service`
+/// / `sola-` sessions). Other apps that reuse this crate as a library must
+/// call [`configure`] **before** any tmux helper so they do not share that
+/// server or collide on session names.
+pub struct TmuxIdentity {
+    pub socket: &'static str,
+    pub unit: &'static str,
+    pub session_prefix: &'static str,
+}
+
+const DEFAULT_IDENTITY: TmuxIdentity = TmuxIdentity {
+    socket: "sola",
+    unit: "sola-tmux.service",
+    session_prefix: "sola-",
+};
+
+static IDENTITY: OnceLock<TmuxIdentity> = OnceLock::new();
+
+/// Pin the tmux socket / unit / session prefix for this process.
+/// First call wins; later calls are ignored so a library consumer cannot
+/// clobber the binary that already configured itself.
+pub fn configure(socket: &'static str, unit: &'static str, session_prefix: &'static str) {
+    let _ = IDENTITY.set(TmuxIdentity {
+        socket,
+        unit,
+        session_prefix,
+    });
+}
+
+fn identity() -> &'static TmuxIdentity {
+    IDENTITY.get().unwrap_or(&DEFAULT_IDENTITY)
+}
 
 fn config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
@@ -96,7 +130,7 @@ pub fn cleanup_stale_socket() {
     }
 
     let uid = unsafe { libc::getuid() };
-    let socket_path = PathBuf::from(format!("/tmp/tmux-{uid}/{TMUX_SOCKET}"));
+    let socket_path = PathBuf::from(format!("/tmp/tmux-{uid}/{}", identity().socket));
     if socket_path.exists() {
         tracing::info!("Removing stale tmux socket: {}", socket_path.display());
         let _ = std::fs::remove_file(&socket_path);
@@ -106,7 +140,7 @@ pub fn cleanup_stale_socket() {
 /// Kill any orphaned tmux client processes from previous Sola runs.
 ///
 /// Scans /proc for processes whose kernel-set name is `tmux: client` and whose
-/// cmdline mentions our socket (`-L sola`). `tmux list-clients` misses "ghost"
+/// cmdline mentions our socket (`-L <socket>`). `tmux list-clients` misses "ghost"
 /// clients whose server-side connection has already been closed — those are
 /// stuck in poll() forever, invisible to the server, but still alive. Reading
 /// /proc/*/status finds them by name regardless of connection state.
@@ -144,7 +178,7 @@ pub fn kill_orphaned_clients() {
         let parts: Vec<&[u8]> = cmdline.split(|&b| b == 0).collect();
         let matches_socket = parts
             .windows(2)
-            .any(|w| w[0] == b"-L" && w[1] == TMUX_SOCKET.as_bytes());
+            .any(|w| w[0] == b"-L" && w[1] == identity().socket.as_bytes());
         if !matches_socket {
             continue;
         }
@@ -160,13 +194,13 @@ pub fn kill_orphaned_clients() {
 /// config doesn't matter and ensure_config side effects aren't wanted).
 fn tmux_cmd_raw() -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
-    cmd.args(["-L", TMUX_SOCKET]);
+    cmd.args(["-L", identity().socket]);
     cmd
 }
 
 pub fn tmux_cmd() -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
-    cmd.args(["-L", TMUX_SOCKET]);
+    cmd.args(["-L", identity().socket]);
     if let Ok(conf) = ensure_config() {
         cmd.args(["-f", &*conf.to_string_lossy()]);
     }
@@ -174,7 +208,7 @@ pub fn tmux_cmd() -> std::process::Command {
 }
 
 pub fn session_name(id: &str) -> String {
-    format!("sola-{id}")
+    format!("{}{id}", identity().session_prefix)
 }
 
 pub fn capture_scrollback(session: &str) -> Result<String, String> {
@@ -226,7 +260,7 @@ pub fn kill_session(session: &str) {
 /// reaps it (and every shell inside) when the scope stops.
 pub fn ensure_server_running() {
     let active = std::process::Command::new("systemctl")
-        .args(["--user", "is-active", "--quiet", "sola-tmux.service"])
+        .args(["--user", "is-active", "--quiet", identity().unit])
         .status();
     if matches!(active, Ok(s) if s.success()) {
         return;
@@ -247,15 +281,15 @@ pub fn ensure_server_running() {
             "--user",
             "--quiet",
             "--collect",
-            "--unit=sola-tmux.service",
-            "--description=tmux daemon for sola-terminal",
+            &format!("--unit={}", identity().unit),
+            &format!("--description=tmux daemon ({})", identity().socket),
             "--property=Type=oneshot",
             "--property=RemainAfterExit=yes",
             "--property=KillMode=none",
             "--",
             "tmux",
             "-L",
-            TMUX_SOCKET,
+            identity().socket,
             "new-session",
             "-d",
             "-s",
@@ -267,13 +301,17 @@ pub fn ensure_server_running() {
 
     match status {
         Ok(s) if s.success() => {
-            tracing::info!("started sola-tmux.service");
+            tracing::info!(unit = identity().unit, "started tmux systemd unit");
         }
         Ok(s) => {
-            tracing::warn!("systemd-run sola-tmux.service exited with {:?}", s.code());
+            tracing::warn!(
+                unit = identity().unit,
+                "systemd-run exited with {:?}",
+                s.code()
+            );
         }
         Err(e) => {
-            tracing::warn!("failed to start sola-tmux.service: {e}");
+            tracing::warn!(unit = identity().unit, "failed to start tmux unit: {e}");
         }
     }
 }
@@ -290,7 +328,7 @@ pub fn list_sessions() -> Option<Vec<String>> {
         return Some(
             String::from_utf8_lossy(&output.stdout)
                 .lines()
-                .filter(|l| l.starts_with("sola-"))
+                .filter(|l| l.starts_with(identity().session_prefix))
                 .map(String::from)
                 .collect(),
         );

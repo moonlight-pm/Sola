@@ -61,9 +61,10 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-shell` | Menubar, launcher, switcher, zoning (iced daemon) |
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
-| `crates/sola-terminal` | Terminal (alacritty grid + iced) |
+| `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
+| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux socket `sola-at`). Skeleton on this branch. |
 | `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
-| `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
+| `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of agent-terminal |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |

@@ -5523,6 +5523,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-agent-terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-terminal",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sola-arcade"
 version = "0.1.0"
 dependencies = [

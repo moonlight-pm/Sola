@@ -78,13 +78,19 @@ pub enum SidebarItemChrome {
     Card,
 }
 
-/// Leading status dot for a sidebar row (activity / health, not selection).
+/// Leading status mark for a sidebar row (activity / health, not selection).
 ///
-/// Prefer always showing a dot (Active or Idle) so the title does not
-/// shift horizontally when activity starts/stops.
+/// Prefer always showing a mark so the title does not shift horizontally
+/// when activity starts/stops. `Idle` is the reserved empty slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarIndicator {
-    /// Session is actively working (streaming, tools, recent writes).
+    /// Turn in flight (tools, streaming). Ring, not a filled dot.
+    Working,
+    /// Needs a human (question, permission).
+    Waiting,
+    /// Turn finished.
+    Done,
+    /// Session is actively working (generic apps — streaming, recent writes).
     Active,
     /// Present but idle — dim placeholder so layout stays fixed.
     #[default]
@@ -1272,29 +1278,58 @@ fn hover_action_button<'a, Message: Clone + 'a>(
 }
 
 fn status_dot<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
-    let color = match indicator {
-        SidebarIndicator::Active => Color {
-            r: 0.24,
-            g: 0.81,
-            b: 0.56,
-            a: 1.0,
-        },
+    let (fill, stroke, stroke_w) = match indicator {
+        SidebarIndicator::Working => (
+            Color::TRANSPARENT,
+            Color {
+                r: 0.92,
+                g: 0.72,
+                b: 0.18,
+                a: 1.0,
+            },
+            1.5,
+        ),
+        SidebarIndicator::Waiting => (
+            Color {
+                r: 0.92,
+                g: 0.62,
+                b: 0.18,
+                a: 1.0,
+            },
+            Color::TRANSPARENT,
+            0.0,
+        ),
+        SidebarIndicator::Done | SidebarIndicator::Active => (
+            Color {
+                r: 0.24,
+                g: 0.81,
+                b: 0.56,
+                a: 1.0,
+            },
+            Color::TRANSPARENT,
+            0.0,
+        ),
         // Quiet placeholder — visible enough to reserve space, not attention.
-        SidebarIndicator::Idle => Color {
-            r: 0.45,
-            g: 0.48,
-            b: 0.55,
-            a: 0.55,
-        },
+        SidebarIndicator::Idle => (
+            Color {
+                r: 0.45,
+                g: 0.48,
+                b: 0.55,
+                a: 0.55,
+            },
+            Color::TRANSPARENT,
+            0.0,
+        ),
     };
     container(Space::new().width(6.0).height(6.0))
         .width(Length::Fixed(6.0))
         .height(Length::Fixed(6.0))
         .style(move |_t: &Theme| container::Style {
-            background: Some(Background::Color(color)),
+            background: Some(Background::Color(fill)),
             border: Border {
                 radius: 999.0.into(),
-                ..Default::default()
+                width: stroke_w,
+                color: stroke,
             },
             ..container::Style::default()
         })

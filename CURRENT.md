@@ -9,18 +9,19 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (this branch: parked sola-agent-terminal idea + pickup path)
+**As of:** 2026-08-13 (this branch: agent-terminal freeze + compiling skeleton)
 
 ---
 
 ## Now
 
-1. **sola-agent-terminal** — **idea, not built** (this branch / this Orca workspace)  
-   **Pickup:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](docs/ideas/2026-08-12-sola-agent-terminal.md)  
-   Rule: [`.grok/rules/agent-terminal-design.md`](.grok/rules/agent-terminal-design.md)  
-   Capability: `agent-terminal` in [`docs/capabilities.md`](docs/capabilities.md) (`idea`).  
-   **Decided:** spawn sibling is v1 (UI + `sat`, `--prompt` is the handoff); design law (impeccable Operate + frontend-design before any UI; kit is open to refine); **not** `crates/sola-agent`.  
-   **Next if you say go:** promote to a freeze, then build-order step 1 (skeleton app). Remaining forks stay in the idea — ask, do not invent.  
+1. **sola-agent-terminal** — **partial (skeleton compiles)** (this branch)  
+   **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
+   **Product:** [`crates/sola-agent-terminal/PRODUCT.md`](crates/sola-agent-terminal/PRODUCT.md)  
+   **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](docs/ideas/2026-08-12-sola-agent-terminal.md)  
+   **Next:** status chrome (real working/waiting/done marks) → Grok hooks.  
+   **Do not invent:** D3 interims (name, worktree base, `sat` if down, Claude hooks).  
+   **Install:** ask first. `cargo make build sola-agent-terminal` is green.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on **master**)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -47,7 +48,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (idea docs only). Master dogfood: **`master`** (post–windowed-gamescope) | Feature work in worktrees / Orca workspaces |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (freeze + skeleton, not installed). Master dogfood: **`master`** | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

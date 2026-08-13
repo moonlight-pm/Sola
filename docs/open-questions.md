@@ -70,12 +70,32 @@ sites?
 
 **Default until decided:** WPE remains default dispatcher path.
 
+### D3 — sola-agent-terminal product forks (P2)
+
+**Context:** Freeze is in; skeleton compiles. These were left interim so we did
+not invent policy. Do not treat the interims as locked.
+
+**Ask:**
+
+1. Display name / window title (`Workspaces` is interim)?  
+2. Default worktree base — this desk’s `~/orca/workspaces/<Project>/`, sibling
+   of main, or always ask?  
+3. If `sat` runs and the app is down — fail, or launch the Wayland window?  
+4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
+
+**Until decided:** use freeze **Interim** table only. Do not persist worktree
+paths or `sat` auto-launch.
+
+**Related:** `agent-terminal` capability;
+[`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
+
 ---
 
 ## Decision log
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. D3 forks still open. | freeze + CURRENT + D3 |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |

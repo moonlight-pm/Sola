@@ -7,4 +7,4 @@ Do not implement from this folder without promotion.
 
 | Idea | Notes |
 |------|--------|
-| [sola-agent-terminal](2026-08-12-sola-agent-terminal.md) | Projects, workspaces, agent-aware terminals; spawn sibling is v1. Design law: impeccable + frontend-design; kit is open to refine. Not `sola-agent`. |
+| [sola-agent-terminal](2026-08-12-sola-agent-terminal.md) | Promoted → [freeze](../specs/2026-08-13-sola-agent-terminal-design.md). Skeleton compiles. |
