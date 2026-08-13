@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (vault create login + OSR copy/paste)
+**As of:** 2026-08-13 (OSR IME + `<select>` dogfood)
 
 ---
 
@@ -31,15 +31,15 @@ Do not invent product policy.
      ⌘C / ⌘V on page fields and body text; triple-click word/line select;
      passkey get on Google; chrome stays interactive with a few
      animated tabs (shader self-pumps; parked helpers hidden; frames
-     off the control socket). CEF CPU readback on NVIDIA is still the
-     structural per-frame cost.  
+     off the control socket). OSR IME + Shift+wheel + `<select>`
+     dropdowns (`PET_POPUP` blit) dogfooded. NVIDIA CPU readback is
+     an accepted cost, not a slice.  
    - **Profile model:** `app_id` is always `sola-browser` (one switcher
      entry). Each profile is headless `sola-browser --engine` with its
      own CEF cookie root. Chrome-bar select is the quick switcher.  
    - Manual: `docs/manual/sola-browser.md`.  
-   - **Not shipped:** passkey **registration**; remaining OSR quirks
-     (caret/scroll/IME); first-visit session tabs.  
-   - **Next:** remaining OSR (caret/scroll/IME) and passkey registration.  
+   - **Deferred:** passkey **registration** (until needed).  
+   - **Next:** none on this branch — pick the next slice.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -65,7 +65,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump); OSR IME + Shift+wheel + `<select>` dropdowns dogfooded | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

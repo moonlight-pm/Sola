@@ -227,6 +227,8 @@ pub struct FrameSlot<E: Engine> {
     pub pumping: AtomicBool,
     /// Monotonic ms of the last accepted paint (shader hangover / kick).
     pub last_frame_ms: AtomicU64,
+    /// Composition caret (helper) / last pointer fallback (chrome).
+    pub ime: ImeHandle,
 }
 
 impl<E: Engine> FrameSlot<E> {
@@ -273,6 +275,60 @@ pub type CursorHandle = Arc<AtomicU32>;
 /// there's nothing pending.
 pub type ClipboardHandle = Arc<Mutex<Option<String>>>;
 
+/// Last IME / caret box in CEF view pixels. `w == 0` means "use last
+/// pointer as a 1×16 fallback".
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImeCaret {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl ImeCaret {
+    pub fn logical_rect(
+        &self,
+        bounds: iced::Rectangle,
+        scale: f32,
+    ) -> iced::Rectangle {
+        let scale = scale.max(0.5);
+        let (x, y, w, h) = if self.w > 0 && self.h > 0 {
+            (self.x, self.y, self.w, self.h)
+        } else {
+            (self.x, self.y, 1, 16)
+        };
+        iced::Rectangle::new(
+            iced::Point::new(bounds.x + x as f32 / scale, bounds.y + y as f32 / scale),
+            iced::Size::new((w as f32 / scale).max(1.0), (h as f32 / scale).max(1.0)),
+        )
+    }
+}
+
+#[cfg(test)]
+mod ime_caret_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_is_one_by_sixteen_at_point() {
+        let c = ImeCaret {
+            x: 40,
+            y: 80,
+            w: 0,
+            h: 0,
+        };
+        let r = c.logical_rect(
+            iced::Rectangle::new(iced::Point::new(10.0, 20.0), iced::Size::new(100.0, 100.0)),
+            1.0,
+        );
+        assert_eq!(r.x, 50.0);
+        assert_eq!(r.y, 100.0);
+        assert_eq!(r.width, 1.0);
+        assert_eq!(r.height, 16.0);
+    }
+}
+
+pub type ImeHandle = Arc<Mutex<ImeCaret>>;
+
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
     /// Engine-specific raw frame (CEF: CPU BGRA buffer).
@@ -304,6 +360,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     /// Shared slot the engine fills with copy text (page selection) for the
     /// chrome to drain onto the system clipboard. See [`ClipboardHandle`].
     fn clipboard_handle(&self) -> ClipboardHandle;
+    fn ime_handle(&self) -> ImeHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

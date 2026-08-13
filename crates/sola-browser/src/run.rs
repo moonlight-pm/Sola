@@ -225,6 +225,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         redraw_queued: std::sync::atomic::AtomicBool::new(false),
         pumping: std::sync::atomic::AtomicBool::new(false),
         last_frame_ms: std::sync::atomic::AtomicU64::new(0),
+        ime: engine.ime_handle(),
     });
 
     // Browser + Edit + Profiles (dynamic profile list with active check).

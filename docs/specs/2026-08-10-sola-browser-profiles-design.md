@@ -166,7 +166,7 @@ Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 ## Gaps (explicit)
 
 - History / downloads storage under `shared/`.
-- First visit to a profile this session still opens its session tabs (later switches resume the helper).
+- Cold visit this session loads `session.json` tabs (intended restore; later switches resume the parked helper). Not a product defect.
 
 ## Decision log
 

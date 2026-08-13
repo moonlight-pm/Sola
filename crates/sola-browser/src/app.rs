@@ -1749,6 +1749,23 @@ impl<E: Engine> App<E> {
         let webview = Shader::new(E::make_program(self.slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
+        let page_owns_keys = !self.url_bar_focused
+            && self.profile_dialog.is_none()
+            && {
+                #[cfg(feature = "bitwarden")]
+                {
+                    !self.vault_panel_open
+                }
+                #[cfg(not(feature = "bitwarden"))]
+                {
+                    true
+                }
+            };
+        let webview = crate::cef::page_ime::page_ime(
+            webview,
+            self.slot.clone(),
+            page_owns_keys,
+        );
 
         // Full-width chrome (profile + nav + omnibox), then tabs | page.
         let lower = row![

@@ -77,6 +77,20 @@ pub enum InputEvent {
         character: Option<u16>,
         modifiers: u32,
     },
+    /// Begin or update an IME composition (OSR `ImeSetComposition`).
+    ImeSetComposition {
+        text: String,
+        /// UTF-16 selection start inside `text`.
+        selection_from: u32,
+        /// UTF-16 selection end inside `text`.
+        selection_to: u32,
+    },
+    /// Commit composed text (OSR `ImeCommitText`).
+    ImeCommit { text: String },
+    /// Cancel the current composition (`ImeCancelComposition`).
+    ImeCancel,
+    /// Pointer left the OSR view (`send_mouse_move_event` with mouse_leave).
+    PointerLeave { x: i32, y: i32, modifiers: u32 },
 }
 
 fn default_click_count() -> u32 {
@@ -111,6 +125,7 @@ pub struct CefEngine {
     /// `frame.copy()`; kept so the chrome's drain-on-Tick is engine-agnostic
     /// and a future selection bridge can fill it.
     clipboard_out: ClipboardHandle,
+    ime: crate::engine::ImeHandle,
 }
 
 impl Engine for CefEngine {
@@ -175,6 +190,7 @@ impl Engine for CefEngine {
             active_tab: handles.active,
             next_id: handles.next_id,
             clipboard_out: handles.clipboard,
+            ime: handles.ime,
         }
     }
 
@@ -200,6 +216,10 @@ impl Engine for CefEngine {
 
     fn clipboard_handle(&self) -> ClipboardHandle {
         self.clipboard_out.clone()
+    }
+
+    fn ime_handle(&self) -> crate::engine::ImeHandle {
+        self.ime.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -313,6 +333,18 @@ struct CefTabState {
     last_frame: RefCell<Option<CefFrame>>,
     /// Recycled pixel buffers so `on_paint` does not allocate 8 MiB/frame.
     paint_bufs: RefCell<PixelRing>,
+    /// `<select>` / date-picker OSR popup (PET_POPUP). Blitted onto VIEW.
+    popup: RefCell<OsrPopup>,
+}
+
+#[derive(Default)]
+struct OsrPopup {
+    visible: bool,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    pixels: Vec<u8>,
 }
 
 thread_local! {
@@ -532,6 +564,55 @@ cef::wrap_render_handler! {
             1
         }
 
+        fn on_popup_show(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            show: ::std::os::raw::c_int,
+        ) {
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
+                return;
+            };
+            let Some(tab) = tab_state_by_id(&state, tab_id) else {
+                return;
+            };
+            let mut popup = tab.popup.borrow_mut();
+            if show == 0 {
+                popup.visible = false;
+                popup.pixels.clear();
+                popup.w = 0;
+                popup.h = 0;
+                drop(popup);
+                if let Some(host) = browser.host() {
+                    host.invalidate(cef::PaintElementType::VIEW);
+                }
+            } else {
+                popup.visible = true;
+            }
+        }
+
+        fn on_popup_size(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            rect: Option<&cef::Rect>,
+        ) {
+            let Some(rect) = rect else { return };
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
+                return;
+            };
+            let Some(tab) = tab_state_by_id(&state, tab_id) else {
+                return;
+            };
+            let mut popup = tab.popup.borrow_mut();
+            popup.x = rect.x;
+            popup.y = rect.y;
+            popup.w = rect.width.max(0) as u32;
+            popup.h = rect.height.max(0) as u32;
+        }
+
         // CPU OSR. Fires when the browser was created with
         // `shared_texture_enabled = 0`. `buffer` is valid only for
         // the duration of this call — we memcpy out.
@@ -544,12 +625,12 @@ cef::wrap_render_handler! {
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
         ) {
-            // Ignore popup paints (e.g. <select> dropdowns); they
-            // arrive on a separate surface. We don't host them.
-            if type_ != cef::PaintElementType::from(cef::sys::cef_paint_element_type_t::PET_VIEW) {
+            if width <= 0 || height <= 0 || buffer.is_null() {
                 return;
             }
-            if width <= 0 || height <= 0 || buffer.is_null() {
+            let is_popup = type_.get_raw() == cef::PaintElementType::POPUP.get_raw();
+            let is_view = type_.get_raw() == cef::PaintElementType::VIEW.get_raw();
+            if !is_view && !is_popup {
                 return;
             }
             let state = cef_state();
@@ -573,21 +654,11 @@ cef::wrap_render_handler! {
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
-            let mut ring = tab.paint_bufs.borrow_mut();
-            let mut bytes = ring.take(len);
-            paint::apply_paint(&mut bytes, src, w, h, &dirty);
-            paint::ensure_bgra_dirty(&mut bytes, w, h, &dirty);
-            let pixels = ring.publish(bytes);
-            drop(ring);
-            tracing::trace!(w, h, bytes = len, dirty = dirty.len(), ?tab_id, "CEF on_paint");
-            let frame = CefFrame {
-                pixels,
-                width: w,
-                height: h,
-                dirty,
-            };
-            *tab.last_frame.borrow_mut() = Some(frame.clone());
-            state.frames.push(TaggedFrame { tab_id, frame });
+            if is_popup {
+                publish_popup_paint(&state, &tab, src, w, h, dirty);
+            } else {
+                publish_view_paint(&state, &tab, src, w, h, dirty);
+            }
         }
 
         // Block dma-buf path. We picked the CPU path deliberately
@@ -605,6 +676,48 @@ cef::wrap_render_handler! {
                 "on_accelerated_paint fired with shared_texture_enabled=0 — \
                  this should not happen, ignoring frame"
             );
+        }
+
+        fn on_ime_composition_range_changed(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _selected_range: Option<&cef::Range>,
+            character_bounds: Option<&[cef::Rect]>,
+        ) {
+            // First glyph box is the caret / candidate-window anchor.
+            let Some(bounds) = character_bounds.and_then(|b| b.first().cloned()) else {
+                return;
+            };
+            let state = cef_state();
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
+                    x: bounds.x,
+                    y: bounds.y,
+                    w: bounds.width.max(1),
+                    h: bounds.height.max(1),
+                });
+            }
+        }
+
+        fn on_virtual_keyboard_requested(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            input_mode: cef::TextInputMode,
+        ) {
+            // Desktop IME is enabled whenever the page owns keys (chrome
+            // side). This callback is only used to drop a stale caret when
+            // Chromium says there is no text field.
+            if *input_mode.as_ref() == cef::sys::cef_text_input_mode_t::CEF_TEXT_INPUT_MODE_NONE {
+                let state = cef_state();
+                if let Some(tx) = &state.ipc_events {
+                    let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
+                        x: 0,
+                        y: 0,
+                        w: 0,
+                        h: 0,
+                    });
+                }
+            }
         }
     }
 }
@@ -946,6 +1059,124 @@ fn post_drain(drain_posted: &AtomicBool) {
             Some(&mut task),
         );
     }
+}
+
+fn publish_view_paint(
+    state: &CefThreadState,
+    tab: &CefTabState,
+    src: &[u8],
+    w: u32,
+    h: u32,
+    dirty: Vec<DirtyRect>,
+) {
+    let len = (w as usize) * (h as usize) * 4;
+    let mut ring = tab.paint_bufs.borrow_mut();
+    let mut bytes = ring.take(len);
+    paint::apply_paint(&mut bytes, src, w, h, &dirty);
+    paint::ensure_bgra_dirty(&mut bytes, w, h, &dirty);
+    let dirty = composite_popup(tab, &mut bytes, w, h, dirty);
+    let pixels = ring.publish(bytes);
+    drop(ring);
+    tracing::trace!(w, h, dirty = dirty.len(), ?tab.id, "CEF on_paint VIEW");
+    let frame = CefFrame {
+        pixels,
+        width: w,
+        height: h,
+        dirty,
+    };
+    *tab.last_frame.borrow_mut() = Some(frame.clone());
+    state.frames.push(TaggedFrame {
+        tab_id: tab.id,
+        frame,
+    });
+}
+
+fn publish_popup_paint(
+    state: &CefThreadState,
+    tab: &CefTabState,
+    src: &[u8],
+    w: u32,
+    h: u32,
+    dirty: Vec<DirtyRect>,
+) {
+    {
+        let mut popup = tab.popup.borrow_mut();
+        popup.visible = true;
+        if popup.w == 0 {
+            popup.w = w;
+        }
+        if popup.h == 0 {
+            popup.h = h;
+        }
+        paint::apply_paint(&mut popup.pixels, src, w, h, &dirty);
+        paint::ensure_bgra_dirty(&mut popup.pixels, w, h, &dirty);
+        popup.w = w;
+        popup.h = h;
+    }
+    let Some(view) = tab.last_frame.borrow().clone() else {
+        tracing::debug!(?tab.id, w, h, "PET_POPUP before first VIEW — waiting");
+        return;
+    };
+    let need = (view.width as usize) * (view.height as usize) * 4;
+    let mut ring = tab.paint_bufs.borrow_mut();
+    let mut bytes = ring.take(need);
+    if view.pixels.len() == need {
+        bytes.copy_from_slice(&view.pixels);
+    } else {
+        bytes.clear();
+        bytes.resize(need, 0);
+        let n = view.pixels.len().min(need);
+        bytes[..n].copy_from_slice(&view.pixels[..n]);
+    }
+    let dirty = composite_popup(tab, &mut bytes, view.width, view.height, Vec::new());
+    let pixels = ring.publish(bytes);
+    drop(ring);
+    tracing::debug!(
+        view_w = view.width,
+        view_h = view.height,
+        popup_w = w,
+        popup_h = h,
+        ?tab.id,
+        "CEF on_paint POPUP"
+    );
+    let frame = CefFrame {
+        pixels,
+        width: view.width,
+        height: view.height,
+        dirty,
+    };
+    *tab.last_frame.borrow_mut() = Some(frame.clone());
+    state.frames.push(TaggedFrame {
+        tab_id: tab.id,
+        frame,
+    });
+}
+
+fn composite_popup(
+    tab: &CefTabState,
+    bytes: &mut [u8],
+    view_w: u32,
+    view_h: u32,
+    mut dirty: Vec<DirtyRect>,
+) -> Vec<DirtyRect> {
+    let popup = tab.popup.borrow();
+    if !popup.visible || popup.pixels.is_empty() || popup.w == 0 || popup.h == 0 {
+        return dirty;
+    }
+    paint::blit_overlay(
+        bytes,
+        view_w,
+        view_h,
+        &popup.pixels,
+        popup.w,
+        popup.h,
+        popup.x,
+        popup.y,
+    );
+    if let Some(r) = paint::overlay_dirty(popup.x, popup.y, popup.w, popup.h, view_w, view_h) {
+        dirty.push(r);
+    }
+    dirty
 }
 
 fn dirty_from_cef(rects: Option<&[cef::Rect]>, width: u32, height: u32) -> Vec<DirtyRect> {
@@ -1606,6 +1837,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         load_progress: Cell::new(0.0),
         last_frame: RefCell::new(None),
         paint_bufs: RefCell::new(PixelRing::default()),
+        popup: RefCell::new(OsrPopup::default()),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
@@ -1699,6 +1931,24 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             }
             host.send_mouse_wheel_event(Some(&me), delta_x, delta_y);
         }
+        InputEvent::PointerLeave { x, y, modifiers } => {
+            let me = MouseEvent { x, y, modifiers };
+            host.send_mouse_move_event(Some(&me), 1);
+        }
+        InputEvent::ImeSetComposition {
+            text,
+            selection_from,
+            selection_to,
+        } => {
+            dispatch_ime_set(host, &text, selection_from, selection_to);
+        }
+        InputEvent::ImeCommit { text } => {
+            let s = cef::CefString::from(text.as_str());
+            host.ime_commit_text(Some(&s), None, 0);
+        }
+        InputEvent::ImeCancel => {
+            host.ime_cancel_composition();
+        }
         InputEvent::Key { down, vk, character, modifiers } => {
             // RAWKEYDOWN / KEYUP carry the VK code. CHAR carries
             // the produced text character (post-shift). For
@@ -1726,6 +1976,25 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             }
         }
     }
+}
+
+fn dispatch_ime_set(host: &cef::BrowserHost, text: &str, selection_from: u32, selection_to: u32) {
+    let s = cef::CefString::from(text);
+    let utf16_len = text.encode_utf16().count() as u32;
+    let mut underline = cef::CompositionUnderline::default();
+    underline.range = cef::Range {
+        from: 0,
+        to: utf16_len,
+    };
+    underline.color = 0xFF_00_00_00;
+    underline.background_color = 0x00_00_00_00;
+    underline.thick = 0;
+    underline.style = cef::CompositionUnderlineStyle::SOLID;
+    let sel = cef::Range {
+        from: selection_from.min(utf16_len),
+        to: selection_to.min(utf16_len),
+    };
+    host.ime_set_composition(Some(&s), Some(&[underline]), None, Some(&sel));
 }
 
 /// Dispatch a `NavCmd` to the live CEF browser. Runs on the CEF

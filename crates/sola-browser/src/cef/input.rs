@@ -334,6 +334,60 @@ pub fn scroll(
     }
 }
 
+/// Shift+wheel (no explicit X) is horizontal in every desktop browser.
+pub fn apply_shift_scroll(delta_x: i32, delta_y: i32, shift: bool) -> (i32, i32) {
+    if shift && delta_x == 0 && delta_y != 0 {
+        (delta_y, 0)
+    } else {
+        (delta_x, delta_y)
+    }
+}
+
+pub fn pointer_leave(x: i32, y: i32, held: u32, kbd_mods: u32) -> InputEvent {
+    InputEvent::PointerLeave {
+        x,
+        y,
+        modifiers: kbd_mods | held,
+    }
+}
+
+/// iced preedit selection is UTF-8 bytes; CEF IME ranges are UTF-16 units.
+pub fn utf8_to_utf16_index(text: &str, byte: usize) -> u32 {
+    let b = byte.min(text.len());
+    text.get(..b)
+        .map(|s| s.encode_utf16().count() as u32)
+        .unwrap_or(0)
+}
+
+pub fn ime_set_composition(
+    text: String,
+    selection: Option<std::ops::Range<usize>>,
+) -> InputEvent {
+    let (from, to) = match selection {
+        Some(r) => (
+            utf8_to_utf16_index(&text, r.start),
+            utf8_to_utf16_index(&text, r.end),
+        ),
+        None => {
+            let end = text.encode_utf16().count() as u32;
+            (end, end)
+        }
+    };
+    InputEvent::ImeSetComposition {
+        text,
+        selection_from: from,
+        selection_to: to,
+    }
+}
+
+pub fn ime_commit(text: String) -> InputEvent {
+    InputEvent::ImeCommit { text }
+}
+
+pub fn ime_cancel() -> InputEvent {
+    InputEvent::ImeCancel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +490,36 @@ mod tests {
                 assert_eq!(vk, '.' as u32);
             }
             other => panic!("expected Key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_scroll_becomes_horizontal() {
+        assert_eq!(apply_shift_scroll(0, 120, true), (120, 0));
+        assert_eq!(apply_shift_scroll(0, 120, false), (0, 120));
+        assert_eq!(apply_shift_scroll(40, 120, true), (40, 120));
+    }
+
+    #[test]
+    fn utf8_to_utf16_handles_multibyte() {
+        // "é" is 2 UTF-8 bytes, 1 UTF-16 unit.
+        assert_eq!(utf8_to_utf16_index("éx", 0), 0);
+        assert_eq!(utf8_to_utf16_index("éx", 2), 1);
+        assert_eq!(utf8_to_utf16_index("éx", 3), 2);
+    }
+
+    #[test]
+    fn ime_set_maps_byte_selection() {
+        let ev = ime_set_composition("éx".into(), Some(0..2));
+        match ev {
+            InputEvent::ImeSetComposition {
+                selection_from,
+                selection_to,
+                ..
+            } => {
+                assert_eq!((selection_from, selection_to), (0, 1));
+            }
+            other => panic!("expected ImeSetComposition, got {other:?}"),
         }
     }
 }

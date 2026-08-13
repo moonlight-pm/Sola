@@ -42,6 +42,11 @@ pub struct ProgramState {
     /// Last *press*: button, x, y, time, count.
     last_press: Option<(u32, i32, i32, Instant, u32)>,
     last_click_count: u32,
+    last_pointer: Option<(i32, i32)>,
+    pointer_in: bool,
+    /// True while an IME preedit is live — suppress CHAR so we do not
+    /// double-insert next to `ImeSetComposition`.
+    composing: bool,
     _started: Option<Instant>,
 }
 
@@ -74,12 +79,33 @@ impl shader::Program<crate::app::Msg> for CefProgram {
 
         match event {
             iced::Event::Mouse(m) => {
-                let cur = cursor.position_in(bounds)?;
+                let over = cursor.position_in(bounds);
+                if over.is_none() {
+                    if matches!(m, mouse::Event::CursorMoved { .. }) && state.pointer_in {
+                        state.pointer_in = false;
+                        if let Some((x, y)) = state.last_pointer {
+                            let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
+                            let _ = self.slot.cmd_tx.send(Cmd::Input(input::pointer_leave(
+                                x,
+                                y,
+                                state.held_button_mods,
+                                kbd_mods,
+                            )));
+                            return Some(iced::widget::shader::Action::capture());
+                        }
+                    }
+                    // Wheel / buttons outside the page belong to chrome.
+                    return None;
+                }
+                let cur = over?;
                 let (x, y) = crate::input::project_cursor_i32(
                     iced::Point::new(bounds.x + cur.x, bounds.y + cur.y),
                     bounds,
                     scale,
                 );
+                state.last_pointer = Some((x, y));
+                state.pointer_in = true;
+                note_ime_fallback(&self.slot, x, y);
                 let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
                 let ev = match m {
                     mouse::Event::CursorMoved { .. } => Some(input::pointer_move(
@@ -124,6 +150,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     }
                     mouse::Event::WheelScrolled { delta } => {
                         let (dx, dy, precise) = input::scroll_delta_to_cef(*delta);
+                        let (dx, dy) = input::apply_shift_scroll(dx, dy, mods_now.shift());
                         Some(input::scroll(
                             x,
                             y,
@@ -156,9 +183,51 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
+            iced::Event::InputMethod(ime) => {
+                use iced::advanced::input_method::Event as ImeEv;
+                let ev = match ime {
+                    ImeEv::Opened => None,
+                    ImeEv::Preedit(text, sel) => {
+                        state.composing = !text.is_empty();
+                        if text.is_empty() {
+                            Some(input::ime_set_composition(String::new(), None))
+                        } else {
+                            Some(input::ime_set_composition(text.clone(), sel.clone()))
+                        }
+                    }
+                    ImeEv::Commit(text) => {
+                        state.composing = false;
+                        Some(input::ime_commit(text.clone()))
+                    }
+                    ImeEv::Closed => {
+                        let cancel = state.composing;
+                        state.composing = false;
+                        cancel.then(input::ime_cancel)
+                    }
+                };
+                if let Some(e) = ev {
+                    let _ = self.slot.cmd_tx.send(Cmd::Input(e));
+                    return Some(iced::widget::shader::Action::capture());
+                }
+            }
             iced::Event::Keyboard(k) => {
                 if let keyboard::Event::ModifiersChanged(m) = k {
                     state.modifiers = *m;
+                }
+                // While composing, printable CHAR would double-insert next
+                // to ImeSetComposition. Still send Escape (cancel) / arrows.
+                if state.composing {
+                    if let keyboard::Event::KeyPressed { key, .. } = k {
+                        if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape))
+                        {
+                            state.composing = false;
+                            let _ = self.slot.cmd_tx.send(Cmd::Input(input::ime_cancel()));
+                            return Some(iced::widget::shader::Action::capture());
+                        }
+                        if matches!(key, keyboard::Key::Character(_)) {
+                            return Some(iced::widget::shader::Action::capture());
+                        }
+                    }
                 }
                 let translated = match k {
                     keyboard::Event::KeyPressed {
@@ -274,6 +343,15 @@ impl CefImporter {
             bind_group: self.bind_group.clone()?,
             size: (frame.width, frame.height),
         })
+    }
+}
+
+fn note_ime_fallback(slot: &FrameSlot<CefEngine>, x: i32, y: i32) {
+    if let Ok(mut caret) = slot.ime.lock() {
+        if caret.w <= 0 || caret.h <= 0 {
+            caret.x = x;
+            caret.y = y;
+        }
     }
 }
 

@@ -52,6 +52,8 @@ pub enum FromEngine {
     Active(u64),
     Cursor(u32),
     Clipboard(String),
+    /// Composition caret in view pixels. `w == 0` clears the last box.
+    ImeCaret { x: i32, y: i32, w: i32, h: i32 },
 }
 
 /// Header for one raw frame on the dedicated frame socket. Pixels follow
@@ -186,5 +188,27 @@ mod tests {
         assert_eq!(got.tab_id, 7);
         assert_eq!(got.width, 2);
         assert_eq!(pix, pixels);
+    }
+
+    #[test]
+    fn round_trip_ime_caret() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::ImeCaret {
+                x: 8,
+                y: 16,
+                w: 2,
+                h: 18,
+            },
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::ImeCaret { x, y, w, h } => {
+                assert_eq!((x, y, w, h), (8, 16, 2, 18));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

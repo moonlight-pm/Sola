@@ -12,6 +12,7 @@ pub mod frame;
 pub mod host;
 pub mod input;
 pub mod ipc;
+pub mod page_ime;
 pub mod paint;
 pub mod router;
 

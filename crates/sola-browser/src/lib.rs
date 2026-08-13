@@ -22,7 +22,7 @@ pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver, FrameSlot,
-    NavCmd, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
+    ImeCaret, ImeHandle, NavCmd, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 pub use input::CursorKind;
 pub use run::run;

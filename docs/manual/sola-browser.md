@@ -120,11 +120,17 @@ extracts the selection in the engine helper and writes the system
 clipboard; paste inserts into the focused field without emptying the
 clipboard. Triple-click selects a line / field the way Chromium expects.
 
+Clicking the page focuses the engine (caret / IME). Shift+wheel scrolls
+sideways. Composition (dead keys, CJK) is forwarded to Chromium when the
+page owns keys; the candidate window sits on the last caret box.
+
+`<select>` dropdowns paint as an overlay on the page (Chromium’s OSR
+popup buffer).
+
 ## Not in this manual yet
 
 - Full keyboard chrome reference  
-- Engine quirks (OSR caret / scroll / IME)  
-- Passkey **registration**  
+- Passkey **registration** (deferred)  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
 and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).

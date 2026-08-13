@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
-    ClipboardHandle, Cmd, FrameMailbox, FrameReceiver, TabId, TabInfo, TabsHandle,
+    ClipboardHandle, Cmd, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle, TabId, TabInfo,
+    TabsHandle,
 };
 use crate::profiles;
 
@@ -40,6 +41,7 @@ struct Shared {
     active: Arc<AtomicU64>,
     cursor: Arc<AtomicU32>,
     clipboard: ClipboardHandle,
+    ime: ImeHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -55,6 +57,7 @@ pub struct RouterHandles {
     pub cursor: Arc<AtomicU32>,
     pub next_id: Arc<AtomicU64>,
     pub clipboard: ClipboardHandle,
+    pub ime: ImeHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -65,6 +68,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let cursor = Arc::new(AtomicU32::new(0));
     let next_id = Arc::new(AtomicU64::new(1));
     let clipboard: ClipboardHandle = Arc::new(Mutex::new(None));
+    let ime: ImeHandle = Arc::new(Mutex::new(ImeCaret::default()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -73,6 +77,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         active: active.clone(),
         cursor: cursor.clone(),
         clipboard: clipboard.clone(),
+        ime: ime.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -92,6 +97,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         cursor,
         next_id,
         clipboard,
+        ime,
     }
 }
 
@@ -475,6 +481,11 @@ fn handle_from(
         FromEngine::Clipboard(text) => {
             if is_front {
                 *shared.clipboard.lock().unwrap() = Some(text);
+            }
+        }
+        FromEngine::ImeCaret { x, y, w, h } => {
+            if is_front {
+                *shared.ime.lock().unwrap() = ImeCaret { x, y, w, h };
             }
         }
     }

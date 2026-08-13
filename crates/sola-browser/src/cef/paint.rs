@@ -177,6 +177,65 @@ fn looks_like_argb(pixels: &[u8]) -> bool {
     a_first > a_last.saturating_mul(2) && a_first > (n as u32 / 2)
 }
 
+/// Blit a `sw × sh` BGRA overlay onto `dst` (`dw × dh`) at `(dx, dy)`.
+/// Clips to the destination. Used for CEF `PET_POPUP` (`<select>`).
+pub fn blit_overlay(
+    dst: &mut [u8],
+    dw: u32,
+    dh: u32,
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    dx: i32,
+    dy: i32,
+) {
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return;
+    }
+    let dst_x0 = dx.max(0) as u32;
+    let dst_y0 = dy.max(0) as u32;
+    if dst_x0 >= dw || dst_y0 >= dh {
+        return;
+    }
+    let src_x0 = if dx < 0 { (-dx) as u32 } else { 0 };
+    let src_y0 = if dy < 0 { (-dy) as u32 } else { 0 };
+    let copy_w = sw.saturating_sub(src_x0).min(dw.saturating_sub(dst_x0));
+    let copy_h = sh.saturating_sub(src_y0).min(dh.saturating_sub(dst_y0));
+    if copy_w == 0 || copy_h == 0 {
+        return;
+    }
+    let src_row = sw as usize * 4;
+    let dst_row = dw as usize * 4;
+    let copy_bytes = copy_w as usize * 4;
+    for row in 0..copy_h as usize {
+        let s_off = (src_y0 as usize + row) * src_row + src_x0 as usize * 4;
+        let d_off = (dst_y0 as usize + row) * dst_row + dst_x0 as usize * 4;
+        let s_end = s_off + copy_bytes;
+        let d_end = d_off + copy_bytes;
+        if s_end <= src.len() && d_end <= dst.len() {
+            dst[d_off..d_end].copy_from_slice(&src[s_off..s_end]);
+        }
+    }
+}
+
+/// View-pixel box of a `PET_POPUP` after clipping to the view.
+pub fn overlay_dirty(dx: i32, dy: i32, sw: u32, sh: u32, dw: u32, dh: u32) -> Option<DirtyRect> {
+    let x = dx.max(0) as u32;
+    let y = dy.max(0) as u32;
+    if x >= dw || y >= dh || sw == 0 || sh == 0 {
+        return None;
+    }
+    let src_x0 = if dx < 0 { (-dx) as u32 } else { 0 };
+    let src_y0 = if dy < 0 { (-dy) as u32 } else { 0 };
+    let w = sw.saturating_sub(src_x0).min(dw.saturating_sub(x));
+    let h = sh.saturating_sub(src_y0).min(dh.saturating_sub(y));
+    if w == 0 || h == 0 {
+        None
+    } else {
+        Some(DirtyRect { x, y, w, h })
+    }
+}
+
 /// Recycle an `Arc<Vec<u8>>` when we are the unique owner; otherwise allocate.
 pub fn take_unique_pixels(prev: Option<std::sync::Arc<Vec<u8>>>, need: usize) -> Vec<u8> {
     if let Some(arc) = prev {
@@ -300,5 +359,30 @@ mod tests {
         assert_eq!(v.len(), 16);
         // Recycled buffer keeps previous bytes (then we overwrite in apply_paint).
         assert_eq!(v[0], 1);
+    }
+
+    #[test]
+    fn overlay_blits_into_view() {
+        // 2×2 dest, 1×1 src at (1, 0)
+        let mut dst = vec![0u8; 16];
+        let src = vec![9u8, 8, 7, 6];
+        blit_overlay(&mut dst, 2, 2, &src, 1, 1, 1, 0);
+        assert_eq!(&dst[4..8], &[9, 8, 7, 6]);
+        assert_eq!(&dst[0..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn overlay_clips_negative_origin() {
+        let mut dst = vec![0u8; 16];
+        let src = vec![1, 1, 1, 1, 2, 2, 2, 2];
+        blit_overlay(&mut dst, 2, 2, &src, 2, 1, -1, 0);
+        // src col 1 lands at dest (0, 0)
+        assert_eq!(&dst[0..4], &[2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn overlay_dirty_clips() {
+        let d = overlay_dirty(-4, 2, 10, 8, 20, 20).unwrap();
+        assert_eq!(d, DirtyRect { x: 0, y: 2, w: 6, h: 8 });
     }
 }
