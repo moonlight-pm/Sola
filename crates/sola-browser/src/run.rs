@@ -72,6 +72,12 @@ pub fn frame_stream<E: Engine>(
             // upload or steal the latest-wins mailbox.
             let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
             let tid = tagged.tab_id.0;
+            // Park every frame we see so a later tab/profile switch can
+            // present it synchronously (no helper round-trip).
+            slot.parked_frames
+                .lock()
+                .unwrap()
+                .insert(tid, tagged.frame.clone());
             if tid != paint_tab {
                 let mut need = slot.need_park_prime.lock().unwrap();
                 need.remove(&tid); // consume one-shot primes without holding
@@ -206,6 +212,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         paint_tab: std::sync::atomic::AtomicU64::new(u64::MAX),
         need_park_prime: Mutex::new(std::collections::HashSet::new()),
         drop_paint_tabs: Mutex::new(Vec::new()),
+        parked_frames: Mutex::new(std::collections::HashMap::new()),
+        blank_content: std::sync::atomic::AtomicBool::new(false),
         redraw_queued: std::sync::atomic::AtomicBool::new(false),
     });
 

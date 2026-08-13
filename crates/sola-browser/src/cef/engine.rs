@@ -107,6 +107,10 @@ impl Engine for CefEngine {
     type Input = InputEvent;
     type Program = crate::cef::frame::CefProgram;
 
+    fn frame_size(frame: &Self::Frame) -> (u32, u32) {
+        (frame.width, frame.height)
+    }
+
     /// CEF subprocess gate. Must run first in `main`, before logging
     /// or Wayland init. If re-exec'd by CEF as a renderer / GPU /
     /// utility / zygote worker, `cef::execute_process` handles the
@@ -881,10 +885,20 @@ cef::wrap_task! {
 fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
     match cmd {
         Cmd::Resize { width, height, scale: _ } => {
-            *state.size.lock().unwrap() = (width, height);
-            if let Some(tab) = active_tab(state) {
-                if let Some(host) = tab.browser.host() {
-                    host.was_resized();
+            let prev = *state.size.lock().unwrap();
+            if prev == (width, height) {
+                // Same widget size — do not was_resized/invalidate. A
+                // no-op resize after profile switch was discarding the
+                // parked compositor so tabs looked like they reloaded.
+            } else {
+                *state.size.lock().unwrap() = (width, height);
+                // Keep last_frames (even if stale size). Chrome will not
+                // display a mismatch; wiping here is what made every
+                // tab switch wait on a fresh CEF paint.
+                if let Some(tab) = active_tab(state) {
+                    if let Some(host) = tab.browser.host() {
+                        host.was_resized();
+                    }
                 }
             }
         }
@@ -1108,16 +1122,28 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
         .active_atomic
         .store(id.0, std::sync::atomic::Ordering::Relaxed);
 
-    // Instant content: replay last composite for this tab (if any).
+    // Instant content: replay last composite only when it matches the
+    // live widget. A 1280×800 park buffer stretched into a wide view
+    // is the half-width "slender" flash on tab switch.
     if let Some(tab) = tab_state_by_id(state, id) {
-        if let Some(frame) = tab.last_frame.borrow().clone() {
-            state.frames.push(TaggedFrame { tab_id: id, frame });
-        }
+        let want = *state.size.lock().unwrap();
+        let replayed = if let Some(frame) = tab.last_frame.borrow().clone() {
+            let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
+            if ok {
+                state.frames.push(TaggedFrame { tab_id: id, frame });
+            }
+            ok
+        } else {
+            false
+        };
         if let Some(host) = tab.browser.host() {
             host.was_hidden(0);
             host.set_focus(1);
-            // Size may be unchanged — still notify, then force a full paint.
-            host.was_resized();
+            // Same-size was_resized after profile switch was discarding
+            // the parked compositor (tabs looked like they reloaded).
+            if !replayed {
+                host.was_resized();
+            }
             host.invalidate(cef::PaintElementType::VIEW);
         }
     }

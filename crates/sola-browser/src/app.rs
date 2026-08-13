@@ -545,6 +545,9 @@ impl<E: Engine> App<E> {
             Ok(_) => {
                 tracing::info!(from = %from, to = %id, "switching profile (same window)");
                 self.enter_profile_workspace(from, false);
+                // Wake the shader so it drops the previous profile's texture
+                // this frame, not whenever the new helper happens to paint.
+                return Task::done(Msg::NewFrame);
             }
             Err(e) => {
                 tracing::warn!(error = %e, id, "switch profile failed");
@@ -582,12 +585,23 @@ impl<E: Engine> App<E> {
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
                 self.apply_workspace_chrome_focus();
-                // Helper already has these browsers; resume without reload.
+                // Helper already has these browsers. Pass the parked list
+                // only as a fallback if the helper was evicted/died.
+                let create_tabs: Vec<(TabId, String, String)> = self
+                    .cached_tabs
+                    .iter()
+                    .map(|t| (t.id, t.url.clone(), t.title.clone()))
+                    .collect();
+                tracing::info!(
+                    profile = %resume_id,
+                    tabs = create_tabs.len(),
+                    "resuming parked profile workspace"
+                );
                 let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
                     park_as_profile_id,
                     resume_profile_id: resume_id,
                     cef_cache_path: cef_path,
-                    create_tabs: None,
+                    create_tabs: Some(create_tabs),
                     active,
                 });
                 self.evict_workspace_parks();
@@ -667,16 +681,14 @@ impl<E: Engine> App<E> {
 
     fn apply_workspace_chrome_focus(&mut self) {
         let active = self.cached_active;
+        self.active_handle
+            .store(active.0, std::sync::atomic::Ordering::Relaxed);
+        // Present *before* zeroing last_size so a same-size park hits.
+        self.slot.present_tab(active);
         // Force the next shader prepare to re-send Resize. The router
         // would otherwise leave a newly-front helper at 1280×800 because
         // chrome last_size already matches the widget.
         *self.slot.last_size.lock().unwrap() = (0, 0);
-        self.slot
-            .paint_tab
-            .store(active.0, std::sync::atomic::Ordering::Relaxed);
-        self.active_handle
-            .store(active.0, std::sync::atomic::Ordering::Relaxed);
-        *self.slot.pending.lock().unwrap() = None;
         self.slot.need_park_prime.lock().unwrap().clear();
         self.slot.drop_paint_tabs.lock().unwrap().clear();
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
@@ -696,7 +708,11 @@ impl<E: Engine> App<E> {
         let live = self.cached_tabs.len();
         let victims = eviction_victims(&self.workspace_cache, live, Instant::now());
         for id in victims {
-            self.workspace_cache.remove(&id);
+            if let Some(snap) = self.workspace_cache.remove(&id) {
+                for t in snap.tabs {
+                    self.slot.forget_tab(t.id);
+                }
+            }
             let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
                 profile_id: id.clone(),
             });
@@ -714,7 +730,7 @@ impl<E: Engine> App<E> {
                         tracing::info!(id = %profile.id, name = %profile.name, "new profile");
                         self.close_profile_dialog();
                         self.enter_profile_workspace(from, true);
-                        return Task::none();
+                        return Task::done(Msg::NewFrame);
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -735,6 +751,9 @@ impl<E: Engine> App<E> {
             }
             Some(ProfileDialog::DeleteConfirm) => {
                 let id = crate::profiles::active().id.clone();
+                for t in &self.cached_tabs {
+                    self.slot.forget_tab(t.id);
+                }
                 self.workspace_cache.remove(&id);
                 match crate::profiles::delete(&id) {
                     Ok(Some(_new_active)) => {
@@ -743,7 +762,7 @@ impl<E: Engine> App<E> {
                             profile_id: id.clone(),
                         });
                         self.enter_profile_workspace(id, false);
-                        return Task::none();
+                        return Task::done(Msg::NewFrame);
                     }
                     Ok(None) => {
                         self.close_profile_dialog();
@@ -1091,16 +1110,8 @@ impl<E: Engine> App<E> {
                         self.switch_active_tab(new_active);
                     }
                 }
-                // Release any parked GPU frame for this tab on next prepare.
+                self.slot.forget_tab(id);
                 self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
-                // Drop a queued frame for the closed tab so prepare cannot
-                // re-park a dead surface after the drop list is drained.
-                {
-                    let mut pending = self.slot.pending.lock().unwrap();
-                    if pending.as_ref().is_some_and(|p| p.tab_id == id) {
-                        *pending = None;
-                    }
-                }
                 self.slot.need_park_prime.lock().unwrap().remove(&id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
                 // Drop from optimistic cache immediately so persist sees it.
@@ -1378,22 +1389,13 @@ impl<E: Engine> App<E> {
     /// (and static pages may never produce one).
     pub fn switch_active_tab(&mut self, id: TabId) {
         self.cached_active = id;
-        self.slot
-            .paint_tab
-            .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Optimistic: worker frame filter reads this before SetActiveTab is
         // pumped. Without this, every buffer-rendered is drop_bg → black page.
         self.active_handle
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
-        // Drop a queued frame for a *different* tab so prepare cannot paint
-        // the previous surface after the strip has already highlighted `id`.
-        // The engine replays a parked last-frame for `id` on SetActiveTab.
-        {
-            let mut pending = self.slot.pending.lock().unwrap();
-            if pending.as_ref().is_some_and(|p| p.tab_id != id) {
-                *pending = None;
-            }
-        }
+        // Same-size park → pending this frame. Miss → blank now (do not
+        // keep sampling the previous tab until CEF answers).
+        self.slot.present_tab(id);
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
         // Omnibox follows chrome optimistically — don't wait for Tick
         // (250ms) or the worker URI notify, which feels laggy on tab click.

@@ -1,8 +1,9 @@
 # sola-browser profiles — design freeze
 
 **Date:** 2026-08-10  
-**Status:** **Frozen** — layout + Profiles menubar switcher on
-`naturalethic/cef-browser` (2026-08-12); CEF engine under profile data dirs  
+**Status:** **Frozen** — layout + Profiles menubar + chrome-bar select on
+`naturalethic/cef-browser` (2026-08-13); CEF helpers; parked last-frames
+for instant switch (miss blanks)  
 **Branch context:** `naturalethic/cef-browser` (was `naturalethic/browser`)  
 **Related:** [hardening plan](../plans/2026-08-09-sola-browser-hardening.md) P1.3;
 open-questions D8.
@@ -159,6 +160,7 @@ Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 | Profiles menubar switch + manage | **done** (2026-08-12) |
 | One-window instant switch + per-profile CEF helpers | **done** (2026-08-12) |
 | Chrome-bar kit identity select (aligned to tab column) | **done** (2026-08-12) |
+| Chrome parks last composites; instant tab/profile paint | **done** (2026-08-13) |
 | History / downloads under `shared/` | **not yet** |
 
 ## Gaps (explicit)

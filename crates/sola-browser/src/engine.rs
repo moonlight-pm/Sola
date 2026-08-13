@@ -1,7 +1,8 @@
 //! Engine-agnostic types shared by every Sola browser engine, plus the
 //! `Engine` trait the shared chrome is generic over.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
@@ -191,10 +192,52 @@ pub struct FrameSlot<E: Engine> {
     pub need_park_prime: Mutex<std::collections::HashSet<u64>>,
     /// Tab ids whose GPU caches should be dropped (closed tabs).
     pub drop_paint_tabs: Mutex<Vec<u64>>,
+    /// Last composite for every tab we have painted this session.
+    /// `present_tab` installs a same-size hit synchronously so tab /
+    /// profile switch is instant; a miss blanks instead of keeping
+    /// the previous tab on screen.
+    pub parked_frames: Mutex<HashMap<u64, E::Frame>>,
+    /// Drop the last sampled texture on the next shader prepare (dark
+    /// fallback) until a frame for `paint_tab` arrives. Set on profile
+    /// switch so the previous identity is not left on screen while the
+    /// new helper opens / paints.
+    pub blank_content: AtomicBool,
     /// Coalesce `Msg::NewFrame`: only one iced wakeup is in flight. Without
     /// this, 60+ NewFrame/s fill the queue ahead of keyboard events (typing
     /// lag, frozen caret, slow placeholder animation).
     pub redraw_queued: AtomicBool,
+}
+
+impl<E: Engine> FrameSlot<E> {
+    /// Front `id` in chrome. Same-size parked frame → pending this
+    /// frame (instant). Otherwise blank until CEF paints.
+    pub fn present_tab(&self, id: TabId) {
+        self.paint_tab.store(id.0, Ordering::Relaxed);
+        let want = *self.last_size.lock().unwrap();
+        let hit = self
+            .parked_frames
+            .lock()
+            .unwrap()
+            .get(&id.0)
+            .cloned()
+            .filter(|f| crate::shader::size_matches(E::frame_size(f), want));
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(frame) = hit {
+            *pending = Some(PendingFrame { tab_id: id, frame });
+            self.blank_content.store(false, Ordering::Relaxed);
+        } else {
+            *pending = None;
+            self.blank_content.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn forget_tab(&self, id: TabId) {
+        self.parked_frames.lock().unwrap().remove(&id.0);
+        let mut pending = self.pending.lock().unwrap();
+        if pending.as_ref().is_some_and(|p| p.tab_id == id) {
+            *pending = None;
+        }
+    }
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
@@ -212,7 +255,9 @@ pub type ClipboardHandle = Arc<Mutex<Option<String>>>;
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
     /// Engine-specific raw frame (CEF: CPU BGRA buffer).
-    type Frame: Send + 'static;
+    type Frame: Send + Clone + 'static;
+    /// Pixel size of a parked frame (for same-size replay).
+    fn frame_size(frame: &Self::Frame) -> (u32, u32);
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
     /// Engine-specific native input event carried by `Cmd::Input`.

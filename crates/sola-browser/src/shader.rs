@@ -326,11 +326,19 @@ impl SamplePipeline {
         last_requested_size: (u32, u32),
         pass_label: &str,
     ) {
-        let _ = last_requested_size;
-        let bg = self
-            .bind_group
-            .as_ref()
-            .unwrap_or(&self.fallback_bind_group);
+        // A parked last-frame at spawn size (1280×800) stretched into the
+        // live widget looks like a half-width, overly-tall page. Keep the
+        // last good texture only when it matches the widget.
+        let size_ok = self
+            .frame_size
+            .is_some_and(|sz| size_matches(sz, last_requested_size));
+        let bg = if size_ok {
+            self.bind_group
+                .as_ref()
+                .unwrap_or(&self.fallback_bind_group)
+        } else {
+            &self.fallback_bind_group
+        };
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(pass_label),
@@ -368,6 +376,11 @@ impl SamplePipeline {
     }
 }
 
+/// Widget vs frame size, with 1px slack for HiDPI rounding.
+pub fn size_matches(a: (u32, u32), b: (u32, u32)) -> bool {
+    a.0.abs_diff(b.0) <= 1 && a.1.abs_diff(b.1) <= 1
+}
+
 const SHADER_WGSL: &str = r#"
 @group(0) @binding(0) var tex: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
@@ -395,3 +408,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4(c.rgb, 1.0);
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::size_matches;
+
+    #[test]
+    fn size_matches_exact_and_one_px() {
+        assert!(size_matches((1920, 1080), (1920, 1080)));
+        assert!(size_matches((1920, 1080), (1921, 1079)));
+        assert!(!size_matches((1280, 800), (2560, 800)));
+        assert!(!size_matches((1280, 800), (2560, 1600)));
+    }
+}

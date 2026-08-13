@@ -153,6 +153,11 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                 if helper_tabs.is_empty() {
                     *shared.tabs.lock().unwrap() = Vec::new();
                     if let Some(tabs) = create_tabs {
+                        tracing::info!(
+                            profile = %resume_profile_id,
+                            tabs = tabs.len(),
+                            "router: helper empty — opening parked/session tabs"
+                        );
                         for (id, url, title) in tabs {
                             bump_next(&shared, id.0);
                             let _ = helper.to_engine.send(ToEngine::OpenTab {
@@ -165,7 +170,8 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                     let _ = helper.to_engine.send(ToEngine::SetActiveTab(active.0));
                     shared.active.store(active.0, Ordering::Relaxed);
                 } else {
-                    // Helper already has browsers — adopt its ids.
+                    // Helper already has browsers — adopt; never OpenTab
+                    // (that would reload parked pages).
                     if let Some(max) = helper_tabs.iter().map(|t| t.id.0).max() {
                         bump_next(&shared, max);
                     }
@@ -175,6 +181,12 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                     } else {
                         helper_tabs.first().map(|t| t.id.0).unwrap_or(active.0)
                     };
+                    tracing::info!(
+                        profile = %resume_profile_id,
+                        tabs = helper_tabs.len(),
+                        active = paint,
+                        "router: adopting parked helper tabs"
+                    );
                     let _ = helper.to_engine.send(ToEngine::SetActiveTab(paint));
                     shared.active.store(paint, Ordering::Relaxed);
                 }

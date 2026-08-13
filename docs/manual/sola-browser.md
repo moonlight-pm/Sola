@@ -43,9 +43,14 @@ under a failed keyring backend cannot be re-read.
 
 Switching profiles is **instant** in the **same window**. The shell
 still shows one **Browser** app. Each profile keeps its own CEF cookie
-store in a headless engine process (no extra switcher entries). Closing
-the window quits the browser and those helpers. Tabs restore from
-`session.json`.
+store in a headless engine process (no extra switcher entries). The
+tab strip and location bar update immediately; the page area blanks
+until the new profile’s tab paints (it does not keep showing the
+previous identity). A tab you have already opened this session
+appears instantly; one that has not painted yet goes blank until it
+does. Switching back restores the parked helper’s live tabs — they
+do not reload. Closing the window quits the browser and
+those helpers. Tabs restore from `session.json`.
 
 The **profile name** lives in the left of the full-width top bar
 (aligned with the tab column). Each profile has a small enamel mark;

@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-12 (full-width chrome bar; profile in the strip)
+**As of:** 2026-08-13 (parked last-frames; instant tab/profile paint)
 
 ---
 
@@ -19,7 +19,9 @@ Do not invent product policy.
    - Branch: **`naturalethic/cef-browser`** (this worktree).  
    - Single crate `sola-browser`: iced chrome + CEF CPU OSR.  
    - **Dogfood (local):** one iced window; Profiles switch instant
-     (menubar + kit identity select in the full-width chrome bar);
+     (menubar + kit identity select in the full-width chrome bar;
+     visited tabs/profiles paint instantly from parked last-frames;
+     uncached tabs blank immediately);
      YouTube signed in after full quit; colors OK after ARGB→BGRA
      swizzle; Bitwarden unlock (**`--release`**); fill after unlock;
      passkey get on Google.  
@@ -55,7 +57,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); YouTube persists after quit; Bitwarden unlock/fill; passkey **get** (Google) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); YouTube persists after quit; Bitwarden unlock/fill; passkey **get** (Google) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

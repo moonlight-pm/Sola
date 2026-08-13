@@ -269,28 +269,49 @@ impl shader::Primitive for CefPrimitive {
                 height: req_h,
                 scale: scale as f64,
             });
+        } else {
+            drop(last);
         }
-
+        let want = (req_w, req_h);
         let paint_tab = self.slot.paint_tab.load(std::sync::atomic::Ordering::Relaxed);
-        let mut guard = self.slot.pending.lock().unwrap();
-        let Some(pending) = guard.take() else {
-            return;
+        let pending = {
+            let mut guard = self.slot.pending.lock().unwrap();
+            guard.take()
         };
-        // Stale frame for a tab we already left — drop; engine parks per-tab.
-        if pending.tab_id.0 != paint_tab {
-            return;
+        if let Some(pending) = pending {
+            if pending.tab_id.0 == paint_tab
+                && crate::shader::size_matches(
+                    (pending.frame.width, pending.frame.height),
+                    want,
+                )
+            {
+                if let Some(imported) = pipeline.importer.import_into(
+                    device,
+                    queue,
+                    &pipeline.sample.bind_group_layout,
+                    &pipeline.sample.sampler,
+                    pending.frame,
+                ) {
+                    pipeline.sample.install(imported);
+                    pipeline.sample.note_frame();
+                    pipeline.painted_tab = paint_tab;
+                    self.slot
+                        .blank_content
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+            }
+            // Wrong tab, or a parked snapshot at the wrong size — drop.
         }
-        drop(guard);
-
-        if let Some(imported) = pipeline.importer.import_into(
-            device,
-            queue,
-            &pipeline.sample.bind_group_layout,
-            &pipeline.sample.sampler,
-            pending.frame,
-        ) {
-            pipeline.sample.install(imported);
-            pipeline.sample.note_frame();
+        // Different tab than what's on the GPU, or chrome asked to blank:
+        // never keep the previous page up while we wait.
+        let blank = self
+            .slot
+            .blank_content
+            .swap(false, std::sync::atomic::Ordering::Relaxed);
+        if blank || pipeline.painted_tab != paint_tab {
+            pipeline.sample.clear();
+            pipeline.painted_tab = u64::MAX;
         }
     }
 
@@ -312,6 +333,8 @@ impl shader::Primitive for CefPrimitive {
 pub struct CefPipeline {
     sample: SamplePipeline,
     importer: CefImporter,
+    /// Tab id currently sampled (`u64::MAX` = fallback / none).
+    painted_tab: u64,
 }
 
 impl std::fmt::Debug for CefImporter {
@@ -325,6 +348,7 @@ impl shader::Pipeline for CefPipeline {
         Self {
             sample: SamplePipeline::new(device, queue, format, "cef"),
             importer: CefImporter { texture: None },
+            painted_tab: u64::MAX,
         }
     }
 }
