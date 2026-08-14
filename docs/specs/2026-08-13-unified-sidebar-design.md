@@ -2,8 +2,14 @@
 
 **Date:** 2026-08-13  
 **Branch / worktree:** `feature/unified-sidebar` · `.worktrees/unified-sidebar`  
-**Status:** draft (chart) — awaiting human go-ahead before code  
+**Status:** accepted / landed in worktree (`feature/unified-sidebar`) — install dogfood pending  
 **Companion plan:** [`../plans/2026-08-13-unified-sidebar-plan.md`](../plans/2026-08-13-unified-sidebar-plan.md)
+
+| | |
+|--|--|
+| **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel`; `vertical_tabs*` deleted |
+| **Dogfood** | Code-complete; **not** installed/smoked on the TTY yet |
+| **Gaps** | Monitor sticky list still custom; etch tokens not on the bus; OD `sola-kit-ds.html` nav may still show selection-wash |
 
 ---
 
@@ -224,18 +230,12 @@ cleanup, not a product requirement.
 
 ---
 
-## Decision points (ask human if unclear)
+## Decision points (resolved 2026-08-13)
 
-1. **Density for terminal** — Large (match browser) vs Normal?  
-   *Recommendation: Large.*  
-2. **Rename `Row` → `List`/`Etch`?** — *Recommendation: redefault materials
-   under `Row` first; rename only if it clarifies storybook/docs.*  
-3. **Browser divider ownership** — migrate to `SidebarPanel::resizable_with`
-   in the same PR as the item migrate, or two steps?  
-   *Recommendation: same PR if low risk; keeps one layout model.*  
-4. **Selection atom** — list etch abandons `theme::selection()` for rows;
-   is that still OK for settings nav?  
-   *Recommendation: yes — browser is the global list language.*
+1. **Density for terminal** — **Large** (match browser).  
+2. **Rename `Row` → `List`/`Etch`?** — **No.** Redefaulted materials under `Row`.  
+3. **Browser divider ownership** — **Same change** as item migrate (`resizable_with`).  
+4. **Selection atom** — **Yes.** Settings / mail / preview nav use etch, not teal.
 
 ---
 

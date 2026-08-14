@@ -15,7 +15,8 @@ use iced::widget::{
 use sola_kit::components::text_input::text_input;
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
-    TabDescriptor, TabSize, field, horizontal_divider, vertical_divider_with, vertical_tabs_sized,
+    DividerColors, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field,
+    horizontal_divider,
 };
 use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::button as kit_button;
@@ -76,8 +77,8 @@ pub enum Msg {
     CursorMoved(f32),
     /// Global left-button released — ends a divider drag.
     CursorReleased,
-    /// Hovered tab row changed (index into `cached_tabs`), or `None`.
-    TabHover(Option<usize>),
+    /// Hovered tab row changed (string id of [`TabId`]), or `None`.
+    TabHover(Option<String>),
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
@@ -249,9 +250,9 @@ pub struct App<E: Engine> {
     /// `(cursor_x_at_press, sidebar_w_at_press)` — anchor-relative drag
     /// (recompute from displacement, never accumulate deltas).
     pub drag_anchor: Option<(f32, f32)>,
-    /// Index of the hovered tab row, if any — drives the float-in close
-    /// button. Recomputed from `mouse_area` enter/exit each frame.
-    pub hovered_tab: Option<usize>,
+    /// Hovered tab id (string form of [`TabId`]) — drives the float-in
+    /// close button. Wired through [`sola_kit::components::SidebarPanel::item_hover`].
+    pub hovered_tab: Option<String>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -1319,7 +1320,6 @@ impl<E: Engine> App<E> {
                         self.switch_active_tab(new_active);
                     }
                 }
-                let closed_idx = self.cached_tabs.iter().position(|t| t.id == id);
                 self.slot.forget_tab(id);
                 self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
                 self.slot.need_park_prime.lock().unwrap().remove(&id.0);
@@ -1328,12 +1328,8 @@ impl<E: Engine> App<E> {
                 // and Tick cannot paint the row again.
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
-                if let (Some(idx), Some(h)) = (closed_idx, self.hovered_tab) {
-                    if h > idx {
-                        self.hovered_tab = Some(h - 1);
-                    } else if h == idx && h >= self.cached_tabs.len() {
-                        self.hovered_tab = self.cached_tabs.len().checked_sub(1);
-                    }
+                if self.hovered_tab.as_deref() == Some(&id.0.to_string()) {
+                    self.hovered_tab = None;
                 }
                 self.persist_session();
             }
@@ -1768,14 +1764,9 @@ impl<E: Engine> App<E> {
         );
 
         // Full-width chrome (profile + nav + omnibox), then tabs | page.
+        // SidebarPanel owns the kit divider + drag overlay.
         let lower = row![
-            container(self.view_tab_sidebar())
-                .width(Length::Fixed(self.sidebar_w))
-                .height(Length::Fill),
-            vertical_divider_with(
-                Msg::DividerPress,
-                sola_kit::components::DividerColors::raised_to_canvas(&self.theme),
-            ),
+            self.view_tab_sidebar(),
             container(webview).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill);
@@ -1792,7 +1783,7 @@ impl<E: Engine> App<E> {
             a: 1.0,
             ..canvas
         };
-        let body: Element<'_, Msg> = container(main)
+        let content: Element<'_, Msg> = container(main)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_t: &iced::Theme| iced::widget::container::Style {
@@ -1800,19 +1791,6 @@ impl<E: Engine> App<E> {
                 ..iced::widget::container::Style::default()
             })
             .into();
-
-        // While dragging, a transparent top layer holds the resize
-        // cursor steady even when the pointer races ahead of the divider.
-        let content: Element<'_, Msg> = if self.dragging_divider {
-            stack![
-                body,
-                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                    .interaction(mouse::Interaction::ResizingColumn),
-            ]
-            .into()
-        } else {
-            body
-        };
 
         #[cfg(feature = "bitwarden")]
         let content: Element<'_, Msg> = if self.vault_panel_open {
@@ -1840,7 +1818,15 @@ impl<E: Engine> App<E> {
     /// Left vertical tab column. Profile switch lives in the full-width
     /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
     pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
-        let tabs: Vec<TabDescriptor<Msg>> = self
+        let active_id = {
+            let paint = self.slot.paint_tab.load(Ordering::Relaxed);
+            if paint != u64::MAX {
+                TabId(paint)
+            } else {
+                self.cached_active
+            }
+        };
+        let items: Vec<SidebarItem<'_, Msg>> = self
             .cached_tabs
             .iter()
             .map(|t| {
@@ -1851,24 +1837,22 @@ impl<E: Engine> App<E> {
                 } else {
                     String::from("Loading…")
                 };
-                let active_id = {
-                    let paint = self.slot.paint_tab.load(Ordering::Relaxed);
-                    if paint != u64::MAX {
-                        TabId(paint)
-                    } else {
-                        self.cached_active
-                    }
-                };
-                TabDescriptor::new(
-                    label,
-                    t.id == active_id,
-                    Msg::ActivateTab(t.id),
-                    Msg::CloseTab(t.id),
-                )
+                SidebarItem::new(label, Msg::ActivateTab(t.id))
+                    .active(t.id == active_id)
+                    .on_close(Msg::CloseTab(t.id))
+                    .id(t.id.0.to_string())
             })
             .collect();
-
-        vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large).into()
+        SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
+            .density(SidebarDensity::Large)
+            .item_hover(self.hovered_tab.clone(), Msg::TabHover)
+            .resizable_with(
+                self.sidebar_w,
+                self.dragging_divider,
+                Msg::DividerPress,
+                DividerColors::raised_to_canvas(&self.theme),
+            )
+            .build()
     }
 
     /// Identity select — kit `select`, enamel mark per profile.

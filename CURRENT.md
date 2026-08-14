@@ -9,14 +9,18 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (browser CEF landed on master)
+**As of:** 2026-08-13 (unified sidebar coded — install/dogfood next)
 
 ---
 
 ## Now
 
-1. **Pick the next slice** — browser CEF work landed on **master**
-   (2026-08-13). No remaining engine polish queued.  
+1. **Unified kit sidebar** — coded on `.worktrees/unified-sidebar`
+   (`feature/unified-sidebar`). One `Sidebar*` stack: default list chrome is
+   browser etch; Card stays for agent. `vertical_tabs*` / `TabDescriptor`
+   deleted. **Needs your install + smoke** (storybook Sidebar, browser tabs,
+   terminal reorder/shortcuts, agent cards, settings nav).  
+   `cargo make install kit browser terminal agent settings` — only with your OK.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
