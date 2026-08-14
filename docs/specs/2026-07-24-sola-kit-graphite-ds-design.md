@@ -3,7 +3,6 @@
 **Status:** merged to `master` (2026-07-24). Overview + shared chrome done;
 other storybook tabs deferred — update on demand when touching components
 (see `.grok/rules/kit-storybook-pages.md`).  
-**Source:** Open Design project **Sola** → `sola-kit-ds.html`  
 **Scope:** sola-kit components + storybook + theme seed (`sola-core` palette;
 not `sola-bus` protocol). Other apps later.
 

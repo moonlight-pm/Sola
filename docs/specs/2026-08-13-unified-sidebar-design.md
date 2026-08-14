@@ -2,14 +2,14 @@
 
 **Date:** 2026-08-13  
 **Branch / worktree:** `feature/unified-sidebar` · `.worktrees/unified-sidebar`  
-**Status:** accepted / landed in worktree (`feature/unified-sidebar`) — install dogfood pending  
+**Status:** accepted / landed on master (2026-08-13)  
 **Companion plan:** [`../plans/2026-08-13-unified-sidebar-plan.md`](../plans/2026-08-13-unified-sidebar-plan.md)
 
 | | |
 |--|--|
 | **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel`; `vertical_tabs*` deleted |
-| **Dogfood** | Code-complete; **not** installed/smoked on the TTY yet |
-| **Gaps** | Monitor sticky list still custom; etch tokens not on the bus; OD `sola-kit-ds.html` nav may still show selection-wash |
+| **Dogfood** | Merged; install + smoke on the TTY when convenient |
+| **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 
 ---
 
@@ -194,12 +194,10 @@ cleanup, not a product requirement.
 
 ---
 
-## Storybook / OD
+## Storybook
 
 - Storybook **Sidebar** page is the dogfood for etch density + panel
   features.  
-- Open Design: if `sola-kit-ds.html` still shows selection-wash nav rows,
-  update when the kit lands (ask before a large OD rewrite).  
 - Per kit-storybook rule: ask before rewriting other storybook pages.
 
 ---

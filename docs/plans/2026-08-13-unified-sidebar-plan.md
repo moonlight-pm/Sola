@@ -3,7 +3,7 @@
 **Date:** 2026-08-13  
 **Worktree:** `.worktrees/unified-sidebar` · branch `feature/unified-sidebar`  
 **Design:** [`../specs/2026-08-13-unified-sidebar-design.md`](../specs/2026-08-13-unified-sidebar-design.md)  
-**Status:** complete in worktree — install / dogfood pending
+**Status:** complete — merged to master 2026-08-13
 
 ---
 
