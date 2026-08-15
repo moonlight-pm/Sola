@@ -1,13 +1,13 @@
 //! Create a sibling git worktree under `<project-root>/.worktrees/<slug>`.
 //!
-//! D3.2: the worktree base is always the project's `.worktrees` folder.
+//! D4.2: the worktree base is always the project's `.worktrees` folder.
 //! `git worktree remove` is not this module — drop is unregister + tmux.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Folder name under the project root. Locked (D3.2).
+/// Folder name under the project root. Locked (D4.2).
 pub const WORKTREE_DIR: &str = ".worktrees";
 
 pub fn worktree_base(root: &Path) -> PathBuf {

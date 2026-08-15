@@ -16,7 +16,7 @@ Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows
 
 **Decided here (not still a fork):**
 
-- **Spawn sibling** is a v1 verb — UI and `sat`. `--prompt` / `--prompt-file` is the handoff.
+- **Spawn sibling** is a v1 verb — UI and `solactl at workspace.spawn`. `--prompt` is the CLI handoff.
 - **Design law** below is mandatory for every UI slice of this app.
 
 ---
@@ -236,7 +236,10 @@ Lineage is **visual metadata**, not a scheduler: a child row indents under its p
 
 `--prompt` / `--prompt-file` on spawn *is* the handoff. Do not build ask/reply.
 
-### 5. A tiny CLI (`sat`)
+### 5. A tiny CLI (`solactl at`)
+
+As-built: sola-call owner `at`. No `sat` binary. Sketch below is the original
+command list; names map to `solactl at <method>`.
 
 Agents already know how to call `orca`. Give them a smaller surface, Unix-socket to the running app (same pattern as Orca’s runtime client, but talking to a Sola process).
 

@@ -53,7 +53,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (merging master `65e0051d`). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (master `65e0051d` merged). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; YouTube persists; Bitwarden unlock/fill + Create login; passkey get (Google) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |

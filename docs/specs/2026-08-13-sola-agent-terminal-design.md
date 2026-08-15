@@ -47,15 +47,15 @@ deprecated for this line of work.
 ## Interim (ask before treating as product policy)
 
 Recorded so the skeleton can ship. Do **not** pretend these are locked.
-Decision points: [`open-questions.md`](../open-questions.md) D3.
+Decision points: [`open-questions.md`](../open-questions.md) D4.
 
 | Topic | Interim |
 |---|---|
 | Window title | `Workspaces` |
-| Worktree base | **Locked (D3.2):** `<project-root>/.worktrees/<name>` |
+| Worktree base | **Locked (D4.2):** `<project-root>/.worktrees/<name>` |
 | Main checkout | A first-class workspace under the project |
 | Drop workspace | Unregister + kill tmux sessions; `git worktree remove` is a separate confirm |
-| `sat` if app down | Fail loudly (do not launch a Wayland window as a side effect) |
+| CLI if app down | Fail loudly (do not launch a Wayland window as a side effect) |
 | Claude in v1 | Presence-only until Grok hooks are trustworthy |
 
 ---
@@ -176,5 +176,5 @@ look changes; do not treat it as a second freeze.
 
 ## Open questions
 
-See idea + D3. Worktree path is locked (`.worktrees/`). Do not invent
-`sat` launching the app or the display name.
+See idea + D4. Worktree path is locked (`.worktrees/`). Do not invent
+the display name or Claude hook policy. CLI if down is fail (call plane).

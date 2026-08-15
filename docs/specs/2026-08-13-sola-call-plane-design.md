@@ -22,7 +22,7 @@ Do **not** put request/response on the bus. Do **not** grow per-app sockets (`sa
 | River on the CLI | **`compositor`**, not `river` |
 | Trust | Local-user Unix socket `0600`, same as the bus |
 | Confirm / ACL | **Not in v1.** See **D3** (cousin of D1). Do not invent |
-| `sat` | Not this slice. Later alias of `solactl at …` when Workspaces registers |
+| `sat` | **Declined.** Face is `solactl at …` only. |
 | `eval` | Remove. WebView / `Topic::Evaluate` is dead |
 
 ## Planes
@@ -100,7 +100,7 @@ These are real follow-ups. Not v1 blockers.
 | **MCP adapter** | Translator in front of the Sola protocol so Grok attaches as it already knows. Not the internal contract. |
 | **D3 confirm / ACL** | Which methods need a human in the loop; who owns the prompt. Cousin of D1. |
 | **Catalog sticky on the bus** | `sola-call` could emit live owners as a fact so monitor can audit without speaking RPC. |
-| **`sat` alias** | When Workspaces registers: `sat` → `solactl at …` (or stay a 5-letter binary). |
+| **`sat` alias** | **Declined (2026-08-14).** Workspaces face is `solactl at …`. |
 | **`LaunchResult`** | Leftover reply on the bus. `LaunchApp` stays an announcement (launcher → session). Session already replies on the call for `session.launch`. Shell “Opening…” toast still listens to `LaunchResult`. Move that toast to a call or keep the fact. |
 | **`CloseApp` as call** | Meta+Q is still a bus poke. Could be `session.close` with a real error. |
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |

@@ -1,7 +1,7 @@
 //! Projects, workspaces, catalog persist.
 //!
 //! Live status stays off the catalog. Demo rows are gone — hooks
-//! supply the marks. Worktree paths are `<root>/.worktrees/<slug>` (D3.2).
+//! supply the marks. Worktree paths are `<root>/.worktrees/<slug>` (D4.2).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
