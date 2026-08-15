@@ -1,6 +1,6 @@
-# sola-agent-terminal — design law
+# sola-workspaces — design law
 
-Applies when touching **`crates/sola-agent-terminal`** UI, or kit tokens /
+Applies when touching **`crates/sola-workspaces`** UI, or kit tokens /
 components / atoms **in service of that app**.
 
 Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/ideas/2026-08-12-sola-agent-terminal.md) (Design law).

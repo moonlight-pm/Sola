@@ -1,10 +1,10 @@
 [package]
-name = "sola-agent-terminal"
+name = "sola-workspaces"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "sola-agent-terminal"
+name = "sola-workspaces"
 path = "src/main.rs"
 
 [dependencies]

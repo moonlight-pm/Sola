@@ -42,7 +42,7 @@ pub fn start() -> HookPaths {
             ensure_channel();
             let tx = HOOK_TX.get().unwrap().clone();
             std::thread::Builder::new()
-                .name("sola-at-hooks".into())
+                .name("sola-ws-hooks".into())
                 .spawn(move || server::serve(listener, tx))
                 .ok();
             tracing::info!(sock = %paths.socket_path.display(), "hook socket listening");

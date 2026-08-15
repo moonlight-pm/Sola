@@ -1,5 +1,5 @@
 ---
-name: sola-agent-terminal
+name: sola-workspaces
 description: Operate rail — status marks are the product
 colors:
   canvas: "#0c0e12"

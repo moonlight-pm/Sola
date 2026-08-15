@@ -1,7 +1,7 @@
-//! sola-agent-terminal — project / workspace rail + agent-aware PTYs.
+//! sola-workspaces — project / workspace rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `at`.
+//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `ws`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,8 +12,8 @@ use iced::widget::{canvas, container, row, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
 
-use sola_bus::topics::{AppToast, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{AppToast, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
@@ -30,18 +30,19 @@ use sola_terminal::{extkeys, links, tmux};
 mod calls;
 mod hooks;
 mod menu;
+mod paths;
 mod presence;
 mod sidebar;
 mod spawn;
 mod status;
 mod workspace;
 
-const APP_ID: &str = "sola-agent-terminal";
+const APP_ID: &str = "sola-workspaces";
 const WINDOW_TITLE: &str = "Workspaces";
 
-const TMUX_SOCKET: &str = "sola-at";
-const TMUX_UNIT: &str = "sola-at-tmux.service";
-const TMUX_PREFIX: &str = "sat-";
+const TMUX_SOCKET: &str = "sola-ws";
+const TMUX_UNIT: &str = "sola-ws-tmux.service";
+const TMUX_PREFIX: &str = "sws-";
 
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
@@ -168,7 +169,10 @@ impl App {
             .filter(|id| catalog.workspaces.iter().any(|w| w.id == *id))
             .or_else(|| catalog.workspaces.first().map(|w| w.id.clone()))
             .unwrap_or_default();
-        let adopted_from = if catalog.workspaces.iter().any(|w| w.id == workspace::LIVE_ID)
+        let adopted_from = if catalog
+            .workspaces
+            .iter()
+            .any(|w| w.id == workspace::LIVE_ID)
         {
             workspace::adopt_orphan_session()
         } else {
@@ -231,8 +235,7 @@ impl App {
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
             hooks::subscription().map(Msg::Hook),
             sola_kit::call_subscription().map(Msg::Call),
-            sola_terminal::osc9999::subscription()
-                .map(|(id, payload)| Msg::Osc(id, payload)),
+            sola_terminal::osc9999::subscription().map(|(id, payload)| Msg::Osc(id, payload)),
             iced::time::every(Duration::from_secs(1)).map(|_| Msg::PresenceTick),
             event::listen_with(|ev, status, _| match &ev {
                 Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
@@ -525,8 +528,7 @@ impl App {
         if apply_theme_update(m, &mut self.theme) {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
                 self.palette = Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
-                self.metrics =
-                    CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
+                self.metrics = CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
                 self.resize_pane();
             }
             return Task::none();
@@ -605,7 +607,7 @@ impl App {
         let hook_sock = self.hook_sock.clone();
         let env = [
             ("SOLA_PANE_ID", id),
-            ("SOLA_AT_HOOKS_SOCK", hook_sock.as_str()),
+            ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
         ];
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
@@ -644,10 +646,7 @@ impl App {
             return Some(id.to_string());
         }
         if self.adopted_from.as_deref() == Some(id)
-            && self
-                .workspaces
-                .iter()
-                .any(|w| w.id == workspace::LIVE_ID)
+            && self.workspaces.iter().any(|w| w.id == workspace::LIVE_ID)
         {
             return Some(workspace::LIVE_ID.into());
         }
@@ -744,7 +743,11 @@ impl App {
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);
         let parent = match parent {
-            Some(p) => Some(workspace::resolve_workspace(&self.workspaces, &p)?.id.clone()),
+            Some(p) => Some(
+                workspace::resolve_workspace(&self.workspaces, &p)?
+                    .id
+                    .clone(),
+            ),
             None => self
                 .workspaces
                 .iter()
@@ -869,7 +872,10 @@ impl App {
                 }
             }
             "pane.read" => {
-                let lines = params.get("lines").and_then(|v| v.as_u64()).map(|n| n as u32);
+                let lines = params
+                    .get("lines")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
                 match self.cli_read(param_str(params, "pane").as_deref(), lines) {
                     Ok(text) => (Ok(serde_json::json!({ "text": text })), Task::none()),
                     Err(e) => (Err(e), Task::none()),
@@ -964,14 +970,18 @@ impl App {
     }
 
     fn cli_rm(&mut self, q: &str) -> Result<Task<Msg>, String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let id = workspace::resolve_workspace(&self.workspaces, q)?
+            .id
+            .clone();
         self.drop_armed = Some(id.clone());
         Ok(self.close_workspace(&id))
     }
 
     fn cli_pane_list(&self, workspace: Option<&str>) -> Result<serde_json::Value, String> {
         let id = match workspace {
-            Some(q) => workspace::resolve_workspace(&self.workspaces, q)?.id.clone(),
+            Some(q) => workspace::resolve_workspace(&self.workspaces, q)?
+                .id
+                .clone(),
             None => self.selected.clone(),
         };
         if id.is_empty() {
@@ -989,7 +999,9 @@ impl App {
 
     fn cli_pane_id(&self, pane: Option<&str>) -> Result<String, String> {
         if let Some(q) = pane {
-            return Ok(workspace::resolve_workspace(&self.workspaces, q)?.id.clone());
+            return Ok(workspace::resolve_workspace(&self.workspaces, q)?
+                .id
+                .clone());
         }
         if !self.selected.is_empty() {
             return Ok(self.selected.clone());
@@ -1150,9 +1162,7 @@ impl App {
             return Task::none();
         }
         if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
-            key,
-            physical_key,
-            ..
+            key, physical_key, ..
         }) = &event
         {
             self.apply_modifier_key(key, physical_key, false);

@@ -1,10 +1,10 @@
 # sola-agent-terminal — a native, Orca-shaped workspace tool
 
 **Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Persist + spawn sibling into `.worktrees/` landed.  
-**Name:** `sola-agent-terminal` (working title).  
+**Name:** `sola-workspaces` (locked 2026-08-14; this file keeps the research title).  
 **Out of scope by request:** `crates/sola-agent` (ACP / Grok-leader chat). That crate is a different product and is not a starting point.  
 **Living focus pointer:** root [`CURRENT.md`](../../CURRENT.md) **Now** item 1 (this branch).  
-**Session rule:** [`.grok/rules/agent-terminal-design.md`](../../.grok/rules/agent-terminal-design.md).
+**Session rule:** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md).
 
 This note is a research-backed sketch: what Orca actually is, what `sola-terminal` already is, and a *small* first version that keeps the parts that feel great and drops the rest.
 
@@ -12,11 +12,11 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows gone.
 
-**Next:** dogfood `solactl at`. No `sat` binary. Remaining D4: name, Claude hooks.
+**Next:** dogfood `solactl ws`. No `sat` binary. Remaining D4: Claude hooks.
 
 **Decided here (not still a fork):**
 
-- **Spawn sibling** is a v1 verb — UI and `solactl at workspace.spawn`. `--prompt` is the CLI handoff.
+- **Spawn sibling** is a v1 verb — UI and `solactl ws workspace.spawn`. `--prompt` is the CLI handoff.
 - **Design law** below is mandatory for every UI slice of this app.
 
 ---
@@ -236,10 +236,10 @@ Lineage is **visual metadata**, not a scheduler: a child row indents under its p
 
 `--prompt` / `--prompt-file` on spawn *is* the handoff. Do not build ask/reply.
 
-### 5. A tiny CLI (`solactl at`)
+### 5. A tiny CLI (`solactl ws`)
 
-As-built: sola-call owner `at`. No `sat` binary. Sketch below is the original
-command list; names map to `solactl at <method>`.
+As-built (2026-08-14): sola-call owner `ws`. No `sat` binary. Sketch below is
+the original command list; names map to `solactl ws <method>`.
 
 Agents already know how to call `orca`. Give them a smaller surface, Unix-socket to the running app (same pattern as Orca’s runtime client, but talking to a Sola process).
 
@@ -381,5 +381,5 @@ These are product forks, not things to invent in an ideas file:
 | Status perf lesson | `docs/reference/renderer-agent-status-performance.md` |
 | sola-terminal engine | `crates/sola-terminal/src/{emulator,pty,term_view,state,tmux,sidebar}.rs` |
 | Kit status dots | `crates/sola-kit/src/components/sidebar.rs` (`SidebarIndicator`) — starting point, not law |
-| Design skills | `.grok/skills/impeccable`, frontend-design; rule `.grok/rules/agent-terminal-design.md` |
+| Design skills | `.grok/skills/impeccable`, frontend-design; rule `.grok/rules/workspaces-design.md` |
 | Tab persist (do not reuse) | `crates/sola-bus/src/topics.rs` (`TerminalSession`) |

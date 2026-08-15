@@ -71,7 +71,7 @@ impl Shell {
     // Real handlers
     // -------------------------------------------------------------------------
 
-    /// Menubar toast from another app (e.g. agent-terminal done-while-unfocused).
+    /// Menubar toast from another app (e.g. Workspaces done-while-unfocused).
     fn on_app_toast(&mut self, t: AppToast) -> Task<Msg> {
         let text = t.text.trim();
         if text.is_empty() {

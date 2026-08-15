@@ -1,8 +1,8 @@
-//! Advertised sola-call methods for owner `at`.
+//! Advertised sola-call methods for owner `ws`.
 
 use sola_call::{ArgSpec, ArgType, MethodSpec};
 
-pub const OWNER: &str = "at";
+pub const OWNER: &str = "ws";
 
 pub fn methods() -> Vec<MethodSpec> {
     vec![
@@ -78,13 +78,7 @@ fn flag(name: &str, short: char, help: &str) -> ArgSpec {
     arg(name, false, ArgType::Bool, Some(short), help)
 }
 
-fn arg(
-    name: &str,
-    required: bool,
-    ty: ArgType,
-    short: Option<char>,
-    help: &str,
-) -> ArgSpec {
+fn arg(name: &str, required: bool, ty: ArgType, short: Option<char>, help: &str) -> ArgSpec {
     ArgSpec {
         name: name.into(),
         long: Some(name.into()),

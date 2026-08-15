@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13  
 **Status:** **Frozen** — infrastructure + compositor/session + kit helper in this worktree; dogfood after install  
-**Related:** [bus freeze](2026-04-09-sola-bus-design.md); agent-terminal freeze (other worktree, evidence only); [architecture](../architecture.md); **D3** confirm-policy in [open-questions](../open-questions.md)
+**Related:** [bus freeze](2026-04-09-sola-bus-design.md); Workspaces freeze (other worktree, evidence only); [architecture](../architecture.md); **D3** confirm-policy in [open-questions](../open-questions.md)
 
 ## Intent
 
@@ -22,7 +22,7 @@ Do **not** put request/response on the bus. Do **not** grow per-app sockets (`sa
 | River on the CLI | **`compositor`**, not `river` |
 | Trust | Local-user Unix socket `0600`, same as the bus |
 | Confirm / ACL | **Not in v1.** See **D3** (cousin of D1). Do not invent |
-| `sat` | **Declined.** Face is `solactl at …` only. |
+| `sat` | **Declined.** Face is `solactl ws …` only. |
 | `eval` | Remove. WebView / `Topic::Evaluate` is dead |
 
 ## Planes
@@ -100,7 +100,7 @@ These are real follow-ups. Not v1 blockers.
 | **MCP adapter** | Translator in front of the Sola protocol so Grok attaches as it already knows. Not the internal contract. |
 | **D3 confirm / ACL** | Which methods need a human in the loop; who owns the prompt. Cousin of D1. |
 | **Catalog sticky on the bus** | `sola-call` could emit live owners as a fact so monitor can audit without speaking RPC. |
-| **`sat` alias** | **Declined (2026-08-14).** Workspaces face is `solactl at …`. |
+| **`sat` alias** | **Declined (2026-08-14).** Workspaces face is `solactl ws …`. |
 | **`LaunchResult`** | Leftover reply on the bus. `LaunchApp` stays an announcement (launcher → session). Session already replies on the call for `session.launch`. Shell “Opening…” toast still listens to `LaunchResult`. Move that toast to a call or keep the fact. |
 | **`CloseApp` as call** | Meta+Q is still a bus poke. Could be `session.close` with a real error. |
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |
@@ -108,7 +108,7 @@ These are real follow-ups. Not v1 blockers.
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
 | **Monitor UI** | Show live owners/methods (needs catalog sticky or a call). |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
-| **Agent-terminal methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Resume in the `sola-agent-terminal` worktree. |
+| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws` on this branch. |
 
 **Dropped in this slice (were fake request/reply on the bus):** `Evaluate` / `Evaluation`, `CaptureScreen` / `Screenshot`, `SimulatePointer` / `SimulateKey`. Payload types `CaptureScreenPayload`, `CaptureTarget`, `PointerAction`, `PointerButton` remain for the call path.
 

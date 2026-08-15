@@ -47,10 +47,10 @@ rows for feature-level progress.
 **Status: partial**
 
 - Terminal iced, browser CEF, agent ACP, mail kit, preview, kvm  
-- `sola-call` on master; `sola-agent-terminal` persist/spawn/call methods
+- `sola-call` on master; `sola-workspaces` persist/spawn/call methods
   on this branch (not on master)
 
-**Remaining:** agent-terminal dogfood + rename/recolor/reorder; agent UI
+**Remaining:** Workspaces dogfood + rename/recolor/reorder; agent UI
 backlog; browser chrome completeness; mail polish; kvm input ACL
 permanence; preview zoom/clipboard.
 

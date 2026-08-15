@@ -45,9 +45,7 @@ pub fn is_git_checkout(path: &Path) -> bool {
         .args(["-C", dir, "rev-parse", "--is-inside-work-tree"])
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim() == "true"
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "true",
         _ => false,
     }
 }
@@ -93,8 +91,7 @@ pub fn add_worktree(root: &Path, slug: &str) -> Result<PathBuf, String> {
     if dest.exists() {
         return Err(format!("{} already exists", dest.display()));
     }
-    fs::create_dir_all(worktree_base(root))
-        .map_err(|e| format!("create .worktrees: {e}"))?;
+    fs::create_dir_all(worktree_base(root)).map_err(|e| format!("create .worktrees: {e}"))?;
     ensure_worktrees_ignored(root)?;
 
     let dest_s = dest
@@ -154,7 +151,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("sat-spawn-{nanos}-{n}"));
+        let dir = std::env::temp_dir().join(format!("ws-spawn-{nanos}-{n}"));
         fs::create_dir_all(&dir).unwrap();
         run(&dir, &["git", "init", "-q"]);
         run(&dir, &["git", "config", "user.email", "t@t"]);
@@ -214,7 +211,7 @@ mod tests {
     #[test]
     fn add_worktree_requires_git() {
         let dir = std::env::temp_dir().join(format!(
-            "sat-nongit-{}",
+            "ws-nongit-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

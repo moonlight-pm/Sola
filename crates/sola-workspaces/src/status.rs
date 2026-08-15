@@ -130,9 +130,7 @@ impl PaneStatus {
 }
 
 fn last_status_path() -> PathBuf {
-    sola_core::config::sola_config_dir()
-        .join("agent-terminal")
-        .join("last-status.json")
+    crate::paths::config_dir().join("last-status.json")
 }
 
 #[derive(Serialize, Deserialize)]

@@ -10,13 +10,13 @@ use sola_kit::components::{
     DividerColors, SidebarHoverAction, SidebarItem, SidebarPanel, SidebarSection,
 };
 
+use crate::Msg;
 use crate::spawn;
 use crate::workspace::{self, Kind, Project, Workspace};
-use crate::Msg;
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
-pub const SPAWN_INPUT_ID: &str = "sat-spawn-name";
-pub const ADD_INPUT_ID: &str = "sat-add-path";
+pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
+pub const ADD_INPUT_ID: &str = "ws-add-path";
 
 pub struct SidebarState {
     pub width: f32,
@@ -118,7 +118,8 @@ pub fn view<'a>(
         b: term_bg,
     };
 
-    let mut panel = SidebarPanel::new(sections).item_hover(state.hovered.clone(), Msg::HoverSidebar);
+    let mut panel =
+        SidebarPanel::new(sections).item_hover(state.hovered.clone(), Msg::HoverSidebar);
     if projects.is_empty() {
         panel = panel.footer(empty_footer());
     }
@@ -133,12 +134,10 @@ pub fn view<'a>(
 }
 
 fn empty_footer<'a>() -> Element<'a, Msg> {
-    container(
-        kit_btn::labeled_sm("Add project", kit_btn::ghost).on_press(Msg::OpenAdd),
-    )
-    .padding(10)
-    .width(Length::Fill)
-    .into()
+    container(kit_btn::labeled_sm("Add project", kit_btn::ghost).on_press(Msg::OpenAdd))
+        .padding(10)
+        .width(Length::Fill)
+        .into()
 }
 
 /// Dim overlay + name-only spawn card. Click the veil to dismiss.
@@ -202,8 +201,7 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
                     draft.error.as_deref(),
                 )
                 .padding(0),
-                sola_kit::components::text::caption(hint)
-                    .style(sola_kit::components::text::muted),
+                sola_kit::components::text::caption(hint).style(sola_kit::components::text::muted),
                 row![
                     iced::widget::Space::new().width(Length::Fill),
                     kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),
@@ -236,8 +234,10 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
                     draft.error.as_deref(),
                 )
                 .padding(0),
-                sola_kit::components::text::caption("A git checkout. Workspaces land in .worktrees/")
-                    .style(sola_kit::components::text::muted),
+                sola_kit::components::text::caption(
+                    "A git checkout. Workspaces land in .worktrees/"
+                )
+                .style(sola_kit::components::text::muted),
                 row![
                     iced::widget::Space::new().width(Length::Fill),
                     kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),

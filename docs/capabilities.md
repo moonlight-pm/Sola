@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-14 (agent-terminal on sola-call; no sat bin)
+**As of:** 2026-08-14 (sola-workspaces on sola-call owner `ws`)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -23,7 +23,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | supervisor | Process manager launches/restarts components | shipped | architecture | local TTY | Policy for crash loops / backoff polish | partial |
 | bus | Unix-socket event bus + stickies | shipped | [persistent bus](specs/2026-04-24-persistent-bus-design.md) | local | Sticky surface still expanding; see bus freezes | partial |
-| call | Request/reply host + `solactl compositor`/`session` + kit helper | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code; install dogfood pending | **Gaps:** not installed yet; no MCP; confirm is **D3**; no catalog sticky; agent-terminal registers `at` on this branch (unsmoked); `LaunchResult` still a bus reply | partial |
+| call | Request/reply host + `solactl compositor`/`session` + kit helper | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code; install dogfood pending | **Gaps:** not installed yet; no MCP; confirm is **D3**; no catalog sticky; Workspaces registers `ws` on this branch (unsmoked); `LaunchResult` still a bus reply | partial |
 | bus-reconnect | Apps survive bus restart | shipped | seamless restart freezes | local (menubar framed after restart) | Broader app-menu re-publish edge cases | no |
 | river-bridge | sola-river ↔ River Wayland | shipped | [river design](specs/2026-04-16-sola-river-design.md) | local | Layer-shell / exclusive focus quirks; skip re-`focus_window` when already focused (FFM flash mitigation) | partial |
 | session-mgr | sola-session spawn/close/reap | shipped | [session](specs/2026-04-17-sola-session-design.md) | local | Persistence depth varies by app | no |
@@ -47,7 +47,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | shell-switcher | MRU switcher | shipped | [switcher](specs/2026-04-09-switcher-design.md) | local | Switcher post-confirm FFM holdoff unmerged | no |
 | shell-ffm | Focus-follows-mouse (dwell, no raise) | shipped | river + shell iced | local | Title-only Windows + Composition/chord dedup on `naturalethic/focus-flashing` (hygiene). Reported “Orca panel flash” reclassified to Orca/Grok pane UI, not shell | no |
 | shell-zoning | Zone assignments | partial | zones + floating freezes | local | Opt-in snaps + restore; unassigned windows no longer force full frame | no |
-| shell-float | Floating windows | partial | [floating](specs/2026-06-24-floating-windows-design.md) | local | **Default for unassigned windows** (app size + `WindowFloating`); Meta-drag shipped; kit CSD (`FloatState` + `floating_frame`) on monitor, settings, preview, mail, agent, terminal, agent-terminal, kit storybook, browser | partial |
+| shell-float | Floating windows | partial | [floating](specs/2026-06-24-floating-windows-design.md) | local | **Default for unassigned windows** (app size + `WindowFloating`); Meta-drag shipped; kit CSD (`FloatState` + `floating_frame`) on monitor, settings, preview, mail, agent, terminal, workspaces, kit storybook, browser | partial |
 | shell-opening-toast | “Opening …” menubar toast | shipped | — | local | — | no |
 | shell-custom | Shell chrome tokens | partial | [shell customization](specs/2026-06-06-shell-customization-design.md) | storybook Shell page | Not all chrome uses tokens | no |
 | app-hidden | Composition hide for apps (`Topic::AppHidden`) + menubar restore chips | partial | — | code; install dogfood pending | **Gaps:** only app_id key (Steam id variants); no animation; switcher still lists hidden | partial |
@@ -62,8 +62,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | settings | Settings panel (theme, apps, mail cfg, …) | partial | [settings](specs/2026-04-19-sola-settings-design.md), apps list-detail | local | Applications UX still evolving; not all pages kit-parity | no |
 | terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab strip uses kit etch at **Large** density (reorder + 1…9 kept). Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
 | browser | sola-browser chrome + CEF (single crate) | partial | [cef port](specs/2026-05-04-cef-port-design.md); [profiles D8](specs/2026-08-10-sola-browser-profiles-design.md); [create login](specs/2026-08-13-sola-browser-vault-create-login-design.md); [manual](manual/sola-browser.md) | local: one iced window (`app_id=sola-browser`); per-profile headless `--engine` helpers; instant Profiles switch; YouTube persists; Bitwarden unlock/fill + Create login; passkey get (Google) | **Gaps:** passkey registration deferred; tab strip kit Large (install dogfood pending); manual still limited | partial |
-| agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only. **Not** the starting point for agent-terminal. | no |
-| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md), [call plane](specs/2026-08-13-sola-call-plane-design.md) | hooks + reattach smoked; spawn UI / `solactl at` await install | **Gaps:** no rename/recolor/reorder; drop does not `git worktree remove`; Claude presence-only. Distinct from `sola-agent`. | no |
+| agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only. **Not** the starting point for Workspaces. | no |
+| workspaces | sola-workspaces: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md), [call plane](specs/2026-08-13-sola-call-plane-design.md) | hooks + reattach smoked (old `sat-` names); spawn UI / `solactl ws` await install | **Gaps:** no rename/recolor/reorder; drop does not `git worktree remove`; Claude presence-only. Distinct from `sola-agent`. | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
 | preview | sola-preview + selection capture | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Zoom; image clipboard; solactl --region | no |
@@ -98,7 +98,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **agent-terminal** | 2026-08-14: Workspaces methods on sola-call owner `at`; face is `solactl at` (no `sat` bin) |
+| **workspaces** | 2026-08-14: renamed from sola-agent-terminal; owner `ws` (`solactl ws`); config `~/.config/sola/workspaces/` |
 | **call plane** | 2026-08-14: `sola-call` host; `solactl compositor`/`session`; kit `CallSetup`; shell screenshot via call; bus `Evaluate`/`CaptureScreen`/`Screenshot`/`Simulate*` removed |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |

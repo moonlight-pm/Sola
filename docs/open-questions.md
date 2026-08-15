@@ -85,22 +85,22 @@ WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
 **CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
 comparison warrants a second engine.
 
-### D4 — sola-agent-terminal product forks (P2)
+### D4 — sola-workspaces product forks (P2)
 
 **Context:** Freeze is in; persist + spawn landed. Call plane owns fail-if-down
-(was old D3.3). Remaining forks are display name and Claude hooks.
+(was old D3.3). Remaining fork is Claude hooks.
 
 **Ask:**
 
-1. Display name / window title (`Workspaces` is interim)?  
+1. ~~Display name / window title~~ **decided 2026-08-14:** crate / app id `sola-workspaces`; window **Workspaces**; owner `ws`; tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`.  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
 4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
 
-**Until decided:** use freeze **Interim** table for (1)(4). Do not invent
+**Until decided:** use freeze **Interim** table for (4). Do not invent
 Claude hook policy.
 
-**Related:** `agent-terminal` capability;
+**Related:** `workspaces` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
 
 ---
@@ -109,11 +109,12 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
-| 2026-08-14 | agent-terminal | No `sat` binary. Face is `solactl at …` only. | CURRENT + freeze |
+| 2026-08-14 | D4.1 | Product is `sola-workspaces`. Owner `ws` (`solactl ws …`). Tmux `sola-ws` / `sws-`. Config `~/.config/sola/workspaces/`. | CURRENT + freeze + PRODUCT |
+| 2026-08-14 | workspaces | No `sat` binary. Face is `solactl ws …` only. | CURRENT + freeze |
 | 2026-08-14 | Call plane | Third plane `sola-call`; fail if owner down; `solactl` face is `compositor`/`session` (not `call 'sig'`); advertise for unknown apps; MCP later; confirm is **D3** | [freeze](specs/2026-08-13-sola-call-plane-design.md), CURRENT, architecture, capabilities |
-| 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. Product forks now **D4** (D3 taken by call plane). | freeze + CURRENT + D4 |
+| 2026-08-13 | workspaces | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. Product forks now **D4** (D3 taken by call plane). | freeze + CURRENT + D4 |
 | 2026-08-13 | D4.2 | Worktrees live in `<project-root>/.worktrees/<name>`. Not `~/orca/workspaces/…`, not sibling-of-main. | freeze + CURRENT + PRODUCT |
-| 2026-08-13 | agent-terminal | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D4 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
+| 2026-08-13 | workspaces | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D4 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
 | 2026-08-13 | Unified sidebar | Terminal density Large; keep `Row` name + redefault to etch; browser divider via `SidebarPanel::resizable_with`; settings/mail/preview lose selection-teal | unified-sidebar freeze + plan, CURRENT, capabilities |
 | 2026-08-13 | Browser OSR | IME + Shift+wheel + `<select>` PET_POPUP dogfooded; passkey **registration** deferred until needed | CURRENT, capabilities, manual |
 | 2026-08-13 | Browser vault | Create login: save Bitwarden cipher first, then fill; always available on unlocked card; last username + generated password + bare apex URL | create-login freeze, CURRENT, capabilities, manual |

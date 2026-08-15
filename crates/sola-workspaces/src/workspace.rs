@@ -12,7 +12,7 @@ use crate::spawn;
 use crate::status::AgentStatus;
 
 /// Stable pane / tmux id for a project's main checkout. Must stay
-/// `ws-main` so the smoked `sat-ws-main` session reattaches.
+/// `ws-main` so the smoked `sws-ws-main` session reattaches.
 pub const LIVE_ID: &str = "ws-main";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,9 +69,7 @@ impl Catalog {
 }
 
 fn catalog_path() -> PathBuf {
-    sola_core::config::sola_config_dir()
-        .join("agent-terminal")
-        .join("catalog.json")
+    crate::paths::config_dir().join("catalog.json")
 }
 
 pub fn load() -> Catalog {
@@ -107,7 +105,7 @@ pub fn save(catalog: &Catalog) {
 }
 
 /// If the stable main session is missing, rename the most recently
-/// active orphan `sat-*` session onto it. Returns the previous pane
+/// active orphan `sws-*` session onto it. Returns the previous pane
 /// id (so hooks from a still-running Grok still match) or `None`.
 pub fn adopt_orphan_session() -> Option<String> {
     let want = sola_terminal::tmux::session_name(LIVE_ID);
@@ -174,7 +172,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
 
 /// Reuse `ws-main` only when that tmux session is free or already in
 /// this checkout. Stops a first-added other project from stealing the
-/// smoked `sat-ws-main` pane.
+/// smoked `sws-ws-main` pane.
 pub fn main_workspace_id(root: &Path, taken: &HashSet<String>) -> String {
     if !taken.contains(LIVE_ID) {
         let session = sola_terminal::tmux::session_name(LIVE_ID);
@@ -236,10 +234,7 @@ pub fn lineage_depth(ws: &Workspace, all: &[Workspace]) -> u8 {
 }
 
 /// Main first, then each parent's children, then remaining by name.
-pub fn ordered_for_project<'a>(
-    project_id: &str,
-    all: &'a [Workspace],
-) -> Vec<&'a Workspace> {
+pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Workspace]) -> Vec<&'a Workspace> {
     let mine: Vec<&Workspace> = all.iter().filter(|w| w.project_id == project_id).collect();
     let mut out = Vec::with_capacity(mine.len());
     let mut seen = HashSet::new();
@@ -341,21 +336,21 @@ mod tests {
 
     #[test]
     fn pick_orphan_skips_when_stable_exists() {
-        let want = "sat-ws-main";
-        let listed = vec![(want.to_string(), 10), ("sat-old".into(), 99)];
+        let want = "sws-ws-main";
+        let listed = vec![(want.to_string(), 10), ("sws-old".into(), 99)];
         assert!(pick_orphan(&listed, want).is_none());
     }
 
     #[test]
     fn pick_orphan_takes_newest() {
         let listed = vec![
-            ("sat-aaa".into(), 10),
-            ("sat-bbb".into(), 50),
-            ("sat-ccc".into(), 20),
+            ("sws-aaa".into(), 10),
+            ("sws-bbb".into(), 50),
+            ("sws-ccc".into(), 20),
         ];
         assert_eq!(
-            pick_orphan(&listed, "sat-ws-main").as_deref(),
-            Some("sat-bbb")
+            pick_orphan(&listed, "sws-ws-main").as_deref(),
+            Some("sws-bbb")
         );
     }
 

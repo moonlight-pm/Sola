@@ -46,10 +46,10 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling (UI: name only; `solactl at workspace.spawn` can pass
+spawn sibling (UI: name only; `solactl ws workspace.spawn` can pass
 `--agent grok` + `--prompt`), Grok hooks + OSC 9999 + process-tree
-presence, sola-call owner `at` (`solactl at …`), tmux persist
-on socket `sola-at`, done-while-unfocused menubar toast.
+presence, sola-call owner `ws` (`solactl ws …`), tmux persist
+on socket `sola-ws`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.
@@ -57,12 +57,12 @@ agent support. Other CLIs are presence-only until Grok status is trustworthy.
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters.
 
-**Undecided (do not invent):** display name, Claude hook installer vs
-presence. App-down is fail (call plane).
+**Undecided (do not invent):** Claude hook installer vs presence. App-down
+is fail (call plane).
 
 ## Brand Commitments
 
-- Crate / app id: `sola-agent-terminal` (working title)
+- Crate / app id: `sola-workspaces`. Window title: **Workspaces**.
 - Design law: impeccable Operate + frontend-design before UI; kit may be refined
 - Theme rides the Sola bus; do not silently restyle other apps
 - Voice: operator-plain. “Spawn sibling,” “working,” “done.” No marketplace copy
@@ -73,7 +73,7 @@ presence. App-down is fail (call plane).
 - Freeze: `docs/specs/2026-08-13-sola-agent-terminal-design.md`
 - Incumbent grid: `crates/sola-terminal`
 - Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `status_mark`, `SidebarPanel`)
-- Surface record: `crates/sola-agent-terminal/DESIGN.md` (status chrome)
+- Surface record: `crates/sola-workspaces/DESIGN.md` (status chrome)
 - Grok hooks: `~/.grok/hooks/sola-status.json` (do not touch `orca-status.json`)
 - No customer quotes, screenshots of this app, or usage stats. Do not fabricate.
 

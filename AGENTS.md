@@ -91,8 +91,8 @@ crates/
   sola-settings/       # Settings panel (incl. mail config)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
-  sola-agent-terminal/ # Project / workspace rail + agent-aware PTYs (this branch)
-  sola-agent/          # Coding agent (iced + ACP / Grok leader) — not agent-terminal
+  sola-workspaces/     # Project / workspace rail + agent-aware PTYs (this branch)
+  sola-agent/          # Coding agent (iced + ACP / Grok leader) — not Workspaces
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Image preview / selection capture
@@ -256,7 +256,7 @@ their own direct deps just to spell trait bounds or reference bus types).
   changes, so `cargo make install` picks up new code live; skipped when
   `SOLA_NO_SELF_WATCH=1`).
 - **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
-  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("at", methods).install()`
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("ws", methods).install()`
   Advertises call-plane methods; fold `call_subscription()` into iced. Or use
   `CallSetup::new(owner, app_id).methods(…).install()` alone.
   hands the connected client to the kit's global slot.

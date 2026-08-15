@@ -16,16 +16,16 @@ pub struct HookPaths {
 
 impl HookPaths {
     pub fn live() -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
         let grok_root = std::env::var_os("GROK_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".grok"));
         Self {
             grok_hooks_dir: grok_root.join("hooks"),
-            script_path: sola_core::config::sola_config_dir()
-                .join("agent-terminal")
-                .join(SCRIPT_NAME),
-            socket_path: sola_core::env::runtime_dir().join("sola-at-hooks.sock"),
+            script_path: crate::paths::config_dir().join(SCRIPT_NAME),
+            socket_path: sola_core::env::runtime_dir().join("sola-ws-hooks.sock"),
         }
     }
 }
@@ -61,9 +61,9 @@ fi
 if [ -z "$SOLA_PANE_ID" ]; then
   exit 0
 fi
-sock="${SOLA_AT_HOOKS_SOCK:-}"
+sock="${SOLA_WS_HOOKS_SOCK:-}"
 if [ -z "$sock" ]; then
-  sock="${XDG_RUNTIME_DIR:-/tmp}/sola-at-hooks.sock"
+  sock="${XDG_RUNTIME_DIR:-/tmp}/sola-ws-hooks.sock"
 fi
 if [ ! -S "$sock" ]; then
   exit 0
@@ -116,11 +116,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("sola-at-hooks-{n}"));
+        let root = std::env::temp_dir().join(format!("sola-ws-hooks-{n}"));
         let paths = HookPaths {
             grok_hooks_dir: root.join("hooks"),
             script_path: root.join("bin").join(SCRIPT_NAME),
-            socket_path: root.join("sola-at-hooks.sock"),
+            socket_path: root.join("sola-ws-hooks.sock"),
         };
         (paths, root)
     }

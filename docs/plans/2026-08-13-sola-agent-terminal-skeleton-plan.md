@@ -1,5 +1,7 @@
 # Plan — sola-agent-terminal skeleton
 
+**Note (2026-08-14):** crate is now `sola-workspaces`. This checklist is historical.
+
 **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md)  
 **Slice:** build-order step 1 only.
 
