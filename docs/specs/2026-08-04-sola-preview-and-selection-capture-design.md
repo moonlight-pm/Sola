@@ -1,7 +1,7 @@
 # sola-preview + selection capture — Design
 
 **Date:** 2026-08-04  
-**Status:** approved (approach A); capture still as-built; **image destination moved to sola-paint** (2026-08-14)  
+**Status:** approved (approach A); capture still as-built; **screenshot dest is sola-preview** (paint is MIME / `solactl open` dest)  
 **Depends on:** `docs/specs/2026-07-20-screenshot-capture-plan.md` (screencopy live); [paint](2026-08-14-sola-paint-design.md)
 
 ## 1. Goal
@@ -73,6 +73,8 @@ Mirror `OpenUrl`:
 pub struct OpenImageRequest {
     pub path: PathBuf,
     pub activate: bool,
+    /// Screenshots set `sola-preview`. Missing / `sola-paint` is MIME dest.
+    pub app_id: Option<String>,
 }
 
 // Topic::OpenImage(OpenImageRequest)
@@ -131,7 +133,7 @@ on_screenshot Ok(path):
   toast "Screenshot saved: …"
   if open_preview_on_next:
     if let Some(wid) = first window with app_id == "sola-preview":
-      Focus(wid); OpenImage { path, activate: true }
+      raise (no keyboard steal); OpenImage { path, activate: false, app_id: preview }
     else:
       LaunchApp { app_id: "sola-preview",
                   command: "/opt/sola/bin/sola-preview <path>" }

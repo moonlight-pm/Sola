@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-15 (sola-paint + kit FilePicker)
+**As of:** 2026-08-15 (paint singleton + zoom/pan; screenshots stay on preview)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -65,8 +65,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
-| preview | sola-preview (standalone argv viewer) | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | No longer the screenshot/MIME dest (paint is). Gaps: zoom; image clipboard | no |
-| paint | sola-paint default image viewer/editor | partial | [paint](specs/2026-08-14-sola-paint-design.md); [manual](manual/sola-paint.md) | local (`paint`+`kit` installed; FilePicker dogfooded) | **Gaps:** no single-instance; no zoom/pan; no clipboard image; crop/rotate/flip/save only; screenshot dest needs `install shell` | partial |
+| preview | sola-preview (screenshot + argv viewer) | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Screenshot dest again (`OpenImage` with `app_id=sola-preview`). MIME / `solactl open` stay on paint. Gaps: zoom; image clipboard; no single-instance | no |
+| paint | sola-paint default image viewer/editor | partial | [paint](specs/2026-08-14-sola-paint-design.md); [manual](manual/sola-paint.md) | local (`paint` installed; tab persist needs reinstall) | Single-instance + zoom/pan + tab persist (`PaintSession`). **Gaps:** no clipboard image; unsaved buffers not persisted; crop/rotate/flip/save only | partial |
 | kvm | sola-kvm Linux↔Mac | partial | [kvm](specs/2026-07-27-sola-kvm-design.md), clipboard | dual-host | Permanent input ACL; clipboard L2; warp cost; Mac scroll is CG velocity gain (not true HID accel) — tune on desk | partial |
 | solactl | Operator CLI (clap owners + live extras) | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md); [manual](manual/solactl.md) | code | `open` → sola-browser (http/s) or sola-paint (image path). **Gaps:** `eval` removed; screenshot/apps/input live under `compositor`; install dogfood pending | yes |
 
@@ -78,7 +78,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | macos-look | macOS dark chrome density/materials | partial | [look roadmap](specs/2026-07-20-macos-look-and-feel-roadmap.md), [design language](manual/design-language.md) | local | Phase program incomplete | partial |
 | design-language | Documented visual law | partial | [design-language](manual/design-language.md) | — | Not all apps comply | yes |
-| screenshot | Capture + handoff to paint | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md); [call plane](specs/2026-08-13-sola-call-plane-design.md); [paint](specs/2026-08-14-sola-paint-design.md) | local (bus pair retired; shell + `solactl compositor screenshot` use call; dest is sola-paint) | **Gaps:** install dogfood pending; multi-output | no |
+| screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md); [call plane](specs/2026-08-13-sola-call-plane-design.md); [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local (bus pair retired; shell + `solactl compositor screenshot` use call; dest is sola-preview) | **Gaps:** install dogfood pending if dest was flipped to paint; multi-output | no |
 | doc-truth | Progress + manual match as-built | partial | [progress-model](progress-model.md) | — | Freeze headers not backfilled; vault stale | n/a |
 
 ---
@@ -98,7 +98,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-paint** | 2026-08-14: first-pass kit app; default MIME/`OpenImage`/screenshot dest; crop/rotate/flip/save; left tab strip; kit FilePicker |
+| **sola-paint** | 2026-08-15: tab persist (`PaintSession`); singleton + zoom/pan; screenshots stay on preview. 2026-08-14: first-pass kit app; default MIME dest; crop/rotate/flip/save; left tab strip; kit FilePicker |
 | **call plane** | 2026-08-14: `sola-call` host; `solactl compositor`/`session`; kit `CallSetup`; shell screenshot via call; bus `Evaluate`/`CaptureScreen`/`Screenshot`/`Simulate*` removed |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |

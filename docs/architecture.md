@@ -69,8 +69,8 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
-| `crates/sola-preview` | Standalone argv image viewer |
-| `crates/sola-paint` | Default image viewer/editor (MIME, `OpenImage`, screenshots) |
+| `crates/sola-preview` | Screenshot + standalone argv image viewer |
+| `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |

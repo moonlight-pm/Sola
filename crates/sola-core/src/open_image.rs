@@ -9,9 +9,9 @@
 //! Spawns `/opt/sola/bin/sola-paint <path>` detached. Override the binary
 //! with `SOLA_PAINT`. No other image-app fallback.
 //!
-//! When sola-paint is already running, a second spawn still starts a new
-//! process (no single-instance handoff yet). Prefer bus `Topic::OpenImage`
-//! for in-session "open in existing window"; paint listens when it is up.
+//! A second spawn of sola-paint hands off via bus `Topic::OpenImage`
+//! (`app_id = sola-paint`) and exits. Screenshots target sola-preview
+//! instead (they set `OpenImage.app_id`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

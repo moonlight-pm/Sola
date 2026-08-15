@@ -9,16 +9,17 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-15 (sola-paint + kit FilePicker)
+**As of:** 2026-08-15 (paint singleton + zoom/pan; screenshots stay on preview)
 
 ---
 
 ## Now
 
-1. **sola-paint first pass (dogfoodable)** — default image dest; crop /
-   rotate / flip / save; left tabs; kit `FilePicker`. **Installed**
-   (`paint` + `kit`). Screenshot dest needs **shell** install. Gaps:
-   no single-instance, no zoom/pan, no clipboard image.
+1. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+   flip / save; left tabs; kit `FilePicker`; **single-instance** (second
+   spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
+   Stage cache + off-thread decode; tabs persist via `PaintSession`.
+   Reinstall `paint` to dogfood. Gaps: no clipboard image.
 2. **Call plane on master** — freeze
    [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md).
    Host `sola-call`; `solactl compositor` / `session`; kit `CallSetup`; shell
@@ -51,7 +52,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **master** + this worktree `naturalethic/sola-paint` | Feature work in worktrees / Orca workspaces |
-| Paint | Installed; FilePicker dogfooded (720px modal, fixed crumb band). Screenshots still old dest until `install shell` | — |
+| Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump); OSR IME + Shift+wheel + `<select>` dropdowns dogfooded; **default http(s) open** via sola-browser only (no Helium; install to re-register MIME; no single-instance yet) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |

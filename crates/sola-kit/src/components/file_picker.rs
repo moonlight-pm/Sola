@@ -647,7 +647,11 @@ fn list_dir(dir: &Path, filter: Option<&Filter>) -> Result<Vec<Entry>, String> {
             continue;
         }
         let path = ent.path();
-        let is_dir = path.is_dir();
+        // `file_type` is usually free (d_type); avoid a second stat per row.
+        let is_dir = ent
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or_else(|_| path.is_dir());
         if !is_dir && !matches_filter(&name, filter) {
             continue;
         }
@@ -688,17 +692,19 @@ fn matches_filter(name: &str, filter: Option<&Filter>) -> bool {
         .any(|want| ext.eq_ignore_ascii_case(want))
 }
 
+const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "tga",
+];
+
 fn is_image_name(name: &str) -> bool {
-    matches_filter(
-        name,
-        Some(&Filter {
-            label: String::new(),
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "tga"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-        }),
-    )
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            IMAGE_EXTS
+                .iter()
+                .any(|want| ext.eq_ignore_ascii_case(want))
+        })
 }
 
 pub(crate) fn human_size(bytes: u64) -> String {

@@ -1,11 +1,33 @@
 //! Open document: decoded pixels, iced handle, undo, save.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use iced::widget::image as iced_image;
+use iced::Vector;
 use ::image::{DynamicImage, ImageFormat, RgbaImage};
 
 const UNDO_CAP: usize = 8;
+
+/// Pixels decoded off the UI thread. [`Doc::from_loaded`] builds the handle.
+/// `Arc` so the iced `Message` clone does not copy the buffer.
+#[derive(Clone)]
+pub struct Loaded {
+    pub id: u64,
+    pub path: PathBuf,
+    pub pixels: Arc<RgbaImage>,
+}
+
+impl std::fmt::Debug for Loaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Loaded")
+            .field("id", &self.id)
+            .field("path", &self.path)
+            .field("width", &self.pixels.width())
+            .field("height", &self.pixels.height())
+            .finish()
+    }
+}
 
 pub struct Doc {
     pub id: u64,
@@ -13,22 +35,49 @@ pub struct Doc {
     pub pixels: RgbaImage,
     pub handle: iced_image::Handle,
     pub dirty: bool,
+    /// 1.0 = contain-fit. Per-doc so tab switches remember the view.
+    pub zoom: f32,
+    pub pan: Vector,
     undo: Vec<RgbaImage>,
 }
 
 impl Doc {
-    pub fn load(id: u64, path: PathBuf) -> Result<Self, String> {
+    /// Decode on a worker. Safe to call from `spawn_blocking`.
+    pub fn load_pixels(id: u64, path: PathBuf) -> Result<Loaded, String> {
         let dyn_img = ::image::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let pixels = dyn_img.to_rgba8();
-        let handle = handle_from(&pixels);
-        Ok(Self {
+        Ok(Loaded {
             id,
-            path: Some(path),
+            path,
+            pixels: Arc::new(dyn_img.to_rgba8()),
+        })
+    }
+
+    pub fn from_loaded(loaded: Loaded) -> Self {
+        let pixels = Arc::try_unwrap(loaded.pixels).unwrap_or_else(|a| (*a).clone());
+        let handle = handle_from(&pixels);
+        Self {
+            id: loaded.id,
+            path: Some(loaded.path),
             pixels,
             handle,
             dirty: false,
+            zoom: 1.0,
+            pan: Vector::ZERO,
             undo: Vec::new(),
-        })
+        }
+    }
+
+    pub fn load(id: u64, path: PathBuf) -> Result<Self, String> {
+        Ok(Self::from_loaded(Self::load_pixels(id, path)?))
+    }
+
+    pub fn reset_view(&mut self) {
+        self.zoom = 1.0;
+        self.pan = Vector::ZERO;
+    }
+
+    pub fn zoom_label(&self) -> String {
+        format!("{}%", (self.zoom * 100.0).round() as i32)
     }
 
     pub fn label(&self) -> String {
@@ -65,6 +114,7 @@ impl Doc {
         self.pixels = next;
         self.handle = handle_from(&self.pixels);
         self.dirty = true;
+        self.reset_view();
     }
 
     pub fn undo(&mut self) {
@@ -72,6 +122,7 @@ impl Doc {
             self.pixels = prev;
             self.handle = handle_from(&self.pixels);
             self.dirty = true;
+            self.reset_view();
         }
     }
 

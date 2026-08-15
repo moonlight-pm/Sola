@@ -59,7 +59,10 @@ pub fn builtin_apps() -> Vec<Application> {
             app_id: "sola-paint".into(),
             label: "Paint".into(),
             command: "/opt/sola/bin/sola-paint".into(),
-            icon: "lucide/paintbrush".into(),
+            // `brush` — simple 20px silhouette. Distinct from Preview
+            // (`image`) and Kit (`palette`). The detailed `paintbrush`
+            // glyph turns to noise at launcher density.
+            icon: "lucide/brush".into(),
         },
         Application {
             app_id: "sola-mail".into(),

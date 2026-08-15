@@ -15,3 +15,4 @@ sola-core = { path = "../sola-core" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image", "svg", "canvas"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 tracing = "0.1"
+tokio = { version = "1", features = ["rt"] }

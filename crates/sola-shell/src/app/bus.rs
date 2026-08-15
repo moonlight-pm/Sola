@@ -259,7 +259,7 @@ impl Shell {
         // back to the next MRU app — or clear the menubar if none remain —
         // then the same pointer resync applies.
         //
-        // Screenshot cold-launch of sola-paint sets `suppress_map_focus_for`
+        // Screenshot cold-launch of sola-preview sets `suppress_map_focus_for`
         // so we raise the window in MRU/composition without taking the seat
         // (keyboard stays on the app that was focused when the chord fired).
         let prev_focused = self.focused_window_id;
@@ -564,7 +564,7 @@ impl Shell {
 
     /// Screenshot capture finished (`compositor.screenshot` reply).
     /// When the capture was shell-initiated (`open_preview_on_next`), also
-    /// open/raise sola-paint with the image **without** stealing keyboard
+    /// open/raise sola-preview with the image **without** stealing keyboard
     /// (macOS-style: show the shot, keep typing in the previous app).
     pub(crate) fn on_screenshot_done(
         &mut self,
@@ -600,18 +600,18 @@ impl Shell {
         toast_task
     }
 
-    /// Open/raise sola-paint with `path`. Raises in the stack so the
+    /// Open/raise sola-preview with `path`. Raises in the stack so the
     /// shot is visible, but does **not** take keyboard focus — the caller
     /// reasserts `screenshot_return_focus` afterward.
     fn open_or_raise_preview(&mut self, path: &std::path::Path) {
-        const PAINT_ID: &str = "sola-paint";
-        let paint_wid = self
+        const PREVIEW_ID: &str = "sola-preview";
+        let preview_wid = self
             .known_windows
             .iter()
-            .find(|w| w.app_id == PAINT_ID)
+            .find(|w| w.app_id == PREVIEW_ID)
             .map(|w| w.window_id);
 
-        if let Some(window_id) = paint_wid {
+        if let Some(window_id) = preview_wid {
             // activate:false — viewer should load the image but not
             // demand seat focus (shell keeps keyboard on the prior app).
             //
@@ -623,25 +623,26 @@ impl Shell {
                 let _ = bus.emit(Topic::OpenImage(OpenImageRequest {
                     path: path.to_path_buf(),
                     activate: false,
+                    app_id: Some(PREVIEW_ID.into()),
                 }));
             }
-            // Raise via MRU so composition puts paint on top.
-            self.mru_apps.retain(|id| id != PAINT_ID);
-            self.mru_apps.insert(0, PAINT_ID.to_string());
+            // Raise via MRU so composition puts preview on top.
+            self.mru_apps.retain(|id| id != PREVIEW_ID);
+            self.mru_apps.insert(0, PREVIEW_ID.to_string());
             self.mru_window_by_app
-                .insert(PAINT_ID.to_string(), window_id);
+                .insert(PREVIEW_ID.to_string(), window_id);
             self.emit_composition();
         } else {
             // sola-session splits the command on whitespace (no shell).
             // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
             // no spaces — so a bare path is safe.
             // Suppress the normal "new app maps → steal focus" path so
-            // the cold-start paint window doesn't yank the keyboard.
-            self.suppress_map_focus_for = Some(PAINT_ID.to_string());
-            let command = format!("/opt/sola/bin/sola-paint {}", path.display());
+            // the cold-start preview window doesn't yank the keyboard.
+            self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
+            let command = format!("/opt/sola/bin/sola-preview {}", path.display());
             if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
-                    app_id: PAINT_ID.to_string(),
+                    app_id: PREVIEW_ID.to_string(),
                     command,
                 }));
             }

@@ -12,6 +12,7 @@
 mod app;
 mod doc;
 mod geom;
+mod instance;
 mod stage;
 
 use iced::keyboard;
@@ -31,9 +32,17 @@ enum Msg {
     Picker(sola_kit::components::file_picker::Message),
     Save,
     ToggleCrop,
-    CropPress(Point, Size),
+    StagePress(Point, Size),
     StageMove(Point, Size),
-    CropRelease,
+    StageRelease,
+    ZoomAt {
+        cursor: Point,
+        size: Size,
+        factor: f32,
+    },
+    ZoomFit,
+    ZoomIn,
+    ZoomOut,
     ApplyCrop,
     CancelCrop,
     RotateCw,
@@ -41,6 +50,11 @@ enum Msg {
     FlipH,
     FlipV,
     Undo,
+    DocLoaded(Result<crate::doc::Loaded, String>),
+    SessionLoaded {
+        loaded: Vec<crate::doc::Loaded>,
+        select: Option<std::path::PathBuf>,
+    },
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,

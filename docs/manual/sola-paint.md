@@ -8,15 +8,18 @@ Default image viewer and editor. First pass — install to use.
 - `xdg-open photo.png` / file manager (MIME via `sola-paint.desktop`)
 - `solactl open /path/to/photo.png`
 - `sola-paint /path/to/photo.png`
-- Super+Shift+3/4/5 screenshots raise Paint without stealing keyboard
-
-A second `open` may start another process (no single-instance yet).
+A second `open` (MIME, `solactl open`, `sola-paint path`) hands off to the
+running window and opens another tab. Super+Shift+3/4/5 screenshots still
+open **Preview**, not Paint.
 
 ## Edit
 
-Left tabs are open images. Hover a tab for ×.
+Left tabs are open images. Hover a tab for ×. Tabs (file paths) come back after quit; missing files are dropped. Unsaved edits are not saved across restart.
 
-Toolbar: Open, Crop, rotate, flip, Undo, Save. **Crop** — drag on the picture, **Apply crop** or Enter; Esc cancels.
+Toolbar: Open, Crop, rotate, flip, Undo, Save. Hover an icon for the name and shortcut. **Crop** — drag on the picture, **Apply crop** or Enter; Esc cancels.
+
+Scroll to zoom toward the pointer; drag to pan when zoomed in. ⌘+ / ⌘− / ⌘0
+(fit). Header shows the zoom next to the pixel size.
 
 Open / Save as use the kit file picker (Places + breadcrumb trail). The name field is the leaf, not the whole path.
 
@@ -24,4 +27,4 @@ Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
 ## Not in this pass
 
-Zoom/pan, clipboard image, color adjust, filters, layers.
+Clipboard image, color adjust, filters, layers.
