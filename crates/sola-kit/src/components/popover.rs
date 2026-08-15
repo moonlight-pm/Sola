@@ -109,9 +109,11 @@ fn anchor_offset(
         }
         Placement::Below => {
             let gap = ANCHOR_GAP_BELOW;
-            // Center a narrower panel under the trigger so the list
-            // behind peeks on both sides (overlay, not another row).
-            let mut x = anchor.x + (anchor.width - panel.width) / 2.0;
+            // Start-align under the trigger (select / combo grammar).
+            // A narrower panel used to be centered so "tabs peeked" —
+            // that read as a darker inset card. Callers who want a
+            // shorter menu pass an explicit width via `select_sized`.
+            let mut x = anchor.x;
             if x + panel.width > viewport.width {
                 x = (viewport.width - panel.width).max(0.0);
             }
@@ -138,6 +140,10 @@ pub struct Anchored<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
     content: Element<'a, Message, Theme, Renderer>,
     on_dismiss: Message,
     placement: Placement,
+    /// When true, the overlay is laid out at the trigger's width
+    /// (`Placement::Below` only). Used by `select` so the menu matches
+    /// the field instead of hanging as a narrower card.
+    match_anchor_width: bool,
 }
 
 /// Render `base` in place and float `content` beside it; a left-click
@@ -152,6 +158,7 @@ pub fn popover_anchored<'a, Message, Theme, Renderer>(
         content: content.into(),
         on_dismiss,
         placement: Placement::End,
+        match_anchor_width: false,
     }
 }
 
@@ -159,6 +166,12 @@ impl<'a, Message, Theme, Renderer> Anchored<'a, Message, Theme, Renderer> {
     /// Pin the panel relative to the trigger. Default is [`Placement::End`].
     pub fn placement(mut self, placement: Placement) -> Self {
         self.placement = placement;
+        self
+    }
+
+    /// Size the floated panel to the trigger's width (Below only).
+    pub fn match_anchor_width(mut self) -> Self {
+        self.match_anchor_width = true;
         self
     }
 }
@@ -287,6 +300,7 @@ where
             anchor,
             on_dismiss: self.on_dismiss.clone(),
             placement: self.placement,
+            match_anchor_width: self.match_anchor_width,
         })))
     }
 }
@@ -309,6 +323,7 @@ struct AnchoredOverlay<'a, 'b, Message, Theme, Renderer> {
     anchor: Rectangle,
     on_dismiss: Message,
     placement: Placement,
+    match_anchor_width: bool,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -318,10 +333,16 @@ where
     Renderer: renderer::Renderer,
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
+        let (min, max) = if self.match_anchor_width && self.placement == Placement::Below {
+            let w = self.anchor.width.max(1.0);
+            (Size::new(w, 0.0), Size::new(w, bounds.height))
+        } else {
+            (Size::ZERO, bounds)
+        };
         let node = self.content.as_widget_mut().layout(
             self.tree,
             renderer,
-            &layout::Limits::new(Size::ZERO, bounds),
+            &layout::Limits::new(min, max),
         );
         let size = node.size();
         let offset = anchor_offset(self.anchor, size, bounds, self.placement);
@@ -480,13 +501,13 @@ mod tests {
             Size::new(1600.0, 900.0),
             Placement::Below,
         );
-        // 200-wide panel under a 56-wide swatch: centered, then clamped.
-        assert_eq!(offset.x, 0.0);
+        // Start-aligned with the trigger (select grammar).
+        assert_eq!(offset.x, 40.0);
         assert_eq!(offset.y, 100.0 + 56.0 + 6.0);
     }
 
     #[test]
-    fn below_centers_a_narrower_panel() {
+    fn below_start_aligns_a_narrower_panel() {
         let trigger = Rectangle {
             x: 40.0,
             y: 100.0,
@@ -499,7 +520,7 @@ mod tests {
             Size::new(1600.0, 900.0),
             Placement::Below,
         );
-        assert_eq!(offset.x, 40.0 + 8.0);
+        assert_eq!(offset.x, 40.0);
         assert_eq!(offset.y, 100.0 + 28.0 + 6.0);
     }
 

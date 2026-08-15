@@ -12,7 +12,7 @@ use iced::{Element, Length, Theme, mouse};
 use sola_bus::topics::SplitDir;
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::split_with;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, heading, muted};
 use sola_kit::components::DividerColors;
 
 /// Logical size of each demo card's **content** area (inside the border).
@@ -159,29 +159,21 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
 
     column![
         heading("Split"),
-        body(
-            "Two-pane split with a live-draggable divider. Side bands use \
-             DividerColors::raised so the hit strip matches the card; only \
-             the 1px hairline shows. Drag either divider to resize."
-        )
-        .style(muted),
-        body("Vertical — side-by-side (drag the centre line)").style(muted),
-        vertical,
+        body("Two panes, live divider. Drag the hairline.").style(muted),
         body(format!(
-            "ratio = {:.0}% / {:.0}%",
+            "Columns · {:.0}% / {:.0}%",
             state.vertical_ratio * 100.0,
             (1.0 - state.vertical_ratio) * 100.0
         ))
         .style(muted),
-        body("Horizontal — stacked (drag the centre line)").style(muted),
-        horizontal,
+        vertical,
         body(format!(
-            "ratio = {:.0}% / {:.0}%",
+            "Rows · {:.0}% / {:.0}%",
             state.horizontal_ratio * 100.0,
             (1.0 - state.horizontal_ratio) * 100.0
         ))
         .style(muted),
-        code("split_with(dir, a, ratio, on_drag, b, DividerColors::raised(theme))").style(muted),
+        horizontal,
     ]
     .spacing(16)
     .into()

@@ -59,8 +59,11 @@ pub fn style(theme: &Theme, tone: Tone) -> container::Style {
             mix_white(raised, 0.08),
         ),
         Tone::Accent => {
+            // Neon stays neon — do not mix `#3dd6f5` into graphite
+            // (that mix is the muddy dark cyan). Graphite fill, full
+            // accent type + thin accent edge.
             let c = p.primary.base.color;
-            (soft(c, 0.14), c, soft(c, 0.28))
+            (mix_white(raised, 0.06), c, c)
         }
         Tone::Success => {
             let c = p.success.base.color;

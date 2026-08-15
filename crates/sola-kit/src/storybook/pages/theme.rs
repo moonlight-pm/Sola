@@ -27,46 +27,25 @@ pub fn view<'a>(
     picker_view: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
-        body(
-            "Live editor for the kit's atoms and font roles. Edits rebuild \
-             the iced theme, reinstall the fonts table, and re-emit \
-             Topic::Theme so other kit apps — sola-monitor today — update \
-             on their next render."
-        )
-        .style(muted)
-        .into()
+        body("Fonts and seed atoms. Edits ride the bus to every kit app.")
+            .style(muted)
+            .into()
     } else {
-        body(
-            "Default theme — read-only. Click \"New Theme\" in the header \
-             above to fork it under a new name; edits then route to that \
-             copy."
-        )
-        .style(muted)
-        .into()
+        body("Default is read-only. New Theme in the header forks it.")
+            .style(muted)
+            .into()
     };
 
     column![
         heading("Theme"),
         intro,
-
         subheading("Fonts"),
-        body(
-            "Pick a family per role. Selections route through the bus, so \
-             sola-monitor's body / chrome / mono text swaps in real time."
-        )
-        .style(muted),
         fonts_grid(fonts, families, editable),
-
-        subheading("Palette atoms"),
+        subheading("Palette"),
         body(if editable {
-            "Click a swatch to edit its atom in the colour picker. \
-             Component style fns reach these via theme.extended_palette() \
-             — the atom→slot bindings live in sola_kit::theme::build_theme."
+            "Click a swatch. Neon stays neon — don't mix it toward black."
         } else {
-            "Read-only on the Default theme. Fork it (\"New Theme\") to \
-             click a swatch and edit its atom. Component style fns reach \
-             these via theme.extended_palette() — the atom→slot bindings \
-             live in sola_kit::theme::build_theme."
+            "Read-only on Default. Fork to edit."
         })
         .style(muted),
         atom_grid(atoms, editable, editing, picker_view),
@@ -194,11 +173,9 @@ pub fn atom_panel<'a>(
         return column![].into();
     }
     let note = if editable {
-        "Atoms this component uses — click a swatch to edit. They're shared \
-         across the theme; Save / Revert live in the header above."
+        "This page's atoms. Click a swatch. Save lives in the header."
     } else {
-        "Atoms this component uses. Read-only on the Default theme — fork it \
-         (\"New Theme\") to edit."
+        "This page's atoms. Default is read-only — New Theme to edit."
     };
     column![
         subheading("Atoms"),

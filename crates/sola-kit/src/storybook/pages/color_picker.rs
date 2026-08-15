@@ -1,13 +1,12 @@
-//! ColorPicker showcase — the full spectrum picker, stateful so the
-//! saturation/value field and the hue/alpha rails actually drag.
+//! ColorPicker — the editor, not a code sample.
 
 use iced::widget::column;
 use iced::{Color, Element};
 
-use sola_kit::components::card;
 use sola_kit::components::color_picker;
-use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::ColorPicker;
+
+use crate::storybook::pages::chrome::{lede, panel};
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -20,7 +19,9 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self { picker: ColorPicker::new(Color::from_rgb(0.35, 0.62, 0.95)) }
+        Self {
+            picker: ColorPicker::new(Color::from_rgb(0.239, 0.839, 0.961)),
+        }
     }
 }
 
@@ -34,15 +35,11 @@ impl State {
 
 pub fn view(state: &State) -> Element<'_, Msg> {
     column![
-        heading("ColorPicker"),
-        body(
-            "A real picker control: drag the saturation/value field and the \
-             hue / alpha rails, or type into Hex / RGB / HSL. HSV is the \
-             canonical model, so hue and saturation survive value → 0."
-        )
-        .style(muted),
-        card(state.picker.view().map(Msg::Picker)),
-        code("ColorPicker::new(color) · view().map(Msg::Picker) · update(m)").style(muted),
+        lede(
+            "ColorPicker",
+            "Drag the field and rails, or type Hex / RGB / HSL. Hue survives value → 0.",
+        ),
+        panel(state.picker.view().map(Msg::Picker)),
     ]
     .spacing(16)
     .into()

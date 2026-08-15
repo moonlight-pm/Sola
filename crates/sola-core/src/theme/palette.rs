@@ -63,10 +63,11 @@ impl Palette {
             "accent-dim".into(),
             Token::new(TokenKind::Color, "rgba(61, 214, 245, 0.10)", &["accent-tint"]),
         );
-        // Quiet selection fill (kit `hex::SELECTION`); not a loud blue slab.
+        // Quiet selection fill (kit `hex::SELECTION`) — graphite lift,
+        // not a darkened neon (that mix reads as muddy teal).
         palette.tokens.insert(
             "selection".into(),
-            Token::new(TokenKind::Color, "#163842", &["surface", "accent-tint"]),
+            Token::new(TokenKind::Color, "#2c333e", &["surface"]),
         );
         palette
             .tokens

@@ -6,27 +6,22 @@
 //! Signature: a small **enamel plate** derived from a stable seed (profile
 //! id, theme name, …) sits in the trigger and on every row. Selection is
 //! the quiet selection wash + a lucide check — not a grey slab, not a
-//! unicode tick. The menu hangs *below* the trigger (select grammar).
+//! unicode tick. The menu hangs *below* the trigger at the trigger's
+//! width (select grammar) — a raised popover, not a darker inset card.
 
 use std::sync::OnceLock;
 
 use iced::widget::{button, column, container, row, svg, text, Space};
-use iced::{
-    Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
-};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
 use crate::components::button as kit_button;
 use crate::components::icon::{icon_handle, icon_svg};
 use crate::components::popover::{self, popover, popover_anchored};
-use crate::components::style::{
-    hairline, hairline_on, mix, mix_white, HAIRLINE_STRONG_A, RADIUS_LG, RADIUS_SM, SPACE_SM,
-};
+use crate::components::style::{hairline, mix_white, RADIUS_SM, SPACE_SM};
 use crate::fonts;
 
-/// Default hanging-menu width when the caller does not pin one.
+/// Default hanging-menu width when the caller pins one via [`select_sized`].
 pub const MENU_W_DEFAULT: f32 = 220.0;
-/// Inset so the menu is narrower than the trigger — tabs peek around it.
-const MENU_INSET: f32 = 16.0;
 const MARK: f32 = 10.0;
 
 /// One row in the hanging menu.
@@ -106,7 +101,7 @@ pub fn identity_mark<'a, Message: 'a>(
         .into()
 }
 
-/// Select with the default hanging-menu width.
+/// Select whose menu matches the trigger's laid-out width.
 pub fn select<'a, Message: Clone + 'a>(
     label: impl Into<String>,
     options: impl IntoIterator<Item = SelectOption<Message>>,
@@ -114,18 +109,12 @@ pub fn select<'a, Message: Clone + 'a>(
     on_toggle: Message,
     on_dismiss: Message,
 ) -> Element<'a, Message, Theme> {
-    select_sized(
-        label,
-        options,
-        open,
-        on_toggle,
-        on_dismiss,
-        MENU_W_DEFAULT,
-    )
+    select_inner(label, options, open, on_toggle, on_dismiss, None)
 }
 
 /// Select whose hanging menu is pinned to `menu_width` (typically the
-/// sidebar gutter so the panel aligns with the trigger).
+/// sidebar gutter so the panel aligns with the trigger). Prefer
+/// [`select`] when the menu should match the trigger.
 pub fn select_sized<'a, Message: Clone + 'a>(
     label: impl Into<String>,
     options: impl IntoIterator<Item = SelectOption<Message>>,
@@ -133,6 +122,24 @@ pub fn select_sized<'a, Message: Clone + 'a>(
     on_toggle: Message,
     on_dismiss: Message,
     menu_width: f32,
+) -> Element<'a, Message, Theme> {
+    select_inner(
+        label,
+        options,
+        open,
+        on_toggle,
+        on_dismiss,
+        Some(menu_width.max(140.0)),
+    )
+}
+
+fn select_inner<'a, Message: Clone + 'a>(
+    label: impl Into<String>,
+    options: impl IntoIterator<Item = SelectOption<Message>>,
+    open: bool,
+    on_toggle: Message,
+    on_dismiss: Message,
+    menu_width: Option<f32>,
 ) -> Element<'a, Message, Theme> {
     let label = label.into();
     let options: Vec<SelectOption<Message>> = options.into_iter().collect();
@@ -150,15 +157,21 @@ pub fn select_sized<'a, Message: Clone + 'a>(
     }
 
     let rows = column(options.into_iter().map(option_row)).spacing(2);
-    let width = (menu_width - MENU_INSET).max(140.0);
+    let menu_w = match menu_width {
+        Some(w) => Length::Fixed(w),
+        None => Length::Fill,
+    };
     let menu = popover(rows)
         .padding(SPACE_SM)
-        .width(Length::Fixed(width))
-        .style(menu_chrome);
+        .width(menu_w)
+        .style(popover::style);
 
-    popover_anchored(trigger, menu, on_dismiss)
-        .placement(popover::Placement::Below)
-        .into()
+    let mut hanging = popover_anchored(trigger, menu, on_dismiss)
+        .placement(popover::Placement::Below);
+    if menu_width.is_none() {
+        hanging = hanging.match_anchor_width();
+    }
+    hanging.into()
 }
 
 fn trigger_button<'a, Message: Clone + 'a>(
@@ -235,29 +248,13 @@ fn option_row<'a, Message: Clone + 'a>(
     .into()
 }
 
-/// Darker than the sidebar material, harder shadow — a card on the list,
-/// not another row of it.
-fn menu_chrome(theme: &Theme) -> iced::widget::container::Style {
-    let p = theme.extended_palette();
-    let fill = p.background.base.color;
-    iced::widget::container::Style {
-        background: Some(Background::Color(fill)),
-        border: hairline_on(fill, HAIRLINE_STRONG_A, RADIUS_LG),
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.50),
-            offset: Vector::new(0.0, 6.0),
-            blur_radius: 18.0,
-        },
-        ..iced::widget::container::Style::default()
-    }
-}
-
 fn trigger_style(theme: &Theme, status: button::Status, open: bool) -> button::Style {
     let p = theme.extended_palette();
     let raised = p.background.weaker.color;
     let rest = mix_white(raised, 0.03);
     let hover = mix_white(p.background.strong.color, 0.04);
-    let open_fill = mix(crate::theme::selection(), raised, 0.55);
+    // Open = hover lift, not a darkened-cyan wash.
+    let open_fill = mix_white(p.background.strong.color, 0.04);
     let (bg, edge) = if open {
         (open_fill, mix_white(open_fill, 0.10))
     } else {

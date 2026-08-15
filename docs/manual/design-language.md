@@ -110,7 +110,7 @@ All UI color should resolve through the kit / bus theme:
 |--------|----------|----------------------------|
 | Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0c0e12` |
 | Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151922` |
-| Hover / selected row | Further lift or accent-tinted selection | `bg_hover` `#1e2533`, selection `#163842` |
+| Hover / selected row | Further lift; selection is graphite, not darkened neon | `bg_hover` `#1e2533`, selection `#2c333e` |
 | Soft hairlines | White@α separators | kit `hairline` / `hairline_strong` |
 | Hard edges | Stronger chrome | `border` `#2a3344` |
 | Primary label | Cool off-white | `fg` / `text-primary` `#e9ecf2` |
@@ -133,8 +133,8 @@ For Sola:
 - Ghost buttons: muted text at rest; hover = grey lift + full fg (no cyan
   wash). One primary (filled accent, dark label) per control group.
 - Secondary: soft fill + strong hairline — not a bare outline.
-- Text selection uses the quiet `selection` atom (teal-grey), not
-  `primary.weak`.
+- Text selection uses the quiet `selection` atom (graphite lift, not
+  darkened neon), not `primary.weak`.
 - Cards: soft hairline + light shadow; use `card::plain` when elevation is
   enough without a border.
 - Badges: soft tone@α fills + matching borders (not solid slabs).
