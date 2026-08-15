@@ -1,13 +1,13 @@
-//! Field showcase — stacked labelled form rows with kit text_input,
-//! help text, and validation error state.
+//! Field showcase — stacked label + input in a product panel.
 
-use iced::widget::column;
-use iced::Element;
+use iced::widget::{column, container, text};
+use iced::{Border, Color, Element, Length};
 
-use sola_kit::components::card;
 use sola_kit::components::field;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::style::{bevel_frame_strong, stage_fill, RADIUS_XL};
+use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::components::text_input as kit_input;
+use sola_kit::fonts;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -34,11 +34,16 @@ impl State {
 }
 
 pub fn view(state: &State) -> Element<'_, Msg> {
-    let demo = card(
+    let form = container(
         column![
+            text("Account")
+                .font(fonts::display())
+                .size(16),
+            body("Stacked label + control. Error replaces help in the same slot.")
+                .style(muted),
             field(
                 "Username",
-                kit_input::text_input("alice", &state.username)
+                kit_input::text_input("naturalethic", &state.username)
                     .on_input(Msg::Username)
                     .style(kit_input::style),
                 Some("3–20 characters"),
@@ -46,36 +51,53 @@ pub fn view(state: &State) -> Element<'_, Msg> {
             ),
             field(
                 "Email",
-                kit_input::text_input("alice@example.com", &state.email)
+                kit_input::text_input("joshua@sola.computer", &state.email)
                     .on_input(Msg::Email)
                     .style(kit_input::style),
                 None,
                 None,
             ),
             field(
-                "Broken field",
+                "Display name",
                 kit_input::text_input("must-not-be-empty", &state.broken)
                     .on_input(Msg::Broken)
                     .style(kit_input::style),
-                Some("help is suppressed when error is set"),
+                Some("Shown in the menubar"),
                 Some("This field is required"),
             ),
+            caption("Horizontal settings rows live on Form (form_row).").style(muted),
         ]
-        .spacing(16),
-    );
+        .spacing(14),
+    )
+    .padding(18)
+    .width(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        iced::widget::container::Style {
+            background: Some(stage_fill(
+                p.background.base.color,
+                p.background.weaker.color,
+                p.primary.base.color,
+            )),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_XL.into(),
+            },
+            ..Default::default()
+        }
+    });
 
     column![
         heading("Field"),
-        body(
-            "Stacked label + control. Label body 13 muted; help is caption muted; \
-             error is danger caption and replaces help."
-        )
-        .style(muted),
-        demo,
-        code(
-            "field(\"Label\", text_input(...).style(text_input::style), Some(\"help\"), None)"
-        )
-        .style(muted),
+        body("The stacked form used in dialogs and account panels. Not a catalog of inputs.")
+            .style(muted),
+        container(form)
+            .padding(1)
+            .width(Length::Fill)
+            .style(|theme: &iced::Theme| {
+                bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+            }),
     ]
     .spacing(16)
     .into()

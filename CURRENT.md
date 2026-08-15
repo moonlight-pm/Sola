@@ -27,7 +27,10 @@ Do not invent product policy.
 4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
 5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), open URL single-instance handoff, etc.
+   unmerged), open URL single-instance handoff, etc.  
+   Kit Overview **desk** + Select chrome + Button/Field/Form/Select
+   pages are on `naturalethic/kit-design` (**needs install**). Card /
+   Theme / remaining labs still lag.
 
 **Explicit holds:** none.
 

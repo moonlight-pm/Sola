@@ -1,13 +1,12 @@
-//! Form showcase — horizontal settings rows, checkbox, and toggler
-//! with kit styles (P7d).
+//! Form showcase — settings rows in a product panel.
 
-use iced::widget::{checkbox, column, toggler};
-use iced::Element;
+use iced::widget::{checkbox, column, container, text, toggler};
+use iced::{Border, Color, Element, Length};
 
-use sola_kit::components::card;
 use sola_kit::components::form::{checkbox_style, form_row, toggle_style};
-use sola_kit::components::style::SPACE_MD;
-use sola_kit::components::text::{body, code, heading, muted, subheading};
+use sola_kit::components::style::{bevel_frame_strong, stage_fill, SPACE_MD, RADIUS_XL};
+use sola_kit::components::text::{body, caption, heading, muted};
+use sola_kit::fonts;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -40,8 +39,13 @@ impl State {
 }
 
 pub fn view(state: &State) -> Element<'_, Msg> {
-    let rows = card(
+    let prefs = container(
         column![
+            text("Preferences")
+                .font(fonts::display())
+                .size(16),
+            body("Label left, control right. Height 32. Parent owns state.")
+                .style(muted),
             form_row(
                 "Wi‑Fi",
                 toggler(state.wifi)
@@ -60,41 +64,51 @@ pub fn view(state: &State) -> Element<'_, Msg> {
                     .on_toggle(Msg::LaunchAtLogin)
                     .style(checkbox_style),
             ),
+            form_row(
+                "Notifications",
+                checkbox(state.notifications)
+                    .on_toggle(Msg::Notifications)
+                    .style(checkbox_style),
+            ),
+            form_row(
+                "Share anonymous analytics",
+                checkbox(state.analytics)
+                    .on_toggle(Msg::Analytics)
+                    .style(checkbox_style),
+            ),
+            caption("Stacked label + input lives on Field.").style(muted),
         ]
         .spacing(SPACE_MD),
-    );
-
-    let checks = card(
-        column![
-            checkbox(state.notifications)
-                .label("Enable notifications")
-                .on_toggle(Msg::Notifications)
-                .style(checkbox_style),
-            checkbox(state.analytics)
-                .label("Share anonymous analytics")
-                .on_toggle(Msg::Analytics)
-                .style(checkbox_style),
-        ]
-        .spacing(SPACE_MD),
-    );
+    )
+    .padding(18)
+    .width(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        iced::widget::container::Style {
+            background: Some(stage_fill(
+                p.background.base.color,
+                p.background.weaker.color,
+                p.primary.base.color,
+            )),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_XL.into(),
+            },
+            ..Default::default()
+        }
+    });
 
     column![
         heading("Form"),
-        body(
-            "Settings-grade path: form_row (label left / control right), \
-             checkbox_style, toggle_style. Parent owns state."
-        )
-        .style(muted),
-        subheading("form_row"),
-        body("Height 32, body label at full contrast, SPACE_MD vertical rhythm.")
+        body("Settings-grade path. One panel, not two stacked sample cards.")
             .style(muted),
-        rows,
-        subheading("checkbox / toggler"),
-        body("Selected = accent; unselected = raised + hairline (checkbox) or grey track (toggle).")
-            .style(muted),
-        checks,
-        code("form_row(\"Wi‑Fi\", toggler(on).on_toggle(Msg::Wifi).style(toggle_style))")
-            .style(muted),
+        container(prefs)
+            .padding(1)
+            .width(Length::Fill)
+            .style(|theme: &iced::Theme| {
+                bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+            }),
     ]
     .spacing(16)
     .into()
