@@ -23,6 +23,24 @@ pub fn monotonic_ms() -> u64 {
 pub struct TabId(pub u64);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryEntry {
+    pub index: i32,
+    pub url: String,
+    pub title: String,
+}
+
+/// Right-click target on the page (CEF context-menu params, chrome-owned UI).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PageContext {
+    pub link_url: Option<String>,
+    pub src_url: Option<String>,
+    pub selection: Option<String>,
+    pub editable: bool,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TabInfo {
     pub id: TabId,
     pub url: String,
@@ -34,6 +52,28 @@ pub struct TabInfo {
     /// CEF overall load progress in `0.0..=1.0`. Meaningful while `is_loading`.
     #[serde(default)]
     pub load_progress: f32,
+    /// Session history for the **active** tab (empty on background tabs).
+    #[serde(default)]
+    pub history: Vec<HistoryEntry>,
+    /// Index of the current history entry in [`Self::history`].
+    #[serde(default)]
+    pub history_index: i32,
+}
+
+impl TabInfo {
+    pub fn chrome(id: TabId, url: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            id,
+            url: url.into(),
+            title: title.into(),
+            is_loading: false,
+            can_go_back: false,
+            can_go_forward: false,
+            load_progress: 0.0,
+            history: Vec::new(),
+            history_index: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -43,6 +83,10 @@ pub enum NavCmd {
     Reload,
     Stop,
     LoadUrl(String),
+    /// `window.history.go(delta)` on the active tab (`-1` = back one).
+    GoHistory {
+        delta: i32,
+    },
 }
 
 /// Editing commands routed to the focused web content (or, in the chrome,
@@ -354,6 +398,8 @@ pub type ImeHandle = Arc<Mutex<ImeCaret>>;
 pub type DownloadsHandle = Arc<Mutex<Vec<(String, crate::cef::ipc::DownloadEvent)>>>;
 /// Helper WebAuthn intercepts waiting for chrome.
 pub type PasskeysHandle = Arc<Mutex<Vec<crate::cef::ipc::WebAuthnEvent>>>;
+/// Helper → chrome page context-menu requests (right-click on content).
+pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
 
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
@@ -389,6 +435,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn ime_handle(&self) -> ImeHandle;
     fn downloads_handle(&self) -> DownloadsHandle;
     fn passkeys_handle(&self) -> PasskeysHandle;
+    fn page_menus_handle(&self) -> PageMenusHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

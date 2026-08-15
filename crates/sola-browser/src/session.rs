@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 /// One tab to restore. Title is best-effort (helps the strip before load).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SessionTab {
     pub url: String,
     #[serde(default)]
@@ -16,6 +16,19 @@ pub struct SessionTab {
     /// Chrome group id; absent = loose.
     #[serde(default)]
     pub group_id: Option<String>,
+    /// Session history (back/forward hold menu). Survives chrome restart.
+    #[serde(default)]
+    pub history: Vec<SessionHistory>,
+    #[serde(default)]
+    pub history_index: i32,
+}
+
+/// One back/forward entry persisted with the tab.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SessionHistory {
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
 }
 
 /// Named folder persisted beside the tab list.
@@ -118,8 +131,7 @@ impl BrowserSession {
             if !url.is_empty() && !is_spurious_switch_url(&url) {
                 self.tabs.push(SessionTab {
                     url,
-                    title: String::new(),
-                    group_id: None,
+                    ..SessionTab::default()
                 });
                 self.active_index = self.tabs.len().saturating_sub(1);
             }
@@ -128,8 +140,7 @@ impl BrowserSession {
         if self.tabs.is_empty() {
             self.tabs.push(SessionTab {
                 url: default_url.to_string(),
-                title: String::new(),
-                group_id: None,
+                ..SessionTab::default()
             });
             self.active_index = 0;
         }
@@ -172,6 +183,25 @@ fn is_spurious_switch_url(url: &str) -> bool {
         || rest.contains("persist-session-cookies")
 }
 
+/// Chrome history list restored from `session.json`.
+pub fn history_from_session(tab: &SessionTab) -> (Vec<crate::engine::HistoryEntry>, i32) {
+    if tab.history.is_empty() {
+        return (Vec::new(), 0);
+    }
+    let entries: Vec<crate::engine::HistoryEntry> = tab
+        .history
+        .iter()
+        .enumerate()
+        .map(|(i, h)| crate::engine::HistoryEntry {
+            index: i as i32,
+            url: h.url.clone(),
+            title: h.title.clone(),
+        })
+        .collect();
+    let max = entries.len().saturating_sub(1) as i32;
+    (entries, tab.history_index.clamp(0, max))
+}
+
 /// Build a session from chrome's cached tab list.
 pub fn session_from_tabs(
     tabs: &[crate::engine::TabInfo],
@@ -189,6 +219,15 @@ pub fn session_from_tabs(
             },
             title: t.title.clone(),
             group_id: groups.of_tab(t.id).map(str::to_string),
+            history: t
+                .history
+                .iter()
+                .map(|e| SessionHistory {
+                    url: e.url.clone(),
+                    title: e.title.clone(),
+                })
+                .collect(),
+            history_index: t.history_index,
         })
         .collect();
     let active_index = tabs
@@ -215,6 +254,13 @@ pub fn fingerprint(session: &BrowserSession) -> String {
         s.push_str(&t.url);
         s.push('\x1e');
         s.push_str(&t.title);
+        s.push('\x1e');
+        s.push_str(&format!("h{}@{}", t.history_index, t.history.len()));
+        s.push('\x1e');
+        for h in &t.history {
+            s.push_str(&h.url);
+            s.push('\x1d');
+        }
         s.push('\x1e');
         if let Some(g) = &t.group_id {
             s.push_str(g);
@@ -251,12 +297,12 @@ mod tests {
                 SessionTab {
                     url: "https://a.example/".into(),
                     title: "A".into(),
-                    group_id: None,
+                    ..SessionTab::default()
                 },
                 SessionTab {
                     url: "https://b.example/".into(),
                     title: "B".into(),
-                    group_id: None,
+                    ..SessionTab::default()
                 },
             ],
             active_index: 1,
@@ -277,12 +323,12 @@ mod tests {
                 SessionTab {
                     url: "https://ok.example/".into(),
                     title: "Ok".into(),
-                    group_id: None,
+                    ..SessionTab::default()
                 },
                 SessionTab {
                     url: "https://--password-store=basic".into(),
                     title: "junk".into(),
-                    group_id: None,
+                    ..SessionTab::default()
                 },
             ],
             active_index: 1,
@@ -299,12 +345,43 @@ mod tests {
     }
 
     #[test]
+    fn session_round_trips_history() {
+        let tab = crate::engine::TabInfo {
+            history: vec![
+                crate::engine::HistoryEntry {
+                    index: 0,
+                    url: "https://a/".into(),
+                    title: "A".into(),
+                },
+                crate::engine::HistoryEntry {
+                    index: 1,
+                    url: "https://b/".into(),
+                    title: "B".into(),
+                },
+            ],
+            history_index: 1,
+            ..crate::engine::TabInfo::chrome(crate::engine::TabId(1), "https://b/", "B")
+        };
+        let session = session_from_tabs(
+            &[tab],
+            crate::engine::TabId(1),
+            200.0,
+            &crate::groups::Groups::default(),
+        );
+        assert_eq!(session.tabs[0].history.len(), 2);
+        assert_eq!(session.tabs[0].history_index, 1);
+        let (entries, idx) = history_from_session(&session.tabs[0]);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(idx, 1);
+        assert_eq!(entries[0].url, "https://a/");
+    }
+
+    #[test]
     fn fingerprint_changes_with_url() {
         let a = BrowserSession {
             tabs: vec![SessionTab {
                 url: "https://a/".into(),
-                title: String::new(),
-                group_id: None,
+                ..SessionTab::default()
             }],
             active_index: 0,
             sidebar_w: 200.0,

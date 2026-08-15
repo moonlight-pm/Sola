@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cef::engine::InputEvent;
 use crate::cef::paint::DirtyRect;
-use crate::engine::{EditCmd, NavCmd, TabInfo};
+use crate::engine::{EditCmd, NavCmd, PageContext, TabInfo};
 
 /// Safety cap (4K BGRA ≈ 33 MiB). Larger is treated as a corrupt peer.
 const MAX_MSG: u32 = 64 * 1024 * 1024;
@@ -64,6 +64,8 @@ pub enum FromEngine {
     },
     Download(DownloadEvent),
     WebAuthn(WebAuthnEvent),
+    /// Page right-click — chrome shows the kit context menu.
+    PageContext(PageContext),
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
@@ -301,6 +303,30 @@ mod tests {
             FromEngine::WebAuthn(ev) => {
                 assert_eq!(ev.id, 9);
                 assert_eq!(ev.rp_id, "gemini.com");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_page_context() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::PageContext(PageContext {
+                link_url: Some("https://ex/a".into()),
+                editable: true,
+                can_go_back: true,
+                ..PageContext::default()
+            }),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::PageContext(ctx) => {
+                assert_eq!(ctx.link_url.as_deref(), Some("https://ex/a"));
+                assert!(ctx.editable);
+                assert!(ctx.can_go_back);
             }
             other => panic!("{other:?}"),
         }

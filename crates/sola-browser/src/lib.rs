@@ -11,6 +11,7 @@ pub mod groups;
 pub mod input;
 pub mod instance;
 pub mod integration;
+pub mod page_menu;
 pub mod paste_js;
 pub mod profiles;
 pub mod run;
@@ -25,8 +26,8 @@ pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
-    FrameReceiver, FrameSlot, ImeCaret, ImeHandle, NavCmd, PasskeysHandle, PendingFrame, TabId,
-    TabInfo, TabsHandle, TaggedFrame,
+    FrameReceiver, FrameSlot, HistoryEntry, ImeCaret, ImeHandle, NavCmd, PageContext,
+    PageMenusHandle, PasskeysHandle, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 pub use input::CursorKind;
 pub use run::run;

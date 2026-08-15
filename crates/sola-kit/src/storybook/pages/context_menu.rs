@@ -62,7 +62,9 @@ pub fn view(state: &State) -> Element<'_, Msg> {
     let mut stack = column![
         lede(
             "Context menu",
-            "Flat actions at the pointer. Escape or click outside dismisses. No submenu in v1.",
+            "Flat actions at the pointer, 200 px wide so labels are not \
+             collapsed to a thin strip. Escape or click outside dismisses. \
+             No submenu in v1.",
         ),
         panel(column![body("Right-click the well."), well].spacing(10)),
     ]

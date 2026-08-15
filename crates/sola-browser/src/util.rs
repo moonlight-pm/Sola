@@ -27,7 +27,12 @@ pub fn editing_command_name(cmd: EditCmd) -> &'static str {
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
 pub fn usable_clipboard_text(text: Option<String>) -> Option<String> {
-    let cleaned: String = text?.chars().filter(|c| !c.is_control()).collect();
+    // Keep newline / tab — markdown copy buttons and ⌘C of a block
+    // would otherwise flatten to one line. Drop the rest (NUL, etc.).
+    let cleaned: String = text?
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\r' | '\t') || !c.is_control())
+        .collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         None
@@ -209,6 +214,10 @@ mod tests {
         assert_eq!(
             usable_clipboard_text(Some("a\u{0}b".into())),
             Some("ab".into())
+        );
+        assert_eq!(
+            usable_clipboard_text(Some("a\nb\t c".into())),
+            Some("a\nb\t c".into())
         );
     }
 

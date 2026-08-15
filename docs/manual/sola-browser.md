@@ -4,7 +4,9 @@
 fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA)
 and **create**.
 Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
-work on form fields and body text.
+work on form fields and body text. ⌘-click a link to open it in a
+background tab. Right-click the page for a small kit menu. Hold back or
+forward to jump in that tab’s session history.
 
 ## What it is
 
@@ -185,8 +187,18 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 
 ⌘C / ⌘V on the page go through chrome (River steals the chords). Copy
 extracts the selection in the engine helper and writes the system
-clipboard; paste inserts into the focused field without emptying the
-clipboard. Triple-click selects a line / field the way Chromium expects.
+clipboard; paste inserts **once** into the focused field without emptying
+the clipboard. In-page **Copy** buttons (`navigator.clipboard.writeText`
+and `document.execCommand('copy')`) are hooked the same way — Chromium’s
+own clipboard never reaches Wayland. Newlines in the copied text are kept.
+Triple-click selects a line / field the way Chromium expects.
+
+⌘-click (or Ctrl-click) a link opens it in a **background tab**. A
+right-click on the page opens a kit menu (open/copy link, cut/copy/paste
+when editing, back / forward / reload) instead of Chromium’s empty OSR
+popup. Click back or forward to go one step; **hold** the button for a
+menu of that tab’s session history. That list is saved with the
+session, so it survives a browser restart.
 
 Clicking the page focuses the engine (caret / IME). Shift+wheel scrolls
 sideways. Composition (dead keys, CJK) is forwarded to Chromium when the

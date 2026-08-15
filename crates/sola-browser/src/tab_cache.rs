@@ -95,15 +95,7 @@ mod tests {
     fn snap(tabs: usize, last_used: Instant) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             tabs: (0..tabs)
-                .map(|i| TabInfo {
-                    id: TabId(i as u64),
-                    url: format!("https://x/{i}"),
-                    title: String::new(),
-                    is_loading: false,
-                    can_go_back: false,
-                    can_go_forward: false,
-                    load_progress: 0.0,
-                })
+                .map(|i| TabInfo::chrome(TabId(i as u64), format!("https://x/{i}"), String::new()))
                 .collect(),
             active: TabId(0),
             sidebar_w: 200.0,

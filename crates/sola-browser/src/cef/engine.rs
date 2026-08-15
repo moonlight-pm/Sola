@@ -17,7 +17,8 @@ use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
-    FrameSlot, NavCmd, PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
+    FrameSlot, HistoryEntry, NavCmd, PageContext, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
+    TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -136,6 +137,7 @@ pub struct CefEngine {
     ime: crate::engine::ImeHandle,
     downloads: DownloadsHandle,
     passkeys: PasskeysHandle,
+    page_menus: PageMenusHandle,
 }
 
 impl Engine for CefEngine {
@@ -202,6 +204,7 @@ impl Engine for CefEngine {
             ime: handles.ime,
             downloads: handles.downloads,
             passkeys: handles.passkeys,
+            page_menus: handles.page_menus,
         }
     }
 
@@ -242,6 +245,10 @@ impl Engine for CefEngine {
 
     fn passkeys_handle(&self) -> PasskeysHandle {
         self.passkeys.clone()
+    }
+
+    fn page_menus_handle(&self) -> PageMenusHandle {
+        self.page_menus.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -491,9 +498,8 @@ cef::wrap_render_process_handler! {
             _context: Option<&mut cef::V8Context>,
         ) {
             // Document-start: run before page scripts can snapshot
-            // navigator.credentials.get (Gemini Exchange does this).
-            #[cfg(feature = "bitwarden")]
-            inject_webauthn_frame(frame);
+            // navigator.clipboard.writeText / credentials.get.
+            inject_page_scripts(frame);
         }
     }
 }
@@ -943,6 +949,7 @@ cef::wrap_display_handler! {
                 }
                 return 1;
             }
+
             #[cfg(feature = "bitwarden")]
             {
                 if let Some(origin) = msg.strip_prefix("__sola_webauthn_installed__") {
@@ -1011,8 +1018,7 @@ cef::wrap_load_handler! {
             frame: Option<&mut cef::Frame>,
             _transition_type: cef::TransitionType,
         ) {
-            #[cfg(feature = "bitwarden")]
-            inject_webauthn_frame(frame);
+            inject_page_scripts(frame);
         }
 
         fn on_load_end(
@@ -1021,21 +1027,25 @@ cef::wrap_load_handler! {
             frame: Option<&mut cef::Frame>,
             _http_status_code: ::std::os::raw::c_int,
         ) {
-            #[cfg(feature = "bitwarden")]
-            inject_webauthn_frame(frame);
+            inject_page_scripts(frame);
         }
     }
 }
 
-#[cfg(feature = "bitwarden")]
-fn inject_webauthn_frame(frame: Option<&mut cef::Frame>) {
+fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
     let Some(frame) = frame else { return };
-    // Every frame — Google sign-in (accounts.google.com iframe) and
-    // Gemini Exchange 2FA both call WebAuthn off the top-level page.
-    let url = cef_string_userfree_display(&frame.url());
-    tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
-    let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
-    frame.execute_java_script(Some(&code), None, 0);
+    let clip_src = crate::paste_js::clipboard_bridge_script();
+    let clip: cef::CefString = clip_src.as_str().into();
+    frame.execute_java_script(Some(&clip), None, 0);
+    #[cfg(feature = "bitwarden")]
+    {
+        // Every frame — Google sign-in (accounts.google.com iframe) and
+        // Gemini Exchange 2FA both call WebAuthn off the top-level page.
+        let url = cef_string_userfree_display(&frame.url());
+        tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
+        let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
+        frame.execute_java_script(Some(&code), None, 0);
+    }
 }
 
 #[cfg(feature = "bitwarden")]
@@ -1143,6 +1153,22 @@ fn eval_js_all_frames(browser: &cef::Browser, script: &str) {
         if let Some(frame) = browser.frame_by_identifier(Some(&ident)) {
             frame.execute_java_script(Some(&code), None, 0);
         }
+    }
+}
+
+/// Paste / single-target scripts: once, in the focused frame (main fallback).
+fn eval_js_focused(browser: &cef::Browser, script: &str) {
+    let code: cef::CefString = script.into();
+    let frame = browser.focused_frame().or_else(|| browser.main_frame());
+    if let Some(frame) = frame {
+        frame.execute_java_script(Some(&code), None, 0);
+    }
+}
+
+fn eval_js_main(browser: &cef::Browser, script: &str) {
+    let code: cef::CefString = script.into();
+    if let Some(frame) = browser.main_frame() {
+        frame.execute_java_script(Some(&code), None, 0);
     }
 }
 
@@ -1313,6 +1339,108 @@ cef::wrap_request_handler! {
     }
 }
 
+// ── ContextMenuHandler (cancel native OSR menu; chrome draws it) ──
+
+cef::wrap_context_menu_handler! {
+    pub struct BrowserContextMenuHandler {}
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            _params: Option<&mut cef::ContextMenuParams>,
+            model: Option<&mut cef::MenuModel>,
+        ) {
+            // Empty model + run_context_menu=1: no native popup (OSR would
+            // otherwise paint a thin empty strip).
+            if let Some(model) = model {
+                let _ = model.clear();
+            }
+        }
+
+        fn run_context_menu(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            params: Option<&mut cef::ContextMenuParams>,
+            _model: Option<&mut cef::MenuModel>,
+            callback: Option<&mut cef::RunContextMenuCallback>,
+        ) -> ::std::os::raw::c_int {
+            if let Some(cb) = callback {
+                cb.cancel();
+            }
+            let Some(params) = params else {
+                return 1;
+            };
+            let nonempty = |s: cef::CefStringUserfree| {
+                let t = cef_string_userfree_display(&s);
+                if t.is_empty() { None } else { Some(t) }
+            };
+            let mut ctx = PageContext {
+                link_url: nonempty(params.link_url()),
+                src_url: nonempty(params.source_url()),
+                selection: nonempty(params.selection_text()),
+                editable: params.is_editable() != 0,
+                can_go_back: false,
+                can_go_forward: false,
+            };
+            if let Some(b) = browser {
+                ctx.can_go_back = b.can_go_back() != 0;
+                ctx.can_go_forward = b.can_go_forward() != 0;
+            }
+            if let Some(tx) = &cef_state().ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::PageContext(ctx));
+            }
+            1
+        }
+    }
+}
+
+cef::wrap_navigation_entry_visitor! {
+    pub struct HistoryCollector {
+        entries: Rc<RefCell<Vec<HistoryEntry>>>,
+        current: Rc<Cell<i32>>,
+    }
+
+    impl NavigationEntryVisitor {
+        fn visit(
+            &self,
+            entry: Option<&mut cef::NavigationEntry>,
+            current: ::std::os::raw::c_int,
+            index: ::std::os::raw::c_int,
+            _total: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(entry) = entry else {
+                return 1;
+            };
+            if entry.is_valid() == 0 {
+                return 1;
+            }
+            self.entries.borrow_mut().push(HistoryEntry {
+                index,
+                url: cef_string_userfree_display(&entry.url()),
+                title: cef_string_userfree_display(&entry.title()),
+            });
+            if current != 0 {
+                self.current.set(index);
+            }
+            1
+        }
+    }
+}
+
+fn collect_history(browser: &cef::Browser) -> (Vec<HistoryEntry>, i32) {
+    let Some(host) = browser.host() else {
+        return (Vec::new(), 0);
+    };
+    let entries = Rc::new(RefCell::new(Vec::new()));
+    let current = Rc::new(Cell::new(0i32));
+    let mut visitor = HistoryCollector::new(entries.clone(), current.clone());
+    host.navigation_entries(Some(&mut visitor), 0);
+    (entries.replace(Vec::new()), current.get())
+}
+
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
@@ -1321,6 +1449,7 @@ cef::wrap_client! {
         pub load_handler: cef::LoadHandler,
         pub download_handler: cef::DownloadHandler,
         pub request_handler: cef::RequestHandler,
+        pub context_menu_handler: cef::ContextMenuHandler,
     }
 
     impl Client {
@@ -1346,6 +1475,10 @@ cef::wrap_client! {
 
         fn request_handler(&self) -> Option<cef::RequestHandler> {
             Some(self.request_handler.clone())
+        }
+
+        fn context_menu_handler(&self) -> Option<cef::ContextMenuHandler> {
+            Some(self.context_menu_handler.clone())
         }
     }
 }
@@ -1663,12 +1796,13 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 }
             }
         }
-        Cmd::PasteText(_text) => {
-            // Chromium OSR still has a clipboard path; use native paste.
+        Cmd::PasteText(text) => {
+            // Chrome already read the Wayland clipboard. Insert once in the
+            // focused field — `eval_js_all_frames` would triple-paste when
+            // main == focused == identifier list.
             if let Some(tab) = active_tab(state) {
-                if let Some(frame) = tab.browser.main_frame() {
-                    frame.paste();
-                }
+                let script = crate::paste_js::paste_into_focused_script(&text);
+                eval_js_focused(&tab.browser, &script);
             }
         }
         Cmd::EvaluateJs(script) => {
@@ -2083,15 +2217,7 @@ fn cef_evict_parks(state: &CefThreadState) {
                 id.clone(),
                 WorkspaceSnapshot {
                     tabs: (0..p.tab_count)
-                        .map(|i| TabInfo {
-                            id: TabId(i as u64),
-                            url: String::new(),
-                            title: String::new(),
-                            is_loading: false,
-                            can_go_back: false,
-                            can_go_forward: false,
-                            load_progress: 0.0,
-                        })
+                        .map(|i| TabInfo::chrome(TabId(i as u64), String::new(), String::new()))
                         .collect(),
                     active: TabId(0),
                     sidebar_w: 0.0,
@@ -2126,6 +2252,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let load_handler = BrowserLoadHandler::new();
     let download_handler = BrowserDownloadHandler::new();
     let request_handler = BrowserRequestHandler::new();
+    let context_menu_handler = BrowserContextMenuHandler::new();
     let mut client = BrowserClient::new(
         render_handler,
         life_span_handler,
@@ -2133,6 +2260,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         load_handler,
         download_handler,
         request_handler,
+        context_menu_handler,
     );
 
     let url_c = cef::CefString::from(initial_url.as_str());
@@ -2213,14 +2341,23 @@ fn rebuild_snapshot(state: &CefThreadState) {
         .tabs
         .borrow()
         .iter()
-        .map(|t| TabInfo {
-            id: t.id,
-            url: t.url.lock().unwrap().clone(),
-            title: t.title.lock().unwrap().clone(),
-            is_loading: t.is_loading.get(),
-            can_go_back: t.can_go_back.get(),
-            can_go_forward: t.can_go_forward.get(),
-            load_progress: t.load_progress.get(),
+        .map(|t| {
+            let (history, history_index) = if t.id == state.active.get() {
+                collect_history(&t.browser)
+            } else {
+                (Vec::new(), 0)
+            };
+            TabInfo {
+                id: t.id,
+                url: t.url.lock().unwrap().clone(),
+                title: t.title.lock().unwrap().clone(),
+                is_loading: t.is_loading.get(),
+                can_go_back: t.can_go_back.get(),
+                can_go_forward: t.can_go_forward.get(),
+                load_progress: t.load_progress.get(),
+                history,
+                history_index,
+            }
         })
         .collect();
     *state.tabs_snapshot.lock().unwrap() = new.clone();
@@ -2253,15 +2390,16 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             click_count,
         } => {
             if down && modifiers != 0 {
-                // Diagnostic for ⌘/Ctrl-click → new tab: confirms which
-                // modifier bits CEF actually receives (CONTROL = 0x4 must be
-                // set for Chromium to raise the new-tab popup on Linux).
                 tracing::debug!(
                     button,
                     modifiers = format_args!("{modifiers:#x}"),
                     "pointer button down"
                 );
             }
+            // ⌘ is mapped to CONTROL in modifiers_to_cef_mouse so Chromium
+            // raises on_before_popup (new background tab). Do not swallow
+            // the click — a JS hit-test that never reports left the page
+            // with a dead press.
             let me = MouseEvent { x, y, modifiers };
             let bt = match button {
                 1 => MouseButtonType::LEFT,
@@ -2373,6 +2511,13 @@ fn dispatch_nav(browser: &cef::Browser, nav: NavCmd) {
                 frame.load_url(Some(&url_c));
                 tracing::info!(url = %url, "Nav::LoadUrl");
             }
+        }
+        NavCmd::GoHistory { delta } => {
+            if delta == 0 {
+                return;
+            }
+            eval_js_main(browser, &format!("history.go({delta});"));
+            tracing::info!(delta, "Nav::GoHistory");
         }
     }
 }

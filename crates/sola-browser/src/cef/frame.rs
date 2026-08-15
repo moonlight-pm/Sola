@@ -75,7 +75,9 @@ impl shader::Program<crate::app::Msg> for CefProgram {
         let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
         let scale = crate::input::scale_from_last_size(bounds, req_w, state.last_scale);
         state.last_scale = scale;
-        let mods_now = state.modifiers;
+        // Chrome subscription keeps this current even when the URL bar
+        // owns iced focus (so ⌘-click still sees Super).
+        let mods_now = crate::input::stored_modifiers();
 
         match event {
             iced::Event::Mouse(m) => {
@@ -201,6 +203,24 @@ impl shader::Program<crate::app::Msg> for CefProgram {
             iced::Event::Keyboard(k) => {
                 if let keyboard::Event::ModifiersChanged(m) = k {
                     state.modifiers = *m;
+                    crate::input::store_modifiers(*m);
+                }
+                // Chrome Edit menu owns ⌘C/X/V/A/Z — do not also send them
+                // to CEF or a page field pastes twice (JS + native).
+                if let keyboard::Event::KeyPressed { key, modifiers, .. }
+                | keyboard::Event::KeyReleased { key, modifiers, .. } = k
+                {
+                    crate::input::store_modifiers(*modifiers);
+                    if crate::input::is_super_key(key) {
+                        crate::input::note_super_key(matches!(
+                            k,
+                            keyboard::Event::KeyPressed { .. }
+                        ));
+                    }
+                    if crate::input::is_chrome_edit_shortcut(key, crate::input::stored_modifiers())
+                    {
+                        return Some(iced::widget::shader::Action::capture());
+                    }
                 }
                 // While composing, printable CHAR would double-insert next
                 // to ImeSetComposition. Still send Escape (cancel) / arrows.

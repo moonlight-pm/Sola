@@ -3,7 +3,85 @@
 //! The engine keeps keymaps and native event constructors; this module
 //! owns the cursor vocabulary and coordinate projection helpers.
 
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+use iced::keyboard::{Key, Modifiers};
 use iced::{Point, Rectangle, mouse};
+
+const M_SHIFT: u8 = 1;
+const M_CTRL: u8 = 2;
+const M_ALT: u8 = 4;
+const M_LOGO: u8 = 8;
+
+/// Last iced keyboard modifiers, written from the chrome subscription so
+/// the page shader sees Super/Ctrl even when a chrome field has focus.
+static LAST_MODS: AtomicU8 = AtomicU8::new(0);
+/// Super/Meta key down, even when `ModifiersChanged` never set LOGO
+/// (compositor often eats Super as its own modifier).
+static SUPER_HELD: AtomicBool = AtomicBool::new(false);
+
+pub fn store_modifiers(m: Modifiers) {
+    let mut bits = 0u8;
+    if m.shift() {
+        bits |= M_SHIFT;
+    }
+    if m.control() {
+        bits |= M_CTRL;
+    }
+    if m.alt() {
+        bits |= M_ALT;
+    }
+    if m.logo() {
+        bits |= M_LOGO;
+    }
+    LAST_MODS.store(bits, Ordering::Relaxed);
+}
+
+pub fn stored_modifiers() -> Modifiers {
+    let bits = LAST_MODS.load(Ordering::Relaxed);
+    let mut m = Modifiers::empty();
+    if bits & M_SHIFT != 0 {
+        m |= Modifiers::SHIFT;
+    }
+    if bits & M_CTRL != 0 {
+        m |= Modifiers::CTRL;
+    }
+    if bits & M_ALT != 0 {
+        m |= Modifiers::ALT;
+    }
+    if bits & M_LOGO != 0 || SUPER_HELD.load(Ordering::Relaxed) {
+        m |= Modifiers::LOGO;
+    }
+    m
+}
+
+/// Track Super/Meta by key name. Call from chrome + the page shader.
+pub fn note_super_key(down: bool) {
+    SUPER_HELD.store(down, Ordering::Relaxed);
+}
+
+pub fn is_super_key(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Named(iced::keyboard::key::Named::Super)
+            | Key::Named(iced::keyboard::key::Named::Meta)
+    )
+}
+
+/// Chrome-owned edit chords (⌘C/X/V/A/Z/Y). The shell routes these via
+/// the Edit menu; they must not also reach CEF or the page double-applies.
+pub fn is_chrome_edit_shortcut(key: &Key, mods: Modifiers) -> bool {
+    if !mods.logo() {
+        return false;
+    }
+    let Key::Character(s) = key else {
+        return false;
+    };
+    matches!(
+        s.chars().next().map(|c| c.to_ascii_lowercase()),
+        Some('c' | 'x' | 'v' | 'a' | 'z' | 'y')
+    )
+}
 
 /// Cursor shape carried across the worker→iced boundary as a plain `u32`
 /// (via `AtomicU32`). Discriminants are stable; new variants append.
@@ -90,5 +168,40 @@ mod tests {
     fn cursor_roundtrip() {
         assert_eq!(CursorKind::from_u32(1), CursorKind::Pointer);
         assert_eq!(CursorKind::from_u32(99), CursorKind::Default);
+    }
+
+    #[test]
+    fn chrome_edit_shortcut_is_logo_plus_letter() {
+        assert!(is_chrome_edit_shortcut(
+            &Key::Character("v".into()),
+            Modifiers::LOGO
+        ));
+        assert!(is_chrome_edit_shortcut(
+            &Key::Character("V".into()),
+            Modifiers::LOGO
+        ));
+        assert!(!is_chrome_edit_shortcut(
+            &Key::Character("v".into()),
+            Modifiers::empty()
+        ));
+        assert!(!is_chrome_edit_shortcut(
+            &Key::Character("t".into()),
+            Modifiers::LOGO
+        ));
+    }
+
+    #[test]
+    fn stored_modifiers_roundtrip() {
+        store_modifiers(Modifiers::LOGO | Modifiers::SHIFT);
+        let m = stored_modifiers();
+        assert!(m.logo());
+        assert!(m.shift());
+        assert!(!m.control());
+        store_modifiers(Modifiers::empty());
+        assert_eq!(stored_modifiers(), Modifiers::empty());
+        note_super_key(true);
+        assert!(stored_modifiers().logo());
+        note_super_key(false);
+        assert!(!stored_modifiers().logo());
     }
 }

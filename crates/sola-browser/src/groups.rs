@@ -118,7 +118,8 @@ impl Groups {
     }
 
     pub fn dissolve_empty(&mut self) {
-        self.groups.retain(|g| self.member.values().any(|id| id == &g.id));
+        self.groups
+            .retain(|g| self.member.values().any(|id| id == &g.id));
         let live: std::collections::HashSet<&str> =
             self.groups.iter().map(|g| g.id.as_str()).collect();
         self.member.retain(|_, gid| live.contains(gid.as_str()));
@@ -303,9 +304,7 @@ impl Groups {
                             after: Some(*prev),
                         }
                     } else {
-                        Dest::Loose {
-                            after: Some(*prev),
-                        }
+                        Dest::Loose { after: Some(*prev) }
                     }
                 }
                 None => Dest::Loose { after: None },
@@ -321,7 +320,9 @@ impl Groups {
                     let tab = tabs.remove(pos);
                     let insert = tabs
                         .iter()
-                        .rposition(|t| self.member.get(&t.id).map(String::as_str) == Some(gid.as_str()))
+                        .rposition(|t| {
+                            self.member.get(&t.id).map(String::as_str) == Some(gid.as_str())
+                        })
                         .map(|i| i + 1)
                         .unwrap_or(tabs.len());
                     tabs.insert(insert.min(tabs.len()), tab);
@@ -340,7 +341,9 @@ impl Groups {
                         None => {
                             // Insert before the `next` tab still in `rest` at insert_at.
                             if let Some(StripRow::Tab(next)) = rest.get(insert_at) {
-                                tabs.iter().position(|t| t.id == *next).unwrap_or(tabs.len())
+                                tabs.iter()
+                                    .position(|t| t.id == *next)
+                                    .unwrap_or(tabs.len())
                             } else {
                                 tabs.len()
                             }
@@ -382,15 +385,7 @@ mod tests {
     use super::*;
 
     fn tab(id: u64, title: &str) -> TabInfo {
-        TabInfo {
-            id: TabId(id),
-            url: format!("https://x/{id}"),
-            title: title.into(),
-            is_loading: false,
-            can_go_back: false,
-            can_go_forward: false,
-            load_progress: 0.0,
-        }
+        TabInfo::chrome(TabId(id), format!("https://x/{id}"), title)
     }
 
     fn ids(tabs: &[TabInfo]) -> Vec<u64> {
@@ -412,7 +407,13 @@ mod tests {
         g.member.insert(TabId(1), "work".into());
         g.member.insert(TabId(2), "work".into());
         g.member.insert(TabId(3), "research".into());
-        let tabs = vec![tab(1, "a"), tab(2, "b"), tab(3, "c"), tab(4, "d"), tab(5, "e")];
+        let tabs = vec![
+            tab(1, "a"),
+            tab(2, "b"),
+            tab(3, "c"),
+            tab(4, "d"),
+            tab(5, "e"),
+        ];
         g.normalize(&mut { tabs.clone() });
         let mut tabs = tabs;
         g.normalize(&mut tabs);
@@ -509,7 +510,10 @@ mod tests {
         g.normalize(&mut tabs);
         assert_eq!(g.groups.len(), 3);
         assert_eq!(g.groups[2].name, "Group");
-        assert_eq!(g.of_tab(TabId(5)).map(str::to_string), Some(g.groups[2].id.clone()));
+        assert_eq!(
+            g.of_tab(TabId(5)).map(str::to_string),
+            Some(g.groups[2].id.clone())
+        );
         assert_eq!(tabs.last().map(|t| t.id.0), Some(4)); // remaining loose
     }
 
@@ -527,16 +531,19 @@ mod tests {
                 url: "https://a/".into(),
                 title: "a".into(),
                 group_id: Some("work".into()),
+                ..SessionTab::default()
             },
             SessionTab {
                 url: "https://b/".into(),
                 title: "b".into(),
                 group_id: Some("missing".into()),
+                ..SessionTab::default()
             },
             SessionTab {
                 url: "https://c/".into(),
                 title: "c".into(),
                 group_id: Some("work".into()),
+                ..SessionTab::default()
             },
         ];
         let ids = vec![TabId(10), TabId(11), TabId(12)];

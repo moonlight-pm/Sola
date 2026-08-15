@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::{
     Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
@@ -29,8 +29,12 @@ use sola_kit::components::{
     panel_drop_index_relative,
 };
 
-use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
+use crate::engine::{
+    Cmd, EditCmd, Engine, FrameSlot, NavCmd, PageContext, PageMenusHandle, TabId, TabInfo,
+    TabsHandle,
+};
 use crate::groups::Groups;
+use crate::page_menu::{self, PageMenuKind};
 use crate::session::{self, SessionGroup, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
@@ -61,6 +65,12 @@ pub enum Msg {
     NewFrame,
     NavBack,
     NavForward,
+    /// Press on back/forward — starts a hold timer for the history menu.
+    NavHoldStart(HistoryDir),
+    /// Hold elapsed — open the session-history menu.
+    NavHoldFire,
+    /// Jump to a session-history index (from the hold menu).
+    NavJump(i32),
     /// Reload when idle; stop when the active tab is loading.
     NavReloadOrStop,
     /// Escape / explicit stop — always `NavCmd::Stop`.
@@ -93,7 +103,10 @@ pub enum Msg {
     GroupContext(String),
     MenuDismiss,
     NewGroup(TabId),
-    AddToGroup { tab: TabId, group: String },
+    AddToGroup {
+        tab: TabId,
+        group: String,
+    },
     UngroupTab(TabId),
     UngroupGroup(String),
     RenameStart(String),
@@ -201,13 +214,43 @@ pub enum Msg {
     DownloadOpen(String),
     /// Drop a row from the list (file stays on disk).
     DownloadRemove(String),
+    /// Page context-menu action (after CEF cancelled the native OSR menu).
+    PageMenu(PageMenuAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryDir {
+    Back,
+    Forward,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageMenuAction {
+    OpenLink(String),
+    CopyLink(String),
+    Copy(String),
+    Cut,
+    Paste,
+    Back,
+    Forward,
+    Reload,
 }
 
 #[derive(Debug, Clone)]
 enum CtxTarget {
     Tab(TabId),
     Group(String),
+    Page(PageContext),
+    History { forward: bool },
 }
+
+struct NavHold {
+    dir: HistoryDir,
+    started: Instant,
+    menu: bool,
+}
+
+const NAV_HOLD_MS: u128 = 400;
 
 /// In-chrome dialog for creating / renaming / confirming delete of a profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +391,8 @@ pub struct App<E: Engine> {
     reorder_anim: ReorderAnim,
     groups: Groups,
     context_menu: Option<(iced::Point, CtxTarget)>,
+    nav_hold: Option<NavHold>,
+    page_menus: PageMenusHandle,
     renaming: Option<(String, String)>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
@@ -463,6 +508,7 @@ impl<E: Engine> App<E> {
         sidebar_w: f32,
         session_groups: Vec<SessionGroup>,
     ) -> Self {
+        let page_menus = engine.page_menus_handle();
         let mut app = Self {
             engine,
             slot,
@@ -486,6 +532,8 @@ impl<E: Engine> App<E> {
             reorder_anim: ReorderAnim::new(),
             groups: Groups::default(),
             context_menu: None,
+            nav_hold: None,
+            page_menus,
             renaming: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
@@ -751,14 +799,12 @@ impl<E: Engine> App<E> {
             } else {
                 tab.title.clone()
             };
+            let (history, history_index) = session::history_from_session(tab);
             self.cached_tabs.push(TabInfo {
-                id,
-                url: url.clone(),
-                title: title.clone(),
                 is_loading: url != BLANK_URL && !url.is_empty(),
-                can_go_back: false,
-                can_go_forward: false,
-                load_progress: 0.0,
+                history,
+                history_index,
+                ..TabInfo::chrome(id, url.clone(), title.clone())
             });
             // One background frame may be imported to seed park cache.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);
@@ -938,28 +984,18 @@ impl<E: Engine> App<E> {
             } else {
                 tab.title.clone()
             };
+            let (history, history_index) = session::history_from_session(tab);
             new_cached.push(TabInfo {
-                id,
-                url: url.clone(),
-                title: title.clone(),
                 is_loading: url != BLANK_URL && !url.is_empty(),
-                can_go_back: false,
-                can_go_forward: false,
-                load_progress: 0.0,
+                history,
+                history_index,
+                ..TabInfo::chrome(id, url.clone(), title.clone())
             });
             open_list.push((id, url, title));
         }
         if open_list.is_empty() {
             let id = self.engine.alloc_tab_id();
-            new_cached.push(TabInfo {
-                id,
-                url: BLANK_URL.to_string(),
-                title: "New Tab".into(),
-                is_loading: false,
-                can_go_back: false,
-                can_go_forward: false,
-                load_progress: 0.0,
-            });
+            new_cached.push(TabInfo::chrome(id, BLANK_URL, "New Tab"));
             open_list.push((id, BLANK_URL.to_string(), "New Tab".into()));
         }
         let active = open_list
@@ -1557,12 +1593,56 @@ impl<E: Engine> App<E> {
                     .store(true, std::sync::atomic::Ordering::Release);
             }
             Msg::NavBack => {
-                self.set_active_loading(true);
-                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Back));
+                self.nav_hold = None;
+                return self.nav_step(HistoryDir::Back);
             }
             Msg::NavForward => {
-                self.set_active_loading(true);
-                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Forward));
+                self.nav_hold = None;
+                return self.nav_step(HistoryDir::Forward);
+            }
+            Msg::NavHoldStart(dir) => {
+                self.nav_hold = Some(NavHold {
+                    dir,
+                    started: Instant::now(),
+                    menu: false,
+                });
+            }
+            Msg::NavHoldFire => {
+                if self
+                    .nav_hold
+                    .as_ref()
+                    .is_some_and(|h| h.started.elapsed().as_millis() >= NAV_HOLD_MS)
+                {
+                    self.open_history_menu();
+                }
+            }
+            Msg::NavJump(index) => {
+                self.context_menu = None;
+                self.nav_hold = None;
+                let info = self.active_tab_info();
+                let current = info.map(|t| t.history_index).unwrap_or(0);
+                let delta = index - current;
+                let target_url = info.and_then(|t| {
+                    t.history
+                        .iter()
+                        .find(|e| e.index == index)
+                        .map(|e| e.url.clone())
+                });
+                let cef_can = info.is_some_and(|t| {
+                    if delta < 0 {
+                        t.can_go_back
+                    } else {
+                        t.can_go_forward
+                    }
+                });
+                if delta != 0 {
+                    self.set_active_loading(true);
+                    if cef_can {
+                        let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::GoHistory { delta }));
+                    } else if let Some(url) = target_url {
+                        let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+                    }
+                }
             }
             Msg::NavReloadOrStop => {
                 if self.active_is_loading() {
@@ -1711,6 +1791,7 @@ impl<E: Engine> App<E> {
                         }
                     }
                 }
+                self.take_page_menu();
                 // Merge engine snapshot with prior cache: WebKit often reports
                 // empty title until the page finishes loading (esp. inactive
                 // restored tabs). Keep the last known title so the strip does
@@ -1782,34 +1863,14 @@ impl<E: Engine> App<E> {
                         });
                     }
                 }
-                // Drain any page-selection text the engine extracted for a copy
-                // and put it on the system clipboard via iced. The engine's own
-                // clipboard can't reach Wayland (headless display); iced's can.
-                if let Some(text) = self
-                    .engine
-                    .clipboard_handle()
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .and_then(|t| crate::util::usable_clipboard_text(Some(t)))
-                {
-                    tracing::debug!(
-                        len = text.len(),
-                        "draining page selection → system clipboard"
-                    );
-                    #[cfg(feature = "bitwarden")]
-                    if focus_otp {
-                        return Task::batch([
-                            iced::clipboard::write(text),
-                            iced::widget::operation::focus(vault_otp_id()),
-                        ]);
-                    }
-                    return iced::clipboard::write(text);
-                }
+                // Drain any page-selection / in-page copy the engine extracted.
+                // The engine's own clipboard can't reach Wayland; iced's can.
+                let clip = self.take_page_clipboard();
                 #[cfg(feature = "bitwarden")]
                 if focus_otp {
-                    return iced::widget::operation::focus(vault_otp_id());
+                    return Task::batch([clip, iced::widget::operation::focus(vault_otp_id())]);
                 }
+                return clip;
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -1834,6 +1895,8 @@ impl<E: Engine> App<E> {
                 if self.reorder_dragging {
                     self.sync_reorder_anim();
                 }
+                self.take_page_menu();
+                return self.take_page_clipboard();
             }
             Msg::CursorMoved(x, y) => {
                 self.last_cursor_x = Some(x);
@@ -1868,6 +1931,7 @@ impl<E: Engine> App<E> {
                 if self.reorder.is_some() {
                     self.finish_reorder();
                 }
+                return self.finish_nav_hold();
             }
             Msg::TabHover(i) => self.hovered_tab = i,
             Msg::ToggleGroup(id) => {
@@ -1880,7 +1944,10 @@ impl<E: Engine> App<E> {
             Msg::GroupContext(id) => {
                 self.context_menu = Some((last_cursor_point(), CtxTarget::Group(id)));
             }
-            Msg::MenuDismiss => self.context_menu = None,
+            Msg::MenuDismiss => {
+                self.context_menu = None;
+                self.nav_hold = None;
+            }
             Msg::NewGroup(id) => {
                 self.context_menu = None;
                 self.groups.new_group(id);
@@ -2027,6 +2094,8 @@ impl<E: Engine> App<E> {
                 // after a chrome read hits an empty clipboard and can *set*
                 // that empty selection as the new source.
                 if cmd == EditCmd::Paste {
+                    // Focused-frame JS insert via PasteText — not EvaluateJs
+                    // (that runs in every frame and triple-pastes).
                     return iced::clipboard::read().map(Msg::PagePasted);
                 }
                 if cmd == EditCmd::Copy || cmd == EditCmd::Cut {
@@ -2056,9 +2125,12 @@ impl<E: Engine> App<E> {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                let script = crate::paste_js::paste_into_focused_script(&s);
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                let _ = self.cmd_tx.send(Cmd::PasteText(s.clone()));
                 return iced::clipboard::write(s);
+            }
+            Msg::PageMenu(action) => {
+                self.context_menu = None;
+                return self.run_page_menu(action);
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultClipboardPaste(text) => {
@@ -2117,13 +2189,8 @@ impl<E: Engine> App<E> {
             String::new()
         };
         self.cached_tabs.push(TabInfo {
-            id,
-            url: url.clone(),
-            title: title.clone(),
             is_loading: url != BLANK_URL && !url.is_empty(),
-            can_go_back: false,
-            can_go_forward: false,
-            load_progress: 0.0,
+            ..TabInfo::chrome(id, url.clone(), title.clone())
         });
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
@@ -2273,7 +2340,11 @@ impl<E: Engine> App<E> {
         };
 
         let content: Element<'_, Msg> = if let Some((at, target)) = &self.context_menu {
-            stack![content, menu_at(*at, self.menu_items(target), Msg::MenuDismiss)].into()
+            stack![
+                content,
+                menu_at(*at, self.menu_items(target), Msg::MenuDismiss)
+            ]
+            .into()
         } else {
             content
         };
@@ -2314,6 +2385,26 @@ impl<E: Engine> App<E> {
                 MenuItem::action("Rename", Msg::RenameStart(gid.clone())),
                 MenuItem::action("Ungroup", Msg::UngroupGroup(gid.clone())),
             ],
+            CtxTarget::Page(ctx) => page_menu_items(ctx),
+            CtxTarget::History { forward } => {
+                let (entries, current) = self
+                    .active_tab_info()
+                    .map(|t| (t.history.as_slice(), t.history_index))
+                    .unwrap_or((&[], 0));
+                let items = page_menu::history_jump_items(entries, current, *forward, 12);
+                if items.is_empty() {
+                    vec![MenuItem::disabled(if *forward {
+                        "No forward history"
+                    } else {
+                        "No back history"
+                    })]
+                } else {
+                    items
+                        .into_iter()
+                        .map(|(index, label)| MenuItem::action(label, Msg::NavJump(index)))
+                        .collect()
+                }
+            }
         }
     }
 
@@ -2345,11 +2436,8 @@ impl<E: Engine> App<E> {
                 .map(mk_tab)
                 .collect();
             let n = members.len();
-            let header_active = g.collapsed
-                && self
-                    .groups
-                    .of_tab(active_id)
-                    .is_some_and(|id| id == g.id);
+            let header_active =
+                g.collapsed && self.groups.of_tab(active_id).is_some_and(|id| id == g.id);
             let mut section = SidebarSection::new(g.name.clone(), members)
                 .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
                 .header_active(header_active)
@@ -2431,28 +2519,14 @@ impl<E: Engine> App<E> {
     pub fn view_chrome_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
         let info = self.active_tab_info();
-        let can_back = info.map(|t| t.can_go_back).unwrap_or(false);
-        let can_fwd = info.map(|t| t.can_go_forward).unwrap_or(false);
+        let can_back = info.is_some_and(chrome_can_nav_back);
+        let can_fwd = info.is_some_and(chrome_can_nav_forward);
         let muted = {
             let t = self.theme.extended_palette().secondary.base.text;
             iced::Color { a: 0.55, ..t }
         };
-        let back = self.nav_icon_btn(
-            nav_icon_back(),
-            16,
-            can_back,
-            NAV_BTN_W,
-            Msg::NavBack,
-            muted,
-        );
-        let forward = self.nav_icon_btn(
-            nav_icon_forward(),
-            16,
-            can_fwd,
-            NAV_BTN_W,
-            Msg::NavForward,
-            muted,
-        );
+        let back = self.nav_hold_btn(nav_icon_back(), can_back, muted, HistoryDir::Back);
+        let forward = self.nav_hold_btn(nav_icon_forward(), can_fwd, muted, HistoryDir::Forward);
         let reload_handle = if self.active_is_loading() {
             nav_icon_stop()
         } else {
@@ -2636,6 +2710,159 @@ impl<E: Engine> App<E> {
             b.on_press(msg).into()
         } else {
             b.into()
+        }
+    }
+
+    /// Back / forward: click = one step; hold = session history menu.
+    ///
+    /// iced `Button::on_press` fires on *release*, so hold must be a
+    /// `mouse_area` around a non-button (a button with `on_press` would
+    /// capture the down and look disabled without one).
+    fn nav_hold_btn(
+        &self,
+        handle: iced::widget::svg::Handle,
+        enabled: bool,
+        muted: iced::Color,
+        dir: HistoryDir,
+    ) -> Element<'_, Msg> {
+        let icon: Element<'_, Msg> = if enabled {
+            icon_svg(handle, 16)
+        } else {
+            icon_svg_colored(handle, 16, muted)
+        };
+        let inner = container(icon)
+            .padding(PAD_CONTROL_SM)
+            .width(Length::Fixed(NAV_BTN_W))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        if !enabled {
+            return inner.into();
+        }
+        mouse_area(inner).on_press(Msg::NavHoldStart(dir)).into()
+    }
+
+    fn take_page_clipboard(&mut self) -> Task<Msg> {
+        let Some(text) = self
+            .engine
+            .clipboard_handle()
+            .lock()
+            .unwrap()
+            .take()
+            .and_then(|t| crate::util::usable_clipboard_text(Some(t)))
+        else {
+            return Task::none();
+        };
+        tracing::debug!(len = text.len(), "page copy → system clipboard");
+        iced::clipboard::write(text)
+    }
+
+    fn take_page_menu(&mut self) {
+        let menus: Vec<PageContext> = self.page_menus.lock().unwrap().drain(..).collect();
+        if let Some(ctx) = menus.into_iter().last() {
+            self.context_menu = Some((last_cursor_point(), CtxTarget::Page(ctx)));
+        }
+    }
+
+    fn nav_step(&mut self, dir: HistoryDir) -> Task<Msg> {
+        let info = self.active_tab_info();
+        let cef_can = info.is_some_and(|t| match dir {
+            HistoryDir::Back => t.can_go_back,
+            HistoryDir::Forward => t.can_go_forward,
+        });
+        if cef_can {
+            self.set_active_loading(true);
+            let _ = self.cmd_tx.send(Cmd::Nav(match dir {
+                HistoryDir::Back => NavCmd::Back,
+                HistoryDir::Forward => NavCmd::Forward,
+            }));
+            return Task::none();
+        }
+        let Some(info) = info else {
+            return Task::none();
+        };
+        let items = page_menu::history_jump_items(
+            &info.history,
+            info.history_index,
+            matches!(dir, HistoryDir::Forward),
+            1,
+        );
+        let Some((index, _)) = items.into_iter().next() else {
+            return Task::none();
+        };
+        let Some(url) = info
+            .history
+            .iter()
+            .find(|e| e.index == index)
+            .map(|e| e.url.clone())
+        else {
+            return Task::none();
+        };
+        self.set_active_loading(true);
+        let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+        Task::none()
+    }
+
+    fn finish_nav_hold(&mut self) -> Task<Msg> {
+        let Some(hold) = self.nav_hold.take() else {
+            return Task::none();
+        };
+        if hold.menu {
+            return Task::none();
+        }
+        match hold.dir {
+            HistoryDir::Back => self.update(Msg::NavBack),
+            HistoryDir::Forward => self.update(Msg::NavForward),
+        }
+    }
+
+    fn open_history_menu(&mut self) {
+        let Some(hold) = self.nav_hold.as_ref() else {
+            return;
+        };
+        if hold.menu {
+            return;
+        }
+        let forward = matches!(hold.dir, HistoryDir::Forward);
+        let has = self
+            .active_tab_info()
+            .map(|t| {
+                !page_menu::history_jump_items(&t.history, t.history_index, forward, 12).is_empty()
+            })
+            .unwrap_or(false);
+        if !has {
+            return;
+        }
+        if let Some(hold) = self.nav_hold.as_mut() {
+            hold.menu = true;
+        }
+        self.context_menu = Some((last_cursor_point(), CtxTarget::History { forward }));
+    }
+
+    fn run_page_menu(&mut self, action: PageMenuAction) -> Task<Msg> {
+        match action {
+            PageMenuAction::OpenLink(url) => {
+                if !url.is_empty() {
+                    self.open_tab(url, false);
+                }
+                Task::none()
+            }
+            PageMenuAction::CopyLink(url) | PageMenuAction::Copy(url) => {
+                match crate::util::usable_clipboard_text(Some(url)) {
+                    Some(t) => iced::clipboard::write(t),
+                    None => Task::none(),
+                }
+            }
+            PageMenuAction::Cut => {
+                let _ = self
+                    .cmd_tx
+                    .send(Cmd::EvaluateJs(crate::paste_js::copy_selection_script()));
+                let _ = self.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
+                Task::none()
+            }
+            PageMenuAction::Paste => iced::clipboard::read().map(Msg::PagePasted),
+            PageMenuAction::Back => self.update(Msg::NavBack),
+            PageMenuAction::Forward => self.update(Msg::NavForward),
+            PageMenuAction::Reload => self.update(Msg::NavReloadOrStop),
         }
     }
 
@@ -4134,55 +4361,83 @@ impl<E: Engine> App<E> {
         let frames = self.engine.frames();
         let slot = self.slot.clone();
         let active = self.active_handle.clone();
-        Subscription::batch(vec![
+        let mut subs = vec![
             crate::run::frame_subscription::<E>(frames, slot, active),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             sola_kit::app::bus_subscription().map(Msg::Bus),
             // Always registered; `update` no-ops when not dragging.
             iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
-            event::listen_with(|event, status, _| match event {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
-                    CURSOR_Y_BITS.store(position.y.to_bits(), Ordering::Relaxed);
-                    // Rebuilding chrome on every pixel move starved menus and
-                    // typing. Divider resize and tab reorder both need samples.
-                    if DIVIDER_DRAGGING.load(Ordering::Relaxed)
-                        || REORDER_TRACKING.load(Ordering::Relaxed)
-                    {
-                        Some(Msg::CursorMoved(position.x, position.y))
-                    } else {
-                        None
+            event::listen_with(|event, status, _| {
+                match &event {
+                    Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
+                        crate::input::store_modifiers(*m);
                     }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                        crate::input::store_modifiers(*modifiers);
+                        if crate::input::is_super_key(key) {
+                            crate::input::note_super_key(true);
+                        }
+                    }
+                    Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+                        crate::input::store_modifiers(*modifiers);
+                        if crate::input::is_super_key(key) {
+                            crate::input::note_super_key(false);
+                        }
+                    }
+                    _ => {}
                 }
-                // A left press anywhere: resolve whether it focused the URL bar
-                // (for click-to-select-all). Received regardless of which widget
-                // captures it, unlike a wrapping `mouse_area`.
-                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                    Some(Msg::LeftPressed)
+                match event {
+                    Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                        CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
+                        CURSOR_Y_BITS.store(position.y.to_bits(), Ordering::Relaxed);
+                        // Rebuilding chrome on every pixel move starved menus and
+                        // typing. Divider resize and tab reorder both need samples.
+                        if DIVIDER_DRAGGING.load(Ordering::Relaxed)
+                            || REORDER_TRACKING.load(Ordering::Relaxed)
+                        {
+                            Some(Msg::CursorMoved(position.x, position.y))
+                        } else {
+                            None
+                        }
+                    }
+                    // A left press anywhere: resolve whether it focused the URL bar
+                    // (for click-to-select-all). Received regardless of which widget
+                    // captures it, unlike a wrapping `mouse_area`.
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                        Some(Msg::LeftPressed)
+                    }
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                        Some(Msg::CursorReleased)
+                    }
+                    // Escape stops loading (browser-standard). Only when iced did
+                    // not already capture the key (e.g. a focused text field that
+                    // wants Escape for its own cancel).
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    }) if status == event::Status::Ignored => Some(Msg::NavStop),
+                    // Tab between vault form fields while the panel is open.
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Tab),
+                        modifiers,
+                        ..
+                    }) if vault_panel_is_open() => Some(if modifiers.shift() {
+                        Msg::VaultFocusPrev
+                    } else {
+                        Msg::VaultFocusNext
+                    }),
+                    _ => None,
                 }
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Msg::CursorReleased)
-                }
-                // Escape stops loading (browser-standard). Only when iced did
-                // not already capture the key (e.g. a focused text field that
-                // wants Escape for its own cancel).
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                    ..
-                }) if status == event::Status::Ignored => Some(Msg::NavStop),
-                // Tab between vault form fields while the panel is open.
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::Tab),
-                    modifiers,
-                    ..
-                }) if vault_panel_is_open() => Some(if modifiers.shift() {
-                    Msg::VaultFocusPrev
-                } else {
-                    Msg::VaultFocusNext
-                }),
-                _ => None,
             }),
-        ])
+        ];
+        if self
+            .nav_hold
+            .as_ref()
+            .is_some_and(|h| !h.menu && h.started.elapsed().as_millis() < NAV_HOLD_MS + 200)
+        {
+            subs.push(iced::time::every(Duration::from_millis(50)).map(|_| Msg::NavHoldFire));
+        }
+        Subscription::batch(subs)
     }
 }
 
@@ -4194,6 +4449,62 @@ static REORDER_TRACKING: AtomicBool = AtomicBool::new(false);
 /// emitting CursorMoved on every pixel.
 static CURSOR_X_BITS: AtomicU32 = AtomicU32::new(0);
 static CURSOR_Y_BITS: AtomicU32 = AtomicU32::new(0);
+
+fn chrome_can_nav_back(t: &TabInfo) -> bool {
+    t.can_go_back
+        || !page_menu::history_jump_items(&t.history, t.history_index, false, 1).is_empty()
+}
+
+fn chrome_can_nav_forward(t: &TabInfo) -> bool {
+    t.can_go_forward
+        || !page_menu::history_jump_items(&t.history, t.history_index, true, 1).is_empty()
+}
+
+fn page_menu_items(ctx: &PageContext) -> Vec<MenuItem<Msg>> {
+    page_menu::page_menu_kinds(ctx)
+        .into_iter()
+        .map(|kind| match kind {
+            PageMenuKind::OpenLink => {
+                let url = ctx.link_url.clone().unwrap_or_default();
+                MenuItem::action(
+                    "Open Link in New Tab",
+                    Msg::PageMenu(PageMenuAction::OpenLink(url)),
+                )
+            }
+            PageMenuKind::CopyLink => {
+                let url = ctx.link_url.clone().unwrap_or_default();
+                MenuItem::action(
+                    "Copy Link Address",
+                    Msg::PageMenu(PageMenuAction::CopyLink(url)),
+                )
+            }
+            PageMenuKind::Copy => {
+                let t = ctx.selection.clone().unwrap_or_default();
+                MenuItem::action("Copy", Msg::PageMenu(PageMenuAction::Copy(t)))
+            }
+            PageMenuKind::Cut => MenuItem::action("Cut", Msg::PageMenu(PageMenuAction::Cut)),
+            PageMenuKind::Paste => MenuItem::action("Paste", Msg::PageMenu(PageMenuAction::Paste)),
+            PageMenuKind::Back => {
+                if ctx.can_go_back {
+                    MenuItem::action("Back", Msg::PageMenu(PageMenuAction::Back))
+                } else {
+                    MenuItem::disabled("Back")
+                }
+            }
+            PageMenuKind::Forward => {
+                if ctx.can_go_forward {
+                    MenuItem::action("Forward", Msg::PageMenu(PageMenuAction::Forward))
+                } else {
+                    MenuItem::disabled("Forward")
+                }
+            }
+            PageMenuKind::Reload => {
+                MenuItem::action("Reload", Msg::PageMenu(PageMenuAction::Reload))
+            }
+            PageMenuKind::Separator => MenuItem::separator(),
+        })
+        .collect()
+}
 
 fn last_cursor_point() -> iced::Point {
     iced::Point::new(
@@ -4484,6 +4795,13 @@ fn merge_tab_fields(prior: &TabInfo, live: &TabInfo) -> TabInfo {
     } else {
         0.0
     };
+    let (history, history_index) = page_menu::merge_tab_history(
+        &prior.history,
+        prior.history_index,
+        &live.history,
+        &url,
+        &title,
+    );
     TabInfo {
         id: prior.id,
         url,
@@ -4492,6 +4810,8 @@ fn merge_tab_fields(prior: &TabInfo, live: &TabInfo) -> TabInfo {
         can_go_back: live.can_go_back,
         can_go_forward: live.can_go_forward,
         load_progress,
+        history,
+        history_index,
     }
 }
 
@@ -4500,15 +4820,7 @@ mod tests {
     use super::*;
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
-        TabInfo {
-            id: TabId(id),
-            url: url.to_string(),
-            title: title.to_string(),
-            is_loading: false,
-            can_go_back: false,
-            can_go_forward: false,
-            load_progress: 0.0,
-        }
+        TabInfo::chrome(TabId(id), url, title)
     }
 
     #[test]

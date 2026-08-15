@@ -46,14 +46,20 @@ impl<Message> MenuItem<Message> {
     }
 }
 
+/// Wide enough that labels read; `Fill` rows inside a `Shrink` column
+/// collapse to 0 width (a thin empty strip).
+pub const MENU_MIN_W: f32 = 200.0;
+
 /// Menu chrome only — no positioning. Prefer [`menu_at`] for a real menu.
 pub fn menu<'a, Message: Clone + 'a>(
     items: impl IntoIterator<Item = MenuItem<Message>>,
 ) -> iced::widget::Container<'a, Message, Theme> {
     let rows = column(items.into_iter().map(menu_row))
         .spacing(1)
-        .width(Length::Shrink);
-    popover::popover(rows).padding(Padding::from([4, 4])).width(Length::Shrink)
+        .width(Length::Fixed(MENU_MIN_W));
+    popover::popover(rows)
+        .padding(Padding::from([4, 4]))
+        .width(Length::Fixed(MENU_MIN_W + 8.0))
 }
 
 /// Float the menu at `position` (window-logical). Build only while open.
