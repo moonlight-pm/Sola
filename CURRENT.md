@@ -9,19 +9,24 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (browser CEF landed on master)
+**As of:** 2026-08-14 (this worktree: call-plane infrastructure)
 
 ---
 
 ## Now
 
-1. **Pick the next slice** — browser CEF work landed on **master**
-   (2026-08-13). No remaining engine polish queued.  
+1. **Call plane — infrastructure in this worktree** (`naturalethic/sola-call-plane`).
+   Freeze: [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md).
+   Host + `solactl compositor`/`session` + kit `CallSetup` + shell screenshot
+   via call. Fake bus pairs (`Evaluate`, `CaptureScreen`/`Screenshot`,
+   `Simulate*`) removed. **Needs your install to dogfood.** Next product
+   consumer: agent-terminal. **D3** (confirm) is open. Later list is in the freeze.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
 3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+4. **Follow-ups (unordered backlog):** sola-agent-terminal continues in its
+   own Orca workspace after this; float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
    unmerged), etc.
 
@@ -65,7 +70,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 |-------|------|
 | UI stack | **Iced + sola-kit** only for new apps; WebView host is apocrypha |
 | Compositor | **River** external; **sola-river** is the bus ↔ Wayland bridge |
-| IPC | **Sola Bus** (Unix socket events) + Wayland for surfaces/input |
+| IPC | **Sola Bus** (fan-out) + **sola-call** (request/reply) + Wayland for surfaces/input |
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |

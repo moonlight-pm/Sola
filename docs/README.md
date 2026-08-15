@@ -34,7 +34,7 @@ ask the human.
 |------|---------|------|
 | [`../CURRENT.md`](../CURRENT.md) | Living priority, dogfood, locks | **Focus** |
 | [`capabilities.md`](capabilities.md) | Capability status + gaps | **As-built** |
-| [`architecture.md`](architecture.md) | Processes, crates, bus, install layout | **As-built** map |
+| [`architecture.md`](architecture.md) | Processes, crates, bus, call plane, install layout | **As-built** map |
 | [`progress-model.md`](progress-model.md) | How is / will-be / focus / manual fit | Meta |
 | [`progress-documentation-practice.md`](progress-documentation-practice.md) | Portable practice (shareable) | Meta |
 | [`roadmap.md`](roadmap.md) | Coarse multi-month phases | **Horizon** |
@@ -42,7 +42,7 @@ ask the human.
 | [`specs/`](specs/) | Target freezes (dated) | **Target** |
 | [`plans/`](plans/) | Implementation checklists (active + historical) | Build |
 | [`ideas/`](ideas/) | Parked thoughts | Idea |
-| [`manual/`](manual/) | Operator truth (fonts, kvm, **arcade**, **browser** profiles, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
+| [`manual/`](manual/) | Operator truth (fonts, kvm, **arcade**, **browser**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
 | [`specs/2026-08-05-distribution-image-design.md`](specs/2026-08-05-distribution-image-design.md) | Dist installer freeze | **Target** |
 | [`vault/`](vault/) | Early Obsidian notes — reference only | History |
 | [`notes/`](notes/) | One-off investigations — not living handoff | History |

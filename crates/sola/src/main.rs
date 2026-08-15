@@ -18,6 +18,7 @@ use sola_bus::topics::Topic;
 
 const MANAGED: &[&str] = &[
     "sola-bus",
+    "sola-call",
     "sola-river",
     "sola-shell",
     "sola-session",

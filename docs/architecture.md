@@ -20,7 +20,7 @@ update the freeze’s Implementation / Gaps header.
 ## Overview
 
 Sola is a **Wayland desktop environment**: River as compositor, a typed IPC
-bus, and multi-process **Iced** apps sharing `sola-kit`.
+bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
 
 ```text
                     ┌──────────────────────┐
@@ -29,14 +29,14 @@ bus, and multi-process **Iced** apps sharing `sola-kit`.
                     └──┬───┬───┬───┬───┬───┘
                        │   │   │   │   │
           ┌────────────┘   │   │   │   └────────────┐
-          ▼                ▼   ▼   ▼                ▼
-     ┌────────┐      ┌──────┐ ┌────────┐      ┌──────────┐
-     │ River  │      │ bus  │ │ river  │      │ session  │
-     │(comp.) │      │ host │ │ bridge │      │ manager  │
-     └───┬────┘      └──┬───┘ └───┬────┘      └────┬─────┘
-         │              │         │                │
-         │              └────┬────┴────────────────┘
-         │                   │  Unix socket (sola-bus)
+          ▼                ▼   ▼   ▼   ▼            ▼
+     ┌────────┐      ┌──────┐ ┌──────┐ ┌────────┐ ┌──────────┐
+     │ River  │      │ bus  │ │ call │ │ river  │ │ session  │
+     │(comp.) │      │ host │ │ host │ │ bridge │ │ manager  │
+     └───┬────┘      └──┬───┘ └──┬───┘ └───┬────┘ └────┬─────┘
+         │              │        │         │           │
+         │              └────┬───┴─────────┴───────────┘
+         │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  browser · agent · mail · …  │
@@ -55,6 +55,7 @@ to the bus and tolerate compositor restarts.
 |------|------|
 | `crates/sola` | Process manager (binary entry) |
 | `crates/sola-bus` | Bus host + client library + topics |
+| `crates/sola-call` | Call host + client library (request/reply) |
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
@@ -69,7 +70,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Image preview / selection capture handoff |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
-| `crates/solactl` | CLI helpers |
+| `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
@@ -91,6 +92,7 @@ to the bus and tolerate compositor restarts.
 | UI | Iced 0.14, wgpu, Wayland client |
 | Compositor | External **River**; bridge **sola-river** |
 | IPC control plane | **Sola Bus** over a Unix socket |
+| IPC call plane | **sola-call** over `$XDG_RUNTIME_DIR/sola-call` |
 | Surfaces / input | Wayland protocols via River |
 | Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
@@ -104,8 +106,11 @@ to the bus and tolerate compositor restarts.
 ### Communication layers
 
 1. **Sola Bus** — lifecycle, focus, themes, app menus, session commands,
-   stickies. Control plane.  
-2. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
+   stickies. Fan-out facts. No request/reply.  
+2. **sola-call** — live method registry; request id, timeout, error to the
+   caller. `solactl compositor` / `session`; kit apps advertise via
+   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.  
+3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
 
 ---
 

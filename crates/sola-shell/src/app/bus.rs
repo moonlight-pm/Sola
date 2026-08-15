@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppHidden, AppMenuPayload, Application, CaptureScreenPayload, CaptureTarget, ChordEvent,
-    FloatGeometry, FocusTarget, LaunchAppPayload, LaunchResultPayload, MouseClickedPayload,
-    MouseEnteredPayload, OpenImageRequest, OutputGeometry, ScreenshotPayload, Topic,
-    UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
+    AppHidden, AppMenuPayload, Application, ChordEvent, FloatGeometry, FocusTarget,
+    LaunchAppPayload, LaunchResultPayload, MouseClickedPayload, MouseEnteredPayload,
+    OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating,
+    WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -54,7 +54,6 @@ impl Shell {
             Topic::Zones(z) => { self.on_zones(z); Task::none() }
             Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
             Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
-            Topic::Screenshot(r) => self.on_screenshot(r),
             // External links: Helium is the system browser while sola-browser
             // is not day-to-day usable. Mail, solactl (if still bus-emitting),
             // and other apps emit OpenUrl; shell is always running.
@@ -561,16 +560,19 @@ impl Shell {
         )
     }
 
-    /// Screenshot capture finished in sola-river — toast path or error.
+    /// Screenshot capture finished (`compositor.screenshot` reply).
     /// When the capture was shell-initiated (`open_preview_on_next`), also
     /// open/raise sola-preview with the image **without** stealing keyboard
     /// (macOS-style: show the shot, keep typing in the previous app).
-    fn on_screenshot(&mut self, r: ScreenshotPayload) -> Task<Msg> {
+    pub(crate) fn on_screenshot_done(
+        &mut self,
+        result: Result<std::path::PathBuf, String>,
+    ) -> Task<Msg> {
         let open_preview = self.open_preview_on_next;
         self.open_preview_on_next = false;
         let return_focus = self.screenshot_return_focus.take();
 
-        let msg = match &r.result {
+        let msg = match &result {
             Ok(path) => format!("Screenshot saved: {}", path.display()),
             Err(e) => format!("Screenshot failed: {e}"),
         };
@@ -582,7 +584,7 @@ impl Shell {
         );
 
         if open_preview {
-            if let Ok(path) = r.result {
+            if let Ok(path) = result {
                 self.open_or_raise_preview(&path);
             }
         }
@@ -832,13 +834,7 @@ impl Shell {
         {
             tracing::info!("Super+Shift+3 — full-output screenshot");
             self.arm_screenshot_handoff();
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
-                    path: None,
-                    target: CaptureTarget::FullOutput,
-                }));
-            }
-            return Task::none();
+            return crate::screenshot::full();
         }
 
         // Super+Shift+4: interactive selection marquee (macOS order).
@@ -876,13 +872,7 @@ impl Shell {
                     .map(|w| w.title.clone())
             });
             self.arm_screenshot_handoff();
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
-                    path: None,
-                    target: CaptureTarget::Window { app_id, title },
-                }));
-            }
-            return Task::none();
+            return crate::screenshot::window(app_id, title);
         }
 
         // Meta+`: cycle windows of the focused app.

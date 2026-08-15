@@ -22,9 +22,6 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::WindowFloating,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
-    TopicKind::CaptureScreen,
-    TopicKind::SimulatePointer,
-    TopicKind::SimulateKey,
     TopicKind::Shutdown,
 ];
 

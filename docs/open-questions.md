@@ -52,6 +52,22 @@ install from agent sessions.
 
 ---
 
+### D3 — Which call-plane methods need a human confirm (P1)
+
+**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). General agent control will want a confirm gate for some methods (close app, input, later Workspaces spawn). Cousin of **D1**.
+
+**Ask:**
+
+1. Which owners/methods require a prompt in v1+?  
+2. Who owns the prompt (shell, a dedicated surface, the calling agent)?  
+3. How does this interact with D1 multi-agent attach?
+
+**Until decided:** do not invent confirm policy. Every live method is as privileged as the socket.
+
+**Related:** [call-plane freeze](specs/2026-08-13-sola-call-plane-design.md); `call` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface
@@ -75,6 +91,7 @@ comparison warrants a second engine.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-13 | Call plane | Third plane `sola-call`; fail if owner down; `solactl` face is `compositor`/`session` (not `call 'sig'`); advertise for unknown apps; MCP later; confirm is **D3** | [freeze](specs/2026-08-13-sola-call-plane-design.md), CURRENT, architecture, capabilities |
 | 2026-08-13 | Browser OSR | IME + Shift+wheel + `<select>` PET_POPUP dogfooded; passkey **registration** deferred until needed | CURRENT, capabilities, manual |
 | 2026-08-13 | Browser vault | Create login: save Bitwarden cipher first, then fill; always available on unlocked card; last username + generated password + bare apex URL | create-login freeze, CURRENT, capabilities, manual |
 | 2026-08-12 | Browser persist | YouTube login survives full quit; ARGB→BGRA swizzle confirmed (no red wash) | CURRENT, capabilities |

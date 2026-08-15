@@ -23,6 +23,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | supervisor | Process manager launches/restarts components | shipped | architecture | local TTY | Policy for crash loops / backoff polish | partial |
 | bus | Unix-socket event bus + stickies | shipped | [persistent bus](specs/2026-04-24-persistent-bus-design.md) | local | Sticky surface still expanding; see bus freezes | partial |
+| call | Request/reply host + `solactl compositor`/`session` + kit helper | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code; install dogfood pending | **Gaps:** not installed yet; no MCP; confirm is **D3**; no catalog sticky; agent-terminal not registered; `LaunchResult` still a bus reply | partial |
 | bus-reconnect | Apps survive bus restart | shipped | seamless restart freezes | local (menubar framed after restart) | Broader app-menu re-publish edge cases | no |
 | river-bridge | sola-river ↔ River Wayland | shipped | [river design](specs/2026-04-16-sola-river-design.md) | local | Layer-shell / exclusive focus quirks; skip re-`focus_window` when already focused (FFM flash mitigation) | partial |
 | session-mgr | sola-session spawn/close/reap | shipped | [session](specs/2026-04-17-sola-session-design.md) | local | Persistence depth varies by app | no |
@@ -66,7 +67,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
 | preview | sola-preview + selection capture | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Zoom; image clipboard; solactl --region | no |
 | kvm | sola-kvm Linux↔Mac | partial | [kvm](specs/2026-07-27-sola-kvm-design.md), clipboard | dual-host | Permanent input ACL; clipboard L2; warp cost; Mac scroll is CG velocity gain (not true HID accel) — tune on desk | partial |
-| solactl | CLI helpers | partial | — | local | Region/screenshot flags incomplete | no |
+| solactl | Operator CLI (clap owners + live extras) | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code | **Gaps:** `eval` removed; screenshot/apps/input live under `compositor`; install dogfood pending | no |
 
 ---
 
@@ -76,7 +77,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | macos-look | macOS dark chrome density/materials | partial | [look roadmap](specs/2026-07-20-macos-look-and-feel-roadmap.md), [design language](manual/design-language.md) | local | Phase program incomplete | partial |
 | design-language | Documented visual law | partial | [design-language](manual/design-language.md) | — | Not all apps comply | yes |
-| screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md) | local | Region completeness; multi-output | no |
+| screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md); [call plane](specs/2026-08-13-sola-call-plane-design.md) | local (bus pair retired; shell + `solactl compositor screenshot` use call) | **Gaps:** install dogfood pending; multi-output | no |
 | doc-truth | Progress + manual match as-built | partial | [progress-model](progress-model.md) | — | Freeze headers not backfilled; vault stale | n/a |
 
 ---
@@ -96,6 +97,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
+| **call plane** | 2026-08-14: `sola-call` host; `solactl compositor`/`session`; kit `CallSetup`; shell screenshot via call; bus `Evaluate`/`CaptureScreen`/`Screenshot`/`Simulate*` removed |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |

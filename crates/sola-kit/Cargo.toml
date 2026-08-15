@@ -46,6 +46,7 @@ unicode-segmentation = "1"
 # iced pulls in, so there's one shared global font db.
 iced_graphics = "0.14"
 sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 sola-assets = { path = "../sola-assets" }
 serde_json = "1"

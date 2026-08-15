@@ -1,8 +1,7 @@
 //! Screenshot capture via `wlr-screencopy-unstable-v1`.
 //!
-//! Bus clients (`solactl screenshot`, sola-shell Super+Shift+3/4) emit
-//! `Topic::CaptureScreen`. This module runs the compositor-side capture,
-//! writes a PNG, and answers with `Topic::Screenshot`.
+//! Call-plane screenshot (`compositor.screenshot`). This module runs the
+//! compositor-side capture, writes a PNG, and completes the call reply.
 //!
 //! ## Why not grim / grim-rs?
 //!
@@ -18,8 +17,8 @@
 //!    `frame.copy(buffer)`.
 //! 4. On `Ready`: **copy** SHM bytes off the mmap, destroy Wayland
 //!    resources, and spawn a worker thread for convert+PNG. The result is
-//!    polled from `bus_tick` and emitted as `Topic::Screenshot`.
-//!    On `Failed` / any error: emit `Err(msg)`.
+//!    polled from `bus_tick` and completed as the call reply.
+//!    On `Failed` / any error: reply `Err(msg)`.
 //!
 //! ## Why off-thread encode?
 //!
@@ -43,7 +42,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
-use sola_bus::topics::{CaptureScreenPayload, CaptureTarget, ScreenshotPayload, Topic};
+use sola_bus::topics::{CaptureScreenPayload, CaptureTarget};
 use tracing::{debug, info, warn};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
@@ -67,6 +66,8 @@ pub struct ScreenshotState {
     /// Encode-worker result channel. While `Some`, a capture is still in
     /// progress even if `flight` is already cleared.
     result_rx: Option<Receiver<Result<PathBuf, String>>>,
+    /// When the request came from sola-call, complete this after encode.
+    pending_reply: Option<sola_call::ReplyTx>,
 }
 
 /// In-flight screencopy state machine.
@@ -121,12 +122,21 @@ pub fn poll_results(state: &mut AppData) {
     }
 }
 
-/// Handle a `Topic::CaptureScreen` request.
-pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
+/// Handle a sola-call screenshot. Completes `reply` when encode finishes.
+pub fn handle_call(
+    state: &mut AppData,
+    req: CaptureScreenPayload,
+    reply: sola_call::ReplyTx,
+) {
     if in_progress(state) {
-        emit_err(state, "screenshot already in progress");
+        reply.err("screenshot already in progress");
         return;
     }
+    state.screenshot.pending_reply = Some(reply);
+    start_capture(state, req);
+}
+
+fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
 
     let Some(manager) = state.screenshot.manager.clone() else {
         emit_err(state, "zwlr_screencopy_manager_v1 not available");
@@ -285,17 +295,17 @@ fn resolve_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn emit_ok(state: &mut AppData, path: PathBuf) {
     info!(path = %path.display(), "screenshot saved");
-    state.bus.emit(Topic::Screenshot(ScreenshotPayload {
-        result: Ok(path),
-    }));
+    if let Some(reply) = state.screenshot.pending_reply.take() {
+        reply.ok(serde_json::json!({ "path": path }));
+    }
 }
 
 fn emit_err(state: &mut AppData, msg: impl Into<String>) {
     let msg = msg.into();
     warn!(%msg, "screenshot failed");
-    state.bus.emit(Topic::Screenshot(ScreenshotPayload {
-        result: Err(msg),
-    }));
+    if let Some(reply) = state.screenshot.pending_reply.take() {
+        reply.err(msg);
+    }
 }
 
 /// Tear down flight resources and clear `state.screenshot.flight`.
