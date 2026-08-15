@@ -43,14 +43,10 @@ pub fn is_full_damage(rects: &[DirtyRect], width: u32, height: u32) -> bool {
 /// Copy `src` (full `src_w × src_h` BGRA) into `dst` (same geometry).
 /// `dst` is resized to `src_w * src_h * 4` when the size changes or on
 /// a full-damage blit. Partial damage is applied in place.
-pub fn apply_paint(
-    dst: &mut Vec<u8>,
-    src: &[u8],
-    src_w: u32,
-    src_h: u32,
-    dirty: &[DirtyRect],
-) {
-    let need = (src_w as usize).saturating_mul(src_h as usize).saturating_mul(4);
+pub fn apply_paint(dst: &mut Vec<u8>, src: &[u8], src_w: u32, src_h: u32, dirty: &[DirtyRect]) {
+    let need = (src_w as usize)
+        .saturating_mul(src_h as usize)
+        .saturating_mul(4);
     let size_changed = dst.len() != need;
     if size_changed || is_full_damage(dirty, src_w, src_h) {
         dst.clear();
@@ -383,6 +379,14 @@ mod tests {
     #[test]
     fn overlay_dirty_clips() {
         let d = overlay_dirty(-4, 2, 10, 8, 20, 20).unwrap();
-        assert_eq!(d, DirtyRect { x: 0, y: 2, w: 6, h: 8 });
+        assert_eq!(
+            d,
+            DirtyRect {
+                x: 0,
+                y: 2,
+                w: 6,
+                h: 8
+            }
+        );
     }
 }

@@ -114,7 +114,10 @@ mod tests {
     fn drops_idle_parks() {
         let now = Instant::now();
         let mut m = HashMap::new();
-        m.insert("old".into(), snap(2, now - PARK_IDLE - Duration::from_secs(1)));
+        m.insert(
+            "old".into(),
+            snap(2, now - PARK_IDLE - Duration::from_secs(1)),
+        );
         m.insert("fresh".into(), snap(2, now));
         let v = eviction_victims(&m, 2, now);
         assert_eq!(v, vec!["old".to_string()]);

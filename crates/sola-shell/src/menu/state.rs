@@ -131,7 +131,13 @@ mod tests {
         assert_eq!(menu.label, "Firefox");
         assert_eq!(menu.items.len(), 1);
         match &menu.items[0] {
-            MenuItem::Action { id, label, shortcut, disabled, checked } => {
+            MenuItem::Action {
+                id,
+                label,
+                shortcut,
+                disabled,
+                checked,
+            } => {
                 assert_eq!(id, SYNTHESIZED_CLOSE_ACTION);
                 assert_eq!(label, "Quit Firefox");
                 assert!(!disabled);

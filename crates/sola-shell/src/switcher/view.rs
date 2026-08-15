@@ -9,7 +9,7 @@
 //! When `switcher.active` is false, returns an invisible placeholder so the
 //! surface stays mapped without drawing content.
 
-use iced::widget::{column, container, mouse_area, row, text, Space};
+use iced::widget::{Space, column, container, mouse_area, row, text};
 use iced::{Alignment, Element, Length, Padding};
 use sola_kit::components::icon;
 use sola_kit::fonts;
@@ -60,16 +60,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             // differ in case (e.g. Wayland `orca` vs launcher `Orca`).
             // gamescope often maps empty until river infers — also try
             // the Arcade-published `gamescope` catalog row.
-            let catalog_entry = shell
-                .applications
-                .get_for_window(&app.app_id)
-                .or_else(|| {
-                    if app.app_id.is_empty() {
-                        shell.applications.get_for_window("gamescope")
-                    } else {
-                        None
-                    }
-                });
+            let catalog_entry = shell.applications.get_for_window(&app.app_id).or_else(|| {
+                if app.app_id.is_empty() {
+                    shell.applications.get_for_window("gamescope")
+                } else {
+                    None
+                }
+            });
             let icon_name = catalog_entry
                 .map(|a| a.icon.as_str())
                 .filter(|s| !s.is_empty())
@@ -107,17 +104,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                             app.app_id.as_str()
                         }
                     });
-                container(
-                    text(label)
-                        .font(fonts::chrome())
-                        .size(CAPTION_SIZE)
-                        .style(|theme: &iced::Theme| iced::widget::text::Style {
-                            color: Some(iced::Color {
-                                a: 0.92,
-                                ..theme.palette().text
-                            }),
+                container(text(label).font(fonts::chrome()).size(CAPTION_SIZE).style(
+                    |theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(iced::Color {
+                            a: 0.92,
+                            ..theme.palette().text
                         }),
-                )
+                    },
+                ))
                 .width(Length::Fixed(ICON_CELL))
                 .height(Length::Fixed(CAPTION_SLOT_H))
                 .center_x(Length::Fixed(ICON_CELL))
@@ -170,9 +164,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
     let max_w = (output_w - 2.0 * SCREEN_MARGIN).max(ICON_CELL);
 
-    let constrained: Element<'_, Msg> = container(backplate)
-        .max_width(max_w)
-        .into();
+    let constrained: Element<'_, Msg> = container(backplate).max_width(max_w).into();
 
     let centered: Element<'_, Msg> = container(constrained)
         .width(Length::Fill)
@@ -181,7 +173,5 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .center_y(Length::Fill)
         .into();
 
-    mouse_area(centered)
-        .on_press(Msg::SwitcherCancel)
-        .into()
+    mouse_area(centered).on_press(Msg::SwitcherCancel).into()
 }

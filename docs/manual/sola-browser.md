@@ -1,8 +1,10 @@
 # sola-browser
 
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / **Create login** / passkey **get**. Page ⌘C / ⌘V and triple-click
-select work on form fields and body text.
+fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA)
+and **create**.
+Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
+work on form fields and body text.
 
 ## What it is
 
@@ -19,10 +21,13 @@ Sola routes http(s) opens to **sola-browser**:
 
 | Path | Behavior |
 |------|----------|
-| Terminal / mail / arcade link click | `sola_core::open_url` → spawn `sola-browser <url>` |
+| Terminal / mail / arcade link click | `sola_core::open_url` → `chrome.sock` if chrome is up, else spawn |
 | `solactl open <url>` | same |
-| Bus `Topic::OpenUrl` | shell + browser (browser opens a tab when already up) |
-| `xdg-open` / MIME defaults | `sola-browser.desktop` claims `x-scheme-handler/http` and `https` after install |
+| Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
+| `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
+
+Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
+hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
 Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
 Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
@@ -39,6 +44,7 @@ A **profile** is a separate web identity + tab workspace (D8).
 | CEF cookies / storage | `~/.local/share/sola/browser/profiles/<uuid>/cef/` |
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
+| Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
 
 Site logins (cookies) live under that profile CEF dir. The engine uses
 Chromium’s **basic** password store so cookie encryption works without a
@@ -77,10 +83,13 @@ Manage (new / rename / delete) stays under **Menubar → Profiles**.
 
 ## Tabs
 
-The left strip is the tab list (`⌘T` for a new blank). Close removes the
-row immediately — no flash back. Closing the tab you are looking at
+The left strip is the tab list (`⌘T` for a new blank). **Drag a row** to
+reorder; a click (no drag) still selects. Titles fill the column and
+ellipsize at the edge (they grow if you widen the strip). Close removes
+the row immediately — no flash back. Closing the tab you are looking at
 selects the neighbor to the right (or the left if it was last). The last
-tab is replaced by a blank rather than closing the window.
+tab is replaced by a blank rather than closing the window. Order is
+saved in that profile’s `session.json`.
 
 ## Omnibox
 
@@ -93,15 +102,41 @@ Type a URL or a search and press Enter. Search text goes to Kagi.
   bottom of the field. Reload becomes **Stop**; back / forward follow
   the engine. Escape also stops the load.
 
+## Downloads
+
+Toolbar **download** icon (right of vault / cards) is always there.
+
+- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists
+  the next file is `report (1).pdf`. There is no Save dialog.
+- While a file is coming in, the icon goes accent and a thin progress line
+  grows on the button. The panel does not open by itself.
+- Click the icon for the list (flat rows). Long hash names shorten in the
+  middle. In-progress rows show percent and **Cancel**. Finished rows
+  open the file with the default app (`xdg-open`). **×** removes the
+  row from the list only — the file stays on disk.
+- After a download finishes, the icon stays accent until you open the panel.
+- Completed and failed items survive quit. In-progress ones do not (the
+  helper dies with the window).
+
+No “show in folder” (Sola has no file manager yet). No delete-from-disk.
+
 ## Bitwarden vault
 
-Toolbar lock / key icon opens the vault panel.
+Toolbar **key** opens logins. Toolbar **card** opens cards. They are
+separate panels (only one at a time). Unlock is shared. While locked
+both icons sit muted (key is a lock). After unlock both come up to
+full chrome color; the open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
-  After unlock, the panel opens the **fill login** list for the active page
-  (unless a passkey ceremony is already waiting).
+  The key button then opens the **fill login** list for the active page
+  (unless a passkey ceremony is already waiting). The card button unlocks
+  the same way, then opens **fill card**.
 - **Fill login** lists URI-matching items (tall list; items with a passkey show
   a **passkey** badge). Click to fill username / password into the page.
+- **Fill card** lists every card in the vault (cards rarely have URIs). Each
+  row shows the item name, brand, last digits, and expiry. Click fills
+  number, name, expiry, and CVC on the page (standard `cc-*` autocomplete
+  plus common checkout names). The panel does not show the full number.
 - **Create login** is always on the unlocked card (primary when this site has
   no matches). Username is the last one you used, selected so typing replaces
   it. Password is a fresh 16-character generated value (visible; **Regenerate**
@@ -111,8 +146,17 @@ Toolbar lock / key icon opens the vault panel.
   If the page has no fields yet, the item is still saved.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
-  passkeys** — pick one to complete sign-in. Dogfooded on Google accounts.
-  **Registration** (`credentials.create`) is not supported yet.
+  passkeys** — pick one to complete sign-in. The intercept is injected in
+  **every frame** (Google sign-in iframes, Gemini Exchange 2FA, etc.).
+  Duplicate or retry `get()` calls for the same site stay one picker —
+  they do not fail the page before you pick. Chromium’s own passkey
+  window is not used.
+- **Passkeys (create):** when a site calls `navigator.credentials.create`,
+  the vault panel opens (unlock first if needed) with **Save a passkey**.
+  Confirm creates a new Bitwarden login for the site (name is the apex
+  domain, username from the request). Matching logins for the page are
+  listed so you can attach the passkey to one of those instead. Chromium’s
+  own passkey window is not used.
 
 ### Unlock speed
 
@@ -145,7 +189,7 @@ popup buffer).
 ## Not in this manual yet
 
 - Full keyboard chrome reference  
-- Passkey **registration** (deferred)  
+- Save-as / custom download folder  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
 and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).

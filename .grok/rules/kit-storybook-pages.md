@@ -1,29 +1,33 @@
 # Kit storybook pages when changing components
 
 When you change a **sola-kit component** (styles, layout, density, API, or
-behavior under `crates/sola-kit/src/components/`), **ask the user** whether to
-also update the matching **storybook page** under
-`crates/sola-kit/src/storybook/pages/`.
+behavior under `crates/sola-kit/src/components/`), **always update** the
+matching **storybook page** under `crates/sola-kit/src/storybook/pages/`
+in the **same change**. Do not ask first. Do not leave storybook stale.
 
 ## Why
 
-Graphite design-system work landed Overview + shared chrome first. Other tabs
-still use older lab layouts; they inherit component styles but may not match
-Overview page composition. Page rewrites are optional and should not block
-component work.
+The storybook is the dogfood surface for the kit. A component change that
+does not show up there is an incomplete kit change. Graphite Overview is
+the composition reference; other tabs still inherit styles, but the page
+for the component you touched must demonstrate the new look or behavior.
 
 ## Do
 
-1. Ship / propose the component change first.
-2. **Ask** something like: “Want the storybook **Button** (or Field / Card / …)
-   page updated to match Overview / the new look?”
-3. Only rewrite the page if they say yes (or already asked for parity).
+1. Ship the component change.
+2. Update the matching storybook page in the same commit / slice:
+   copy, demo rows, hover/close/empty states — whatever the change
+   actually affects.
+3. If the page is a full rewrite, follow Overview composition. If it is
+   a local tweak (e.g. close-chip fill), update the existing demo and
+   the one-line description so the new behavior is visible and named.
 
 ## Do not
 
-- Silently rewrite every storybook page on every component tweak.
-- Block a component fix waiting for full OD page parity.
-- Assume Overview-style layout is required for every tab.
+- Skip the page because the widget “already inherits” the style.
+- Ask the user whether to update storybook (the answer is yes).
+- Block a tiny style fix on a full page rewrite — update the demo that
+  exists; rewrite only when the page can no longer show the change.
 
 ## Mapping (component → page)
 
@@ -36,6 +40,6 @@ component work.
 | `sidebar` | `pages/sidebar.rs` |
 | `text_input` | `pages/field.rs` (and form demos) |
 | theme / shell tokens | `pages/theme.rs`, `pages/shell.rs`, Overview |
-| shared `style.rs` materials | ask which demos matter; often Overview + affected control pages |
+| shared `style.rs` materials | Overview + every control page that uses the token |
 
 Storybook Overview is the in-repo composition reference when rewriting a page.

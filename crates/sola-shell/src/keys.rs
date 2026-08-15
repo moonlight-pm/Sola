@@ -144,8 +144,8 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::KP_5 => KEYSYM_KP_0 + 5,
         KeyCode::KP_6 => KEYSYM_KP_0 + 6,
         KeyCode::KP_8 => KEYSYM_KP_0 + 8,
-        KeyCode::KP_EQUAL => 0xFFBD,   // XK_KP_Equal
-        KeyCode::KP_DECIMAL => 0xFFAE, // XK_KP_Decimal
+        KeyCode::KP_EQUAL => 0xFFBD,    // XK_KP_Equal
+        KeyCode::KP_DECIMAL => 0xFFAE,  // XK_KP_Decimal
         KeyCode::KP_ENTER => 0xFF8D,    // XK_KP_Enter
         KeyCode::KP_MULTIPLY => 0xFFAA, // XK_KP_Multiply — floats the window
         KeyCode::KP_ADD => 0xFFAB,      // XK_KP_Add — MiddleRight zone

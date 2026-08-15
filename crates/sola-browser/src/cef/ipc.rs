@@ -39,6 +39,9 @@ pub enum ToEngine {
     },
     CloseTab(u64),
     SetActiveTab(u64),
+    CancelDownload {
+        id: u32,
+    },
     Shutdown,
 }
 
@@ -53,7 +56,46 @@ pub enum FromEngine {
     Cursor(u32),
     Clipboard(String),
     /// Composition caret in view pixels. `w == 0` clears the last box.
-    ImeCaret { x: i32, y: i32, w: i32, h: i32 },
+    ImeCaret {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    Download(DownloadEvent),
+    WebAuthn(WebAuthnEvent),
+}
+
+/// Helper → chrome WebAuthn intercept (page lives in the engine process).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebAuthnEvent {
+    pub id: u64,
+    pub action: String,
+    pub origin: String,
+    pub rp_id: String,
+    pub public_key_json: String,
+}
+
+/// One download update from a helper. `id` is CEF's per-process download id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadEvent {
+    pub id: u32,
+    pub filename: String,
+    pub path: String,
+    pub url: String,
+    pub received: i64,
+    pub total: i64,
+    /// 0..=100, or `-1` if CEF does not know the size.
+    pub percent: i32,
+    pub state: DownloadPhase,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DownloadPhase {
+    Progress,
+    Complete,
+    Canceled,
+    Failed,
 }
 
 /// Header for one raw frame on the dedicated frame socket. Pixels follow
@@ -207,6 +249,58 @@ mod tests {
         match got {
             FromEngine::ImeCaret { x, y, w, h } => {
                 assert_eq!((x, y, w, h), (8, 16, 2, 18));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_download() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::Download(DownloadEvent {
+                id: 3,
+                filename: "a.pdf".into(),
+                path: "/tmp/a.pdf".into(),
+                url: "https://ex/a.pdf".into(),
+                received: 10,
+                total: 100,
+                percent: 10,
+                state: DownloadPhase::Progress,
+            }),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::Download(ev) => {
+                assert_eq!(ev.id, 3);
+                assert_eq!(ev.filename, "a.pdf");
+                assert_eq!(ev.percent, 10);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_webauthn() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::WebAuthn(WebAuthnEvent {
+                id: 9,
+                action: "get".into(),
+                origin: "https://exchange.gemini.com".into(),
+                rp_id: "gemini.com".into(),
+                public_key_json: "{}".into(),
+            }),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::WebAuthn(ev) => {
+                assert_eq!(ev.id, 9);
+                assert_eq!(ev.rp_id, "gemini.com");
             }
             other => panic!("{other:?}"),
         }

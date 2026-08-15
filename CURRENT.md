@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-15 (paint singleton + zoom/pan; screenshots stay on preview)
+**As of:** 2026-08-15 (browser polish + paint on master)
 
 ---
 
@@ -25,14 +25,17 @@ Do not invent product policy.
    Host `sola-call`; `solactl compositor` / `session`; kit `CallSetup`; shell
    screenshot via call. Fake bus pairs removed. **Needs install to dogfood.**
    Next consumer: **sola-agent-terminal** (merge master, register methods).
-   **D3** (confirm gates) is open. Later list is in the freeze.  
-3. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+   **D3** (confirm gates) is open. Later list is in the freeze.
+3. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
-     never-played owned without API.  
-4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
-   kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), open URL single-instance handoff, etc.  
+     never-played owned without API.
+4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+5. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+   preview, mail, kvm clipboard, switcher FFM holdoff
+   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser polish is on
+   **master** (downloads, cards, passkey get/create, chrome singleton,
+   tab-strip overflow chip). `naturalethic/browser-polish` stays open for
+   more chrome work. Outline passkey create still needs a clean smoke.
    Kit storybook desks on master (install `kit` to dogfood).
 
 **Explicit holds:** none.
@@ -51,9 +54,9 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** + this worktree `naturalethic/sola-paint` | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (browser polish + paint). `naturalethic/browser-polish` kept open | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump); OSR IME + Shift+wheel + `<select>` dropdowns dogfooded; **default http(s) open** via sola-browser only (no Helium; install to re-register MIME; no single-instance yet) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; instant tab close (hover × opaque chip); **drag-reorder tabs** + width-aware titles (dogfooded); YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **needs Outline dogfood**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

@@ -30,9 +30,9 @@ impl SyncHandler for CipherSyncHandler {
             .iter()
             .filter_map(|c| {
                 Cipher::try_from(c.clone())
-                    .inspect_err(|e| {
-                        tracing::error!(id = ?c.id, error = %e, "failed to deserialize cipher")
-                    })
+                    .inspect_err(
+                        |e| tracing::error!(id = ?c.id, error = %e, "failed to deserialize cipher"),
+                    )
                     .ok()
                     .and_then(|cipher| {
                         let id = cipher.id.or_else(|| {

@@ -7,9 +7,9 @@ pub mod mem;
 pub mod net;
 pub mod view;
 
-use iced::futures::Stream;
 use iced::Color;
 use iced::Subscription;
+use iced::futures::Stream;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,7 +53,10 @@ pub struct History {
 
 impl History {
     pub fn new(cap: usize) -> Self {
-        Self { cap, buf: VecDeque::with_capacity(cap) }
+        Self {
+            cap,
+            buf: VecDeque::with_capacity(cap),
+        }
     }
     pub fn push(&mut self, v: f32) {
         if self.buf.len() == self.cap {
@@ -183,9 +186,7 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
                 }
                 Some(Metric::Mem) => Some(Detail::Mem(mem::detail())),
                 // RX and TX share the same tier-2 Net detail (iface/IP/totals).
-                Some(Metric::Rx) | Some(Metric::Tx) => {
-                    Some(Detail::Net(net::detail(&cur_net)))
-                }
+                Some(Metric::Rx) | Some(Metric::Tx) => Some(Detail::Net(net::detail(&cur_net))),
                 Some(Metric::Gpu) => gpu::detail().map(Detail::Gpu),
                 None => None,
             };

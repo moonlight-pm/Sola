@@ -301,7 +301,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         heading("Sidebar"),
         body(
             "List etch: muted idle, inset active, hover-only ×. Collapse, \
-             resize, reorder. Drafts has a count; hover Spam for ×."
+             resize, reorder. Overflow chips only when section_scroll is \
+             wired and the viewport is measured. Drafts has a count; hover \
+             Spam for ×."
         )
         .style(muted),
         demo,

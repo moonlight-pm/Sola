@@ -17,13 +17,13 @@
 use std::sync::Arc;
 
 use iced::Task;
+use sola_bus::Message;
 use sola_bus::topics::{
     AppMenuPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic, TopicKind,
 };
-use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
-use crate::app::{App, ProfileDialog, BLANK_URL, Msg};
+use crate::app::{App, BLANK_URL, Msg, ProfileDialog};
 use crate::engine::{EditCmd, Engine};
 use crate::profiles;
 
@@ -188,7 +188,10 @@ pub fn profile_name_input_id() -> iced::advanced::widget::Id {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserIntent {
     /// Open a tab loading `url`, focused per `activate` (bus-driven OpenUrl).
-    NewTab { url: String, activate: bool },
+    NewTab {
+        url: String,
+        activate: bool,
+    },
     /// Open a fresh blank tab, focus it, and move keyboard focus to the empty
     /// URL bar ready for typing (⌘T).
     NewBlankTab,
@@ -200,7 +203,9 @@ pub enum BrowserIntent {
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
     /// Switch to profile `id` (save session, set active, same window).
-    SwitchProfile { id: String },
+    SwitchProfile {
+        id: String,
+    },
     /// Open the new-profile name dialog.
     NewProfile,
     /// Open rename dialog for the active profile.
@@ -342,30 +347,28 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
 
 /// Move keyboard focus to the chrome URL field.
 fn focus_url_bar() -> Task<Msg> {
-    iced::advanced::widget::operate(
-        iced::advanced::widget::operation::focusable::focus::<Msg>(url_input_id()),
-    )
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
+        url_input_id(),
+    ))
 }
 
 /// Drop iced widget focus (URL bar, dialogs) so key events reach the
 /// webview shader after a click into the page.
 pub(crate) fn unfocus_chrome() -> Task<Msg> {
-    iced::advanced::widget::operate(
-        iced::advanced::widget::operation::focusable::unfocus::<Msg>(),
-    )
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::unfocus::<Msg>())
 }
 
 fn focus_profile_name() -> Task<Msg> {
-    iced::advanced::widget::operate(
-        iced::advanced::widget::operation::focusable::focus::<Msg>(profile_name_input_id()),
-    )
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
+        profile_name_input_id(),
+    ))
 }
 
 /// Select all text in the chrome URL field.
 pub(crate) fn select_url_bar() -> Task<Msg> {
-    iced::advanced::widget::operate(
-        iced::advanced::widget::operation::text_input::select_all::<Msg>(url_input_id()),
-    )
+    iced::advanced::widget::operate(iced::advanced::widget::operation::text_input::select_all::<
+        Msg,
+    >(url_input_id()))
 }
 
 /// Query the chrome URL field's live focus state. Used to route Edit
@@ -376,9 +379,9 @@ pub(crate) fn url_bar_is_focused<F>(to_msg: F) -> Task<Msg>
 where
     F: Fn(bool) -> Msg + Send + 'static,
 {
-    iced::advanced::widget::operate(
-        iced::advanced::widget::operation::focusable::is_focused(url_input_id()),
-    )
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::is_focused(
+        url_input_id(),
+    ))
     .map(to_msg)
 }
 
@@ -394,7 +397,10 @@ mod tests {
             BrowserIntent::CloseActiveTab
         );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
-        assert_eq!(intent_for_menu_action(ACTION_FORWARD), BrowserIntent::Forward);
+        assert_eq!(
+            intent_for_menu_action(ACTION_FORWARD),
+            BrowserIntent::Forward
+        );
         assert_eq!(
             intent_for_menu_action(ACTION_FOCUS_URL),
             BrowserIntent::FocusUrl

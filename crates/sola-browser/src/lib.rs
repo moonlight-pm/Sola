@@ -5,15 +5,17 @@
 
 pub mod app;
 pub mod cef;
+pub mod downloads;
 pub mod engine;
 pub mod input;
+pub mod instance;
 pub mod integration;
 pub mod paste_js;
 pub mod profiles;
 pub mod run;
 pub mod session;
-pub mod tab_cache;
 pub mod shader;
+pub mod tab_cache;
 pub mod util;
 #[cfg(feature = "bitwarden")]
 pub mod vault;
@@ -21,8 +23,9 @@ pub mod vault;
 pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver, FrameSlot,
-    ImeCaret, ImeHandle, NavCmd, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
+    FrameReceiver, FrameSlot, ImeCaret, ImeHandle, NavCmd, PasskeysHandle, PendingFrame, TabId,
+    TabInfo, TabsHandle, TaggedFrame,
 };
 pub use input::CursorKind;
 pub use run::run;

@@ -345,7 +345,10 @@ mod tests {
     #[test]
     fn chord_display_renders_mac_modifiers() {
         // Mac order is ⌃⌥⇧⌘ followed by the key label.
-        assert_eq!(KeyCode::RIGHT.meta_shift().display(), "\u{21E7}\u{2318}\u{2192}");
+        assert_eq!(
+            KeyCode::RIGHT.meta_shift().display(),
+            "\u{21E7}\u{2318}\u{2192}"
+        );
         assert_eq!(KeyCode::C.meta().display(), "\u{2318}C");
         assert_eq!(KeyCode::W.meta_shift().display(), "\u{21E7}\u{2318}W");
     }

@@ -27,8 +27,7 @@ const MENU_WINDOW_HEIGHT: f32 = 1052.0; // 1080 − 28
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
     settings.size = iced::Size::new(1920.0, MENU_WINDOW_HEIGHT);
-    settings.position =
-        iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    settings.position = iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
     settings.resizable = false;
     settings.decorations = false;
     settings.transparent = true;

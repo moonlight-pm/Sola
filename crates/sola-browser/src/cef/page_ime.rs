@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use iced::advanced::input_method::{InputMethod, Purpose};
 use iced::advanced::layout::{self, Layout};
-use iced::advanced::widget::tree::Tree;
 use iced::advanced::widget::Widget;
+use iced::advanced::widget::tree::Tree;
 use iced::advanced::{Clipboard, Shell, mouse, renderer};
 use iced::{Element, Event, Length, Rectangle, Size};
 

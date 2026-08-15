@@ -221,7 +221,9 @@ pub fn delete(id: &str) -> Result<Option<ActiveProfile>, String> {
 fn set_process_active(profile: ActiveProfile) -> Result<ActiveProfile, String> {
     let lock = ACTIVE.get_or_init(|| RwLock::new(profile.clone()));
     {
-        let mut g = lock.write().map_err(|_| "profile lock poisoned".to_string())?;
+        let mut g = lock
+            .write()
+            .map_err(|_| "profile lock poisoned".to_string())?;
         *g = profile.clone();
     }
     tracing::info!(
@@ -256,7 +258,10 @@ fn sanitize_name(name: &str) -> Result<String, String> {
         return Err("name too long (max 64)".into());
     }
     // Avoid control chars / path tricks in the label only (id is UUID).
-    if name.chars().any(|c| c.is_control() || c == '/' || c == '\\') {
+    if name
+        .chars()
+        .any(|c| c.is_control() || c == '/' || c == '\\')
+    {
         return Err("name contains invalid characters".into());
     }
     Ok(name.to_string())
@@ -342,7 +347,22 @@ fn new_profile_id() -> String {
     b[8] = (b[8] & 0x3f) | 0x80;
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6],
+        b[7],
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
     )
 }
 
@@ -360,7 +380,9 @@ fn fill_random(buf: &mut [u8]) {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     for (i, b) in buf.iter_mut().enumerate() {
-        *b = ((t >> (i * 8)) as u8).wrapping_add(i as u8).wrapping_mul(17);
+        *b = ((t >> (i * 8)) as u8)
+            .wrapping_add(i as u8)
+            .wrapping_mul(17);
     }
 }
 
@@ -415,11 +437,7 @@ fn wipe_legacy_paths() {
     }
 
     // Dead / relocated config.
-    for rel in [
-        "browser-session.json",
-        "browser-vault.json",
-        "browser.yaml",
-    ] {
+    for rel in ["browser-session.json", "browser-vault.json", "browser.yaml"] {
         remove_path(&sola_config_dir().join(rel));
     }
     // Legacy port-era browser/ subtree (tabs yaml, history yaml).
@@ -449,6 +467,13 @@ fn remove_path(p: &Path) {
 
 pub fn browser_data_root() -> PathBuf {
     xdg_data_home().join("sola/browser")
+}
+
+/// Browser-wide durable data (downloads index, later history).
+pub fn shared_dir() -> PathBuf {
+    let dir = browser_data_root().join("shared");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 pub fn browser_cache_root() -> PathBuf {
