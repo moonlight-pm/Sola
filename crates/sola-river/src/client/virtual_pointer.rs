@@ -48,10 +48,10 @@ pub fn init_if_ready(state: &mut AppData, qh: &QueueHandle<AppData>) {
     state.virtual_pointer.pointer = Some(pointer);
 }
 
-pub fn dispatch(state: &AppData, action: &PointerAction) {
+pub fn dispatch(state: &AppData, action: &PointerAction) -> Result<(), String> {
     let Some(pointer) = state.virtual_pointer.pointer.as_ref() else {
         warn!("SimulatePointer received but virtual pointer not ready");
-        return;
+        return Err("virtual pointer not ready".into());
     };
     let t = now_ms();
 
@@ -91,6 +91,7 @@ pub fn dispatch(state: &AppData, action: &PointerAction) {
             warn!(%e, "failed to flush wayland after synthesizing pointer event");
         }
     }
+    Ok(())
 }
 
 fn move_to(

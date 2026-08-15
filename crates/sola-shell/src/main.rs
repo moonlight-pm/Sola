@@ -16,6 +16,7 @@ pub mod media;
 pub mod menu;
 pub mod menubar;
 pub mod selection;
+mod screenshot;
 pub mod stats;
 pub mod switcher;
 pub mod zoning;

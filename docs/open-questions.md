@@ -52,6 +52,22 @@ install from agent sessions.
 
 ---
 
+### D3 — Which call-plane methods need a human confirm (P1)
+
+**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). General agent control will want a confirm gate for some methods (close app, input, later Workspaces spawn). Cousin of **D1**.
+
+**Ask:**
+
+1. Which owners/methods require a prompt in v1+?  
+2. Who owns the prompt (shell, a dedicated surface, the calling agent)?  
+3. How does this interact with D1 multi-agent attach?
+
+**Until decided:** do not invent confirm policy. Every live method is as privileged as the socket.
+
+**Related:** [call-plane freeze](specs/2026-08-13-sola-call-plane-design.md); `call` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface
@@ -63,27 +79,26 @@ return to the sidebar row?
 **Default until decided:** leave pins data-compatible; no new chrome without
 product ask. See agent UI backlog.
 
-### T2 — CEF default vs WPE
+### T2 — CEF default vs WPE — **closed (2026-08-11)**
 
-WPE is primary; CEF is parallel. When (if ever) flip defaults for specific
-sites?
+WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
+**CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
+comparison warrants a second engine.
 
-**Default until decided:** WPE remains default dispatcher path.
+### D4 — sola-agent-terminal product forks (P2)
 
-### D3 — sola-agent-terminal product forks (P2)
-
-**Context:** Freeze is in; Grok hooks + persist + spawn landed. Remaining
-forks are display name, `sat` if down, and Claude hooks.
+**Context:** Freeze is in; persist + spawn landed. Call plane owns fail-if-down
+(was old D3.3). Remaining forks are display name and Claude hooks.
 
 **Ask:**
 
 1. Display name / window title (`Workspaces` is interim)?  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
-3. If `sat` runs and the app is down — fail, or launch the Wayland window?  
+3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
 4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
 
-**Until decided:** use freeze **Interim** table for (1)(3)(4). Do not
-implement `sat` auto-launch.
+**Until decided:** use freeze **Interim** table for (1)(4). Do not invent
+Claude hook policy.
 
 **Related:** `agent-terminal` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
@@ -94,12 +109,22 @@ implement `sat` auto-launch.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
-| 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. D3 forks still open. | freeze + CURRENT + D3 |
-| 2026-08-13 | D3.2 | Worktrees live in `<project-root>/.worktrees/<name>`. Not `~/orca/workspaces/…`, not sibling-of-main. | freeze + CURRENT + PRODUCT |
-| 2026-08-13 | agent-terminal | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D3 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
+| 2026-08-14 | Call plane | Third plane `sola-call`; fail if owner down; `solactl` face is `compositor`/`session` (not `call 'sig'`); advertise for unknown apps; MCP later; confirm is **D3** | [freeze](specs/2026-08-13-sola-call-plane-design.md), CURRENT, architecture, capabilities |
+| 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. Product forks now **D4** (D3 taken by call plane). | freeze + CURRENT + D4 |
+| 2026-08-13 | D4.2 | Worktrees live in `<project-root>/.worktrees/<name>`. Not `~/orca/workspaces/…`, not sibling-of-main. | freeze + CURRENT + PRODUCT |
+| 2026-08-13 | agent-terminal | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D4 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
+| 2026-08-13 | Unified sidebar | Terminal density Large; keep `Row` name + redefault to etch; browser divider via `SidebarPanel::resizable_with`; settings/mail/preview lose selection-teal | unified-sidebar freeze + plan, CURRENT, capabilities |
+| 2026-08-13 | Browser OSR | IME + Shift+wheel + `<select>` PET_POPUP dogfooded; passkey **registration** deferred until needed | CURRENT, capabilities, manual |
+| 2026-08-13 | Browser vault | Create login: save Bitwarden cipher first, then fill; always available on unlocked card; last username + generated password + bare apex URL | create-login freeze, CURRENT, capabilities, manual |
+| 2026-08-12 | Browser persist | YouTube login survives full quit; ARGB→BGRA swizzle confirmed (no red wash) | CURRENT, capabilities |
+| 2026-08-12 | Browser vault | Passkey **get** dogfooded (Google): intercept → picker → assert; clean web `clientDataJSON`; wire field `clientDataJSON` (not camelCase) | CURRENT, capabilities, manual/sola-browser |
+| 2026-08-12 | Browser install | Prefer `cargo make install browser --release` for Bitwarden KDF; restore `--release` on install | sola-make, CURRENT, manual |
+| 2026-08-12 | D8 / Browser | Profiles menubar (switch/create/rename/delete); switch re-exec; CEF under `profiles/<uuid>/cef/` | profiles freeze, CURRENT, capabilities, architecture, manual/sola-browser |
+| 2026-08-12 | Browser windows | One iced chrome window (`sola-browser`). Instant profile switch via headless per-profile CEF helpers, not extra Wayland windows / unique app_ids. | CURRENT, capabilities, architecture, manual |
+| 2026-08-11 | T2 / Browser | CEF-only single crate `sola-browser`; WPE multi-crate path retired after failed dogfood | CURRENT, architecture, capabilities, AGENTS |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |
 | (earlier) | UI stack | Iced + sola-kit; WebView apocrypha | AGENTS, CURRENT locks |
-| (earlier) | Browser | WPE primary, CEF parallel | AGENTS, architecture |
+| (earlier) | Browser | WPE primary, CEF parallel *(superseded 2026-08-11)* | — |
 | (earlier) | Agent backend | Shared Grok leader only | AGENTS, CURRENT locks |

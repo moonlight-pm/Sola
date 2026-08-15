@@ -1,8 +1,7 @@
 //! Driver for `zwp_virtual_keyboard_unstable_v1`.
 //!
 //! Owns the manager proxy and a single virtual keyboard attached to the
-//! seat. Provides `synthesize_chord` for `Topic::SimulateKey` (used by
-//! `solactl input` for testing/automation).
+//! seat. Provides `synthesize_chord` for `compositor.input.key`.
 //!
 //! Uses explicit `modifiers()` requests rather than synthesizing
 //! modifier keycode press/release pairs:
@@ -90,16 +89,16 @@ pub fn init_if_ready(state: &mut AppData, qh: &QueueHandle<AppData>) {
 }
 
 /// Synthesize a keystroke for an arbitrary KeyChord. Used by the
-/// `Topic::SimulateKey` handler. The chord's `keycode` is in xkb space
+/// Call-plane key handler. The chord's `keycode` is in xkb space
 /// (evdev + 8); we subtract 8 before passing to `kb.key`.
-pub fn synthesize_chord(state: &AppData, chord: &sola_core::KeyChord) {
+pub fn synthesize_chord(state: &AppData, chord: &sola_core::KeyChord) -> Result<(), String> {
     let Some(kb) = state.virtual_keyboard.keyboard.as_ref() else {
         warn!("SimulateKey received but virtual keyboard not ready");
-        return;
+        return Err("virtual keyboard not ready".into());
     };
     if !state.virtual_keyboard.keymap_set {
         warn!("virtual keyboard keymap not set; refusing to synthesize");
-        return;
+        return Err("virtual keyboard keymap not set".into());
     }
 
     let mut mask: u32 = 0;
@@ -129,6 +128,7 @@ pub fn synthesize_chord(state: &AppData, chord: &sola_core::KeyChord) {
             warn!(%e, "failed to flush wayland after synthesizing chord");
         }
     }
+    Ok(())
 }
 
 fn now_ms() -> u32 {

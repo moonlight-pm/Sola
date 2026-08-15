@@ -1,7 +1,8 @@
 use iced::{Element, Theme};
 use sola_bus::topics::TerminalConfig;
 use sola_kit::components::{
-    DividerColors, ReorderAnim, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, ReorderAnim, ReorderCfg, SidebarDensity, SidebarItem, SidebarPanel,
+    SidebarSection,
 };
 
 use sola_terminal::state::Tabs;
@@ -98,6 +99,7 @@ pub fn view<'a>(
     };
 
     SidebarPanel::new(sections)
+        .density(SidebarDensity::Large)
         .resizable_with(
             config.sidebar_width as f32,
             state.dragging_divider,

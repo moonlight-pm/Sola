@@ -38,7 +38,7 @@ rows for feature-level progress.
 - sola-kit + theme protocol + storybook  
 - Settings / monitor kit ports  
 
-**Remaining:** Open Design parity across storybook pages; shell token adoption.
+**Remaining:** storybook page composition (Overview-style where it matters); shell token adoption.
 
 ---
 

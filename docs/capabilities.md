@@ -23,11 +23,12 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | supervisor | Process manager launches/restarts components | shipped | architecture | local TTY | Policy for crash loops / backoff polish | partial |
 | bus | Unix-socket event bus + stickies | shipped | [persistent bus](specs/2026-04-24-persistent-bus-design.md) | local | Sticky surface still expanding; see bus freezes | partial |
+| call | Request/reply host + `solactl compositor`/`session` + kit helper | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code; install dogfood pending | **Gaps:** not installed yet; no MCP; confirm is **D3**; no catalog sticky; agent-terminal not registered; `LaunchResult` still a bus reply | partial |
 | bus-reconnect | Apps survive bus restart | shipped | seamless restart freezes | local (menubar framed after restart) | Broader app-menu re-publish edge cases | no |
 | river-bridge | sola-river ↔ River Wayland | shipped | [river design](specs/2026-04-16-sola-river-design.md) | local | Layer-shell / exclusive focus quirks; skip re-`focus_window` when already focused (FFM flash mitigation) | partial |
 | session-mgr | sola-session spawn/close/reap | shipped | [session](specs/2026-04-17-sola-session-design.md) | local | Persistence depth varies by app | no |
 | theme-bus | Topic::Theme palette + fonts | shipped | [sidebar/theme](specs/2026-05-07-sidebar-and-theme-protocol-design.md) | local | Full theme editor UX incomplete | partial |
-| kit | sola-kit components + storybook | partial | [kit](specs/2026-04-30-sola-kit-design.md), graphite DS | storybook + apps | Storybook pages lag Open Design; not every control OD-parity | no |
+| kit | sola-kit components + storybook | partial | [kit](specs/2026-04-30-sola-kit-design.md), graphite DS, [unified sidebar](specs/2026-08-13-unified-sidebar-design.md) | storybook + apps (sidebar etch **code-complete**, install dogfood pending) | **Select** hangs as a darker inset card (tabs peek around it). Default list chrome is etch (muted idle, lip + inset active, hover-only ×, `SidebarDensity`). Card chrome unchanged. **vertical_tabs** / `TabDescriptor` removed. Storybook Select page; other pages still lag Overview composition | no |
 | install-make | cargo make build/install to /opt/sola | shipped | — | local | Install requires human permission | yes |
 | fonts-dist | System fonts only; distribution notes | shipped | [manual/distribution](manual/distribution.md) | local | Optional families must be installed by hand | yes |
 | dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), [freeze](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL **404** for v0.1.1; needs release refresh; not a fresh-machine path | partial |
@@ -59,16 +60,15 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | arcade | sola-arcade Steam library + windowed gamescope nest | partial | [manual](manual/sola-arcade.md) | unit tests; library JSON cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; Stop-on-row; scroll preserve; nest steam exit; host label; zone/float + Cinema exit; `-S fit` | **Gaps:** some titles no host/crash; residual flicker; no `-e`; multi-store; never-played owned without local activity | yes |
 | settings | Settings panel (theme, apps, mail cfg, …) | partial | [settings](specs/2026-04-19-sola-settings-design.md), apps list-detail | local | Applications UX still evolving; not all pages kit-parity | no |
-| terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
-| browser-wpe | Browser chrome + WPE engine | partial | browser freezes | local | Chrome features incomplete vs plan; engine quirks | no |
-| browser-cef | Parallel CEF engine | partial | [cef port](specs/2026-05-04-cef-port-design.md) | local | Secondary path; not default for all users | no |
+| terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab strip uses kit etch at **Large** density (reorder + 1…9 kept). Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
+| browser | sola-browser chrome + CEF (single crate) | partial | [cef port](specs/2026-05-04-cef-port-design.md); [profiles D8](specs/2026-08-10-sola-browser-profiles-design.md); [create login](specs/2026-08-13-sola-browser-vault-create-login-design.md); [manual](manual/sola-browser.md) | local: one iced window (`app_id=sola-browser`); per-profile headless `--engine` helpers; instant Profiles switch; YouTube persists; Bitwarden unlock/fill + Create login; passkey get (Google) | **Gaps:** passkey registration deferred; tab strip kit Large (install dogfood pending); manual still limited | partial |
 | agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only. **Not** the starting point for agent-terminal. | no |
-| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md) | hooks + reattach smoked; sat/toast/spawn UI await install | **Gaps:** no rename/recolor/reorder; drop does not `git worktree remove`; Claude presence-only. Distinct from `sola-agent`. | no |
+| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md), [call plane](specs/2026-08-13-sola-call-plane-design.md) | hooks + reattach smoked; spawn UI / call methods await install | **Gaps:** methods not yet on sola-call; no rename/recolor/reorder; drop does not `git worktree remove`; Claude presence-only. Distinct from `sola-agent`. | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
 | preview | sola-preview + selection capture | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Zoom; image clipboard; solactl --region | no |
 | kvm | sola-kvm Linux↔Mac | partial | [kvm](specs/2026-07-27-sola-kvm-design.md), clipboard | dual-host | Permanent input ACL; clipboard L2; warp cost; Mac scroll is CG velocity gain (not true HID accel) — tune on desk | partial |
-| solactl | CLI helpers | partial | — | local | Region/screenshot flags incomplete | no |
+| solactl | Operator CLI (clap owners + live extras) | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md) | code | **Gaps:** `eval` removed; screenshot/apps/input live under `compositor`; install dogfood pending | no |
 
 ---
 
@@ -78,7 +78,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 |----|------------|--------|-------------|---------|------|--------|
 | macos-look | macOS dark chrome density/materials | partial | [look roadmap](specs/2026-07-20-macos-look-and-feel-roadmap.md), [design language](manual/design-language.md) | local | Phase program incomplete | partial |
 | design-language | Documented visual law | partial | [design-language](manual/design-language.md) | — | Not all apps comply | yes |
-| screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md) | local | Region completeness; multi-output | no |
+| screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md); [call plane](specs/2026-08-13-sola-call-plane-design.md) | local (bus pair retired; shell + `solactl compositor screenshot` use call) | **Gaps:** install dogfood pending; multi-output | no |
 | doc-truth | Progress + manual match as-built | partial | [progress-model](progress-model.md) | — | Freeze headers not backfilled; vault stale | n/a |
 
 ---
@@ -98,7 +98,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **agent-terminal** | 2026-08-13: `sat` + done toast. Spawn modal is name-only. |
+| **agent-terminal** | 2026-08-14: master (call plane) merged; retargeting `sat` UDS → `sola-call` owner `at` |
+| **call plane** | 2026-08-14: `sola-call` host; `solactl compositor`/`session`; kit `CallSetup`; shell screenshot via call; bus `Evaluate`/`CaptureScreen`/`Screenshot`/`Simulate*` removed |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |

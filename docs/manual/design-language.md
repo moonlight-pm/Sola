@@ -12,9 +12,8 @@
 selection — with **macOS Dark Mode density and hierarchy** as craft reference,
 not a pixel-perfect HIG clone.
 
-Open Design source of truth for kit visuals: project **Sola** → `sola-kit-ds.html`.
 Seed atoms live in `sola-kit::theme::hex::*` and `sola-core` `Palette::seed`
-(must stay in sync).
+(must stay in sync). Dogfood kit chrome in the storybook, not in external mocks.
 
 We borrow Apple’s *structural* ideas — materials, elevation steps, menu bar
 roles, control density, type roles — and diverge where Sola’s windowing model
@@ -45,16 +44,16 @@ Craft rules distilled from HIG density + the sola-kit design system pass.
 
 - **Dark graphite for all chrome** — menu bar, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
 - **Elevation through background steps *and soft materials***, not heavy borders. Base → raised → hover/selected. Soft hairlines (opaque sRGB white-mix ~7% on the surface) separate layers when needed.
-- **Cards and primary fills are not flat slabs.** Kit chrome uses iced **linear gradients** (`style::card_fill`, `primary_fill`, `hero_fill`, `stage_fill`, `canvas_ambient`) so panels read as lit graphite, matching Open Design.
+- **Cards and primary fills are not flat slabs.** Kit chrome uses iced **linear gradients** (`style::card_fill`, `primary_fill`, `hero_fill`, `stage_fill`, `canvas_ambient`) so panels read as lit graphite.
 - **Foreground content must stay readable.** Prefer cool off-white primary text over dim-on-dim.
 - **Accent is for selection, focus, and live status** — not large filled regions of shell chrome. One filled primary per control group.
 
 ### 2.2 Materials and what iced can do
 
-Open Design uses CSS tools iced only partially has. Map intentionally:
+CSS comps use tools iced only partially has. Map intentionally:
 
-| OD technique | Iced 0.14 | Kit approach |
-|--------------|-----------|--------------|
+| Comp technique | Iced 0.14 | Kit approach |
+|----------------|-----------|--------------|
 | `linear-gradient(...)` | **Yes** — `Background::Gradient(Linear)` | `style::linear_bg` / `card_fill` / `primary_fill` / … |
 | Soft top highlight on cards / primaries | Yes (vertical linear) | bake into card / primary styles |
 | Dual **radial** ambient wash on canvas | **No** (radial TBD upstream) | multi-stop **linear** approx (`canvas_ambient`) |

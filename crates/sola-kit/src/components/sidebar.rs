@@ -10,9 +10,10 @@
 //! For richer panels — collapse/expand, drag-to-resize, drag-reorder,
 //! per-item shortcut hints / close buttons / secondary labels, and
 //! **section-scoped scroll with overflow chips** — use the opt-in
-//! [`SidebarPanel`] builder. It is strictly additive: `sidebar()` and
-//! the `SidebarItem`/`SidebarSection` constructors keep their exact
-//! prior behaviour, so existing consumers compile and render unchanged.
+//! [`SidebarPanel`] builder. List chrome ([`SidebarItemChrome::Row`]) is
+//! the browser etched title stack (muted idle, lip + inset active well,
+//! hover-only `×`). [`SidebarItemChrome::Card`] is a separate product
+//! surface and is not restyled by list etch.
 //!
 //! ## Section scroll (no scrollbar)
 //!
@@ -28,6 +29,7 @@
 //! never see a raw `hex::*`.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
@@ -45,17 +47,13 @@ use iced::{
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
-use crate::components::icon::{icon_handle, icon_svg_colored};
+use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
-    linear_bg, mix, mix_white, RADIUS_LG, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS,
-    alpha,
+    inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_SM,
+    SPACE_MD, SPACE_SM, SPACE_XS, alpha,
 };
 use crate::fonts;
 
-/// Vertical padding for a standard sidebar row (top+bottom each).
-const ITEM_PAD_V: f32 = 10.0;
-/// Horizontal padding for a standard sidebar row.
-const ITEM_PAD_H: f32 = 12.0;
 /// Card chrome: roomier face pad (Overview rule-card density).
 const CARD_PAD_V: f32 = 14.0;
 const CARD_PAD_H: f32 = 14.0;
@@ -67,9 +65,10 @@ const TITLE_SUB_GAP: f32 = 5.0;
 
 /// Visual chrome for a [`SidebarItem`].
 ///
-/// [`Self::Row`] is the historical packed nav row. [`Self::Card`] is a
-/// softer, roomier product surface (session switcher, mailbox cards) —
-/// raised idle material, larger radius, more internal pad. Pair cards
+/// [`Self::Row`] is the default **list etch** (quiet title stack: muted
+/// idle type, 1px lip + inset well when active, no selection-teal wash).
+/// [`Self::Card`] is a softer, roomier product surface (session switcher)
+/// — raised idle material, larger radius, more internal pad. Pair cards
 /// with non-zero [`SidebarPanel::item_spacing`] (e.g. [`SPACE_MD`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarItemChrome {
@@ -79,6 +78,17 @@ pub enum SidebarItemChrome {
 }
 
 pub use crate::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
+
+/// List density for [`SidebarPanel`] (and the [`sidebar`] helper).
+///
+/// [`Self::Normal`] is settings / mail / preview / storybook nav.
+/// [`Self::Large`] is the browser / terminal tab-strip density.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarDensity {
+    #[default]
+    Normal,
+    Large,
+}
 
 /// Trailing control under [`SidebarItem::secondary`], shown only while the
 /// row is hovered (requires [`SidebarPanel::item_hover`] + [`SidebarItem::id`]).
@@ -96,8 +106,8 @@ pub struct SidebarHoverAction<Message> {
 /// `on_double_click` / `indicator` / `hover_action` / `chrome` /
 /// `content` fields are opt-in extras consumed by [`SidebarPanel`]
 /// (and the shared row renderer used by plain [`sidebar`]). They default
-/// to `None` / [`SidebarItemChrome::Row`], so existing `::new().active()`
-/// callers behave exactly as before.
+/// to `None` / [`SidebarItemChrome::Row`]. List rows use etch materials;
+/// [`SidebarItemChrome::Card`] keeps the raised product surface.
 ///
 /// Set [`Self::content`] to supply a fully custom body (session cards,
 /// rich mail rows). Outer press/selection/hover-trash chrome still wraps
@@ -109,8 +119,9 @@ pub struct SidebarItem<'a, Message> {
     pub message: Message,
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
-    /// When set, [`SidebarPanel`] renders a trailing `×` button that
-    /// emits this message.
+    /// When set, [`SidebarPanel`] renders a hover-only stacked `×` that
+    /// emits this message. Requires [`SidebarPanel::item_hover`] plus
+    /// [`Self::id`] (auto-assigned from the row index when missing).
     pub on_close: Option<Message>,
     /// Dim trailing label (e.g. relative time `19m`, unread count).
     /// Laid out in a fixed trailing column so it cannot crush the title.
@@ -128,7 +139,7 @@ pub struct SidebarItem<'a, Message> {
     /// Control under the secondary label; visible only while this row is
     /// the hovered item (see [`SidebarPanel::item_hover`]).
     pub hover_action: Option<SidebarHoverAction<Message>>,
-    /// Row vs card materials / padding. Default is packed nav row.
+    /// List etch vs card materials / padding. Default is list etch.
     pub chrome: SidebarItemChrome,
     /// Custom body — replaces the default title/subtitle/secondary layout.
     pub content: Option<Element<'a, Message, Theme>>,
@@ -172,7 +183,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self
     }
 
-    /// Attach a trailing `×` close button emitting `msg`.
+    /// Attach a hover-only stacked `×` emitting `msg`.
     pub fn on_close(mut self, msg: Message) -> Self {
         self.on_close = Some(msg);
         self
@@ -388,17 +399,19 @@ impl SectionScroll {
 }
 
 /// Intrinsic height of one sidebar row (padding + text), excluding column gap.
-fn item_row_height<Message>(item: &SidebarItem<'_, Message>) -> f32 {
+fn item_row_height<Message>(item: &SidebarItem<'_, Message>, density: SidebarDensity) -> f32 {
     if let Some(h) = item.height_hint {
         return h;
     }
     if item.content.is_some() || item.chrome == SidebarItemChrome::Card {
         return CARD_HEIGHT_HINT;
     }
+    let m = density.metrics();
+    let title_h = m.font as f32;
     let text_h = if item.subtitle.is_some() {
-        14.0 + TITLE_SUB_GAP + 11.0
+        title_h + TITLE_SUB_GAP + 11.0
     } else {
-        14.0
+        title_h
     };
     // Multi-line secondary (e.g. context KB + age) needs room in scroll math.
     let trail_h = item
@@ -406,7 +419,14 @@ fn item_row_height<Message>(item: &SidebarItem<'_, Message>) -> f32 {
         .as_ref()
         .map(|s| s.lines().filter(|l| !l.is_empty()).count().max(1) as f32 * 12.0)
         .unwrap_or(0.0);
-    ITEM_PAD_V * 2.0 + text_h.max(trail_h)
+    let pad_v = m.row_pad_v as f32;
+    // Active list rows add a 1px etch lip on each side.
+    let lip = if item.active && item.chrome == SidebarItemChrome::Row {
+        2.0
+    } else {
+        0.0
+    };
+    pad_v * 2.0 + text_h.max(trail_h) + lip
 }
 
 /// Full scroll content height for a section body (padding + rows + gaps).
@@ -419,11 +439,20 @@ pub fn section_content_height_with_spacing<Message>(
     items: &[SidebarItem<'_, Message>],
     item_spacing: f32,
 ) -> f32 {
+    section_content_height_with(items, item_spacing, SidebarDensity::Normal)
+}
+
+/// Like [`section_content_height_with_spacing`], with explicit list density.
+pub fn section_content_height_with<Message>(
+    items: &[SidebarItem<'_, Message>],
+    item_spacing: f32,
+    density: SidebarDensity,
+) -> f32 {
     let pad_v = 8.0; // matches body column padding [4, 8]
     if items.is_empty() {
         return pad_v;
     }
-    let rows: f32 = items.iter().map(item_row_height).sum();
+    let rows: f32 = items.iter().map(|item| item_row_height(item, density)).sum();
     let gaps = item_spacing * items.len().saturating_sub(1) as f32;
     pad_v + rows + gaps
 }
@@ -505,11 +534,19 @@ where
         if let Some(label) = section.label {
             col = col.push(section_header(label, section.on_label, section.on_add));
         }
-        for item in section.items {
+        for (i, item) in section.items.into_iter().enumerate() {
             // `sidebar()` never enables reorder, so `render_item` takes
             // the plain `button(..).on_press(item.message)` path. `index`
-            // is only read on the reorder path.
-            col = col.push(render_item(item, None, 0, false));
+            // is only read on the reorder path. No `item_hover` → close
+            // (if any) stays visible as a stacked fallback.
+            col = col.push(render_item(
+                item,
+                None,
+                i,
+                false,
+                SidebarDensity::Normal,
+                false,
+            ));
         }
     }
     container(col)
@@ -519,38 +556,8 @@ where
 }
 
 
-/// One tab in [`vertical_tabs`].
-pub struct TabDescriptor<Message> {
-    pub label: String,
-    pub active: bool,
-    pub on_activate: Message,
-    pub on_close: Message,
-}
-
-impl<Message> TabDescriptor<Message> {
-    pub fn new(
-        label: impl Into<String>,
-        active: bool,
-        on_activate: Message,
-        on_close: Message,
-    ) -> Self {
-        Self { label: label.into(), active, on_activate, on_close }
-    }
-}
-
-/// Size variant for [`vertical_tabs_sized`]. `Normal` reproduces the
-/// historical density; `Large` is the roomier browser-chrome variant.
-/// This is the kit's canonical size-variant pattern — copy it for other
-/// components that grow a size knob.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TabSize {
-    #[default]
-    Normal,
-    Large,
-}
-
-/// Resolved per-size metrics. Values are deliberate, not derived.
-struct TabMetrics {
+/// Resolved per-density metrics. Values are deliberate, not derived.
+struct DensityMetrics {
     row_pad_v: u16,
     row_pad_h: u16,
     font: u32,
@@ -558,94 +565,104 @@ struct TabMetrics {
     gap: f32,
 }
 
-impl TabSize {
-    fn metrics(self) -> TabMetrics {
+impl SidebarDensity {
+    fn metrics(self) -> DensityMetrics {
         match self {
-            TabSize::Normal => TabMetrics { row_pad_v: 6, row_pad_h: 10, font: 13, close: 15, gap: SPACE_XS },
-            TabSize::Large => TabMetrics { row_pad_v: 10, row_pad_h: 12, font: 14, close: 17, gap: SPACE_SM },
+            SidebarDensity::Normal => DensityMetrics {
+                row_pad_v: 6,
+                row_pad_h: 10,
+                font: 13,
+                close: 14,
+                gap: SPACE_XS,
+            },
+            // Browser chrome: a stack of titles, not fat list-pills.
+            SidebarDensity::Large => DensityMetrics {
+                row_pad_v: 7,
+                row_pad_h: 10,
+                font: 12,
+                close: 14,
+                gap: 3.0,
+            },
         }
     }
 }
 
-/// Vertical browser-style tab column at the default ([`TabSize::Normal`])
-/// density. Thin wrapper over [`vertical_tabs_sized`].
-pub fn vertical_tabs<'a, Message, FHover>(
-    tabs: Vec<TabDescriptor<Message>>,
-    hovered: Option<usize>,
-    on_hover: FHover,
-) -> Container<'a, Message, Theme>
-where
-    Message: Clone + 'a,
-    FHover: Fn(Option<usize>) -> Message + 'a,
-{
-    vertical_tabs_sized(tabs, hovered, on_hover, TabSize::Normal)
+/// 1px rim of the etch — a hair lighter than the column so the cut
+/// reads as a lip, not a painted card.
+fn tab_etch_lip() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(mix_white(CHROME_SURFACE, 0.06))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..container::Style::default()
+    }
 }
 
-/// Size-parameterized vertical tab column. Each row is a single-line label
-/// (`Wrapping::None` — the caller truncates to control where the ellipsis
-/// falls) with the active row highlighted. The close `×` *floats* over the
-/// row's right edge (drawn on top via a `stack`) and only appears while that
-/// row is hovered — the caller tracks hover by row index via `hovered` +
-/// the `on_hover` callback. `TabSize::Large` is the roomier browser-chrome
-/// density. Returns a full-size `Container` (kit sidebar styling) so the
-/// caller sizes the column — typically behind a draggable divider — by
-/// chaining `.width(..)`.
-pub fn vertical_tabs_sized<'a, Message, FHover>(
-    tabs: Vec<TabDescriptor<Message>>,
-    hovered: Option<usize>,
-    on_hover: FHover,
-    size: TabSize,
-) -> Container<'a, Message, Theme>
-where
-    Message: Clone + 'a,
-    FHover: Fn(Option<usize>) -> Message + 'a,
-{
-    let m = size.metrics();
-    let mut col = column![].spacing(m.gap).padding(Padding::from([8, 6]));
-    for (i, tab) in tabs.into_iter().enumerate() {
-        let TabDescriptor { label, active, on_activate, on_close } = tab;
+fn tab_close_icon() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/x")).clone()
+}
 
-        let activate = button(
-            text(label)
-                .font(fonts::ui())
-                .size(m.font)
-                .wrapping(Wrapping::None),
-        )
-        .style(move |t, status| item_style(t, status, active))
-        .padding(Padding::from([m.row_pad_v, m.row_pad_h]))
-        .width(Length::Fill)
-        .on_press(on_activate);
-
-        // The close button floats over the row's right edge (a `stack`
-        // layer on top of the label), revealed only while this row is
-        // hovered — never a second cell that steals label width.
-        let row_el: Element<'a, Message> = if hovered == Some(i) {
-            let close = button(text("×").font(fonts::ui()).size(m.close))
-                .style(|t, status| item_style(t, status, false))
-                .padding(Padding::from([0, 7]))
-                .on_press(on_close);
-            stack![
-                activate,
-                container(close)
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(Padding::from([0, 4])),
-            ]
-            .into()
-        } else {
-            activate.into()
+/// Quiet title stack: idle is muted type on nothing; active is a
+/// darker well (etched into the column), not a gradient card.
+fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    let p = theme.extended_palette();
+    let muted = p.secondary.base.text;
+    let fg = p.background.base.text;
+    if active {
+        return button::Style {
+            background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.22))),
+            text_color: fg,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 4.0.into(),
+            },
+            shadow: Default::default(),
+            snap: false,
         };
-
-        col = col.push(
-            mouse_area(row_el)
-                .on_enter(on_hover(Some(i)))
-                .on_exit(on_hover(None)),
-        );
     }
+    let (bg, text_color) = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            (alpha(p.background.strong.color, 0.45), fg)
+        }
+        _ => (Color::TRANSPARENT, muted),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
+}
 
-    container(col).style(style).height(Length::Fill).width(Length::Fill)
+fn tab_close_style(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            alpha(p.background.strong.color, 0.80)
+        }
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: p.secondary.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
 }
 
 fn section_header<'a, Message: Clone + 'a>(
@@ -981,12 +998,19 @@ pub struct ReorderCfg<'a, Message> {
 /// `container` wrapped in a `mouse_area` (an inner pressable `button`
 /// would `capture_event` the press and the reorder gesture would never
 /// fire). The `×` close button — which IS pressable — therefore sits
-/// OUTSIDE that `mouse_area`, as a sibling in the row.
+/// OUTSIDE that `mouse_area`, stacked over the row so it never steals
+/// title width.
+///
+/// `hover_tracked` is true when the parent wired [`SidebarPanel::item_hover`].
+/// List `on_close` is then hover-only; without tracking the × stays visible
+/// so callers that have not migrated hover still get a close target.
 fn render_item<'a, Message>(
     item: SidebarItem<'a, Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
     index: usize,
     show_hover_action: bool,
+    density: SidebarDensity,
+    hover_tracked: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -1009,12 +1033,12 @@ where
         indent,
     } = item;
 
-    // Selection is background-only (see `item_style`) — no left accent bar,
-    // so title/subtitle stay aligned with idle rows.
+    let m = density.metrics();
     // Custom card bodies own their own padding (session tabs inset a
     // bottom context bar); structured card rows keep kit pad.
+    // List etch uses density metrics (browser title-stack, not fat pills).
     let (pad_v, pad_h) = match (chrome, custom.is_some()) {
-        (SidebarItemChrome::Row, _) => (ITEM_PAD_V, ITEM_PAD_H),
+        (SidebarItemChrome::Row, _) => (m.row_pad_v as f32, m.row_pad_h as f32),
         (SidebarItemChrome::Card, true) => (0.0, 0.0),
         (SidebarItemChrome::Card, false) => (CARD_PAD_V, CARD_PAD_H),
     };
@@ -1043,6 +1067,9 @@ where
             shortcut,
             indicator,
             inline_hover,
+            active,
+            chrome,
+            density,
         )
     };
 
@@ -1051,7 +1078,7 @@ where
         // Hover-action rows: full padded row is the select target (pad is
         // inside the mouse_area so inter-row space is clickable). Trash
         // overlays bottom-right (under the age label) via `stack` — same
-        // pattern as [`vertical_tabs`] — so showing it never steals width
+        // pattern as the list-etch close overlay — so showing it never steals width
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
         let row_el: Element<'a, Message> = if hover_action.is_some() {
@@ -1111,13 +1138,7 @@ where
                 .on_press(message)
                 .into()
         };
-        if let Some(close_msg) = on_close {
-            return row![row_el, close_button(close_msg)]
-                .spacing(SPACE_XS)
-                .align_y(iced::Alignment::Center)
-                .into();
-        }
-        return row_el;
+        return finish_list_row(row_el, chrome, active, on_close, hovered, hover_tracked, density);
     };
 
     // ── Reorder-enabled path. ──
@@ -1148,18 +1169,77 @@ where
         pressable = pressable.on_double_click(dbl);
     }
 
-    let row_el: Element<'a, Message> = if let Some(close_msg) = on_close {
-        row![pressable, close_button(close_msg)]
-            .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center)
-            .into()
-    } else {
-        pressable.into()
-    };
-
     // Motion is applied by the caller via [`with_reorder_motion`] so the
     // drag path can pass pointer-relative dy for the lifted row.
-    row_el
+    finish_list_row(
+        pressable.into(),
+        chrome,
+        active,
+        on_close,
+        hovered,
+        hover_tracked,
+        density,
+    )
+}
+
+/// Etch lip (list active) + hover-only stacked close. Card chrome skips the
+/// lip so agent session rows stay pixel-stable. Close sits *on top* of the
+/// row via `stack` (never a trailing sibling) so the title width is stable
+/// and the × does not steal the reorder press target.
+fn finish_list_row<'a, Message: Clone + 'a>(
+    row_el: Element<'a, Message>,
+    chrome: SidebarItemChrome,
+    active: bool,
+    on_close: Option<Message>,
+    hovered: bool,
+    hover_tracked: bool,
+    density: SidebarDensity,
+) -> Element<'a, Message> {
+    let etched: Element<'a, Message> = if chrome == SidebarItemChrome::Row && active {
+        container(row_el)
+            .padding(1)
+            .width(Length::Fill)
+            .style(|_theme: &Theme| tab_etch_lip())
+            .into()
+    } else {
+        row_el
+    };
+
+    let Some(close_msg) = on_close else {
+        return etched;
+    };
+    // Hover-only when the parent tracks hover; otherwise keep × visible
+    // (sidebar() helper, or a panel that never called `item_hover`).
+    let show_close = hovered || !hover_tracked;
+    if !show_close {
+        return etched;
+    }
+    let m = density.metrics();
+    let close = button(icon_svg(tab_close_icon(), m.close as u16))
+        .style(tab_close_style)
+        .padding(Padding::from([2, 4]))
+        .on_press(close_msg);
+    stack![
+        etched,
+        container(close)
+            .align_x(iced::alignment::Horizontal::Right)
+            .align_y(iced::alignment::Vertical::Center)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding::from([0, 4])),
+    ]
+    .into()
+}
+
+/// Stable id for close-on-hover when the caller omitted [`SidebarItem::id`].
+fn assign_close_id<'a, Message>(
+    mut item: SidebarItem<'a, Message>,
+    index: usize,
+) -> SidebarItem<'a, Message> {
+    if item.on_close.is_some() && item.id.is_none() {
+        item.id = Some(format!("__row:{index}"));
+    }
+    item
 }
 
 /// Apply vertical motion (and optional lift chrome) for a reorder row.
@@ -1190,16 +1270,30 @@ where
 
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
 ///
-/// Primary line is the identity row (ui, slightly larger). Subtitle is quieter
-/// secondary caption (ui, not mono — session titles / paths both read better).
+/// List etch: idle muted + regular; active full fg + [`fonts::ui_medium`].
+/// Card structured rows keep the historical 14px regular face.
 fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
     indicator: Option<SidebarIndicator>,
+    active: bool,
+    chrome: SidebarItemChrome,
+    density: SidebarDensity,
 ) -> Element<'a, Message> {
+    let (title_font, title_size) = match chrome {
+        SidebarItemChrome::Row => {
+            let font = if active {
+                fonts::ui_medium()
+            } else {
+                fonts::ui()
+            };
+            (font, density.metrics().font)
+        }
+        SidebarItemChrome::Card => (fonts::ui(), 14),
+    };
     let title = text(label.to_string())
-        .font(fonts::ui())
-        .size(14)
+        .font(title_font)
+        .size(title_size)
         .wrapping(Wrapping::None)
         .width(Length::Fill);
 
@@ -1291,8 +1385,11 @@ fn item_content<'a, Message: Clone + 'a>(
     shortcut: Option<u8>,
     indicator: Option<SidebarIndicator>,
     hover_action: Option<SidebarHoverAction<Message>>,
+    active: bool,
+    chrome: SidebarItemChrome,
+    density: SidebarDensity,
 ) -> Element<'a, Message> {
-    let text_box = item_text_block(label, subtitle, indicator);
+    let text_box = item_text_block(label, subtitle, indicator, active, chrome, density);
     let has_trail =
         secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
@@ -1393,16 +1490,6 @@ fn dim_label<'a, Message: 'a>(s: &str) -> Element<'a, Message> {
         .into()
 }
 
-/// Trailing `×` close button. Pressable, so it must sit OUTSIDE any
-/// reorder `mouse_area` (see [`render_item`]).
-fn close_button<'a, Message: Clone + 'a>(msg: Message) -> Element<'a, Message> {
-    button(text("×").font(fonts::ui()).size(14))
-        .style(|t, status| item_style(t, status, false))
-        .padding(Padding::from([2, 8]))
-        .on_press(msg)
-        .into()
-}
-
 // ─────────────────────────────── SidebarPanel ───────────────────────────────
 
 /// Opt-in richer sidebar: collapse/expand, drag-to-resize, drag-reorder,
@@ -1430,10 +1517,15 @@ pub struct SidebarPanel<'a, Message> {
     section_scroll: Option<(SectionScroll, Box<dyn Fn(SectionScroll) -> Message + 'a>)>,
     /// Per-row hover id + callback (for hover-only trailing actions).
     item_hover: Option<(Option<String>, Box<dyn Fn(Option<String>) -> Message + 'a>)>,
-    /// Vertical gap between item rows in a section body. Default `0` so the
-    /// full band between labels is clickable (nav lists). Pass e.g.
-    /// [`SPACE_MD`] for card stacks.
-    item_spacing: f32,
+    /// Vertical gap between item rows in a section body. `None` means
+    /// "use density default" (list etch gap). Explicit `0` keeps a packed
+    /// clickable band. Card stacks pass e.g. [`SPACE_MD`].
+    item_spacing: Option<f32>,
+    /// List pad / type / default gap. Card chrome ignores pad/type.
+    density: SidebarDensity,
+    /// When true and the panel is not resizable, the column is `Fill`
+    /// so a parent can size it.
+    fill_width: bool,
 }
 
 impl<'a, Message> SidebarPanel<'a, Message>
@@ -1450,13 +1542,30 @@ where
             footer: None,
             section_scroll: None,
             item_hover: None,
-            item_spacing: 0.0,
+            item_spacing: None,
+            density: SidebarDensity::Normal,
+            fill_width: false,
         }
     }
 
     /// Space between consecutive item rows (`0` = packed / fully clickable).
+    /// Overrides the density default gap.
     pub fn item_spacing(mut self, spacing: f32) -> Self {
-        self.item_spacing = spacing.max(0.0);
+        self.item_spacing = Some(spacing.max(0.0));
+        self
+    }
+
+    /// List density (pad, primary type size, default inter-row gap).
+    /// Card chrome is unchanged. Default [`SidebarDensity::Normal`].
+    pub fn density(mut self, density: SidebarDensity) -> Self {
+        self.density = density;
+        self
+    }
+
+    /// Column width follows the parent instead of [`SIDEBAR_WIDTH`].
+    /// Ignored when [`Self::resizable`] / [`Self::resizable_with`] is set.
+    pub fn fill_width(mut self) -> Self {
+        self.fill_width = true;
         self
     }
 
@@ -1551,7 +1660,10 @@ where
             section_scroll,
             item_hover,
             item_spacing,
+            density,
+            fill_width,
         } = self;
+        let item_spacing = item_spacing.unwrap_or(density.metrics().gap);
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
         let reorder_ref = reorder.as_ref();
@@ -1636,6 +1748,7 @@ where
                 } else {
                     panel_sibling_offset(from, to, stable_index)
                 };
+                let item = assign_close_id(item, stable_index);
                 let show_action = item
                     .id
                     .as_ref()
@@ -1643,7 +1756,14 @@ where
                 let row_el = if collapsed {
                     collapsed_row(&item, stable_index, reorder_ref)
                 } else {
-                    render_item(item, reorder_ref, stable_index, show_action)
+                    render_item(
+                        item,
+                        reorder_ref,
+                        stable_index,
+                        show_action,
+                        density,
+                        on_item_hover.is_some(),
+                    )
                 };
                 items = items.push(with_reorder_motion(row_el, dy, is_dragged));
             }
@@ -1662,7 +1782,7 @@ where
 
                 let n_in_section = section.items.len();
                 let content_h =
-                    section_content_height_with_spacing(&section.items, item_spacing);
+                    section_content_height_with(&section.items, item_spacing, density);
                 let wants_fill = !collapsed
                     && (section.fill || auto_fill_single)
                     && !assigned_fill;
@@ -1689,12 +1809,19 @@ where
                         body_items =
                             body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
+                        let item = assign_close_id(item, row_index);
                         let item_id = item.id.clone();
                         let show_action = item_id
                             .as_ref()
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                        let mut row_el =
-                            render_item(item, reorder_ref, row_index, show_action);
+                        let mut row_el = render_item(
+                            item,
+                            reorder_ref,
+                            row_index,
+                            show_action,
+                            density,
+                            on_item_hover.is_some(),
+                        );
                         // Enter only — list-level exit clears hover so A→B
                         // cannot race (exit A after enter B → stuck None).
                         if let (Some(id), Some(ref mut on_hover)) =
@@ -1756,14 +1883,15 @@ where
         }
 
         let width = match &resize {
-            Some((w, _, _, _)) if !collapsed => *w,
-            _ if collapsed => 36.0,
-            _ => SIDEBAR_WIDTH,
+            Some((w, _, _, _)) if !collapsed => Length::Fixed(*w),
+            _ if collapsed => Length::Fixed(36.0),
+            _ if fill_width => Length::Fill,
+            _ => Length::Fixed(SIDEBAR_WIDTH),
         };
 
         let panel = container(chrome)
             .style(style)
-            .width(Length::Fixed(width))
+            .width(width)
             .height(Length::Fill);
 
         // Gesture flags captured before we move `resize` into the divider.
@@ -2173,12 +2301,10 @@ where
 
 pub fn style(theme: &Theme) -> container::Style {
     let _p = theme.extended_palette();
-    // OD `--material-sidebar`: cool #121722 (slightly off pure raised).
     // Full outline is intentionally off — the storybook / shell draws a
     // single right hairline separator against the content column.
-    let material = Color::from_rgb(0.071, 0.090, 0.133); // #121722
     container::Style {
-        background: Some(Background::Color(material)),
+        background: Some(Background::Color(CHROME_SURFACE)),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -2187,7 +2313,8 @@ pub fn style(theme: &Theme) -> container::Style {
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder / hover-action path).
 ///
-/// - **Row:** selected → quiet [`crate::theme::selection`]; idle flat / hover lift.
+/// - **Row:** browser etch — idle flat / muted; active inset well on
+///   [`CHROME_SURFACE`]; hover wash. No selection-teal.
 /// - **Card:** OD session-tab graphite (not selection teal). Idle raised
 ///   wash + hairline; active gradient + stronger border. Same box either way.
 /// Mid-drag lift (scale + shadow) is applied by [`with_reorder_motion`].
@@ -2200,20 +2327,32 @@ fn row_container_style(
     let p = theme.extended_palette();
     match chrome {
         SidebarItemChrome::Row => {
-            let bg = if active {
-                Some(Background::Color(crate::theme::selection()))
-            } else if hovered {
-                Some(Background::Color(alpha(p.background.strong.color, 0.70)))
+            let muted = p.secondary.base.text;
+            let fg = p.background.base.text;
+            if active {
+                return container::Style {
+                    background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.22))),
+                    text_color: Some(fg),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    },
+                    ..container::Style::default()
+                };
+            }
+            let (bg, text_color) = if hovered {
+                (alpha(p.background.strong.color, 0.45), fg)
             } else {
-                None
+                (Color::TRANSPARENT, muted)
             };
             container::Style {
-                background: bg,
-                text_color: Some(p.background.base.text),
+                background: Some(Background::Color(bg)),
+                text_color: Some(text_color),
                 border: Border {
                     color: Color::TRANSPARENT,
                     width: 0.0,
-                    radius: RADIUS_MD.into(),
+                    radius: RADIUS_SM.into(),
                 },
                 ..container::Style::default()
             }
@@ -2278,8 +2417,7 @@ fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::
 /// building custom row widgets (e.g. with leading icons) can match the
 /// kit's visual language.
 ///
-/// Active = quiet selection wash + rounded corners only. No left accent
-/// bar (that shifted title/subtitle relative to idle rows).
+/// List etch: idle muted + flat; active inset well (no selection wash).
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     item_style_chrome(theme, status, active, SidebarItemChrome::Row)
 }
@@ -2293,36 +2431,7 @@ pub fn item_style_chrome(
 ) -> button::Style {
     let p = theme.extended_palette();
     match chrome {
-        SidebarItemChrome::Row => {
-            if active {
-                return button::Style {
-                    background: Some(Background::Color(crate::theme::selection())),
-                    text_color: p.background.base.text,
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: RADIUS_MD.into(),
-                    },
-                    shadow: Default::default(),
-                    snap: false,
-                };
-            }
-            let bg = match status {
-                button::Status::Hovered => alpha(p.background.strong.color, 0.70),
-                _ => Color::TRANSPARENT,
-            };
-            button::Style {
-                background: Some(Background::Color(bg)),
-                text_color: p.background.base.text,
-                border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: RADIUS_MD.into(),
-                },
-                shadow: Default::default(),
-                snap: false,
-            }
-        }
+        SidebarItemChrome::Row => tab_item_style(theme, status, active),
         SidebarItemChrome::Card => {
             let hovered = matches!(
                 status,
@@ -2345,16 +2454,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tab_size_metrics_are_stable() {
-        let n = TabSize::Normal.metrics();
-        assert_eq!((n.row_pad_v, n.row_pad_h, n.font, n.close), (6, 10, 13, 15));
+    fn density_metrics_are_stable() {
+        let n = SidebarDensity::Normal.metrics();
+        assert_eq!((n.row_pad_v, n.row_pad_h, n.font, n.close), (6, 10, 13, 14));
         assert_eq!(n.gap, SPACE_XS);
 
-        let l = TabSize::Large.metrics();
-        assert_eq!((l.row_pad_v, l.row_pad_h, l.font, l.close), (10, 12, 14, 17));
-        assert_eq!(l.gap, SPACE_SM);
+        let l = SidebarDensity::Large.metrics();
+        assert_eq!((l.row_pad_v, l.row_pad_h, l.font, l.close), (7, 10, 12, 14));
+        assert_eq!(l.gap, 3.0);
 
-        assert_eq!(TabSize::default(), TabSize::Normal);
+        assert_eq!(SidebarDensity::default(), SidebarDensity::Normal);
+    }
+
+    #[test]
+    fn row_chrome_is_etch_not_selection() {
+        let theme = crate::default_theme();
+        let row = item_style_chrome(
+            &theme,
+            button::Status::Active,
+            true,
+            SidebarItemChrome::Row,
+        );
+        match row.background {
+            Some(Background::Color(c)) => {
+                assert_eq!(c, inset_surface(CHROME_SURFACE, 0.22));
+            }
+            other => panic!("row active should be solid inset, got {other:?}"),
+        }
+        assert_eq!(row.border.width, 0.0);
+        assert_ne!(
+            match row.background {
+                Some(Background::Color(c)) => c,
+                _ => Color::TRANSPARENT,
+            },
+            crate::theme::selection()
+        );
+    }
+
+    #[test]
+    fn card_chrome_does_not_collapse_into_etch() {
+        let theme = crate::default_theme();
+        let card = item_style_chrome(
+            &theme,
+            button::Status::Active,
+            true,
+            SidebarItemChrome::Card,
+        );
+        let row = item_style_chrome(
+            &theme,
+            button::Status::Active,
+            true,
+            SidebarItemChrome::Row,
+        );
+        // Card keeps a 1px hairline + graphite gradient; etch is inset fill.
+        assert_eq!(card.border.width, 1.0);
+        assert_eq!(row.border.width, 0.0);
+        match card.background {
+            Some(Background::Gradient(_)) => {}
+            Some(Background::Color(c)) => {
+                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+            }
+            other => panic!("card active should stay graphite surface, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assign_close_id_only_when_needed() {
+        let with_close = assign_close_id(SidebarItem::new("x", ()).on_close(()), 3);
+        assert_eq!(with_close.id.as_deref(), Some("__row:3"));
+        let with_id = assign_close_id(
+            SidebarItem::new("x", ()).on_close(()).id("keep"),
+            3,
+        );
+        assert_eq!(with_id.id.as_deref(), Some("keep"));
+        let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
+        assert_eq!(no_close.id, None);
     }
 
     fn sv(v: &[&str]) -> Vec<String> {

@@ -38,6 +38,18 @@ where
         .style(style)
 }
 
+/// Compact toolbar icon button — same density as [`toolbar_button`],
+/// for chrome that has moved off unicode arrows.
+pub fn toolbar_icon<'a, Message: Clone + 'a>(
+    handle: iced::widget::svg::Handle,
+    size: u16,
+) -> button::Button<'a, Message> {
+    button(crate::components::icon::icon_svg(handle, size))
+        .padding(PAD_CONTROL_SM)
+        .width(Length::Shrink)
+        .style(style)
+}
+
 /// Boxed `Element` form for callers that want to stash a row of
 /// already-wired buttons in a `Vec<Element>`. Equivalent to
 /// `toolbar_button(label).on_press(msg).into()`.

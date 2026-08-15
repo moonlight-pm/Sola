@@ -20,7 +20,7 @@ update the freeze’s Implementation / Gaps header.
 ## Overview
 
 Sola is a **Wayland desktop environment**: River as compositor, a typed IPC
-bus, and multi-process **Iced** apps sharing `sola-kit`.
+bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
 
 ```text
                     ┌──────────────────────┐
@@ -29,14 +29,14 @@ bus, and multi-process **Iced** apps sharing `sola-kit`.
                     └──┬───┬───┬───┬───┬───┘
                        │   │   │   │   │
           ┌────────────┘   │   │   │   └────────────┐
-          ▼                ▼   ▼   ▼                ▼
-     ┌────────┐      ┌──────┐ ┌────────┐      ┌──────────┐
-     │ River  │      │ bus  │ │ river  │      │ session  │
-     │(comp.) │      │ host │ │ bridge │      │ manager  │
-     └───┬────┘      └──┬───┘ └───┬────┘      └────┬─────┘
-         │              │         │                │
-         │              └────┬────┴────────────────┘
-         │                   │  Unix socket (sola-bus)
+          ▼                ▼   ▼   ▼   ▼            ▼
+     ┌────────┐      ┌──────┐ ┌──────┐ ┌────────┐ ┌──────────┐
+     │ River  │      │ bus  │ │ call │ │ river  │ │ session  │
+     │(comp.) │      │ host │ │ host │ │ bridge │ │ manager  │
+     └───┬────┘      └──┬───┘ └──┬───┘ └───┬────┘ └────┬─────┘
+         │              │        │         │           │
+         │              └────┬───┴─────────┴───────────┘
+         │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  agent-terminal · browser    │
@@ -56,6 +56,7 @@ to the bus and tolerate compositor restarts.
 |------|------|
 | `crates/sola` | Process manager (binary entry) |
 | `crates/sola-bus` | Bus host + client library + topics |
+| `crates/sola-call` | Call host + client library (request/reply) |
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
@@ -63,15 +64,15 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
-| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux `sola-at`). Catalog `~/.config/sola/agent-terminal/catalog.json`. Siblings under `<root>/.worktrees/`. `sat` on `$XDG_RUNTIME_DIR/sola-at-cli.sock`. Grok hooks on `$XDG_RUNTIME_DIR/sola-at-hooks.sock`; OSC 9999 stripped in the term lib. |
-| `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
+| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux `sola-at`). Catalog `~/.config/sola/agent-terminal/catalog.json`. Siblings under `<root>/.worktrees/`. Call owner `at` (private `sat` UDS retired). Grok hooks on `$XDG_RUNTIME_DIR/sola-at-hooks.sock`; OSC 9999 stripped in the term lib. |
+| `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of agent-terminal |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Image preview / selection capture handoff |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
-| `crates/solactl` | CLI helpers |
+| `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
@@ -93,6 +94,7 @@ to the bus and tolerate compositor restarts.
 | UI | Iced 0.14, wgpu, Wayland client |
 | Compositor | External **River**; bridge **sola-river** |
 | IPC control plane | **Sola Bus** over a Unix socket |
+| IPC call plane | **sola-call** over `$XDG_RUNTIME_DIR/sola-call` |
 | Surfaces / input | Wayland protocols via River |
 | Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
@@ -101,15 +103,18 @@ to the bus and tolerate compositor restarts.
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
 | Agent-terminal catalog | `~/.config/sola/agent-terminal/catalog.json` (projects / workspaces / selected) |
-| Agent-terminal CLI | `$XDG_RUNTIME_DIR/sola-at-cli.sock` (`sat`; fail if app down) |
+| Agent-terminal calls | sola-call owner `at` (`solactl at …`; optional `sat` alias) |
 | Grok sessions | `~/.grok/sessions/` + leader socket `~/.grok/leader.sock` |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
 
 ### Communication layers
 
 1. **Sola Bus** — lifecycle, focus, themes, app menus, session commands,
-   stickies. Control plane.  
-2. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
+   stickies. Fan-out facts. No request/reply.  
+2. **sola-call** — live method registry; request id, timeout, error to the
+   caller. `solactl compositor` / `session`; kit apps advertise via
+   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.  
+3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
 
 ---
 
@@ -144,17 +149,20 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 ---
 
-## Browser engines (as-built)
+## Browser (as-built)
 
-| Engine | Crate | Role |
-|--------|-------|------|
-| WPE | `sola-browser-wpe` | **Primary** |
-| CEF | `sola-browser-cef` | Parallel path; CEF `147.x` via `cef` crate |
-| Shared chrome | `sola-browser-core` | Iced chrome |
-| Dispatcher | `sola-browser` | Exec WPE or CEF |
+| Piece | Role |
+|-------|------|
+| `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox; vertical tabs; vault) + CEF CPU OSR under `src/cef/` |
+| App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window) |
+| Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
+| CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
+| Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json`; chrome parks tab-strip snapshots + last CPU composites (`FrameSlot.parked_frames`); switch points the router at the target helper (pages stay loaded). Eviction: `tab_cache` (idle 30m, max 4 parks, max 48 tabs total) |
+| Tab / profile paint | `present_tab`: same-size parked frame → GPU this frame; miss → blank immediately (never keep the previous page). Helpers skip same-size `Resize` so the parked compositor stays live. Iced presents paints via the shader `request_redraw` pump (does not rebuild chrome at 60 Hz). |
 
-CEF: do **not** enable `accelerated_osr`; dma-buf import is via Wayland
-`zwp_linux_dmabuf_v1` and sola-river composition.
+Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE
+content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
+(CPU `on_paint` path only).
 
 ---
 

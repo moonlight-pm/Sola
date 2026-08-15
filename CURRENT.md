@@ -9,32 +9,32 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (this branch: sat CLI + done toast)
+**As of:** 2026-08-14 (this branch: agent-terminal after merging call plane)
 
 ---
 
 ## Now
 
-1. **sola-agent-terminal** — **partial (sat + toast)** (this branch)  
+1. **sola-agent-terminal** — **partial** (this branch, master merged)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
+   **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-agent-terminal/PRODUCT.md`](crates/sola-agent-terminal/PRODUCT.md)  
-   **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](docs/ideas/2026-08-12-sola-agent-terminal.md)  
-   **Next:** dogfood install; remaining polish (rename/recolor/reorder).  
-   **Do not invent:** D3 interims (name, `sat` if down = fail, Claude hooks).  
-   **Install:** ask first. `sat` + app + shell (toast) not smoked.  
-   **Now:** `sat` talks `$XDG_RUNTIME_DIR/sola-at-cli.sock` (fails if app
-   down). UI spawn is name-only; `sat workspace spawn --agent grok` is
-   the prompt handoff. Done-while-unfocused emits menubar toast
-   `{workspace} · grok is done`.  
-2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on **master**)  
+   **Next:** register Workspaces methods on `sola-call` (`BusSetup::calls("at", …)`);
+   `sat` becomes a thin alias of `solactl at …`. Then dogfood.  
+   **Do not invent:** D4 interims (name, Claude hooks); call-plane **D3** confirm.  
+   **Install:** ask first.  
+   **Now:** persist + spawn modal + done toast in tree. Private `sat` UDS is
+   the wrong home (call-plane freeze). Hooks + `sat-ws-main` reattach smoked
+   earlier; spawn UI / call methods not smoked.  
+2. **Call plane** — on **master** (`65e0051d`). Host + `solactl compositor` /
+   `session` + kit helper. **Needs install to dogfood.**  
+3. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
-3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
+5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), etc.  
-   Orca Grok pane flash reclassified off Sola; shell Windows/composition
-   hygiene + ordered multi-install merged from focus-flashing.
+   unmerged), etc.
 
 **Explicit holds:** none.
 
@@ -52,7 +52,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (installed locally). Grok sidebar marks + `sat-ws-main` reattach smoked. Master dogfood: **`master`** | Feature work in worktrees / Orca workspaces |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (merging master `65e0051d`). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; YouTube persists; Bitwarden unlock/fill + Create login; passkey get (Google) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
@@ -63,7 +64,7 @@ permission for that install. User installs and smokes.
 
 ```bash
 cargo make build
-cargo make install arcade shell river   # only with your OK
+cargo make install browser shell   # only with your OK
 RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 ```
 
@@ -75,13 +76,14 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 |-------|------|
 | UI stack | **Iced + sola-kit** only for new apps; WebView host is apocrypha |
 | Compositor | **River** external; **sola-river** is the bus ↔ Wayland bridge |
-| IPC | **Sola Bus** (Unix socket events) + Wayland for surfaces/input |
+| IPC | **Sola Bus** (fan-out) + **sola-call** (request/reply) + Wayland for surfaces/input |
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
-| Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
+| Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents. **`sola-agent` is not the start of agent-terminal.** |
 | Agent-terminal | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
 | Agent-terminal CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
 | Agent-terminal UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
-| Agent-terminal worktrees | **`<project-root>/.worktrees/<name>`** (D3.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
+| Agent-terminal worktrees | **`<project-root>/.worktrees/<name>`** (D4.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
+| Agent-terminal calls | Register on **sola-call** as owner `at`. Do not add per-app sockets. `sat` if kept is an alias of `solactl at …`. Fail if app/host down. |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

@@ -58,6 +58,11 @@ pub const PAD_CONTROL: [u16; 2] = [7, 14];
 /// Compact control padding — toolbar, steppers, dense chrome.
 pub const PAD_CONTROL_SM: [u16; 2] = [5, 11];
 
+/// Cool graphite used for sidebar columns and the full-width chrome
+/// strip (OD `--material-sidebar` `#121722`). One surface so a top bar
+/// that spans the window meets the tab column without a colour step.
+pub const CHROME_SURFACE: Color = Color::from_rgb(0.071, 0.090, 0.133);
+
 /// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;
 /// Stronger hairline — OD `--hairline-strong` (white 12% in sRGB).

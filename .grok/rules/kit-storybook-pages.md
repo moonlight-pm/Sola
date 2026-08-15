@@ -9,14 +9,14 @@ also update the matching **storybook page** under
 
 Graphite design-system work landed Overview + shared chrome first. Other tabs
 still use older lab layouts; they inherit component styles but may not match
-Open Design (`sola-kit-ds.html`) page composition. Page rewrites are optional
-and should not block component work.
+Overview page composition. Page rewrites are optional and should not block
+component work.
 
 ## Do
 
 1. Ship / propose the component change first.
 2. **Ask** something like: “Want the storybook **Button** (or Field / Card / …)
-   page updated to match Open Design / the new look?”
+   page updated to match Overview / the new look?”
 3. Only rewrite the page if they say yes (or already asked for parity).
 
 ## Do not
@@ -38,4 +38,4 @@ and should not block component work.
 | theme / shell tokens | `pages/theme.rs`, `pages/shell.rs`, Overview |
 | shared `style.rs` materials | ask which demos matter; often Overview + affected control pages |
 
-Open Design reference: project **Sola** → `sola-kit-ds.html`.
+Storybook Overview is the in-repo composition reference when rewriting a page.

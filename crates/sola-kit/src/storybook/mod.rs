@@ -50,6 +50,7 @@ pub enum Page {
     ColorPicker,
     Divider,
     Popover,
+    Select,
     Sidebar,
     Split,
     Titlebar,
@@ -78,6 +79,7 @@ impl Page {
         Page::Readable,
         Page::ColorPicker,
         Page::Popover,
+        Page::Select,
         Page::Sidebar,
     ];
 
@@ -98,6 +100,7 @@ impl Page {
             Page::ColorPicker => "ColorPicker",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
+            Page::Select => "Select",
             Page::Sidebar => "Sidebar",
             Page::Split => "Split",
             Page::Titlebar => "Titlebar",
@@ -123,6 +126,7 @@ impl Page {
             | Page::Readable
             | Page::ColorPicker
             | Page::Popover
+            | Page::Select
             | Page::Sidebar => Some("Components"),
         }
     }
@@ -155,6 +159,7 @@ impl Page {
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
             Page::Popover => &[BgRaised, Border, Fg, FgMuted],
+            Page::Select => &[BgRaised, BgHover, Selection, Border, Fg, FgMuted],
             Page::Sidebar => &[Bg, BgHover, Selection, Fg, FgMuted, Accent],
         }
     }
@@ -171,6 +176,7 @@ pub enum Msg {
     ColorPicker(pages::color_picker::Msg),
     Sidebar(pages::sidebar::Msg),
     Split(pages::split::Msg),
+    SelectDemo(pages::select::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
     /// Open the inline color picker for one palette atom. No-op when
@@ -396,6 +402,7 @@ pub struct Storybook {
     color_picker: pages::color_picker::State,
     sidebar: pages::sidebar::State,
     split: pages::split::State,
+    select: pages::select::State,
     /// All known themes. `themes[0]` is always Default and can't be
     /// edited or deleted. Subsequent entries are user copies.
     themes: Vec<ThemePreset>,
@@ -487,6 +494,7 @@ impl Storybook {
             color_picker: pages::color_picker::State::default(),
             sidebar: pages::sidebar::State::default(),
             split: pages::split::State::default(),
+            select: pages::select::State::default(),
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
@@ -617,6 +625,7 @@ impl Storybook {
             Msg::ColorPicker(m) => self.color_picker.update(m),
             Msg::Sidebar(m) => self.sidebar.update(m),
             Msg::Split(m) => self.split.update(m),
+            Msg::SelectDemo(m) => self.select.update(m),
             Msg::Bus(message) => {
                 self.float.update(&message);
                 let Some(topic) = Topic::parse(&message) else {
@@ -1360,6 +1369,7 @@ impl Storybook {
             }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
+            Page::Select => pages::select::view(&self.select).map(Msg::SelectDemo),
             Page::Sidebar => pages::sidebar::view(&self.sidebar, &self.theme).map(Msg::Sidebar),
             Page::Split => pages::split::view(&self.split, &self.theme).map(Msg::Split),
             Page::Toolbar => pages::toolbar::view(&self.toolbar).map(Msg::Toolbar),
@@ -1402,6 +1412,7 @@ mod tests {
     #[test]
     fn every_page_variant_is_listed_in_all() {
         const VARIANTS: &[Page] = &[
+            Page::Overview,
             Page::Theme,
             Page::Shell,
             Page::Text,
@@ -1416,6 +1427,7 @@ mod tests {
             Page::ColorPicker,
             Page::Divider,
             Page::Popover,
+            Page::Select,
             Page::Sidebar,
             Page::Split,
             Page::Titlebar,
@@ -1441,6 +1453,7 @@ mod tests {
                 | Page::ColorPicker
                 | Page::Divider
                 | Page::Popover
+                | Page::Select
                 | Page::Sidebar
                 | Page::Split
                 | Page::Titlebar

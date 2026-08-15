@@ -41,6 +41,7 @@ pub struct Session {
     /// Monotonic, never reused, so concurrent launches of the same
     /// app_id get distinct scope unit names.
     launch_counter: u64,
+    call_rx: Option<std::sync::mpsc::Receiver<sola_call::Incoming>>,
 }
 
 impl Session {
@@ -51,6 +52,7 @@ impl Session {
             bus,
             children: HashMap::new(),
             launch_counter: 0,
+            call_rx: None,
         }
     }
 
@@ -158,6 +160,10 @@ impl Session {
     }
 
     pub fn launch(&mut self, payload: LaunchAppPayload) {
+        let _ = self.launch_result(payload);
+    }
+
+    fn launch_result(&mut self, payload: LaunchAppPayload) -> Result<serde_json::Value, String> {
         let LaunchAppPayload { app_id, command } = payload;
         info!(%app_id, %command, "launch");
 
@@ -165,13 +171,13 @@ impl Session {
         if trimmed.is_empty() {
             warn!(%app_id, "empty command");
             self.emit_launch_result(&app_id, &command, false, Some("empty command".into()));
-            return;
+            return Err("empty command".into());
         }
         let mut parts = trimmed.split_whitespace();
         let Some(program) = parts.next() else {
             warn!(%app_id, %command, "no program");
             self.emit_launch_result(&app_id, &command, false, Some("no program".into()));
-            return;
+            return Err("no program".into());
         };
         let args: Vec<&str> = parts.collect();
 
@@ -260,7 +266,8 @@ impl Session {
 
         match cmd.spawn() {
             Ok(child) => {
-                info!(%app_id, %unit, pid = child.id(), "user app launched");
+                let pid = child.id();
+                info!(%app_id, %unit, pid, "user app launched");
                 self.children
                     .entry(app_id.clone())
                     .or_default()
@@ -274,10 +281,16 @@ impl Session {
                     });
                 self.emit_launch_result(&app_id, &command, true, None);
                 self.emit_session_apps();
+                Ok(serde_json::json!({
+                    "app_id": app_id,
+                    "command": command,
+                    "pid": pid,
+                }))
             }
             Err(e) => {
                 warn!(%app_id, %e, "spawn failed");
                 self.emit_launch_result(&app_id, &command, false, Some(e.to_string()));
+                Err(e.to_string())
             }
         }
     }
@@ -295,21 +308,31 @@ impl Session {
     }
 
     pub fn close(&mut self, app_id: &str) {
+        let _ = self.close_result(app_id);
+    }
+
+    fn close_result(&mut self, app_id: &str) -> Result<serde_json::Value, String> {
         let Some(records) = self.children.get_mut(app_id) else {
             info!(%app_id, "CloseApp: no live children");
-            return;
+            return Err(format!("no live children for {app_id}"));
         };
+        let mut n = 0u32;
         for r in records.iter_mut() {
             if r.closing {
                 continue;
             }
             r.closing = true;
+            n += 1;
             info!(%app_id, unit = %r.unit, "CloseApp: stopping");
             stop_app_record(r);
         }
         // Drop the now-closing app from the persisted set so a restart
         // doesn't relaunch something the user just closed.
         self.emit_session_apps();
+        if n == 0 {
+            return Err(format!("no live children for {app_id}"));
+        }
+        Ok(serde_json::json!({ "app_id": app_id, "stopped": n }))
     }
 
     /// Stop every scope, then poll for exit up to [`SHUTDOWN_POLL_BUDGET`].
@@ -555,6 +578,11 @@ pub fn run() {
     let mut session = Session::new();
 
     connect_and_subscribe(&mut session.bus);
+    session.call_rx = Some(sola_call::start_provider(
+        sola_call::methods::OWNER_SESSION,
+        "sola-session",
+        sola_call::methods::session_methods(),
+    ));
 
     // Relaunch last session's apps (once, before the steady-state loop).
     session.restore_session();
@@ -579,7 +607,80 @@ pub fn run() {
                 session.handle(topic);
             }
         }
+        session.drain_calls();
         session.tick();
+    }
+}
+
+impl Session {
+    fn drain_calls(&mut self) {
+        let mut batch = Vec::new();
+        let mut dead = false;
+        if let Some(rx) = self.call_rx.as_ref() {
+            loop {
+                match rx.try_recv() {
+                    Ok(inc) => batch.push(inc),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        dead = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if dead {
+            self.call_rx = None;
+        }
+        for inc in batch {
+            self.handle_call(inc);
+        }
+    }
+
+    fn handle_call(&mut self, inc: sola_call::Incoming) {
+        match inc.method.as_str() {
+            "launch" => {
+                let app_id = inc
+                    .params
+                    .get("app_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if app_id.is_empty() {
+                    inc.reply.err("missing app_id");
+                    return;
+                }
+                let command = inc
+                    .params
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_command(&app_id));
+                match self.launch_result(LaunchAppPayload { app_id, command }) {
+                    Ok(data) => inc.reply.ok(data),
+                    Err(e) => inc.reply.err(e),
+                }
+            }
+            "close" => {
+                let Some(app_id) = inc.params.get("app_id").and_then(|v| v.as_str()) else {
+                    inc.reply.err("missing app_id");
+                    return;
+                };
+                match self.close_result(app_id) {
+                    Ok(data) => inc.reply.ok(data),
+                    Err(e) => inc.reply.err(e),
+                }
+            }
+            other => inc.reply.err(format!("unknown method {other}")),
+        }
+    }
+}
+
+fn default_command(app_id: &str) -> String {
+    let path = format!("/opt/sola/bin/{app_id}");
+    if std::path::Path::new(&path).exists() {
+        path
+    } else {
+        app_id.to_string()
     }
 }
 

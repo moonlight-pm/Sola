@@ -63,11 +63,12 @@ Do not invent `STATUS.md` / `HANDOFF.md` / session diaries. Deferred
 Living map: [`docs/architecture.md`](docs/architecture.md).
 
 - **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
-- **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
+- **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. Fan-out facts over a Unix socket.
+- **Call (`sola-call`):** Request/reply host. Live method registry. Not the bus.
 - **Compositor:** River (external), bridged by `sola-river` (bus client).
 - **Shell / apps:** Iced programs via `sola-kit` — Wayland clients + bus clients. Each is a separate process.
-- **Browser:** Custom iced chrome with WPE (primary) or CEF (parallel) engines.
-- **IPC:** Sola Bus (events over Unix socket) + Wayland protocols for surfaces/input
+- **Browser:** Custom iced chrome + CEF engine in a single `sola-browser` crate.
+- **IPC:** Sola Bus (events over Unix socket) + **sola-call** (request/reply) + Wayland protocols for surfaces/input
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
 All components are independently restartable. Sola apps are resilient to bus and compositor restarts.
@@ -78,13 +79,11 @@ All components are independently restartable. Sola apps are resilient to bus and
 crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # IPC bus host + client library
+  sola-call/           # Call host + client (request/reply; not the bus)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-kit/            # Iced app kit + storybook binary
   sola-assets/         # Vendored icon/asset bundles
-  sola-browser/        # Thin engine dispatcher (exec WPE or CEF)
-  sola-browser-core/   # Shared iced browser chrome
-  sola-browser-wpe/    # Primary browser engine
-  sola-browser-cef/    # Parallel CEF engine
+  sola-browser/        # Iced browser chrome + CEF engine (single crate)
   sola-make/           # Build/install orchestration (xtask)
   sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
@@ -141,7 +140,7 @@ docs/
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
-  `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
+  `sola-call` → `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
   other apps) with a **1s settle gap** between actual replaces so the
   process manager can restart each component before the next kill.
   CLI order is ignored for that sequence (`install shell river` still
@@ -235,13 +234,13 @@ The old GTK4 + WebKit6 host (`sola-app`) and its apps live under
 Do **not** write new apps against that stack. The only remaining product
 gap from that era is a kit-native mail client (`crates/sola-mail`); use
 `apocrypha/apps/mail` as the logic/UI reference. CEF binding notes at the
-end of this file apply to `sola-browser-cef`, not to the Iced kit.
+end of this file apply to `sola-browser` (CEF engine module), not to the Iced kit.
 
 ## sola-kit (the Iced app kit)
 
 `sola-kit` is the shared Iced app kit + a `sola-kit` **storybook** binary that
 dogfoods every component (each widget has a showcase page, so regressions show
-up there first). Library surface in `src/lib.rs`: `App`, `BusSetup`, `run`,
+up there first). Library surface in `src/lib.rs`: `App`, `BusSetup`, `CallSetup`, `run`,
 `default_theme`, plus re-exported `iced` and `sola_bus` (so consumers don't take
 their own direct deps just to spell trait bounds or reference bus types).
 
@@ -257,7 +256,9 @@ their own direct deps just to spell trait bounds or reference bus types).
   changes, so `cargo make install` picks up new code live; skipped when
   `SOLA_NO_SELF_WATCH=1`).
 - **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
-  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).install()`
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("at", methods).install()`
+  Advertises call-plane methods; fold `call_subscription()` into iced. Or use
+  `CallSetup::new(owner, app_id).methods(…).install()` alone.
   hands the connected client to the kit's global slot.
 - **`bus_subscription()`** → `Subscription<Arc<Message>>` — apps `.map(...)` it
   into their own message enum. Internally a 8ms polling thread forwards the bus

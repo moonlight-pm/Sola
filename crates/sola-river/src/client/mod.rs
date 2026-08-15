@@ -156,6 +156,8 @@ pub struct AppData {
     pub cursor_device: Option<WpCursorShapeDeviceV1>,
     /// `wlr-screencopy` + `wl_shm` + `wl_output` state for screenshots.
     pub screenshot: screenshot::ScreenshotState,
+    /// Incoming sola-call invokes (`compositor.*`).
+    pub call_rx: Option<std::sync::mpsc::Receiver<sola_call::Incoming>>,
     /// Floating-window drop shadows (`get_decoration_below` + SHM silhouette).
     pub shadow: shadow::ShadowState,
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
@@ -204,6 +206,7 @@ impl AppData {
             wl_pointer: None,
             cursor_device: None,
             screenshot: screenshot::ScreenshotState::default(),
+            call_rx: None,
             shadow: shadow::ShadowState::default(),
             layer_shell: layer_shell::LayerShellState::default(),
         }
@@ -257,6 +260,7 @@ pub fn bus_tick(state: &mut AppData) {
     state.bus.drain_notify();
     // Screenshot PNG encode runs off-thread; deliver results here.
     screenshot::poll_results(state);
+    crate::call::poll(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;
@@ -360,15 +364,7 @@ pub fn bus_tick(state: &mut AppData) {
                     .collect();
                 state.pending.set_chords(pairs);
             }
-            sola_bus::topics::Topic::CaptureScreen(req) => {
-                screenshot::handle(state, req);
-            }
-            sola_bus::topics::Topic::SimulatePointer(req) => {
-                virtual_pointer::dispatch(state, &req.action);
-            }
-            sola_bus::topics::Topic::SimulateKey(req) => {
-                virtual_keyboard::synthesize_chord(state, &req.chord);
-            }
+            // Screenshot and synthetic input are sola-call methods now.
             sola_bus::topics::Topic::CloseApp(app_id) => {
                 let to_close: Vec<u32> = state
                     .windows_by_id

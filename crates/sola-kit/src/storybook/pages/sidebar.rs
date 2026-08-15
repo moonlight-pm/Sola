@@ -13,9 +13,8 @@ use iced::{Element, Length, Theme};
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::{
-    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarIndicator, SidebarItem,
-    SidebarPanel, SidebarSection, TabDescriptor, TabSize, panel_dragged_width,
-    vertical_tabs_sized,
+    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarDensity, SidebarIndicator,
+    SidebarItem, SidebarPanel, SidebarSection, panel_dragged_width,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -43,6 +42,8 @@ pub enum Msg {
     SectionScroll(SectionScroll),
     /// A plain row click (collapsed buttons use this).
     ItemPress(usize),
+    /// Hovered list item id (for hover-only ×).
+    ItemHover(Option<String>),
     /// Demo placeholder (e.g. a close button) with no modelled effect.
     Noop,
     /// Working-ring animation tick (parent frames subscription).
@@ -71,6 +72,8 @@ pub struct State {
     pub selected: usize,
     /// Fill-section scroll snapshot for overflow chips.
     pub section_scroll: SectionScroll,
+    /// Hovered item id (close-on-hover + hover_action).
+    pub hovered: Option<String>,
 }
 
 impl Default for State {
@@ -87,6 +90,7 @@ impl Default for State {
             order: (0..ITEMS.len()).collect(),
             selected: 0,
             section_scroll: SectionScroll::default(),
+            hovered: None,
         }
     }
 }
@@ -195,6 +199,7 @@ impl State {
             Msg::SectionScroll(s) => {
                 self.section_scroll = s;
             }
+            Msg::ItemHover(id) => self.hovered = id,
             Msg::Noop | Msg::MarkTick => {}
         }
     }
@@ -233,6 +238,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         .map(|(row_i, &item)| {
             let label = ITEMS[item];
             let mut si = SidebarItem::new(label, Msg::ItemPress(row_i))
+                .id(item.to_string())
                 .active(item == state.selected)
                 .shortcut((item + 1) as u8);
             if label == "Drafts" {
@@ -275,6 +281,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     let divider = DividerColors::raised(theme);
 
     let panel = SidebarPanel::new(sections)
+        .density(SidebarDensity::Normal)
+        .item_hover(state.hovered.clone(), Msg::ItemHover)
         .collapsible(state.collapsed, Msg::Toggle)
         .resizable_with(state.width, state.dragging, Msg::DividerPress, divider)
         .reorderable(cfg)
@@ -294,16 +302,17 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     column![
         heading("Sidebar"),
         body(
-            "SidebarPanel: collapse (»/«), resize, reorder. Section headers are \
-             sticky (title case + muted chrome). Fill sections scroll without a \
+            "List etch is the default Row chrome (muted idle, lip + inset active, \
+             hover-only ×). SidebarPanel: collapse (»/«), resize, reorder. \
+             Section headers stay sticky. Fill sections scroll without a \
              scrollbar and show ↑ N … / ↓ N … when items overflow. Drafts has a \
-             secondary count; Spam a × close."
+             secondary count; hover Spam for ×."
         )
         .style(muted),
         demo,
         code("SidebarSection::new(\"Sessions\", items).fill() · sticky label + bar-less scroll")
             .style(muted),
-        code("SidebarPanel::new(sections).section_scroll(snap, Msg::Scroll) · overflow chips")
+        code("SidebarPanel::new(sections).density(Normal).item_hover(id, Msg::Hover)")
             .style(muted),
         code("SidebarPanel::new(sections).collapsible(..).resizable(..).reorderable(..).build()")
             .style(muted),
@@ -316,8 +325,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         marks_demo(),
         code("SidebarItem::new(label, msg).indicator(SidebarIndicator::Working)")
             .style(muted),
-        body("vertical_tabs density: Normal vs Large").style(muted),
-        density_demo(),
+        body("List density: Normal vs Large (same SidebarItem etch)").style(muted),
+        density_demo(state),
     ]
     .spacing(16)
     .into()
@@ -350,27 +359,36 @@ fn marks_demo<'a>() -> Element<'a, Msg> {
         .into()
 }
 
-/// Dogfood the `vertical_tabs` size variants side by side so the Large
-/// browser-chrome density is visible (and regressions show up here first).
-fn density_demo<'a>() -> Element<'a, Msg> {
-    let mk = |active_i: usize| -> Vec<TabDescriptor<Msg>> {
-        ["Inbox", "A long tab title that truncates", "Sent"]
+/// Etch strips at both densities — this is the product language now.
+fn density_demo(state: &State) -> Element<'_, Msg> {
+    let mk = |density: SidebarDensity| {
+        let items: Vec<SidebarItem<Msg>> = ["Inbox", "A long tab title that truncates", "Sent"]
             .into_iter()
             .enumerate()
-            .map(|(i, l)| TabDescriptor::new(l, i == active_i, Msg::ItemPress(i), Msg::Noop))
-            .collect()
+            .map(|(i, l)| {
+                SidebarItem::new(l, Msg::ItemPress(i))
+                    .id(format!("dens-{i}"))
+                    .active(i == 0)
+                    .on_close(Msg::Noop)
+            })
+            .collect();
+        SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
+            .density(density)
+            .item_hover(state.hovered.clone(), Msg::ItemHover)
+            .fill_width()
+            .build()
     };
     row![
         column![
             body("Normal").style(muted),
-            container(vertical_tabs_sized(mk(0), None, |_| Msg::Noop, TabSize::Normal))
+            container(mk(SidebarDensity::Normal))
                 .width(Length::Fixed(200.0))
                 .height(Length::Fixed(160.0)),
         ]
         .spacing(8),
         column![
             body("Large").style(muted),
-            container(vertical_tabs_sized(mk(0), None, |_| Msg::Noop, TabSize::Large))
+            container(mk(SidebarDensity::Large))
                 .width(Length::Fixed(200.0))
                 .height(Length::Fixed(160.0)),
         ]

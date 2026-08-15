@@ -438,30 +438,8 @@ pub struct BrowserHistory {
     pub entries: Vec<HistoryEntry>,
 }
 
-/// Ask a specific Sola app to evaluate a JS expression in one of its
-/// WebViews. The app's framework wraps the expression, runs it, and
-/// emits an `Evaluation` event with the JSON-encoded result. Multiple
-/// concurrent `Evaluate` events to the same app race against each
-/// other — `solactl` is a one-at-a-time tool and doesn't try to
-/// correlate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluatePayload {
-    pub target_app: String,
-    /// Window title; `None` selects the first window.
-    pub window: Option<String>,
-    pub expr: String,
-}
-
-/// Result of an evaluation. Source app is on `Message::source`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationPayload {
-    /// `Ok(json)` — the JSON-encoded value. `Err(msg)` — runtime or
-    /// serialization error from the WebView.
-    pub result: Result<String, String>,
-}
-
-/// Ask sola-river to capture the compositor output. Answered with a
-/// `Screenshot` event whose `result` carries the path on disk.
+/// Capture request used by sola-river's screenshot path (call plane).
+/// Not a bus topic — requests go through `sola-call`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureScreenPayload {
     /// Where to write the PNG. `None` → auto-generate a path under
@@ -492,11 +470,6 @@ pub enum CaptureTarget {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScreenshotPayload {
-    pub result: Result<PathBuf, String>,
-}
-
 /// Ask sola-preview (or a future image viewer) to open a file.
 /// Ephemeral — same pattern as [`OpenUrlRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -506,14 +479,7 @@ pub struct OpenImageRequest {
     pub activate: bool,
 }
 
-/// Synthesize a pointer event on the seat. Handled by sola-river via
-/// `wlr-virtual-pointer-unstable-v1`. Coordinates are absolute in
-/// compositor space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimulatePointerPayload {
-    pub action: PointerAction,
-}
-
+/// Pointer action for compositor input (call plane, not a bus topic).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PointerAction {
     /// Move pointer to absolute (x, y) on the primary output.
@@ -537,14 +503,6 @@ pub enum PointerButton {
     Left,
     Right,
     Middle,
-}
-
-/// Synthesize a single keystroke (press + release) with the given
-/// modifiers. Handled by sola-river via the existing virtual-keyboard
-/// protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimulateKeyPayload {
-    pub chord: KeyChord,
 }
 
 /// Ephemeral menubar toast. Shell chrome only — no sound, no extra UI.
@@ -705,18 +663,6 @@ define_topics! {
     // Image viewer (shell → sola-preview). Ephemeral; cold-start uses
     // LaunchApp with a path arg instead.
     OpenImage(OpenImageRequest),
-
-    // Debug introspection (solactl ↔ apps via sola-app framework).
-    Evaluate(EvaluatePayload),
-    Evaluation(EvaluationPayload),
-
-    // Screenshot capture (solactl → sola-river).
-    CaptureScreen(CaptureScreenPayload),
-    Screenshot(ScreenshotPayload),
-
-    // Synthetic input (solactl → sola-river).
-    SimulatePointer(SimulatePointerPayload),
-    SimulateKey(SimulateKeyPayload),
 
     // Menubar toast. Ephemeral; shell shows `text` and expires it.
     // Operator-plain copy — the sender owns the words.

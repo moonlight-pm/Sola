@@ -16,13 +16,14 @@ const NIX_DIR: &str = "/opt/sola/nix";
 /// Preferred binary replace order when installing multiple targets.
 ///
 /// Matches the process manager's dependency chain: bus first (IPC), then
-/// river (compositor bridge), shell, session, kvm. `sola` itself is last
-/// because replacing it restarts the whole session.
+/// call host, river (compositor bridge), shell, session, kvm. `sola` itself
+/// is last because replacing it restarts the whole session.
 ///
 /// Unknown binaries (apps, terminal, …) sort after these and keep the
 /// relative order the user passed on the CLI.
 const INSTALL_RESTART_ORDER: &[&str] = &[
     "sola-bus",
+    "sola-call",
     "sola-river",
     "sola-shell",
     "sola-session",
@@ -398,7 +399,12 @@ fn confirm_sola_replace(binaries: &[String]) -> Result<bool, String> {
     if !binaries.iter().any(|b| b == "sola") {
         return Ok(true);
     }
-    let src = "target/debug/sola";
+    // Confirm against whichever profile we might replace; prefer release if present.
+    let src = if Path::new("target/release/sola").exists() {
+        "target/release/sola"
+    } else {
+        "target/debug/sola"
+    };
     let dest = format!("{BIN_DIR}/sola");
     if !Path::new(src).exists() {
         return Ok(true);
@@ -436,7 +442,11 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// If `apps` is non-empty, builds and installs only those apps (short
 /// names like `shell` resolve to `sola-shell`). Otherwise builds and
 /// installs all workspace binaries.
-pub fn install(apps: &[String]) {
+///
+/// When `release` is true, builds with `--release` and copies from
+/// `target/release/` (optimized; much faster KDF / crypto paths for
+/// sola-browser Bitwarden unlock).
+pub fn install(apps: &[String], release: bool) {
     // Bootstrap third-party assets if any pack is missing.
     // /opt/sola/share is the single source of truth at runtime; install
     // never rsyncs it from the source tree (nothing's committed there).
@@ -471,7 +481,8 @@ pub fn install(apps: &[String]) {
     let build_packages = binaries.clone();
     sort_binaries_for_restart(&mut binaries);
 
-    println!("Building...");
+    let profile = if release { "release" } else { "debug" };
+    println!("Building ({profile})...");
     // Empty packages ⇒ full workspace build; otherwise one `-p` per app
     // so `cargo make install shell kit` is a single cargo invocation.
     super::build(
@@ -480,7 +491,7 @@ pub fn install(apps: &[String]) {
         } else {
             &build_packages
         },
-        false,
+        release,
     );
 
     println!("Preparing install...");
@@ -516,7 +527,7 @@ pub fn install(apps: &[String]) {
     }
     let mut wrote_previous = false;
     for name in &binaries {
-        let src = format!("target/debug/{name}");
+        let src = format!("target/{profile}/{name}");
         if !Path::new(&src).exists() {
             eprintln!("  warning: binary not found: {src}");
             continue;
@@ -636,7 +647,8 @@ mod restart_order_tests {
 
     #[test]
     fn managed_order_bus_before_river_before_shell() {
-        assert!(install_restart_rank("sola-bus") < install_restart_rank("sola-river"));
+        assert!(install_restart_rank("sola-bus") < install_restart_rank("sola-call"));
+        assert!(install_restart_rank("sola-call") < install_restart_rank("sola-river"));
         assert!(install_restart_rank("sola-river") < install_restart_rank("sola-shell"));
         assert!(install_restart_rank("sola-shell") < install_restart_rank("sola"));
     }

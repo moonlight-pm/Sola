@@ -184,11 +184,10 @@ and project conventions. The headline pieces:
   while iterating.
 - `RUST_LOG` accepts the standard env-filter syntax:
   `RUST_LOG=info,sola_kit=trace,cef=warn`.
-- `solactl apps` lists running apps + window IDs.
+- `solactl compositor windows` lists running apps + window IDs.
 - `solactl logs <app>` tails one app's log.
-- `solactl eval <app> '<js-expression>'` runs JS inside a CEF app's
-  WebView and prints the JSON result — invaluable for diagnosing
-  Remix v3 state.
+- `solactl compositor screenshot` / `session launch` talk to `sola-call`
+  (not the bus). Owner down → fail.
 - `solactl emit <Topic> '<json-payload>'` injects bus events from
   the command line.
 - For River-side issues, look at `/opt/sola/log/river.log`.
