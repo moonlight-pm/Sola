@@ -34,8 +34,10 @@ Do not invent product policy.
    preview, mail, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser polish is on
    **master** (downloads, cards, passkey get/create, chrome singleton,
-   tab-strip overflow chip). `naturalethic/browser-polish` stays open for
-   more chrome work. Outline passkey create still needs a clean smoke.
+   tab-strip overflow chip). `naturalethic/browser-polish` stays open:
+   **tab groups freeze**
+   ([`docs/specs/2026-08-15-sola-browser-tab-groups-design.md`](docs/specs/2026-08-15-sola-browser-tab-groups-design.md))
+   — not implemented. Outline passkey create still needs a clean smoke.
    Kit storybook desks on master (install `kit` to dogfood).
 
 **Explicit holds:** none.
