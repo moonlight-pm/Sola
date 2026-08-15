@@ -252,7 +252,7 @@ enum Msg {
     SelectionChanged,
     /// Local scrollback moved on this pane (PaneId).
     Scrolled(String),
-    /// Plain left-click on a URL; open it in Helium.
+    /// Plain left-click on a URL; open it in sola-browser.
     OpenUrl(String),
     /// Mouse-wheel bytes destined for a pane's PTY (PaneId, encoded report),
     /// emitted when a mouse-tracking app owns the wheel. Accumulated and

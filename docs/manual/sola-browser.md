@@ -25,8 +25,8 @@ Sola routes http(s) opens to **sola-browser**:
 | `xdg-open` / MIME defaults | `sola-browser.desktop` claims `x-scheme-handler/http` and `https` after install |
 
 Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
-Override the binary with `SOLA_BROWSER`. If the binary is missing, open falls
-back to Helium AppImage when installed.
+Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
+fallback — if the binary is missing, open fails.
 
 ## Profiles
 

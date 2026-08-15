@@ -81,7 +81,8 @@ solactl <app-id> <method> [json|--flags]
 Removed: `eval`, top-level `apps` / `screenshot` / `click` / `move` / `scroll` / `key`.
 
 `open` is launch-shaped (scheme handler): spawns **sola-browser** with the
-URL (Helium only if the browser binary is missing). Not a fail-if-down call.
+URL. No alternate browser. Not a fail-if-down call (fails if the binary is
+missing).
 
 ## Providers in this slice
 

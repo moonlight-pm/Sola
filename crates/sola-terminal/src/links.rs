@@ -3,7 +3,7 @@
 //! Scans the terminal grid for plain-text `http(s)://` / `www.` links (and
 //! honours OSC 8 hyperlinks when a cell carries one). Visible links are always
 //! underlined; a plain left-click (press + release with no drag) opens the
-//! link in **Helium** (the system browser). Dragging still starts a text
+//! link in **sola-browser**. Dragging still starts a text
 //! selection, including when the press begins on a URL.
 //!
 //! Super/⌘ is intentionally not used — sola-river owns Meta+Left for window
@@ -31,7 +31,7 @@ pub struct UrlSpan {
     pub end: GridPoint,
 }
 
-/// Open `uri` in Helium (shared sola-wide helper).
+/// Open `uri` in sola-browser (shared sola-wide helper).
 pub fn open_url(uri: &str) {
     sola_core::open_url_logged(uri);
 }

@@ -50,7 +50,7 @@ pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
 /// `OpenUrl` is subscribed for dogfood / `solactl emit OpenUrl` control of a
-/// running sola-browser. System http/https defaults may still prefer Helium
+/// running sola-browser. System http/https defaults go to sola-browser
 /// (D3) until we flip MIME; this does not change that default by itself.
 pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
