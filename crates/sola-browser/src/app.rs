@@ -220,9 +220,27 @@ enum VaultPanelPhase {
 #[derive(Debug, Clone)]
 struct PendingPasskey {
     req: PasskeyPageRequest,
+    /// Extra page promise ids for the same origin/RP (duplicate
+    /// delivery or a same-ceremony retry). Resolved together so the
+    /// site does not see "Superseded" / NotAllowedError mid-pick.
+    extra_ids: Vec<u64>,
     candidates: Vec<PasskeyCandidate>,
     loading: bool,
     error: Option<String>,
+}
+
+#[cfg(feature = "bitwarden")]
+impl PendingPasskey {
+    fn all_ids(&self) -> Vec<u64> {
+        let mut ids = Vec::with_capacity(1 + self.extra_ids.len());
+        ids.push(self.req.id);
+        for id in &self.extra_ids {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        ids
+    }
 }
 
 /// Where shell Edit → Paste (⌘V) should land while the vault panel is open.
@@ -1671,6 +1689,24 @@ impl<E: Engine> App<E> {
                         );
                     }
                 }
+                #[cfg(feature = "bitwarden")]
+                {
+                    let pks: Vec<_> = self
+                        .engine
+                        .passkeys_handle()
+                        .lock()
+                        .unwrap()
+                        .drain(..)
+                        .collect();
+                    for ev in pks {
+                        self.dispatch_passkey_request(crate::vault::PasskeyPageRequest {
+                            id: ev.id,
+                            origin: ev.origin,
+                            rp_id: ev.rp_id,
+                            public_key_json: ev.public_key_json,
+                        });
+                    }
+                }
                 // Drain any page-selection text the engine extracted for a copy
                 // and put it on the system clipboard via iced. The engine's own
                 // clipboard can't reach Wayland (headless display); iced's can.
@@ -2572,21 +2608,27 @@ impl<E: Engine> App<E> {
                 payload,
             } => {
                 self.vault_busy = false;
-                // Clear pending only if this is the current request.
-                if self
+                // Clear pending only if this is the current ceremony
+                // (primary id or a coalesced extra).
+                let ids = self
                     .pending_passkey
                     .as_ref()
-                    .map(|p| p.req.id == req_id)
-                    .unwrap_or(false)
-                {
+                    .filter(|p| p.all_ids().contains(&req_id))
+                    .map(|p| p.all_ids());
+                if let Some(ids) = ids {
                     self.pending_passkey = None;
                     if matches!(self.vault_phase, VaultPanelPhase::PasskeyPick) {
                         self.vault_phase = VaultPanelPhase::Credentials;
                         self.set_vault_panel_open(false);
                     }
+                    let script =
+                        crate::vault::resolve_webauthn_scripts(&ids, ok, &payload);
+                    let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                } else {
+                    let script =
+                        crate::vault::resolve_webauthn_script(req_id, ok, &payload);
+                    let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
                 }
-                let script = crate::vault::resolve_webauthn_script(req_id, ok, &payload);
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
                 if ok {
                     tracing::info!(req_id, "vault: passkey response injected");
                 } else {
@@ -2611,10 +2653,32 @@ impl<E: Engine> App<E> {
     /// Page asked for a passkey: open the vault panel picker (or unlock first).
     #[cfg(feature = "bitwarden")]
     fn dispatch_passkey_request(&mut self, req: PasskeyPageRequest) {
-        // Replace any prior pending request (reject the old page promise).
+        // Same click can arrive more than once (console + leftover
+        // beacon, helper IPC fan-out). Same origin/RP also retries
+        // while the picker is open (Gemini Exchange). Rejecting those
+        // as "Superseded" makes the page show failure before a pick.
+        if let Some(cur) = self.pending_passkey.as_mut() {
+            let same_site = cur.req.origin == req.origin
+                && (cur.req.rp_id == req.rp_id
+                    || cur.req.rp_id.is_empty()
+                    || req.rp_id.is_empty());
+            if same_site {
+                if cur.req.id != req.id && !cur.extra_ids.contains(&req.id) {
+                    tracing::info!(
+                        keep_id = cur.req.id,
+                        extra_id = req.id,
+                        origin = %req.origin,
+                        "vault: coalescing passkey request (same site)"
+                    );
+                    cur.extra_ids.push(req.id);
+                }
+                return;
+            }
+        }
+        // Different site: replace any prior pending request.
         if let Some(old) = self.pending_passkey.take() {
-            let script = crate::vault::resolve_webauthn_script(
-                old.req.id,
+            let script = crate::vault::resolve_webauthn_scripts(
+                &old.all_ids(),
                 false,
                 "Superseded by another passkey request.",
             );
@@ -2630,6 +2694,7 @@ impl<E: Engine> App<E> {
 
         self.pending_passkey = Some(PendingPasskey {
             req,
+            extra_ids: Vec::new(),
             candidates: Vec::new(),
             loading: true,
             error: None,
@@ -2695,7 +2760,7 @@ impl<E: Engine> App<E> {
     fn cancel_pending_passkey(&mut self, reason: &str) {
         if let Some(pending) = self.pending_passkey.take() {
             let script =
-                crate::vault::resolve_webauthn_script(pending.req.id, false, reason);
+                crate::vault::resolve_webauthn_scripts(&pending.all_ids(), false, reason);
             let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
         }
         if matches!(self.vault_phase, VaultPanelPhase::PasskeyPick) {
@@ -3527,107 +3592,145 @@ impl<E: Engine> App<E> {
     }
 
     fn view_downloads_panel(&self) -> Element<'_, Msg> {
-        use crate::downloads::{DownloadStatus, format_bytes, format_progress};
-        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+        use crate::downloads::{DownloadStatus, ellipsize_middle, format_bytes, format_progress};
+        use iced::widget::text::Wrapping;
+        use sola_kit::components::style::SPACE_LG;
 
-        let soft_sm = |s: String| {
-            text(s).size(11).style(|theme: &iced::Theme| {
-                let t = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(iced::Color { a: 0.62, ..t }),
-                }
+        const PANEL_W: f32 = 300.0;
+        const NAME_CHARS: usize = 26;
+
+        let caption = |s: String, danger: bool| {
+            text(s).size(11).style(move |theme: &iced::Theme| {
+                let p = theme.extended_palette();
+                let color = if danger {
+                    p.danger.base.color
+                } else {
+                    iced::Color {
+                        a: 0.58,
+                        ..p.background.base.text
+                    }
+                };
+                iced::widget::text::Style { color: Some(color) }
             })
         };
 
         let title = text("Downloads")
-            .size(15)
-            .font(sola_kit::fonts::ui_medium());
+            .size(13)
+            .font(sola_kit::fonts::ui_medium())
+            .style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.82, ..t }),
+                }
+            });
 
         let items = self.downloads.items();
         let body: Element<'_, Msg> = if items.is_empty() {
-            column![title, soft_sm("Nothing downloaded yet.".into())]
-                .spacing(SPACE_SM)
-                .width(Length::Fixed(340.0))
+            column![title, caption("Nothing downloaded yet.".into(), false)]
+                .spacing(SPACE_LG)
+                .width(Length::Fill)
                 .into()
         } else {
-            let mut list = column![].spacing(4.0);
-            for e in items {
-                let name = text(e.filename.clone())
+            let mut list = column![].spacing(0.0);
+            for (i, e) in items.iter().enumerate() {
+                if i > 0 {
+                    list = list.push(horizontal_divider());
+                }
+                let name = ellipsize_middle(&e.filename, NAME_CHARS);
+                let name_el = text(name)
                     .size(13)
-                    .font(sola_kit::fonts::ui_medium());
-                let row_el: Element<'_, Msg> = match e.status {
-                    DownloadStatus::InProgress => {
-                        let sub = format_progress(e);
-                        let cancel = kit_button::labeled_sm("Cancel", kit_button::ghost)
-                            .on_press(Msg::DownloadCancel(e.id.clone()));
-                        row![
-                            column![name, soft_sm(sub)]
-                                .spacing(2)
-                                .width(Length::Fill),
-                            cancel,
-                        ]
-                        .spacing(SPACE_SM)
-                        .align_y(Alignment::Center)
-                        .into()
-                    }
-                    DownloadStatus::Complete => {
-                        let sub = e
-                            .total
-                            .or(Some(e.received))
-                            .filter(|n| *n > 0)
-                            .map(format_bytes)
-                            .unwrap_or_else(|| "Done".into());
-                        let open = button(
-                            column![name, soft_sm(sub)]
-                                .spacing(2)
-                                .width(Length::Fill),
-                        )
-                        .padding(Padding::from([8, 10]))
+                    .font(sola_kit::fonts::ui())
+                    .wrapping(Wrapping::None);
+                let name_el = container(name_el)
+                    .width(Length::Fill)
+                    .clip(true);
+
+                let meta = match e.status {
+                    DownloadStatus::InProgress => format_progress(e),
+                    DownloadStatus::Complete => e
+                        .total
+                        .or(Some(e.received))
+                        .filter(|n| *n > 0)
+                        .map(format_bytes)
+                        .unwrap_or_default(),
+                    DownloadStatus::Failed => "Failed".into(),
+                };
+                let failed = e.status == DownloadStatus::Failed;
+                let meta_el = caption(meta, failed);
+
+                let dismiss = match e.status {
+                    DownloadStatus::InProgress => Msg::DownloadCancel(e.id.clone()),
+                    _ => Msg::DownloadRemove(e.id.clone()),
+                };
+                let x = button(icon_svg(nav_icon_stop(), 12))
+                    .padding(4)
+                    .width(Length::Fixed(22.0))
+                    .style(kit_toolbar::style)
+                    .on_press(dismiss);
+
+                let main = row![name_el, meta_el]
+                    .spacing(SPACE_LG)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill);
+
+                let mut face: Element<'_, Msg> = match e.status {
+                    DownloadStatus::Complete => button(main)
+                        .padding(Padding::from([7, 4]))
                         .width(Length::Fill)
                         .style(download_row_style)
-                        .on_press(Msg::DownloadOpen(e.id.clone()));
-                        let remove = button(icon_svg(nav_icon_stop(), 14))
-                            .padding(PAD_CONTROL_SM)
-                            .style(kit_toolbar::style)
-                            .on_press(Msg::DownloadRemove(e.id.clone()));
-                        row![open, remove]
-                            .spacing(4)
-                            .align_y(Alignment::Center)
+                        .on_press(Msg::DownloadOpen(e.id.clone()))
+                        .into(),
+                    DownloadStatus::InProgress => {
+                        let frac = e.percent.unwrap_or(0.08).clamp(0.08, 1.0);
+                        column![main, download_row_progress(frac)]
+                            .spacing(5)
+                            .width(Length::Fill)
+                            .padding(Padding::from([7, 4]))
                             .into()
                     }
-                    DownloadStatus::Failed => {
-                        let open = button(
-                            column![name, soft_sm("Failed".into())]
-                                .spacing(2)
-                                .width(Length::Fill),
-                        )
-                        .padding(Padding::from([8, 10]))
+                    DownloadStatus::Failed => container(main)
+                        .padding(Padding::from([7, 4]))
                         .width(Length::Fill)
-                        .style(download_row_style);
-                        let remove = button(icon_svg(nav_icon_stop(), 14))
-                            .padding(PAD_CONTROL_SM)
-                            .style(kit_toolbar::style)
-                            .on_press(Msg::DownloadRemove(e.id.clone()));
-                        row![open, remove]
-                            .spacing(4)
-                            .align_y(Alignment::Center)
-                            .into()
-                    }
+                        .into(),
                 };
-                list = list.push(row_el);
+
+                if e.status == DownloadStatus::InProgress {
+                    // Keep cancel off the progress column so the x stays top-aligned.
+                    face = container(face).width(Length::Fill).into();
+                }
+
+                list = list.push(
+                    row![face, x]
+                        .spacing(2)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill),
+                );
             }
-            let list_h = (items.len().min(8) as f32 * 56.0).max(72.0);
-            let scroller = scrollable(list)
-                .height(Length::Fixed(list_h))
-                .width(Length::Fill);
-            column![title, scroller]
-                .spacing(SPACE_SM)
-                .width(Length::Fixed(340.0))
+
+            let list: Element<'_, Msg> = if items.len() > 7 {
+                scrollable(list)
+                    .height(Length::Fixed(7.0 * 38.0))
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                list.into()
+            };
+
+            column![title, list]
+                .spacing(SPACE_LG)
+                .width(Length::Fill)
                 .into()
         };
 
-        let panel = card::modal(container(body).padding(SPACE_MD + SPACE_SM))
-            .width(Length::Fixed(360.0));
+        let panel = card::modal(
+            container(body).padding(Padding {
+                top: 12.0,
+                right: 10.0,
+                bottom: 8.0,
+                left: 12.0,
+            }),
+        )
+        .width(Length::Fixed(PANEL_W));
 
         let backdrop = mouse_area(
             container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
@@ -3760,20 +3863,57 @@ fn download_row_style(
     let p = theme.extended_palette();
     let bg = match status {
         iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed => {
-            p.background.strong.color
+            Some(iced::Background::Color(p.background.strong.color))
         }
-        _ => p.background.weak.color,
+        _ => None,
     };
     iced::widget::button::Style {
-        background: Some(iced::Background::Color(bg)),
+        background: bg,
         text_color: p.background.base.text,
         border: iced::Border {
-            color: p.background.strong.color,
-            width: 1.0,
-            radius: 8.0.into(),
+            color: iced::Color::TRANSPARENT,
+            width: 0.0,
+            radius: 5.0.into(),
         },
         ..Default::default()
     }
+}
+
+fn download_row_progress<'a>(frac: f32) -> Element<'a, Msg> {
+    let fill_w = ((frac * 1000.0) as u16).max(1);
+    let rest_w = ((1.0 - frac) * 1000.0).max(1.0) as u16;
+    let fill = container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+        .width(Length::FillPortion(fill_w))
+        .height(Length::Fixed(2.0))
+        .style(|theme: &iced::Theme| {
+            let accent = theme.extended_palette().primary.base.color;
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(accent)),
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        });
+    let track = container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+        .width(Length::FillPortion(rest_w))
+        .height(Length::Fixed(2.0))
+        .style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().background.strong.color;
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(t)),
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        });
+    row![fill, track]
+        .width(Length::Fill)
+        .height(Length::Fixed(2.0))
+        .into()
 }
 
 /// Unlocked vault toolbar control — subtle accent wash so “ready” ≠ locked.

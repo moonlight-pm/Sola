@@ -160,12 +160,14 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     }
   };
   function post(req){
-    try {
-      console.debug('__sola_webauthn__' + JSON.stringify(req));
-    } catch (e) {
-      console.log('__sola_webauthn__' + JSON.stringify(req));
-    }
+    // One channel. Gemini Exchange stubs console.debug; log still
+    // reaches CEF. Extra console levels + a hidden iframe beacon used
+    // to deliver the same click 4× — chrome rejected the live promise
+    // as "Superseded" and the page showed "passkey auth failed"
+    // before the user could pick.
+    try { console.log('__sola_webauthn__' + JSON.stringify(req)); } catch (e) {}
   }
+  try { console.info('__sola_webauthn_installed__' + (location && location.origin || '')); } catch (e) {}
   var orig = navigator.credentials && navigator.credentials.get
     ? navigator.credentials.get.bind(navigator.credentials) : null;
   var origCreate = navigator.credentials && navigator.credentials.create
@@ -199,18 +201,118 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     if (!options || !options.publicKey) {
       return origCreate ? origCreate(options) : Promise.reject(new DOMException('NotSupportedError'));
     }
-    return origCreate ? origCreate(options)
-      : Promise.reject(new DOMException('Passkey registration is not supported in Sola yet.', 'NotSupportedError'));
+    // Never fall through to Chromium's native WebAuthn window (OSR cannot
+    // host that dialog). Registration is still out of scope.
+    post({
+      v: 1,
+      id: ++seq,
+      action: 'create',
+      origin: location.origin,
+      rpId: (options.publicKey.rp && options.publicKey.rp.id) || location.hostname
+    });
+    return Promise.reject(new DOMException('Passkey registration is not supported in Sola yet.', 'NotSupportedError'));
   };
+  // WebAuthn L3 static methods bypass navigator.credentials in Chromium.
+  try {
+    if (window.PublicKeyCredential) {
+      if (typeof PublicKeyCredential.get === 'function') {
+        PublicKeyCredential.get = function(options){
+          return navigator.credentials.get(options);
+        };
+      }
+      if (typeof PublicKeyCredential.create === 'function') {
+        PublicKeyCredential.create = function(options){
+          return navigator.credentials.create(options);
+        };
+      }
+    }
+  } catch (e) {}
 })();"#
 }
 
 /// JS that resolves a pending WebAuthn promise (payload is JSON string).
 pub fn resolve_webauthn_script(id: u64, ok: bool, payload_json: &str) -> String {
+    resolve_webauthn_scripts(&[id], ok, payload_json)
+}
+
+/// Resolve every in-flight page id for one ceremony (duplicates / retries).
+pub fn resolve_webauthn_scripts(ids: &[u64], ok: bool, payload_json: &str) -> String {
     let payload = serde_json::to_string(payload_json).unwrap_or_else(|_| "\"\"".into());
+    let ok_js = if ok { "true" } else { "false" };
+    let calls: String = ids
+        .iter()
+        .map(|id| {
+            format!("window.__solaWebAuthnResolve({id}, {ok_js}, {payload});")
+        })
+        .collect();
     format!(
-        "(function(){{ try {{ if (window.__solaWebAuthnResolve) window.__solaWebAuthnResolve({id}, {}, {}); }} catch(e) {{ console.error('sola webauthn resolve', e); }} }})();",
-        if ok { "true" } else { "false" },
-        payload
+        "(function(){{ try {{ if (window.__solaWebAuthnResolve) {{ {calls} }} }} catch(e) {{ console.error('sola webauthn resolve', e); }} }})();"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_public_key_does_not_fall_through_to_chromium() {
+        let s = inject_webauthn_intercept_script();
+        let create = s
+            .split("navigator.credentials.create = function")
+            .nth(1)
+            .expect("create hook");
+        assert!(
+            create.contains("Passkey registration is not supported"),
+            "publicKey create() must reject"
+        );
+        // The only origCreate call is the non-publicKey branch.
+        let after_pk = create
+            .split("options.publicKey)")
+            .nth(1)
+            .unwrap_or("");
+        let reject_idx = after_pk.find("Passkey registration").expect("reject");
+        let rest = &after_pk[reject_idx..];
+        assert!(
+            !rest.contains("origCreate("),
+            "publicKey create() must not fall through to Chromium"
+        );
+    }
+
+    #[test]
+    fn post_emits_once_via_console_log() {
+        let s = inject_webauthn_intercept_script();
+        let post = s
+            .split("function post(req)")
+            .nth(1)
+            .expect("post()");
+        let body = post.split("try { console.info").next().unwrap_or(post);
+        assert!(
+            body.contains("console.log('__sola_webauthn__'"),
+            "post() must use console.log (Gemini stubs debug)"
+        );
+        assert!(
+            !body.contains("console.info('__sola_webauthn__'"),
+            "do not also post via console.info"
+        );
+        assert!(
+            !body.contains("console.warn('__sola_webauthn__'"),
+            "do not also post via console.warn"
+        );
+        assert!(
+            !body.contains("sola.invalid") && !body.contains("createElement('iframe')"),
+            "do not also post via a navigation beacon"
+        );
+        assert_eq!(
+            body.matches("console.log('__sola_webauthn__'").count(),
+            1,
+            "exactly one console.log of the request"
+        );
+    }
+
+    #[test]
+    fn resolve_scripts_fans_out_ids() {
+        let js = resolve_webauthn_scripts(&[1, 2], false, "Superseded");
+        assert!(js.contains("__solaWebAuthnResolve(1, false"));
+        assert!(js.contains("__solaWebAuthnResolve(2, false"));
+    }
 }

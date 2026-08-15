@@ -18,6 +18,7 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle,
+    PasskeysHandle,
     TabId, TabInfo, TabsHandle,
 };
 use crate::profiles;
@@ -43,6 +44,7 @@ struct Shared {
     clipboard: ClipboardHandle,
     ime: ImeHandle,
     downloads: DownloadsHandle,
+    passkeys: PasskeysHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -60,6 +62,7 @@ pub struct RouterHandles {
     pub clipboard: ClipboardHandle,
     pub ime: ImeHandle,
     pub downloads: DownloadsHandle,
+    pub passkeys: PasskeysHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -72,6 +75,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let clipboard: ClipboardHandle = Arc::new(Mutex::new(None));
     let ime: ImeHandle = Arc::new(Mutex::new(ImeCaret::default()));
     let downloads: DownloadsHandle = Arc::new(Mutex::new(Vec::new()));
+    let passkeys: PasskeysHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -82,6 +86,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         clipboard: clipboard.clone(),
         ime: ime.clone(),
         downloads: downloads.clone(),
+        passkeys: passkeys.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -103,6 +108,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         clipboard,
         ime,
         downloads,
+        passkeys,
     }
 }
 
@@ -512,6 +518,9 @@ fn handle_from(
                 .lock()
                 .unwrap()
                 .push((profile_id.to_string(), ev));
+        }
+        FromEngine::WebAuthn(ev) => {
+            shared.passkeys.lock().unwrap().push(ev);
         }
     }
 }

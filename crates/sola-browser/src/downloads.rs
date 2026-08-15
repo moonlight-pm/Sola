@@ -344,6 +344,45 @@ fn split_stem_ext(name: &str) -> (String, String) {
     }
 }
 
+/// Middle-ellipsis a download name so UUID-ish hashes stay identifiable.
+/// Keeps a short head, a short tail, and the extension when there is one.
+pub fn ellipsize_middle(name: &str, max_chars: usize) -> String {
+    let n = name.chars().count();
+    if n <= max_chars {
+        return name.to_string();
+    }
+    if max_chars < 8 {
+        return crate::util::truncate(name, max_chars);
+    }
+    let (stem, ext) = split_stem_ext(name);
+    let ext_cost = if ext.is_empty() {
+        0
+    } else {
+        ext.chars().count() + 1
+    };
+    let budget = max_chars.saturating_sub(1 + ext_cost).max(4);
+    let stem_chars: Vec<char> = stem.chars().collect();
+    if stem_chars.len() <= budget {
+        return name.to_string();
+    }
+    let tail = (budget / 3).max(3);
+    let head = budget.saturating_sub(tail).max(4);
+    let start: String = stem_chars.iter().take(head).collect();
+    let end: String = stem_chars
+        .iter()
+        .rev()
+        .take(tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if ext.is_empty() {
+        format!("{start}…{end}")
+    } else {
+        format!("{start}…{end}.{ext}")
+    }
+}
+
 pub fn format_bytes(n: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -591,5 +630,16 @@ mod tests {
         assert_eq!(format_bytes(500), "500 B");
         assert_eq!(format_bytes(2048), "2 KB");
         assert_eq!(format_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn ellipsize_middle_keeps_head_tail_and_ext() {
+        assert_eq!(ellipsize_middle("short.pdf", 28), "short.pdf");
+        let long = "grok-image-2e8fbbc8-7234-4b60-9bbb-404cd023e81.png";
+        let out = ellipsize_middle(long, 28);
+        assert!(out.ends_with(".png"), "{out}");
+        assert!(out.contains('…'), "{out}");
+        assert!(out.starts_with("grok-image"), "{out}");
+        assert!(out.chars().count() <= 28, "{out}");
     }
 }

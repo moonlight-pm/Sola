@@ -23,6 +23,7 @@ pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
+    PasskeysHandle,
     FrameReceiver, FrameSlot, ImeCaret, ImeHandle, NavCmd, PendingFrame, TabId, TabInfo,
     TabsHandle, TaggedFrame,
 };

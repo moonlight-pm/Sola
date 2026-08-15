@@ -625,13 +625,39 @@ fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button
     }
 }
 
-fn tab_close_style(theme: &Theme, status: button::Status) -> button::Style {
+fn tab_close_style(
+    theme: &Theme,
+    status: button::Status,
+    active: bool,
+    chrome: SidebarItemChrome,
+) -> button::Style {
     let p = theme.extended_palette();
+    // Opaque chip so the stacked × covers the title instead of sitting
+    // on it. Idle hover wash is 45% alpha; bake that onto the column
+    // so the pad matches the row without the glyphs showing through.
+    let rest = match chrome {
+        SidebarItemChrome::Row => {
+            if active {
+                inset_surface(CHROME_SURFACE, 0.22)
+            } else {
+                mix(p.background.strong.color, CHROME_SURFACE, 0.45)
+            }
+        }
+        SidebarItemChrome::Card => {
+            let raised = p.background.weaker.color;
+            if active {
+                mix(p.background.strong.color, raised, 0.92)
+            } else {
+                let idle = mix(raised, p.background.base.color, 0.42);
+                mix(p.background.strong.color, idle, 0.55)
+            }
+        }
+    };
     let bg = match status {
         button::Status::Hovered | button::Status::Pressed => {
-            alpha(p.background.strong.color, 0.80)
+            mix(p.background.strong.color, rest, 0.40)
         }
-        _ => Color::TRANSPARENT,
+        _ => rest,
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -1127,8 +1153,8 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     }
     let m = density.metrics();
     let close = button(icon_svg(tab_close_icon(), m.close as u16))
-        .style(tab_close_style)
-        .padding(Padding::from([2, 4]))
+        .style(move |theme, status| tab_close_style(theme, status, active, chrome))
+        .padding(Padding::from([3, 6]))
         .on_press(close_msg);
     stack![
         etched,

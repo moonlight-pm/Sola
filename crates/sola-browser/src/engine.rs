@@ -333,6 +333,8 @@ pub type ImeHandle = Arc<Mutex<ImeCaret>>;
 
 /// Helper download events waiting for chrome (`profile_id` + payload).
 pub type DownloadsHandle = Arc<Mutex<Vec<(String, crate::cef::ipc::DownloadEvent)>>>;
+/// Helper WebAuthn intercepts waiting for chrome.
+pub type PasskeysHandle = Arc<Mutex<Vec<crate::cef::ipc::WebAuthnEvent>>>;
 
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
@@ -367,6 +369,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn clipboard_handle(&self) -> ClipboardHandle;
     fn ime_handle(&self) -> ImeHandle;
     fn downloads_handle(&self) -> DownloadsHandle;
+    fn passkeys_handle(&self) -> PasskeysHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

@@ -17,6 +17,7 @@ use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
+    PasskeysHandle,
     FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
@@ -127,6 +128,7 @@ pub struct CefEngine {
     clipboard_out: ClipboardHandle,
     ime: crate::engine::ImeHandle,
     downloads: DownloadsHandle,
+    passkeys: PasskeysHandle,
 }
 
 impl Engine for CefEngine {
@@ -150,7 +152,7 @@ impl Engine for CefEngine {
         }
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
-        let mut app = BrowserCefApp::new(app_id);
+        let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
         let result =
             cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
         if result >= 0 {
@@ -193,6 +195,7 @@ impl Engine for CefEngine {
             clipboard_out: handles.clipboard,
             ime: handles.ime,
             downloads: handles.downloads,
+            passkeys: handles.passkeys,
         }
     }
 
@@ -226,6 +229,10 @@ impl Engine for CefEngine {
 
     fn downloads_handle(&self) -> DownloadsHandle {
         self.downloads.clone()
+    }
+
+    fn passkeys_handle(&self) -> PasskeysHandle {
+        self.passkeys.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -462,12 +469,35 @@ fn teardown_all_browsers(state: &CefThreadState) {
 
 // ── CEF App ───────────────────────────────────────────────────────
 
+cef::wrap_render_process_handler! {
+    pub struct BrowserRenderProcessHandler {}
+
+    impl RenderProcessHandler {
+        fn on_context_created(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _context: Option<&mut cef::V8Context>,
+        ) {
+            // Document-start: run before page scripts can snapshot
+            // navigator.credentials.get (Gemini Exchange does this).
+            #[cfg(feature = "bitwarden")]
+            inject_webauthn_frame(frame);
+        }
+    }
+}
+
 cef::wrap_app! {
     pub struct BrowserCefApp {
         app_id: &'static str,
+        render_process_handler: cef::RenderProcessHandler,
     }
 
     impl App {
+        fn render_process_handler(&self) -> Option<cef::RenderProcessHandler> {
+            Some(self.render_process_handler.clone())
+        }
+
         fn on_before_command_line_processing(
             &self,
             _process_type: Option<&CefString>,
@@ -904,6 +934,10 @@ cef::wrap_display_handler! {
             }
             #[cfg(feature = "bitwarden")]
             {
+                if let Some(origin) = msg.strip_prefix("__sola_webauthn_installed__") {
+                    tracing::info!(origin = %origin, "webauthn hook installed in frame");
+                    return 1;
+                }
                 const PREFIX: &str = "__sola_webauthn__";
                 if let Some(rest) = msg.strip_prefix(PREFIX) {
                     // Credential assembly breadcrumb from the polyfill.
@@ -911,33 +945,7 @@ cef::wrap_display_handler! {
                         tracing::info!(%detail, "webauthn page credential assembled");
                         return 1;
                     }
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
-                        let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
-                        let origin = v
-                            .get("origin")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let rp_id = v
-                            .get("rpId")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let public_key_json = v
-                            .get("publicKey")
-                            .cloned()
-                            .map(|pk| pk.to_string())
-                            .unwrap_or_else(|| "{}".into());
-                        tracing::info!(id, %origin, %rp_id, "webauthn intercept from page");
-                        crate::vault::passkey_bridge::push_from_page(
-                            crate::vault::PasskeyPageRequest {
-                                id,
-                                origin,
-                                rp_id,
-                                public_key_json,
-                            },
-                        );
-                    }
+                    handle_webauthn_payload(rest);
                     return 1; // suppress console noise
                 }
                 if let Some(detail) = msg.strip_prefix("__sola_webauthn_cred__") {
@@ -982,24 +990,147 @@ cef::wrap_load_handler! {
             }
         }
 
+        fn on_load_start(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _transition_type: cef::TransitionType,
+        ) {
+            #[cfg(feature = "bitwarden")]
+            inject_webauthn_frame(frame);
+        }
+
         fn on_load_end(
             &self,
-            browser: Option<&mut cef::Browser>,
+            _browser: Option<&mut cef::Browser>,
             frame: Option<&mut cef::Frame>,
             _http_status_code: ::std::os::raw::c_int,
         ) {
             #[cfg(feature = "bitwarden")]
-            {
-                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
-                if !is_main {
-                    return;
-                }
-                let Some(frame) = frame else { return };
-                let code: cef::CefString =
-                    crate::vault::inject_webauthn_intercept_script().into();
-                frame.execute_java_script(Some(&code), None, 0);
+            inject_webauthn_frame(frame);
+        }
+    }
+}
+
+#[cfg(feature = "bitwarden")]
+fn inject_webauthn_frame(frame: Option<&mut cef::Frame>) {
+    let Some(frame) = frame else { return };
+    // Every frame — Google sign-in (accounts.google.com iframe) and
+    // Gemini Exchange 2FA both call WebAuthn off the top-level page.
+    let url = cef_string_userfree_display(&frame.url());
+    tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
+    let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
+    frame.execute_java_script(Some(&code), None, 0);
+}
+
+#[cfg(feature = "bitwarden")]
+fn handle_webauthn_payload(raw: &str) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        tracing::warn!(payload = %raw, "webauthn: payload not json");
+        return;
+    };
+    let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+    let action = v
+        .get("action")
+        .and_then(|x| x.as_str())
+        .unwrap_or("get")
+        .to_string();
+    let origin = v
+        .get("origin")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let rp_id = v
+        .get("rpId")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let public_key_json = v
+        .get("publicKey")
+        .cloned()
+        .map(|pk| pk.to_string())
+        .unwrap_or_else(|| "{}".into());
+    if action == "create" {
+        tracing::info!(id, %origin, %rp_id, "webauthn create intercepted (registration unsupported)");
+        return;
+    }
+    // One emit per (id, origin). Console + leftover beacon used to
+    // fan the same click into chrome several times.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(u64, String)>> =
+            std::cell::RefCell::new(None);
+    }
+    let dup = LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        if last.as_ref().is_some_and(|(i, o)| *i == id && *o == origin) {
+            true
+        } else {
+            *last = Some((id, origin.clone()));
+            false
+        }
+    });
+    if dup {
+        tracing::debug!(id, %origin, "webauthn intercept duplicate dropped");
+        return;
+    }
+    tracing::info!(id, %origin, %rp_id, "webauthn intercept from page");
+    let ev = crate::cef::ipc::WebAuthnEvent {
+        id,
+        action,
+        origin,
+        rp_id,
+        public_key_json,
+    };
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::WebAuthn(ev));
+    }
+}
+
+const WEBAUTHN_BEACON: &str = "https://sola.invalid/__sola_webauthn__?";
+
+fn take_webauthn_beacon(url: &str) -> Option<String> {
+    let rest = url.strip_prefix(WEBAUTHN_BEACON)?;
+    Some(percent_decode(rest))
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut out = Vec::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = &s[i + 1..i + 3];
+            if let Ok(v) = u8::from_str_radix(hex, 16) {
+                out.push(v);
+                i += 3;
+                continue;
             }
-            let _ = browser;
+        } else if b[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn eval_js_all_frames(browser: &cef::Browser, script: &str) {
+    use cef::ImplBrowser;
+    let code: cef::CefString = script.into();
+    if let Some(frame) = browser.main_frame() {
+        frame.execute_java_script(Some(&code), None, 0);
+    }
+    if let Some(frame) = browser.focused_frame() {
+        frame.execute_java_script(Some(&code), None, 0);
+    }
+    let mut ids = cef::CefStringList::new();
+    browser.frame_identifiers(Some(&mut ids));
+    for id in ids {
+        let ident = cef::CefString::from(id.as_str());
+        if let Some(frame) = browser.frame_by_identifier(Some(&ident)) {
+            frame.execute_java_script(Some(&code), None, 0);
         }
     }
 }
@@ -1145,6 +1276,32 @@ fn emit_download(ev: DownloadEvent) {
 
 // ── Client ────────────────────────────────────────────────────────
 
+cef::wrap_request_handler! {
+    pub struct BrowserRequestHandler {}
+
+    impl RequestHandler {
+        fn on_before_browse(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            request: Option<&mut cef::Request>,
+            _user_gesture: ::std::os::raw::c_int,
+            _is_redirect: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(req) = request else { return 0 };
+            use cef::ImplRequest;
+            let url = cef_string_userfree_display(&req.url());
+            if let Some(payload) = take_webauthn_beacon(&url) {
+                tracing::info!(len = payload.len(), "webauthn beacon (browse)");
+                #[cfg(feature = "bitwarden")]
+                handle_webauthn_payload(&payload);
+                return 1;
+            }
+            0
+        }
+    }
+}
+
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
@@ -1152,6 +1309,7 @@ cef::wrap_client! {
         pub display_handler: cef::DisplayHandler,
         pub load_handler: cef::LoadHandler,
         pub download_handler: cef::DownloadHandler,
+        pub request_handler: cef::RequestHandler,
     }
 
     impl Client {
@@ -1173,6 +1331,10 @@ cef::wrap_client! {
 
         fn download_handler(&self) -> Option<cef::DownloadHandler> {
             Some(self.download_handler.clone())
+        }
+
+        fn request_handler(&self) -> Option<cef::RequestHandler> {
+            Some(self.request_handler.clone())
         }
     }
 }
@@ -1495,12 +1657,12 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::EvaluateJs(script) => {
-            // Minimal glue for vault fill / chrome inject — not a CEF feature push.
+            // Vault fill + WebAuthn resolve. Google login (Gemini, etc.)
+            // runs credentials.get in an accounts.google.com iframe — the
+            // host can exec JS in every frame (no SOP). Main-only left
+            // Chromium's native passkey window to open.
             if let Some(tab) = active_tab(state) {
-                if let Some(frame) = tab.browser.main_frame() {
-                    let code: cef::CefString = script.as_str().into();
-                    frame.execute_java_script(Some(&code), None, 0);
-                }
+                eval_js_all_frames(&tab.browser, &script);
             }
         }
         Cmd::OpenTab { id, url, title } => {
@@ -1949,12 +2111,14 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let display_handler = BrowserDisplayHandler::new();
     let load_handler = BrowserLoadHandler::new();
     let download_handler = BrowserDownloadHandler::new();
+    let request_handler = BrowserRequestHandler::new();
     let mut client = BrowserClient::new(
         render_handler,
         life_span_handler,
         display_handler,
         load_handler,
         download_handler,
+        request_handler,
     );
 
     let url_c = cef::CefString::from(initial_url.as_str());
@@ -2229,7 +2393,7 @@ fn initialize_cef(app_id: &'static str) {
 
     let args = cef::args::Args::new();
     let main_args = args.as_main_args();
-    let mut app = BrowserCefApp::new(app_id);
+    let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
 
     let rc = cef::initialize(
         Some(main_args),

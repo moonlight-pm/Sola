@@ -58,6 +58,17 @@ pub enum FromEngine {
     /// Composition caret in view pixels. `w == 0` clears the last box.
     ImeCaret { x: i32, y: i32, w: i32, h: i32 },
     Download(DownloadEvent),
+    WebAuthn(WebAuthnEvent),
+}
+
+/// Helper → chrome WebAuthn intercept (page lives in the engine process).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebAuthnEvent {
+    pub id: u64,
+    pub action: String,
+    pub origin: String,
+    pub rp_id: String,
+    pub public_key_json: String,
 }
 
 /// One download update from a helper. `id` is CEF's per-process download id.
@@ -261,6 +272,30 @@ mod tests {
                 assert_eq!(ev.id, 3);
                 assert_eq!(ev.filename, "a.pdf");
                 assert_eq!(ev.percent, 10);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_webauthn() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::WebAuthn(WebAuthnEvent {
+                id: 9,
+                action: "get".into(),
+                origin: "https://exchange.gemini.com".into(),
+                rp_id: "gemini.com".into(),
+                public_key_json: "{}".into(),
+            }),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::WebAuthn(ev) => {
+                assert_eq!(ev.id, 9);
+                assert_eq!(ev.rp_id, "gemini.com");
             }
             other => panic!("{other:?}"),
         }

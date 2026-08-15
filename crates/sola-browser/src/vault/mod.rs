@@ -30,5 +30,7 @@ pub use generate::password as generate_password;
 pub use match_uri::{apex_domain, uri_matches};
 pub use prefs::VaultPrefs;
 pub use passkey::PasskeyCandidate;
-pub use webauthn_js::{inject_webauthn_intercept_script, resolve_webauthn_script};
+pub use webauthn_js::{
+    inject_webauthn_intercept_script, resolve_webauthn_script, resolve_webauthn_scripts,
+};
 pub use worker::{VaultCmd, VaultEvent, VaultHandle};

@@ -1,8 +1,9 @@
 # sola-browser
 
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / **Create login** / passkey **get**. Downloads auto-save to `~/Downloads`.
-Page ⌘C / ⌘V and triple-click select work on form fields and body text.
+fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA).
+Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
+work on form fields and body text.
 
 ## What it is
 
@@ -105,9 +106,10 @@ Toolbar **download** icon (right of vault / cards) is always there.
   the next file is `report (1).pdf`. There is no Save dialog.
 - While a file is coming in, the icon goes accent and a thin progress line
   grows on the button. The panel does not open by itself.
-- Click the icon for the list. In-progress rows show percent and **Cancel**.
-  Finished rows open the file with the default app (`xdg-open`). **×**
-  removes the row from the list only — the file stays on disk.
+- Click the icon for the list (flat rows). Long hash names shorten in the
+  middle. In-progress rows show percent and **Cancel**. Finished rows
+  open the file with the default app (`xdg-open`). **×** removes the
+  row from the list only — the file stays on disk.
 - After a download finishes, the icon stays accent until you open the panel.
 - Completed and failed items survive quit. In-progress ones do not (the
   helper dies with the window).
@@ -140,8 +142,12 @@ full chrome color; the open panel’s icon is the accent wash.
   If the page has no fields yet, the item is still saved.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
-  passkeys** — pick one to complete sign-in. Dogfooded on Google accounts.
-  **Registration** (`credentials.create`) is not supported yet.
+  passkeys** — pick one to complete sign-in. The intercept is injected in
+  **every frame** (Google sign-in iframes, Gemini Exchange 2FA, etc.).
+  Duplicate or retry `get()` calls for the same site stay one picker —
+  they do not fail the page before you pick. Chromium’s own passkey
+  window is not used. **Registration** (`credentials.create`) is not
+  supported yet (the request is rejected rather than opening a CEF dialog).
 
 ### Unlock speed
 

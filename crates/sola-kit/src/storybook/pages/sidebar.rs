@@ -301,10 +301,11 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         heading("Sidebar"),
         body(
             "List etch is the default Row chrome (muted idle, lip + inset active, \
-             hover-only ×). SidebarPanel: collapse (»/«), resize, reorder. \
+             hover-only × on an opaque chip so it covers the title). \
+             SidebarPanel: collapse (»/«), resize, reorder. \
              Section headers stay sticky. Fill sections scroll without a \
              scrollbar and show ↑ N … / ↓ N … when items overflow. Drafts has a \
-             secondary count; hover Spam for ×."
+             secondary count; hover Spam or the long title for ×."
         )
         .style(muted),
         demo,

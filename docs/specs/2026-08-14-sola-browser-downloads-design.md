@@ -1,7 +1,7 @@
 # sola-browser downloads
 
 **Date:** 2026-08-14  
-**Status:** **Frozen** — implemented on `naturalethic/browser-polish`; dogfood after install  
+**Status:** **Frozen** — implemented and dogfooded on `naturalethic/browser-polish`  
 **Related:** [profiles](2026-08-10-sola-browser-profiles-design.md) (`shared/` downloads index); [manual](../manual/sola-browser.md)
 
 ## Intent
@@ -50,8 +50,9 @@ Download ids collide across helpers, so chrome keys live items as
 
 - **Icon** — `lucide/download`. Idle = muted. In progress = accent + hairline.
   Unseen complete = accent, no hairline. Open panel = accent wash (same as vault).
-- **Panel** — title **Downloads**. In-progress first, then completed (newest
-  first). Empty: **Nothing downloaded yet.**
+- **Panel** — title **Downloads**. Flat rows (no nested cards). Long
+  hash names use middle-ellipsis. In-progress first, then completed
+  (newest first). Empty: **Nothing downloaded yet.**
 
 ## Out of scope
 
@@ -65,7 +66,7 @@ download shelf, `chrome://downloads`.
 | Freeze | **this document** |
 | Helper `DownloadHandler` + IPC | **done** |
 | Chrome list + persist + panel + icon | **done** |
-| Dogfood | pending install |
+| Dogfood | local 2026-08-15 |
 
 ## Decision log
 
@@ -75,3 +76,4 @@ download shelf, `chrome://downloads`.
 | 2026-08-14 | Permanent toolbar icon; progress on the icon; panel click-to-open |
 | 2026-08-14 | Cancel + open-on-click + remove-from-list; no show-in-folder (no Finder) |
 | 2026-08-14 | Persist completed/failed in shared `downloads.json` |
+| 2026-08-15 | Flat panel rows + middle-ellipsis for hash filenames |

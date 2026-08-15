@@ -201,7 +201,7 @@ cleanup, not a product requirement.
 
 - Storybook **Sidebar** page is the dogfood for etch density + panel
   features.  
-- Per kit-storybook rule: ask before rewriting other storybook pages.
+- Per kit-storybook rule: always update the matching storybook page.
 
 ---
 
