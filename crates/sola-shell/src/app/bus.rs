@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppHidden, AppMenuPayload, Application, CaptureScreenPayload, CaptureTarget, ChordEvent,
-    FloatGeometry, FocusTarget, LaunchAppPayload, LaunchResultPayload, MouseClickedPayload,
-    MouseEnteredPayload, OpenImageRequest, OutputGeometry, ScreenshotPayload, Topic,
-    UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
+    AppHidden, AppMenuPayload, AppToast, Application, CaptureScreenPayload, CaptureTarget,
+    ChordEvent, FloatGeometry, FocusTarget, LaunchAppPayload, LaunchResultPayload,
+    MouseClickedPayload, MouseEnteredPayload, OpenImageRequest, OutputGeometry, ScreenshotPayload,
+    Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -62,6 +62,7 @@ impl Shell {
                 sola_core::open_url_logged(&req.url);
                 Task::none()
             }
+            Topic::AppToast(t) => self.on_app_toast(t),
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -70,6 +71,20 @@ impl Shell {
     // -------------------------------------------------------------------------
     // Real handlers
     // -------------------------------------------------------------------------
+
+    /// Menubar toast from another app (e.g. agent-terminal done-while-unfocused).
+    fn on_app_toast(&mut self, t: AppToast) -> Task<Msg> {
+        let text = t.text.trim();
+        if text.is_empty() {
+            return Task::none();
+        }
+        self.menubar.push_toast(text.to_string());
+        let toast_gen = self.menubar.toast_generation;
+        Task::perform(
+            tokio::time::sleep(Duration::from_secs(5)),
+            move |_| Msg::ToastExpire(toast_gen),
+        )
+    }
 
     /// Apply an updated bus theme to the iced renderer.
     fn on_theme(&mut self, t: BusTheme) {

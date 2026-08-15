@@ -450,7 +450,20 @@ pub fn install(apps: &[String]) {
     let mut binaries: Vec<String> = if apps.is_empty() {
         super::discover_binaries()
     } else {
-        apps.iter().map(|n| super::resolve_crate_name(n)).collect()
+        let mut out = Vec::new();
+        for n in apps {
+            let pkg = super::resolve_crate_name(n);
+            let dir = format!("crates/{pkg}");
+            let toml = std::path::Path::new(&dir).join("Cargo.toml");
+            if let Ok(contents) = std::fs::read_to_string(&toml) {
+                out.extend(super::bin_names_from_toml(&contents));
+            } else {
+                out.push(pkg);
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
     };
     // Build packages in CLI/discovery order (cargo doesn't care); sort only
     // for the copy loop so on-disk replaces — and thus sola's restart

@@ -547,6 +547,12 @@ pub struct SimulateKeyPayload {
     pub chord: KeyChord,
 }
 
+/// Ephemeral menubar toast. Shell chrome only — no sound, no extra UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppToast {
+    pub text: String,
+}
+
 define_topics! {
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -711,6 +717,10 @@ define_topics! {
     // Synthetic input (solactl → sola-river).
     SimulatePointer(SimulatePointerPayload),
     SimulateKey(SimulateKeyPayload),
+
+    // Menubar toast. Ephemeral; shell shows `text` and expires it.
+    // Operator-plain copy — the sender owns the words.
+    AppToast(AppToast),
 
     // Lifecycle
     Shutdown,

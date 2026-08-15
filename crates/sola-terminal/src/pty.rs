@@ -202,12 +202,14 @@ impl PtyBackend {
             notify,
             exit,
             &[],
+            &[],
         )
     }
 
     /// Like [`Self::spawn_or_attach`], then stamps `env` onto the tmux
     /// session (`new-session -e` plus `set-environment` so reattach
-    /// still inherits).
+    /// still inherits). `exec` is the optional first command for a
+    /// *new* session (`tmux new-session … cmd`); `-A` reattach ignores it.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_or_attach_with_env(
         tab_id: &str,
@@ -220,6 +222,7 @@ impl PtyBackend {
         notify: mpsc::Sender<String>,
         exit: mpsc::Sender<String>,
         env: &[(&str, &str)],
+        exec: &[&str],
     ) -> std::io::Result<Self> {
         let winsize = libc::winsize {
             ws_row: rows,
@@ -250,6 +253,9 @@ impl PtyBackend {
         }
         for (key, val) in env {
             cmd.args(["-e", &format!("{key}={val}")]);
+        }
+        if !exec.is_empty() {
+            cmd.args(exec);
         }
 
         // SAFETY: pre_exec runs in the child between fork and exec; the libc

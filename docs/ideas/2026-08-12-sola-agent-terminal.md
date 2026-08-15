@@ -1,6 +1,6 @@
 # sola-agent-terminal — a native, Orca-shaped workspace tool
 
-**Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Grok hooks + tmux reattach smoked locally.  
+**Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Persist + spawn sibling into `.worktrees/` landed.  
 **Name:** `sola-agent-terminal` (working title).  
 **Out of scope by request:** `crates/sola-agent` (ACP / Grok-leader chat). That crate is a different product and is not a starting point.  
 **Living focus pointer:** root [`CURRENT.md`](../../CURRENT.md) **Now** item 1 (this branch).  
@@ -10,9 +10,9 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 ### Where a new session left off (2026-08-13)
 
-Promoted to freeze. Grok hooks + status chrome + `sat-ws-main` reattach smoked. Demo rows still seeded.
+Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows gone.
 
-**Next:** projects + workspaces + spawn sibling. Ask D3; do not invent. Grok stays the first-class CLI.
+**Next:** dogfood. Remaining D3: name, Claude hooks. `sat` if down stays fail-loudly.
 
 **Decided here (not still a fork):**
 
@@ -356,7 +356,7 @@ Each step should be dogfoodable alone. Do not start with the CLI, and do not sta
 
 These are product forks, not things to invent in an ideas file:
 
-1. **Worktree location convention.** Follow this desk’s `~/orca/workspaces/<Project>/<name>`, or always sibling-to-main, or ask per project?
+1. **Worktree location convention.** **Decided:** `<project-root>/.worktrees/<name>`.
 2. **Main checkout as a workspace.** Is the project root itself a first-class workspace (probably yes), or only spawned worktrees?
 3. **Killing git worktrees.** Unregister-only vs offer `git worktree remove` in the same dialog?
 4. **`sat` when the app is down.** Fail, or launch the Wayland app?

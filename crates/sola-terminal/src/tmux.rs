@@ -277,6 +277,27 @@ pub fn capture_scrollback(session: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Type `text` literally into the session (`send-keys -l`).
+pub fn send_literal(session: &str, text: &str) -> bool {
+    tmux_cmd()
+        .args(["send-keys", "-t", session, "-l", "--", text])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn send_enter(session: &str) -> bool {
+    tmux_cmd()
+        .args(["send-keys", "-t", session, "Enter"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub fn kill_session(session: &str) {
     let _ = tmux_cmd()
         .args(["kill-session", "-t", session])

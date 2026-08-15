@@ -347,6 +347,39 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
     format!("sola-{name}")
 }
 
+/// `[[bin]]` names from a crate manifest. Falls back to `[package].name`.
+pub(crate) fn bin_names_from_toml(contents: &str) -> Vec<String> {
+    let mut bins = Vec::new();
+    let mut in_bin = false;
+    for line in contents.lines() {
+        let t = line.trim();
+        if t.starts_with("[[bin]]") {
+            in_bin = true;
+            continue;
+        }
+        if t.starts_with('[') {
+            in_bin = false;
+        }
+        if in_bin && t.starts_with("name") {
+            if let Some(name) = t.split('"').nth(1) {
+                bins.push(name.to_string());
+            }
+        }
+    }
+    if bins.is_empty() {
+        for line in contents.lines() {
+            let t = line.trim();
+            if t.starts_with("name") {
+                if let Some(name) = t.split('"').nth(1) {
+                    bins.push(name.to_string());
+                }
+                break;
+            }
+        }
+    }
+    bins
+}
+
 /// Discover installable binary names by scanning `crates/`.
 ///
 /// Looks for `Cargo.toml` files in `crates/` that contain a
@@ -386,16 +419,9 @@ pub(crate) fn discover_binaries() -> Vec<String> {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            // Extract package name from `name = "..."` line.
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.starts_with("name") {
-                    if let Some(name) = line.split('"').nth(1) {
-                        if name != "sola-make" && !EXCLUDED_TARGETS.contains(&name) {
-                            binaries.push(name.to_string());
-                        }
-                    }
-                    break;
+            for name in bin_names_from_toml(&contents) {
+                if name != "sola-make" && !EXCLUDED_TARGETS.contains(&name.as_str()) {
+                    binaries.push(name);
                 }
             }
         }
@@ -616,6 +642,14 @@ mod tests {
     /// discovered. This verifies the fix that allows a crate whose binary
     /// lives at a non-default path (e.g. src/app/main.rs) to be found by
     /// the all-apps install path.
+    #[test]
+    #[test]
+    fn bin_names_from_toml_collects_extra_bins() {
+        let toml = "[package]\nname = \"sola-agent-terminal\"\n\n[[bin]]\nname = \"sola-agent-terminal\"\npath = \"src/main.rs\"\n\n[[bin]]\nname = \"sat\"\npath = \"src/bin/sat.rs\"\n";
+        let names = bin_names_from_toml(toml);
+        assert_eq!(names, ["sola-agent-terminal", "sat"]);
+    }
+
     #[test]
     fn discover_binaries_finds_bin_section_without_main_rs() {
         let tmp = std::env::temp_dir().join("sola-make-test-discover");

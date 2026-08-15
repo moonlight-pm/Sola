@@ -74,15 +74,15 @@ secondary, never inside the mark.
 ## Layout
 
 ```
-[ project header                  ]
-[ ●  workspace          who       ]
-[    subtitle                     ]
-| 12px mark | title …………… secondary |
+[ PROJECT                    + ]
+[ ●  root              who     ]
+[ ●  workspace-a       who     ]
               terminal grid →
 ```
 
-Mark slot is always 12×12 so titles do not shift. Demo fixture rows are
-labeled `demo` in the subtitle until hooks replace them.
+Mark slot is always 12×12 so titles do not shift. Group `+` opens a
+name-only modal (worktree + branch). The new pane is a shell — start
+grok yourself.
 
 ## Shapes
 
@@ -96,15 +96,16 @@ Motion is state only (the working ring). No page-load choreography.
 
 ## Components
 
-Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Refine the kit
-when the mark language is generally true. App-local: status snapshot,
-demo fixtures, spawn (later). Do not restyle mail / settings / terminal.
+Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Section labels
+toggle collapse; section `+` opens the name modal. App-local: catalog,
+modal, drop confirm. Do not restyle mail / settings / terminal.
 
 ## Do's and Don'ts
 
 - Do reserve the mark slot on every row, including idle.
 - Do keep who (agent name) separate from state (the mark).
-- Do label synthetic rows `demo`.
+- Do put `+` on the project group, not a form in the rail.
+- Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
 - Don't infer status from OSC 0/2 titles.
 - Don't cargo-cult Orca worktree cards or amber-everything dots.
-- Don't persist demo paths or invent D3 worktree policy.
+- Don't put siblings anywhere but `<root>/.worktrees/<slug>`.

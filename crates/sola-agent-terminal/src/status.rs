@@ -136,19 +136,26 @@ fn last_status_path() -> PathBuf {
 }
 
 #[derive(Serialize, Deserialize)]
-struct DiskSnapshot {
-    pane_id: String,
+struct DiskPane {
     status: AgentStatus,
     agent: Option<String>,
 }
 
-pub fn persist(pane_id: &str, pane: &PaneStatus) {
-    let snap = DiskSnapshot {
-        pane_id: pane_id.into(),
-        status: pane.status,
-        agent: pane.agent.clone(),
-    };
-    if let Ok(text) = serde_json::to_string_pretty(&snap) {
+#[derive(Serialize, Deserialize)]
+struct DiskSnapshot {
+    #[serde(default)]
+    panes: std::collections::HashMap<String, DiskPane>,
+    /// Pre-multi-pane shape. Read on hydrate; never written.
+    #[serde(default)]
+    pane_id: Option<String>,
+    #[serde(default)]
+    status: Option<AgentStatus>,
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+fn write_snapshot(snap: &DiskSnapshot) {
+    if let Ok(text) = serde_json::to_string_pretty(snap) {
         let path = last_status_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -157,19 +164,51 @@ pub fn persist(pane_id: &str, pane: &PaneStatus) {
     }
 }
 
+fn read_snapshot() -> Option<DiskSnapshot> {
+    let text = std::fs::read_to_string(last_status_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn persist_all(panes: &std::collections::HashMap<String, PaneStatus>) {
+    let mut snap = DiskSnapshot {
+        panes: std::collections::HashMap::new(),
+        pane_id: None,
+        status: None,
+        agent: None,
+    };
+    for (id, pane) in panes {
+        snap.panes.insert(
+            id.clone(),
+            DiskPane {
+                status: pane.status,
+                agent: pane.agent.clone(),
+            },
+        );
+    }
+    write_snapshot(&snap);
+}
+
 /// Hydrate last hook status. Caller must mark unconfirmed and not toast.
 pub fn hydrate(pane_id: &str) -> Option<PaneStatus> {
-    let text = std::fs::read_to_string(last_status_path()).ok()?;
-    let snap: DiskSnapshot = serde_json::from_str(&text).ok()?;
-    if snap.pane_id != pane_id {
-        return None;
+    let snap = read_snapshot()?;
+    if let Some(p) = snap.panes.get(pane_id) {
+        return Some(PaneStatus {
+            status: p.status,
+            agent: p.agent.clone(),
+            restored_unconfirmed: p.status != AgentStatus::Idle,
+            ..PaneStatus::default()
+        });
     }
-    Some(PaneStatus {
-        status: snap.status,
-        agent: snap.agent,
-        restored_unconfirmed: snap.status != AgentStatus::Idle,
-        ..PaneStatus::default()
-    })
+    if snap.pane_id.as_deref() == Some(pane_id) {
+        let status = snap.status.unwrap_or_default();
+        return Some(PaneStatus {
+            status,
+            agent: snap.agent,
+            restored_unconfirmed: status != AgentStatus::Idle,
+            ..PaneStatus::default()
+        });
+    }
+    None
 }
 
 #[cfg(test)]

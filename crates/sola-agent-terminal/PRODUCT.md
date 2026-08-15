@@ -38,7 +38,7 @@ becoming this product.
 ## Operating Context
 
 - Physical TTY → Sola desktop; this app is one window among kit apps
-- Checkouts often live under `~/orca/workspaces/<Project>/` (this desk)
+- Sibling checkouts live under `<project-root>/.worktrees/<name>`
 - Agents are CLI TUIs in PTYs (Grok). Orca may be installed alongside; hooks
   must not fight (`sola-status.json` vs `orca-status.json`)
 - `sola-terminal` remains the untitled shell on tmux socket `sola`
@@ -46,8 +46,9 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling with `--prompt`, Grok hooks + OSC 9999 + process-tree presence,
-`sat` CLI, tmux persist on socket `sola-at`.
+spawn sibling (UI: name only; `sat`: optional `--agent grok` + `--prompt`),
+Grok hooks + OSC 9999 + process-tree presence, `sat` CLI, tmux persist
+on socket `sola-at`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.
@@ -55,8 +56,8 @@ agent support. Other CLIs are presence-only until Grok status is trustworthy.
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters.
 
-**Undecided (do not invent):** display name, worktree-base convention as
-policy, whether `sat` may launch the app, Claude hook installer vs presence.
+**Undecided (do not invent):** display name, whether `sat` may launch the
+app, Claude hook installer vs presence.
 
 ## Brand Commitments
 

@@ -9,21 +9,23 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-13 (this branch: agent-terminal Grok hooks, local smoke OK)
+**As of:** 2026-08-13 (this branch: sat CLI + done toast)
 
 ---
 
 ## Now
 
-1. **sola-agent-terminal** — **partial (Grok hooks)** (this branch)  
+1. **sola-agent-terminal** — **partial (sat + toast)** (this branch)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Product:** [`crates/sola-agent-terminal/PRODUCT.md`](crates/sola-agent-terminal/PRODUCT.md)  
    **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](docs/ideas/2026-08-12-sola-agent-terminal.md)  
-   **Next:** projects + workspaces + spawn sibling.  
-   **Do not invent:** D3 interims (name, worktree base, `sat` if down, Claude hooks).  
-   **Install:** ask first. User installed; Grok marks + tmux reattach smoked.  
-   **Now:** kit marks + Grok hooks + OSC 9999 + process-tree. Live PTY is
-   `sat-ws-main` (stable; orphans adopted). Demo rows still in the rail.  
+   **Next:** dogfood install; remaining polish (rename/recolor/reorder).  
+   **Do not invent:** D3 interims (name, `sat` if down = fail, Claude hooks).  
+   **Install:** ask first. `sat` + app + shell (toast) not smoked.  
+   **Now:** `sat` talks `$XDG_RUNTIME_DIR/sola-at-cli.sock` (fails if app
+   down). UI spawn is name-only; `sat workspace spawn --agent grok` is
+   the prompt handoff. Done-while-unfocused emits menubar toast
+   `{workspace} · grok is done`.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on **master**)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -81,4 +83,5 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Agent-terminal | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
 | Agent-terminal CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
 | Agent-terminal UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
+| Agent-terminal worktrees | **`<project-root>/.worktrees/<name>`** (D3.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

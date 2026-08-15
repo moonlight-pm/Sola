@@ -135,6 +135,9 @@ pub struct SidebarItem<'a, Message> {
     /// Scroll-chip / overflow math when body height is not obvious from
     /// label+subtitle (required accuracy for tall custom cards).
     pub height_hint: Option<f32>,
+    /// Extra leading steps (12px each) for lineage / nesting. Zero by
+    /// default so existing rows stay aligned.
+    pub indent: u8,
 }
 
 impl<'a, Message> SidebarItem<'a, Message> {
@@ -154,6 +157,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             chrome: SidebarItemChrome::Row,
             content: None,
             height_hint: None,
+            indent: 0,
         }
     }
 
@@ -235,6 +239,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self.height_hint = Some(h.max(0.0));
         self
     }
+
+    /// Indent the row by `steps` × 12px (lineage, nested lists).
+    pub fn indent(mut self, steps: u8) -> Self {
+        self.indent = steps;
+        self
+    }
 }
 
 /// A group of sidebar rows with an optional section header label.
@@ -253,6 +263,10 @@ pub struct SidebarSection<'a, Message> {
     /// several are marked, the first wins the `Fill` slot and others
     /// still get a bounded scroll body.
     pub fill: bool,
+    /// When set, the section label is a quiet press target (collapse).
+    pub on_label: Option<Message>,
+    /// Trailing `+` on the section header (add a row in this group).
+    pub on_add: Option<Message>,
 }
 
 impl<'a, Message> SidebarSection<'a, Message> {
@@ -261,6 +275,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             label: Some(label.into()),
             items,
             fill: false,
+            on_label: None,
+            on_add: None,
         }
     }
 
@@ -269,7 +285,21 @@ impl<'a, Message> SidebarSection<'a, Message> {
             label: None,
             items,
             fill: false,
+            on_label: None,
+            on_add: None,
         }
+    }
+
+    /// Make the section label emit `msg` (e.g. collapse the group).
+    pub fn on_label(mut self, msg: Message) -> Self {
+        self.on_label = Some(msg);
+        self
+    }
+
+    /// Trailing `+` on the group header.
+    pub fn on_add(mut self, msg: Message) -> Self {
+        self.on_add = Some(msg);
+        self
     }
 
     /// This section's item body fills remaining panel height and scrolls
@@ -473,7 +503,7 @@ where
             col = col.push(Space::new().height(Length::Fixed(10.0)));
         }
         if let Some(label) = section.label {
-            col = col.push(section_header(label));
+            col = col.push(section_header(label, section.on_label, section.on_add));
         }
         for item in section.items {
             // `sidebar()` never enables reorder, so `render_item` takes
@@ -618,25 +648,89 @@ where
     container(col).style(style).height(Length::Fill).width(Length::Fill)
 }
 
-fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
+fn section_header<'a, Message: Clone + 'a>(
+    label: String,
+    on_press: Option<Message>,
+    on_add: Option<Message>,
+) -> Element<'a, Message> {
     // Uppercase tracked section labels — graphite tool UI (sola-kit-ds).
-    container(
-        text(label.to_uppercase())
-            .font(fonts::ui_medium())
-            .size(10)
-            .style(|theme: &Theme| {
-                let p = theme.extended_palette();
-                iced::widget::text::Style {
-                    color: Some(p.secondary.base.text),
-                }
-            }),
-    )
-    .padding(Padding {
+    let label_el = text(label.to_uppercase())
+        .font(fonts::ui_medium())
+        .size(10)
+        .style(|theme: &Theme| {
+            let p = theme.extended_palette();
+            iced::widget::text::Style {
+                color: Some(p.secondary.base.text),
+            }
+        });
+    let pad = Padding {
         top: SPACE_SM + 2.0,  // 6
         bottom: SPACE_SM + 1.0,
         left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
-    })
+    };
+    let name: Element<'a, Message> = match on_press {
+        Some(msg) => button(label_el)
+            .padding(pad)
+            .style(|theme: &Theme, status| {
+                let p = theme.extended_palette();
+                let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+                button::Style {
+                    background: hover.then_some(Background::Color(p.background.weak.color)),
+                    text_color: p.secondary.base.text,
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    snap: true,
+                }
+            })
+            .on_press(msg)
+            .into(),
+        None => container(label_el).padding(pad).into(),
+    };
+    let Some(add) = on_add else {
+        return name;
+    };
+    let plus = {
+        let handle = icon_handle("lucide/plus");
+        button(icon_svg_colored(
+            handle,
+            12,
+            Color {
+                r: 0.55,
+                g: 0.58,
+                b: 0.64,
+                a: 0.95,
+            },
+        ))
+        .padding(Padding::from([2, 4]))
+        .style(|theme: &Theme, status| {
+            let p = theme.extended_palette();
+            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: hover.then_some(Background::Color(p.background.weak.color)),
+                text_color: p.secondary.base.text,
+                border: Border {
+                    radius: RADIUS_SM.into(),
+                    ..Default::default()
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            }
+        })
+        .on_press(add)
+    };
+    row![
+        name,
+        Space::new().width(Length::Fill),
+        container(plus).padding(Padding {
+            top: SPACE_SM,
+            bottom: SPACE_SM,
+            left: 0.0,
+            right: SPACE_MD,
+        }),
+    ]
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
     .into()
 }
 
@@ -912,6 +1006,7 @@ where
         chrome,
         content: custom,
         height_hint: _,
+        indent,
     } = item;
 
     // Selection is background-only (see `item_style`) — no left accent bar,
@@ -923,7 +1018,12 @@ where
         (SidebarItemChrome::Card, true) => (0.0, 0.0),
         (SidebarItemChrome::Card, false) => (CARD_PAD_V, CARD_PAD_H),
     };
-    let pad = Padding::from([pad_v, pad_h]);
+    let pad = Padding {
+        top: pad_v,
+        bottom: pad_v,
+        left: pad_h + f32::from(indent) * 12.0,
+        right: pad_h,
+    };
     let hovered = show_hover_action;
 
     // Inline hover action only on the reorder + structured path; the plain
@@ -1573,7 +1673,11 @@ where
                 if let Some(label) = section.label {
                     if !collapsed {
                         // Sticky: outside the section's scroll body.
-                        sections_col = sections_col.push(section_header(label));
+                        sections_col = sections_col.push(section_header(
+                            label,
+                            section.on_label,
+                            section.on_add,
+                        ));
                     }
                 }
 

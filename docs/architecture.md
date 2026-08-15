@@ -63,7 +63,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
-| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux `sola-at`). Grok hooks on `$XDG_RUNTIME_DIR/sola-at-hooks.sock`; OSC 9999 stripped in the term lib. |
+| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux `sola-at`). Catalog `~/.config/sola/agent-terminal/catalog.json`. Siblings under `<root>/.worktrees/`. `sat` on `$XDG_RUNTIME_DIR/sola-at-cli.sock`. Grok hooks on `$XDG_RUNTIME_DIR/sola-at-hooks.sock`; OSC 9999 stripped in the term lib. |
 | `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of agent-terminal |
 | `crates/sola-mail` | Kit-native mail client |
@@ -100,6 +100,8 @@ to the bus and tolerate compositor restarts.
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
+| Agent-terminal catalog | `~/.config/sola/agent-terminal/catalog.json` (projects / workspaces / selected) |
+| Agent-terminal CLI | `$XDG_RUNTIME_DIR/sola-at-cli.sock` (`sat`; fail if app down) |
 | Grok sessions | `~/.grok/sessions/` + leader socket `~/.grok/leader.sock` |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
 

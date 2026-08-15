@@ -3,9 +3,17 @@ name = "sola-agent-terminal"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "sola_agent_terminal"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sola-agent-terminal"
 path = "src/main.rs"
+
+[[bin]]
+name = "sat"
+path = "src/bin/sat.rs"
 
 [dependencies]
 sola-kit = { path = "../sola-kit" }
@@ -18,3 +26,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+clap = { version = "4", features = ["derive"] }

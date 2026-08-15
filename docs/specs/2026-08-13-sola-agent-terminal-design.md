@@ -7,9 +7,9 @@
 **Product record:** [`crates/sola-agent-terminal/PRODUCT.md`](../../crates/sola-agent-terminal/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/agent-terminal-design.md`](../../.grok/rules/agent-terminal-design.md)
 
-**Implementation:** Grok hooks + process-tree + OSC 9999 + status chrome + stable `sat-ws-main`  
-**Dogfood:** installed locally; Grok marks + tmux reattach smoked  
-**Gaps:** persist projects, spawn sibling, `sat`, toast-on-done; demo rows still seeded; Claude presence-only
+**Implementation:** persist + spawn modal + `sat` + done toast  
+**Dogfood:** hooks + `sat-ws-main` reattach smoked; sat/toast/spawn UI await install  
+**Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only
 
 ---
 
@@ -40,7 +40,7 @@ deprecated for this line of work.
 | Status vocab | `working` / `waiting` / `done` / idle. Reserved indicator slot (no layout shift) |
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-agent-terminal` |
-| CLI | `sat` (later slice). Not on `solactl` |
+| CLI | `sat` (`ps`, project/workspace/pane). Not on `solactl`. App down → fail |
 
 ---
 
@@ -52,7 +52,7 @@ Decision points: [`open-questions.md`](../open-questions.md) D3.
 | Topic | Interim |
 |---|---|
 | Window title | `Workspaces` |
-| Worktree base | Per-project; this desk’s shape is `~/orca/workspaces/<Project>/` |
+| Worktree base | **Locked (D3.2):** `<project-root>/.worktrees/<name>` |
 | Main checkout | A first-class workspace under the project |
 | Drop workspace | Unregister + kill tmux sessions; `git worktree remove` is a separate confirm |
 | `sat` if app down | Fail loudly (do not launch a Wayland window as a side effect) |
@@ -93,7 +93,11 @@ crates/sola-agent-terminal/
   src/status.rs        # working / waiting / done / idle + persist
   src/hooks.rs         # Grok installer + UDS server
   src/presence.rs      # process-tree who (Grok first)
-  src/workspace.rs     # in-memory project + workspace + pane ids
+  src/workspace.rs     # project + workspace + catalog persist
+  src/spawn.rs         # git worktree add under .worktrees/
+  src/cli.rs           # sat protocol (lib)
+  src/cli_server.rs    # UDS server in the app
+  src/bin/sat.rs
   src/menu.rs
 ```
 
@@ -164,15 +168,15 @@ look changes; do not treat it as a second freeze.
 ## Build order (after this freeze)
 
 1. **Skeleton** — done  
-2. **Status chrome** — done (kit `status_mark`; demo states)  
+2. **Status chrome** — done (kit `status_mark`)  
 3. **Grok hooks + process-tree + OSC 9999** — done  
-4. **Projects + workspaces + spawn sibling**  
-5. **`sat`** — `ps`, `workspace spawn`, `pane send`  
-6. **Toasts on done**, then stop
+4. **Projects + workspaces + spawn sibling** — done (catalog.json; `.worktrees/`; name modal)  
+5. **`sat`** — done (`ps`, spawn, send/read/rm; fail if app down)  
+6. **Toasts on done** — done (shell `AppToast`; skip focused + hydrate)
 
 ---
 
 ## Open questions
 
-See idea + D3. Do not invent answers in code that users will live with
-(worktree path on disk, `sat` launching the app, display name).
+See idea + D3. Worktree path is locked (`.worktrees/`). Do not invent
+`sat` launching the app or the display name.

@@ -72,19 +72,18 @@ sites?
 
 ### D3 — sola-agent-terminal product forks (P2)
 
-**Context:** Freeze is in; Grok hooks + tmux reattach smoked. These were left
-interim so we did not invent policy. Do not treat the interims as locked.
+**Context:** Freeze is in; Grok hooks + persist + spawn landed. Remaining
+forks are display name, `sat` if down, and Claude hooks.
 
 **Ask:**
 
 1. Display name / window title (`Workspaces` is interim)?  
-2. Default worktree base — this desk’s `~/orca/workspaces/<Project>/`, sibling
-   of main, or always ask?  
+2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. If `sat` runs and the app is down — fail, or launch the Wayland window?  
 4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
 
-**Until decided:** use freeze **Interim** table only. Do not persist worktree
-paths or `sat` auto-launch.
+**Until decided:** use freeze **Interim** table for (1)(3)(4). Do not
+implement `sat` auto-launch.
 
 **Related:** `agent-terminal` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
@@ -96,6 +95,7 @@ paths or `sat` auto-launch.
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
 | 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. D3 forks still open. | freeze + CURRENT + D3 |
+| 2026-08-13 | D3.2 | Worktrees live in `<project-root>/.worktrees/<name>`. Not `~/orca/workspaces/…`, not sibling-of-main. | freeze + CURRENT + PRODUCT |
 | 2026-08-13 | agent-terminal | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D3 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
