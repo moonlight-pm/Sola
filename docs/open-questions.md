@@ -109,8 +109,12 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-15 | Browser instance | One iced chrome via `chrome.sock`; second process hands off (does not reap live helpers). Helper death respawns + restores tabs. | CURRENT, capabilities, architecture, manual/sola-browser |
+| 2026-08-15 | Browser passkey | `get()` intercept in every frame; same-site duplicate/retry coalesced (Gemini Exchange 2FA was failing the page before pick); `create()` vault confirm + persist (new login or attach) | CURRENT, capabilities, manual/sola-browser |
+| 2026-08-15 | Kit storybook | Always update the matching storybook page in the same change; do not ask | `.grok/rules/kit-storybook-pages.md`, AGENTS |
 | 2026-08-14 | D4.1 | Product is `sola-workspaces`. Owner `ws` (`solactl ws …`). Tmux `sola-ws` / `sws-`. Config `~/.config/sola/workspaces/`. | CURRENT + freeze + PRODUCT |
 | 2026-08-14 | workspaces | No `sat` binary. Face is `solactl ws …` only. | CURRENT + freeze |
+| 2026-08-14 | Browser downloads | Auto-save `~/Downloads`; toolbar icon with progress; click-to-open panel; persist completed in `shared/downloads.json`; cancel + open + remove-row (no Finder) | [freeze](specs/2026-08-14-sola-browser-downloads-design.md), CURRENT, capabilities, manual |
 | 2026-08-14 | Call plane | Third plane `sola-call`; fail if owner down; `solactl` face is `compositor`/`session` (not `call 'sig'`); advertise for unknown apps; MCP later; confirm is **D3** | [freeze](specs/2026-08-13-sola-call-plane-design.md), CURRENT, architecture, capabilities |
 | 2026-08-13 | workspaces | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. Product forks now **D4** (D3 taken by call plane). | freeze + CURRENT + D4 |
 | 2026-08-13 | D4.2 | Worktrees live in `<project-root>/.worktrees/<name>`. Not `~/orca/workspaces/…`, not sibling-of-main. | freeze + CURRENT + PRODUCT |

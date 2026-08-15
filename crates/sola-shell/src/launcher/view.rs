@@ -6,13 +6,13 @@
 //! Chord wiring (Meta+Space toggle, Escape close, arrows nav, Enter launch)
 //! is handled in `on_chord`. Messages are defined on `Msg`.
 
-use iced::widget::{
-    column, container, mouse_area, row, scrollable, stack, text, Id as WidgetId,
-};
+use iced::widget::{Id as WidgetId, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Padding};
 
 use sola_kit::components::{
-    button as kit_btn, divider::horizontal_divider, icon, modal,
+    button as kit_btn,
+    divider::horizontal_divider,
+    icon, modal,
     text_input::{style as input_style, text_input},
 };
 use sola_kit::fonts;
@@ -38,13 +38,9 @@ const LIST_INSET: f32 = 6.0;
 /// composition can show it without a window-create round-trip).
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.launcher.active {
-        return mouse_area(
-            container(text(""))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Msg::CloseLauncher)
-        .into();
+        return mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+            .on_press(Msg::CloseLauncher)
+            .into();
     }
 
     let launcher = &shell.launcher;
@@ -60,20 +56,22 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .into();
 
     let rows: Vec<Element<'_, Msg>> = if launcher.filtered_ids.is_empty() {
-        vec![container(
-            text("No matching applications.")
-                .font(fonts::chrome())
-                .size(13)
-                .style(|theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(iced::Color {
-                        a: 0.55,
-                        ..theme.palette().text
+        vec![
+            container(
+                text("No matching applications.")
+                    .font(fonts::chrome())
+                    .size(13)
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(iced::Color {
+                            a: 0.55,
+                            ..theme.palette().text
+                        }),
                     }),
-                }),
-        )
-        .padding(Padding::new(12.0))
-        .width(Length::Fill)
-        .into()]
+            )
+            .padding(Padding::new(12.0))
+            .width(Length::Fill)
+            .into(),
+        ]
     } else {
         launcher
             .filtered_ids
@@ -86,10 +84,8 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 let is_selected = i == launcher.selected;
 
                 let icon_el: Element<'_, Msg> = icon(icon_name, ROW_ICON);
-                let label_el: Element<'_, Msg> = text(label_str)
-                    .font(fonts::ui())
-                    .size(ROW_LABEL)
-                    .into();
+                let label_el: Element<'_, Msg> =
+                    text(label_str).font(fonts::ui()).size(ROW_LABEL).into();
 
                 let row_content: Element<'_, Msg> = row![icon_el, label_el]
                     .spacing(ROW_GAP)
@@ -117,14 +113,10 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             .collect()
     };
 
-    let list: Element<'_, Msg> = scrollable(
-        column(rows)
-            .width(Length::Fill)
-            .spacing(LIST_SPACING),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(LIST_MAX_H))
-    .into();
+    let list: Element<'_, Msg> = scrollable(column(rows).width(Length::Fill).spacing(LIST_SPACING))
+        .width(Length::Fill)
+        .height(Length::Fixed(LIST_MAX_H))
+        .into();
 
     // Kit modal: raised panel, calm shadow (Spotlight restraint).
     let card_body: Element<'_, Msg> = column![

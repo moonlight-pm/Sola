@@ -11,7 +11,7 @@ use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use sola_kit::components::card::style as card_style;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, heading, muted};
 use sola_kit::components::{
     DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarDensity, SidebarIndicator,
     SidebarItem, SidebarPanel, SidebarSection, panel_dragged_width,
@@ -302,20 +302,13 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     column![
         heading("Sidebar"),
         body(
-            "List etch is the default Row chrome (muted idle, lip + inset active, \
-             hover-only ×). SidebarPanel: collapse (»/«), resize, reorder. \
-             Section headers stay sticky. Fill sections scroll without a \
-             scrollbar and show ↑ N … / ↓ N … when items overflow. Drafts has a \
-             secondary count; hover Spam for ×."
+            "List etch: muted idle, inset active, hover-only ×. Collapse, \
+             resize, reorder. Overflow chips only when section_scroll is \
+             wired and the viewport is measured. Drafts has a count; hover \
+             Spam for ×."
         )
         .style(muted),
         demo,
-        code("SidebarSection::new(\"Sessions\", items).fill() · sticky label + bar-less scroll")
-            .style(muted),
-        code("SidebarPanel::new(sections).density(Normal).item_hover(id, Msg::Hover)")
-            .style(muted),
-        code("SidebarPanel::new(sections).collapsible(..).resizable(..).reorderable(..).build()")
-            .style(muted),
         heading("Status marks"),
         body(
             "Reserved 12px slot. Working is an accent ring; waiting a warning diamond; \
@@ -323,9 +316,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         )
         .style(muted),
         marks_demo(),
-        code("SidebarItem::new(label, msg).indicator(SidebarIndicator::Working)")
-            .style(muted),
-        body("List density: Normal vs Large (same SidebarItem etch)").style(muted),
+        body("Density — Normal vs Large").style(muted),
         density_demo(state),
     ]
     .spacing(16)

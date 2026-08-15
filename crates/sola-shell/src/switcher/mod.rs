@@ -27,4 +27,3 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     settings.transparent = true;
     window::open(settings)
 }
-

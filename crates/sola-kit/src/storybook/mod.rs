@@ -17,11 +17,12 @@
 
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
-use sola_kit::components::style::{mix_white, PAD_CONTROL_SM, HAIRLINE_A};
+use sola_kit::components::select::{SelectOption, select};
+use sola_kit::components::style::{mix_white, PAD_CONTROL_SM, HAIRLINE_A, CHROME_SURFACE};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
@@ -48,6 +49,7 @@ pub enum Page {
     NumberInput,
     Readable,
     ColorPicker,
+    FilePicker,
     Divider,
     Popover,
     Select,
@@ -78,6 +80,7 @@ impl Page {
         Page::NumberInput,
         Page::Readable,
         Page::ColorPicker,
+        Page::FilePicker,
         Page::Popover,
         Page::Select,
         Page::Sidebar,
@@ -98,6 +101,7 @@ impl Page {
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
             Page::ColorPicker => "ColorPicker",
+            Page::FilePicker => "FilePicker",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
             Page::Select => "Select",
@@ -125,6 +129,7 @@ impl Page {
             | Page::NumberInput
             | Page::Readable
             | Page::ColorPicker
+            | Page::FilePicker
             | Page::Popover
             | Page::Select
             | Page::Sidebar => Some("Components"),
@@ -158,6 +163,7 @@ impl Page {
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
+            Page::FilePicker => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted, Accent],
             Page::Popover => &[BgRaised, Border, Fg, FgMuted],
             Page::Select => &[BgRaised, BgHover, Selection, Border, Fg, FgMuted],
             Page::Sidebar => &[Bg, BgHover, Selection, Fg, FgMuted, Accent],
@@ -170,10 +176,14 @@ pub enum Msg {
     Select(Page),
     Toolbar(pages::toolbar::Msg),
     Button(pages::button::Msg),
+    Overview(pages::overview::Msg),
+    ThemeMenuToggle,
+    ThemeMenuDismiss,
     Field(pages::field::Msg),
     Form(pages::form::Msg),
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
+    FilePicker(pages::file_picker::Msg),
     Sidebar(pages::sidebar::Msg),
     Split(pages::split::Msg),
     SelectDemo(pages::select::Msg),
@@ -396,10 +406,13 @@ pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
     button: pages::button::State,
+    overview: pages::overview::State,
+    theme_menu_open: bool,
     field: pages::field::State,
     form: pages::form::State,
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
+    file_picker: pages::file_picker::State,
     sidebar: pages::sidebar::State,
     split: pages::split::State,
     select: pages::select::State,
@@ -488,10 +501,13 @@ impl Storybook {
             page: Page::Overview,
             toolbar: pages::toolbar::State::default(),
             button: pages::button::State::default(),
+            overview: pages::overview::State::default(),
+            theme_menu_open: false,
             field: pages::field::State::default(),
             form: pages::form::State::default(),
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
+            file_picker: pages::file_picker::State::default(),
             sidebar: pages::sidebar::State::default(),
             split: pages::split::State::default(),
             select: pages::select::State::default(),
@@ -616,13 +632,18 @@ impl Storybook {
                 self.editing_atom = None;
                 self.editing_shell = None;
                 self.picker = None;
+                self.theme_menu_open = false;
             }
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Button(m) => self.button.update(m),
+            Msg::Overview(m) => self.overview.update(m),
+            Msg::ThemeMenuToggle => self.theme_menu_open = !self.theme_menu_open,
+            Msg::ThemeMenuDismiss => self.theme_menu_open = false,
             Msg::Field(m) => self.field.update(m),
             Msg::Form(m) => self.form.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
+            Msg::FilePicker(m) => self.file_picker.update(m),
             Msg::Sidebar(m) => self.sidebar.update(m),
             Msg::Split(m) => self.split.update(m),
             Msg::SelectDemo(m) => self.select.update(m),
@@ -746,6 +767,7 @@ impl Storybook {
                 self.dirty = true;
             }
             Msg::SelectTheme(name) => {
+                self.theme_menu_open = false;
                 let Some(idx) = self.themes.iter().position(|t| t.name == name) else {
                     return iced::Task::none();
                 };
@@ -1253,13 +1275,23 @@ impl Storybook {
                 .into()
             }
             None => {
-                let names: Vec<String> =
-                    self.themes.iter().map(|t| t.name.clone()).collect();
-                // OD `.theme-select`: 220×30, compact pad.
-                let picker = pick_list(names, Some(self.active().name.clone()), Msg::SelectTheme)
-                    .width(Length::Fixed(220.0))
-                    .padding(Padding::from([5, 11]))
-                    .text_size(13.0);
+                let active_name = self.active().name.clone();
+                let options = self.themes.iter().map(|t| {
+                    SelectOption::new(
+                        t.name.clone(),
+                        t.name == active_name,
+                        Msg::SelectTheme(t.name.clone()),
+                    )
+                    .mark(t.name.clone())
+                });
+                let picker = container(select(
+                    active_name.clone(),
+                    options,
+                    self.theme_menu_open,
+                    Msg::ThemeMenuToggle,
+                    Msg::ThemeMenuDismiss,
+                ))
+                .width(Length::Fixed(220.0));
                 let new_btn = kit_button::labeled_sm("New Theme", kit_button::secondary)
                     .on_press(Msg::NewThemeStart);
                 // Two-stage delete: outline "Delete" arms the confirm,
@@ -1310,10 +1342,9 @@ impl Storybook {
             container(body)
                 .padding(Padding::from([8, 24]))
                 .width(Length::Fill)
-                .style(|theme: &iced::Theme| {
-                    let p = theme.extended_palette();
+                .style(|_theme: &iced::Theme| {
                     iced::widget::container::Style {
-                        background: Some(iced::Background::Color(p.background.weaker.color)),
+                        background: Some(iced::Background::Color(CHROME_SURFACE)),
                         border: iced::Border::default(),
                         ..Default::default()
                     }
@@ -1336,8 +1367,9 @@ impl Storybook {
     fn page_view(&self) -> Element<'_, Msg> {
         let editable = !self.is_default_active();
         let content: Element<'_, Msg> = match self.page {
-            Page::Overview => pages::overview::view(&self.active().atoms, &self.button)
-                .map(Msg::Button),
+            Page::Overview => {
+                pages::overview::view(&self.active().atoms, &self.overview).map(Msg::Overview)
+            }
             Page::Theme => pages::theme::view(
                 &self.active().atoms,
                 &self.active().fonts,
@@ -1366,6 +1398,9 @@ impl Storybook {
             Page::Readable => pages::readable::view(),
             Page::ColorPicker => {
                 pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
+            }
+            Page::FilePicker => {
+                pages::file_picker::view(&self.file_picker).map(Msg::FilePicker)
             }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
@@ -1425,6 +1460,7 @@ mod tests {
             Page::NumberInput,
             Page::Readable,
             Page::ColorPicker,
+            Page::FilePicker,
             Page::Divider,
             Page::Popover,
             Page::Select,
@@ -1451,6 +1487,7 @@ mod tests {
                 | Page::NumberInput
                 | Page::Readable
                 | Page::ColorPicker
+                | Page::FilePicker
                 | Page::Divider
                 | Page::Popover
                 | Page::Select

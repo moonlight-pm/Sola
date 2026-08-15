@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13  
 **Renamed:** 2026-08-14 — crate / app id / face from `sola-agent-terminal` / `at` to `sola-workspaces` / `ws` (D4.1)  
-**Branch:** `naturalethic/sola-agent-terminal`  
+**Branch:** on master; work continues on `naturalethic/sola-agent-terminal`  
 **Status:** approved for implementation (promoted from idea)  
 **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../ideas/2026-08-12-sola-agent-terminal.md)  
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  

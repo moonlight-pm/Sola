@@ -9,13 +9,13 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-14 (this branch: sola-workspaces after D4.1; master URL→sola-browser merged)
+**As of:** 2026-08-15 (workspaces landing on master; this worktree kept open)
 
 ---
 
 ## Now
 
-1. **sola-workspaces** — **partial** (this branch, master merged)  
+1. **sola-workspaces** — **partial** (on master; this worktree kept open)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -28,15 +28,25 @@ Do not invent product policy.
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
    `sola-ws` / `sws-`. Hooks + old `sat-ws-main` reattach smoked earlier;
    spawn UI / call methods not smoked.  
-2. **Call plane** — on **master** (`65e0051d`). Host + `solactl compositor` /
-   `session` + kit helper. **Needs install to dogfood.**  
-3. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+2. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+   flip / save; left tabs; kit `FilePicker`; **single-instance** (second
+   spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
+   Stage cache + off-thread decode; tabs persist via `PaintSession`.
+   Reinstall `paint` to dogfood. Gaps: no clipboard image.
+3. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+   kit helper. Workspaces already registers `ws` (unsmoked). **Needs install
+   to dogfood.** **D3** (confirm gates) is open.  
+4. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
-     never-played owned without API.  
-4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
-   kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), open URL single-instance handoff, etc.
+     never-played owned without API.
+5. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+6. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+   preview, mail, kvm clipboard, switcher FFM holdoff
+   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser polish is on
+   **master** (downloads, cards, passkey get/create, chrome singleton,
+   tab-strip overflow chip). `naturalethic/browser-polish` stays open for
+   more chrome work. Outline passkey create still needs a clean smoke.
+   Kit storybook desks on master (install `kit` to dogfood).
 
 **Explicit holds:** none.
 
@@ -54,8 +64,9 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (master `70568e8e` merged). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump); OSR IME + Shift+wheel + `<select>` dropdowns dogfooded; **default http(s) open** via sola-browser only (no Helium; install to re-register MIME; no single-instance yet) | — |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (kept open). **master** now includes workspaces + browser polish + paint. `naturalethic/browser-polish` also kept open | Feature work in worktrees / Orca workspaces |
+| Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; instant tab close (hover × opaque chip); **drag-reorder tabs** + width-aware titles (dogfooded); YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **needs Outline dogfood**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

@@ -644,13 +644,39 @@ fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button
     }
 }
 
-fn tab_close_style(theme: &Theme, status: button::Status) -> button::Style {
+fn tab_close_style(
+    theme: &Theme,
+    status: button::Status,
+    active: bool,
+    chrome: SidebarItemChrome,
+) -> button::Style {
     let p = theme.extended_palette();
+    // Opaque chip so the stacked × covers the title instead of sitting
+    // on it. Idle hover wash is 45% alpha; bake that onto the column
+    // so the pad matches the row without the glyphs showing through.
+    let rest = match chrome {
+        SidebarItemChrome::Row => {
+            if active {
+                inset_surface(CHROME_SURFACE, 0.22)
+            } else {
+                mix(p.background.strong.color, CHROME_SURFACE, 0.45)
+            }
+        }
+        SidebarItemChrome::Card => {
+            let raised = p.background.weaker.color;
+            if active {
+                mix(p.background.strong.color, raised, 0.92)
+            } else {
+                let idle = mix(raised, p.background.base.color, 0.42);
+                mix(p.background.strong.color, idle, 0.55)
+            }
+        }
+    };
     let bg = match status {
         button::Status::Hovered | button::Status::Pressed => {
-            alpha(p.background.strong.color, 0.80)
+            mix(p.background.strong.color, rest, 0.40)
         }
-        _ => Color::TRANSPARENT,
+        _ => rest,
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -1216,8 +1242,8 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     }
     let m = density.metrics();
     let close = button(icon_svg(tab_close_icon(), m.close as u16))
-        .style(tab_close_style)
-        .padding(Padding::from([2, 4]))
+        .style(move |theme, status| tab_close_style(theme, status, active, chrome))
+        .padding(Padding::from([3, 6]))
         .on_press(close_msg);
     stack![
         etched,
@@ -1835,7 +1861,10 @@ where
                 }
 
                 if wants_fill {
-                    // First fill section owns app-driven scroll + chips.
+                    // First fill section owns app-driven scroll + chips
+                    // *when* `section_scroll` is wired. Without a callback
+                    // (browser / terminal tab strips), use a hidden iced
+                    // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
                     let mut body = fill_section_body(
                         body_items,
@@ -1972,16 +2001,25 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     scroll: SectionScroll,
     on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
 ) -> Element<'a, Message, Theme> {
+    // No app-owned scroll → hidden iced scrollbar, no overflow chips.
+    // A lone section auto-fills so long lists can scroll; inventing a
+    // 480px viewport made `↓ N` appear whenever content exceeded that,
+    // even when the real pane was taller and every row was visible.
+    let Some(on_scroll) = on_scroll else {
+        return hidden_scroll(items, None, None).into();
+    };
+
     // Prefer measured content_h; keep any larger viewport hint from sensor.
     let mut scroll = scroll.with_content_h(content_h);
-    // Until sensor reports a real viewport, assume a tall pane so chips can
-    // still show "below" when the list is long.
-    if scroll.viewport_h <= 1.0 {
-        scroll.viewport_h = 480.0;
-    }
     scroll = scroll.clamped();
 
-    let (above, below) = section_overflow_counts(scroll, n_items);
+    // Unmeasured viewport: hide chips until the sensor reports a height.
+    // Do not invent a default pane size — that flashes false `↓ N` chips.
+    let (above, below) = if scroll.viewport_h <= 1.0 {
+        (0, 0)
+    } else {
+        section_overflow_counts(scroll, n_items)
+    };
     let offset = scroll.offset_y;
 
     // Unbounded content layout + clip + translate (see [`ClipScroll`]).
@@ -1990,40 +2028,34 @@ fn fill_section_body<'a, Message: Clone + 'a>(
         offset_y: offset,
     };
 
-    let (list, on_jump): (Element<'a, Message, Theme>, Option<std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a>>) =
-        if let Some(cb) = on_scroll {
-            let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(cb);
-            let base = scroll;
+    let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(on_scroll);
+    let base = scroll;
 
-            let cb_wheel = std::rc::Rc::clone(&cb);
-            let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
-                cb_wheel(base.wheel(delta))
-            });
+    let cb_wheel = std::rc::Rc::clone(&cb);
+    let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
+        cb_wheel(base.wheel(delta))
+    });
 
-            let cb_show = std::rc::Rc::clone(&cb);
-            let cb_resize = std::rc::Rc::clone(&cb);
-            let list = sensor(area)
-                .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
-                .on_resize(move |size: iced::Size| {
-                    cb_resize(base.with_viewport_h(size.height))
-                })
-                .into();
-            (list, Some(cb))
-        } else {
-            (clipped.into(), None)
-        };
+    let cb_show = std::rc::Rc::clone(&cb);
+    let cb_resize = std::rc::Rc::clone(&cb);
+    let list: Element<'a, Message, Theme> = sensor(area)
+        .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
+        .on_resize(move |size: iced::Size| {
+            cb_resize(base.with_viewport_h(size.height))
+        })
+        .into();
 
     // Chips only take space when there is overflow on that side — no
     // permanent gap under the section title at rest. Click jumps to end.
     let top_chip = overflow_slot(
         OverflowDir::Up,
         above,
-        on_jump.as_ref().map(|cb| cb(scroll.jump_top())),
+        Some(cb(scroll.jump_top())),
     );
     let bottom_chip = overflow_slot(
         OverflowDir::Down,
         below,
-        on_jump.as_ref().map(|cb| cb(scroll.jump_bottom())),
+        Some(cb(scroll.jump_bottom())),
     );
 
     column![top_chip, list, bottom_chip]
@@ -2677,6 +2709,19 @@ mod tests {
             content_h: 200.0,
         };
         assert_eq!(section_overflow_counts(s, 0), (0, 0));
+    }
+
+    #[test]
+    fn overflow_counts_none_when_viewport_unmeasured() {
+        // Default SectionScroll (viewport 0) must not invent overflow —
+        // a fake 480px pane used to flash `↓ N` on auto-filled tab strips.
+        let s = SectionScroll {
+            offset_y: 0.0,
+            viewport_h: 0.0,
+            content_h: 800.0,
+        };
+        assert_eq!(section_overflow_counts(s, 20), (0, 0));
+        assert!(!s.overflows());
     }
 
     // --- panel_drop_index ---

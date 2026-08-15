@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
-    ClipboardHandle, Cmd, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle, TabId, TabInfo,
-    TabsHandle,
+    ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle,
+    PasskeysHandle, TabId, TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -42,6 +42,8 @@ struct Shared {
     cursor: Arc<AtomicU32>,
     clipboard: ClipboardHandle,
     ime: ImeHandle,
+    downloads: DownloadsHandle,
+    passkeys: PasskeysHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -58,6 +60,8 @@ pub struct RouterHandles {
     pub next_id: Arc<AtomicU64>,
     pub clipboard: ClipboardHandle,
     pub ime: ImeHandle,
+    pub downloads: DownloadsHandle,
+    pub passkeys: PasskeysHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -69,6 +73,8 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let next_id = Arc::new(AtomicU64::new(1));
     let clipboard: ClipboardHandle = Arc::new(Mutex::new(None));
     let ime: ImeHandle = Arc::new(Mutex::new(ImeCaret::default()));
+    let downloads: DownloadsHandle = Arc::new(Mutex::new(Vec::new()));
+    let passkeys: PasskeysHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -78,14 +84,17 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         cursor: cursor.clone(),
         clipboard: clipboard.clone(),
         ime: ime.clone(),
+        downloads: downloads.clone(),
+        passkeys: passkeys.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
 
     let shared_w = shared.clone();
+    let died_tx = cmd_tx.clone();
     let worker = thread::Builder::new()
         .name("cef-router".into())
-        .spawn(move || router_main(shared_w, cmd_rx))
+        .spawn(move || router_main(shared_w, cmd_rx, died_tx))
         .expect("spawn cef-router");
 
     RouterHandles {
@@ -98,17 +107,24 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         next_id,
         clipboard,
         ime,
+        downloads,
+        passkeys,
     }
 }
 
-fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
+fn router_main(
+    shared: Arc<Shared>,
+    cmd_rx: Receiver<Cmd<CefEngine>>,
+    died_tx: Sender<Cmd<CefEngine>>,
+) {
     let helpers: Arc<Mutex<HelperSet>> = Arc::new(Mutex::new(HelperSet {
         map: HashMap::new(),
         pending: HashSet::new(),
     }));
+    let mut deaths: HashMap<String, Vec<Instant>> = HashMap::new();
     let live = profiles::active().id;
     *shared.current.lock().unwrap() = live.clone();
-    if let Err(e) = attach(&helpers, &shared, &live) {
+    if let Err(e) = attach(&helpers, &shared, &live, &died_tx) {
         tracing::error!(error = %e, profile = %live, "router: failed to start active engine");
     } else if let Some(h) = helpers.lock().unwrap().map.get(&live) {
         let _ = h.to_engine.send(ToEngine::SetFront(true));
@@ -122,11 +138,12 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
     {
         let helpers_w = helpers.clone();
         let shared_w = shared.clone();
+        let died_w = died_tx.clone();
         thread::Builder::new()
             .name("cef-prewarm".into())
             .spawn(move || {
                 for id in others {
-                    if let Err(e) = attach(&helpers_w, &shared_w, &id) {
+                    if let Err(e) = attach(&helpers_w, &shared_w, &id, &died_w) {
                         tracing::warn!(error = %e, profile = %id, "router: prewarm helper failed");
                     }
                 }
@@ -143,7 +160,7 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                 create_tabs,
                 active,
             } => {
-                if let Err(e) = attach(&helpers, &shared, &resume_profile_id) {
+                if let Err(e) = attach(&helpers, &shared, &resume_profile_id, &died_tx) {
                     tracing::error!(
                         error = %e,
                         profile = %resume_profile_id,
@@ -218,11 +235,26 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                     "router: front helper"
                 );
             }
+            Cmd::CancelDownload { profile_id, id } => {
+                let set = helpers.lock().unwrap();
+                if let Some(h) = set.map.get(&profile_id) {
+                    let _ = h.to_engine.send(ToEngine::CancelDownload { id });
+                } else {
+                    tracing::warn!(
+                        profile = %profile_id,
+                        id,
+                        "router: no helper for CancelDownload"
+                    );
+                }
+            }
             Cmd::DropParkedProfile { profile_id } => {
                 if let Some(h) = helpers.lock().unwrap().map.remove(&profile_id) {
                     let _ = h.to_engine.send(ToEngine::Shutdown);
                     tracing::info!(profile = %profile_id, "router: dropped helper");
                 }
+            }
+            Cmd::HelperDied { profile_id } => {
+                restore_dead_helper(&helpers, &shared, &died_tx, &mut deaths, &profile_id);
             }
             Cmd::Quit => {
                 let drained: Vec<_> = helpers.lock().unwrap().map.drain().collect();
@@ -262,7 +294,7 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                         let _ = h.to_engine.send(wire);
                     }
                 } else {
-                    tracing::warn!(profile = %current, "router: no helper for cmd");
+                    tracing::warn!(profile = %current, "router: no helper for cmd (engine dead?)");
                 }
             }
         }
@@ -276,10 +308,85 @@ fn bump_next(shared: &Shared, id: u64) {
     }
 }
 
+fn restore_dead_helper(
+    helpers: &Arc<Mutex<HelperSet>>,
+    shared: &Arc<Shared>,
+    died_tx: &Sender<Cmd<CefEngine>>,
+    deaths: &mut HashMap<String, Vec<Instant>>,
+    profile_id: &str,
+) {
+    let removed = helpers.lock().unwrap().map.remove(profile_id);
+    let Some(old) = removed else {
+        tracing::debug!(profile = %profile_id, "helper died after we already dropped it");
+        return;
+    };
+    if let Some(mut child) = old.child {
+        let _ = child.try_wait();
+    }
+    let tabs = old.tabs.lock().unwrap().clone();
+    let was_front = shared.current.lock().unwrap().as_str() == profile_id;
+    let active = shared.active.load(Ordering::Relaxed);
+    tracing::error!(
+        profile = %profile_id,
+        tabs = tabs.len(),
+        was_front,
+        "engine helper died — respawning"
+    );
+
+    let now = Instant::now();
+    let stamps = deaths.entry(profile_id.to_string()).or_default();
+    stamps.retain(|t| now.duration_since(*t) < Duration::from_secs(15));
+    stamps.push(now);
+    if stamps.len() >= 4 {
+        tracing::error!(
+            profile = %profile_id,
+            deaths = stamps.len(),
+            "engine helper crash loop — not respawning (quit and relaunch)"
+        );
+        return;
+    }
+
+    thread::sleep(Duration::from_millis(200));
+    if let Err(e) = attach(helpers, shared, profile_id, died_tx) {
+        tracing::error!(profile = %profile_id, error = %e, "engine helper respawn failed");
+        return;
+    }
+    let set = helpers.lock().unwrap();
+    let Some(helper) = set.map.get(profile_id) else {
+        return;
+    };
+    if was_front {
+        let _ = helper.to_engine.send(ToEngine::SetFront(true));
+    }
+    for t in &tabs {
+        let _ = helper.to_engine.send(ToEngine::OpenTab {
+            id: t.id.0,
+            url: t.url.clone(),
+            title: t.title.clone(),
+        });
+    }
+    if was_front && active != 0 {
+        let _ = helper.to_engine.send(ToEngine::SetActiveTab(active));
+        shared.active.store(active, Ordering::Relaxed);
+    }
+    let (vw, vh, vscale) = *shared.viewport.lock().unwrap();
+    let _ = helper.to_engine.send(ToEngine::Resize {
+        width: vw,
+        height: vh,
+        scale: vscale,
+    });
+    tracing::info!(
+        profile = %profile_id,
+        tabs = tabs.len(),
+        "engine helper restored"
+    );
+}
+
 fn attach(
     helpers: &Arc<Mutex<HelperSet>>,
     shared: &Arc<Shared>,
     profile_id: &str,
+    died_tx: &Sender<Cmd<CefEngine>>,
 ) -> Result<(), String> {
     loop {
         let mut set = helpers.lock().unwrap();
@@ -295,7 +402,7 @@ fn attach(
         break;
     }
     let (width, height, scale) = *shared.viewport.lock().unwrap();
-    let result = spawn_helper(shared, profile_id, width, height, scale);
+    let result = spawn_helper(shared, profile_id, width, height, scale, died_tx);
     let mut set = helpers.lock().unwrap();
     set.pending.remove(profile_id);
     match result {
@@ -313,6 +420,7 @@ fn spawn_helper(
     width: u32,
     height: u32,
     scale: f64,
+    died_tx: &Sender<Cmd<CefEngine>>,
 ) -> Result<Helper, String> {
     let sock = profiles::engine_sock_path(profile_id);
     if let Some(parent) = sock.parent() {
@@ -354,6 +462,7 @@ fn spawn_helper(
     let shared_r = Arc::clone(shared);
     let tabs_r = helper_tabs.clone();
     let profile_r = profile_id.to_string();
+    let died_r = died_tx.clone();
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     thread::Builder::new()
         .name(format!("eng-read-{:.8}", profile_id))
@@ -376,6 +485,11 @@ fn spawn_helper(
                             let _ = ready_tx.send(Err(format!("engine ipc: {e}")));
                         }
                         tracing::warn!(profile = %profile_r, error = %e, "helper reader ended");
+                        if announced {
+                            let _ = died_r.send(Cmd::HelperDied {
+                                profile_id: profile_r,
+                            });
+                        }
                         break;
                     }
                 }
@@ -488,19 +602,37 @@ fn handle_from(
                 *shared.ime.lock().unwrap() = ImeCaret { x, y, w, h };
             }
         }
+        FromEngine::Download(ev) => {
+            // Any helper — parked profiles still finish downloads.
+            shared
+                .downloads
+                .lock()
+                .unwrap()
+                .push((profile_id.to_string(), ev));
+        }
+        FromEngine::WebAuthn(ev) => {
+            shared.passkeys.lock().unwrap().push(ev);
+        }
     }
 }
 
 fn launch_helper(profile_id: &str) -> Result<Child, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    Command::new(exe)
+    let child = Command::new(&exe)
         .arg("--engine")
         .arg(format!("--profile={profile_id}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("spawn engine helper: {e}"))
+        .map_err(|e| format!("spawn engine helper: {e}"))?;
+    tracing::info!(
+        profile = %profile_id,
+        pid = child.id(),
+        exe = %exe.display(),
+        "spawned engine helper"
+    );
+    Ok(child)
 }
 
 fn wait_connect(sock: &Path, timeout: Duration) -> Result<UnixStream, String> {
@@ -551,6 +683,8 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::SetActiveTab(id) => Some(ToEngine::SetActiveTab(id.0)),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
+        | Cmd::CancelDownload { .. }
+        | Cmd::HelperDied { .. }
         | Cmd::Quit
         | Cmd::Release { .. }
         | Cmd::FrameDone { .. } => None,

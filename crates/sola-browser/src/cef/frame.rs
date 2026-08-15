@@ -7,8 +7,8 @@ use std::time::Instant;
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use crate::shader::{ImportedTexture, SamplePipeline};
 use crate::engine::{Cmd, FrameSlot};
+use crate::shader::{ImportedTexture, SamplePipeline};
 
 use crate::cef::cpu_import::{self, UploadedFrame};
 use crate::cef::engine::{CefEngine, CefFrame};
@@ -108,46 +108,39 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 note_ime_fallback(&self.slot, x, y);
                 let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
                 let ev = match m {
-                    mouse::Event::CursorMoved { .. } => Some(input::pointer_move(
-                        x,
-                        y,
-                        state.held_button_mods,
-                        kbd_mods,
-                    )),
-                    mouse::Event::ButtonPressed(b) => {
-                        input::button_number(*b).map(|button| {
-                            state.held_button_mods |= input::button_to_modifier(button);
-                            let prev = state.last_press.map(|(pb, px, py, at, count)| {
-                                (pb, px, py, at.elapsed().as_millis(), count)
-                            });
-                            let count = input::next_click_count(prev, button, x, y);
-                            state.last_press = Some((button, x, y, Instant::now(), count));
-                            state.last_click_count = count;
-                            input::pointer_button(
-                                true,
-                                button,
-                                x,
-                                y,
-                                state.held_button_mods,
-                                kbd_mods,
-                                count,
-                            )
-                        })
+                    mouse::Event::CursorMoved { .. } => {
+                        Some(input::pointer_move(x, y, state.held_button_mods, kbd_mods))
                     }
-                    mouse::Event::ButtonReleased(b) => {
-                        input::button_number(*b).map(|button| {
-                            state.held_button_mods &= !input::button_to_modifier(button);
-                            input::pointer_button(
-                                false,
-                                button,
-                                x,
-                                y,
-                                state.held_button_mods,
-                                kbd_mods,
-                                state.last_click_count.max(1),
-                            )
-                        })
-                    }
+                    mouse::Event::ButtonPressed(b) => input::button_number(*b).map(|button| {
+                        state.held_button_mods |= input::button_to_modifier(button);
+                        let prev = state.last_press.map(|(pb, px, py, at, count)| {
+                            (pb, px, py, at.elapsed().as_millis(), count)
+                        });
+                        let count = input::next_click_count(prev, button, x, y);
+                        state.last_press = Some((button, x, y, Instant::now(), count));
+                        state.last_click_count = count;
+                        input::pointer_button(
+                            true,
+                            button,
+                            x,
+                            y,
+                            state.held_button_mods,
+                            kbd_mods,
+                            count,
+                        )
+                    }),
+                    mouse::Event::ButtonReleased(b) => input::button_number(*b).map(|button| {
+                        state.held_button_mods &= !input::button_to_modifier(button);
+                        input::pointer_button(
+                            false,
+                            button,
+                            x,
+                            y,
+                            state.held_button_mods,
+                            kbd_mods,
+                            state.last_click_count.max(1),
+                        )
+                    }),
                     mouse::Event::WheelScrolled { delta } => {
                         let (dx, dy, precise) = input::scroll_delta_to_cef(*delta);
                         let (dx, dy) = input::apply_shift_scroll(dx, dy, mods_now.shift());
@@ -163,22 +156,17 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     }
                     _ => None,
                 };
-                let is_left_press =
-                    matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
+                let is_left_press = matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
                 if let Some(e) = ev {
                     let _ = self.slot.cmd_tx.send(Cmd::Input(e));
                     if is_left_press {
                         return Some(
-                            iced::widget::shader::Action::publish(
-                                crate::app::Msg::WebViewFocused,
-                            )
-                            .and_capture(),
+                            iced::widget::shader::Action::publish(crate::app::Msg::WebViewFocused)
+                                .and_capture(),
                         );
                     }
                     if should_pump(&self.slot) {
-                        return Some(
-                            iced::widget::shader::Action::request_redraw().and_capture(),
-                        );
+                        return Some(iced::widget::shader::Action::request_redraw().and_capture());
                     }
                     return Some(iced::widget::shader::Action::capture());
                 }
@@ -218,8 +206,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 // to ImeSetComposition. Still send Escape (cancel) / arrows.
                 if state.composing {
                     if let keyboard::Event::KeyPressed { key, .. } = k {
-                        if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape))
-                        {
+                        if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
                             state.composing = false;
                             let _ = self.slot.cmd_tx.send(Cmd::Input(input::ime_cancel()));
                             return Some(iced::widget::shader::Action::capture());
@@ -231,24 +218,25 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 }
                 let translated = match k {
                     keyboard::Event::KeyPressed {
-                        key, modifiers, text, ..
+                        key,
+                        modifiers,
+                        text,
+                        ..
                     } => input::translate_key(
                         true,
                         key,
                         text.as_ref().and_then(|t| t.chars().next()),
                         *modifiers,
                     ),
-                    keyboard::Event::KeyReleased {
-                        key, modifiers, ..
-                    } => input::translate_key(false, key, None, *modifiers),
+                    keyboard::Event::KeyReleased { key, modifiers, .. } => {
+                        input::translate_key(false, key, None, *modifiers)
+                    }
                     keyboard::Event::ModifiersChanged(_) => None,
                 };
                 if let Some(e) = translated {
                     let _ = self.slot.cmd_tx.send(Cmd::Input(e));
                     if should_pump(&self.slot) {
-                        return Some(
-                            iced::widget::shader::Action::request_redraw().and_capture(),
-                        );
+                        return Some(iced::widget::shader::Action::request_redraw().and_capture());
                     }
                     return Some(iced::widget::shader::Action::capture());
                 }
@@ -281,10 +269,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        let raw = self
-            .slot
-            .cursor
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let raw = self.slot.cursor.load(std::sync::atomic::Ordering::Relaxed);
         crate::CursorKind::from_u32(raw).to_iced()
     }
 }
@@ -319,7 +304,13 @@ impl CefImporter {
             self.bind_group = None;
         }
         let uploaded = self.texture.as_ref()?;
-        cpu_import::upload(queue, &uploaded.texture, &frame, &mut self.staging, need_new);
+        cpu_import::upload(
+            queue,
+            &uploaded.texture,
+            &frame,
+            &mut self.staging,
+            need_new,
+        );
         if self.bind_group.is_none() {
             let view = uploaded
                 .texture
@@ -360,7 +351,8 @@ fn should_pump(slot: &FrameSlot<CefEngine>) -> bool {
     let pending = slot.pending.lock().unwrap().is_some();
     let last = slot.last_frame_ms.load(Ordering::Relaxed);
     let recent = last != 0
-        && crate::engine::monotonic_ms().saturating_sub(last) < crate::engine::FRAME_PUMP_HANGOVER_MS;
+        && crate::engine::monotonic_ms().saturating_sub(last)
+            < crate::engine::FRAME_PUMP_HANGOVER_MS;
     if pending || recent {
         slot.pumping.store(true, Ordering::Relaxed);
         return true;
@@ -401,17 +393,17 @@ impl shader::Primitive for CefPrimitive {
             drop(last);
         }
         let want = (req_w, req_h);
-        let paint_tab = self.slot.paint_tab.load(std::sync::atomic::Ordering::Relaxed);
+        let paint_tab = self
+            .slot
+            .paint_tab
+            .load(std::sync::atomic::Ordering::Relaxed);
         let pending = {
             let mut guard = self.slot.pending.lock().unwrap();
             guard.take()
         };
         if let Some(pending) = pending {
             if pending.tab_id.0 == paint_tab
-                && crate::shader::size_matches(
-                    (pending.frame.width, pending.frame.height),
-                    want,
-                )
+                && crate::shader::size_matches((pending.frame.width, pending.frame.height), want)
             {
                 if let Some(imported) = pipeline.importer.import_into(
                     device,
@@ -484,5 +476,3 @@ impl shader::Pipeline for CefPipeline {
         }
     }
 }
-
-

@@ -16,8 +16,8 @@ use std::thread::JoinHandle;
 use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, Engine, FrameReceiver,
-    FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
+    FrameSlot, NavCmd, PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -47,7 +47,11 @@ pub struct CefFrame {
 /// Lives here (engine-specific) rather than in core.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum InputEvent {
-    PointerMove { x: i32, y: i32, modifiers: u32 },
+    PointerMove {
+        x: i32,
+        y: i32,
+        modifiers: u32,
+    },
     PointerButton {
         down: bool,
         x: i32,
@@ -86,18 +90,22 @@ pub enum InputEvent {
         selection_to: u32,
     },
     /// Commit composed text (OSR `ImeCommitText`).
-    ImeCommit { text: String },
+    ImeCommit {
+        text: String,
+    },
     /// Cancel the current composition (`ImeCancelComposition`).
     ImeCancel,
     /// Pointer left the OSR view (`send_mouse_move_event` with mouse_leave).
-    PointerLeave { x: i32, y: i32, modifiers: u32 },
+    PointerLeave {
+        x: i32,
+        y: i32,
+        modifiers: u32,
+    },
 }
 
 fn default_click_count() -> u32 {
     1
 }
-
-
 
 /// Engine handle held by the main thread. Owns the worker thread
 /// that runs CEF's message loop, the command channel into that
@@ -126,6 +134,8 @@ pub struct CefEngine {
     /// and a future selection bridge can fill it.
     clipboard_out: ClipboardHandle,
     ime: crate::engine::ImeHandle,
+    downloads: DownloadsHandle,
+    passkeys: PasskeysHandle,
 }
 
 impl Engine for CefEngine {
@@ -149,9 +159,8 @@ impl Engine for CefEngine {
         }
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
-        let mut app = BrowserCefApp::new(app_id);
-        let result =
-            cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
+        let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
+        let result = cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
         if result >= 0 {
             Some(ExitCode::from(result.clamp(0, 255) as u8))
         } else {
@@ -191,11 +200,16 @@ impl Engine for CefEngine {
             next_id: handles.next_id,
             clipboard_out: handles.clipboard,
             ime: handles.ime,
+            downloads: handles.downloads,
+            passkeys: handles.passkeys,
         }
     }
 
     fn alloc_tab_id(&self) -> TabId {
-        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        TabId(
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        )
     }
 
     fn cmd_sender(&self) -> Sender<Cmd<CefEngine>> {
@@ -220,6 +234,14 @@ impl Engine for CefEngine {
 
     fn ime_handle(&self) -> crate::engine::ImeHandle {
         self.ime.clone()
+    }
+
+    fn downloads_handle(&self) -> DownloadsHandle {
+        self.downloads.clone()
+    }
+
+    fn passkeys_handle(&self) -> PasskeysHandle {
+        self.passkeys.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -295,6 +317,10 @@ struct CefThreadState {
     pending_cmds: Arc<Mutex<Vec<Cmd<CefEngine>>>>,
     drain_posted: Arc<AtomicBool>,
     shutting_down: Cell<bool>,
+    /// Live CEF download cancel callbacks, keyed by download id.
+    download_cbs: RefCell<std::collections::HashMap<u32, cef::DownloadItemCallback>>,
+    /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
+    download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
 }
 
 /// Tabs to recreate after CEF recycle (new profile as root_cache_path).
@@ -390,9 +416,13 @@ pub(super) fn run_worker(
         pending_cmds: Arc::new(Mutex::new(Vec::new())),
         drain_posted: Arc::new(AtomicBool::new(false)),
         shutting_down: Cell::new(false),
+        download_cbs: RefCell::new(std::collections::HashMap::new()),
+        download_last: RefCell::new(std::collections::HashMap::new()),
     });
     CEF_STATE.with(|s| {
-        s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
+        s.set(state.clone())
+            .map_err(|_| ())
+            .expect("CEF_STATE set twice");
     });
 
     initialize_cef(app_id);
@@ -450,12 +480,35 @@ fn teardown_all_browsers(state: &CefThreadState) {
 
 // ── CEF App ───────────────────────────────────────────────────────
 
+cef::wrap_render_process_handler! {
+    pub struct BrowserRenderProcessHandler {}
+
+    impl RenderProcessHandler {
+        fn on_context_created(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _context: Option<&mut cef::V8Context>,
+        ) {
+            // Document-start: run before page scripts can snapshot
+            // navigator.credentials.get (Gemini Exchange does this).
+            #[cfg(feature = "bitwarden")]
+            inject_webauthn_frame(frame);
+        }
+    }
+}
+
 cef::wrap_app! {
     pub struct BrowserCefApp {
         app_id: &'static str,
+        render_process_handler: cef::RenderProcessHandler,
     }
 
     impl App {
+        fn render_process_handler(&self) -> Option<cef::RenderProcessHandler> {
+            Some(self.render_process_handler.clone())
+        }
+
         fn on_before_command_line_processing(
             &self,
             _process_type: Option<&CefString>,
@@ -892,6 +945,10 @@ cef::wrap_display_handler! {
             }
             #[cfg(feature = "bitwarden")]
             {
+                if let Some(origin) = msg.strip_prefix("__sola_webauthn_installed__") {
+                    tracing::info!(origin = %origin, "webauthn hook installed in frame");
+                    return 1;
+                }
                 const PREFIX: &str = "__sola_webauthn__";
                 if let Some(rest) = msg.strip_prefix(PREFIX) {
                     // Credential assembly breadcrumb from the polyfill.
@@ -899,37 +956,15 @@ cef::wrap_display_handler! {
                         tracing::info!(%detail, "webauthn page credential assembled");
                         return 1;
                     }
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
-                        let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
-                        let origin = v
-                            .get("origin")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let rp_id = v
-                            .get("rpId")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let public_key_json = v
-                            .get("publicKey")
-                            .cloned()
-                            .map(|pk| pk.to_string())
-                            .unwrap_or_else(|| "{}".into());
-                        tracing::info!(id, %origin, %rp_id, "webauthn intercept from page");
-                        crate::vault::passkey_bridge::push_from_page(
-                            crate::vault::PasskeyPageRequest {
-                                id,
-                                origin,
-                                rp_id,
-                                public_key_json,
-                            },
-                        );
-                    }
+                    handle_webauthn_payload(rest);
                     return 1; // suppress console noise
                 }
                 if let Some(detail) = msg.strip_prefix("__sola_webauthn_cred__") {
                     tracing::info!(detail = %detail.trim(), "webauthn page credential assembled");
+                    return 1;
+                }
+                if let Some(detail) = msg.strip_prefix("__sola_webauthn_resolve_err__") {
+                    tracing::warn!(detail = %detail.trim(), "webauthn page resolve failed");
                     return 1;
                 }
                 if let Some(rest) = msg.strip_prefix("__sola_vault_fill__:") {
@@ -970,29 +1005,313 @@ cef::wrap_load_handler! {
             }
         }
 
+        fn on_load_start(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _transition_type: cef::TransitionType,
+        ) {
+            #[cfg(feature = "bitwarden")]
+            inject_webauthn_frame(frame);
+        }
+
         fn on_load_end(
             &self,
-            browser: Option<&mut cef::Browser>,
+            _browser: Option<&mut cef::Browser>,
             frame: Option<&mut cef::Frame>,
             _http_status_code: ::std::os::raw::c_int,
         ) {
             #[cfg(feature = "bitwarden")]
-            {
-                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
-                if !is_main {
-                    return;
-                }
-                let Some(frame) = frame else { return };
-                let code: cef::CefString =
-                    crate::vault::inject_webauthn_intercept_script().into();
-                frame.execute_java_script(Some(&code), None, 0);
-            }
-            let _ = browser;
+            inject_webauthn_frame(frame);
         }
     }
 }
 
+#[cfg(feature = "bitwarden")]
+fn inject_webauthn_frame(frame: Option<&mut cef::Frame>) {
+    let Some(frame) = frame else { return };
+    // Every frame — Google sign-in (accounts.google.com iframe) and
+    // Gemini Exchange 2FA both call WebAuthn off the top-level page.
+    let url = cef_string_userfree_display(&frame.url());
+    tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
+    let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
+    frame.execute_java_script(Some(&code), None, 0);
+}
+
+#[cfg(feature = "bitwarden")]
+fn handle_webauthn_payload(raw: &str) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        tracing::warn!(payload = %raw, "webauthn: payload not json");
+        return;
+    };
+    let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+    let action = v
+        .get("action")
+        .and_then(|x| x.as_str())
+        .unwrap_or("get")
+        .to_string();
+    let origin = v
+        .get("origin")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let rp_id = v
+        .get("rpId")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let public_key_json = v
+        .get("publicKey")
+        .cloned()
+        .map(|pk| pk.to_string())
+        .unwrap_or_else(|| "{}".into());
+    // One emit per (id, origin). Console + leftover beacon used to
+    // fan the same click into chrome several times.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(u64, String)>> =
+            std::cell::RefCell::new(None);
+    }
+    let dup = LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        if last.as_ref().is_some_and(|(i, o)| *i == id && *o == origin) {
+            true
+        } else {
+            *last = Some((id, origin.clone()));
+            false
+        }
+    });
+    if dup {
+        tracing::debug!(id, %origin, "webauthn intercept duplicate dropped");
+        return;
+    }
+    tracing::info!(id, %origin, %rp_id, %action, "webauthn intercept from page");
+    let ev = crate::cef::ipc::WebAuthnEvent {
+        id,
+        action,
+        origin,
+        rp_id,
+        public_key_json,
+    };
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::WebAuthn(ev));
+    }
+}
+
+const WEBAUTHN_BEACON: &str = "https://sola.invalid/__sola_webauthn__?";
+
+fn take_webauthn_beacon(url: &str) -> Option<String> {
+    let rest = url.strip_prefix(WEBAUTHN_BEACON)?;
+    Some(percent_decode(rest))
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut out = Vec::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = &s[i + 1..i + 3];
+            if let Ok(v) = u8::from_str_radix(hex, 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        } else if b[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn eval_js_all_frames(browser: &cef::Browser, script: &str) {
+    use cef::ImplBrowser;
+    let code: cef::CefString = script.into();
+    if let Some(frame) = browser.main_frame() {
+        frame.execute_java_script(Some(&code), None, 0);
+    }
+    if let Some(frame) = browser.focused_frame() {
+        frame.execute_java_script(Some(&code), None, 0);
+    }
+    let mut ids = cef::CefStringList::new();
+    browser.frame_identifiers(Some(&mut ids));
+    for id in ids {
+        let ident = cef::CefString::from(id.as_str());
+        if let Some(frame) = browser.frame_by_identifier(Some(&ident)) {
+            frame.execute_java_script(Some(&code), None, 0);
+        }
+    }
+}
+
+// ── DownloadHandler ───────────────────────────────────────────────
+
+cef::wrap_download_handler! {
+    pub struct BrowserDownloadHandler {}
+
+    impl DownloadHandler {
+        fn can_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _url: Option<&cef::CefString>,
+            _request_method: Option<&cef::CefString>,
+        ) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn on_before_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            suggested_name: Option<&cef::CefString>,
+            callback: Option<&mut cef::BeforeDownloadCallback>,
+        ) -> ::std::os::raw::c_int {
+            use cef::{ImplBeforeDownloadCallback, ImplDownloadItem};
+            let Some(item) = download_item else { return 1 };
+            if item.is_valid() == 0 {
+                return 1;
+            }
+            let suggested = suggested_name
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
+            let dest = crate::downloads::unique_dest(&suggested);
+            let dest_s = dest.to_string_lossy().into_owned();
+            if let Some(cb) = callback {
+                let path = cef::CefString::from(dest_s.as_str());
+                cb.cont(Some(&path), 0);
+            }
+            let ev = download_event_from_item(
+                item,
+                crate::cef::ipc::DownloadPhase::Progress,
+                Some(&dest_s),
+            );
+            emit_download(ev);
+            1
+        }
+
+        fn on_download_updated(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            callback: Option<&mut cef::DownloadItemCallback>,
+        ) {
+            use crate::cef::ipc::DownloadPhase;
+            use cef::ImplDownloadItem;
+            let Some(item) = download_item else { return };
+            if item.is_valid() == 0 {
+                return;
+            }
+            let id = item.id();
+            let state = cef_state();
+            if let Some(cb) = callback {
+                state.download_cbs.borrow_mut().insert(id, cb.clone());
+            }
+            let phase = if item.is_complete() != 0 {
+                DownloadPhase::Complete
+            } else if item.is_canceled() != 0 {
+                DownloadPhase::Canceled
+            } else if item.is_interrupted() != 0 {
+                DownloadPhase::Failed
+            } else {
+                DownloadPhase::Progress
+            };
+            if phase == DownloadPhase::Progress && !should_emit_progress(&state, id, item.percent_complete()) {
+                return;
+            }
+            if phase != DownloadPhase::Progress {
+                state.download_cbs.borrow_mut().remove(&id);
+                state.download_last.borrow_mut().remove(&id);
+            }
+            emit_download(download_event_from_item(item, phase, None));
+        }
+    }
+}
+
+use crate::cef::ipc::{DownloadEvent, DownloadPhase};
+
+fn download_event_from_item(
+    item: &mut cef::DownloadItem,
+    state: DownloadPhase,
+    path_override: Option<&str>,
+) -> DownloadEvent {
+    use cef::ImplDownloadItem;
+    let path = path_override
+        .map(str::to_string)
+        .unwrap_or_else(|| cef_string_userfree_display(&item.full_path()));
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
+    let filename = if filename.is_empty() {
+        crate::downloads::sanitize_filename("download")
+    } else {
+        filename
+    };
+    DownloadEvent {
+        id: item.id(),
+        filename,
+        path,
+        url: cef_string_userfree_display(&item.url()),
+        received: item.received_bytes(),
+        total: item.total_bytes(),
+        percent: item.percent_complete(),
+        state,
+    }
+}
+
+fn should_emit_progress(state: &CefThreadState, id: u32, percent: i32) -> bool {
+    let now = crate::engine::monotonic_ms();
+    let mut last = state.download_last.borrow_mut();
+    match last.get(&id).copied() {
+        Some((t, p)) if now.saturating_sub(t) < 150 && (percent < 0 || (percent - p).abs() < 2) => {
+            false
+        }
+        _ => {
+            last.insert(id, (now, percent));
+            true
+        }
+    }
+}
+
+fn emit_download(ev: DownloadEvent) {
+    let state = cef_state();
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Download(ev));
+    }
+}
+
 // ── Client ────────────────────────────────────────────────────────
+
+cef::wrap_request_handler! {
+    pub struct BrowserRequestHandler {}
+
+    impl RequestHandler {
+        fn on_before_browse(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            request: Option<&mut cef::Request>,
+            _user_gesture: ::std::os::raw::c_int,
+            _is_redirect: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(req) = request else { return 0 };
+            use cef::ImplRequest;
+            let url = cef_string_userfree_display(&req.url());
+            if let Some(payload) = take_webauthn_beacon(&url) {
+                tracing::info!(len = payload.len(), "webauthn beacon (browse)");
+                #[cfg(feature = "bitwarden")]
+                handle_webauthn_payload(&payload);
+                return 1;
+            }
+            0
+        }
+    }
+}
 
 cef::wrap_client! {
     pub struct BrowserClient {
@@ -1000,6 +1319,8 @@ cef::wrap_client! {
         pub life_span_handler: cef::LifeSpanHandler,
         pub display_handler: cef::DisplayHandler,
         pub load_handler: cef::LoadHandler,
+        pub download_handler: cef::DownloadHandler,
+        pub request_handler: cef::RequestHandler,
     }
 
     impl Client {
@@ -1017,6 +1338,14 @@ cef::wrap_client! {
 
         fn load_handler(&self) -> Option<cef::LoadHandler> {
             Some(self.load_handler.clone())
+        }
+
+        fn download_handler(&self) -> Option<cef::DownloadHandler> {
+            Some(self.download_handler.clone())
+        }
+
+        fn request_handler(&self) -> Option<cef::RequestHandler> {
+            Some(self.request_handler.clone())
         }
     }
 }
@@ -1261,7 +1590,11 @@ cef::wrap_task! {
 /// active tab here — no side-channel.
 fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
     match cmd {
-        Cmd::Resize { width, height, scale: _ } => {
+        Cmd::Resize {
+            width,
+            height,
+            scale: _,
+        } => {
             let prev = *state.size.lock().unwrap();
             if prev == (width, height) {
                 // Same widget size — do not was_resized/invalidate. A
@@ -1339,12 +1672,12 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::EvaluateJs(script) => {
-            // Minimal glue for vault fill / chrome inject — not a CEF feature push.
+            // Vault fill + WebAuthn resolve. Google login (Gemini, etc.)
+            // runs credentials.get in an accounts.google.com iframe — the
+            // host can exec JS in every frame (no SOP). Main-only left
+            // Chromium's native passkey window to open.
             if let Some(tab) = active_tab(state) {
-                if let Some(frame) = tab.browser.main_frame() {
-                    let code: cef::CefString = script.as_str().into();
-                    frame.execute_java_script(Some(&code), None, 0);
-                }
+                eval_js_all_frames(&tab.browser, &script);
             }
         }
         Cmd::OpenTab { id, url, title } => {
@@ -1376,6 +1709,13 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::DropParkedProfile { profile_id } => {
             drop_parked_profile(state, &profile_id);
         }
+        Cmd::CancelDownload { id, .. } => {
+            if let Some(cb) = state.download_cbs.borrow_mut().remove(&id) {
+                use cef::ImplDownloadItemCallback;
+                cb.cancel();
+            }
+        }
+        Cmd::HelperDied { .. } => {}
         Cmd::Quit => {
             state.shutting_down.set(true);
             // Close browsers first so network/cookie backends settle,
@@ -1414,10 +1754,7 @@ fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>>
     tab_state_by_id(state, state.active.get())
 }
 
-fn tab_state_by_id(
-    state: &CefThreadState,
-    id: TabId,
-) -> Option<std::cell::Ref<'_, CefTabState>> {
+fn tab_state_by_id(state: &CefThreadState, id: TabId) -> Option<std::cell::Ref<'_, CefTabState>> {
     let tabs = state.tabs.borrow();
     let idx = tabs.iter().position(|t| t.id == id)?;
     Some(std::cell::Ref::map(tabs, |v| &v[idx]))
@@ -1732,8 +2069,8 @@ fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
 
 #[allow(dead_code)]
 fn cef_evict_parks(state: &CefThreadState) {
-    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
     use crate::engine::TabInfo;
+    use crate::tab_cache::{WorkspaceSnapshot, eviction_victims};
     use std::collections::HashMap;
     use std::time::Instant;
 
@@ -1786,8 +2123,16 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let life_span_handler = BrowserLifeSpanHandler::new();
     let display_handler = BrowserDisplayHandler::new();
     let load_handler = BrowserLoadHandler::new();
-    let mut client =
-        BrowserClient::new(render_handler, life_span_handler, display_handler, load_handler);
+    let download_handler = BrowserDownloadHandler::new();
+    let request_handler = BrowserRequestHandler::new();
+    let mut client = BrowserClient::new(
+        render_handler,
+        life_span_handler,
+        display_handler,
+        load_handler,
+        download_handler,
+        request_handler,
+    );
 
     let url_c = cef::CefString::from(initial_url.as_str());
     // Global context: Settings.cache_path is the active profile cef dir.
@@ -1910,7 +2255,11 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
                 // Diagnostic for ⌘/Ctrl-click → new tab: confirms which
                 // modifier bits CEF actually receives (CONTROL = 0x4 must be
                 // set for Chromium to raise the new-tab popup on Linux).
-                tracing::debug!(button, modifiers = format_args!("{modifiers:#x}"), "pointer button down");
+                tracing::debug!(
+                    button,
+                    modifiers = format_args!("{modifiers:#x}"),
+                    "pointer button down"
+                );
             }
             let me = MouseEvent { x, y, modifiers };
             let bt = match button {
@@ -1924,7 +2273,14 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             let n = click_count.max(1) as i32;
             host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, n);
         }
-        InputEvent::Scroll { x, y, delta_x, delta_y, precise, modifiers } => {
+        InputEvent::Scroll {
+            x,
+            y,
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        } => {
             let mut me = MouseEvent { x, y, modifiers };
             if precise {
                 me.modifiers |= cef::sys::cef_event_flags_t::EVENTFLAG_PRECISION_SCROLLING_DELTA.0;
@@ -1949,7 +2305,12 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
         InputEvent::ImeCancel => {
             host.ime_cancel_composition();
         }
-        InputEvent::Key { down, vk, character, modifiers } => {
+        InputEvent::Key {
+            down,
+            vk,
+            character,
+            modifiers,
+        } => {
             // RAWKEYDOWN / KEYUP carry the VK code. CHAR carries
             // the produced text character (post-shift). For
             // printable input we send RAWKEYDOWN then CHAR on the
@@ -2061,7 +2422,7 @@ fn initialize_cef(app_id: &'static str) {
 
     let args = cef::args::Args::new();
     let main_args = args.as_main_args();
-    let mut app = BrowserCefApp::new(app_id);
+    let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
 
     let rc = cef::initialize(
         Some(main_args),

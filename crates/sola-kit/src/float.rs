@@ -88,6 +88,11 @@ impl FloatState {
     pub fn is_floating_any(&self) -> bool {
         self.ids_by_title.values().any(|id| self.floating.contains(id))
     }
+
+    /// Any compositor `window_id` belonging to this app, if known.
+    pub fn any_window_id(&self) -> Option<u32> {
+        self.ids_by_title.values().copied().next()
+    }
 }
 
 /// Theme while floating: clear `background.base` so rounded corners show

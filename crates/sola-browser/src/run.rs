@@ -21,13 +21,12 @@ use std::process::ExitCode;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use iced::Subscription;
 use iced::futures::{SinkExt, Stream, StreamExt as _};
 use iced::stream;
-use iced::Subscription;
 use iced_futures::subscription::{self, EventStream, Recipe};
 
-
-use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
+use crate::app::{App, DEFAULT_URL, Msg, VIEW_H, VIEW_W};
 use crate::engine::{ActiveHandle, Engine, FrameReceiver, FrameSlot};
 
 // ---------------------------------------------------------------------------
@@ -148,7 +147,11 @@ pub fn frame_subscription<E: Engine>(
     slot: Arc<FrameSlot<E>>,
     active: ActiveHandle,
 ) -> Subscription<Msg> {
-    subscription::from_recipe(FrameStreamRecipe::<E> { frames, slot, active })
+    subscription::from_recipe(FrameStreamRecipe::<E> {
+        frames,
+        slot,
+        active,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +175,31 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         return code;
     }
 
+    // First non-flag argv token only — never treat `--password-store=…` /
+    // CEF switches as open-URL (they become `https://--…` tabs otherwise).
+    let argv = std::env::args()
+        .skip(1)
+        .find(|a| crate::session::is_cli_open_url(a));
+
+    // One iced window. A second process (MIME / solactl open / launcher)
+    // used to reap the live CEF helpers and leave a blank parked frame.
+    let _chrome_lock = match crate::instance::claim() {
+        Ok(lock) => lock,
+        Err(()) => match crate::instance::handoff(argv.as_deref()) {
+            Ok(()) => {
+                tracing::info!("existing chrome accepted handoff — this process exits");
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "existing chrome is up but handoff failed — not starting a second window"
+                );
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+
     // Wayland/GPU env, fonts, and watch_own_binary (re-exec on
     // /opt/sola/bin/<app> change — same as other kit apps). Without this
     // the browser never auto-restarts after `cargo make install`.
@@ -179,7 +207,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
 
     // D8: registry + active profile dirs; wipe pre-profile flat data.
     let _ = crate::profiles::ensure_active();
-    // Kill leftover two-window fleet / stale helpers from the last binary.
+    // Only orphan helpers / pre-exec children — never another chrome's engines.
     crate::cef::host::reap_stale_browser_procs();
     let app_id = base_id;
     tracing::info!(
@@ -191,11 +219,6 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     #[cfg(feature = "bitwarden")]
     crate::vault::passkey_bridge::install();
 
-    // First non-flag argv token only — never treat `--password-store=…` /
-    // CEF switches as open-URL (they become `https://--…` tabs otherwise).
-    let argv = std::env::args()
-        .skip(1)
-        .find(|a| crate::session::is_cli_open_url(a));
     let (boot_tabs, boot_active, sidebar_w) =
         crate::session::BrowserSession::load().bootstrap(argv, DEFAULT_URL);
     tracing::info!(

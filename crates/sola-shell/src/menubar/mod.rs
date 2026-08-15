@@ -114,16 +114,34 @@ mod tests {
     #[test]
     fn flash_generation_cancels_stale_expiry() {
         let mut mb = MenubarState::new();
-        let first = mb.begin_flash(FlashTarget { is_system: false, index: 1 });
-        assert_eq!(mb.flash, Some(FlashTarget { is_system: false, index: 1 }));
+        let first = mb.begin_flash(FlashTarget {
+            is_system: false,
+            index: 1,
+        });
+        assert_eq!(
+            mb.flash,
+            Some(FlashTarget {
+                is_system: false,
+                index: 1
+            })
+        );
 
         // A second flash supersedes the first; the first's expiry is now stale.
-        let second = mb.begin_flash(FlashTarget { is_system: true, index: 0 });
+        let second = mb.begin_flash(FlashTarget {
+            is_system: true,
+            index: 0,
+        });
         assert_ne!(first, second);
 
         // Stale expiry (from the superseded flash) must NOT clear the live one.
         mb.expire_flash(first);
-        assert_eq!(mb.flash, Some(FlashTarget { is_system: true, index: 0 }));
+        assert_eq!(
+            mb.flash,
+            Some(FlashTarget {
+                is_system: true,
+                index: 0
+            })
+        );
 
         // The current generation's expiry clears it.
         mb.expire_flash(second);

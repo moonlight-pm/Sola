@@ -95,7 +95,8 @@ crates/
   sola-agent/          # Coding agent (iced + ACP / Grok leader) — not Workspaces
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
-  sola-preview/        # Image preview / selection capture
+  sola-preview/        # Simple image viewer (argv)
+  sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
   sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
 nix/                   # NixOS module (Shape 1) + image/ISO profiles
@@ -330,8 +331,10 @@ defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
 caption, checkbox/toggle styles), `icon`, `popover`, `sidebar`, `split`,
 `swatch`, `text`, `text_input` (fork — style/padding only; see module docs),
 `toolbar`. Prefer `button::labeled` / `labeled_sm` and named `PAD_CONTROL*`
-pads. Each has a storybook page under `src/storybook/pages/`. Grow this
-surface only as real apps need shared pieces — no speculative widgets.
+pads. Each has a storybook page under `src/storybook/pages/`. **Always
+update that page in the same change** as the component (see
+`.grok/rules/kit-storybook-pages.md`). Grow this surface only as real
+apps need shared pieces — no speculative widgets.
 
 ## sola-shell (the Iced desktop shell)
 

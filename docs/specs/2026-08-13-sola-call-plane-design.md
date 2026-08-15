@@ -106,11 +106,11 @@ These are real follow-ups. Not v1 blockers.
 | **`LaunchResult`** | Leftover reply on the bus. `LaunchApp` stays an announcement (launcher → session). Session already replies on the call for `session.launch`. Shell “Opening…” toast still listens to `LaunchResult`. Move that toast to a call or keep the fact. |
 | **`CloseApp` as call** | Meta+Q is still a bus poke. Could be `session.close` with a real error. |
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |
-| **`open` single-instance** | `open` / link clicks spawn sola-browser; a second process may start if the browser is already up. Prefer bus `OpenUrl` tab handoff + singleton later. |
+| **`open` single-instance** | **Done on browser-polish (2026-08-15):** `chrome.sock` handoff; live chrome gets the URL; shell only spawns if chrome is down. |
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
 | **Monitor UI** | Show live owners/methods (needs catalog sticky or a call). |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
-| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws` on this branch. |
+| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws` on master (unsmoked). |
 
 **Dropped in this slice (were fake request/reply on the bus):** `Evaluate` / `Evaluation`, `CaptureScreen` / `Screenshot`, `SimulatePointer` / `SimulateKey`. Payload types `CaptureScreenPayload`, `CaptureTarget`, `PointerAction`, `PointerButton` remain for the call path.
 

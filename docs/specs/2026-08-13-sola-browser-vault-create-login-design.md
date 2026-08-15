@@ -56,7 +56,9 @@ Save error → stay on the form with the message. Do not fill.
 
 ## Out of scope
 
-Edit/delete, lock, folders, orgs, notes, generator options, passkey **create**, per-profile vault.
+Edit/delete, lock, folders, orgs, notes, generator options, passkey **create**,
+per-profile vault, **create-card**. Cards **fill** is a sibling chrome surface
+(separate toolbar button + panel), not this freeze.
 
 ## Implementation status
 

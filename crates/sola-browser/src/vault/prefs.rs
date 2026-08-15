@@ -3,8 +3,8 @@
 //! D8: `~/.config/sola/browser/vault.json` via [`JsonConfigIn`] (shared
 //! across profiles). Never put master passwords, tokens, or OTP here.
 
-use sola_core::config::JsonConfigIn;
 use serde::{Deserialize, Serialize};
+use sola_core::config::JsonConfigIn;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultPrefs {

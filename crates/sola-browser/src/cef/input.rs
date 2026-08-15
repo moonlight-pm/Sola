@@ -85,9 +85,7 @@ pub fn scroll_delta_to_cef(d: mouse::ScrollDelta) -> (i32, i32, bool) {
         // convention Chromium follows internally), NOT raw pixels. Sending
         // ~20 made one notch scroll only ~1/6 of a step, hence the sluggish
         // feel; one line → one notch.
-        mouse::ScrollDelta::Lines { x, y } => {
-            ((x * 120.0) as i32, (y * 120.0) as i32, false)
-        }
+        mouse::ScrollDelta::Lines { x, y } => ((x * 120.0) as i32, (y * 120.0) as i32, false),
         // Precise (high-resolution / touchpad) deltas are already pixel
         // amounts; CEF consumes them directly when the precision flag is set.
         mouse::ScrollDelta::Pixels { x, y } => (x as i32, y as i32, true),
@@ -246,26 +244,19 @@ pub fn cef_cursor_to_kind(cursor_type: cef::CursorType) -> CursorKind {
         C::CT_GRAB => CursorKind::Grab,
         C::CT_GRABBING => CursorKind::Grabbing,
         C::CT_MOVE | C::CT_MIDDLEPANNING => CursorKind::Move,
-        C::CT_EASTRESIZE
-        | C::CT_WESTRESIZE
-        | C::CT_EASTWESTRESIZE
-        | C::CT_COLUMNRESIZE => CursorKind::ResizingHorizontally,
-        C::CT_NORTHRESIZE
-        | C::CT_SOUTHRESIZE
-        | C::CT_NORTHSOUTHRESIZE
-        | C::CT_ROWRESIZE => CursorKind::ResizingVertically,
+        C::CT_EASTRESIZE | C::CT_WESTRESIZE | C::CT_EASTWESTRESIZE | C::CT_COLUMNRESIZE => {
+            CursorKind::ResizingHorizontally
+        }
+        C::CT_NORTHRESIZE | C::CT_SOUTHRESIZE | C::CT_NORTHSOUTHRESIZE | C::CT_ROWRESIZE => {
+            CursorKind::ResizingVertically
+        }
         _ => CursorKind::Default,
     }
 }
 
 // ── helpers used by shader::Program::update ─────────────────────
 
-pub fn pointer_move(
-    x: i32,
-    y: i32,
-    held: u32,
-    kbd_mods: u32,
-) -> InputEvent {
+pub fn pointer_move(x: i32, y: i32, held: u32, kbd_mods: u32) -> InputEvent {
     InputEvent::PointerMove {
         x,
         y,
@@ -359,10 +350,7 @@ pub fn utf8_to_utf16_index(text: &str, byte: usize) -> u32 {
         .unwrap_or(0)
 }
 
-pub fn ime_set_composition(
-    text: String,
-    selection: Option<std::ops::Range<usize>>,
-) -> InputEvent {
+pub fn ime_set_composition(text: String, selection: Option<std::ops::Range<usize>>) -> InputEvent {
     let (from, to) = match selection {
         Some(r) => (
             utf8_to_utf16_index(&text, r.start),
@@ -460,8 +448,13 @@ mod tests {
 
     #[test]
     fn translate_key_sends_char_for_period() {
-        let ev = translate_key(true, &Key::Character(".".into()), Some('.'), Modifiers::empty())
-            .expect("period must produce a key event");
+        let ev = translate_key(
+            true,
+            &Key::Character(".".into()),
+            Some('.'),
+            Modifiers::empty(),
+        )
+        .expect("period must produce a key event");
         match ev {
             InputEvent::Key {
                 down,
@@ -483,9 +476,7 @@ mod tests {
         let ev = translate_key(true, &Key::Unidentified, Some('.'), Modifiers::empty())
             .expect("text-only period must not be dropped");
         match ev {
-            InputEvent::Key {
-                character, vk, ..
-            } => {
+            InputEvent::Key { character, vk, .. } => {
                 assert_eq!(character, Some('.' as u16));
                 assert_eq!(vk, '.' as u32);
             }

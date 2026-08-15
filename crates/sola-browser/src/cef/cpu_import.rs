@@ -59,7 +59,8 @@ pub fn upload(
     staging: &mut Vec<u8>,
     force_full: bool,
 ) {
-    let dirty = if force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height)
+    let dirty = if force_full
+        || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height)
     {
         None
     } else {

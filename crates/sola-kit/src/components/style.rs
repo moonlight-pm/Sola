@@ -118,23 +118,17 @@ pub fn primary_fill(accent: Color) -> Background {
     linear_bg(180.0, &[(0.0, mix_white(accent, 0.08)), (1.0, accent)])
 }
 
-/// North-star hero panel — selection-tinted diagonal into canvas
-/// (`linear-gradient(160deg, selection@55%+raised, raised 55%, bg)`).
-pub fn hero_fill(bg: Color, raised: Color, selection: Color) -> Background {
-    let top = mix(selection, raised, 0.55);
-    linear_bg(160.0, &[(0.0, top), (0.55, raised), (1.0, bg)])
+/// Quiet panel face — same whisper as [`card_fill`]. Kept as a named
+/// helper so storybook desks share one fill. Accent/selection are unused:
+/// mixing neon toward graphite produced the muddy “dark cyan” we dropped.
+pub fn hero_fill(_bg: Color, raised: Color, _selection: Color) -> Background {
+    card_fill(raised)
 }
 
-/// Control-stage product panel — cool raised → canvas with a slight
-/// cool lift at the top (radial glow approximated by a lighter start).
-pub fn stage_fill(bg: Color, raised: Color, accent: Color) -> Background {
-    let cool = mix(Color::from_rgb(0.102, 0.133, 0.188), raised, 0.20); // #1a2230-ish into raised
-    let top = mix(cool, raised, 0.80);
-    let glow_start = mix(accent, top, 0.12);
-    linear_bg(
-        165.0,
-        &[(0.0, glow_start), (0.45, raised), (1.0, bg)],
-    )
+/// Product-panel face. Subtle top highlight only — no diagonal wash,
+/// no accent mix.
+pub fn stage_fill(_bg: Color, raised: Color, _accent: Color) -> Background {
+    card_fill(raised)
 }
 
 /// Optional soft canvas wash — **not** used as the storybook page fill.

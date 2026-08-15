@@ -399,6 +399,16 @@ pub struct BrowserTab {
     pub session_state: Option<String>,
 }
 
+/// Open paint tabs. Paths only — unsaved buffers are not persisted.
+/// Missing files are skipped on restore and pruned on the next emit.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaintSession {
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub selected: Option<PathBuf>,
+}
+
 /// Browser-wide singleton config. Headroom for future fields (default
 /// search engine, zoom default, etc.) without breaking the schema.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -470,13 +480,32 @@ pub enum CaptureTarget {
     },
 }
 
-/// Ask sola-preview (or a future image viewer) to open a file.
+/// Ask an image app to open a file.
 /// Ephemeral — same pattern as [`OpenUrlRequest`].
+///
+/// Default dest (`app_id` missing) is **sola-paint** (MIME / `solactl open`).
+/// Screenshots target **sola-preview** by setting `app_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenImageRequest {
     pub path: PathBuf,
     /// When true, the viewer should raise / take focus if it can.
     pub activate: bool,
+    /// When set, only this `app_id` consumes the open. `None` means the
+    /// default image dest (`sola-paint`).
+    #[serde(default)]
+    pub app_id: Option<String>,
+}
+
+impl OpenImageRequest {
+    /// App that should open this path.
+    pub fn target_app(&self) -> &str {
+        self.app_id.as_deref().unwrap_or("sola-paint")
+    }
+
+    /// True when `app` should handle this request.
+    pub fn for_app(&self, app: &str) -> bool {
+        self.target_app() == app
+    }
 }
 
 /// Pointer action for compositor input (call plane, not a bus topic).
@@ -660,8 +689,13 @@ define_topics! {
     // Browser
     OpenUrl(OpenUrlRequest),
 
-    // Image viewer (shell → sola-preview). Ephemeral; cold-start uses
-    // LaunchApp with a path arg instead.
+    // Paint tab strip. Singleton namespace so open/close does not churn
+    // state.yaml. Paths that no longer exist are skipped on restore.
+    #[persistent(namespace = "paint")]
+    PaintSession(PaintSession),
+
+    // Image open. Ephemeral; default dest is sola-paint. Screenshots
+    // set `app_id` to sola-preview. Cold-start uses LaunchApp + path.
     OpenImage(OpenImageRequest),
 
     // Menubar toast. Ephemeral; shell shows `text` and expires it.
@@ -675,6 +709,43 @@ define_topics! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paint_session_roundtrips_via_yaml() {
+        let session = PaintSession {
+            paths: vec![PathBuf::from("/tmp/a.png"), PathBuf::from("/tmp/b.jpg")],
+            selected: Some(PathBuf::from("/tmp/b.jpg")),
+        };
+        let topic = Topic::PaintSession(session.clone());
+        let value = topic
+            .to_yaml_value()
+            .expect("PaintSession is persistent");
+        let restored = Topic::from_yaml_section(TopicKind::PaintSession, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::PaintSession(back) => assert_eq!(back, session),
+            other => panic!("expected PaintSession, got {other:?}"),
+        }
+    }
+
+    fn open_image_defaults_to_paint() {
+        let paint = OpenImageRequest {
+            path: PathBuf::from("/tmp/a.png"),
+            activate: true,
+            app_id: None,
+        };
+        assert_eq!(paint.target_app(), "sola-paint");
+        assert!(paint.for_app("sola-paint"));
+        assert!(!paint.for_app("sola-preview"));
+
+        let preview = OpenImageRequest {
+            path: PathBuf::from("/tmp/shot.png"),
+            activate: false,
+            app_id: Some("sola-preview".into()),
+        };
+        assert!(preview.for_app("sola-preview"));
+        assert!(!preview.for_app("sola-paint"));
+    }
 
     #[test]
     fn unit_topic_roundtrip() {

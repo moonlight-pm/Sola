@@ -15,8 +15,8 @@ pub mod launcher;
 pub mod media;
 pub mod menu;
 pub mod menubar;
-pub mod selection;
 mod screenshot;
+pub mod selection;
 pub mod stats;
 pub mod switcher;
 pub mod zoning;
@@ -66,11 +66,10 @@ fn main() -> iced::Result {
     // Use iced::daemon so we can open multiple windows and dispatch view()
     // per window::Id.  The daemon opens no default window; our boot task
     // opens the menubar immediately.
-    let iced_daemon =
-        iced::daemon(app::Shell::boot, app::Shell::update, app::Shell::view)
-            .title(app::Shell::title)
-            .subscription(app::Shell::subscription)
-            .theme(app::Shell::theme)
-            .default_font(INTER);
+    let iced_daemon = iced::daemon(app::Shell::boot, app::Shell::update, app::Shell::view)
+        .title(app::Shell::title)
+        .subscription(app::Shell::subscription)
+        .theme(app::Shell::theme)
+        .default_font(INTER);
     iced_daemon.run()
 }

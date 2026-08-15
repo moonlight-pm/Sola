@@ -112,7 +112,6 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-
     /// Diff each known window's float state against what was last published,
     /// returning `(window_id, floating)` for every change so the caller can
     /// emit `Topic::WindowFloating`. A window that has vanished from `known`
@@ -270,11 +269,7 @@ impl ZoningState {
     ///
     /// No-op when the window was already processed or the app has a saved
     /// zone (use [`apply_config_zone`] for those).
-    pub fn ensure_default_float(
-        &mut self,
-        app_id: &str,
-        window_id: u32,
-    ) -> Option<FrameUpdate> {
+    pub fn ensure_default_float(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
         if self.config_applied.contains(&window_id) {
             return None;
         }
@@ -565,7 +560,6 @@ fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> Fr
     }
 }
 
-
 /// Default frame for a freshly-floated window: the usable area (below the
 /// menubar) inset by `FLOAT_MARGIN` on every edge, so the window sits
 /// centered with a uniform margin. Used when a float has no remembered
@@ -634,7 +628,10 @@ mod tests {
 
     fn state_with_output(w: i32, h: i32) -> ZoningState {
         let mut s = ZoningState::new();
-        s.set_output_size(&OutputGeometry { width: w, height: h });
+        s.set_output_size(&OutputGeometry {
+            width: w,
+            height: h,
+        });
         s
     }
 
@@ -850,17 +847,26 @@ mod tests {
         let frame = s.handle_key(KeyCode::KP_6.raw(), Some(7));
         assert!(frame.is_some());
         // External apps now persist their zone (Topic::Zones), same as sola-*.
-        assert!(s.take_zones_update().is_some(), "external app must dirty zones");
+        assert!(
+            s.take_zones_update().is_some(),
+            "external app must dirty zones"
+        );
 
         // …and the saved zone re-applies to a fresh window of that app, so a
         // relaunched external app lands back where it was.
         let reapplied = s.apply_config_zone("helium", 8);
-        assert!(reapplied.is_some(), "saved external zone must re-apply on new window");
+        assert!(
+            reapplied.is_some(),
+            "saved external zone must re-apply on new window"
+        );
     }
 
     #[test]
     fn kp_multiply_maps_to_float() {
-        assert_eq!(zone_for_keycode(KeyCode::KP_MULTIPLY.raw()), Some(Zone::Float));
+        assert_eq!(
+            zone_for_keycode(KeyCode::KP_MULTIPLY.raw()),
+            Some(Zone::Float)
+        );
     }
 
     #[test]
@@ -904,7 +910,10 @@ mod tests {
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
             .expect("Float must emit the default inset frame");
         // Centered inset: 50px margin per edge, below the 28px menubar.
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 1820, 952));
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (50, 78, 1820, 952)
+        );
         assert!(!frame.fullscreen);
         // And the assignment is recorded + persisted.
         assert_eq!(s.window_zones.get(&42).copied(), Some(Zone::Float));
@@ -928,9 +937,7 @@ mod tests {
                 height: 600,
             },
         );
-        assert!(s
-            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
-            .is_none());
+        assert!(s.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7)).is_none());
         // Geometry and zone map untouched; no Zones dirty bit.
         assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
         let g = s.float_geometry.get("sola-settings").expect("kept");
@@ -940,9 +947,7 @@ mod tests {
         s.set_focused("UnrealEditor".to_string());
         s.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
             .expect("first float emits");
-        assert!(s
-            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
-            .is_none());
+        assert!(s.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42)).is_none());
     }
 
     #[test]
@@ -1057,19 +1062,31 @@ mod tests {
     #[test]
     fn float_with_saved_geometry_restores_a_frame() {
         let mut z = ZoningState::new();
-        z.set_output_size(&OutputGeometry { width: 5120, height: 2160 });
+        z.set_output_size(&OutputGeometry {
+            width: 5120,
+            height: 2160,
+        });
         z.set_focused("UnrealEditor".to_string());
         z.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(3)); // float it (records Zone::Float)
         z.float_geometry.insert(
             "UnrealEditor".into(),
-            FloatGeometry { app_id: "UnrealEditor".into(), x: 100, y: 50, width: 1280, height: 800 },
+            FloatGeometry {
+                app_id: "UnrealEditor".into(),
+                x: 100,
+                y: 50,
+                width: 1280,
+                height: 800,
+            },
         );
         // config_applied was set by handle_key for window 3; restore targets a
         // *fresh* window (relaunch → new window_id), so use a different id.
         let frame = z
             .apply_config_zone("UnrealEditor", 9)
             .expect("saved geometry → restore frame");
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (100, 50, 1280, 800));
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (100, 50, 1280, 800)
+        );
         assert!(!frame.fullscreen);
 
         // A float with no saved geometry self-sizes (no Frame), still floating.
@@ -1091,7 +1108,10 @@ mod tests {
             .expect("float must emit a frame");
         // Right = (0.72,0,0.28,1.0) on 1920×1080 below the 28px menubar,
         // inset 50px/edge: x 1382→1432, y 28→78, w 538→438, h 1052→952.
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (1432, 78, 438, 952));
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (1432, 78, 438, 952)
+        );
     }
 
     #[test]
@@ -1102,12 +1122,21 @@ mod tests {
         s.set_focused("helium".to_string());
         s.live_geometry.insert(
             5,
-            WindowGeometry { window_id: 5, x: 300, y: 200, width: 800, height: 600 },
+            WindowGeometry {
+                window_id: 5,
+                x: 300,
+                y: 200,
+                width: 800,
+                height: 600,
+            },
         );
         let frame = s
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(5))
             .expect("float must emit a frame");
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (350, 250, 700, 500));
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (350, 250, 700, 500)
+        );
     }
 
     #[test]
@@ -1124,11 +1153,19 @@ mod tests {
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
             .expect("float frame");
         // The float rect is cached against the app immediately.
-        let fg = s.float_geometry.get("helium").expect("float geometry cached");
-        assert_eq!((fg.x, fg.y, fg.width, fg.height), (frame.x, frame.y, frame.width, frame.height));
+        let fg = s
+            .float_geometry
+            .get("helium")
+            .expect("float geometry cached");
+        assert_eq!(
+            (fg.x, fg.y, fg.width, fg.height),
+            (frame.x, frame.y, frame.width, frame.height)
+        );
         // Simulate the on_zones echo clearing config_applied, then re-applying.
         s.config_applied.remove(&7);
-        let restored = s.apply_config_zone("helium", 7).expect("re-apply restores a frame");
+        let restored = s
+            .apply_config_zone("helium", 7)
+            .expect("re-apply restores a frame");
         assert_eq!(
             (restored.x, restored.y, restored.width, restored.height),
             (frame.x, frame.y, frame.width, frame.height),
@@ -1162,12 +1199,18 @@ mod tests {
         let mut zones = std::collections::HashMap::new();
         zones.insert("sola-settings".to_string(), Zone::Right);
         s.set_zones(zones); // populates app_zone_config, NOT window_zones
-        assert!(s.window_zones.get(&7).is_none(), "precondition: window zone unset");
+        assert!(
+            s.window_zones.get(&7).is_none(),
+            "precondition: window zone unset"
+        );
         let frame = s
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
             .expect("float must emit a frame");
         // Right (0.72,0,0.28,1.0) on 1920×1080 inset 50/edge → (1432,78,438,952).
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (1432, 78, 438, 952));
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (1432, 78, 438, 952)
+        );
     }
 
     #[test]
@@ -1179,6 +1222,4 @@ mod tests {
         assert_eq!(f.width, 1920);
         assert_eq!(f.height, MENUBAR_HEIGHT);
     }
-
-    
 }

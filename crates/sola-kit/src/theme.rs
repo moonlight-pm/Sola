@@ -69,11 +69,11 @@ pub mod hex {
     pub const BG_HOVER: &str = "#1e2533";
     /// Stronger edges / hard chrome (soft hairlines use white@α in style).
     pub const BORDER: &str = "#2a3344";
-    /// Selected-row fill — quiet teal-grey intent, not a loud slab.
-    /// Distinct from `BG_HOVER` so selection still reads; sparse vs full
-    /// accent fills. iced has no selection slot — see
-    /// [`super::install_selection`] / [`super::selection`].
-    pub const SELECTION: &str = "#163842";
+    /// Selected-row / text-selection fill — cool graphite lift, not a
+    /// darkened neon. `#3dd6f5` goes muddy when mixed toward black, so
+    /// selection is a slate step above raised (distinct from `BG_HOVER`)
+    /// and neon stays full-chroma for accent only.
+    pub const SELECTION: &str = "#2c333e";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -873,7 +873,7 @@ mod tests {
         assert_eq!(atoms.bg, parse("#0c0e12"));
         assert_eq!(atoms.bg_raised, parse("#151922"));
         assert_eq!(atoms.accent, parse("#3dd6f5"), "soft cyan accent");
-        assert_eq!(atoms.selection, parse("#163842"), "quiet selection");
+        assert_eq!(atoms.selection, parse("#2c333e"), "graphite selection, not dark cyan");
         // Not the old Primer canvas or macOS system greys
         assert_ne!(atoms.bg, parse("#0d1117"));
         assert_ne!(atoms.bg, parse("#1c1c1e"));

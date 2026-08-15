@@ -1,8 +1,8 @@
-//! sola-preview — kit image viewer for screenshots (and path opens).
+//! sola-preview — standalone kit image viewer (argv path opens).
 //!
 //! Session history in a left sidebar; main pane fits the selected PNG.
-//! Shell opens this after Super+Shift+3/4/5; subsequent captures use
-//! `Topic::OpenImage` when the process is already running.
+//! Screenshots land here (shell Super+Shift+3/4/5). MIME / `solactl open`
+//! image paths go to **sola-paint**. Preview also accepts argv paths.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -148,9 +148,12 @@ impl App {
                     return iced::exit();
                 }
 
-                if let Some(Topic::OpenImage(req)) = Topic::parse(&message) {
-                    tracing::info!(path = %req.path.display(), "OpenImage");
-                    self.open_path(req.path);
+                match Topic::parse(&message) {
+                    Some(Topic::OpenImage(req)) if req.for_app(APP_ID) => {
+                        tracing::info!(path = %req.path.display(), "OpenImage");
+                        self.open_path(req.path);
+                    }
+                    _ => {}
                 }
             }
             Msg::Select(path) => {

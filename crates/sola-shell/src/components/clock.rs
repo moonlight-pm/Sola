@@ -5,8 +5,8 @@
 //! system UI type, not mono).
 
 use chrono::{DateTime, Local};
-use iced::widget::text;
 use iced::Element;
+use iced::widget::text;
 use sola_kit::fonts;
 
 /// Matches menubar menu-label size.

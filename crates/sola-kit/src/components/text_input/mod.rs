@@ -1862,7 +1862,7 @@ where
 /// **including Disabled** — demo/read-only fields without `on_input` must
 /// still read as punched-in wells, not raised grey slabs.
 ///
-/// Text selection uses [`crate::theme::selection`] (quiet teal-grey), not
+/// Text selection uses [`crate::theme::selection`] (graphite lift), not
 /// primary accent. Focused border stays `primary.base` — correct sparse
 /// accent use for focus.
 pub fn style(theme: &Theme, status: Status) -> Style {

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sola Paint
+Comment=Sola image viewer and editor — default image handler
+Exec=/opt/sola/bin/sola-paint %F
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=image/png;image/jpeg;image/gif;image/webp;image/bmp;image/tiff;image/x-tga;
+StartupNotify=true
+StartupWMClass=sola-paint

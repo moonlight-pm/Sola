@@ -27,10 +27,7 @@ pub fn editing_command_name(cmd: EditCmd) -> &'static str {
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
 pub fn usable_clipboard_text(text: Option<String>) -> Option<String> {
-    let cleaned: String = text?
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let cleaned: String = text?.chars().filter(|c| !c.is_control()).collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         None
@@ -49,6 +46,33 @@ pub fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// How many title characters fit a Large-density etch row of `sidebar_w` px.
+///
+/// Slightly optimistic so the well fills; the kit still clips if a wide
+/// glyph run overruns. The old hard cap of 20 left a visible empty band
+/// at the default 200 px column.
+pub fn tab_title_chars(sidebar_w: f32) -> usize {
+    // Body pad 8+8, row pad 10+10, active lip 2, a hair of clip slack.
+    const INSET: f32 = 32.0;
+    // 12 px SF Pro mixed-case. Optimistic so we use the well, not sit short.
+    const PX_PER: f32 = 5.5;
+    let inner = (sidebar_w - INSET).max(48.0);
+    (inner / PX_PER).floor().max(8.0) as usize
+}
+
+/// Tab-strip label: page title, else URL, else a loading placeholder.
+/// Ellipsizes to the characters that fit `sidebar_w`.
+pub fn tab_strip_label(title: &str, url: &str, sidebar_w: f32) -> String {
+    let raw = if !title.is_empty() {
+        title
+    } else if !url.is_empty() {
+        url
+    } else {
+        return String::from("Loading…");
+    };
+    truncate(raw, tab_title_chars(sidebar_w))
+}
+
 /// Built-in scroll/tile stress page (fixed nav + tall image grid).
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
@@ -65,10 +89,7 @@ pub fn normalize_url(s: &str) -> String {
     let lower = trimmed.to_ascii_lowercase();
     if matches!(
         lower.as_str(),
-        "sola:scroll-stress"
-            | "sola://scroll-stress"
-            | "about:scroll-stress"
-            | "scroll-stress"
+        "sola:scroll-stress" | "sola://scroll-stress" | "about:scroll-stress" | "scroll-stress"
     ) {
         return SCROLL_STRESS_URL.to_string();
     }
@@ -100,9 +121,7 @@ pub fn looks_like_url(s: &str) -> bool {
     if explicit_scheme(t).is_some() {
         return true;
     }
-    if t.eq_ignore_ascii_case("scroll-stress")
-        || t.to_ascii_lowercase().starts_with("sola:")
-    {
+    if t.eq_ignore_ascii_case("scroll-stress") || t.to_ascii_lowercase().starts_with("sola:") {
         return true;
     }
     if t == "localhost" || t.starts_with("localhost:") || t.starts_with("localhost/") {
@@ -217,6 +236,27 @@ mod tests {
     }
 
     #[test]
+    fn tab_title_chars_fills_default_column() {
+        // Old hard cap was 20; default 200 px column has room for more.
+        let n = tab_title_chars(200.0);
+        assert!(n > 20, "default column still capped at {n}");
+        assert!(n >= 28, "expected ~30 chars at 200 px, got {n}");
+        assert!(tab_title_chars(400.0) > n);
+        assert!(tab_title_chars(120.0) >= 8);
+    }
+
+    #[test]
+    fn tab_strip_label_prefers_title_then_url() {
+        assert_eq!(tab_strip_label("Hi", "https://x", 200.0), "Hi");
+        assert_eq!(tab_strip_label("", "https://x", 200.0), "https://x");
+        assert_eq!(tab_strip_label("", "", 200.0), "Loading…");
+        let long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let out = tab_strip_label(long, "", 200.0);
+        assert!(out.ends_with('…'), "{out:?}");
+        assert!(out.chars().count() < long.chars().count());
+    }
+
+    #[test]
     fn normalize_url_adds_scheme_to_bare_host() {
         assert_eq!(normalize_url("example.com"), "https://example.com");
     }
@@ -231,7 +271,10 @@ mod tests {
     #[test]
     fn normalize_url_treats_host_port_as_bare_host() {
         assert_eq!(normalize_url("localhost:3000"), "https://localhost:3000");
-        assert_eq!(normalize_url("192.168.1.1:8080"), "https://192.168.1.1:8080");
+        assert_eq!(
+            normalize_url("192.168.1.1:8080"),
+            "https://192.168.1.1:8080"
+        );
     }
 
     #[test]
@@ -265,7 +308,10 @@ mod tests {
             resolve_query("how to tie a tie"),
             "https://kagi.com/search?q=how%20to%20tie%20a%20tie"
         );
-        assert_eq!(resolve_query("weather"), "https://kagi.com/search?q=weather");
+        assert_eq!(
+            resolve_query("weather"),
+            "https://kagi.com/search?q=weather"
+        );
     }
 
     #[test]

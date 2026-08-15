@@ -38,16 +38,16 @@ pub fn cpu_pct(prev: &CpuTimes, cur: &CpuTimes) -> f32 {
 /// Per-core cumulative times (the `cpu0`, `cpu1`, ... lines) in order.
 pub fn parse_per_core(stat: &str) -> Vec<CpuTimes> {
     stat.lines()
-        .filter(|l| {
-            l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit())
-        })
+        .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit()))
         .filter_map(parse_cpu_line)
         .collect()
 }
 
 /// The aggregate (`cpu `) line, if present.
 pub fn parse_aggregate(stat: &str) -> Option<CpuTimes> {
-    stat.lines().find(|l| l.starts_with("cpu ")).and_then(parse_cpu_line)
+    stat.lines()
+        .find(|l| l.starts_with("cpu "))
+        .and_then(parse_cpu_line)
 }
 
 /// A process row for a "top processes" list.
@@ -68,12 +68,20 @@ pub struct CpuDetail {
 
 pub fn parse_loadavg(s: &str) -> [f32; 3] {
     let mut it = s.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
-    [it.next().unwrap_or(0.0), it.next().unwrap_or(0.0), it.next().unwrap_or(0.0)]
+    [
+        it.next().unwrap_or(0.0),
+        it.next().unwrap_or(0.0),
+        it.next().unwrap_or(0.0),
+    ]
 }
 
 /// Sort processes by value descending and keep the top `n`.
 pub fn cap_top(rows: &mut Vec<Proc>, n: usize) {
-    rows.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     rows.truncate(n);
 }
 
@@ -83,10 +91,19 @@ pub fn detail(per_core_pct: Vec<f32>, top: Vec<Proc>) -> CpuDetail {
     let load = parse_loadavg(&std::fs::read_to_string("/proc/loadavg").unwrap_or_default());
     let uptime_secs = std::fs::read_to_string("/proc/uptime")
         .ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f32>().ok()))
+        .and_then(|s| {
+            s.split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<f32>().ok())
+        })
         .map(|f| f as u64)
         .unwrap_or(0);
-    CpuDetail { per_core: per_core_pct, load, uptime_secs, top }
+    CpuDetail {
+        per_core: per_core_pct,
+        load,
+        uptime_secs,
+        top,
+    }
 }
 
 /// Top processes by CPU between two scans of /proc/<pid>/stat (utime+stime).
@@ -99,21 +116,33 @@ pub fn top_processes(
     use std::collections::HashMap;
     let mut cur: HashMap<i32, u64> = HashMap::new();
     let mut rows: Vec<Proc> = Vec::new();
-    let Ok(dir) = std::fs::read_dir("/proc") else { return (cur, rows) };
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return (cur, rows);
+    };
     for ent in dir.flatten() {
-        let Ok(pid) = ent.file_name().to_string_lossy().parse::<i32>() else { continue };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        let Ok(pid) = ent.file_name().to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
         // comm is in parens (field 2); split after the closing paren to avoid spaces in names.
-        let Some(rparen) = stat.rfind(')') else { continue };
+        let Some(rparen) = stat.rfind(')') else {
+            continue;
+        };
         // A truncated read (PID vanished mid-scan) can leave nothing after the
         // closing paren; skip rather than panic on an out-of-bounds slice.
-        let Some(rest_str) = stat.get(rparen + 2..) else { continue };
+        let Some(rest_str) = stat.get(rparen + 2..) else {
+            continue;
+        };
         let rest: Vec<&str> = rest_str.split_whitespace().collect();
         // After comm, field indices: state=0, ... utime=11, stime=12 (0-based in `rest`).
         let (Some(utime), Some(stime)) = (
             rest.get(11).and_then(|v| v.parse::<u64>().ok()),
             rest.get(12).and_then(|v| v.parse::<u64>().ok()),
-        ) else { continue };
+        ) else {
+            continue;
+        };
         let jiffies = utime + stime;
         cur.insert(pid, jiffies);
         if total_delta > 0 {
@@ -123,7 +152,9 @@ pub fn top_processes(
                 let pct = (d / total_delta as f32) * 100.0 * ncpu as f32;
                 if pct >= 0.5 {
                     let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
-                        .unwrap_or_default().trim().to_string();
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
                     rows.push(Proc { name, value: pct });
                 }
             }
@@ -163,7 +194,9 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
         let mut is_proc = false;
         let (mut phys, mut core) = (String::new(), String::new());
         for line in block.lines() {
-            let Some((k, v)) = line.split_once(':') else { continue };
+            let Some((k, v)) = line.split_once(':') else {
+                continue;
+            };
             match (k.trim(), v.trim()) {
                 ("processor", _) => is_proc = true,
                 ("model name", v) if model.is_empty() => model = clean_model(v),
@@ -179,11 +212,19 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
             }
         }
     }
-    let cores = if pairs.is_empty() { threads } else { pairs.len() };
+    let cores = if pairs.is_empty() {
+        threads
+    } else {
+        pairs.len()
+    };
     if model.is_empty() {
         model = "CPU".to_string();
     }
-    CpuIdentity { model, cores, threads }
+    CpuIdentity {
+        model,
+        cores,
+        threads,
+    }
 }
 
 /// Trim a raw `model name` to a compact label, e.g.
@@ -238,7 +279,8 @@ mod tests {
 
     #[test]
     fn cpuinfo_identity_falls_back_without_topology() {
-        let info = "processor\t: 0\nmodel name\t: Some CPU\n\nprocessor\t: 1\nmodel name\t: Some CPU\n";
+        let info =
+            "processor\t: 0\nmodel name\t: Some CPU\n\nprocessor\t: 1\nmodel name\t: Some CPU\n";
         let id = parse_cpuinfo(info);
         assert_eq!(id.threads, 2);
         assert_eq!(id.cores, 2); // no physical/core id → cores fall back to threads
@@ -257,15 +299,24 @@ mod tests {
 
     #[test]
     fn pct_from_delta() {
-        let prev = CpuTimes { idle: 1000, total: 1100 };
-        let cur = CpuTimes { idle: 1050, total: 1200 };
+        let prev = CpuTimes {
+            idle: 1000,
+            total: 1100,
+        };
+        let cur = CpuTimes {
+            idle: 1050,
+            total: 1200,
+        };
         // busy delta = total_d(100) - idle_d(50) = 50; pct = 50/100 = 50%
         assert!((cpu_pct(&prev, &cur) - 50.0).abs() < 0.01);
     }
 
     #[test]
     fn pct_zero_when_no_delta() {
-        let t = CpuTimes { idle: 10, total: 20 };
+        let t = CpuTimes {
+            idle: 10,
+            total: 20,
+        };
         assert_eq!(cpu_pct(&t, &t), 0.0);
     }
 
@@ -278,15 +329,27 @@ mod tests {
 
     #[test]
     fn loadavg_parsed() {
-        assert_eq!(parse_loadavg("4.20 3.80 3.10 2/1234 5678"), [4.20, 3.80, 3.10]);
+        assert_eq!(
+            parse_loadavg("4.20 3.80 3.10 2/1234 5678"),
+            [4.20, 3.80, 3.10]
+        );
     }
 
     #[test]
     fn top_sorted_desc_and_capped() {
         let mut rows = vec![
-            Proc { name: "a".into(), value: 5.0 },
-            Proc { name: "b".into(), value: 22.0 },
-            Proc { name: "c".into(), value: 7.0 },
+            Proc {
+                name: "a".into(),
+                value: 5.0,
+            },
+            Proc {
+                name: "b".into(),
+                value: 22.0,
+            },
+            Proc {
+                name: "c".into(),
+                value: 7.0,
+            },
         ];
         cap_top(&mut rows, 2);
         assert_eq!(rows.len(), 2);

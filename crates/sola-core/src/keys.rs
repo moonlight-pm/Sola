@@ -84,6 +84,10 @@ impl KeyCode {
 
     // --- Alphanumeric ---
     pub const KEY_0: Self = Self(19);
+    /// `-` / `_` (XKB = Linux KEY_MINUS + 8).
+    pub const MINUS: Self = Self(20);
+    /// `=` / `+` (XKB = Linux KEY_EQUAL + 8).
+    pub const EQUAL: Self = Self(21);
     pub const KEY_1: Self = Self(10);
     pub const KEY_2: Self = Self(11);
     pub const KEY_3: Self = Self(12);
@@ -170,6 +174,8 @@ impl KeyCode {
             17 => "8",
             18 => "9",
             19 => "0",
+            20 => "-",
+            21 => "=",
             // Letters
             38 => "A",
             56 => "B",
@@ -339,7 +345,10 @@ mod tests {
     #[test]
     fn chord_display_renders_mac_modifiers() {
         // Mac order is ⌃⌥⇧⌘ followed by the key label.
-        assert_eq!(KeyCode::RIGHT.meta_shift().display(), "\u{21E7}\u{2318}\u{2192}");
+        assert_eq!(
+            KeyCode::RIGHT.meta_shift().display(),
+            "\u{21E7}\u{2318}\u{2192}"
+        );
         assert_eq!(KeyCode::C.meta().display(), "\u{2318}C");
         assert_eq!(KeyCode::W.meta_shift().display(), "\u{21E7}\u{2318}W");
     }
