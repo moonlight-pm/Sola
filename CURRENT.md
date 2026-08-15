@@ -19,13 +19,14 @@ Do not invent product policy.
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-agent-terminal/PRODUCT.md`](crates/sola-agent-terminal/PRODUCT.md)  
-   **Next:** register Workspaces methods on `sola-call` (`BusSetup::calls("at", …)`);
-   `sat` becomes a thin alias of `solactl at …`. Then dogfood.  
+   **Next:** dogfood install (`sola-call`, app, `sat`, shell). Polish:
+   rename/recolor/reorder.  
    **Do not invent:** D4 interims (name, Claude hooks); call-plane **D3** confirm.  
    **Install:** ask first.  
-   **Now:** persist + spawn modal + done toast in tree. Private `sat` UDS is
-   the wrong home (call-plane freeze). Hooks + `sat-ws-main` reattach smoked
-   earlier; spawn UI / call methods not smoked.  
+   **Now:** persist + spawn modal + done toast. Methods on sola-call owner
+   `at` (`solactl at ps` / `workspace.spawn` / …). `sat` execs `solactl at`.
+   Hooks + `sat-ws-main` reattach smoked earlier; spawn UI / call methods not
+   smoked.  
 2. **Call plane** — on **master** (`65e0051d`). Host + `solactl compositor` /
    `session` + kit helper. **Needs install to dogfood.**  
 3. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  

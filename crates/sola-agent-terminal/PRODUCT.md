@@ -46,8 +46,9 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling (UI: name only; `sat`: optional `--agent grok` + `--prompt`),
-Grok hooks + OSC 9999 + process-tree presence, `sat` CLI, tmux persist
+spawn sibling (UI: name only; `solactl at workspace.spawn` can pass
+`--agent grok` + `--prompt`), Grok hooks + OSC 9999 + process-tree
+presence, sola-call owner `at` (`sat` aliases `solactl at`), tmux persist
 on socket `sola-at`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
@@ -56,8 +57,8 @@ agent support. Other CLIs are presence-only until Grok status is trustworthy.
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters.
 
-**Undecided (do not invent):** display name, whether `sat` may launch the
-app, Claude hook installer vs presence.
+**Undecided (do not invent):** display name, Claude hook installer vs
+presence. App-down is fail (call plane).
 
 ## Brand Commitments
 

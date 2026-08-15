@@ -1,7 +1,7 @@
 //! sola-agent-terminal — project / workspace rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok hooks, OSC 9999, process-tree. `sat` and toast-on-done later.
+//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `at`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,7 +12,6 @@ use iced::widget::{canvas, container, row, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
 
-use sola_agent_terminal::cli::{Request, Response};
 use sola_bus::topics::{AppToast, Topic, TopicKind};
 use sola_bus::Message;
 use sola_kit::app::{
@@ -28,7 +27,7 @@ use sola_terminal::state::PaneRuntime;
 use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, tmux};
 
-mod cli_server;
+mod calls;
 mod hooks;
 mod menu;
 mod presence;
@@ -65,6 +64,7 @@ fn main() -> iced::Result {
             TopicKind::Windows,
             TopicKind::WindowFloating,
         ])
+        .calls(calls::OWNER, calls::methods())
         .install();
 
     if let Ok(mut client) = bus().lock() {
@@ -145,14 +145,13 @@ enum Msg {
     Hook(hooks::Incoming),
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
-    Cli(cli_server::Incoming),
+    Call(sola_call::Incoming),
     WindowFocus(bool),
 }
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
         let hook_paths = hooks::start();
-        cli_server::start();
         let _ = sola_terminal::osc9999::sender();
         let mut catalog = workspace::load();
         if catalog.projects.is_empty() {
@@ -231,7 +230,7 @@ impl App {
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
             hooks::subscription().map(Msg::Hook),
-            cli_server::subscription().map(Msg::Cli),
+            sola_kit::call_subscription().map(Msg::Call),
             sola_terminal::osc9999::subscription()
                 .map(|(id, payload)| Msg::Osc(id, payload)),
             iced::time::every(Duration::from_secs(1)).map(|_| Msg::PresenceTick),
@@ -284,7 +283,7 @@ impl App {
                 self.window_focused = on;
                 Task::none()
             }
-            Msg::Cli(incoming) => self.on_cli(incoming),
+            Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
                 if let Some(id) = self.resolve_pane(&incoming.pane_id) {
                     let prev = self
@@ -794,60 +793,89 @@ impl App {
         }
     }
 
-    fn on_cli(&mut self, incoming: cli_server::Incoming) -> Task<Msg> {
-        let (resp, attach) = self.dispatch_cli(incoming.req);
-        let _ = incoming.reply.send(resp);
-        attach
+    fn on_call(&mut self, inc: sola_call::Incoming) -> Task<Msg> {
+        let (result, task) = self.dispatch_call(&inc.method, &inc.params);
+        match result {
+            Ok(data) => inc.reply.ok(data),
+            Err(e) => inc.reply.err(e),
+        }
+        task
     }
 
-    fn dispatch_cli(&mut self, req: Request) -> (Response, Task<Msg>) {
-        match req {
-            Request::Ps => (Response::ok(self.ps_json()), Task::none()),
-            Request::ProjectList => {
+    fn dispatch_call(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> (Result<serde_json::Value, String>, Task<Msg>) {
+        match method {
+            "ps" => (Ok(self.ps_json()), Task::none()),
+            "project.list" => {
                 let projects: Vec<serde_json::Value> = self
                     .projects
                     .iter()
                     .map(|p| serde_json::json!({"id": p.id, "name": p.name}))
                     .collect();
                 (
-                    Response::ok(serde_json::json!({ "projects": projects })),
+                    Ok(serde_json::json!({ "projects": projects })),
                     Task::none(),
                 )
             }
-            Request::WorkspaceList { project } => match self.cli_workspace_list(project.as_deref())
-            {
-                Ok(v) => (Response::ok(v), Task::none()),
-                Err(e) => (Response::err(e), Task::none()),
-            },
-            Request::WorkspaceSpawn {
-                project,
-                name,
-                agent,
-                prompt,
-                parent,
-            } => match self.cli_spawn(&project, &name, agent.as_deref(), prompt.as_deref(), parent)
-            {
-                Ok((id, task)) => (Response::ok(serde_json::json!({ "id": id })), task),
-                Err(e) => (Response::err(e), Task::none()),
-            },
-            Request::WorkspaceRm { workspace } => match self.cli_rm(&workspace) {
-                Ok(task) => (Response::ok(serde_json::json!({ "ok": true })), task),
-                Err(e) => (Response::err(e), Task::none()),
-            },
-            Request::PaneList { workspace } => match self.cli_pane_list(workspace.as_deref()) {
-                Ok(v) => (Response::ok(v), Task::none()),
-                Err(e) => (Response::err(e), Task::none()),
-            },
-            Request::PaneSend { pane, text, enter } => {
-                match self.cli_send(pane.as_deref(), &text, enter) {
-                    Ok(()) => (Response::ok(serde_json::json!({ "ok": true })), Task::none()),
-                    Err(e) => (Response::err(e), Task::none()),
+            "workspace.list" => (
+                self.cli_workspace_list(param_str(params, "project").as_deref()),
+                Task::none(),
+            ),
+            "workspace.spawn" => {
+                let Some(project) = param_str(params, "project") else {
+                    return (Err("missing project".into()), Task::none());
+                };
+                let Some(name) = param_str(params, "name") else {
+                    return (Err("missing name".into()), Task::none());
+                };
+                match self.cli_spawn(
+                    &project,
+                    &name,
+                    param_str(params, "agent").as_deref(),
+                    param_str(params, "prompt").as_deref(),
+                    param_str(params, "parent"),
+                ) {
+                    Ok((id, task)) => (Ok(serde_json::json!({ "id": id })), task),
+                    Err(e) => (Err(e), Task::none()),
                 }
             }
-            Request::PaneRead { pane, lines } => match self.cli_read(pane.as_deref(), lines) {
-                Ok(text) => (Response::ok(serde_json::json!({ "text": text })), Task::none()),
-                Err(e) => (Response::err(e), Task::none()),
-            },
+            "workspace.rm" => {
+                let Some(ws) = param_str(params, "workspace") else {
+                    return (Err("missing workspace".into()), Task::none());
+                };
+                match self.cli_rm(&ws) {
+                    Ok(task) => (Ok(serde_json::json!({ "ok": true })), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            "pane.list" => (
+                self.cli_pane_list(param_str(params, "workspace").as_deref()),
+                Task::none(),
+            ),
+            "pane.send" => {
+                let Some(text) = param_str(params, "text") else {
+                    return (Err("missing text".into()), Task::none());
+                };
+                let enter = params
+                    .get("enter")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match self.cli_send(param_str(params, "pane").as_deref(), &text, enter) {
+                    Ok(()) => (Ok(serde_json::json!({ "ok": true })), Task::none()),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            "pane.read" => {
+                let lines = params.get("lines").and_then(|v| v.as_u64()).map(|n| n as u32);
+                match self.cli_read(param_str(params, "pane").as_deref(), lines) {
+                    Ok(text) => (Ok(serde_json::json!({ "text": text })), Task::none()),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            other => (Err(format!("unknown method {other}")), Task::none()),
         }
     }
 
@@ -1232,4 +1260,13 @@ fn modifier_key_bit(
         Physical::Code(Code::SuperLeft | Code::SuperRight) => Some(keyboard::Modifiers::LOGO),
         _ => None,
     }
+}
+
+fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }

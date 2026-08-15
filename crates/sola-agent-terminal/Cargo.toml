@@ -3,10 +3,6 @@ name = "sola-agent-terminal"
 version.workspace = true
 edition.workspace = true
 
-[lib]
-name = "sola_agent_terminal"
-path = "src/lib.rs"
-
 [[bin]]
 name = "sola-agent-terminal"
 path = "src/main.rs"
@@ -18,6 +14,7 @@ path = "src/bin/sat.rs"
 [dependencies]
 sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 sola-terminal = { path = "../sola-terminal" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced", "canvas"] }
@@ -26,4 +23,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-clap = { version = "4", features = ["derive"] }

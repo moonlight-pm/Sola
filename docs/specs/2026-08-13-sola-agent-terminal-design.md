@@ -7,9 +7,9 @@
 **Product record:** [`crates/sola-agent-terminal/PRODUCT.md`](../../crates/sola-agent-terminal/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/agent-terminal-design.md`](../../.grok/rules/agent-terminal-design.md)
 
-**Implementation:** persist + spawn modal + `sat` + done toast  
-**Dogfood:** hooks + `sat-ws-main` reattach smoked; sat/toast/spawn UI await install  
-**Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only
+**Implementation:** persist + spawn modal + done toast + sola-call owner `at`  
+**Dogfood:** hooks + `sat-ws-main` reattach smoked; call methods / spawn UI await install  
+**Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only (D4)
 
 ---
 
@@ -40,7 +40,7 @@ deprecated for this line of work.
 | Status vocab | `working` / `waiting` / `done` / idle. Reserved indicator slot (no layout shift) |
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-agent-terminal` |
-| CLI | `sat` (`ps`, project/workspace/pane). Not on `solactl`. App down → fail |
+| CLI | sola-call owner `at` (`solactl at …`). Optional `sat` alias. App/host down → fail |
 
 ---
 
@@ -73,12 +73,12 @@ dashboards, auto-rename, unread badges, setup-hook runners, sparse checkouts.
 ## Architecture
 
 ```text
-sat  ──unix──▶  sola-agent-terminal (iced)
-                      │
-                      ├── sola-terminal lib  (grid / pty / input / tmux)
-                      ├── tmux socket sola-at
-                      ├── hook socket  $XDG_RUNTIME_DIR/sola-at-hooks.sock
-                      └── sola-bus     (theme, later stickies, toasts, menu)
+solactl at / sat  ──sola-call──▶  sola-agent-terminal (iced)
+                                        │
+                                        ├── sola-terminal lib
+                                        ├── tmux socket sola-at
+                                        ├── hook socket  $XDG_RUNTIME_DIR/sola-at-hooks.sock
+                                        └── sola-bus     (theme, toasts, menu)
 ```
 
 ### Module layout (crate)
@@ -95,9 +95,8 @@ crates/sola-agent-terminal/
   src/presence.rs      # process-tree who (Grok first)
   src/workspace.rs     # project + workspace + catalog persist
   src/spawn.rs         # git worktree add under .worktrees/
-  src/cli.rs           # sat protocol (lib)
-  src/cli_server.rs    # UDS server in the app
-  src/bin/sat.rs
+  src/calls.rs         # sola-call MethodSpec list (owner at)
+  src/bin/sat.rs       # exec solactl at …
   src/menu.rs
 ```
 
@@ -171,7 +170,7 @@ look changes; do not treat it as a second freeze.
 2. **Status chrome** — done (kit `status_mark`)  
 3. **Grok hooks + process-tree + OSC 9999** — done  
 4. **Projects + workspaces + spawn sibling** — done (catalog.json; `.worktrees/`; name modal)  
-5. **`sat`** — done (`ps`, spawn, send/read/rm; fail if app down)  
+5. **`sat` private UDS** — retired; methods on sola-call (`at`)  
 6. **Toasts on done** — done (shell `AppToast`; skip focused + hydrate)
 
 ---

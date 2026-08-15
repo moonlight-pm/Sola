@@ -8186,11 +8186,11 @@ name = "sola-agent-terminal"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
- "clap",
  "iced",
  "serde",
  "serde_json",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "sola-kit",
  "sola-terminal",
