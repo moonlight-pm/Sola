@@ -157,6 +157,8 @@ pub struct SidebarItem<'a, Message> {
     /// Scroll-chip / overflow math when body height is not obvious from
     /// label+subtitle (required accuracy for tall custom cards).
     pub height_hint: Option<f32>,
+    /// Right-click on the row. Does not start a reorder gesture.
+    pub on_context: Option<Message>,
 }
 
 impl<'a, Message> SidebarItem<'a, Message> {
@@ -176,6 +178,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             chrome: SidebarItemChrome::Row,
             content: None,
             height_hint: None,
+            on_context: None,
         }
     }
 
@@ -257,6 +260,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self.height_hint = Some(h.max(0.0));
         self
     }
+
+    /// Right-click emits `msg` and does not start reorder.
+    pub fn on_context(mut self, msg: Message) -> Self {
+        self.on_context = Some(msg);
+        self
+    }
 }
 
 /// A group of sidebar rows with an optional section header label.
@@ -275,6 +284,21 @@ pub struct SidebarSection<'a, Message> {
     /// several are marked, the first wins the `Fill` slot and others
     /// still get a bounded scroll body.
     pub fill: bool,
+    /// Opt-in collapsible header (browser tab groups). Static section
+    /// labels are unchanged when this is `None`.
+    pub collapse: Option<SectionCollapse<'a, Message>>,
+}
+
+/// Header chrome for a [`SidebarSection::collapsible`] section.
+pub struct SectionCollapse<'a, Message> {
+    pub collapsed: bool,
+    pub on_toggle: Message,
+    pub header_active: bool,
+    pub on_context: Option<Message>,
+    /// Trailing count (shown when collapsed).
+    pub count: Option<String>,
+    /// Replace the default chevron+name body (e.g. an inline rename field).
+    pub header_content: Option<Element<'a, Message, Theme>>,
 }
 
 impl<'a, Message> SidebarSection<'a, Message> {
@@ -283,6 +307,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             label: Some(label.into()),
             items,
             fill: false,
+            collapse: None,
         }
     }
 
@@ -291,6 +316,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             label: None,
             items,
             fill: false,
+            collapse: None,
         }
     }
 
@@ -299,6 +325,48 @@ impl<'a, Message> SidebarSection<'a, Message> {
     /// [`SidebarPanel::section_scroll`] for overflow chips.
     pub fn fill(mut self) -> Self {
         self.fill = true;
+        self
+    }
+
+    /// Clickable Large-density header. Items are omitted while collapsed.
+    /// The header is a reorder row when the panel is reorderable.
+    pub fn collapsible(mut self, collapsed: bool, on_toggle: Message) -> Self {
+        self.collapse = Some(SectionCollapse {
+            collapsed,
+            on_toggle,
+            header_active: false,
+            on_context: None,
+            count: None,
+            header_content: None,
+        });
+        self
+    }
+
+    pub fn header_active(mut self, active: bool) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.header_active = active;
+        }
+        self
+    }
+
+    pub fn header_context(mut self, msg: Message) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.on_context = Some(msg);
+        }
+        self
+    }
+
+    pub fn header_count(mut self, n: usize) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.count = Some(n.to_string());
+        }
+        self
+    }
+
+    pub fn header_content(mut self, el: impl Into<Element<'a, Message, Theme>>) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.header_content = Some(el.into());
+        }
         self
     }
 }
@@ -672,6 +740,30 @@ fn tab_close_style(
     }
 }
 
+/// Synthesize a reorderable header row for a collapsible section.
+fn collapse_header_item<'a, Message: Clone + 'a>(
+    label: Option<String>,
+    collapse: SectionCollapse<'a, Message>,
+) -> SidebarItem<'a, Message> {
+    let name = label.unwrap_or_default();
+    let chevron = if collapse.collapsed { "▸" } else { "▾" };
+    let mut item = SidebarItem::new(format!("{chevron}  {name}"), collapse.on_toggle)
+        .active(collapse.header_active)
+        .id(format!("__section:{name}"));
+    if collapse.collapsed {
+        if let Some(n) = collapse.count {
+            item = item.secondary(n);
+        }
+    }
+    if let Some(ctx) = collapse.on_context {
+        item = item.on_context(ctx);
+    }
+    if let Some(content) = collapse.header_content {
+        item = item.content(content);
+    }
+    item
+}
+
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
     // Uppercase tracked section labels — graphite tool UI (sola-kit-ds).
     container(
@@ -973,6 +1065,7 @@ where
         chrome,
         content: custom,
         height_hint: _,
+        on_context,
     } = item;
 
     let m = density.metrics();
@@ -1029,6 +1122,9 @@ where
             )
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
+            if let Some(ctx) = on_context.clone() {
+                select = select.on_right_press(ctx);
+            }
             if let Some(dbl) = on_double_click {
                 select = select.on_double_click(dbl);
             }
@@ -1054,8 +1150,8 @@ where
             } else {
                 select.into()
             }
-        } else if let Some(dbl) = on_double_click {
-            mouse_area(
+        } else if on_double_click.is_some() || on_context.is_some() {
+            let mut area = mouse_area(
                 container(body)
                     .width(Length::Fill)
                     .padding(pad)
@@ -1064,9 +1160,14 @@ where
                     }),
             )
             .interaction(mouse::Interaction::Pointer)
-            .on_press(message)
-            .on_double_click(dbl)
-            .into()
+            .on_press(message);
+            if let Some(ctx) = on_context {
+                area = area.on_right_press(ctx);
+            }
+            if let Some(dbl) = on_double_click {
+                area = area.on_double_click(dbl);
+            }
+            area.into()
         } else {
             button(body)
                 .style(move |t, status| item_style_chrome(t, status, active, chrome))
@@ -1102,6 +1203,9 @@ where
         mouse::Interaction::Pointer
     })
     .on_press((reorder.on_press)(index));
+    if let Some(ctx) = on_context {
+        pressable = pressable.on_right_press(ctx);
+    }
     if let Some(dbl) = on_double_click {
         pressable = pressable.on_double_click(dbl);
     }
@@ -1664,8 +1768,18 @@ where
             }
         }
 
-        // Total item count across all sections — clamps the drop slot.
-        let total_items: usize = sections.iter().map(|s| s.items.len()).sum();
+        // Visible reorder rows: collapsible headers + non-hidden items.
+        let total_items: usize = sections
+            .iter()
+            .map(|s| {
+                let header = usize::from(s.collapse.is_some());
+                let n = match &s.collapse {
+                    Some(c) if c.collapsed => 0,
+                    _ => s.items.len(),
+                };
+                header + n
+            })
+            .sum();
         let n_sections = sections.len();
         let any_explicit_fill = sections.iter().any(|s| s.fill);
         // Auto-fill a lone section so a single long list scrolls without
@@ -1690,6 +1804,17 @@ where
             let mut flat: Vec<(usize, SidebarItem<'a, Message>)> = Vec::with_capacity(total_items);
             let mut row_index = 0usize;
             for section in sections {
+                let hide = section
+                    .collapse
+                    .as_ref()
+                    .is_some_and(|c| c.collapsed);
+                if let Some(collapse) = section.collapse {
+                    flat.push((row_index, collapse_header_item(section.label, collapse)));
+                    row_index += 1;
+                    if hide {
+                        continue;
+                    }
+                }
                 for item in section.items {
                     flat.push((row_index, item));
                     row_index += 1;
@@ -1733,15 +1858,35 @@ where
             let mut row_index = 0usize;
             let mut assigned_fill = false;
 
+            let mut prev_collapsible = false;
             for (si, section) in sections.into_iter().enumerate() {
-                if si > 0 && !collapsed {
+                let is_collapsible = section.collapse.is_some();
+                if si > 0 && !collapsed && !is_collapsible && !prev_collapsible {
                     sections_col =
                         sections_col.push(Space::new().height(Length::Fixed(12.0)));
                 }
+                prev_collapsible = is_collapsible;
 
-                let n_in_section = section.items.len();
-                let content_h =
-                    section_content_height_with(&section.items, item_spacing, density);
+                let hide_items = section
+                    .collapse
+                    .as_ref()
+                    .is_some_and(|c| c.collapsed);
+                let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
+                    Vec::new()
+                } else {
+                    section.items
+                };
+                let n_in_section = visible_items.len()
+                    + usize::from(section.collapse.is_some());
+                let content_h = section_content_height_with(
+                    &visible_items,
+                    item_spacing,
+                    density,
+                ) + if section.collapse.is_some() {
+                    PANEL_ROW_H + item_spacing
+                } else {
+                    0.0
+                };
                 let wants_fill = !collapsed
                     && (section.fill || auto_fill_single)
                     && !assigned_fill;
@@ -1749,17 +1894,43 @@ where
                     assigned_fill = true;
                 }
 
-                if let Some(label) = section.label {
-                    if !collapsed {
-                        // Sticky: outside the section's scroll body.
-                        sections_col = sections_col.push(section_header(label));
+                if section.collapse.is_none() {
+                    if let Some(label) = section.label.clone() {
+                        if !collapsed {
+                            sections_col = sections_col.push(section_header(label));
+                        }
                     }
                 }
 
                 let mut body_items = column![]
                     .spacing(item_spacing)
                     .padding(Padding::from([4.0, 8.0]));
-                for item in section.items {
+                if let Some(collapse) = section.collapse {
+                    if !collapsed {
+                        let header = collapse_header_item(section.label, collapse);
+                        let header = assign_close_id(header, row_index);
+                        let hid = header.id.clone();
+                        let show_action = hid
+                            .as_ref()
+                            .is_some_and(|id| hovered_id.as_ref() == Some(id));
+                        let mut row_el = render_item(
+                            header,
+                            reorder_ref,
+                            row_index,
+                            show_action,
+                            density,
+                            on_item_hover.is_some(),
+                        );
+                        if let (Some(id), Some(ref mut on_hover)) =
+                            (hid, on_item_hover.as_mut())
+                        {
+                            row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
+                        }
+                        body_items = body_items.push(row_el);
+                        row_index += 1;
+                    }
+                }
+                for item in visible_items {
                     if collapsed {
                         body_items =
                             body_items.push(collapsed_row(&item, row_index, reorder_ref));

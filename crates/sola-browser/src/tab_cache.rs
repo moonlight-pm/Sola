@@ -28,6 +28,7 @@ pub struct WorkspaceSnapshot {
     pub active: TabId,
     pub sidebar_w: f32,
     pub last_used: Instant,
+    pub groups: crate::groups::Groups,
 }
 
 impl WorkspaceSnapshot {
@@ -107,6 +108,7 @@ mod tests {
             active: TabId(0),
             sidebar_w: 200.0,
             last_used,
+            groups: crate::groups::Groups::default(),
         }
     }
 

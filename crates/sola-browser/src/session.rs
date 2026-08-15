@@ -13,6 +13,18 @@ pub struct SessionTab {
     pub url: String,
     #[serde(default)]
     pub title: String,
+    /// Chrome group id; absent = loose.
+    #[serde(default)]
+    pub group_id: Option<String>,
+}
+
+/// Named folder persisted beside the tab list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SessionGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 /// Full session snapshot.
@@ -26,6 +38,9 @@ pub struct BrowserSession {
     /// Sidebar width (logical px).
     #[serde(default = "default_sidebar_w")]
     pub sidebar_w: f32,
+    /// Group metadata (name / collapsed). Membership is on each tab.
+    #[serde(default)]
+    pub groups: Vec<SessionGroup>,
 }
 
 fn default_sidebar_w() -> f32 {
@@ -38,6 +53,7 @@ impl Default for BrowserSession {
             tabs: Vec::new(),
             active_index: 0,
             sidebar_w: default_sidebar_w(),
+            groups: Vec::new(),
         }
     }
 }
@@ -103,6 +119,7 @@ impl BrowserSession {
                 self.tabs.push(SessionTab {
                     url,
                     title: String::new(),
+                    group_id: None,
                 });
                 self.active_index = self.tabs.len().saturating_sub(1);
             }
@@ -112,6 +129,7 @@ impl BrowserSession {
             self.tabs.push(SessionTab {
                 url: default_url.to_string(),
                 title: String::new(),
+                group_id: None,
             });
             self.active_index = 0;
         }
@@ -159,6 +177,7 @@ pub fn session_from_tabs(
     tabs: &[crate::engine::TabInfo],
     active: crate::engine::TabId,
     sidebar_w: f32,
+    groups: &crate::groups::Groups,
 ) -> BrowserSession {
     let session_tabs: Vec<SessionTab> = tabs
         .iter()
@@ -169,6 +188,7 @@ pub fn session_from_tabs(
                 t.url.clone()
             },
             title: t.title.clone(),
+            group_id: groups.of_tab(t.id).map(str::to_string),
         })
         .collect();
     let active_index = tabs
@@ -180,6 +200,7 @@ pub fn session_from_tabs(
         tabs: session_tabs,
         active_index,
         sidebar_w: sidebar_w.clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX),
+        groups: groups.to_session(),
     }
 }
 
@@ -194,6 +215,18 @@ pub fn fingerprint(session: &BrowserSession) -> String {
         s.push_str(&t.url);
         s.push('\x1e');
         s.push_str(&t.title);
+        s.push('\x1e');
+        if let Some(g) = &t.group_id {
+            s.push_str(g);
+        }
+        s.push('\x1f');
+    }
+    for g in &session.groups {
+        s.push_str(&g.id);
+        s.push('\x1e');
+        s.push_str(&g.name);
+        s.push('\x1e');
+        s.push(if g.collapsed { '1' } else { '0' });
         s.push('\x1f');
     }
     s
@@ -218,14 +251,17 @@ mod tests {
                 SessionTab {
                     url: "https://a.example/".into(),
                     title: "A".into(),
+                    group_id: None,
                 },
                 SessionTab {
                     url: "https://b.example/".into(),
                     title: "B".into(),
+                    group_id: None,
                 },
             ],
             active_index: 1,
             sidebar_w: 200.0,
+            groups: Vec::new(),
         };
         let (tabs, active, _) =
             session.bootstrap(Some("https://c.example/".into()), "https://fallback/");
@@ -241,14 +277,17 @@ mod tests {
                 SessionTab {
                     url: "https://ok.example/".into(),
                     title: "Ok".into(),
+                    group_id: None,
                 },
                 SessionTab {
                     url: "https://--password-store=basic".into(),
                     title: "junk".into(),
+                    group_id: None,
                 },
             ],
             active_index: 1,
             sidebar_w: 200.0,
+            groups: Vec::new(),
         };
         let (tabs, active, _) =
             session.bootstrap(Some("--password-store=basic".into()), "about:blank");
@@ -265,9 +304,11 @@ mod tests {
             tabs: vec![SessionTab {
                 url: "https://a/".into(),
                 title: String::new(),
+                group_id: None,
             }],
             active_index: 0,
             sidebar_w: 200.0,
+            groups: Vec::new(),
         };
         let mut b = a.clone();
         b.tabs[0].url = "https://b/".into();

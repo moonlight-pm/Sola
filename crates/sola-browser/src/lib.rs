@@ -7,6 +7,7 @@ pub mod app;
 pub mod cef;
 pub mod downloads;
 pub mod engine;
+pub mod groups;
 pub mod input;
 pub mod instance;
 pub mod integration;

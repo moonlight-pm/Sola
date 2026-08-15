@@ -2096,6 +2096,7 @@ fn cef_evict_parks(state: &CefThreadState) {
                     active: TabId(0),
                     sidebar_w: 0.0,
                     last_used: p.last_used,
+                    groups: crate::groups::Groups::default(),
                 },
             );
         }

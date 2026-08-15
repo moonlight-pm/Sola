@@ -21,6 +21,7 @@ pub mod button;
 pub mod card;
 pub mod chrome;
 pub mod color_picker;
+pub mod context_menu;
 pub mod divider;
 pub mod field;
 pub mod file_picker;

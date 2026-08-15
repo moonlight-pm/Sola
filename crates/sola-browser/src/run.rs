@@ -219,8 +219,9 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     #[cfg(feature = "bitwarden")]
     crate::vault::passkey_bridge::install();
 
-    let (boot_tabs, boot_active, sidebar_w) =
-        crate::session::BrowserSession::load().bootstrap(argv, DEFAULT_URL);
+    let boot_session = crate::session::BrowserSession::load();
+    let boot_groups = boot_session.groups.clone();
+    let (boot_tabs, boot_active, sidebar_w) = boot_session.bootstrap(argv, DEFAULT_URL);
     tracing::info!(
         tabs = boot_tabs.len(),
         active_index = boot_active,
@@ -263,6 +264,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     // it once via `Option::take`.
     let engine_cell = std::cell::Cell::new(Some(engine));
     let boot_tabs = std::cell::RefCell::new(Some(boot_tabs));
+    let boot_groups = std::cell::RefCell::new(Some(boot_groups));
 
     let result = iced::application(
         move || {
@@ -270,6 +272,10 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 .take()
                 .expect("browser App init called more than once");
             let tabs = boot_tabs
+                .borrow_mut()
+                .take()
+                .expect("browser App init called more than once");
+            let groups = boot_groups
                 .borrow_mut()
                 .take()
                 .expect("browser App init called more than once");
@@ -283,6 +289,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 tabs,
                 boot_active,
                 sidebar_w,
+                groups,
             );
             (
                 app,

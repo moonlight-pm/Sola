@@ -44,6 +44,8 @@ pub enum Msg {
     ItemPress(usize),
     /// Hovered list item id (for hover-only ×).
     ItemHover(Option<String>),
+    /// Collapse the demo group section.
+    ToggleGroup,
     /// Demo placeholder (e.g. a close button) with no modelled effect.
     Noop,
 }
@@ -72,6 +74,8 @@ pub struct State {
     pub section_scroll: SectionScroll,
     /// Hovered item id (close-on-hover + hover_action).
     pub hovered: Option<String>,
+    /// Demo collapsible section (tab-group header).
+    pub group_collapsed: bool,
 }
 
 impl Default for State {
@@ -89,6 +93,7 @@ impl Default for State {
             selected: 0,
             section_scroll: SectionScroll::default(),
             hovered: None,
+            group_collapsed: false,
         }
     }
 }
@@ -198,6 +203,7 @@ impl State {
                 self.section_scroll = s;
             }
             Msg::ItemHover(id) => self.hovered = id,
+            Msg::ToggleGroup => self.group_collapsed = !self.group_collapsed,
             Msg::Noop => {}
         }
     }
@@ -240,7 +246,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
                 .active(item == state.selected)
                 .shortcut((item + 1) as u8);
             if label == "Drafts" {
-                si = si.secondary("3");
+                si = si.secondary("3").on_context(Msg::Noop);
             }
             if label == "Spam" {
                 si = si.on_close(Msg::Noop);
@@ -258,10 +264,16 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         .partition(|(i, _)| *i < mid);
     let primary: Vec<_> = primary.into_iter().map(|(_, it)| it).collect();
     let secondary: Vec<_> = secondary.into_iter().map(|(_, it)| it).collect();
+    let n_smart = secondary.len();
     let sections = vec![
         SidebarSection::new("Mailboxes", primary),
         // Fill + section_scroll → sticky label, bar-less list, overflow chips.
-        SidebarSection::new("Smart folders", secondary).fill(),
+        // Collapsible header dogfoods tab-group chrome (chevron + count).
+        SidebarSection::new("Smart folders", secondary)
+            .fill()
+            .collapsible(state.group_collapsed, Msg::ToggleGroup)
+            .header_count(n_smart)
+            .header_context(Msg::Noop),
     ];
 
     let cfg = ReorderCfg {
@@ -301,9 +313,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         heading("Sidebar"),
         body(
             "List etch: muted idle, inset active, hover-only ×. Collapse, \
-             resize, reorder. Overflow chips only when section_scroll is \
-             wired and the viewport is measured. Drafts has a count; hover \
-             Spam for ×."
+             resize, reorder. Smart folders is a collapsible section \
+             (tab-group header). Right-click Drafts. Overflow chips only \
+             when section_scroll is wired and the viewport is measured."
         )
         .style(muted),
         demo,

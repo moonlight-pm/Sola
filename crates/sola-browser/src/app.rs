@@ -24,13 +24,14 @@ use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{
-    DividerColors, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim, ReorderCfg, SidebarDensity,
-    SidebarItem, SidebarPanel, SidebarSection, field, horizontal_divider,
+    DividerColors, MenuItem, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim, ReorderCfg,
+    SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field, horizontal_divider, menu_at,
     panel_drop_index_relative,
 };
 
 use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
-use crate::session::{self, SessionTab};
+use crate::groups::Groups;
+use crate::session::{self, SessionGroup, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
     CardSummary, MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd,
@@ -87,6 +88,18 @@ pub enum Msg {
     CursorReleased,
     /// Hovered tab row changed (string id of [`TabId`]), or `None`.
     TabHover(Option<String>),
+    ToggleGroup(String),
+    TabContext(TabId),
+    GroupContext(String),
+    MenuDismiss,
+    NewGroup(TabId),
+    AddToGroup { tab: TabId, group: String },
+    UngroupTab(TabId),
+    UngroupGroup(String),
+    RenameStart(String),
+    RenameInput(String),
+    RenameCommit,
+    RenameCancel,
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
@@ -188,6 +201,12 @@ pub enum Msg {
     DownloadOpen(String),
     /// Drop a row from the list (file stays on disk).
     DownloadRemove(String),
+}
+
+#[derive(Debug, Clone)]
+enum CtxTarget {
+    Tab(TabId),
+    Group(String),
 }
 
 /// In-chrome dialog for creating / renaming / confirming delete of a profile.
@@ -327,6 +346,9 @@ pub struct App<E: Engine> {
     /// True once movement has crossed [`PANEL_REORDER_THRESHOLD`].
     reorder_dragging: bool,
     reorder_anim: ReorderAnim,
+    groups: Groups,
+    context_menu: Option<(iced::Point, CtxTarget)>,
+    renaming: Option<(String, String)>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -341,7 +363,7 @@ pub struct App<E: Engine> {
     /// Last written session fingerprint — skip disk when unchanged.
     session_fp: String,
     /// Tabs to open after the iced Wayland window exists (session restore).
-    pending_session: Option<(Vec<SessionTab>, usize)>,
+    pending_session: Option<(Vec<SessionTab>, usize, Vec<SessionGroup>)>,
     /// Bitwarden vault worker + login panel state.
     #[cfg(feature = "bitwarden")]
     vault: VaultHandle,
@@ -439,6 +461,7 @@ impl<E: Engine> App<E> {
         tabs: Vec<SessionTab>,
         active_index: usize,
         sidebar_w: f32,
+        session_groups: Vec<SessionGroup>,
     ) -> Self {
         let mut app = Self {
             engine,
@@ -461,12 +484,15 @@ impl<E: Engine> App<E> {
             reorder_cursor_y: 0.0,
             reorder_dragging: false,
             reorder_anim: ReorderAnim::new(),
+            groups: Groups::default(),
+            context_menu: None,
+            renaming: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
             app_id,
             url_bar_focused: false,
             session_fp: String::new(),
-            pending_session: Some((tabs, active_index)),
+            pending_session: Some((tabs, active_index, session_groups)),
             #[cfg(feature = "bitwarden")]
             vault: VaultHandle::spawn(),
             #[cfg(feature = "bitwarden")]
@@ -701,10 +727,16 @@ impl<E: Engine> App<E> {
     /// Clear compositor env so WebKit child processes cannot open a Wayland
     /// window. Safe after iced has already connected (WindowReady).
     /// Open restored tabs in order and focus `active_index`.
-    fn bootstrap_tabs(&mut self, tabs: Vec<SessionTab>, active_index: usize) {
+    fn bootstrap_tabs(
+        &mut self,
+        tabs: Vec<SessionTab>,
+        active_index: usize,
+        session_groups: Vec<SessionGroup>,
+    ) {
         debug_assert!(!tabs.is_empty(), "bootstrap always has ≥1 tab");
-        let mut ids = Vec::with_capacity(tabs.len());
-        for tab in tabs {
+        let session_tabs = tabs;
+        let mut ids = Vec::with_capacity(session_tabs.len());
+        for tab in &session_tabs {
             let id = self.engine.alloc_tab_id();
             let url = crate::util::normalize_url(&tab.url);
             let url = if url.is_empty() {
@@ -739,6 +771,8 @@ impl<E: Engine> App<E> {
             .or_else(|| ids.first().copied())
             .unwrap_or(TabId(0));
         self.switch_active_tab(active);
+        self.groups = Groups::restore(&session_tabs, &ids, &session_groups);
+        self.groups.normalize(&mut self.cached_tabs);
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
             self.url_field = if info.url == BLANK_URL {
                 String::new()
@@ -823,6 +857,7 @@ impl<E: Engine> App<E> {
                     active: self.cached_active,
                     sidebar_w: self.sidebar_w,
                     last_used: Instant::now(),
+                    groups: self.groups.clone(),
                 },
             );
         }
@@ -837,6 +872,7 @@ impl<E: Engine> App<E> {
                 self.sidebar_w = snap.sidebar_w;
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
+                self.groups = snap.groups;
                 self.apply_workspace_chrome_focus();
                 // Helper already has these browsers. Pass the parked list
                 // only as a fallback if the helper was evicted/died.
@@ -882,8 +918,9 @@ impl<E: Engine> App<E> {
     }
 
     fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
-        let (tabs, active_index, sidebar_w) =
-            crate::session::BrowserSession::load().bootstrap(None, BLANK_URL);
+        let session = crate::session::BrowserSession::load();
+        let session_groups = session.groups.clone();
+        let (tabs, active_index, sidebar_w) = session.bootstrap(None, BLANK_URL);
         self.sidebar_w = sidebar_w;
 
         let mut new_cached = Vec::with_capacity(tabs.len().max(1));
@@ -932,6 +969,9 @@ impl<E: Engine> App<E> {
 
         self.cached_tabs = new_cached;
         self.cached_active = active;
+        let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
+        self.groups = Groups::restore(&tabs, &ids, &session_groups);
+        self.groups.normalize(&mut self.cached_tabs);
         self.apply_workspace_chrome_focus();
         (open_list, active)
     }
@@ -1053,7 +1093,7 @@ impl<E: Engine> App<E> {
         } else {
             tabs[0].id
         };
-        let session = session::session_from_tabs(&tabs, active, self.sidebar_w);
+        let session = session::session_from_tabs(&tabs, active, self.sidebar_w, &self.groups);
         let fp = session::fingerprint(&session);
         if fp == self.session_fp {
             return;
@@ -1070,7 +1110,7 @@ impl<E: Engine> App<E> {
         if !self.reorder_dragging {
             return;
         }
-        let n = self.cached_tabs.len();
+        let n = self.groups.visible_rows(&self.cached_tabs).len();
         if n == 0 {
             return;
         }
@@ -1079,8 +1119,7 @@ impl<E: Engine> App<E> {
             .sync(from, to, n, iced::time::Instant::now());
     }
 
-    /// Finish a tab-reorder gesture: click → activate; drag → move the row.
-    /// Chrome owns order (`merge_tab_snapshot` keeps this vec's sequence).
+    /// Finish a strip gesture: click → activate / toggle; drag → drop.
     fn finish_reorder(&mut self) {
         let gesture = self.reorder.take();
         let final_cursor_y = self.reorder_cursor_y;
@@ -1094,16 +1133,23 @@ impl<E: Engine> App<E> {
             return;
         };
 
-        // Never crossed the threshold → click, not drag: select the tab.
+        let rows = self.groups.visible_rows(&self.cached_tabs);
         if !was_dragging || start_y == 0.0 {
-            if let Some(id) = self.cached_tabs.get(from).map(|t| t.id) {
-                self.switch_active_tab(id);
-                self.persist_session();
+            match rows.get(from) {
+                Some(crate::groups::StripRow::Tab(id)) => {
+                    self.switch_active_tab(*id);
+                    self.persist_session();
+                }
+                Some(crate::groups::StripRow::Header(gid)) => {
+                    self.groups.toggle(gid);
+                    self.persist_session();
+                }
+                None => {}
             }
             return;
         }
 
-        let n = self.cached_tabs.len();
+        let n = rows.len();
         if n == 0 {
             return;
         }
@@ -1111,10 +1157,7 @@ impl<E: Engine> App<E> {
         if from == to {
             return;
         }
-        let from = from.min(n - 1);
-        let to = to.min(n - 1);
-        let tab = self.cached_tabs.remove(from);
-        self.cached_tabs.insert(to, tab);
+        self.groups.apply_drop(&mut self.cached_tabs, from, to);
         self.persist_session();
     }
 
@@ -1127,8 +1170,8 @@ impl<E: Engine> App<E> {
             Msg::WindowReady(id) => {
                 self.window_id = id;
                 // Iced is connected; open restored tabs now.
-                if let Some((tabs, active_index)) = self.pending_session.take() {
-                    self.bootstrap_tabs(tabs, active_index);
+                if let Some((tabs, active_index, groups)) = self.pending_session.take() {
+                    self.bootstrap_tabs(tabs, active_index, groups);
                 }
                 return Task::none();
             }
@@ -1531,6 +1574,14 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::NavStop => {
+                if self.renaming.is_some() {
+                    self.renaming = None;
+                    return Task::none();
+                }
+                if self.context_menu.is_some() {
+                    self.context_menu = None;
+                    return Task::none();
+                }
                 if self.profile_picker_open {
                     self.profile_picker_open = false;
                     return Task::none();
@@ -1611,6 +1662,7 @@ impl<E: Engine> App<E> {
                 // and Tick cannot paint the row again.
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
+                self.groups.on_tab_closed(id);
                 if self.hovered_tab.as_deref() == Some(&id.0.to_string()) {
                     self.hovered_tab = None;
                 }
@@ -1818,6 +1870,62 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::TabHover(i) => self.hovered_tab = i,
+            Msg::ToggleGroup(id) => {
+                self.groups.toggle(&id);
+                self.persist_session();
+            }
+            Msg::TabContext(id) => {
+                self.context_menu = Some((last_cursor_point(), CtxTarget::Tab(id)));
+            }
+            Msg::GroupContext(id) => {
+                self.context_menu = Some((last_cursor_point(), CtxTarget::Group(id)));
+            }
+            Msg::MenuDismiss => self.context_menu = None,
+            Msg::NewGroup(id) => {
+                self.context_menu = None;
+                self.groups.new_group(id);
+                self.groups.normalize(&mut self.cached_tabs);
+                self.persist_session();
+            }
+            Msg::AddToGroup { tab, group } => {
+                self.context_menu = None;
+                self.groups.add_to(tab, &group);
+                self.groups.normalize(&mut self.cached_tabs);
+                self.persist_session();
+            }
+            Msg::UngroupTab(id) => {
+                self.context_menu = None;
+                self.groups.ungroup_tab(id);
+                self.groups.normalize(&mut self.cached_tabs);
+                self.persist_session();
+            }
+            Msg::UngroupGroup(id) => {
+                self.context_menu = None;
+                self.groups.ungroup_all(&id);
+                self.groups.normalize(&mut self.cached_tabs);
+                self.persist_session();
+            }
+            Msg::RenameStart(id) => {
+                self.context_menu = None;
+                let name = self
+                    .groups
+                    .group(&id)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                self.renaming = Some((id, name));
+            }
+            Msg::RenameInput(s) => {
+                if let Some((_, draft)) = &mut self.renaming {
+                    *draft = s;
+                }
+            }
+            Msg::RenameCommit => {
+                if let Some((id, name)) = self.renaming.take() {
+                    self.groups.rename(&id, name);
+                    self.persist_session();
+                }
+            }
+            Msg::RenameCancel => self.renaming = None,
             Msg::WebViewFocused => {
                 // Page took the click: drop iced chrome focus so keys go to
                 // the shader → CEF, and tell the host it is the focused OSR
@@ -2164,6 +2272,12 @@ impl<E: Engine> App<E> {
             content
         };
 
+        let content: Element<'_, Msg> = if let Some((at, target)) = &self.context_menu {
+            stack![content, menu_at(*at, self.menu_items(target), Msg::MenuDismiss)].into()
+        } else {
+            content
+        };
+
         sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
             crate::profiles::active().name.as_str(),
@@ -2172,6 +2286,35 @@ impl<E: Engine> App<E> {
             Msg::TitleResize,
             content,
         )
+    }
+
+    fn menu_items(&self, target: &CtxTarget) -> Vec<MenuItem<Msg>> {
+        match target {
+            CtxTarget::Tab(id) => {
+                let mut items = vec![MenuItem::action("New group", Msg::NewGroup(*id))];
+                let current = self.groups.of_tab(*id);
+                for g in &self.groups.groups {
+                    if current == Some(g.id.as_str()) {
+                        continue;
+                    }
+                    items.push(MenuItem::action(
+                        format!("Add to {}", g.name),
+                        Msg::AddToGroup {
+                            tab: *id,
+                            group: g.id.clone(),
+                        },
+                    ));
+                }
+                if current.is_some() {
+                    items.push(MenuItem::action("Ungroup", Msg::UngroupTab(*id)));
+                }
+                items
+            }
+            CtxTarget::Group(gid) => vec![
+                MenuItem::action("Rename", Msg::RenameStart(gid.clone())),
+                MenuItem::action("Ungroup", Msg::UngroupGroup(gid.clone())),
+            ],
+        }
     }
 
     /// Left vertical tab column. Profile switch lives in the full-width
@@ -2185,21 +2328,55 @@ impl<E: Engine> App<E> {
                 self.cached_active
             }
         };
-        let items: Vec<SidebarItem<'_, Msg>> = self
+        let mk_tab = |t: &TabInfo| {
+            let label = crate::util::tab_strip_label(&t.title, &t.url, self.sidebar_w);
+            SidebarItem::new(label, Msg::ActivateTab(t.id))
+                .active(t.id == active_id)
+                .on_close(Msg::CloseTab(t.id))
+                .on_context(Msg::TabContext(t.id))
+                .id(t.id.0.to_string())
+        };
+        let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
+        for g in &self.groups.groups {
+            let members: Vec<SidebarItem<'_, Msg>> = self
+                .cached_tabs
+                .iter()
+                .filter(|t| self.groups.of_tab(t.id) == Some(g.id.as_str()))
+                .map(mk_tab)
+                .collect();
+            let n = members.len();
+            let header_active = g.collapsed
+                && self
+                    .groups
+                    .of_tab(active_id)
+                    .is_some_and(|id| id == g.id);
+            let mut section = SidebarSection::new(g.name.clone(), members)
+                .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
+                .header_active(header_active)
+                .header_context(Msg::GroupContext(g.id.clone()))
+                .header_count(n);
+            if let Some((rid, draft)) = &self.renaming {
+                if rid == &g.id {
+                    let field = text_input("Group name", draft)
+                        .on_input(Msg::RenameInput)
+                        .on_submit(Msg::RenameCommit)
+                        .style(sola_kit::components::text_input::style)
+                        .padding(Padding::from([2, 4]));
+                    section = section.header_content(field);
+                }
+            }
+            sections.push(section);
+        }
+        let loose: Vec<SidebarItem<'_, Msg>> = self
             .cached_tabs
             .iter()
-            .map(|t| {
-                // Item message is unused: reorder is always on, so the kit
-                // press path emits ReorderStart; click-vs-drag is decided
-                // on release (same contract as the terminal strip).
-                let label = crate::util::tab_strip_label(&t.title, &t.url, self.sidebar_w);
-                SidebarItem::new(label, Msg::ActivateTab(t.id))
-                    .active(t.id == active_id)
-                    .on_close(Msg::CloseTab(t.id))
-                    .id(t.id.0.to_string())
-            })
+            .filter(|t| self.groups.of_tab(t.id).is_none())
+            .map(mk_tab)
             .collect();
-        SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
+        if !loose.is_empty() || sections.is_empty() {
+            sections.push(SidebarSection::unlabeled(loose));
+        }
+        SidebarPanel::new(sections)
             .density(SidebarDensity::Large)
             .item_hover(self.hovered_tab.clone(), Msg::TabHover)
             .resizable_with(
@@ -3966,6 +4143,7 @@ impl<E: Engine> App<E> {
             event::listen_with(|event, status, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
+                    CURSOR_Y_BITS.store(position.y.to_bits(), Ordering::Relaxed);
                     // Rebuilding chrome on every pixel move starved menus and
                     // typing. Divider resize and tab reorder both need samples.
                     if DIVIDER_DRAGGING.load(Ordering::Relaxed)
@@ -4015,6 +4193,14 @@ static REORDER_TRACKING: AtomicBool = AtomicBool::new(false);
 /// Last pointer x (bits) so DividerPress has a current anchor without
 /// emitting CursorMoved on every pixel.
 static CURSOR_X_BITS: AtomicU32 = AtomicU32::new(0);
+static CURSOR_Y_BITS: AtomicU32 = AtomicU32::new(0);
+
+fn last_cursor_point() -> iced::Point {
+    iced::Point::new(
+        f32::from_bits(CURSOR_X_BITS.load(Ordering::Relaxed)),
+        f32::from_bits(CURSOR_Y_BITS.load(Ordering::Relaxed)),
+    )
+}
 
 /// Process-wide flag so `event::listen_with` (fn pointer) can see panel state.
 #[cfg(feature = "bitwarden")]

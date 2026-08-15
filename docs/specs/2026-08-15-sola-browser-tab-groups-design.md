@@ -1,15 +1,15 @@
 # sola-browser tab groups
 
 **Date:** 2026-08-15  
-**Status:** **Frozen** — not implemented  
+**Status:** **Frozen** — implemented on `naturalethic/browser-polish`; not dogfooded  
 **Branch / worktree:** `naturalethic/browser-polish`  
 **Related:** [unified sidebar](2026-08-13-unified-sidebar-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [session persist](2026-06-15-session-persistence-design.md)
 
 | | |
 |--|--|
-| **Implementation** | none |
-| **Dogfood** | — |
-| **Gaps** | this slice |
+| **Implementation** | kit context menu + collapsible sections; chrome groups + persist + strip |
+| **Dogfood** | not installed |
+| **Gaps** | spaces; color; drag-to-create |
 
 ## Intent
 
@@ -183,9 +183,9 @@ Kit does not learn membership.
 | Item | Status |
 |------|--------|
 | Freeze | **this document** |
-| Kit collapsible section + context menu | not started |
-| Chrome groups + persist + strip | not started |
-| Dogfood | — |
+| Kit collapsible section + context menu | **done** |
+| Chrome groups + persist + strip | **done** |
+| Dogfood | needs `install browser` |
 
 ## Decision log
 
