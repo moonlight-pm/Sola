@@ -16,7 +16,7 @@ use std::thread::JoinHandle;
 use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, Engine, FrameReceiver,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
     FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
@@ -126,6 +126,7 @@ pub struct CefEngine {
     /// and a future selection bridge can fill it.
     clipboard_out: ClipboardHandle,
     ime: crate::engine::ImeHandle,
+    downloads: DownloadsHandle,
 }
 
 impl Engine for CefEngine {
@@ -191,6 +192,7 @@ impl Engine for CefEngine {
             next_id: handles.next_id,
             clipboard_out: handles.clipboard,
             ime: handles.ime,
+            downloads: handles.downloads,
         }
     }
 
@@ -220,6 +222,10 @@ impl Engine for CefEngine {
 
     fn ime_handle(&self) -> crate::engine::ImeHandle {
         self.ime.clone()
+    }
+
+    fn downloads_handle(&self) -> DownloadsHandle {
+        self.downloads.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -295,6 +301,10 @@ struct CefThreadState {
     pending_cmds: Arc<Mutex<Vec<Cmd<CefEngine>>>>,
     drain_posted: Arc<AtomicBool>,
     shutting_down: Cell<bool>,
+    /// Live CEF download cancel callbacks, keyed by download id.
+    download_cbs: RefCell<std::collections::HashMap<u32, cef::DownloadItemCallback>>,
+    /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
+    download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
 }
 
 /// Tabs to recreate after CEF recycle (new profile as root_cache_path).
@@ -390,6 +400,8 @@ pub(super) fn run_worker(
         pending_cmds: Arc::new(Mutex::new(Vec::new())),
         drain_posted: Arc::new(AtomicBool::new(false)),
         shutting_down: Cell::new(false),
+        download_cbs: RefCell::new(std::collections::HashMap::new()),
+        download_last: RefCell::new(std::collections::HashMap::new()),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
@@ -992,6 +1004,145 @@ cef::wrap_load_handler! {
     }
 }
 
+// ── DownloadHandler ───────────────────────────────────────────────
+
+cef::wrap_download_handler! {
+    pub struct BrowserDownloadHandler {}
+
+    impl DownloadHandler {
+        fn can_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _url: Option<&cef::CefString>,
+            _request_method: Option<&cef::CefString>,
+        ) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn on_before_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            suggested_name: Option<&cef::CefString>,
+            callback: Option<&mut cef::BeforeDownloadCallback>,
+        ) -> ::std::os::raw::c_int {
+            use cef::{ImplBeforeDownloadCallback, ImplDownloadItem};
+            let Some(item) = download_item else { return 1 };
+            if item.is_valid() == 0 {
+                return 1;
+            }
+            let suggested = suggested_name
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
+            let dest = crate::downloads::unique_dest(&suggested);
+            let dest_s = dest.to_string_lossy().into_owned();
+            if let Some(cb) = callback {
+                let path = cef::CefString::from(dest_s.as_str());
+                cb.cont(Some(&path), 0);
+            }
+            let ev = download_event_from_item(
+                item,
+                crate::cef::ipc::DownloadPhase::Progress,
+                Some(&dest_s),
+            );
+            emit_download(ev);
+            1
+        }
+
+        fn on_download_updated(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            callback: Option<&mut cef::DownloadItemCallback>,
+        ) {
+            use crate::cef::ipc::DownloadPhase;
+            use cef::ImplDownloadItem;
+            let Some(item) = download_item else { return };
+            if item.is_valid() == 0 {
+                return;
+            }
+            let id = item.id();
+            let state = cef_state();
+            if let Some(cb) = callback {
+                state.download_cbs.borrow_mut().insert(id, cb.clone());
+            }
+            let phase = if item.is_complete() != 0 {
+                DownloadPhase::Complete
+            } else if item.is_canceled() != 0 {
+                DownloadPhase::Canceled
+            } else if item.is_interrupted() != 0 {
+                DownloadPhase::Failed
+            } else {
+                DownloadPhase::Progress
+            };
+            if phase == DownloadPhase::Progress && !should_emit_progress(&state, id, item.percent_complete()) {
+                return;
+            }
+            if phase != DownloadPhase::Progress {
+                state.download_cbs.borrow_mut().remove(&id);
+                state.download_last.borrow_mut().remove(&id);
+            }
+            emit_download(download_event_from_item(item, phase, None));
+        }
+    }
+}
+
+use crate::cef::ipc::{DownloadEvent, DownloadPhase};
+
+fn download_event_from_item(
+    item: &mut cef::DownloadItem,
+    state: DownloadPhase,
+    path_override: Option<&str>,
+) -> DownloadEvent {
+    use cef::ImplDownloadItem;
+    let path = path_override
+        .map(str::to_string)
+        .unwrap_or_else(|| cef_string_userfree_display(&item.full_path()));
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
+    let filename = if filename.is_empty() {
+        crate::downloads::sanitize_filename("download")
+    } else {
+        filename
+    };
+    DownloadEvent {
+        id: item.id(),
+        filename,
+        path,
+        url: cef_string_userfree_display(&item.url()),
+        received: item.received_bytes(),
+        total: item.total_bytes(),
+        percent: item.percent_complete(),
+        state,
+    }
+}
+
+fn should_emit_progress(state: &CefThreadState, id: u32, percent: i32) -> bool {
+    let now = crate::engine::monotonic_ms();
+    let mut last = state.download_last.borrow_mut();
+    match last.get(&id).copied() {
+        Some((t, p)) if now.saturating_sub(t) < 150 && (percent < 0 || (percent - p).abs() < 2) => {
+            false
+        }
+        _ => {
+            last.insert(id, (now, percent));
+            true
+        }
+    }
+}
+
+fn emit_download(ev: DownloadEvent) {
+    let state = cef_state();
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Download(ev));
+    }
+}
+
 // ── Client ────────────────────────────────────────────────────────
 
 cef::wrap_client! {
@@ -1000,6 +1151,7 @@ cef::wrap_client! {
         pub life_span_handler: cef::LifeSpanHandler,
         pub display_handler: cef::DisplayHandler,
         pub load_handler: cef::LoadHandler,
+        pub download_handler: cef::DownloadHandler,
     }
 
     impl Client {
@@ -1017,6 +1169,10 @@ cef::wrap_client! {
 
         fn load_handler(&self) -> Option<cef::LoadHandler> {
             Some(self.load_handler.clone())
+        }
+
+        fn download_handler(&self) -> Option<cef::DownloadHandler> {
+            Some(self.download_handler.clone())
         }
     }
 }
@@ -1375,6 +1531,12 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         }
         Cmd::DropParkedProfile { profile_id } => {
             drop_parked_profile(state, &profile_id);
+        }
+        Cmd::CancelDownload { id, .. } => {
+            if let Some(cb) = state.download_cbs.borrow_mut().remove(&id) {
+                use cef::ImplDownloadItemCallback;
+                cb.cancel();
+            }
         }
         Cmd::Quit => {
             state.shutting_down.set(true);
@@ -1786,8 +1948,14 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let life_span_handler = BrowserLifeSpanHandler::new();
     let display_handler = BrowserDisplayHandler::new();
     let load_handler = BrowserLoadHandler::new();
-    let mut client =
-        BrowserClient::new(render_handler, life_span_handler, display_handler, load_handler);
+    let download_handler = BrowserDownloadHandler::new();
+    let mut client = BrowserClient::new(
+        render_handler,
+        life_span_handler,
+        display_handler,
+        load_handler,
+        download_handler,
+    );
 
     let url_c = cef::CefString::from(initial_url.as_str());
     // Global context: Settings.cache_path is the active profile cef dir.

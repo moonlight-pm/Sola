@@ -1,8 +1,8 @@
 # sola-browser
 
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / **Create login** / passkey **get**. Page ⌘C / ⌘V and triple-click
-select work on form fields and body text.
+fill / **Create login** / passkey **get**. Downloads auto-save to `~/Downloads`.
+Page ⌘C / ⌘V and triple-click select work on form fields and body text.
 
 ## What it is
 
@@ -39,6 +39,7 @@ A **profile** is a separate web identity + tab workspace (D8).
 | CEF cookies / storage | `~/.local/share/sola/browser/profiles/<uuid>/cef/` |
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
+| Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
 
 Site logins (cookies) live under that profile CEF dir. The engine uses
 Chromium’s **basic** password store so cookie encryption works without a
@@ -95,6 +96,23 @@ Type a URL or a search and press Enter. Search text goes to Kagi.
 - While a real page is loading, a **thin accent line** grows along the
   bottom of the field. Reload becomes **Stop**; back / forward follow
   the engine. Escape also stops the load.
+
+## Downloads
+
+Toolbar **download** icon (right of vault / cards) is always there.
+
+- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists
+  the next file is `report (1).pdf`. There is no Save dialog.
+- While a file is coming in, the icon goes accent and a thin progress line
+  grows on the button. The panel does not open by itself.
+- Click the icon for the list. In-progress rows show percent and **Cancel**.
+  Finished rows open the file with the default app (`xdg-open`). **×**
+  removes the row from the list only — the file stays on disk.
+- After a download finishes, the icon stays accent until you open the panel.
+- Completed and failed items survive quit. In-progress ones do not (the
+  helper dies with the window).
+
+No “show in folder” (Sola has no file manager yet). No delete-from-disk.
 
 ## Bitwarden vault
 
@@ -157,6 +175,7 @@ popup buffer).
 
 - Full keyboard chrome reference  
 - Passkey **registration** (deferred)  
+- Save-as / custom download folder  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
 and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).

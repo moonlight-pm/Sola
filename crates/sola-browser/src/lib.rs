@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod cef;
+pub mod downloads;
 pub mod engine;
 pub mod input;
 pub mod integration;
@@ -21,8 +22,9 @@ pub mod vault;
 pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver, FrameSlot,
-    ImeCaret, ImeHandle, NavCmd, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
+    FrameReceiver, FrameSlot, ImeCaret, ImeHandle, NavCmd, PendingFrame, TabId, TabInfo,
+    TabsHandle, TaggedFrame,
 };
 pub use input::CursorKind;
 pub use run::run;

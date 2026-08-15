@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
-    ClipboardHandle, Cmd, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle, TabId, TabInfo,
-    TabsHandle,
+    ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle,
+    TabId, TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -42,6 +42,7 @@ struct Shared {
     cursor: Arc<AtomicU32>,
     clipboard: ClipboardHandle,
     ime: ImeHandle,
+    downloads: DownloadsHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -58,6 +59,7 @@ pub struct RouterHandles {
     pub next_id: Arc<AtomicU64>,
     pub clipboard: ClipboardHandle,
     pub ime: ImeHandle,
+    pub downloads: DownloadsHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -69,6 +71,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let next_id = Arc::new(AtomicU64::new(1));
     let clipboard: ClipboardHandle = Arc::new(Mutex::new(None));
     let ime: ImeHandle = Arc::new(Mutex::new(ImeCaret::default()));
+    let downloads: DownloadsHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -78,6 +81,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         cursor: cursor.clone(),
         clipboard: clipboard.clone(),
         ime: ime.clone(),
+        downloads: downloads.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -98,6 +102,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         next_id,
         clipboard,
         ime,
+        downloads,
     }
 }
 
@@ -217,6 +222,18 @@ fn router_main(shared: Arc<Shared>, cmd_rx: Receiver<Cmd<CefEngine>>) {
                     height = vh,
                     "router: front helper"
                 );
+            }
+            Cmd::CancelDownload { profile_id, id } => {
+                let set = helpers.lock().unwrap();
+                if let Some(h) = set.map.get(&profile_id) {
+                    let _ = h.to_engine.send(ToEngine::CancelDownload { id });
+                } else {
+                    tracing::warn!(
+                        profile = %profile_id,
+                        id,
+                        "router: no helper for CancelDownload"
+                    );
+                }
             }
             Cmd::DropParkedProfile { profile_id } => {
                 if let Some(h) = helpers.lock().unwrap().map.remove(&profile_id) {
@@ -488,6 +505,14 @@ fn handle_from(
                 *shared.ime.lock().unwrap() = ImeCaret { x, y, w, h };
             }
         }
+        FromEngine::Download(ev) => {
+            // Any helper — parked profiles still finish downloads.
+            shared
+                .downloads
+                .lock()
+                .unwrap()
+                .push((profile_id.to_string(), ev));
+        }
     }
 }
 
@@ -551,6 +576,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::SetActiveTab(id) => Some(ToEngine::SetActiveTab(id.0)),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
+        | Cmd::CancelDownload { .. }
         | Cmd::Quit
         | Cmd::Release { .. }
         | Cmd::FrameDone { .. } => None,

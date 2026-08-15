@@ -168,6 +168,15 @@ pub enum Msg {
     ProfilePickerDismiss,
     /// Instant-switch to this profile from the sidebar menu.
     ProfileSwitch(String),
+    /// Toolbar download icon: open / close the downloads panel.
+    DownloadsToggle,
+    DownloadsPanelClose,
+    /// Cancel an in-progress download (`entry.id`).
+    DownloadCancel(String),
+    /// Open a completed file (`entry.id`).
+    DownloadOpen(String),
+    /// Drop a row from the list (file stays on disk).
+    DownloadRemove(String),
 }
 
 /// In-chrome dialog for creating / renaming / confirming delete of a profile.
@@ -374,6 +383,9 @@ pub struct App<E: Engine> {
     /// Cached registry rows — `profiles::list()` used to re-read the JSON
     /// from disk on every `view()` (60 Hz while a page animated).
     profile_options: Vec<crate::profiles::ProfileEntry>,
+    downloads: crate::downloads::DownloadList,
+    downloads_panel_open: bool,
+    download_icon: iced::widget::svg::Handle,
 }
 
 impl<E: Engine> App<E> {
@@ -481,6 +493,9 @@ impl<E: Engine> App<E> {
             workspace_cache: std::collections::HashMap::new(),
             profile_picker_open: false,
             profile_options: crate::profiles::list(),
+            downloads: crate::downloads::DownloadList::load(),
+            downloads_panel_open: false,
+            download_icon: icon_handle("lucide/download"),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -499,6 +514,22 @@ impl<E: Engine> App<E> {
         VAULT_PANEL_OPEN.store(open, Ordering::Relaxed);
         // Do **not** clear form / 2FA / pending password on dismiss — accidental
         // close must restore the same state when the lock icon is clicked again.
+        if open {
+            self.set_downloads_panel_open(false);
+        }
+    }
+
+    fn set_downloads_panel_open(&mut self, open: bool) {
+        self.downloads_panel_open = open;
+        if open {
+            self.downloads.mark_seen();
+            #[cfg(feature = "bitwarden")]
+            {
+                self.vault_panel_open = false;
+                VAULT_PANEL_OPEN.store(false, Ordering::Relaxed);
+                self.cards_panel_open = false;
+            }
+        }
     }
 
     /// Ask the vault worker for logins matching the active tab URL.
@@ -538,6 +569,7 @@ impl<E: Engine> App<E> {
     fn set_cards_panel_open(&mut self, open: bool) {
         self.cards_panel_open = open;
         if open {
+            self.set_downloads_panel_open(false);
             self.set_vault_panel_open(false);
         }
     }
@@ -1384,6 +1416,52 @@ impl<E: Engine> App<E> {
             Msg::ProfileDialogSubmit => {
                 return self.submit_profile_dialog();
             }
+            Msg::DownloadsToggle => {
+                let open = !self.downloads_panel_open;
+                self.set_downloads_panel_open(open);
+            }
+            Msg::DownloadsPanelClose => {
+                self.set_downloads_panel_open(false);
+            }
+            Msg::DownloadCancel(id) => {
+                if let Some(e) = self
+                    .downloads
+                    .items()
+                    .iter()
+                    .find(|e| e.id == id)
+                    .cloned()
+                {
+                    let _ = self.cmd_tx.send(Cmd::CancelDownload {
+                        profile_id: e.profile_id.clone(),
+                        id: e.cef_id,
+                    });
+                    // Optimistic: CEF will also emit Canceled; drop_live is idempotent.
+                    self.downloads.apply(
+                        &e.profile_id,
+                        crate::cef::ipc::DownloadEvent {
+                            id: e.cef_id,
+                            filename: e.filename.clone(),
+                            path: e.path.to_string_lossy().into_owned(),
+                            url: e.url.clone(),
+                            received: e.received as i64,
+                            total: e.total.map(|t| t as i64).unwrap_or(-1),
+                            percent: e.percent.map(|p| (p * 100.0) as i32).unwrap_or(-1),
+                            state: crate::cef::ipc::DownloadPhase::Canceled,
+                        },
+                        self.downloads_panel_open,
+                    );
+                }
+            }
+            Msg::DownloadOpen(id) => {
+                if let Some(e) = self.downloads.items().iter().find(|e| e.id == id) {
+                    if e.status == crate::downloads::DownloadStatus::Complete {
+                        let _ = crate::downloads::open_file(&e.path);
+                    }
+                }
+            }
+            Msg::DownloadRemove(id) => {
+                self.downloads.remove(&id);
+            }
             Msg::ProfilePickerToggle => {
                 self.profile_picker_open = !self.profile_picker_open;
             }
@@ -1432,6 +1510,10 @@ impl<E: Engine> App<E> {
                 #[cfg(feature = "bitwarden")]
                 if self.pending_passkey.is_some() {
                     self.cancel_pending_passkey("User cancelled.");
+                    return Task::none();
+                }
+                if self.downloads_panel_open {
+                    self.set_downloads_panel_open(false);
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
@@ -1573,6 +1655,22 @@ impl<E: Engine> App<E> {
                 }
                 self.persist_session();
                 self.profile_options = crate::profiles::list();
+                {
+                    let evs: Vec<_> = self
+                        .engine
+                        .downloads_handle()
+                        .lock()
+                        .unwrap()
+                        .drain(..)
+                        .collect();
+                    for (profile_id, ev) in evs {
+                        self.downloads.apply(
+                            &profile_id,
+                            ev,
+                            self.downloads_panel_open,
+                        );
+                    }
+                }
                 // Drain any page-selection text the engine extracted for a copy
                 // and put it on the system clipboard via iced. The engine's own
                 // clipboard can't reach Wayland (headless display); iced's can.
@@ -1945,6 +2043,7 @@ impl<E: Engine> App<E> {
             .height(Length::Fill);
         let page_owns_keys = !self.url_bar_focused
             && self.profile_dialog.is_none()
+            && !self.downloads_panel_open
             && {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -1989,6 +2088,12 @@ impl<E: Engine> App<E> {
                 ..iced::widget::container::Style::default()
             })
             .into();
+
+        let content: Element<'_, Msg> = if self.downloads_panel_open {
+            stack![content, self.view_downloads_panel()].into()
+        } else {
+            content
+        };
 
         #[cfg(feature = "bitwarden")]
         let content: Element<'_, Msg> = if self.cards_panel_open {
@@ -2147,6 +2252,8 @@ impl<E: Engine> App<E> {
         #[cfg(not(feature = "bitwarden"))]
         let cards_btn = Space::new().width(Length::Fixed(0.0));
 
+        let downloads_btn = self.downloads_tool_btn(muted);
+
         let profile = container(self.view_profile_picker())
             .width(Length::Fixed(self.sidebar_w))
             .padding(Padding::from([0, 6]))
@@ -2161,6 +2268,7 @@ impl<E: Engine> App<E> {
             self.view_omnibox(),
             vault_btn,
             cards_btn,
+            downloads_btn,
         ]
         .spacing(SPACE_SM)
         .padding([SPACE_SM, SPACE_MD])
@@ -2200,6 +2308,29 @@ impl<E: Engine> App<E> {
             return None;
         }
         Some(info.load_progress.clamp(0.0, 1.0).max(0.08))
+    }
+
+    fn downloads_tool_btn(&self, muted: iced::Color) -> Element<'_, Msg> {
+        let accent = self.theme.extended_palette().primary.base.color;
+        let active = self.downloads.has_in_progress() || self.downloads.has_unseen();
+        let color = if self.downloads_panel_open || active {
+            accent
+        } else {
+            muted
+        };
+        let icon = button(icon_svg_colored(self.download_icon.clone(), 18, color))
+            .padding(PAD_CONTROL_SM)
+            .width(Length::Fixed(NAV_BTN_W))
+            .style(if self.downloads_panel_open || self.downloads.has_in_progress() {
+                vault_toolbar_btn_unlocked
+            } else {
+                kit_toolbar::style
+            })
+            .on_press(Msg::DownloadsToggle);
+        match self.downloads.progress_frac() {
+            Some(frac) => stack![icon, omnibox_progress_overlay(frac)].into(),
+            None => icon.into(),
+        }
     }
 
     /// Shared lock / card toolbar control.
@@ -3395,6 +3526,136 @@ impl<E: Engine> App<E> {
         stack![backdrop, anchored].into()
     }
 
+    fn view_downloads_panel(&self) -> Element<'_, Msg> {
+        use crate::downloads::{DownloadStatus, format_bytes, format_progress};
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let soft_sm = |s: String| {
+            text(s).size(11).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.62, ..t }),
+                }
+            })
+        };
+
+        let title = text("Downloads")
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+
+        let items = self.downloads.items();
+        let body: Element<'_, Msg> = if items.is_empty() {
+            column![title, soft_sm("Nothing downloaded yet.".into())]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(340.0))
+                .into()
+        } else {
+            let mut list = column![].spacing(4.0);
+            for e in items {
+                let name = text(e.filename.clone())
+                    .size(13)
+                    .font(sola_kit::fonts::ui_medium());
+                let row_el: Element<'_, Msg> = match e.status {
+                    DownloadStatus::InProgress => {
+                        let sub = format_progress(e);
+                        let cancel = kit_button::labeled_sm("Cancel", kit_button::ghost)
+                            .on_press(Msg::DownloadCancel(e.id.clone()));
+                        row![
+                            column![name, soft_sm(sub)]
+                                .spacing(2)
+                                .width(Length::Fill),
+                            cancel,
+                        ]
+                        .spacing(SPACE_SM)
+                        .align_y(Alignment::Center)
+                        .into()
+                    }
+                    DownloadStatus::Complete => {
+                        let sub = e
+                            .total
+                            .or(Some(e.received))
+                            .filter(|n| *n > 0)
+                            .map(format_bytes)
+                            .unwrap_or_else(|| "Done".into());
+                        let open = button(
+                            column![name, soft_sm(sub)]
+                                .spacing(2)
+                                .width(Length::Fill),
+                        )
+                        .padding(Padding::from([8, 10]))
+                        .width(Length::Fill)
+                        .style(download_row_style)
+                        .on_press(Msg::DownloadOpen(e.id.clone()));
+                        let remove = button(icon_svg(nav_icon_stop(), 14))
+                            .padding(PAD_CONTROL_SM)
+                            .style(kit_toolbar::style)
+                            .on_press(Msg::DownloadRemove(e.id.clone()));
+                        row![open, remove]
+                            .spacing(4)
+                            .align_y(Alignment::Center)
+                            .into()
+                    }
+                    DownloadStatus::Failed => {
+                        let open = button(
+                            column![name, soft_sm("Failed".into())]
+                                .spacing(2)
+                                .width(Length::Fill),
+                        )
+                        .padding(Padding::from([8, 10]))
+                        .width(Length::Fill)
+                        .style(download_row_style);
+                        let remove = button(icon_svg(nav_icon_stop(), 14))
+                            .padding(PAD_CONTROL_SM)
+                            .style(kit_toolbar::style)
+                            .on_press(Msg::DownloadRemove(e.id.clone()));
+                        row![open, remove]
+                            .spacing(4)
+                            .align_y(Alignment::Center)
+                            .into()
+                    }
+                };
+                list = list.push(row_el);
+            }
+            let list_h = (items.len().min(8) as f32 * 56.0).max(72.0);
+            let scroller = scrollable(list)
+                .height(Length::Fixed(list_h))
+                .width(Length::Fill);
+            column![title, scroller]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(340.0))
+                .into()
+        };
+
+        let panel = card::modal(container(body).padding(SPACE_MD + SPACE_SM))
+            .width(Length::Fixed(360.0));
+
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.12,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::DownloadsPanelClose);
+
+        let anchored = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: CHROME_HEIGHT + 4.0,
+                right: 10.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
+
+        stack![backdrop, anchored].into()
+    }
+
     pub fn subscription(&self) -> Subscription<Msg> {
         let frames = self.engine.frames();
         let slot = self.slot.clone();
@@ -3492,8 +3753,30 @@ fn page_host_hint(page_url: &str) -> String {
         })
 }
 
+fn download_row_style(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    let p = theme.extended_palette();
+    let bg = match status {
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed => {
+            p.background.strong.color
+        }
+        _ => p.background.weak.color,
+    };
+    iced::widget::button::Style {
+        background: Some(iced::Background::Color(bg)),
+        text_color: p.background.base.text,
+        border: iced::Border {
+            color: p.background.strong.color,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Unlocked vault toolbar control — subtle accent wash so “ready” ≠ locked.
-#[cfg(feature = "bitwarden")]
 fn vault_toolbar_btn_unlocked(
     theme: &iced::Theme,
     status: iced::widget::button::Status,

@@ -162,11 +162,12 @@ Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 | One-window instant switch + per-profile CEF helpers | **done** (2026-08-12) |
 | Chrome-bar kit identity select (aligned to tab column) | **done** (2026-08-12) |
 | Chrome parks last composites; instant tab/profile paint | **done** (2026-08-13) |
-| History / downloads under `shared/` | **not yet** |
+| Downloads list under `shared/downloads.json` | **done** (2026-08-14) |
+| History under `shared/` | **not yet** |
 
 ## Gaps (explicit)
 
-- History / downloads storage under `shared/`.
+- History storage under `shared/`.
 - Cold visit this session loads `session.json` tabs (intended restore; later switches resume the parked helper). Not a product defect.
 
 ## Decision log

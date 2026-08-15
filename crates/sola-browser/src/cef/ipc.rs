@@ -39,6 +39,9 @@ pub enum ToEngine {
     },
     CloseTab(u64),
     SetActiveTab(u64),
+    CancelDownload {
+        id: u32,
+    },
     Shutdown,
 }
 
@@ -54,6 +57,29 @@ pub enum FromEngine {
     Clipboard(String),
     /// Composition caret in view pixels. `w == 0` clears the last box.
     ImeCaret { x: i32, y: i32, w: i32, h: i32 },
+    Download(DownloadEvent),
+}
+
+/// One download update from a helper. `id` is CEF's per-process download id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadEvent {
+    pub id: u32,
+    pub filename: String,
+    pub path: String,
+    pub url: String,
+    pub received: i64,
+    pub total: i64,
+    /// 0..=100, or `-1` if CEF does not know the size.
+    pub percent: i32,
+    pub state: DownloadPhase,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DownloadPhase {
+    Progress,
+    Complete,
+    Canceled,
+    Failed,
 }
 
 /// Header for one raw frame on the dedicated frame socket. Pixels follow
@@ -207,6 +233,34 @@ mod tests {
         match got {
             FromEngine::ImeCaret { x, y, w, h } => {
                 assert_eq!((x, y, w, h), (8, 16, 2, 18));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_download() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::Download(DownloadEvent {
+                id: 3,
+                filename: "a.pdf".into(),
+                path: "/tmp/a.pdf".into(),
+                url: "https://ex/a.pdf".into(),
+                received: 10,
+                total: 100,
+                percent: 10,
+                state: DownloadPhase::Progress,
+            }),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::Download(ev) => {
+                assert_eq!(ev.id, 3);
+                assert_eq!(ev.filename, "a.pdf");
+                assert_eq!(ev.percent, 10);
             }
             other => panic!("{other:?}"),
         }

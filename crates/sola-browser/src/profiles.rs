@@ -451,6 +451,13 @@ pub fn browser_data_root() -> PathBuf {
     xdg_data_home().join("sola/browser")
 }
 
+/// Browser-wide durable data (downloads index, later history).
+pub fn shared_dir() -> PathBuf {
+    let dir = browser_data_root().join("shared");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 pub fn browser_cache_root() -> PathBuf {
     xdg_cache_home().join("sola/browser")
 }

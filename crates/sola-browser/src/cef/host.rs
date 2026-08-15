@@ -277,6 +277,10 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         },
         ToEngine::CloseTab(id) => Cmd::CloseTab(TabId(id)),
         ToEngine::SetActiveTab(id) => Cmd::SetActiveTab(TabId(id)),
+        ToEngine::CancelDownload { id } => Cmd::CancelDownload {
+            profile_id: String::new(),
+            id,
+        },
         ToEngine::Shutdown => return None,
     })
 }

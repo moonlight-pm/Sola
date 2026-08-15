@@ -113,6 +113,8 @@ pub enum Cmd<E: Engine> {
     },
     /// Drop a parked profile workspace (eviction / profile deleted).
     DropParkedProfile { profile_id: String },
+    /// Cancel a CEF download on the helper that started it.
+    CancelDownload { profile_id: String, id: u32 },
     Quit,
 }
 
@@ -329,6 +331,9 @@ mod ime_caret_tests {
 
 pub type ImeHandle = Arc<Mutex<ImeCaret>>;
 
+/// Helper download events waiting for chrome (`profile_id` + payload).
+pub type DownloadsHandle = Arc<Mutex<Vec<(String, crate::cef::ipc::DownloadEvent)>>>;
+
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
     /// Engine-specific raw frame (CEF: CPU BGRA buffer).
@@ -361,6 +366,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     /// chrome to drain onto the system clipboard. See [`ClipboardHandle`].
     fn clipboard_handle(&self) -> ClipboardHandle;
     fn ime_handle(&self) -> ImeHandle;
+    fn downloads_handle(&self) -> DownloadsHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-15 (browser tabs + Bitwarden cards)
+**As of:** 2026-08-14 (browser downloads)
 
 ---
 
@@ -25,7 +25,10 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
 3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-4. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+4. **Browser downloads** — on `naturalethic/browser-polish`. Auto-save
+   `~/Downloads`, toolbar icon + panel, persist completed. **Needs install
+   to dogfood.**
+5. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
    preview, mail, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged), open URL single-instance
    handoff, etc.
@@ -47,7 +50,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **naturalethic/browser-polish** (tabs + cards); **master** has call plane 2026-08-14 | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; instant tab close; **drag-reorder tabs** + width-aware titles (dogfooded); YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium; no single-instance yet) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; instant tab close; **drag-reorder tabs** + width-aware titles (dogfooded); YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; panel list; persist `shared/downloads.json`; **needs install to dogfood**); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium; no single-instance yet) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
