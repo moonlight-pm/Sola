@@ -1,13 +1,12 @@
-//! Toolbar button showcase — stateful so we can demonstrate the
-//! pressed-count side effect, which mirrors how a real consumer
-//! (pause/clear in sola-monitor) wires it up.
+//! Toolbar — a monitor-style action row.
 
-use iced::widget::{column, container, row};
-use iced::{Element, Length};
+use iced::widget::{column, row};
+use iced::Element;
 
-use sola_kit::components::card::style as card_style;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, muted};
 use sola_kit::components::toolbar_button;
+
+use crate::storybook::pages::chrome::{lede, panel};
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -32,32 +31,29 @@ impl State {
 }
 
 pub fn view(state: &State) -> Element<'_, Msg> {
-    let buttons = ["Pause", "Clear", "Reset"];
-    let bar = buttons.iter().fold(row![].spacing(6), |r, label| {
-        r.push(toolbar_button(*label).on_press(Msg::Clicked(*label)))
-    });
-
-    let demo = container(bar)
-        .style(card_style)
-        .padding(12)
-        .width(Length::Fill);
+    let bar = ["Pause", "Clear", "Reset"]
+        .iter()
+        .fold(row![].spacing(6), |r, label| {
+            r.push(toolbar_button(*label).on_press(Msg::Clicked(*label)))
+        });
 
     let status = match state.last_clicked {
         Some(label) => format!(
-            "Last clicked: {} (count: {})",
+            "{} · {}",
             label,
-            state.counts.get(label).copied().unwrap_or(0),
+            state.counts.get(label).copied().unwrap_or(0)
         ),
-        None => "Click a button to see the active state".to_string(),
+        None => "Compact actions for a top strip.".to_string(),
     };
 
     column![
-        heading("Toolbar"),
-        body("Compact buttons with condensed-bold labels — for top-of-window action rows.")
-            .style(muted),
-        demo,
-        body(status).style(muted),
-        code("toolbar_button(label).on_press(msg)").style(muted),
+        lede(
+            "Toolbar",
+            "Condensed-bold labels. Same density as monitor Pause / Clear.",
+        ),
+        panel(
+            column![bar, body(status).style(muted)].spacing(12),
+        ),
     ]
     .spacing(16)
     .into()

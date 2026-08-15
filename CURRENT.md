@@ -28,9 +28,8 @@ Do not invent product policy.
 5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
    unmerged), open URL single-instance handoff, etc.  
-   Kit Overview **desk** + Select chrome + Button/Field/Form/Select
-   pages are on `naturalethic/kit-design` (**needs install**). Card /
-   Theme / remaining labs still lag.
+   Kit storybook desks (all showcase pages) on `naturalethic/kit-design`
+   (**needs install**).
 
 **Explicit holds:** none.
 

@@ -1,36 +1,34 @@
-//! Badge showcase — every tone, in a row.
+//! Badge — status in a product row, not a tone catalog.
 
 use iced::widget::{column, row};
 use iced::Element;
 
-use sola_kit::components::card;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, muted};
 use sola_kit::components::{Tone, badge};
 
 use crate::storybook::Msg;
+use crate::storybook::pages::chrome::{lede, panel};
 
 pub fn view() -> Element<'static, Msg> {
-    let demo = card(
-        row![
-            badge::<Msg>("Neutral", Tone::Neutral),
-            badge::<Msg>("Accent", Tone::Accent),
-            badge::<Msg>("Ready", Tone::Success),
-            badge::<Msg>("Pending", Tone::Warning),
-            badge::<Msg>("Error", Tone::Danger),
-        ]
-        .spacing(8),
-    );
-
     column![
-        heading("Badge"),
-        body(
-            "Status pills — 10px medium, pad [2, 8]. Neutral is quiet grey + muted \
-             text; status tones keep scanable fills."
-        )
-        .style(muted),
-        demo,
-        code("badge(\"Ready\", Tone::Success) · Neutral → background.strong + muted")
-            .style(muted),
+        lede(
+            "Badge",
+            "Status pills. Accent is neon type on graphite — never a darkened-cyan fill.",
+        ),
+        panel(
+            column![
+                body("Session").style(muted),
+                row![
+                    badge::<Msg>("DEFAULT", Tone::Accent),
+                    badge::<Msg>("CLEAN", Tone::Success),
+                    badge::<Msg>("DIRTY", Tone::Warning),
+                    badge::<Msg>("ERROR", Tone::Danger),
+                    badge::<Msg>("IDLE", Tone::Neutral),
+                ]
+                .spacing(8),
+            ]
+            .spacing(10),
+        ),
     ]
     .spacing(16)
     .into()

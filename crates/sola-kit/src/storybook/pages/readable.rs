@@ -1,33 +1,35 @@
-//! Readable showcase — a max-width centered column for long-form / form
-//! content.
+//! Readable — a measure, shown as a column of copy.
 
 use iced::widget::column;
 use iced::{Element, Length};
 
-use sola_kit::components::card;
 use sola_kit::components::readable;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, muted};
 
 use crate::storybook::Msg;
+use crate::storybook::pages::chrome::{lede, panel};
 
 pub fn view() -> Element<'static, Msg> {
-    let demo = readable(
-        card(body(
-            "This column is capped at 480px and centered in whatever space \
-             it's given, so long-form text keeps a comfortable measure \
-             instead of spanning the full window width. Resize the window \
-             and the column stays put until the viewport drops below the cap.",
-        ))
-        .width(Length::Fill),
-        480.0,
-    );
-
     column![
-        heading("Readable"),
-        body("Max-width centered column — the readable-measure primitive apps were hand-rolling.")
-            .style(muted),
-        demo,
-        code("readable(content, 480.0)").style(muted),
+        lede(
+            "Readable",
+            "Cap the measure. Long copy stays ~65ch instead of spanning the window.",
+        ),
+        readable(
+            panel(
+                column![
+                    body("How this machine names you"),
+                    body(
+                        "This column is capped at 480px and centered. Resize the window — \
+                         the measure holds until the viewport drops below the cap."
+                    )
+                    .style(muted),
+                ]
+                .spacing(8),
+            )
+            .width(Length::Fill),
+            480.0,
+        ),
     ]
     .spacing(16)
     .into()

@@ -26,10 +26,7 @@ pub fn view<'a>(
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
         body(
-            "Live editor for sola-shell's chrome. Colors carry alpha — \
-             the switcher backplate fill is translucent by design. Edits \
-             re-emit Topic::Theme, so the running shell restyles \
-             immediately.",
+            "Shell chrome tokens. Colors carry alpha. The running shell restyles as you edit.",
         )
         .style(muted)
         .into()

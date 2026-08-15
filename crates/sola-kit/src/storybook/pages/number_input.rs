@@ -1,12 +1,13 @@
-//! NumberInput showcase — unit-aware steppers. Stateful so the values
-//! actually change as you press.
+//! NumberInput — token steppers in a settings panel.
 
 use iced::widget::column;
 use iced::Element;
 
+use sola_kit::components::form::form_row;
 use sola_kit::components::number_input;
-use sola_kit::components::text::{body, caption, code, heading, muted};
-use sola_kit::components::card;
+use sola_kit::components::style::SPACE_MD;
+
+use crate::storybook::pages::chrome::{lede, panel};
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -21,7 +22,10 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self { radius: 8.0, opacity: 80.0 }
+        Self {
+            radius: 8.0,
+            opacity: 80.0,
+        }
     }
 }
 
@@ -35,22 +39,24 @@ impl State {
 }
 
 pub fn view(state: &State) -> Element<'_, Msg> {
-    let demo = card(
-        column![
-            caption("Corner radius").style(muted),
-            number_input(state.radius, 0.0..=32.0, 1.0, "px", Msg::Radius),
-            caption("Opacity").style(muted),
-            number_input(state.opacity, 0.0..=100.0, 5.0, "%", Msg::Opacity),
-        ]
-        .spacing(8),
-    );
-
     column![
-        heading("NumberInput"),
-        body("Unit-aware stepper for numeric tokens — radius, spacing, text size.")
-            .style(muted),
-        demo,
-        code("number_input(value, 0.0..=32.0, 1.0, \"px\", Msg::Radius)").style(muted),
+        lede(
+            "NumberInput",
+            "Unit-aware steppers for tokens — radius, spacing, opacity.",
+        ),
+        panel(
+            column![
+                form_row(
+                    "Corner radius",
+                    number_input(state.radius, 0.0..=32.0, 1.0, "px", Msg::Radius),
+                ),
+                form_row(
+                    "Opacity",
+                    number_input(state.opacity, 0.0..=100.0, 5.0, "%", Msg::Opacity),
+                ),
+            ]
+            .spacing(SPACE_MD),
+        ),
     ]
     .spacing(16)
     .into()

@@ -1,48 +1,33 @@
-//! Popover showcase — the floating-panel chrome rendered inline.
-//! v0 doesn't ship anchor/show-hide behavior, so the popover is shown
-//! statically next to its trigger to demonstrate the visual chrome.
+//! Popover — a menu sitting next to its trigger.
 
-use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length};
+use iced::widget::{column, row};
+use iced::Element;
 
 use sola_kit::components::button as kit_btn;
-use sola_kit::components::card::style as card_style;
 use sola_kit::components::popover;
-use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::text::{body, muted};
 
 use crate::storybook::Msg;
+use crate::storybook::pages::chrome::{lede, panel};
 
 pub fn view() -> Element<'static, Msg> {
-    let trigger = button(text("Open menu")).style(kit_btn::secondary).on_press(Msg::Noop);
-
+    let trigger = kit_btn::labeled("Open menu", kit_btn::secondary).on_press(Msg::Noop);
     let menu = popover(
         column![
-            body("Item one"),
-            body("Item two"),
-            body("Item three").style(muted),
+            body("Revert"),
+            body("Duplicate"),
+            body("Delete").style(muted),
         ]
-        .spacing(4),
+        .spacing(6),
     )
-    .width(220);
-
-    let demo = container(
-        row![trigger, menu].spacing(16),
-    )
-    .style(card_style)
-    .padding(16)
-    .width(Length::Fill);
+    .width(180);
 
     column![
-        heading("Popover"),
-        body(
-            "Floating-panel chrome — raised bg, hairline at RADIUS_MD, tight \
-             soft shadow (menu-bar dropdown calm). Default pad SPACE_SM. \
-             v0 ships visual chrome only; anchor/show-hide is the caller's \
-             concern (Stack / Float / shell Menu window)."
-        )
-        .style(muted),
-        demo,
-        code("popover(content)  // RADIUS_MD, pad 4, shadow blur 10").style(muted),
+        lede(
+            "Popover",
+            "Menu chrome: raised face, hairline, tight shadow. Anchor and dismiss stay with the caller.",
+        ),
+        panel(row![trigger, menu].spacing(16).align_y(iced::Alignment::Start)),
     ]
     .spacing(16)
     .into()
