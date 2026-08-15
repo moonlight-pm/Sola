@@ -106,6 +106,8 @@ pub enum Msg {
     SelectionMove { x: f32, y: f32 },
     /// Pointer up — finish region capture if large enough.
     SelectionRelease { x: f32, y: f32 },
+    /// `compositor.screenshot` finished (call plane, not the bus).
+    ScreenshotDone(Result<std::path::PathBuf, String>),
     Noop,
 }
 
@@ -212,8 +214,8 @@ pub struct Shell {
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub selection: SelectionState,
-    /// When true, the next `Topic::Screenshot` from sola-river should
-    /// open/raise sola-preview. Set only by shell hotkey / selection paths.
+    /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
+    /// sola-preview. Set only by shell hotkey / selection paths.
     pub open_preview_on_next: bool,
     /// Window that should keep keyboard after a shell-initiated capture
     /// finishes (preview is raised without stealing focus). Set when a
@@ -1470,7 +1472,7 @@ impl Shell {
                 self.selection.move_to(x, y);
                 let (region, prior) = self.selection.finish_region();
                 // Hide overlay before capture so the marquee/scrim is not
-                // in the PNG (Composition precedes CaptureScreen on the bus).
+                // in the PNG (Composition precedes the screenshot call).
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Always return keyboard to the pre-marquee window — even on
@@ -1487,20 +1489,9 @@ impl Shell {
                 };
                 tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection capture");
                 self.open_preview_on_next = true;
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    use sola_bus::topics::{CaptureScreenPayload, CaptureTarget};
-                    let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
-                        path: None,
-                        target: CaptureTarget::Region {
-                            x: rx,
-                            y: ry,
-                            width: rw,
-                            height: rh,
-                        },
-                    }));
-                }
-                iced::Task::none()
+                crate::screenshot::region(rx, ry, rw, rh)
             }
+            Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
             Msg::CycleAppWindows => {
                 // Find all windows of the focused app and cycle to the next.
                 let Some(ref app_id) = self.focused_app_id.clone() else {

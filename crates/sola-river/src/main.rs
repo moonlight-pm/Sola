@@ -42,6 +42,7 @@ fn main() {
             exit(1);
         }
     };
+    data.call_rx = Some(sola_river::call::start());
 
     let mut event_loop: EventLoop<client::AppData> =
         EventLoop::try_new().expect("calloop event loop");

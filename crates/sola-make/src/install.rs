@@ -16,13 +16,14 @@ const NIX_DIR: &str = "/opt/sola/nix";
 /// Preferred binary replace order when installing multiple targets.
 ///
 /// Matches the process manager's dependency chain: bus first (IPC), then
-/// river (compositor bridge), shell, session, kvm. `sola` itself is last
-/// because replacing it restarts the whole session.
+/// call host, river (compositor bridge), shell, session, kvm. `sola` itself
+/// is last because replacing it restarts the whole session.
 ///
 /// Unknown binaries (apps, terminal, …) sort after these and keep the
 /// relative order the user passed on the CLI.
 const INSTALL_RESTART_ORDER: &[&str] = &[
     "sola-bus",
+    "sola-call",
     "sola-river",
     "sola-shell",
     "sola-session",
@@ -633,7 +634,8 @@ mod restart_order_tests {
 
     #[test]
     fn managed_order_bus_before_river_before_shell() {
-        assert!(install_restart_rank("sola-bus") < install_restart_rank("sola-river"));
+        assert!(install_restart_rank("sola-bus") < install_restart_rank("sola-call"));
+        assert!(install_restart_rank("sola-call") < install_restart_rank("sola-river"));
         assert!(install_restart_rank("sola-river") < install_restart_rank("sola-shell"));
         assert!(install_restart_rank("sola-shell") < install_restart_rank("sola"));
     }

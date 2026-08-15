@@ -8252,6 +8252,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-call"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sola-core",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sola-core"
 version = "0.1.0"
 dependencies = [
@@ -8295,6 +8307,7 @@ dependencies = [
  "serde_json",
  "sola-assets",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "tracing",
  "ttf-parser",
@@ -8384,7 +8397,9 @@ dependencies = [
  "calloop-wayland-source 0.4.1",
  "png 0.18.1",
  "rustix 1.1.4",
+ "serde_json",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "thiserror 2.0.19",
  "tracing",
@@ -8399,7 +8414,9 @@ name = "sola-session"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "serde_json",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "tempfile",
  "tracing",
@@ -8428,6 +8445,7 @@ dependencies = [
  "serde_json",
  "sola-assets",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "sola-kit",
  "tokio",
@@ -8460,6 +8478,7 @@ dependencies = [
  "clap",
  "serde_json",
  "sola-bus",
+ "sola-call",
  "sola-core",
  "zbus",
 ]

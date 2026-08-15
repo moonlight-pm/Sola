@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 tracing = "0.1"
 wayland-client = "0.31"
@@ -24,3 +25,4 @@ thiserror = "2"
 bitflags = "2"
 rustix = { version = "1", features = ["fs", "mm"] }
 png = "0.18"
+serde_json = "1"

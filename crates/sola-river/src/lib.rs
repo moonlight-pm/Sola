@@ -1,4 +1,5 @@
 pub mod bus;
+pub mod call;
 pub mod client;
 pub mod pending;
 pub mod proc_identity;

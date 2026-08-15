@@ -86,6 +86,8 @@ pub struct BusSetup {
     subscribe: Option<&'static [TopicKind]>,
     app_menus: Vec<MenuDefinition>,
     connect_timeout: Duration,
+    call_owner: Option<String>,
+    call_methods: Vec<sola_call::MethodSpec>,
 }
 
 impl BusSetup {
@@ -95,6 +97,8 @@ impl BusSetup {
             subscribe: None,
             app_menus: Vec::new(),
             connect_timeout: Duration::from_millis(250),
+            call_owner: None,
+            call_methods: Vec::new(),
         }
     }
 
@@ -155,6 +159,19 @@ impl BusSetup {
         self.app_menu(menu_label, items)
     }
 
+    /// Advertise call-plane methods as CLI owner `owner` (e.g. `"at"`).
+    /// Starts the reconnecting provider when [`install`](Self::install) runs.
+    /// Fold [`crate::call_subscription`] into iced to receive invokes.
+    pub fn calls(
+        mut self,
+        owner: impl Into<String>,
+        methods: impl IntoIterator<Item = sola_call::MethodSpec>,
+    ) -> Self {
+        self.call_owner = Some(owner.into());
+        self.call_methods.extend(methods);
+        self
+    }
+
     /// Connect, subscribe, publish the menu, and stash the client
     /// in the global slot. Panics if called twice in the same
     /// process — that's a setup-order bug.
@@ -186,6 +203,9 @@ impl BusSetup {
         BUS.set(Arc::new(Mutex::new(client)))
             .map_err(|_| ())
             .expect("sola_kit::BusSetup::install called twice");
+        if let Some(owner) = self.call_owner {
+            crate::call::install_provider(owner, self.app_id.to_string(), self.call_methods);
+        }
     }
 }
 

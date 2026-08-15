@@ -9,16 +9,15 @@
 `solactl screenshot` for automation/agents, Super+Shift+3/4 in sola-shell for
 humans — by implementing `wlr-screencopy` capture in `sola-river`.
 
-**Architecture:** One capture backend in `sola-river`. CLI and shell only emit
-`Topic::CaptureScreen` and consume `Topic::Screenshot`. No grim binary; no
-second capture path.
+**Architecture (as-built now):** One capture backend in `sola-river`. CLI and
+shell invoke `compositor.screenshot`. No grim binary.
 
 **Tech stack:** Wayland client (`wayland-client` 0.31), vendored
 `wlr-screencopy-unstable-v1`, `wl_shm` memfd buffers, `png` crate encode,
 existing bus topics.
 
 **Date:** 2026-07-20  
-**Status:** Ready for execution  
+**Status:** **Superseded (request path)** — capture still lives in sola-river; request/reply is `compositor.screenshot` on sola-call (2026-08-13 call-plane freeze). `CaptureScreen` / `Screenshot` bus topics are gone.  
 **Roadmap:** `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` (P0)  
 **Prior art:** stub + plan comments in
 `crates/sola-river/src/client/screenshot.rs`; older notes in

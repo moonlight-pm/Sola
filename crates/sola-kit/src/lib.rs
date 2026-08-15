@@ -6,6 +6,7 @@
 //! `run::<A>()` wrapper. The kit handles:
 //!
 //! - bus connection + subscription ([`BusSetup`], [`app::bus_subscription`])
+//! - call-plane advertise + subscription ([`CallSetup`], [`call::call_subscription`])
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
 //! - system font resolution (no bundled fonts; see `fonts::ensure_system_fonts`)
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
@@ -30,12 +31,14 @@
 //! pieces — no speculative widgets.
 
 pub mod app;
+pub mod call;
 pub mod components;
 pub mod float;
 pub mod fonts;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
+pub use call::{CallSetup, call_subscription};
 pub use float::{FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating};
 pub use theme::default_theme;
 
@@ -46,3 +49,4 @@ pub use iced;
 /// Re-export so consumers can reference bus types without taking
 /// their own dep — convenience only, not load-bearing.
 pub use sola_bus;
+pub use sola_call;
