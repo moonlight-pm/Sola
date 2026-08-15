@@ -25,7 +25,6 @@ pub struct Theme {
     pub components: BTreeMap<String, ComponentBindings>,
 }
 
-
 /// A theme persisted under a user-supplied name. Lives behind the
 /// `Topic::CustomTheme` persistent topic (keyed by `name`) so the
 /// storybook's user-created presets survive restart. The hardcoded

@@ -88,7 +88,9 @@ pub fn build_pm_client(
     state.register_client_managed(Arc::new(MemoryRepository::<Cipher>::default()));
     state.register_client_managed(Arc::new(MemoryRepository::<Folder>::default()));
     state.register_client_managed(Arc::new(MemoryRepository::<UserKeyState>::default()));
-    state.register_client_managed(Arc::new(MemoryRepository::<LocalUserDataKeyState>::default()));
+    state.register_client_managed(Arc::new(
+        MemoryRepository::<LocalUserDataKeyState>::default(),
+    ));
 
     let pm = PasswordManagerClient(client);
     // Keep this SyncClient for the process lifetime — handlers live on it.
@@ -144,14 +146,17 @@ impl IdentityLogin<'_> {
             .prelogin(email.clone())
             .await
             .map_err(|e| format!("prelogin: {e}"))?;
-        info!(ms = t0.elapsed().as_millis() as u64, "vault: timing prelogin");
+        info!(
+            ms = t0.elapsed().as_millis() as u64,
+            "vault: timing prelogin"
+        );
 
         // --- master key once (PBKDF2 ~600k) ---
         // Chrome-class clients pay this cost **once**. We previously derived
         // for the server auth hash *and* again inside MasterPasswordUnlock.
         let t1 = Instant::now();
-        let master_key = MasterKey::derive(&password, &email, &kdf)
-            .map_err(|e| format!("master key: {e}"))?;
+        let master_key =
+            MasterKey::derive(&password, &email, &kdf).map_err(|e| format!("master key: {e}"))?;
         let hash = master_key
             .derive_master_key_hash(password.as_bytes(), HashPurpose::ServerAuthorization)
             .to_string();
@@ -343,7 +348,10 @@ impl IdentityLogin<'_> {
         if let Some((kind, token)) = &self.otp {
             match kind {
                 TwoFactorKind::NewDevice => {
-                    info!(token_len = token.len(), "vault: identity token + newDeviceOtp");
+                    info!(
+                        token_len = token.len(),
+                        "vault: identity token + newDeviceOtp"
+                    );
                     new_device_otp = Some(token.clone());
                 }
                 TwoFactorKind::Email => {
@@ -353,7 +361,10 @@ impl IdentityLogin<'_> {
                     two_factor_remember = Some(true);
                 }
                 TwoFactorKind::Authenticator => {
-                    info!(token_len = token.len(), "vault: identity token + authenticator 2FA");
+                    info!(
+                        token_len = token.len(),
+                        "vault: identity token + authenticator 2FA"
+                    );
                     two_factor_token = Some(token.clone());
                     two_factor_provider = Some(0u8);
                     two_factor_remember = Some(true);
@@ -503,7 +514,14 @@ fn redact_secrets(body: &str) -> String {
         Err(_) => return body.chars().take(500).collect(),
     };
     if let Some(obj) = v.as_object_mut() {
-        for k in ["access_token", "AccessToken", "refresh_token", "RefreshToken", "Key", "PrivateKey"] {
+        for k in [
+            "access_token",
+            "AccessToken",
+            "refresh_token",
+            "RefreshToken",
+            "Key",
+            "PrivateKey",
+        ] {
             if obj.contains_key(k) {
                 obj.insert(k.to_string(), Value::String("[redacted]".into()));
             }
@@ -650,7 +668,10 @@ fn extract_unlock_data(v: &Value) -> Option<MasterPasswordUnlockData> {
     }
 
     // Legacy: top-level Key + Kdf fields
-    let wrapped = v.get("Key").or_else(|| v.get("key")).and_then(|x| x.as_str())?;
+    let wrapped = v
+        .get("Key")
+        .or_else(|| v.get("key"))
+        .and_then(|x| x.as_str())?;
     let kdf = parse_kdf(v)?;
     let salt = v
         .get("Email")
@@ -668,7 +689,11 @@ fn extract_unlock_data(v: &Value) -> Option<MasterPasswordUnlockData> {
 
 fn parse_kdf(v: &Value) -> Option<Kdf> {
     // Nested Kdf object
-    if let Some(kdf_obj) = v.get("Kdf").or_else(|| v.get("kdf")).filter(|x| x.is_object()) {
+    if let Some(kdf_obj) = v
+        .get("Kdf")
+        .or_else(|| v.get("kdf"))
+        .filter(|x| x.is_object())
+    {
         let kdf_type = kdf_obj
             .get("KdfType")
             .or_else(|| kdf_obj.get("kdfType"))
@@ -699,7 +724,8 @@ fn parse_kdf(v: &Value) -> Option<Kdf> {
 fn kdf_from_parts(kdf_type: i64, iterations: u32, v: &Value) -> Option<Kdf> {
     match kdf_type {
         0 => Some(Kdf::PBKDF2 {
-            iterations: std::num::NonZeroU32::new(iterations).unwrap_or(std::num::NonZeroU32::new(600_000).unwrap()),
+            iterations: std::num::NonZeroU32::new(iterations)
+                .unwrap_or(std::num::NonZeroU32::new(600_000).unwrap()),
         }),
         1 => {
             let memory = v
@@ -717,9 +743,12 @@ fn kdf_from_parts(kdf_type: i64, iterations: u32, v: &Value) -> Option<Kdf> {
                 .and_then(|x| x.as_u64())
                 .unwrap_or(4) as u32;
             Some(Kdf::Argon2id {
-                iterations: std::num::NonZeroU32::new(iterations).unwrap_or(std::num::NonZeroU32::new(3).unwrap()),
-                memory: std::num::NonZeroU32::new(memory).unwrap_or(std::num::NonZeroU32::new(64).unwrap()),
-                parallelism: std::num::NonZeroU32::new(parallelism).unwrap_or(std::num::NonZeroU32::new(4).unwrap()),
+                iterations: std::num::NonZeroU32::new(iterations)
+                    .unwrap_or(std::num::NonZeroU32::new(3).unwrap()),
+                memory: std::num::NonZeroU32::new(memory)
+                    .unwrap_or(std::num::NonZeroU32::new(64).unwrap()),
+                parallelism: std::num::NonZeroU32::new(parallelism)
+                    .unwrap_or(std::num::NonZeroU32::new(4).unwrap()),
             })
         }
         _ => None,

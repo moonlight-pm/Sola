@@ -74,8 +74,18 @@ pub fn month_weeks(anchor: NaiveDate) -> Vec<[Option<NaiveDate>; 7]> {
 
 fn month_name(month: u32) -> &'static str {
     [
-        "January", "February", "March", "April", "May", "June", "July", "August", "September",
-        "October", "November", "December",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
     ]
     .get((month.max(1) - 1) as usize)
     .copied()

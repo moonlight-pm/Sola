@@ -16,4 +16,6 @@ pub mod watcher;
 
 pub use encrypted::Encrypted;
 pub use keys::{KeyChord, KeyCode};
-pub use open_url::{open as open_url, open_logged as open_url_logged};
+pub use open_url::{
+    chrome_is_running as sola_browser_is_running, open as open_url, open_logged as open_url_logged,
+};

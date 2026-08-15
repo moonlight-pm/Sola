@@ -58,27 +58,16 @@ impl canvas::Program<Msg> for Marquee {
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => Some(
-                canvas::Action::publish(Msg::SelectionPress {
-                    x: pos.x,
-                    y: pos.y,
-                })
-                .and_capture(),
+                canvas::Action::publish(Msg::SelectionPress { x: pos.x, y: pos.y }).and_capture(),
             ),
             Event::Mouse(mouse::Event::CursorMoved { .. }) if self.state.drag_start.is_some() => {
                 Some(
-                    canvas::Action::publish(Msg::SelectionMove {
-                        x: pos.x,
-                        y: pos.y,
-                    })
-                    .and_capture(),
+                    canvas::Action::publish(Msg::SelectionMove { x: pos.x, y: pos.y })
+                        .and_capture(),
                 )
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(
-                canvas::Action::publish(Msg::SelectionRelease {
-                    x: pos.x,
-                    y: pos.y,
-                })
-                .and_capture(),
+                canvas::Action::publish(Msg::SelectionRelease { x: pos.x, y: pos.y }).and_capture(),
             ),
             _ => None,
         }
@@ -104,8 +93,7 @@ impl canvas::Program<Msg> for Marquee {
             },
         );
 
-        if let (Some((x0, y0)), Some((x1, y1))) = (self.state.drag_start, self.state.drag_current)
-        {
+        if let (Some((x0, y0)), Some((x1, y1))) = (self.state.drag_start, self.state.drag_current) {
             let left = x0.min(x1);
             let top = y0.min(y1);
             let w = (x0 - x1).abs();

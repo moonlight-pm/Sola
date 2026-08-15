@@ -78,11 +78,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_dangling_token() {
-        let theme = theme_with_one_binding(
-            "demo",
-            "bg",
-            Binding::new("surface", "no-such-token"),
-        );
+        let theme = theme_with_one_binding("demo", "bg", Binding::new("surface", "no-such-token"));
         let err = theme.validate().expect_err("expected validation error");
         assert!(
             err.iter().any(|e| matches!(
@@ -98,11 +94,7 @@ mod tests {
         // bg-primary is a surface-only token (`groups: ["surface"]`).
         // Pointing a `border`-group slot at it triggers GroupNotInToken
         // (not GroupKindMismatch — bg-primary is still a Color).
-        let theme = theme_with_one_binding(
-            "demo",
-            "border",
-            Binding::new("border", "bg-primary"),
-        );
+        let theme = theme_with_one_binding("demo", "border", Binding::new("border", "bg-primary"));
         let err = theme.validate().expect_err("expected validation error");
         assert!(
             err.iter().any(|e| matches!(
@@ -137,11 +129,8 @@ mod tests {
 
     #[test]
     fn validate_rejects_unknown_group() {
-        let theme = theme_with_one_binding(
-            "demo",
-            "bg",
-            Binding::new("not-a-real-group", "bg-primary"),
-        );
+        let theme =
+            theme_with_one_binding("demo", "bg", Binding::new("not-a-real-group", "bg-primary"));
         let err = theme.validate().expect_err("expected validation error");
         assert!(
             err.iter().any(|e| matches!(

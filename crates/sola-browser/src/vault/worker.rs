@@ -14,7 +14,10 @@ use super::passkey::PasskeyCandidate;
 
 /// Commands from chrome → vault worker.
 pub enum VaultCmd {
-    Login { email: String, password: String },
+    Login {
+        email: String,
+        password: String,
+    },
     /// Complete 2FA / new-device verification.
     LoginTwoFactor {
         email: String,
@@ -30,12 +33,18 @@ pub enum VaultCmd {
         kind: TwoFactorKind,
     },
     Sync,
-    Matches { url: String },
-    Fill { id: String },
+    Matches {
+        url: String,
+    },
+    Fill {
+        id: String,
+    },
     /// List every card cipher (no URI filter).
     ListCards,
     /// Decrypt a card for page fill.
-    FillCard { id: String },
+    FillCard {
+        id: String,
+    },
     /// Persist a new login then return fill material.
     CreateLogin {
         name: String,
@@ -58,6 +67,14 @@ pub enum VaultCmd {
         /// Cipher id chosen in the passkey picker (required).
         cipher_id: String,
     },
+    /// WebAuthn create() — register a vault passkey.
+    PasskeyRegister {
+        req_id: u64,
+        origin: String,
+        public_key_json: String,
+        /// Existing login to attach to. `None` creates a new personal login.
+        cipher_id: Option<String>,
+    },
     Status,
     Quit,
 }
@@ -66,7 +83,9 @@ pub enum VaultCmd {
 #[derive(Debug, Clone)]
 pub enum VaultEvent {
     Status(VaultStatus),
-    LoginOk { email: String },
+    LoginOk {
+        email: String,
+    },
     /// Email OTP (new device) or authenticator TOTP required.
     LoginNeedsTwoFactor {
         email: String,
@@ -76,11 +95,19 @@ pub enum VaultEvent {
         /// True if we successfully asked the server to email a code.
         email_sent: bool,
     },
-    LoginFailed { message: String },
+    LoginFailed {
+        message: String,
+    },
     EmailCodeSent,
-    EmailCodeFailed { message: String },
-    SyncOk { full: bool },
-    SyncFailed { message: String },
+    EmailCodeFailed {
+        message: String,
+    },
+    SyncOk {
+        full: bool,
+    },
+    SyncFailed {
+        message: String,
+    },
     Matches(Vec<MatchSummary>),
     Cards(Vec<CardSummary>),
     FillReady {
@@ -113,7 +140,9 @@ pub enum VaultEvent {
         /// On ok: assertion JSON string; on err: error message.
         payload: String,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Handle held by `App` for the vault worker.
@@ -245,24 +274,25 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
             VaultCmd::Status => {
                 let _ = event_tx.send(VaultEvent::Status(svc.status()));
             }
-            VaultCmd::Login { email, mut password } => {
-                match svc.login(email.clone(), password.clone()).await {
-                    Ok(outcome) => {
-                        password.zeroize();
-                        handle_login_outcome(&mut svc, &event_tx, email, outcome).await;
-                    }
-                    Err(e) => {
-                        password.zeroize();
-                        let message = match e {
-                            VaultError::LoginFailed => "Login failed.".into(),
-                            other => other.to_string(),
-                        };
-                        tracing::warn!(%message, "vault: login failed");
-                        let _ = event_tx.send(VaultEvent::LoginFailed { message });
-                        let _ = event_tx.send(VaultEvent::Status(svc.status()));
-                    }
+            VaultCmd::Login {
+                email,
+                mut password,
+            } => match svc.login(email.clone(), password.clone()).await {
+                Ok(outcome) => {
+                    password.zeroize();
+                    handle_login_outcome(&mut svc, &event_tx, email, outcome).await;
                 }
-            }
+                Err(e) => {
+                    password.zeroize();
+                    let message = match e {
+                        VaultError::LoginFailed => "Login failed.".into(),
+                        other => other.to_string(),
+                    };
+                    tracing::warn!(%message, "vault: login failed");
+                    let _ = event_tx.send(VaultEvent::LoginFailed { message });
+                    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+                }
+            },
             VaultCmd::LoginTwoFactor {
                 email,
                 mut password,
@@ -414,10 +444,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     }
                     let username = material.username.take();
                     let password = material.password.take();
-                    let _ = event_tx.send(VaultEvent::FillReady {
-                        username,
-                        password,
-                    });
+                    let _ = event_tx.send(VaultEvent::FillReady { username, password });
                 }
                 Err(e) => {
                     let _ = event_tx.send(VaultEvent::Error {
@@ -434,10 +461,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                             n = candidates.len(),
                             "vault: passkey candidates"
                         );
-                        let _ = event_tx.send(VaultEvent::PasskeyCandidates {
-                            req_id,
-                            candidates,
-                        });
+                        let _ = event_tx.send(VaultEvent::PasskeyCandidates { req_id, candidates });
                     }
                     Err(e) => {
                         tracing::warn!(req_id, error = %e, "vault: passkey list failed");
@@ -465,9 +489,8 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                 {
                     Ok(assertion) => {
                         crate::vault::VaultPrefs::touch_cipher(&cipher_id);
-                        let payload = serde_json::to_string(&assertion).unwrap_or_else(|e| {
-                            format!(r#"{{"error":"{e}"}}"#)
-                        });
+                        let payload = serde_json::to_string(&assertion)
+                            .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
                         tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
                         let _ = event_tx.send(VaultEvent::PasskeyReady {
                             req_id,
@@ -477,6 +500,58 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     }
                     Err(e) => {
                         tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
+                        let _ = event_tx.send(VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        });
+                    }
+                }
+            }
+            VaultCmd::PasskeyRegister {
+                req_id,
+                origin,
+                public_key_json,
+                cipher_id,
+            } => {
+                match super::passkey::register(&svc, &origin, &public_key_json, cipher_id.clone())
+                    .await
+                {
+                    Ok((attestation, ctx)) => match svc.persist_encryption_context(ctx).await {
+                        Ok(id) => {
+                            if let Some(ref id) = id {
+                                crate::vault::VaultPrefs::touch_cipher(id);
+                            }
+                            let payload = serde_json::to_string(&attestation)
+                                .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
+                            tracing::info!(
+                                req_id,
+                                %origin,
+                                cipher_id = id.as_deref().unwrap_or("-"),
+                                attached = cipher_id.is_some(),
+                                "vault: passkey register ok"
+                            );
+                            let _ = event_tx.send(VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: true,
+                                payload,
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                req_id,
+                                error = %e,
+                                "vault: passkey register persist failed"
+                            );
+                            let _ = event_tx.send(VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: false,
+                                payload: format!("Could not save the passkey to Bitwarden: {e}"),
+                            });
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(req_id, error = %e, "vault: passkey register failed");
                         let _ = event_tx.send(VaultEvent::PasskeyReady {
                             req_id,
                             ok: false,

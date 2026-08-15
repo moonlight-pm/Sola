@@ -14,12 +14,17 @@ impl Counters {
 pub fn parse_dev(s: &str) -> Counters {
     let mut c = Counters::default();
     for line in s.lines() {
-        let Some((name, rest)) = line.split_once(':') else { continue };
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
         let name = name.trim();
         if name == "lo" || name.is_empty() {
             continue;
         }
-        let f: Vec<u64> = rest.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        let f: Vec<u64> = rest
+            .split_whitespace()
+            .filter_map(|v| v.parse().ok())
+            .collect();
         if f.len() >= 9 {
             c.0.insert(name.to_string(), (f[0], f[8]));
         }
@@ -88,7 +93,12 @@ pub fn detail(cur: &Counters) -> NetDetail {
     let iface = default_iface().unwrap_or_default();
     let ip = iface_ip(&iface).unwrap_or_else(|| "—".into());
     let (down, up) = cur.get(&iface).copied().unwrap_or((0, 0));
-    NetDetail { iface, ip, total_down: down, total_up: up }
+    NetDetail {
+        iface,
+        ip,
+        total_down: down,
+        total_up: up,
+    }
 }
 
 #[cfg(test)]

@@ -29,9 +29,32 @@ const EQUIVALENT_DOMAIN_GROUPS: &[&[&str]] = &[
         "chrome.com",
         "chromium.org",
     ],
-    &["apple.com", "icloud.com", "icloud.com.cn", "me.com", "mzstatic.com"],
-    &["microsoft.com", "live.com", "outlook.com", "office.com", "office365.com", "microsoftonline.com", "xbox.com", "skype.com"],
-    &["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.ca", "amazon.com.au", "aws.amazon.com"],
+    &[
+        "apple.com",
+        "icloud.com",
+        "icloud.com.cn",
+        "me.com",
+        "mzstatic.com",
+    ],
+    &[
+        "microsoft.com",
+        "live.com",
+        "outlook.com",
+        "office.com",
+        "office365.com",
+        "microsoftonline.com",
+        "xbox.com",
+        "skype.com",
+    ],
+    &[
+        "amazon.com",
+        "amazon.co.uk",
+        "amazon.de",
+        "amazon.fr",
+        "amazon.ca",
+        "amazon.com.au",
+        "aws.amazon.com",
+    ],
 ];
 
 /// Returns true when `page_url` should be considered a match for a stored
@@ -62,15 +85,15 @@ fn parse_url(s: &str) -> Option<Url> {
 fn match_with_urls(page: &Url, stored: &Url, match_type: Option<UriMatchType>) -> bool {
     match match_type.unwrap_or(UriMatchType::Domain) {
         UriMatchType::Never => false,
-        UriMatchType::Exact => page.as_str().trim_end_matches('/') == stored.as_str().trim_end_matches('/'),
+        UriMatchType::Exact => {
+            page.as_str().trim_end_matches('/') == stored.as_str().trim_end_matches('/')
+        }
         UriMatchType::StartsWith => {
             let page_s = page.as_str();
             let stored_s = stored.as_str().trim_end_matches('/');
             page_s.starts_with(stored_s)
         }
-        UriMatchType::Host => {
-            hosts_equal(page, stored) && ports_compatible(page, stored)
-        }
+        UriMatchType::Host => hosts_equal(page, stored) && ports_compatible(page, stored),
         UriMatchType::Domain => base_domains_equal(page, stored),
         UriMatchType::RegularExpression => {
             // Spike: treat as exact host match rather than compiling untrusted regex

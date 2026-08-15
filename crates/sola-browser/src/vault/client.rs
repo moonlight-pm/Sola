@@ -3,14 +3,15 @@
 
 use std::sync::Arc;
 
+use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_core::auth::login::TwoFactorEmailRequest;
 use bitwarden_core::key_management::MasterPasswordAuthenticationData;
 use bitwarden_core::{ClientSettings, DeviceType};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncRequest};
-use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_vault::{
-    CipherRepromptType, CipherType, CipherView, LoginUriView, LoginView, UriMatchType,
+    CipherRepromptType, CipherType, CipherView, EncryptionContext, LoginUriView, LoginView,
+    UriMatchType,
 };
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -444,71 +445,7 @@ impl VaultService {
             return Err(VaultError::Locked);
         }
 
-        let name = {
-            let t = name.trim();
-            if t.is_empty() {
-                "Login".to_string()
-            } else {
-                t.to_string()
-            }
-        };
-        let mut login = LoginView {
-            username: username.clone().filter(|s| !s.is_empty()),
-            password: password.clone().filter(|s| !s.is_empty()),
-            password_revision_date: None,
-            uris: None,
-            totp: None,
-            autofill_on_page_load: None,
-            fido2_credentials: None,
-        };
-        if let Some(uri) = uri
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        {
-            login.uris = Some(vec![LoginUriView {
-                uri: Some(uri),
-                r#match: Some(UriMatchType::Domain),
-                uri_checksum: None,
-            }]);
-        }
-        login.generate_checksums();
-
-        let now = chrono::Utc::now();
-        let view = CipherView {
-            id: None,
-            organization_id: None,
-            folder_id: None,
-            collection_ids: Vec::new(),
-            key: None,
-            name,
-            notes: None,
-            r#type: CipherType::Login,
-            login: Some(login),
-            identity: None,
-            card: None,
-            secure_note: None,
-            ssh_key: None,
-            bank_account: None,
-            drivers_license: None,
-            passport: None,
-            favorite: false,
-            reprompt: CipherRepromptType::None,
-            organization_use_totp: false,
-            edit: true,
-            permissions: None,
-            view_password: true,
-            local_data: None,
-            attachments: None,
-            attachment_decryption_failures: None,
-            fields: None,
-            password_history: None,
-            creation_date: now,
-            deleted_date: None,
-            revision_date: now,
-            archived_date: None,
-        };
-
+        let view = new_login_view(name, username.clone(), password.clone(), uri);
         let ctx = self
             .client
             .vault()
@@ -516,36 +453,117 @@ impl VaultService {
             .encrypt(view)
             .await
             .map_err(|e| VaultError::Other(format!("encrypt login: {e}")))?;
+        let id = self.persist_encryption_context(ctx).await?;
 
-        let mut req: CipherRequestModel = ctx
-            .cipher
-            .try_into()
-            .map_err(|e| VaultError::Other(format!("cipher request: {e}")))?;
-        req.encrypted_for = Some(ctx.encrypted_for.into());
+        Ok((id, FillMaterial { username, password }))
+    }
 
-        let created = self
-            .client
-            .0
-            .internal
-            .get_api_configurations()
-            .api_client
-            .ciphers_api()
-            .post(Some(req))
-            .await
-            .map_err(|e| VaultError::Other(format!("create login: {e}")))?;
-        let id = created.id.map(|id| id.to_string());
-
-        if let Err(e) = self.sync().await {
-            tracing::warn!(error = %e, "vault: created login but sync failed");
+    /// POST a new cipher or PUT an existing one, then sync.
+    pub async fn persist_encryption_context(
+        &self,
+        ctx: EncryptionContext,
+    ) -> Result<Option<String>, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
         }
 
-        Ok((
-            id,
-            FillMaterial {
-                username,
-                password,
-            },
-        ))
+        let existing_id = ctx.cipher.id;
+        let req: CipherRequestModel = ctx.into();
+        let api = self.client.0.internal.get_api_configurations();
+
+        let id = if let Some(id) = existing_id {
+            api.api_client
+                .ciphers_api()
+                .put(id.into(), Some(req))
+                .await
+                .map_err(|e| VaultError::Other(format!("update login: {e}")))?;
+            Some(id.to_string())
+        } else {
+            let created = api
+                .api_client
+                .ciphers_api()
+                .post(Some(req))
+                .await
+                .map_err(|e| VaultError::Other(format!("create login: {e}")))?;
+            created.id.map(|id| id.to_string())
+        };
+
+        if let Err(e) = self.sync().await {
+            tracing::warn!(error = %e, "vault: persisted cipher but sync failed");
+        }
+        Ok(id)
+    }
+}
+
+/// Decrypted personal login ready to encrypt (create-login and passkey create).
+pub fn new_login_view(
+    name: String,
+    username: Option<String>,
+    password: Option<String>,
+    uri: Option<String>,
+) -> CipherView {
+    let name = {
+        let t = name.trim();
+        if t.is_empty() {
+            "Login".to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    let mut login = LoginView {
+        username: username.filter(|s| !s.is_empty()),
+        password: password.filter(|s| !s.is_empty()),
+        password_revision_date: None,
+        uris: None,
+        totp: None,
+        autofill_on_page_load: None,
+        fido2_credentials: None,
+    };
+    if let Some(uri) = uri.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        login.uris = Some(vec![LoginUriView {
+            uri: Some(uri),
+            r#match: Some(UriMatchType::Domain),
+            uri_checksum: None,
+        }]);
+    }
+    login.generate_checksums();
+
+    let now = chrono::Utc::now();
+    CipherView {
+        id: None,
+        organization_id: None,
+        folder_id: None,
+        collection_ids: Vec::new(),
+        key: None,
+        name,
+        notes: None,
+        r#type: CipherType::Login,
+        login: Some(login),
+        identity: None,
+        card: None,
+        secure_note: None,
+        ssh_key: None,
+        bank_account: None,
+        drivers_license: None,
+        passport: None,
+        favorite: false,
+        reprompt: CipherRepromptType::None,
+        organization_use_totp: false,
+        edit: true,
+        permissions: None,
+        view_password: true,
+        local_data: None,
+        attachments: None,
+        attachment_decryption_failures: None,
+        fields: None,
+        password_history: None,
+        creation_date: now,
+        deleted_date: None,
+        revision_date: now,
+        archived_date: None,
     }
 }
 
@@ -657,10 +675,7 @@ fn cipher_last_used(
 
 /// Last 4 digits, or 5 for Amex (34/37). None if the PAN is too short.
 pub fn card_last4(number: Option<&str>) -> Option<String> {
-    let digits: String = number?
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = number?.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() < 4 {
         return None;
     }
@@ -673,7 +688,10 @@ pub fn card_last4(number: Option<&str>) -> Option<String> {
 }
 
 pub fn card_subtitle(brand: Option<&str>, last4: Option<&str>) -> String {
-    match (brand.filter(|s| !s.is_empty()), last4.filter(|s| !s.is_empty())) {
+    match (
+        brand.filter(|s| !s.is_empty()),
+        last4.filter(|s| !s.is_empty()),
+    ) {
         (Some(b), Some(n)) => format!("{b} · •••• {n}"),
         (Some(b), None) => b.to_string(),
         (None, Some(n)) => format!("•••• {n}"),
@@ -699,8 +717,14 @@ mod tests {
 
     #[test]
     fn last4_visa_and_amex() {
-        assert_eq!(card_last4(Some("4111111111111111")).as_deref(), Some("1111"));
-        assert_eq!(card_last4(Some("3782 822463 10005")).as_deref(), Some("10005"));
+        assert_eq!(
+            card_last4(Some("4111111111111111")).as_deref(),
+            Some("1111")
+        );
+        assert_eq!(
+            card_last4(Some("3782 822463 10005")).as_deref(),
+            Some("10005")
+        );
         assert_eq!(card_last4(Some("12")), None);
         assert_eq!(card_last4(None), None);
     }
@@ -712,8 +736,14 @@ mod tests {
             "Visa · •••• 1111"
         );
         assert_eq!(card_subtitle(None, Some("4444")), "•••• 4444");
-        assert_eq!(card_exp_display(Some("3"), Some("2028")).as_deref(), Some("03/28"));
-        assert_eq!(card_exp_display(Some("12"), Some("28")).as_deref(), Some("12/28"));
+        assert_eq!(
+            card_exp_display(Some("3"), Some("2028")).as_deref(),
+            Some("03/28")
+        );
+        assert_eq!(
+            card_exp_display(Some("12"), Some("28")).as_deref(),
+            Some("12/28")
+        );
         assert_eq!(card_exp_display(Some("12"), None), None);
     }
 }

@@ -7,10 +7,18 @@ use std::sync::{Mutex, OnceLock};
 #[derive(Debug, Clone)]
 pub struct PasskeyPageRequest {
     pub id: u64,
+    /// `get` or `create`.
+    pub action: String,
     pub origin: String,
     pub rp_id: String,
-    /// Serialized PublicKeyCredentialRequestOptions.publicKey (challenge etc. base64url).
+    /// Serialized publicKey options (challenge / user.id etc. base64url).
     pub public_key_json: String,
+}
+
+impl PasskeyPageRequest {
+    pub fn is_create(&self) -> bool {
+        self.action == "create"
+    }
 }
 
 static TO_UI: OnceLock<Sender<PasskeyPageRequest>> = OnceLock::new();

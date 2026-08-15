@@ -17,8 +17,7 @@ use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
-    PasskeysHandle,
-    FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
+    FrameSlot, NavCmd, PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -48,7 +47,11 @@ pub struct CefFrame {
 /// Lives here (engine-specific) rather than in core.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum InputEvent {
-    PointerMove { x: i32, y: i32, modifiers: u32 },
+    PointerMove {
+        x: i32,
+        y: i32,
+        modifiers: u32,
+    },
     PointerButton {
         down: bool,
         x: i32,
@@ -87,18 +90,22 @@ pub enum InputEvent {
         selection_to: u32,
     },
     /// Commit composed text (OSR `ImeCommitText`).
-    ImeCommit { text: String },
+    ImeCommit {
+        text: String,
+    },
     /// Cancel the current composition (`ImeCancelComposition`).
     ImeCancel,
     /// Pointer left the OSR view (`send_mouse_move_event` with mouse_leave).
-    PointerLeave { x: i32, y: i32, modifiers: u32 },
+    PointerLeave {
+        x: i32,
+        y: i32,
+        modifiers: u32,
+    },
 }
 
 fn default_click_count() -> u32 {
     1
 }
-
-
 
 /// Engine handle held by the main thread. Owns the worker thread
 /// that runs CEF's message loop, the command channel into that
@@ -153,8 +160,7 @@ impl Engine for CefEngine {
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
         let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
-        let result =
-            cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
+        let result = cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
         if result >= 0 {
             Some(ExitCode::from(result.clamp(0, 255) as u8))
         } else {
@@ -200,7 +206,10 @@ impl Engine for CefEngine {
     }
 
     fn alloc_tab_id(&self) -> TabId {
-        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        TabId(
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        )
     }
 
     fn cmd_sender(&self) -> Sender<Cmd<CefEngine>> {
@@ -411,7 +420,9 @@ pub(super) fn run_worker(
         download_last: RefCell::new(std::collections::HashMap::new()),
     });
     CEF_STATE.with(|s| {
-        s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
+        s.set(state.clone())
+            .map_err(|_| ())
+            .expect("CEF_STATE set twice");
     });
 
     initialize_cef(app_id);
@@ -952,6 +963,10 @@ cef::wrap_display_handler! {
                     tracing::info!(detail = %detail.trim(), "webauthn page credential assembled");
                     return 1;
                 }
+                if let Some(detail) = msg.strip_prefix("__sola_webauthn_resolve_err__") {
+                    tracing::warn!(detail = %detail.trim(), "webauthn page resolve failed");
+                    return 1;
+                }
                 if let Some(rest) = msg.strip_prefix("__sola_vault_fill__:") {
                     let found = rest.trim().starts_with('1');
                     crate::vault::passkey_bridge::push_fill_result(found);
@@ -1050,10 +1065,6 @@ fn handle_webauthn_payload(raw: &str) {
         .cloned()
         .map(|pk| pk.to_string())
         .unwrap_or_else(|| "{}".into());
-    if action == "create" {
-        tracing::info!(id, %origin, %rp_id, "webauthn create intercepted (registration unsupported)");
-        return;
-    }
     // One emit per (id, origin). Console + leftover beacon used to
     // fan the same click into chrome several times.
     thread_local! {
@@ -1073,7 +1084,7 @@ fn handle_webauthn_payload(raw: &str) {
         tracing::debug!(id, %origin, "webauthn intercept duplicate dropped");
         return;
     }
-    tracing::info!(id, %origin, %rp_id, "webauthn intercept from page");
+    tracing::info!(id, %origin, %rp_id, %action, "webauthn intercept from page");
     let ev = crate::cef::ipc::WebAuthnEvent {
         id,
         action,
@@ -1579,7 +1590,11 @@ cef::wrap_task! {
 /// active tab here — no side-channel.
 fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
     match cmd {
-        Cmd::Resize { width, height, scale: _ } => {
+        Cmd::Resize {
+            width,
+            height,
+            scale: _,
+        } => {
             let prev = *state.size.lock().unwrap();
             if prev == (width, height) {
                 // Same widget size — do not was_resized/invalidate. A
@@ -1700,6 +1715,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 cb.cancel();
             }
         }
+        Cmd::HelperDied { .. } => {}
         Cmd::Quit => {
             state.shutting_down.set(true);
             // Close browsers first so network/cookie backends settle,
@@ -1738,10 +1754,7 @@ fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>>
     tab_state_by_id(state, state.active.get())
 }
 
-fn tab_state_by_id(
-    state: &CefThreadState,
-    id: TabId,
-) -> Option<std::cell::Ref<'_, CefTabState>> {
+fn tab_state_by_id(state: &CefThreadState, id: TabId) -> Option<std::cell::Ref<'_, CefTabState>> {
     let tabs = state.tabs.borrow();
     let idx = tabs.iter().position(|t| t.id == id)?;
     Some(std::cell::Ref::map(tabs, |v| &v[idx]))
@@ -2056,8 +2069,8 @@ fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
 
 #[allow(dead_code)]
 fn cef_evict_parks(state: &CefThreadState) {
-    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
     use crate::engine::TabInfo;
+    use crate::tab_cache::{WorkspaceSnapshot, eviction_victims};
     use std::collections::HashMap;
     use std::time::Instant;
 
@@ -2242,7 +2255,11 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
                 // Diagnostic for ⌘/Ctrl-click → new tab: confirms which
                 // modifier bits CEF actually receives (CONTROL = 0x4 must be
                 // set for Chromium to raise the new-tab popup on Linux).
-                tracing::debug!(button, modifiers = format_args!("{modifiers:#x}"), "pointer button down");
+                tracing::debug!(
+                    button,
+                    modifiers = format_args!("{modifiers:#x}"),
+                    "pointer button down"
+                );
             }
             let me = MouseEvent { x, y, modifiers };
             let bt = match button {
@@ -2256,7 +2273,14 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             let n = click_count.max(1) as i32;
             host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, n);
         }
-        InputEvent::Scroll { x, y, delta_x, delta_y, precise, modifiers } => {
+        InputEvent::Scroll {
+            x,
+            y,
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        } => {
             let mut me = MouseEvent { x, y, modifiers };
             if precise {
                 me.modifiers |= cef::sys::cef_event_flags_t::EVENTFLAG_PRECISION_SCROLLING_DELTA.0;
@@ -2281,7 +2305,12 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
         InputEvent::ImeCancel => {
             host.ime_cancel_composition();
         }
-        InputEvent::Key { down, vk, character, modifiers } => {
+        InputEvent::Key {
+            down,
+            vk,
+            character,
+            modifiers,
+        } => {
             // RAWKEYDOWN / KEYUP carry the VK code. CHAR carries
             // the produced text character (post-shift). For
             // printable input we send RAWKEYDOWN then CHAR on the

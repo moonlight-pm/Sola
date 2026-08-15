@@ -66,8 +66,12 @@ pub fn detail() -> MemDetail {
     let mut top = Vec::new();
     if let Ok(dir) = std::fs::read_dir("/proc") {
         for ent in dir.flatten() {
-            let Ok(pid) = ent.file_name().to_string_lossy().parse::<i32>() else { continue };
-            let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { continue };
+            let Ok(pid) = ent.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+                continue;
+            };
             let rss_kb = status
                 .lines()
                 .find(|l| l.starts_with("VmRSS:"))
@@ -80,7 +84,10 @@ pub fn detail() -> MemDetail {
                         .unwrap_or_default()
                         .trim()
                         .to_string();
-                    top.push(Proc { name, value: kb as f32 / 1024.0 });
+                    top.push(Proc {
+                        name,
+                        value: kb as f32 / 1024.0,
+                    });
                 }
             }
         }

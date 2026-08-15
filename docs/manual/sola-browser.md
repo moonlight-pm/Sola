@@ -1,7 +1,8 @@
 # sola-browser
 
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA).
+fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA)
+and **create**.
 Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
 work on form fields and body text.
 
@@ -20,10 +21,13 @@ Sola routes http(s) opens to **sola-browser**:
 
 | Path | Behavior |
 |------|----------|
-| Terminal / mail / arcade link click | `sola_core::open_url` → spawn `sola-browser <url>` |
+| Terminal / mail / arcade link click | `sola_core::open_url` → `chrome.sock` if chrome is up, else spawn |
 | `solactl open <url>` | same |
-| Bus `Topic::OpenUrl` | shell + browser (browser opens a tab when already up) |
-| `xdg-open` / MIME defaults | `sola-browser.desktop` claims `x-scheme-handler/http` and `https` after install |
+| Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
+| `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
+
+Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
+hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
 Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
 Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
@@ -146,8 +150,13 @@ full chrome color; the open panel’s icon is the accent wash.
   **every frame** (Google sign-in iframes, Gemini Exchange 2FA, etc.).
   Duplicate or retry `get()` calls for the same site stay one picker —
   they do not fail the page before you pick. Chromium’s own passkey
-  window is not used. **Registration** (`credentials.create`) is not
-  supported yet (the request is rejected rather than opening a CEF dialog).
+  window is not used.
+- **Passkeys (create):** when a site calls `navigator.credentials.create`,
+  the vault panel opens (unlock first if needed) with **Save a passkey**.
+  Confirm creates a new Bitwarden login for the site (name is the apex
+  domain, username from the request). Matching logins for the page are
+  listed so you can attach the passkey to one of those instead. Chromium’s
+  own passkey window is not used.
 
 ### Unlock speed
 
@@ -180,7 +189,6 @@ popup buffer).
 ## Not in this manual yet
 
 - Full keyboard chrome reference  
-- Passkey **registration** (deferred)  
 - Save-as / custom download folder  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)

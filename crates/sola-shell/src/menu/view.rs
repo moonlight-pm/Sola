@@ -20,7 +20,9 @@ use iced::{Element, Length, Padding};
 use crate::app::Msg;
 use crate::menu::state::synthesized_menu;
 use sola_bus::topics::MenuItem;
-use sola_kit::components::{button as kit_btn, divider::horizontal_divider, popover, text as kit_text};
+use sola_kit::components::{
+    button as kit_btn, divider::horizontal_divider, popover, text as kit_text,
+};
 use sola_kit::fonts;
 
 /// Menu row type size — same as menubar chrome (P3).
@@ -39,13 +41,9 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     if !shell.menu_open {
         // Not open — render an invisible full-screen placeholder so iced
         // never gets an empty view.  CloseMenu on press is harmless.
-        return mouse_area(
-            container(text(""))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Msg::CloseMenu)
-        .into();
+        return mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+            .on_press(Msg::CloseMenu)
+            .into();
     }
 
     // Clock calendar panel takes over the same window when open.
@@ -97,18 +95,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .collect();
         // Fill the card horizontally so each row spans the full menu width
         // and the shortcut sits flush against the right padding (macOS feel).
-        column(rows)
-            .width(Length::Fill)
-            .spacing(0)
-            .into()
+        column(rows).width(Length::Fill).spacing(0).into()
     };
 
     // Dropdown card — kit popover chrome (raised bg, calm shadow, MD radius).
     // Default popover pad is already SPACE_SM (4); keep explicit for clarity.
     let anchor_x = shell.menu_anchor_x;
-    let card: Element<'_, Msg> = popover(items_el)
-        .width(Length::Fixed(MENU_WIDTH))
-        .into();
+    let card: Element<'_, Msg> = popover(items_el).width(Length::Fixed(MENU_WIDTH)).into();
 
     // Outer container positions the card at anchor_x by using left padding.
     let positioned: Element<'_, Msg> = container(card)
@@ -124,13 +117,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .into();
 
     // Backdrop: full-screen mouse_area that dismisses on outside click.
-    let backdrop: Element<'_, Msg> = mouse_area(
-        container(text(""))
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(Msg::CloseMenu)
-    .into();
+    let backdrop: Element<'_, Msg> =
+        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+            .on_press(Msg::CloseMenu)
+            .into();
 
     // Stack: backdrop (layer 0, sets intrinsic size) + positioned card (layer 1).
     stack![backdrop, positioned]
@@ -165,13 +155,10 @@ fn calendar_panel(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .align_y(iced::alignment::Vertical::Top)
         .into();
 
-    let backdrop: Element<'_, Msg> = mouse_area(
-        container(text(""))
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(Msg::CloseMenu)
-    .into();
+    let backdrop: Element<'_, Msg> =
+        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+            .on_press(Msg::CloseMenu)
+            .into();
 
     stack![backdrop, positioned]
         .width(Length::Fill)
@@ -204,10 +191,7 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
                     .style(kit_text::muted)
                     .into()
             } else {
-                text(label)
-                    .font(fonts::chrome())
-                    .size(MENU_TYPE)
-                    .into()
+                text(label).font(fonts::chrome()).size(MENU_TYPE).into()
             };
 
             let shortcut_txt: Element<'static, Msg> = if let Some(chord) = shortcut {

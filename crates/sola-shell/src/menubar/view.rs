@@ -140,15 +140,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // Bold — matches macOS application menu title vs regular menu labels.
     let app_title_str = focused_app_title(shell);
     let clickable = has_menu(shell);
-    let title_active = (shell.menu_open
-        && !shell.current_open_is_system
-        && shell.current_open_index == Some(0))
-        || flashing(shell, false, 0);
+    let title_active =
+        (shell.menu_open && !shell.current_open_is_system && shell.current_open_index == Some(0))
+            || flashing(shell, false, 0);
     let app_title: Element<'_, Msg> = if clickable {
         bar_item(
-            text(app_title_str)
-                .font(app_title_font())
-                .size(CHROME_SIZE),
+            text(app_title_str).font(app_title_font()).size(CHROME_SIZE),
             title_active,
             Msg::OpenMenu {
                 index: 0,
@@ -160,15 +157,11 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             }),
         )
     } else {
-        container(
-            text(app_title_str)
-                .font(app_title_font())
-                .size(CHROME_SIZE),
-        )
-        .padding(ITEM_PAD)
-        .height(Length::Fixed(BAR_H))
-        .align_y(Alignment::Center)
-        .into()
+        container(text(app_title_str).font(app_title_font()).size(CHROME_SIZE))
+            .padding(ITEM_PAD)
+            .height(Length::Fixed(BAR_H))
+            .align_y(Alignment::Center)
+            .into()
     };
 
     // ── App-menu labels (menus[1..]) ──────────────────────────────────
@@ -451,17 +444,13 @@ fn stat_indicator<'a>(
         text(label)
             .font(fonts::chrome())
             .size(CHROME_SIZE)
-            .style(move |_: &Theme| iced::widget::text::Style {
-                color: Some(muted),
-            }),
+            .style(move |_: &Theme| iced::widget::text::Style { color: Some(muted) }),
         text(value)
             .font(fonts::chrome())
             .size(CHROME_SIZE)
             .width(Length::Fixed(value_w))
             .align_x(iced::alignment::Horizontal::Right)
-            .style(move |_: &Theme| iced::widget::text::Style {
-                color: Some(color),
-            }),
+            .style(move |_: &Theme| iced::widget::text::Style { color: Some(color) }),
     ]
     .spacing(STAT_INNER_SPACING)
     .align_y(iced::alignment::Vertical::Center)
@@ -469,12 +458,7 @@ fn stat_indicator<'a>(
 }
 
 /// TX/RX rate indicator — same chrome type as [`stat_indicator`].
-fn rate_indicator<'a>(
-    label: &'a str,
-    bps: f32,
-    color: Color,
-    muted: Color,
-) -> Element<'a, Msg> {
+fn rate_indicator<'a>(label: &'a str, bps: f32, color: Color, muted: Color) -> Element<'a, Msg> {
     let value = crate::stats::view::fmt_rate(bps);
     stat_indicator(label, value, color, muted, RATE_VALUE_W)
 }

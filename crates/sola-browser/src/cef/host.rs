@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::os::unix::net::UnixListener;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::mpsc;
@@ -285,13 +286,20 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
     })
 }
 
-/// Kill leftover iced fleet windows (`--parked` / `--profile=` without `--engine`)
-/// and stale helpers from a previous chrome process.
+/// Kill leftover iced fleet windows (`--parked`) and **orphan** helpers.
+///
+/// Never kill an `--engine` whose parent is a *different* live chrome —
+/// a second sola-browser used to do that and leave the first window on a
+/// parked last-frame with a dead CEF (reload painted nothing).
+///
+/// After `exec_self` our own pre-restart helpers still have ppid == us;
+/// those *are* stale (old binary) and must go.
 pub fn reap_stale_browser_procs() {
     let me = std::process::id();
     let Ok(dir) = fs::read_dir("/proc") else {
         return;
     };
+    let mut killed = 0u32;
     for ent in dir.flatten() {
         let Ok(pid) = ent.file_name().to_string_lossy().parse::<u32>() else {
             continue;
@@ -303,36 +311,208 @@ pub fn reap_stale_browser_procs() {
             continue;
         };
         let text = String::from_utf8_lossy(&raw);
-        if !text.contains("sola-browser") {
+        if !cmdline_is_sola_browser(&text) {
             continue;
         }
-        // Chromium/CEF workers of a helper we are about to replace.
-        if text.split('\0').any(|a| a.starts_with("--type=")) {
-            continue;
-        }
-        let parked = text.split('\0').any(|a| a == "--parked");
-        let profile_flag = text.split('\0').any(|a| a == "--profile" || a.starts_with("--profile="));
-        let engine = text.split('\0').any(|a| a == "--engine");
-        // Old two-window fleet, plus helpers from the last chrome (new binary).
-        if parked || engine || profile_flag {
-            tracing::info!(pid, parked, engine, "reaping leftover sola-browser process");
-            let _ = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .status();
+        let ppid = proc_ppid(pid);
+        let ppid_live_chrome = ppid.filter(|&p| p != me).is_some_and(pid_is_live_chrome);
+        match decide_reap(me, pid, &text, ppid, ppid_live_chrome) {
+            ReapDecision::Keep { why } => {
+                tracing::info!(
+                    pid,
+                    ppid,
+                    why,
+                    "leaving sola-browser process (live helper or chrome)"
+                );
+            }
+            ReapDecision::Kill {
+                why,
+                parked,
+                engine,
+            } => {
+                tracing::info!(
+                    pid,
+                    ppid,
+                    parked,
+                    engine,
+                    why,
+                    "reaping leftover sola-browser process"
+                );
+                let _ = std::process::Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .status();
+                killed += 1;
+            }
         }
     }
-    // Stale sockets / fleet focus file.
     let root = profiles::browser_data_root();
     let _ = fs::remove_file(root.join("fleet-focus.json"));
+    // Only unlink engine sockets whose helper pid is dead. Wiping live
+    // socks used to race a just-started helper.
     if let Ok(dir) = fs::read_dir(root.join("profiles")) {
         for ent in dir.flatten() {
             let p = ent.path();
+            let pid_file = p.join("engine.pid");
+            let helper_live = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+            if helper_live {
+                continue;
+            }
             let _ = fs::remove_file(p.join("engine.sock"));
             let _ = fs::remove_file(p.join("engine.frame.sock"));
             let _ = fs::remove_file(p.join("instance.pid"));
         }
     }
-    // Give TERM a beat so binds succeed.
-    thread::sleep(Duration::from_millis(150));
+    if killed > 0 {
+        thread::sleep(Duration::from_millis(150));
+    }
+    tracing::info!(killed, me, "helper reap finished");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReapDecision {
+    Keep {
+        why: &'static str,
+    },
+    Kill {
+        why: &'static str,
+        parked: bool,
+        engine: bool,
+    },
+}
+
+fn cmdline_is_sola_browser(text: &str) -> bool {
+    text.split('\0')
+        .any(|a| a.ends_with("sola-browser") || a == "sola-browser")
+        || text.contains("sola-browser")
+}
+
+fn decide_reap(
+    me: u32,
+    pid: u32,
+    cmdline: &str,
+    ppid: Option<u32>,
+    ppid_live_chrome: bool,
+) -> ReapDecision {
+    let args: Vec<&str> = cmdline.split('\0').filter(|s| !s.is_empty()).collect();
+    if args.iter().any(|a| a.starts_with("--type=")) {
+        return ReapDecision::Keep {
+            why: "cef subprocess",
+        };
+    }
+    let parked = args.iter().any(|a| *a == "--parked");
+    let engine = args.iter().any(|a| *a == "--engine");
+    if parked {
+        return ReapDecision::Kill {
+            why: "legacy --parked fleet window",
+            parked,
+            engine,
+        };
+    }
+    if engine {
+        if ppid == Some(me) {
+            return ReapDecision::Kill {
+                why: "our child from before exec_self / leftover",
+                parked,
+                engine,
+            };
+        }
+        if ppid_live_chrome {
+            return ReapDecision::Keep {
+                why: "engine owned by another live chrome",
+            };
+        }
+        return ReapDecision::Kill {
+            why: "orphan engine (parent gone or not chrome)",
+            parked,
+            engine,
+        };
+    }
+    // Another iced chrome — singleton should have prevented this; do not
+    // SIGTERM it (that's how we used to murder a window the user still sees).
+    if pid != me {
+        return ReapDecision::Keep {
+            why: "other chrome window",
+        };
+    }
+    ReapDecision::Keep { why: "self" }
+}
+
+fn proc_ppid(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_stat_ppid(&stat)
+}
+
+fn parse_stat_ppid(stat: &str) -> Option<u32> {
+    let rparen = stat.rfind(')')?;
+    let mut rest = stat[rparen + 1..].split_whitespace();
+    let _state = rest.next()?;
+    rest.next()?.parse().ok()
+}
+
+fn pid_is_live_chrome(pid: u32) -> bool {
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return false;
+    }
+    let Ok(raw) = fs::read(format!("/proc/{pid}/cmdline")) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&raw);
+    if !cmdline_is_sola_browser(&text) {
+        return false;
+    }
+    let args: Vec<&str> = text.split('\0').filter(|s| !s.is_empty()).collect();
+    !args
+        .iter()
+        .any(|a| *a == "--engine" || a.starts_with("--type="))
+}
+
+#[cfg(test)]
+mod reap_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_foreign_live_helper() {
+        let cmd = "/opt/sola/bin/sola-browser\0--engine\0--profile=abc\0";
+        assert!(matches!(
+            decide_reap(10, 99, cmd, Some(20), true),
+            ReapDecision::Keep { why } if why.contains("another live chrome")
+        ));
+    }
+
+    #[test]
+    fn kills_orphan_helper() {
+        let cmd = "/opt/sola/bin/sola-browser\0--engine\0--profile=abc\0";
+        assert!(matches!(
+            decide_reap(10, 99, cmd, Some(1), false),
+            ReapDecision::Kill { .. }
+        ));
+    }
+
+    #[test]
+    fn kills_our_pre_exec_helper() {
+        let cmd = "/opt/sola/bin/sola-browser\0--engine\0--profile=abc\0";
+        assert!(matches!(
+            decide_reap(10, 99, cmd, Some(10), false),
+            ReapDecision::Kill { why, .. } if why.contains("exec_self")
+        ));
+    }
+
+    #[test]
+    fn never_kills_other_chrome() {
+        let cmd = "/opt/sola/bin/sola-browser\0";
+        assert!(matches!(
+            decide_reap(10, 50, cmd, Some(1), false),
+            ReapDecision::Keep { why } if why.contains("other chrome")
+        ));
+    }
+
+    #[test]
+    fn parse_ppid_with_spaces_in_comm() {
+        let stat = "123 (sola-browser) S 456 456 456 0 -1";
+        assert_eq!(parse_stat_ppid(stat), Some(456));
+    }
 }

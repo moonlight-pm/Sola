@@ -28,14 +28,23 @@ impl Shell {
             return Task::none();
         };
         match topic {
-            Topic::Theme(t) => { self.on_theme(t); Task::none() }
-            Topic::OutputGeometry(g) => { self.on_output_geometry(g); Task::none() }
+            Topic::Theme(t) => {
+                self.on_theme(t);
+                Task::none()
+            }
+            Topic::OutputGeometry(g) => {
+                self.on_output_geometry(g);
+                Task::none()
+            }
             Topic::Windows(w) => {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
                 Task::none()
             }
-            Topic::SetAppMenu(m) => { self.on_set_app_menu(m); Task::none() }
+            Topic::SetAppMenu(m) => {
+                self.on_set_app_menu(m);
+                Task::none()
+            }
             Topic::Application(a) => {
                 self.on_application(a, message.sticky);
                 Task::none()
@@ -47,20 +56,35 @@ impl Shell {
             Topic::Chord(c) => self.on_chord(c),
             Topic::ChordReleased(c) => self.on_chord_released(c),
             Topic::MouseEntered(e) => self.on_mouse_entered(e),
-            Topic::MouseClicked(e) => { self.on_mouse_clicked(e); Task::none() }
+            Topic::MouseClicked(e) => {
+                self.on_mouse_clicked(e);
+                Task::none()
+            }
             Topic::MouseLeft => self.on_mouse_left(),
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
-            Topic::Zones(z) => { self.on_zones(z); Task::none() }
-            Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
-            Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
-            // External links → sola-browser (via sola_core::open_url). Mail /
-            // scripts may emit OpenUrl; shell is always running so cold
-            // session still gets a handler when the browser is not up yet.
-            // When sola-browser is already running it also listens for this
-            // topic and opens a tab (may double-open until single-instance).
+            Topic::Zones(z) => {
+                self.on_zones(z);
+                Task::none()
+            }
+            Topic::WindowGeometry(g) => {
+                self.on_window_geometry(g);
+                Task::none()
+            }
+            Topic::FloatGeometry(f) => {
+                self.on_float_geometry(f);
+                Task::none()
+            }
+            // External links. Live sola-browser already subscribed to
+            // OpenUrl and will open a tab. Only spawn if chrome is down
+            // (otherwise we used to start a second process that reaped
+            // the live CEF helpers).
             Topic::OpenUrl(req) => {
-                sola_core::open_url_logged(&req.url);
+                if sola_core::sola_browser_is_running() {
+                    tracing::debug!(url = %req.url, "OpenUrl: chrome live, not spawning");
+                } else {
+                    sola_core::open_url_logged(&req.url);
+                }
                 Task::none()
             }
             // All other topics are not consumed by sola-shell; ignore quietly.
@@ -77,9 +101,7 @@ impl Shell {
         self.theme = sola_kit::theme::theme_from_bus(&t);
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
-        sola_kit::theme::install_selection(
-            sola_kit::theme::atoms_from_bus_theme(&t).selection,
-        );
+        sola_kit::theme::install_selection(sola_kit::theme::atoms_from_bus_theme(&t).selection);
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.
@@ -183,8 +205,7 @@ impl Shell {
         }
 
         // Clean up window-level zone tracking for windows that no longer exist.
-        let current_wids: HashSet<u32> =
-            self.known_windows.iter().map(|w| w.window_id).collect();
+        let current_wids: HashSet<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
         let orphaned_wids: Vec<u32> = self
             .zoning
             .window_zones
@@ -207,8 +228,7 @@ impl Shell {
             }
             if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
                 zone_frames.push(frame);
-            } else if let Some(frame) = self.zoning.ensure_default_float(&w.app_id, w.window_id)
-            {
+            } else if let Some(frame) = self.zoning.ensure_default_float(&w.app_id, w.window_id) {
                 zone_frames.push(frame);
             }
         }
@@ -418,11 +438,7 @@ impl Shell {
 
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
     fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
-        tracing::debug!(
-            window_id,
-            ?prev_focused,
-            "emit Focus"
-        );
+        tracing::debug!(window_id, ?prev_focused, "emit Focus");
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
@@ -522,10 +538,9 @@ impl Shell {
         );
         self.menubar.push_toast(msg);
         let toast_gen = self.menubar.toast_generation;
-        Task::perform(
-            tokio::time::sleep(Duration::from_secs(5)),
-            move |_| Msg::ToastExpire(toast_gen),
-        )
+        Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+            Msg::ToastExpire(toast_gen)
+        })
     }
 
     /// A user app process exited.
@@ -556,10 +571,9 @@ impl Shell {
         };
         self.menubar.push_toast(msg);
         let toast_gen = self.menubar.toast_generation;
-        Task::perform(
-            tokio::time::sleep(Duration::from_secs(5)),
-            move |_| Msg::ToastExpire(toast_gen),
-        )
+        Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+            Msg::ToastExpire(toast_gen)
+        })
     }
 
     /// Screenshot capture finished (`compositor.screenshot` reply).
@@ -580,10 +594,9 @@ impl Shell {
         };
         self.menubar.push_toast(msg);
         let toast_gen = self.menubar.toast_generation;
-        let toast_task = Task::perform(
-            tokio::time::sleep(Duration::from_secs(5)),
-            move |_| Msg::ToastExpire(toast_gen),
-        );
+        let toast_task = Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+            Msg::ToastExpire(toast_gen)
+        });
 
         if open_preview {
             if let Ok(path) = result {
@@ -862,10 +875,9 @@ impl Shell {
                 self.menubar
                     .push_toast("Screenshot failed: no focused window");
                 let toast_gen = self.menubar.toast_generation;
-                return Task::perform(
-                    tokio::time::sleep(Duration::from_secs(5)),
-                    move |_| Msg::ToastExpire(toast_gen),
-                );
+                return Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                    Msg::ToastExpire(toast_gen)
+                });
             };
             let title = self.focused_window_id.and_then(|wid| {
                 self.known_windows
@@ -921,7 +933,10 @@ impl Shell {
         }
 
         // Zone snapping (Meta+Numpad).
-        if let Some(frame) = self.zoning.handle_key(chord.keycode.raw(), self.focused_window_id) {
+        if let Some(frame) = self
+            .zoning
+            .handle_key(chord.keycode.raw(), self.focused_window_id)
+        {
             // If that snap floated the focused window, persist the rect
             // handle_key just cached so the on-disk FloatGeometry isn't a
             // stale rect a later restore would clobber with.
@@ -1040,13 +1055,12 @@ impl Shell {
             delay_ms = Self::FOCUS_HOVER_DELAY.as_millis() as u64,
             "FFM enter — schedule dwell"
         );
-        Task::perform(
-            tokio::time::sleep(Self::FOCUS_HOVER_DELAY),
-            move |_| Msg::FocusHoverFire {
+        Task::perform(tokio::time::sleep(Self::FOCUS_HOVER_DELAY), move |_| {
+            Msg::FocusHoverFire {
                 window_id: wid,
                 generation: focus_gen,
-            },
-        )
+            }
+        })
     }
 
     /// Mouse button pressed on a window surface.
@@ -1216,10 +1230,11 @@ mod windows_identity_tests {
     #[test]
     fn identity_neq_on_new_window_or_app_id() {
         let a = vec![win(1, "orca", "A")];
-        assert!(!Shell::windows_identity_eq(&a, &[win(1, "orca", "A"), win(2, "zed", "")]));
+        assert!(!Shell::windows_identity_eq(
+            &a,
+            &[win(1, "orca", "A"), win(2, "zed", "")]
+        ));
         assert!(!Shell::windows_identity_eq(&a, &[win(1, "gamescope", "A")]));
         assert!(!Shell::windows_identity_eq(&a, &[]));
     }
 }
-
-

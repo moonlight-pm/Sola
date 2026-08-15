@@ -5,8 +5,8 @@ use std::sync::OnceLock;
 
 use nvml_wrapper::Nvml;
 
-use crate::stats::cpu::Proc;
 use crate::stats::GpuLite;
+use crate::stats::cpu::Proc;
 
 fn nvml() -> Option<&'static Nvml> {
     static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
@@ -53,13 +53,20 @@ pub fn detail() -> Option<GpuDetail> {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            top.push(Proc { name, value: used as f32 / 1024.0 / 1024.0 });
+            top.push(Proc {
+                name,
+                value: used as f32 / 1024.0 / 1024.0,
+            });
         }
     }
     crate::stats::cpu::cap_top(&mut top, 4);
     Some(GpuDetail {
         name: dev.name().unwrap_or_default(),
-        util: dev.utilization_rates().ok().map(|u| u.gpu as f32).unwrap_or(0.0),
+        util: dev
+            .utilization_rates()
+            .ok()
+            .map(|u| u.gpu as f32)
+            .unwrap_or(0.0),
         mem_used_mb: mem.used as f32 / 1024.0 / 1024.0,
         mem_total_mb: mem.total as f32 / 1024.0 / 1024.0,
         temp_c: dev.temperature(TemperatureSensor::Gpu).unwrap_or(0) as f32,

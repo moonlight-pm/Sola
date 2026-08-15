@@ -27,10 +27,7 @@ pub fn editing_command_name(cmd: EditCmd) -> &'static str {
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
 pub fn usable_clipboard_text(text: Option<String>) -> Option<String> {
-    let cleaned: String = text?
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let cleaned: String = text?.chars().filter(|c| !c.is_control()).collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         None
@@ -92,10 +89,7 @@ pub fn normalize_url(s: &str) -> String {
     let lower = trimmed.to_ascii_lowercase();
     if matches!(
         lower.as_str(),
-        "sola:scroll-stress"
-            | "sola://scroll-stress"
-            | "about:scroll-stress"
-            | "scroll-stress"
+        "sola:scroll-stress" | "sola://scroll-stress" | "about:scroll-stress" | "scroll-stress"
     ) {
         return SCROLL_STRESS_URL.to_string();
     }
@@ -127,9 +121,7 @@ pub fn looks_like_url(s: &str) -> bool {
     if explicit_scheme(t).is_some() {
         return true;
     }
-    if t.eq_ignore_ascii_case("scroll-stress")
-        || t.to_ascii_lowercase().starts_with("sola:")
-    {
+    if t.eq_ignore_ascii_case("scroll-stress") || t.to_ascii_lowercase().starts_with("sola:") {
         return true;
     }
     if t == "localhost" || t.starts_with("localhost:") || t.starts_with("localhost/") {
@@ -279,7 +271,10 @@ mod tests {
     #[test]
     fn normalize_url_treats_host_port_as_bare_host() {
         assert_eq!(normalize_url("localhost:3000"), "https://localhost:3000");
-        assert_eq!(normalize_url("192.168.1.1:8080"), "https://192.168.1.1:8080");
+        assert_eq!(
+            normalize_url("192.168.1.1:8080"),
+            "https://192.168.1.1:8080"
+        );
     }
 
     #[test]
@@ -313,7 +308,10 @@ mod tests {
             resolve_query("how to tie a tie"),
             "https://kagi.com/search?q=how%20to%20tie%20a%20tie"
         );
-        assert_eq!(resolve_query("weather"), "https://kagi.com/search?q=weather");
+        assert_eq!(
+            resolve_query("weather"),
+            "https://kagi.com/search?q=weather"
+        );
     }
 
     #[test]

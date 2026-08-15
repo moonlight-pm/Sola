@@ -16,7 +16,9 @@ pub fn monotonic_ms() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(transparent)]
 pub struct TabId(pub u64);
 
@@ -68,13 +70,21 @@ pub enum EditCmd {
 pub enum Cmd<E: Engine> {
     /// Physical pixel size of the content scissor + compositor scale factor
     /// (for `wpe_toplevel_scale_changed` / HiDPI text).
-    Resize { width: u32, height: u32, scale: f64 },
+    Resize {
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
     /// FrameDone: UI presented this buffer (Wayland frame cb / blit done).
     /// Must precede `Release` for correct WebKit pacing; `Release` will
     /// FrameDone first if this was skipped.
-    FrameDone { token: E::Token },
+    FrameDone {
+        token: E::Token,
+    },
     /// Recycle a producer buffer (WPE dma-buf pool).
-    Release { token: E::Token },
+    Release {
+        token: E::Token,
+    },
     Input(E::Input),
     Focus(bool),
     /// Profile helper is / is not the painted identity. `false` hides every
@@ -82,7 +92,11 @@ pub enum Cmd<E: Engine> {
     SetFront(bool),
     Nav(NavCmd),
     /// `title` seeds the tab strip before WebKit reports one (session restore).
-    OpenTab { id: TabId, url: String, title: String },
+    OpenTab {
+        id: TabId,
+        url: String,
+        title: String,
+    },
     CloseTab(TabId),
     SetActiveTab(TabId),
     /// Run an editing command against the active tab's web content.
@@ -112,9 +126,18 @@ pub enum Cmd<E: Engine> {
         active: TabId,
     },
     /// Drop a parked profile workspace (eviction / profile deleted).
-    DropParkedProfile { profile_id: String },
+    DropParkedProfile {
+        profile_id: String,
+    },
     /// Cancel a CEF download on the helper that started it.
-    CancelDownload { profile_id: String, id: u32 },
+    CancelDownload {
+        profile_id: String,
+        id: u32,
+    },
+    /// Helper IPC died — router respawns and restores tabs.
+    HelperDied {
+        profile_id: String,
+    },
     Quit,
 }
 
@@ -288,11 +311,7 @@ pub struct ImeCaret {
 }
 
 impl ImeCaret {
-    pub fn logical_rect(
-        &self,
-        bounds: iced::Rectangle,
-        scale: f32,
-    ) -> iced::Rectangle {
+    pub fn logical_rect(&self, bounds: iced::Rectangle, scale: f32) -> iced::Rectangle {
         let scale = scale.max(0.5);
         let (x, y, w, h) = if self.w > 0 && self.h > 0 {
             (self.x, self.y, self.w, self.h)

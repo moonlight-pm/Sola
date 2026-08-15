@@ -10,13 +10,15 @@
 //! Spawns `/opt/sola/bin/sola-browser <url>` detached. Override the binary
 //! with `SOLA_BROWSER`. No other browser fallback.
 //!
-//! When sola-browser is already running, a second spawn still starts a new
-//! process (no single-instance handoff yet). Prefer bus `Topic::OpenUrl` for
-//! in-session "open in existing window" once a singleton path exists; today
-//! the browser also listens for that topic when it is up.
+//! When sola-browser is already running, [`open`] first writes the URL to
+//! `chrome.sock` (the iced singleton). Only if that fails do we spawn a
+//! new process.
 
+use std::io::Write;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 /// Env override for the sola-browser binary (defaults to
 /// `/opt/sola/bin/sola-browser`).
@@ -29,6 +31,10 @@ const DEFAULT_SOLA_BROWSER: &str = "/opt/sola/bin/sola-browser";
 pub fn open(uri: &str) -> Result<(), String> {
     if uri.trim().is_empty() {
         return Err("empty URL".into());
+    }
+
+    if try_handoff_running_chrome(uri) {
+        return Ok(());
     }
 
     let bin = sola_browser_bin().ok_or_else(|| {
@@ -45,6 +51,33 @@ pub fn open(uri: &str) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
     Ok(())
+}
+
+/// Path must match `sola-browser` `instance::chrome_sock_path`.
+fn chrome_sock_path() -> PathBuf {
+    let root = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from(".local/share"));
+    root.join("sola/browser/chrome.sock")
+}
+
+fn try_handoff_running_chrome(uri: &str) -> bool {
+    let sock = chrome_sock_path();
+    let Ok(mut stream) = UnixStream::connect(&sock) else {
+        return false;
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    if stream.write_all(format!("{uri}\n").as_bytes()).is_err() {
+        return false;
+    }
+    tracing::info!(%uri, path = %sock.display(), "handed URL to running sola-browser");
+    true
+}
+
+/// True when iced chrome is bound to `chrome.sock`.
+pub fn chrome_is_running() -> bool {
+    UnixStream::connect(chrome_sock_path()).is_ok()
 }
 
 /// Best-effort open: log failures, never panic. For UI event handlers.

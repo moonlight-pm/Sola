@@ -1,21 +1,22 @@
-//! Bitwarden passkey (FIDO2) assertion for WebAuthn intercept.
+//! Bitwarden passkey (FIDO2) assertion and registration for WebAuthn intercept.
 //!
 //! Uses `bitwarden-fido::Fido2Client` (WebAuthn client path) with vault
 //! credentials. The page polyfill rebuilds a `PublicKeyCredential` from the
 //! returned base64url fields.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bitwarden_fido::{
     CheckUserOptions, CheckUserResult, ClientData, ClientFido2Ext, Fido2CallbackError,
-    Fido2CredentialStore, Fido2UserInterface, Origin,
+    Fido2CredentialStore, Fido2UserInterface, Origin, UiHint,
 };
 use bitwarden_vault::{
     CipherListView, CipherType, CipherView, EncryptionContext, Fido2CredentialNewView,
 };
 use serde::Serialize;
 
-use super::client::{VaultError, VaultService};
+use super::client::{VaultError, VaultService, new_login_view};
+use super::match_uri::apex_domain;
 
 /// One passkey the user can pick for a WebAuthn get() (no secrets).
 #[derive(Debug, Clone)]
@@ -29,6 +30,13 @@ pub struct PasskeyCandidate {
 
 struct AutoUserInterface {
     preferred_cipher_id: Option<String>,
+    /// New login to attach a created passkey to (no id yet).
+    new_cipher: Option<CipherView>,
+    ciphers: Arc<Vec<CipherView>>,
+}
+
+fn cipher_id_eq(cipher: &CipherView, want: &str) -> bool {
+    cipher.id.map(|id| id.to_string() == want).unwrap_or(false)
 }
 
 #[async_trait::async_trait]
@@ -36,8 +44,13 @@ impl Fido2UserInterface for AutoUserInterface {
     async fn check_user<'a>(
         &self,
         _options: CheckUserOptions,
-        _hint: bitwarden_fido::UiHint<'a, CipherView>,
+        hint: UiHint<'a, CipherView>,
     ) -> Result<CheckUserResult, Fido2CallbackError> {
+        if matches!(hint, UiHint::InformExcludedCredentialFound(_)) {
+            return Err(Fido2CallbackError::Unknown(
+                "A passkey for this account is already saved.".into(),
+            ));
+        }
         Ok(CheckUserResult {
             user_present: true,
             user_verified: true,
@@ -52,10 +65,7 @@ impl Fido2UserInterface for AutoUserInterface {
             return Err(Fido2CallbackError::OperationCancelled);
         }
         if let Some(ref want) = self.preferred_cipher_id {
-            if let Some(c) = available_credentials.iter().find(|c| {
-                c.id.map(|id| id.to_string().as_str() == want.as_str())
-                    .unwrap_or(false)
-            }) {
+            if let Some(c) = available_credentials.iter().find(|c| cipher_id_eq(c, want)) {
                 return Ok(c.clone());
             }
         }
@@ -67,8 +77,23 @@ impl Fido2UserInterface for AutoUserInterface {
         _options: CheckUserOptions,
         _new_credential: Fido2CredentialNewView,
     ) -> Result<(CipherView, CheckUserResult), Fido2CallbackError> {
+        let approved = CheckUserResult {
+            user_present: true,
+            user_verified: true,
+        };
+        if let Some(ref want) = self.preferred_cipher_id {
+            if let Some(c) = self.ciphers.iter().find(|c| cipher_id_eq(c, want)) {
+                return Ok((c.clone(), approved));
+            }
+            return Err(Fido2CallbackError::Unknown(
+                "Selected login was not found in the vault.".into(),
+            ));
+        }
+        if let Some(ref new_cipher) = self.new_cipher {
+            return Ok((new_cipher.clone(), approved));
+        }
         Err(Fido2CallbackError::Unknown(
-            "passkey registration is not supported yet".into(),
+            "No login selected for the new passkey.".into(),
         ))
     }
 
@@ -79,6 +104,7 @@ impl Fido2UserInterface for AutoUserInterface {
 
 struct VaultCredentialStore {
     ciphers: Arc<Vec<CipherView>>,
+    saved: Mutex<Option<EncryptionContext>>,
 }
 
 #[async_trait::async_trait]
@@ -114,10 +140,9 @@ impl Fido2CredentialStore for VaultCredentialStore {
         Ok(Vec::new())
     }
 
-    async fn save_credential(&self, _cred: EncryptionContext) -> Result<(), Fido2CallbackError> {
-        Err(Fido2CallbackError::Unknown(
-            "passkey registration is not supported yet".into(),
-        ))
+    async fn save_credential(&self, cred: EncryptionContext) -> Result<(), Fido2CallbackError> {
+        *self.saved.lock().unwrap() = Some(cred);
+        Ok(())
     }
 }
 
@@ -139,6 +164,62 @@ pub struct PasskeyAssertionJson {
     /// Omitted when empty — Google rejects empty userHandle ArrayBuffers.
     #[serde(rename = "userHandle", skip_serializing_if = "Option::is_none")]
     pub user_handle: Option<String>,
+}
+
+/// Wire form returned to the page polyfill after `credentials.create`.
+#[derive(Debug, Serialize)]
+pub struct PasskeyAttestationJson {
+    pub id: String,
+    #[serde(rename = "rawId")]
+    pub raw_id: String,
+    #[serde(rename = "clientDataJSON")]
+    pub client_data_json: String,
+    #[serde(rename = "authenticatorData")]
+    pub authenticator_data: String,
+    #[serde(rename = "attestationObject")]
+    pub attestation_object: String,
+    #[serde(rename = "publicKey", skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    #[serde(rename = "publicKeyAlgorithm")]
+    pub public_key_algorithm: i64,
+    pub transports: Vec<String>,
+}
+
+/// Display name / username from a create() publicKey JSON (for the confirm card).
+pub fn create_account_hint(public_key_json: &str) -> Option<String> {
+    let pk: serde_json::Value = serde_json::from_str(public_key_json).ok()?;
+    let user = pk.get("user")?;
+    let display = user
+        .get("displayName")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let name = user
+        .get("name")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    display.or(name).map(|s| s.to_string())
+}
+
+fn create_user_name(public_key_json: &str) -> Option<String> {
+    let pk: serde_json::Value = serde_json::from_str(public_key_json).ok()?;
+    pk.get("user")?
+        .get("name")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+fn create_rp_name(public_key_json: &str) -> Option<String> {
+    let pk: serde_json::Value = serde_json::from_str(public_key_json).ok()?;
+    pk.get("rp")?
+        .get("name")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -267,9 +348,12 @@ pub async fn authenticate(
     let ciphers: Arc<Vec<CipherView>> = Arc::new(listed.successes);
     let store = VaultCredentialStore {
         ciphers: ciphers.clone(),
+        saved: Mutex::new(None),
     };
     let ui = AutoUserInterface {
         preferred_cipher_id,
+        new_cipher: None,
+        ciphers: ciphers.clone(),
     };
 
     let fido = svc.client.0.fido2();
@@ -283,7 +367,7 @@ pub async fn authenticate(
     // field even when empty. Use CustomHash with a hash of the *same*
     // clean CollectedClientData JSON that Fido2Client will emit when
     // extra=None (CustomHash path), so signature and returned JSON match.
-    let client_data = web_client_data_for_request(origin, public_key_json)?;
+    let client_data = web_client_data(origin, public_key_json, "webauthn.get")?;
 
     let result = client
         .authenticate(Origin::Web(origin.to_string()), request, client_data)
@@ -324,13 +408,123 @@ pub async fn authenticate(
     })
 }
 
+/// Register a new vault passkey (`navigator.credentials.create`).
+///
+/// `preferred_cipher_id` attaches the credential to an existing login.
+/// `None` creates a new personal login named after the site.
+///
+/// Returns the attestation for the page and the encrypted cipher to persist.
+pub async fn register(
+    svc: &VaultService,
+    origin: &str,
+    public_key_json: &str,
+    preferred_cipher_id: Option<String>,
+) -> Result<(PasskeyAttestationJson, EncryptionContext), VaultError> {
+    if !svc.is_ready_for_passkey() {
+        return Err(VaultError::Locked);
+    }
+
+    let listed = svc
+        .client
+        .vault()
+        .ciphers()
+        .get_all()
+        .await
+        .map_err(|e| VaultError::Other(e.to_string()))?;
+
+    let ciphers: Arc<Vec<CipherView>> = Arc::new(listed.successes);
+    let new_cipher = if preferred_cipher_id.is_none() {
+        Some(new_login_for_passkey(origin, public_key_json))
+    } else {
+        None
+    };
+    let store = VaultCredentialStore {
+        ciphers: ciphers.clone(),
+        saved: Mutex::new(None),
+    };
+    let ui = AutoUserInterface {
+        preferred_cipher_id,
+        new_cipher,
+        ciphers,
+    };
+
+    let fido = svc.client.0.fido2();
+    let mut client = fido.create_client(&ui, &store);
+
+    let request = format!(r#"{{"publicKey":{public_key_json}}}"#);
+    let client_data = web_client_data(origin, public_key_json, "webauthn.create")?;
+
+    let result = client
+        .register(Origin::Web(origin.to_string()), request, client_data)
+        .await
+        .map_err(|e| VaultError::Other(format!("passkey register failed: {e}")))?;
+
+    let saved = store
+        .saved
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| VaultError::Other("passkey register did not produce a cipher".into()))?;
+
+    let client_data_str = String::from_utf8_lossy(&result.response.client_data_json);
+    if client_data_str.contains("androidPackageName") {
+        tracing::error!(
+            %client_data_str,
+            "passkey create clientDataJSON still has androidPackageName"
+        );
+    }
+    tracing::info!(
+        %client_data_str,
+        raw_id_len = result.raw_id.len(),
+        att_len = result.response.attestation_object.len(),
+        auth_data_len = result.response.authenticator_data.len(),
+        cred_id = %result.id,
+        "vault: passkey attestation detail"
+    );
+
+    let attestation = PasskeyAttestationJson {
+        id: result.id,
+        raw_id: b64url(&result.raw_id),
+        client_data_json: b64url(&result.response.client_data_json),
+        authenticator_data: b64url(&result.response.authenticator_data),
+        attestation_object: b64url(&result.response.attestation_object),
+        public_key: result.response.public_key.as_ref().map(|k| b64url(k)),
+        public_key_algorithm: result.response.public_key_algorithm,
+        transports: result
+            .response
+            .transports
+            .unwrap_or_else(|| vec!["internal".into()]),
+    };
+    Ok((attestation, saved))
+}
+
+fn new_login_for_passkey(origin: &str, public_key_json: &str) -> CipherView {
+    let apex = apex_domain(origin);
+    let host = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("")
+        .to_string();
+    let name = if !apex.is_empty() {
+        apex.clone()
+    } else if !host.is_empty() {
+        host
+    } else {
+        create_rp_name(public_key_json).unwrap_or_else(|| "Passkey".into())
+    };
+    let uri = if apex.is_empty() { None } else { Some(apex) };
+    new_login_view(name, create_user_name(public_key_json), None, uri)
+}
+
 /// Build `ClientData::DefaultWithCustomHash` matching clean web clientDataJSON.
 ///
 /// Mirrors passkey-client's CollectedClientData serialization:
-/// `{"type":"webauthn.get","challenge":…,"origin":…,"crossOrigin":false}`
-fn web_client_data_for_request(
+/// `{"type":"webauthn.get|create","challenge":…,"origin":…,"crossOrigin":false}`
+fn web_client_data(
     origin: &str,
     public_key_json: &str,
+    ty: &str,
 ) -> Result<ClientData, VaultError> {
     let pk: serde_json::Value = serde_json::from_str(public_key_json)
         .map_err(|e| VaultError::Other(format!("publicKey JSON: {e}")))?;
@@ -350,7 +544,7 @@ fn web_client_data_for_request(
     // Field order must match CollectedClientData Serialize (type, challenge,
     // origin, crossOrigin). truthiness() always emits crossOrigin as bool.
     let client_data_json = format!(
-        r#"{{"type":"webauthn.get","challenge":"{challenge_canon}","origin":"{origin_clean}","crossOrigin":false}}"#
+        r#"{{"type":"{ty}","challenge":"{challenge_canon}","origin":"{origin_clean}","crossOrigin":false}}"#
     );
     let hash = {
         use sha2::{Digest, Sha256};
@@ -358,6 +552,31 @@ fn web_client_data_for_request(
     };
     tracing::debug!(%client_data_json, "vault: passkey expected clientDataJSON");
     Ok(ClientData::DefaultWithCustomHash { hash })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_account_hint_prefers_display_name() {
+        let pk =
+            r#"{"user":{"id":"YWJj","name":"ada@ex.com","displayName":"Ada"},"challenge":"YQ"}"#;
+        assert_eq!(create_account_hint(pk).as_deref(), Some("Ada"));
+        assert_eq!(create_user_name(pk).as_deref(), Some("ada@ex.com"));
+    }
+
+    #[test]
+    fn web_client_data_create_type() {
+        let pk = r#"{"challenge":"YQ"}"#;
+        let data = web_client_data("https://docs.example.com", pk, "webauthn.create").unwrap();
+        match data {
+            ClientData::DefaultWithCustomHash { hash } => {
+                assert_eq!(hash.len(), 32);
+            }
+            _ => panic!("expected DefaultWithCustomHash"),
+        }
+    }
 }
 
 fn b64url_decode(s: &str) -> Option<Vec<u8>> {

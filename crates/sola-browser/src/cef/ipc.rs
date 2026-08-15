@@ -56,7 +56,12 @@ pub enum FromEngine {
     Cursor(u32),
     Clipboard(String),
     /// Composition caret in view pixels. `w == 0` clears the last box.
-    ImeCaret { x: i32, y: i32, w: i32, h: i32 },
+    ImeCaret {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
     Download(DownloadEvent),
     WebAuthn(WebAuthnEvent),
 }
