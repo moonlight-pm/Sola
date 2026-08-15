@@ -1,35 +1,59 @@
-//! Open http(s) URLs in the system browser — currently **Helium**.
+//! Open http(s) URLs in **sola-browser** (Sola's product browser).
 //!
-//! sola-browser is not the day-to-day handler (WPE/CEF still immature for
-//! general browsing). All Sola surfaces that open links should call
-//! [`open`] so behaviour stays consistent:
+//! All Sola surfaces that open links should call [`open`] so behaviour
+//! stays consistent:
 //!
 //! - `solactl open` (xdg-open / MIME path when pointed here)
 //! - sola-shell handling of `Topic::OpenUrl`
-//! - terminal / mail clickable links
+//! - terminal / mail / arcade clickable links
 //!
-//! Helium is launched the same way as `helium.desktop`:
-//! `appimage-run ~/Applications/Helium.AppImage <url>`.
-//! Override the AppImage path with `HELIUM_APPIMAGE`.
+//! Spawns `/opt/sola/bin/sola-browser <url>` detached. Override the binary
+//! with `SOLA_BROWSER`. If the binary is missing, falls back to **Helium**
+//! (`appimage-run ~/Applications/Helium.AppImage`) when present so a partial
+//! install still has a scheme handler.
+//!
+//! When sola-browser is already running, a second spawn still starts a new
+//! process (no single-instance handoff yet). Prefer bus `Topic::OpenUrl` for
+//! in-session "open in existing window" once a singleton path exists; today
+//! the browser also listens for that topic when it is up.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Env override for the Helium AppImage path (defaults to
-/// `$HOME/Applications/Helium.AppImage`, matching `helium.desktop`).
+/// Env override for the sola-browser binary (defaults to
+/// `/opt/sola/bin/sola-browser`).
+pub const SOLA_BROWSER_ENV: &str = "SOLA_BROWSER";
+
+/// Env override for the Helium AppImage path used only as fallback
+/// (defaults to `$HOME/Applications/Helium.AppImage`).
 pub const HELIUM_APPIMAGE_ENV: &str = "HELIUM_APPIMAGE";
 
-/// Open `uri` in Helium. Spawns detached; returns after spawn (not after the
-/// browser finishes). Chromium-based Helium hands the URL to a running
-/// instance when one exists.
+const DEFAULT_SOLA_BROWSER: &str = "/opt/sola/bin/sola-browser";
+
+/// Open `uri` in sola-browser (or Helium if the browser binary is absent).
+/// Spawns detached; returns after spawn (not after the browser finishes).
 pub fn open(uri: &str) -> Result<(), String> {
     if uri.trim().is_empty() {
         return Err("empty URL".into());
     }
+
+    if let Some(bin) = sola_browser_bin() {
+        Command::new(&bin)
+            .arg(uri)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
+        return Ok(());
+    }
+
+    // Fallback: Helium AppImage (legacy system browser).
     let appimage = helium_appimage().ok_or_else(|| {
         format!(
-            "Helium AppImage not found (set {HELIUM_APPIMAGE_ENV} or install \
-             ~/Applications/Helium.AppImage)"
+            "sola-browser not found at {DEFAULT_SOLA_BROWSER} \
+             (set {SOLA_BROWSER_ENV}) and Helium AppImage not found \
+             (set {HELIUM_APPIMAGE_ENV} or install ~/Applications/Helium.AppImage)"
         )
     })?;
     Command::new("appimage-run")
@@ -46,12 +70,34 @@ pub fn open(uri: &str) -> Result<(), String> {
 /// Best-effort open: log failures, never panic. For UI event handlers.
 pub fn open_logged(uri: &str) {
     match open(uri) {
-        Ok(()) => tracing::info!(%uri, "opened URL in Helium"),
-        Err(e) => tracing::warn!(%uri, error = %e, "failed to open URL in Helium"),
+        Ok(()) => {
+            if sola_browser_bin().is_some() {
+                tracing::info!(%uri, "opened URL in sola-browser");
+            } else {
+                tracing::info!(%uri, "opened URL in Helium (sola-browser missing)");
+            }
+        }
+        Err(e) => tracing::warn!(%uri, error = %e, "failed to open URL"),
     }
 }
 
-/// Path to the Helium AppImage, if present on disk.
+/// Path to the sola-browser binary, if present on disk.
+pub fn sola_browser_bin() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(SOLA_BROWSER_ENV) {
+        let path = PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "{SOLA_BROWSER_ENV} set but file missing; falling back to default"
+        );
+    }
+    let path = PathBuf::from(DEFAULT_SOLA_BROWSER);
+    path.is_file().then_some(path)
+}
+
+/// Path to the Helium AppImage, if present on disk (fallback only).
 pub fn helium_appimage() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(HELIUM_APPIMAGE_ENV) {
         let path = PathBuf::from(p);
@@ -60,7 +106,7 @@ pub fn helium_appimage() -> Option<PathBuf> {
         }
         tracing::warn!(
             path = %path.display(),
-            "HELIUM_APPIMAGE set but file missing; falling back to default"
+            "{HELIUM_APPIMAGE_ENV} set but file missing; falling back to default"
         );
     }
     let home = std::env::var_os("HOME")?;
@@ -76,6 +122,17 @@ mod tests {
     fn empty_url_errors() {
         assert!(open("").is_err());
         assert!(open("   ").is_err());
+    }
+
+    #[test]
+    fn sola_browser_default_when_present() {
+        // SAFETY: test-only, single-threaded unit test process.
+        unsafe { std::env::remove_var(SOLA_BROWSER_ENV) };
+        let path = PathBuf::from(DEFAULT_SOLA_BROWSER);
+        if !path.is_file() {
+            return;
+        }
+        assert_eq!(sola_browser_bin().as_deref(), Some(path.as_path()));
     }
 
     #[test]

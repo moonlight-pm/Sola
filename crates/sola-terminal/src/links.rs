@@ -7,8 +7,8 @@
 //! selection, including when the press begins on a URL.
 //!
 //! Super/⌘ is intentionally not used — sola-river owns Meta+Left for window
-//! move. Opening uses [`sola_core::open_url`] (Helium) — same path as mail,
-//! solactl, and shell's `Topic::OpenUrl` handler.
+//! move. Opening uses [`sola_core::open_url`] (sola-browser) — same path as
+//! mail, solactl, and shell's `Topic::OpenUrl` handler.
 //!
 //! The scanner is deliberately simple — no regex crate — and matches the
 //! conventions terminals like alacritty use: scheme prefix, then non-space

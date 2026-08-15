@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Sola Browser
-Comment=Sola browser (CEF) — http/https defaults may go to Helium; this launches sola-browser explicitly
+Comment=Sola product browser (CEF) — default http/https handler
 Exec=/opt/sola/bin/sola-browser %u
 Terminal=false
 Categories=Network;WebBrowser;
-MimeType=
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
 NoDisplay=true
+StartupNotify=true

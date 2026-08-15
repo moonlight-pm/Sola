@@ -48,7 +48,7 @@ enum Command {
         payload: String,
     },
 
-    /// Open a URL in Helium (scheme handler). Not a call.
+    /// Open a URL in sola-browser (scheme handler). Not a call.
     Open { url: String },
 
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.

@@ -54,9 +54,11 @@ impl Shell {
             Topic::Zones(z) => { self.on_zones(z); Task::none() }
             Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
             Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
-            // External links: Helium is the system browser while sola-browser
-            // is not day-to-day usable. Mail, solactl (if still bus-emitting),
-            // and other apps emit OpenUrl; shell is always running.
+            // External links → sola-browser (via sola_core::open_url). Mail /
+            // scripts may emit OpenUrl; shell is always running so cold
+            // session still gets a handler when the browser is not up yet.
+            // When sola-browser is already running it also listens for this
+            // topic and opens a tab (may double-open until single-instance).
             Topic::OpenUrl(req) => {
                 sola_core::open_url_logged(&req.url);
                 Task::none()
