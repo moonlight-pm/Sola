@@ -13,6 +13,21 @@ one binary, `sola-browser`.
 Launch from the shell launcher (**Browser**), or
 `/opt/sola/bin/sola-browser`.
 
+## Default URL handler
+
+Sola routes http(s) opens to **sola-browser**:
+
+| Path | Behavior |
+|------|----------|
+| Terminal / mail / arcade link click | `sola_core::open_url` → spawn `sola-browser <url>` |
+| `solactl open <url>` | same |
+| Bus `Topic::OpenUrl` | shell + browser (browser opens a tab when already up) |
+| `xdg-open` / MIME defaults | `sola-browser.desktop` claims `x-scheme-handler/http` and `https` after install |
+
+Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
+Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
+fallback — if the binary is missing, open fails.
+
 ## Profiles
 
 A **profile** is a separate web identity + tab workspace (D8).

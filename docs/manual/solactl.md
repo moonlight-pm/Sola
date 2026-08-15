@@ -24,7 +24,7 @@ them; `solactl <app-id> <method> …` invokes.
 ```text
 solactl emit <Topic> '<json>'   # bus poke
 solactl logs [app] [-f]         # /opt/sola/log
-solactl open <url>              # Helium / scheme handler
+solactl open <url>              # sola-browser (http/https scheme handler)
 solactl media <action>          # MPRIS / wpctl (shell key handler)
 ```
 

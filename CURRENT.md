@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-14 (this branch: sola-workspaces after D4.1 rename)
+**As of:** 2026-08-14 (this branch: sola-workspaces after D4.1; master URL→sola-browser merged)
 
 ---
 
@@ -36,7 +36,7 @@ Do not invent product policy.
 4. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
 5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), etc.
+   unmerged), open URL single-instance handoff, etc.
 
 **Explicit holds:** none.
 
@@ -54,8 +54,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (master `65e0051d` merged). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; YouTube persists; Bitwarden unlock/fill + Create login; passkey get (Google) | — |
+| Branch | This workspace: **`naturalethic/sola-agent-terminal`** (master `70568e8e` merged). Master dogfood: **`master`** (call plane not installed) | Feature work in worktrees / Orca workspaces |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); visited tabs/profiles paint from parked last-frames (miss blanks); omnibox load line + no submit blank-flash; instant tab close (no strip bounce); YouTube persists after quit; Bitwarden unlock/fill; **Create login** (save-then-fill); page ⌘C/⌘V + triple-click; passkey **get** (Google); chrome interactive with animated tabs (parked helpers hidden; shader pump); OSR IME + Shift+wheel + `<select>` dropdowns dogfooded; **default http(s) open** via sola-browser only (no Helium; install to re-register MIME; no single-instance yet) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
