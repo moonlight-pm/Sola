@@ -91,6 +91,15 @@ selects the neighbor to the right (or the left if it was last). The last
 tab is replaced by a blank rather than closing the window. Order is
 saved in that profile’s `session.json`.
 
+**Groups** are named folders at the **top** of the strip. Loose tabs stay
+in one run underneath. Right-click a tab for **New group**, **Add to…**,
+or **Ungroup**. Right-click a group header to **Rename** or **Ungroup**
+(members go loose). Click the header to collapse — the page stays if you
+were on a tab inside. Drag a loose tab into a group to join it; drag a
+member into the loose run to leave. `⌘T` always makes a loose tab.
+Empty groups disappear. There are no colors, nested groups, or spaces
+yet.
+
 ## Omnibox
 
 Type a URL or a search and press Enter. Search text goes to Kagi.
