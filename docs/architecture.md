@@ -149,7 +149,7 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 | Piece | Role |
 |-------|------|
-| `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox; vertical tabs; vault) + CEF CPU OSR under `src/cef/` |
+| `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox; etch tab strip with kit reorder; vault logins + cards) + CEF CPU OSR under `src/cef/` |
 | App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window) |
 | Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |

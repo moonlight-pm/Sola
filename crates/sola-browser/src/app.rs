@@ -15,8 +15,8 @@ use iced::widget::{
 use sola_kit::components::text_input::text_input;
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
-    DividerColors, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field,
-    horizontal_divider,
+    DividerColors, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim, ReorderCfg, SidebarDensity,
+    SidebarItem, SidebarPanel, SidebarSection, field, horizontal_divider, panel_drop_index_relative,
 };
 use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::button as kit_button;
@@ -31,9 +31,9 @@ use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, Tab
 use crate::session::{self, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
-    MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent,
-    VaultHandle, VaultStatus, apex_domain, fill_credentials_script, fill_credentials_script_ex,
-    generate_password,
+    CardSummary, MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd,
+    VaultEvent, VaultHandle, VaultStatus, apex_domain, fill_card_script, fill_credentials_script,
+    fill_credentials_script_ex, generate_password,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -46,6 +46,7 @@ pub const BLANK_URL: &str = "about:blank";
 pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 46.0;
+const NAV_BTN_W: f32 = 34.0;
 /// Tab sidebar width (logical px) — the value the draggable divider
 /// edits, clamped to `[MIN, MAX]`.
 pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
@@ -73,9 +74,14 @@ pub enum Msg {
     Bus(Arc<sola_bus::Message>),
     /// User pressed the mouse on the sidebar divider.
     DividerPress,
-    /// Global cursor moved — only acted on while dragging the divider.
-    CursorMoved(f32),
-    /// Global left-button released — ends a divider drag.
+    /// Press on a tab row (potential reorder), carrying the strip index.
+    ReorderStart(usize),
+    /// Animation tick while a tab reorder drag is live (sibling glides).
+    ReorderTick,
+    /// Global cursor moved — acted on while dragging the divider or
+    /// reordering tabs. `(x, y)` in window-logical pixels.
+    CursorMoved(f32, f32),
+    /// Global left-button released — ends a divider drag or tab reorder.
     CursorReleased,
     /// Hovered tab row changed (string id of [`TabId`]), or `None`.
     TabHover(Option<String>),
@@ -105,6 +111,13 @@ pub enum Msg {
     // —— Bitwarden vault (feature `bitwarden`) ——
     /// Toolbar lock: open login / status panel.
     VaultToggle,
+    /// Toolbar credit-card: open the cards panel (unlock first if needed).
+    #[cfg(feature = "bitwarden")]
+    CardsToggle,
+    #[cfg(feature = "bitwarden")]
+    CardsFill(String),
+    #[cfg(feature = "bitwarden")]
+    CardsRefresh,
     VaultEmail(String),
     VaultPassword(String),
     VaultOtp(String),
@@ -163,6 +176,15 @@ pub enum ProfileDialog {
     New,
     Rename,
     DeleteConfirm,
+}
+
+/// After unlock, which chrome panel to show.
+#[cfg(feature = "bitwarden")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum VaultResume {
+    #[default]
+    Logins,
+    Cards,
 }
 
 /// Which form the vault panel shows.
@@ -253,6 +275,14 @@ pub struct App<E: Engine> {
     /// Hovered tab id (string form of [`TabId`]) — drives the float-in
     /// close button. Wired through [`sola_kit::components::SidebarPanel::item_hover`].
     pub hovered_tab: Option<String>,
+    /// Active tab-reorder gesture (`from_index`, start_y). `start_y` is
+    /// `0.0` until the first cursor sample after press (same sentinel as
+    /// the terminal strip).
+    reorder: Option<(usize, f32)>,
+    reorder_cursor_y: f32,
+    /// True once movement has crossed [`PANEL_REORDER_THRESHOLD`].
+    reorder_dragging: bool,
+    reorder_anim: ReorderAnim,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -273,6 +303,11 @@ pub struct App<E: Engine> {
     vault: VaultHandle,
     #[cfg(feature = "bitwarden")]
     vault_panel_open: bool,
+    /// Separate cards panel (mutually exclusive with the login panel).
+    #[cfg(feature = "bitwarden")]
+    cards_panel_open: bool,
+    #[cfg(feature = "bitwarden")]
+    vault_resume: VaultResume,
     #[cfg(feature = "bitwarden")]
     vault_phase: VaultPanelPhase,
     #[cfg(feature = "bitwarden")]
@@ -305,6 +340,12 @@ pub struct App<E: Engine> {
     vault_icon_locked: iced::widget::svg::Handle,
     #[cfg(feature = "bitwarden")]
     vault_icon_unlocked: iced::widget::svg::Handle,
+    #[cfg(feature = "bitwarden")]
+    cards_icon: iced::widget::svg::Handle,
+    #[cfg(feature = "bitwarden")]
+    vault_cards: Vec<CardSummary>,
+    #[cfg(feature = "bitwarden")]
+    vault_cards_loading: bool,
     /// Page WebAuthn get() waiting for passkey selection.
     #[cfg(feature = "bitwarden")]
     pending_passkey: Option<PendingPasskey>,
@@ -369,6 +410,10 @@ impl<E: Engine> App<E> {
             last_cursor_x: None,
             drag_anchor: None,
             hovered_tab: None,
+            reorder: None,
+            reorder_cursor_y: 0.0,
+            reorder_dragging: false,
+            reorder_anim: ReorderAnim::new(),
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
             app_id,
@@ -379,6 +424,10 @@ impl<E: Engine> App<E> {
             vault: VaultHandle::spawn(),
             #[cfg(feature = "bitwarden")]
             vault_panel_open: false,
+            #[cfg(feature = "bitwarden")]
+            cards_panel_open: false,
+            #[cfg(feature = "bitwarden")]
+            vault_resume: VaultResume::Logins,
             #[cfg(feature = "bitwarden")]
             vault_phase: VaultPanelPhase::Credentials,
             #[cfg(feature = "bitwarden")]
@@ -408,6 +457,12 @@ impl<E: Engine> App<E> {
             vault_icon_locked: icon_handle("lucide/lock"),
             #[cfg(feature = "bitwarden")]
             vault_icon_unlocked: icon_handle("lucide/key-round"),
+            #[cfg(feature = "bitwarden")]
+            cards_icon: icon_handle("lucide/credit-card"),
+            #[cfg(feature = "bitwarden")]
+            vault_cards: Vec::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_cards_loading: false,
             #[cfg(feature = "bitwarden")]
             pending_passkey: None,
             #[cfg(feature = "bitwarden")]
@@ -466,6 +521,25 @@ impl<E: Engine> App<E> {
         }
         self.vault_matches_loading = true;
         self.vault.send(VaultCmd::Matches { url });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn request_vault_cards(&mut self) {
+        if !self.vault_status.unlocked {
+            self.vault_cards.clear();
+            self.vault_cards_loading = false;
+            return;
+        }
+        self.vault_cards_loading = true;
+        self.vault.send(VaultCmd::ListCards);
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn set_cards_panel_open(&mut self, open: bool) {
+        self.cards_panel_open = open;
+        if open {
+            self.set_vault_panel_open(false);
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -931,6 +1005,62 @@ impl<E: Engine> App<E> {
         self.session_fp = fp;
     }
 
+    /// Drive sibling-offset animations for the live tab-reorder preview.
+    fn sync_reorder_anim(&mut self) {
+        let Some((from, start_y)) = self.reorder else {
+            return;
+        };
+        if !self.reorder_dragging {
+            return;
+        }
+        let n = self.cached_tabs.len();
+        if n == 0 {
+            return;
+        }
+        let to = panel_drop_index_relative(from, start_y, self.reorder_cursor_y, PANEL_ROW_H, n);
+        self.reorder_anim
+            .sync(from, to, n, iced::time::Instant::now());
+    }
+
+    /// Finish a tab-reorder gesture: click → activate; drag → move the row.
+    /// Chrome owns order (`merge_tab_snapshot` keeps this vec's sequence).
+    fn finish_reorder(&mut self) {
+        let gesture = self.reorder.take();
+        let final_cursor_y = self.reorder_cursor_y;
+        let was_dragging = self.reorder_dragging;
+        self.reorder_cursor_y = 0.0;
+        self.reorder_dragging = false;
+        self.reorder_anim.clear();
+        REORDER_TRACKING.store(false, Ordering::Relaxed);
+
+        let Some((from, start_y)) = gesture else {
+            return;
+        };
+
+        // Never crossed the threshold → click, not drag: select the tab.
+        if !was_dragging || start_y == 0.0 {
+            if let Some(id) = self.cached_tabs.get(from).map(|t| t.id) {
+                self.switch_active_tab(id);
+                self.persist_session();
+            }
+            return;
+        }
+
+        let n = self.cached_tabs.len();
+        if n == 0 {
+            return;
+        }
+        let to = panel_drop_index_relative(from, start_y, final_cursor_y, PANEL_ROW_H, n);
+        if from == to {
+            return;
+        }
+        let from = from.min(n - 1);
+        let to = to.min(n - 1);
+        let tab = self.cached_tabs.remove(from);
+        self.cached_tabs.insert(to, tab);
+        self.persist_session();
+    }
+
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
         self.cached_tabs.iter().find(|t| t.id == self.cached_active)
     }
@@ -955,6 +1085,8 @@ impl<E: Engine> App<E> {
             Msg::VaultToggle => {
                 #[cfg(feature = "bitwarden")]
                 {
+                    self.vault_resume = VaultResume::Logins;
+                    self.cards_panel_open = false;
                     let open = !self.vault_panel_open;
                     self.set_vault_panel_open(open);
                     if open {
@@ -971,6 +1103,41 @@ impl<E: Engine> App<E> {
                         return iced::widget::operation::focus(vault_email_id());
                     }
                 }
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::CardsToggle => {
+                if self.cards_panel_open {
+                    self.set_cards_panel_open(false);
+                    return Task::none();
+                }
+                self.vault_error = None;
+                self.vault_resume = VaultResume::Cards;
+                if self.vault_status.unlocked {
+                    self.set_cards_panel_open(true);
+                    self.request_vault_cards();
+                    return Task::none();
+                }
+                // Unlock first (same form as the key button), then open cards.
+                self.cards_panel_open = false;
+                self.set_vault_panel_open(true);
+                if !self.vault_email.trim().is_empty() {
+                    self.vault_paste_target = VaultPasteTarget::Password;
+                    return iced::widget::operation::focus(vault_password_id());
+                }
+                return iced::widget::operation::focus(vault_email_id());
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::CardsFill(id) => {
+                if self.vault_busy || !self.vault_status.unlocked {
+                    return Task::none();
+                }
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::FillCard { id });
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::CardsRefresh => {
+                self.request_vault_cards();
             }
             Msg::VaultFill(id) => {
                 #[cfg(feature = "bitwarden")]
@@ -1193,6 +1360,7 @@ impl<E: Engine> App<E> {
                         }
                         self.vault_awaiting_fill = false;
                         self.set_vault_panel_open(false);
+                        self.set_cards_panel_open(false);
                     }
                 }
             }
@@ -1267,9 +1435,10 @@ impl<E: Engine> App<E> {
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
-                if self.vault_panel_open {
+                if self.vault_panel_open || self.cards_panel_open {
                     // Dismiss panel only — keep login / 2FA state for re-open.
                     self.set_vault_panel_open(false);
+                    self.set_cards_panel_open(false);
                     return Task::none();
                 }
                 self.set_active_loading(false);
@@ -1440,7 +1609,21 @@ impl<E: Engine> App<E> {
                 self.last_cursor_x = Some(x);
                 self.drag_anchor = Some((x, self.sidebar_w));
             }
-            Msg::CursorMoved(x) => {
+            Msg::ReorderStart(index) => {
+                // start_y = 0.0 sentinel; captured on first CursorMoved.
+                // Live-reorder stays off until movement crosses the threshold.
+                self.reorder = Some((index, 0.0));
+                self.reorder_cursor_y = 0.0;
+                self.reorder_dragging = false;
+                self.reorder_anim.clear();
+                REORDER_TRACKING.store(true, Ordering::Relaxed);
+            }
+            Msg::ReorderTick => {
+                if self.reorder_dragging {
+                    self.sync_reorder_anim();
+                }
+            }
+            Msg::CursorMoved(x, y) => {
                 self.last_cursor_x = Some(x);
                 if self.dragging_divider {
                     if let Some((anchor_x, anchor_w)) = self.drag_anchor {
@@ -1450,14 +1633,29 @@ impl<E: Engine> App<E> {
                         self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
                     }
                 }
+                if let Some((_from, ref mut start_y)) = self.reorder {
+                    if *start_y == 0.0 {
+                        *start_y = y;
+                    }
+                    self.reorder_cursor_y = y;
+                    if (y - *start_y).abs() >= PANEL_REORDER_THRESHOLD {
+                        self.reorder_dragging = true;
+                    }
+                    if self.reorder_dragging {
+                        self.sync_reorder_anim();
+                    }
+                }
             }
-            // sidebar width persisted on Tick / drop
+            // sidebar width / tab order persisted on Tick / drop
             Msg::CursorReleased => {
                 if self.dragging_divider {
                     self.dragging_divider = false;
                     self.drag_anchor = None;
                 }
                 DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
+                if self.reorder.is_some() {
+                    self.finish_reorder();
+                }
             }
             Msg::TabHover(i) => self.hovered_tab = i,
             Msg::WebViewFocused => {
@@ -1750,7 +1948,7 @@ impl<E: Engine> App<E> {
             && {
                 #[cfg(feature = "bitwarden")]
                 {
-                    !self.vault_panel_open
+                    !self.vault_panel_open && !self.cards_panel_open
                 }
                 #[cfg(not(feature = "bitwarden"))]
                 {
@@ -1793,7 +1991,9 @@ impl<E: Engine> App<E> {
             .into();
 
         #[cfg(feature = "bitwarden")]
-        let content: Element<'_, Msg> = if self.vault_panel_open {
+        let content: Element<'_, Msg> = if self.cards_panel_open {
+            stack![content, self.view_cards_panel()].into()
+        } else if self.vault_panel_open {
             stack![content, self.view_vault_panel()].into()
         } else {
             content
@@ -1830,13 +2030,10 @@ impl<E: Engine> App<E> {
             .cached_tabs
             .iter()
             .map(|t| {
-                let label = if !t.title.is_empty() {
-                    crate::util::truncate(&t.title, 20)
-                } else if !t.url.is_empty() {
-                    crate::util::truncate(&t.url, 20)
-                } else {
-                    String::from("Loading…")
-                };
+                // Item message is unused: reorder is always on, so the kit
+                // press path emits ReorderStart; click-vs-drag is decided
+                // on release (same contract as the terminal strip).
+                let label = crate::util::tab_strip_label(&t.title, &t.url, self.sidebar_w);
                 SidebarItem::new(label, Msg::ActivateTab(t.id))
                     .active(t.id == active_id)
                     .on_close(Msg::CloseTab(t.id))
@@ -1852,6 +2049,16 @@ impl<E: Engine> App<E> {
                 Msg::DividerPress,
                 DividerColors::raised_to_canvas(&self.theme),
             )
+            .reorderable(ReorderCfg {
+                on_press: Box::new(Msg::ReorderStart),
+                active: if self.reorder_dragging {
+                    self.reorder
+                } else {
+                    None
+                },
+                cursor_y: self.reorder_cursor_y,
+                anim: self.reorder_dragging.then_some(&self.reorder_anim),
+            })
             .build()
     }
 
@@ -1887,7 +2094,6 @@ impl<E: Engine> App<E> {
     /// query, which sees the press regardless of widget capture.
     pub fn view_chrome_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
-        const NAV_BTN_W: f32 = 34.0;
         let info = self.active_tab_info();
         let can_back = info.map(|t| t.can_go_back).unwrap_or(false);
         let can_fwd = info.map(|t| t.can_go_forward).unwrap_or(false);
@@ -1920,27 +2126,26 @@ impl<E: Engine> App<E> {
             } else {
                 self.vault_icon_locked.clone()
             };
-            let icon = if unlocked {
-                icon_svg_colored(
-                    handle,
-                    18,
-                    self.theme.extended_palette().primary.base.color,
-                )
-            } else {
-                icon_svg_colored(handle, 18, muted)
-            };
-            button(icon)
-                .padding(PAD_CONTROL_SM)
-                .width(Length::Fixed(NAV_BTN_W))
-                .style(if unlocked {
-                    vault_toolbar_btn_unlocked
-                } else {
-                    kit_toolbar::style
-                })
-                .on_press(Msg::VaultToggle)
+            self.vault_tool_btn(
+                handle,
+                unlocked,
+                self.vault_panel_open,
+                muted,
+                Msg::VaultToggle,
+            )
         };
+        #[cfg(feature = "bitwarden")]
+        let cards_btn = self.vault_tool_btn(
+            self.cards_icon.clone(),
+            self.vault_status.unlocked,
+            self.cards_panel_open,
+            muted,
+            Msg::CardsToggle,
+        );
         #[cfg(not(feature = "bitwarden"))]
         let vault_btn = Space::new().width(Length::Fixed(0.0));
+        #[cfg(not(feature = "bitwarden"))]
+        let cards_btn = Space::new().width(Length::Fixed(0.0));
 
         let profile = container(self.view_profile_picker())
             .width(Length::Fixed(self.sidebar_w))
@@ -1955,6 +2160,7 @@ impl<E: Engine> App<E> {
             reload_or_stop,
             self.view_omnibox(),
             vault_btn,
+            cards_btn,
         ]
         .spacing(SPACE_SM)
         .padding([SPACE_SM, SPACE_MD])
@@ -1996,6 +2202,41 @@ impl<E: Engine> App<E> {
         Some(info.load_progress.clamp(0.0, 1.0).max(0.08))
     }
 
+    /// Shared lock / card toolbar control.
+    ///
+    /// Locked: muted glyph (looks idle). Unlocked: full chrome foreground
+    /// on *both* so the pair reads ready — accent is reserved for the
+    /// panel that is actually open (not a second “I’m unlocked” blue).
+    #[cfg(feature = "bitwarden")]
+    fn vault_tool_btn(
+        &self,
+        handle: iced::widget::svg::Handle,
+        unlocked: bool,
+        open: bool,
+        muted: iced::Color,
+        msg: Msg,
+    ) -> Element<'_, Msg> {
+        let fg = self.theme.extended_palette().background.base.text;
+        let accent = self.theme.extended_palette().primary.base.color;
+        let color = if open {
+            accent
+        } else if unlocked {
+            fg
+        } else {
+            muted
+        };
+        button(icon_svg_colored(handle, 18, color))
+            .padding(PAD_CONTROL_SM)
+            .width(Length::Fixed(NAV_BTN_W))
+            .style(if open {
+                vault_toolbar_btn_unlocked
+            } else {
+                kit_toolbar::style
+            })
+            .on_press(msg)
+            .into()
+    }
+
     fn nav_icon_btn(
         &self,
         handle: iced::widget::svg::Handle,
@@ -2031,12 +2272,16 @@ impl<E: Engine> App<E> {
                 self.vault_email = email;
                 self.persist_vault_email();
                 self.reset_vault_form_keep_email();
-                // Passkey ceremony mid-unlock → stay on picker. Otherwise open
-                // the fill/password panel for the active page.
+                // Passkey ceremony mid-unlock → stay on picker. Cards button
+                // unlocks then opens the cards panel. Otherwise fill-login.
                 if self.pending_passkey.is_some() {
                     self.vault_phase = VaultPanelPhase::PasskeyPick;
                     self.set_vault_panel_open(true);
                     self.request_passkey_candidates();
+                } else if self.vault_resume == VaultResume::Cards {
+                    self.vault_phase = VaultPanelPhase::Credentials;
+                    self.set_cards_panel_open(true);
+                    self.request_vault_cards();
                 } else {
                     self.vault_phase = VaultPanelPhase::Credentials;
                     self.set_vault_panel_open(true);
@@ -2086,10 +2331,13 @@ impl<E: Engine> App<E> {
                 if self.vault_panel_open && self.vault_status.unlocked {
                     self.request_vault_matches();
                 }
+                if self.cards_panel_open && self.vault_status.unlocked {
+                    self.request_vault_cards();
+                }
             }
             VaultEvent::SyncFailed { message } => {
                 tracing::warn!(%message, "vault: sync failed");
-                if self.vault_panel_open && self.vault_status.unlocked {
+                if (self.vault_panel_open || self.cards_panel_open) && self.vault_status.unlocked {
                     self.vault_error = Some(format!("Signed in, but sync failed: {message}"));
                 }
             }
@@ -2097,6 +2345,11 @@ impl<E: Engine> App<E> {
                 self.vault_matches_loading = false;
                 tracing::info!(n = list.len(), url = %self.vault_matches_url, "vault: matches");
                 self.vault_matches = list;
+            }
+            VaultEvent::Cards(list) => {
+                self.vault_cards_loading = false;
+                tracing::info!(n = list.len(), "vault: cards");
+                self.vault_cards = list;
             }
             VaultEvent::FillReady {
                 mut username,
@@ -2115,6 +2368,33 @@ impl<E: Engine> App<E> {
                 tracing::info!("vault: fill injected into active page");
                 // Close panel so the user can submit the form immediately.
                 self.set_vault_panel_open(false);
+            }
+            VaultEvent::CardFillReady {
+                cardholder_name,
+                mut number,
+                exp_month,
+                exp_year,
+                mut code,
+                brand,
+            } => {
+                self.vault_busy = false;
+                let script = fill_card_script(
+                    cardholder_name.as_deref(),
+                    number.as_deref(),
+                    exp_month.as_deref(),
+                    exp_year.as_deref(),
+                    code.as_deref(),
+                    brand.as_deref(),
+                );
+                if let Some(ref mut n) = number {
+                    n.zeroize();
+                }
+                if let Some(ref mut c) = code {
+                    c.zeroize();
+                }
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                tracing::info!("vault: card fill injected into active page");
+                self.set_cards_panel_open(false);
             }
             VaultEvent::Created {
                 id: _,
@@ -2189,7 +2469,8 @@ impl<E: Engine> App<E> {
                 tracing::warn!(%message, "vault: error");
                 self.vault_busy = false;
                 self.vault_matches_loading = false;
-                if self.vault_panel_open {
+                self.vault_cards_loading = false;
+                if self.vault_panel_open || self.cards_panel_open {
                     self.vault_error = Some(message);
                 }
             }
@@ -2426,6 +2707,156 @@ impl<E: Engine> App<E> {
             .align_y(Alignment::Center);
 
         stack![backdrop, centered].into()
+    }
+
+    /// Cards panel — list every Bitwarden card; click fills the page.
+    #[cfg(feature = "bitwarden")]
+    fn view_cards_panel(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let soft = |s: String| {
+            text(s).size(12).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.72, ..t }),
+                }
+            })
+        };
+        let soft_sm = |s: String| {
+            text(s).size(11).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.62, ..t }),
+                }
+            })
+        };
+
+        let title = text("Fill card")
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+        const MATCH_LIST_H: f32 = 420.0;
+        let mut col = column![title, soft("Cards from your Bitwarden vault.".into())]
+            .spacing(SPACE_SM)
+            .width(Length::Fixed(340.0));
+
+        if let Some(err) = self.vault_error.as_ref() {
+            col = col.push(
+                text(err.clone())
+                    .size(12)
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().danger.base.color),
+                    }),
+            );
+        }
+
+        if self.vault_cards_loading {
+            col = col.push(text("Looking up cards…").size(13));
+        } else if self.vault_cards.is_empty() {
+            col = col.push(text("No cards saved in Bitwarden.").size(13));
+            col = col.push(soft_sm(
+                "Add a card in Bitwarden, then Refresh.".into(),
+            ));
+        } else {
+            let mut list = column![].spacing(4.0);
+            for c in &self.vault_cards {
+                let title_line = if c.name.is_empty() {
+                    c.brand.clone().unwrap_or_else(|| "Card".into())
+                } else {
+                    c.name.clone()
+                };
+                let sub = {
+                    let mut s = c.subtitle();
+                    if let Some(ref exp) = c.exp {
+                        if s.is_empty() {
+                            s = exp.clone();
+                        } else {
+                            s.push_str(" · ");
+                            s.push_str(exp);
+                        }
+                    }
+                    if s.is_empty() {
+                        s = "—".into();
+                    }
+                    s
+                };
+                let row_body = column![
+                    text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
+                    soft_sm(sub),
+                ]
+                .spacing(2);
+                let id = c.id.clone();
+                let mut btn = button(row_body)
+                    .padding(Padding::from([8, 10]))
+                    .width(Length::Fill)
+                    .style(|theme: &iced::Theme, status| {
+                        let p = theme.extended_palette();
+                        let bg = match status {
+                            iced::widget::button::Status::Hovered
+                            | iced::widget::button::Status::Pressed => p.background.strong.color,
+                            _ => p.background.weak.color,
+                        };
+                        iced::widget::button::Style {
+                            background: Some(iced::Background::Color(bg)),
+                            text_color: p.background.base.text,
+                            border: iced::Border {
+                                color: p.background.strong.color,
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    });
+                if !self.vault_busy {
+                    btn = btn.on_press(Msg::CardsFill(id));
+                }
+                list = list.push(btn);
+            }
+            col = col.push(
+                scrollable(list)
+                    .height(Length::Fixed(MATCH_LIST_H))
+                    .width(Length::Fill),
+            );
+        }
+
+        let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
+        if !self.vault_busy && !self.vault_cards_loading {
+            refresh = refresh.on_press(Msg::CardsRefresh);
+        }
+        let close = kit_button::labeled("Close", kit_button::secondary)
+            .on_press(Msg::VaultPanelClose);
+        col = col.push(
+            row![refresh, close]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+        );
+
+        let panel = card::modal(container(col).padding(SPACE_MD + SPACE_SM))
+            .width(Length::Fixed(360.0));
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.12,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::VaultPanelClose);
+
+        let anchored = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: CHROME_HEIGHT + 4.0,
+                right: 10.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
+
+        stack![backdrop, anchored].into()
     }
 
     /// Bitwarden panel anchored top-right under the toolbar vault icon.
@@ -2972,13 +3403,17 @@ impl<E: Engine> App<E> {
             crate::run::frame_subscription::<E>(frames, slot, active),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             sola_kit::app::bus_subscription().map(Msg::Bus),
+            // Always registered; `update` no-ops when not dragging.
+            iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
             event::listen_with(|event, status, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
                     // Rebuilding chrome on every pixel move starved menus and
-                    // typing. Only the divider drag needs a message.
-                    if DIVIDER_DRAGGING.load(Ordering::Relaxed) {
-                        Some(Msg::CursorMoved(position.x))
+                    // typing. Divider resize and tab reorder both need samples.
+                    if DIVIDER_DRAGGING.load(Ordering::Relaxed)
+                        || REORDER_TRACKING.load(Ordering::Relaxed)
+                    {
+                        Some(Msg::CursorMoved(position.x, position.y))
                     } else {
                         None
                     }
@@ -3017,6 +3452,8 @@ impl<E: Engine> App<E> {
 
 /// Divider drag: `listen_with` is a fn pointer and cannot close over App.
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
+/// Tab-reorder press is live (before and after the movement threshold).
+static REORDER_TRACKING: AtomicBool = AtomicBool::new(false);
 /// Last pointer x (bits) so DividerPress has a current anchor without
 /// emitting CursorMoved on every pixel.
 static CURSOR_X_BITS: AtomicU32 = AtomicU32::new(0);
@@ -3367,6 +3804,23 @@ mod tests {
         let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].id, TabId(3));
+    }
+
+    #[test]
+    fn merge_preserves_chrome_tab_order() {
+        // Engine snapshot order must not undo a user reorder.
+        let prev = vec![
+            tab(2, "https://b.example/", "B"),
+            tab(1, "https://a.example/", "A"),
+        ];
+        let live = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, "https://b.example/", "B"),
+        ];
+        let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].id, TabId(2));
+        assert_eq!(out[1].id, TabId(1));
     }
 
     #[test]

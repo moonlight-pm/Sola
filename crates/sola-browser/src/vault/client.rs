@@ -39,6 +39,37 @@ pub struct MatchSummary {
     pub last_used: i64,
 }
 
+/// One card for the picker (no PAN / CVV).
+#[derive(Debug, Clone)]
+pub struct CardSummary {
+    pub id: String,
+    pub name: String,
+    pub brand: Option<String>,
+    /// Last 4 (Amex last 5) for the subtitle only.
+    pub last4: Option<String>,
+    /// Display expiry (`MM/YY`) when both parts exist.
+    pub exp: Option<String>,
+    pub last_used: i64,
+}
+
+impl CardSummary {
+    /// `Visa · •••• 1111` / `•••• 1111` / name-only fallback left to chrome.
+    pub fn subtitle(&self) -> String {
+        card_subtitle(self.brand.as_deref(), self.last4.as_deref())
+    }
+}
+
+/// Card fields for page fill — zeroize PAN / CVV on drop.
+#[derive(Debug, Clone)]
+pub struct CardFillMaterial {
+    pub cardholder_name: Option<String>,
+    pub number: Option<String>,
+    pub exp_month: Option<String>,
+    pub exp_year: Option<String>,
+    pub code: Option<String>,
+    pub brand: Option<String>,
+}
+
 /// Credentials for page fill — zeroize on drop.
 #[derive(Debug, Clone)]
 pub struct FillMaterial {
@@ -53,6 +84,17 @@ impl Drop for FillMaterial {
         }
         if let Some(ref mut u) = self.username {
             u.zeroize();
+        }
+    }
+}
+
+impl Drop for CardFillMaterial {
+    fn drop(&mut self) {
+        if let Some(ref mut n) = self.number {
+            n.zeroize();
+        }
+        if let Some(ref mut c) = self.code {
+            c.zeroize();
         }
     }
 }
@@ -328,6 +370,65 @@ impl VaultService {
         })
     }
 
+    /// Every non-deleted card (cards rarely have URIs — list all).
+    pub async fn list_cards(&self) -> Result<Vec<CardSummary>, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let listed = self
+            .client
+            .vault()
+            .ciphers()
+            .get_all()
+            .await
+            .map_err(|e| VaultError::Other(e.to_string()))?;
+
+        let mru = super::prefs::VaultPrefs::last_used_map();
+        let mut out = Vec::new();
+        for view in listed.successes {
+            if let Some(summary) = card_summary_if_card(&view, &mru) {
+                out.push(summary);
+            }
+        }
+        out.sort_by(|a, b| b.last_used.cmp(&a.last_used).then(a.name.cmp(&b.name)));
+        tracing::info!(n = out.len(), "vault: card list");
+        Ok(out)
+    }
+
+    pub async fn fill_card(&self, cipher_id: &str) -> Result<CardFillMaterial, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let view = self
+            .client
+            .vault()
+            .ciphers()
+            .get(cipher_id)
+            .await
+            .map_err(|_| VaultError::NotFound)?;
+
+        if view.r#type != CipherType::Card {
+            return Err(VaultError::NotFound);
+        }
+        let card = view.card.ok_or(VaultError::NotFound)?;
+        Ok(CardFillMaterial {
+            cardholder_name: card.cardholder_name,
+            number: card.number,
+            exp_month: card.exp_month,
+            exp_year: card.exp_year,
+            code: card.code,
+            brand: card.brand,
+        })
+    }
+
     /// Encrypt + POST a personal login, then sync so match lists see it.
     pub async fn create_login(
         &self,
@@ -510,4 +611,109 @@ fn match_summary_if_login(
         has_passkey,
         last_used,
     })
+}
+
+fn card_summary_if_card(
+    view: &CipherView,
+    mru: &std::collections::HashMap<String, i64>,
+) -> Option<CardSummary> {
+    if view.r#type != CipherType::Card {
+        return None;
+    }
+    if view.deleted_date.is_some() {
+        return None;
+    }
+    let card = view.card.as_ref()?;
+    let id = view.id.map(|id| id.to_string()).unwrap_or_default();
+    if id.is_empty() {
+        return None;
+    }
+    let last_used = cipher_last_used(view, &id, mru);
+    Some(CardSummary {
+        id,
+        name: view.name.clone(),
+        brand: card.brand.clone(),
+        last4: card_last4(card.number.as_deref()),
+        exp: card_exp_display(card.exp_month.as_deref(), card.exp_year.as_deref()),
+        last_used,
+    })
+}
+
+fn cipher_last_used(
+    view: &CipherView,
+    id: &str,
+    mru: &std::collections::HashMap<String, i64>,
+) -> i64 {
+    let bw_used = view.local_data.as_ref().and_then(|ld| {
+        let v = serde_json::to_value(ld).ok()?;
+        v.get("lastUsedDate")?.as_i64()
+    });
+    let ours = mru.get(id).copied();
+    ours.into_iter()
+        .chain(bw_used)
+        .max()
+        .unwrap_or_else(|| view.revision_date.timestamp())
+}
+
+/// Last 4 digits, or 5 for Amex (34/37). None if the PAN is too short.
+pub fn card_last4(number: Option<&str>) -> Option<String> {
+    let digits: String = number?
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    if digits.len() < 4 {
+        return None;
+    }
+    let take = if digits.starts_with("34") || digits.starts_with("37") {
+        5.min(digits.len())
+    } else {
+        4
+    };
+    Some(digits[digits.len() - take..].to_string())
+}
+
+pub fn card_subtitle(brand: Option<&str>, last4: Option<&str>) -> String {
+    match (brand.filter(|s| !s.is_empty()), last4.filter(|s| !s.is_empty())) {
+        (Some(b), Some(n)) => format!("{b} · •••• {n}"),
+        (Some(b), None) => b.to_string(),
+        (None, Some(n)) => format!("•••• {n}"),
+        (None, None) => String::new(),
+    }
+}
+
+pub fn card_exp_display(month: Option<&str>, year: Option<&str>) -> Option<String> {
+    let m = month.map(str::trim).filter(|s| !s.is_empty())?;
+    let y = year.map(str::trim).filter(|s| !s.is_empty())?;
+    let mm = if m.len() == 1 {
+        format!("0{m}")
+    } else {
+        m.to_string()
+    };
+    let yy = if y.len() >= 4 { &y[y.len() - 2..] } else { y };
+    Some(format!("{mm}/{yy}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last4_visa_and_amex() {
+        assert_eq!(card_last4(Some("4111111111111111")).as_deref(), Some("1111"));
+        assert_eq!(card_last4(Some("3782 822463 10005")).as_deref(), Some("10005"));
+        assert_eq!(card_last4(Some("12")), None);
+        assert_eq!(card_last4(None), None);
+    }
+
+    #[test]
+    fn subtitle_and_exp() {
+        assert_eq!(
+            card_subtitle(Some("Visa"), Some("1111")),
+            "Visa · •••• 1111"
+        );
+        assert_eq!(card_subtitle(None, Some("4444")), "•••• 4444");
+        assert_eq!(card_exp_display(Some("3"), Some("2028")).as_deref(), Some("03/28"));
+        assert_eq!(card_exp_display(Some("12"), Some("28")).as_deref(), Some("12/28"));
+        assert_eq!(card_exp_display(Some("12"), None), None);
+    }
 }

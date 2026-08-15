@@ -49,6 +49,33 @@ pub fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// How many title characters fit a Large-density etch row of `sidebar_w` px.
+///
+/// Slightly optimistic so the well fills; the kit still clips if a wide
+/// glyph run overruns. The old hard cap of 20 left a visible empty band
+/// at the default 200 px column.
+pub fn tab_title_chars(sidebar_w: f32) -> usize {
+    // Body pad 8+8, row pad 10+10, active lip 2, a hair of clip slack.
+    const INSET: f32 = 32.0;
+    // 12 px SF Pro mixed-case. Optimistic so we use the well, not sit short.
+    const PX_PER: f32 = 5.5;
+    let inner = (sidebar_w - INSET).max(48.0);
+    (inner / PX_PER).floor().max(8.0) as usize
+}
+
+/// Tab-strip label: page title, else URL, else a loading placeholder.
+/// Ellipsizes to the characters that fit `sidebar_w`.
+pub fn tab_strip_label(title: &str, url: &str, sidebar_w: f32) -> String {
+    let raw = if !title.is_empty() {
+        title
+    } else if !url.is_empty() {
+        url
+    } else {
+        return String::from("Loading…");
+    };
+    truncate(raw, tab_title_chars(sidebar_w))
+}
+
 /// Built-in scroll/tile stress page (fixed nav + tall image grid).
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
@@ -214,6 +241,27 @@ mod tests {
         let out = truncate("a very long tab title indeed", 10);
         assert_eq!(out, "a very lo…");
         assert!(out.chars().count() <= 10, "got {out:?}");
+    }
+
+    #[test]
+    fn tab_title_chars_fills_default_column() {
+        // Old hard cap was 20; default 200 px column has room for more.
+        let n = tab_title_chars(200.0);
+        assert!(n > 20, "default column still capped at {n}");
+        assert!(n >= 28, "expected ~30 chars at 200 px, got {n}");
+        assert!(tab_title_chars(400.0) > n);
+        assert!(tab_title_chars(120.0) >= 8);
+    }
+
+    #[test]
+    fn tab_strip_label_prefers_title_then_url() {
+        assert_eq!(tab_strip_label("Hi", "https://x", 200.0), "Hi");
+        assert_eq!(tab_strip_label("", "https://x", 200.0), "https://x");
+        assert_eq!(tab_strip_label("", "", 200.0), "Loading…");
+        let long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let out = tab_strip_label(long, "", 200.0);
+        assert!(out.ends_with('…'), "{out:?}");
+        assert!(out.chars().count() < long.chars().count());
     }
 
     #[test]

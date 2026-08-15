@@ -7,8 +7,8 @@
 
 | | |
 |--|--|
-| **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel`; `vertical_tabs*` deleted |
-| **Dogfood** | Merged; install + smoke on the TTY when convenient |
+| **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel` (both **reorderable**); `vertical_tabs*` deleted |
+| **Dogfood** | Merged; browser tab reorder + width-aware titles dogfooded 2026-08-15 |
 | **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 
 ---
@@ -135,7 +135,7 @@ optional custom body, spacing via `item_spacing`.
 
 | Consumer | Today | Target |
 |----------|-------|--------|
-| **sola-browser** | App-built width + `vertical_tabs_sized` + separate `vertical_divider_with` | `SidebarPanel` unlabeled section of etch items (`on_close`, density Large). Prefer **panel `resizable_with`** so divider/overlay match terminal/agent; drop duplicate drag overlay if panel already stacks it. Profile picker stays in chrome bar. |
+| **sola-browser** | App-built width + `vertical_tabs_sized` + separate `vertical_divider_with` | `SidebarPanel` unlabeled section of etch items (`on_close`, density Large, **`reorderable`**). Prefer **panel `resizable_with`** so divider/overlay match terminal/agent; drop duplicate drag overlay if panel already stacks it. Profile picker stays in chrome bar. |
 | **sola-terminal** | `SidebarPanel` Row + reorder + shortcuts | Same structure; free visual upgrade to etch. Keep reorder + `1`…`9` shortcuts. Density: Large (tab strip). |
 | **sola-agent** | Card + custom content + hover + scroll chips | Unchanged API; ensure list etch changes do not bleed into Card styles. |
 | **sola-settings / mail / preview** | `sidebar(sections)` Row | Same call sites; inherit etch list look. Density Normal. |
@@ -157,7 +157,10 @@ optional custom body, spacing via `item_spacing`.
 
 - Hover reveals close; close never reflows title width.  
 - Active etch (not teal selection).  
-- Truncation remains caller-side (title/url) with `Wrapping::None`.  
+- Truncation remains caller-side (title/url) with `Wrapping::None`,
+  width-aware so the etch well fills (no fixed 20-char cap).  
+- Drag-reorder via panel `reorderable` (same click-vs-drag threshold as
+  terminal); chrome owns order (`merge_tab_snapshot` keeps it).  
 - New tab still ⌘T / app chrome — no required “+” footer in v1.  
 - Instant close / tab list from cache still works (only view path changes).
 

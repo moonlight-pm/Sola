@@ -8,7 +8,7 @@ use std::time::Duration;
 use zeroize::Zeroize;
 
 use super::client::{
-    LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
+    CardSummary, LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
 };
 use super::passkey::PasskeyCandidate;
 
@@ -32,6 +32,10 @@ pub enum VaultCmd {
     Sync,
     Matches { url: String },
     Fill { id: String },
+    /// List every card cipher (no URI filter).
+    ListCards,
+    /// Decrypt a card for page fill.
+    FillCard { id: String },
     /// Persist a new login then return fill material.
     CreateLogin {
         name: String,
@@ -78,9 +82,18 @@ pub enum VaultEvent {
     SyncOk { full: bool },
     SyncFailed { message: String },
     Matches(Vec<MatchSummary>),
+    Cards(Vec<CardSummary>),
     FillReady {
         username: Option<String>,
         password: Option<String>,
+    },
+    CardFillReady {
+        cardholder_name: Option<String>,
+        number: Option<String>,
+        exp_month: Option<String>,
+        exp_year: Option<String>,
+        code: Option<String>,
+        brand: Option<String>,
     },
     /// New login is on the server — fill the page (same payload as FillReady).
     Created {
@@ -359,6 +372,40 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                 }
                 password.zeroize();
             }
+            VaultCmd::ListCards => match svc.list_cards().await {
+                Ok(m) => {
+                    let _ = event_tx.send(VaultEvent::Cards(m));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(VaultEvent::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+            VaultCmd::FillCard { id } => match svc.fill_card(&id).await {
+                Ok(mut material) => {
+                    crate::vault::VaultPrefs::touch_cipher(&id);
+                    let cardholder_name = material.cardholder_name.take();
+                    let number = material.number.take();
+                    let exp_month = material.exp_month.take();
+                    let exp_year = material.exp_year.take();
+                    let code = material.code.take();
+                    let brand = material.brand.take();
+                    let _ = event_tx.send(VaultEvent::CardFillReady {
+                        cardholder_name,
+                        number,
+                        exp_month,
+                        exp_year,
+                        code,
+                        brand,
+                    });
+                }
+                Err(e) => {
+                    let _ = event_tx.send(VaultEvent::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
             VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
                 Ok(mut material) => {
                     crate::vault::VaultPrefs::touch_cipher(&id);

@@ -2,7 +2,7 @@
 //!
 //! Official Bitwarden cloud + iced chrome login (incl. email new-device
 //! verification / authenticator TOTP), URI match picker, page fill inject,
-//! and WebAuthn passkey assertion (FIDO2).
+//! card list + checkout fill, and WebAuthn passkey assertion (FIDO2).
 //!
 //! Spec: `docs/specs/2026-08-10-sola-browser-bitwarden-design.md`.
 
@@ -22,9 +22,10 @@ mod worker;
 pub use bridge::PasskeyPageRequest;
 pub use bridge as passkey_bridge;
 pub use client::{
-    FillMaterial, LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
+    CardFillMaterial, CardSummary, FillMaterial, LoginOutcome, MatchSummary, TwoFactorKind,
+    VaultError, VaultService, VaultStatus,
 };
-pub use fill_js::{fill_credentials_script, fill_credentials_script_ex};
+pub use fill_js::{fill_card_script, fill_credentials_script, fill_credentials_script_ex};
 pub use generate::password as generate_password;
 pub use match_uri::{apex_domain, uri_matches};
 pub use prefs::VaultPrefs;

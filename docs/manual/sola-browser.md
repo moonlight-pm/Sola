@@ -77,10 +77,13 @@ Manage (new / rename / delete) stays under **Menubar → Profiles**.
 
 ## Tabs
 
-The left strip is the tab list (`⌘T` for a new blank). Close removes the
-row immediately — no flash back. Closing the tab you are looking at
+The left strip is the tab list (`⌘T` for a new blank). **Drag a row** to
+reorder; a click (no drag) still selects. Titles fill the column and
+ellipsize at the edge (they grow if you widen the strip). Close removes
+the row immediately — no flash back. Closing the tab you are looking at
 selects the neighbor to the right (or the left if it was last). The last
-tab is replaced by a blank rather than closing the window.
+tab is replaced by a blank rather than closing the window. Order is
+saved in that profile’s `session.json`.
 
 ## Omnibox
 
@@ -95,13 +98,21 @@ Type a URL or a search and press Enter. Search text goes to Kagi.
 
 ## Bitwarden vault
 
-Toolbar lock / key icon opens the vault panel.
+Toolbar **key** opens logins. Toolbar **card** opens cards. They are
+separate panels (only one at a time). Unlock is shared. While locked
+both icons sit muted (key is a lock). After unlock both come up to
+full chrome color; the open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
-  After unlock, the panel opens the **fill login** list for the active page
-  (unless a passkey ceremony is already waiting).
+  The key button then opens the **fill login** list for the active page
+  (unless a passkey ceremony is already waiting). The card button unlocks
+  the same way, then opens **fill card**.
 - **Fill login** lists URI-matching items (tall list; items with a passkey show
   a **passkey** badge). Click to fill username / password into the page.
+- **Fill card** lists every card in the vault (cards rarely have URIs). Each
+  row shows the item name, brand, last digits, and expiry. Click fills
+  number, name, expiry, and CVC on the page (standard `cc-*` autocomplete
+  plus common checkout names). The panel does not show the full number.
 - **Create login** is always on the unlocked card (primary when this site has
   no matches). Username is the last one you used, selected so typing replaces
   it. Password is a fresh 16-character generated value (visible; **Regenerate**
