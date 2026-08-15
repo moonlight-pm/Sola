@@ -17,7 +17,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme
 use crate::components::button as kit_button;
 use crate::components::icon::{icon_handle, icon_svg};
 use crate::components::popover::{self, popover, popover_anchored};
-use crate::components::style::{hairline, mix, mix_white, RADIUS_SM, SPACE_SM};
+use crate::components::style::{hairline, mix_white, RADIUS_SM, SPACE_SM};
 use crate::fonts;
 
 /// Default hanging-menu width when the caller pins one via [`select_sized`].
@@ -253,7 +253,8 @@ fn trigger_style(theme: &Theme, status: button::Status, open: bool) -> button::S
     let raised = p.background.weaker.color;
     let rest = mix_white(raised, 0.03);
     let hover = mix_white(p.background.strong.color, 0.04);
-    let open_fill = mix(crate::theme::selection(), raised, 0.55);
+    // Open = hover lift, not a darkened-cyan wash.
+    let open_fill = mix_white(p.background.strong.color, 0.04);
     let (bg, edge) = if open {
         (open_fill, mix_white(open_fill, 0.10))
     } else {

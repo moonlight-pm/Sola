@@ -4,7 +4,7 @@ use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{bevel_frame_strong, stage_fill, CHROME_SURFACE, RADIUS_XL};
+use sola_kit::components::style::{bevel_frame, stage_fill, CHROME_SURFACE, RADIUS_XL};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
 
@@ -163,7 +163,7 @@ fn form_panel(state: &State) -> Element<'_, Msg> {
         .padding(1)
         .width(Length::Fill)
         .style(|theme: &iced::Theme| {
-            bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
         })
         .into()
 }

@@ -41,7 +41,7 @@ Cool graphite tool UI on a multi-process Wayland desk — Iced only, no
 WebView for shell or kit apps. macOS Dark Mode is the *craft reference*
 (density, hierarchy, materials), not a clone. Intentional departures:
 graphite palette, default-float windows, no title bars when zoned, client
-decorations when floating, sparse cyan accent, quiet teal-grey selection.
+decorations when floating, sparse neon cyan accent, graphite selection.
 
 A neighboring Linux desktop (GNOME, Cosmic, niri-as-DE) cannot truthfully
 claim this stack + this visual law.

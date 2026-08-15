@@ -4,15 +4,14 @@
 //! a thin seed footnote. Theme still owns the atom editor. Selection
 //! compare / type stack / spacing chips live on their own pages.
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{column, container, row, stack, text, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::select::{SelectOption, select};
 use sola_kit::components::style::{
-    bevel_frame, bevel_frame_strong, mix, mix_white, stage_fill, HAIRLINE_A, PAD_CONTROL,
-    RADIUS_MD, RADIUS_XL,
+    bevel_frame, mix, mix_white, stage_fill, HAIRLINE_A, PAD_CONTROL, RADIUS_MD, RADIUS_XL,
 };
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
@@ -83,10 +82,28 @@ pub fn view<'a>(atoms: &'a Atoms, state: &'a State) -> Element<'a, Msg> {
 }
 
 fn desk(state: &State) -> Element<'_, Msg> {
-    row![identity(state), style_key(state)]
+    // Identity is intrinsically taller. Iced `Fill` height collapses on a
+    // shrink-height row, so stack: identity defines height; style key
+    // fills that limit.
+    stack![
+        row![
+            container(identity(state)).width(Length::FillPortion(3)),
+            Space::new().width(Length::FillPortion(2)),
+        ]
+        .spacing(14)
+        .width(Length::Fill),
+        row![
+            Space::new().width(Length::FillPortion(3)),
+            container(style_key(state))
+                .width(Length::FillPortion(2))
+                .height(Length::Fill),
+        ]
         .spacing(14)
         .width(Length::Fill)
-        .into()
+        .height(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .into()
 }
 
 fn identity(state: &State) -> Element<'_, Msg> {
@@ -182,9 +199,9 @@ fn identity(state: &State) -> Element<'_, Msg> {
 
     container(face)
         .padding(1)
-        .width(Length::FillPortion(3))
+        .width(Length::Fill)
         .style(|theme: &iced::Theme| {
-            bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
         })
         .into()
 }
@@ -239,11 +256,15 @@ fn style_key(state: &State) -> Element<'_, Msg> {
     )
     .padding(16)
     .width(Length::Fill)
+    .height(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
-        let fill = mix(p.background.weaker.color, p.background.base.color, 0.90);
         iced::widget::container::Style {
-            background: Some(Background::Color(fill)),
+            background: Some(stage_fill(
+                p.background.base.color,
+                p.background.weaker.color,
+                p.primary.base.color,
+            )),
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
@@ -255,11 +276,10 @@ fn style_key(state: &State) -> Element<'_, Msg> {
 
     container(face)
         .padding(1)
-        .width(Length::FillPortion(2))
+        .width(Length::Fill)
+        .height(Length::Fill)
         .style(|theme: &iced::Theme| {
-            let p = theme.extended_palette();
-            let fill = mix(p.background.weaker.color, p.background.base.color, 0.90);
-            bevel_frame(fill, RADIUS_XL)
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
         })
         .into()
 }

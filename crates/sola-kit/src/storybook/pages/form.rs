@@ -4,7 +4,7 @@ use iced::widget::{checkbox, column, container, text, toggler};
 use iced::{Border, Color, Element, Length};
 
 use sola_kit::components::form::{checkbox_style, form_row, toggle_style};
-use sola_kit::components::style::{bevel_frame_strong, stage_fill, SPACE_MD, RADIUS_XL};
+use sola_kit::components::style::{bevel_frame, stage_fill, SPACE_MD, RADIUS_XL};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
 
@@ -107,7 +107,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
             .padding(1)
             .width(Length::Fill)
             .style(|theme: &iced::Theme| {
-                bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+                bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
             }),
     ]
     .spacing(16)

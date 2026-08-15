@@ -104,7 +104,7 @@ fn dialog(state: &State) -> Element<'_, Msg> {
         .padding(1)
         .width(Length::FillPortion(3))
         .style(|theme: &iced::Theme| {
-            sola_kit::components::style::bevel_frame_strong(
+            sola_kit::components::style::bevel_frame(
                 theme.extended_palette().background.weaker.color,
                 RADIUS_XL,
             )
