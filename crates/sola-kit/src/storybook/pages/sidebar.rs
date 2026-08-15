@@ -304,7 +304,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
              hover-only × on an opaque chip so it covers the title). \
              SidebarPanel: collapse (»/«), resize, reorder. \
              Section headers stay sticky. Fill sections scroll without a \
-             scrollbar and show ↑ N … / ↓ N … when items overflow. Drafts has a \
+             scrollbar. Overflow chips (↑ N … / ↓ N …) show only when \
+             section_scroll is wired and items sit outside the measured \
+             viewport — never against a guessed pane height. Drafts has a \
              secondary count; hover Spam or the long title for ×."
         )
         .style(muted),

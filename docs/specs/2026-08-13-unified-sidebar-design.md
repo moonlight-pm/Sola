@@ -8,7 +8,7 @@
 | | |
 |--|--|
 | **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel` (both **reorderable**); `vertical_tabs*` deleted |
-| **Dogfood** | Merged; browser tab reorder + width-aware titles dogfooded 2026-08-15 |
+| **Dogfood** | Merged; browser tab reorder + width-aware titles dogfooded 2026-08-15. Overflow chips require `section_scroll` + a measured viewport (no fake 480px pane) |
 | **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 
 ---
