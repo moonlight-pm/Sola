@@ -505,7 +505,10 @@ fn status_dot(indicator: SidebarIndicator) -> Element<'static, Msg> {
                 a: 0.20,
             }),
         ),
-        SidebarIndicator::Idle => (
+        SidebarIndicator::Idle
+        | SidebarIndicator::Working
+        | SidebarIndicator::Waiting
+        | SidebarIndicator::Done => (
             Color {
                 r: 0.55,
                 g: 0.58,

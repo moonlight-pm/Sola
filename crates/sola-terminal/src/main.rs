@@ -23,17 +23,10 @@ use sola_kit::app::{
 use sola_kit::fonts;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
-mod emulator;
-mod extkeys;
-mod input;
-mod links;
+use sola_terminal::{emulator, extkeys, input, links, perf, pty, state, term_view, tmux};
+
 mod menu;
-mod perf;
-mod pty;
 mod sidebar;
-mod state;
-mod term_view;
-mod tmux;
 
 const APP_ID: &str = "sola-terminal";
 

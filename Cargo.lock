@@ -8485,6 +8485,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-workspaces"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "iced",
+ "serde",
+ "serde_json",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "sola-kit",
+ "sola-terminal",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "solactl"
 version = "0.1.0"
 dependencies = [

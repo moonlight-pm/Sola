@@ -3,6 +3,10 @@ name = "sola-terminal"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "sola_terminal"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sola-terminal"
 path = "src/main.rs"

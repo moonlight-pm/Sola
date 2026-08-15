@@ -159,7 +159,7 @@ impl BusSetup {
         self.app_menu(menu_label, items)
     }
 
-    /// Advertise call-plane methods as CLI owner `owner` (e.g. `"at"`).
+    /// Advertise call-plane methods as CLI owner `owner` (e.g. `"ws"`).
     /// Starts the reconnecting provider when [`install`](Self::install) runs.
     /// Fold [`crate::call_subscription`] into iced to receive invokes.
     pub fn calls(

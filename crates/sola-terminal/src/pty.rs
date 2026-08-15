@@ -39,6 +39,7 @@ use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use tracing::{debug, warn};
 
 use crate::emulator::Listener;
+use crate::osc9999;
 use crate::perf;
 
 // -- Process-wide pty-write drain ----------------------------------------------
@@ -190,6 +191,39 @@ impl PtyBackend {
         notify: mpsc::Sender<String>,
         exit: mpsc::Sender<String>,
     ) -> std::io::Result<Self> {
+        Self::spawn_or_attach_with_env(
+            tab_id,
+            tmux_session,
+            cols,
+            rows,
+            cwd,
+            term,
+            cursor,
+            notify,
+            exit,
+            &[],
+            &[],
+        )
+    }
+
+    /// Like [`Self::spawn_or_attach`], then stamps `env` onto the tmux
+    /// session (`new-session -e` plus `set-environment` so reattach
+    /// still inherits). `exec` is the optional first command for a
+    /// *new* session (`tmux new-session … cmd`); `-A` reattach ignores it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_or_attach_with_env(
+        tab_id: &str,
+        tmux_session: &str,
+        cols: u16,
+        rows: u16,
+        cwd: Option<&str>,
+        term: Arc<FairMutex<Term<Listener>>>,
+        cursor: Arc<std::sync::RwLock<crate::emulator::CursorSnap>>,
+        notify: mpsc::Sender<String>,
+        exit: mpsc::Sender<String>,
+        env: &[(&str, &str)],
+        exec: &[&str],
+    ) -> std::io::Result<Self> {
         let winsize = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -216,6 +250,12 @@ impl PtyBackend {
         // on reattach (`-A` finds an existing session) tmux ignores `-c`.
         if let Some(dir) = cwd {
             cmd.args(["-c", dir]);
+        }
+        for (key, val) in env {
+            cmd.args(["-e", &format!("{key}={val}")]);
+        }
+        if !exec.is_empty() {
+            cmd.args(exec);
         }
 
         // SAFETY: pre_exec runs in the child between fork and exec; the libc
@@ -255,6 +295,10 @@ impl PtyBackend {
             "spawned PTY"
         );
 
+        for (key, val) in env {
+            crate::tmux::set_environment(tmux_session, key, val);
+        }
+
         // Writer thread: owns a dup'd master fd + drains the per-tab queue.
         // Keyboard/wheel/paste and Listener replies all serialise here so the
         // UI never calls write(2) and concurrent writers never interleave
@@ -292,6 +336,7 @@ impl PtyBackend {
             // discards — `input` reads the tracked level to encode Shift+Enter
             // and friends as CSI-u. See `crate::extkeys`.
             let mut extkeys_scanner = crate::extkeys::Scanner::new();
+            let mut osc_scanner = osc9999::OscScanner::new();
             // Larger read + pending buffer so a TUI full-repaint is advanced in
             // fewer lock acquisitions (alacritty-style batching).
             // 16 KiB reads (was 4 KiB) → fewer lock acquisitions per TUI repaint.
@@ -312,7 +357,14 @@ impl PtyBackend {
                 if n <= 0 {
                     break;
                 }
-                let chunk = &buf[..n as usize];
+                let raw = &buf[..n as usize];
+                let (clean, osc_payloads) = osc_scanner.feed(raw);
+                if let Some(tx) = osc9999::try_sender() {
+                    for payload in osc_payloads {
+                        let _ = tx.send((reader_tab_id.clone(), payload));
+                    }
+                }
+                let chunk = clean.as_slice();
                 if let Some(level) = extkeys_scanner.feed(chunk) {
                     crate::extkeys::set_level(&reader_tab_id, level);
                 }

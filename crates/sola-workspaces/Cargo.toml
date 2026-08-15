@@ -1,0 +1,21 @@
+[package]
+name = "sola-workspaces"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sola-workspaces"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
+sola-core = { path = "../sola-core" }
+sola-terminal = { path = "../sola-terminal" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced", "canvas"] }
+alacritty_terminal = "=0.26.0"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

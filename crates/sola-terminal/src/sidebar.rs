@@ -5,7 +5,8 @@ use sola_kit::components::{
     SidebarSection,
 };
 
-use crate::state::Tabs;
+use sola_terminal::state::Tabs;
+
 use crate::Msg;
 
 #[derive(Default)]

@@ -77,6 +77,8 @@ pub enum SidebarItemChrome {
     Card,
 }
 
+pub use crate::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
+
 /// List density for [`SidebarPanel`] (and the [`sidebar`] helper).
 ///
 /// [`Self::Normal`] is settings / mail / preview / storybook nav.
@@ -86,19 +88,6 @@ pub enum SidebarDensity {
     #[default]
     Normal,
     Large,
-}
-
-/// Leading status dot for a sidebar row (activity / health, not selection).
-///
-/// Prefer always showing a dot (Active or Idle) so the title does not
-/// shift horizontally when activity starts/stops.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SidebarIndicator {
-    /// Session is actively working (streaming, tools, recent writes).
-    Active,
-    /// Present but idle — dim placeholder so layout stays fixed.
-    #[default]
-    Idle,
 }
 
 /// Trailing control under [`SidebarItem::secondary`], shown only while the
@@ -159,6 +148,9 @@ pub struct SidebarItem<'a, Message> {
     pub height_hint: Option<f32>,
     /// Right-click on the row. Does not start a reorder gesture.
     pub on_context: Option<Message>,
+    /// Extra leading steps (12px each) for lineage / nesting. Zero by
+    /// default so existing rows stay aligned.
+    pub indent: u8,
 }
 
 impl<'a, Message> SidebarItem<'a, Message> {
@@ -179,6 +171,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             content: None,
             height_hint: None,
             on_context: None,
+            indent: 0,
         }
     }
 
@@ -260,10 +253,15 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self.height_hint = Some(h.max(0.0));
         self
     }
-
     /// Right-click emits `msg` and does not start reorder.
     pub fn on_context(mut self, msg: Message) -> Self {
         self.on_context = Some(msg);
+        self
+    }
+
+    /// Indent the row by `steps` × 12px (lineage, nested lists).
+    pub fn indent(mut self, steps: u8) -> Self {
+        self.indent = steps;
         self
     }
 }
@@ -287,6 +285,10 @@ pub struct SidebarSection<'a, Message> {
     /// Opt-in collapsible header (browser tab groups). Static section
     /// labels are unchanged when this is `None`.
     pub collapse: Option<SectionCollapse<'a, Message>>,
+    /// When set, the section label is a quiet press target (collapse).
+    pub on_label: Option<Message>,
+    /// Trailing `+` on the section header (add a row in this group).
+    pub on_add: Option<Message>,
 }
 
 /// Header chrome for a [`SidebarSection::collapsible`] section.
@@ -308,6 +310,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             items,
             fill: false,
             collapse: None,
+            on_label: None,
+            on_add: None,
         }
     }
 
@@ -317,7 +321,21 @@ impl<'a, Message> SidebarSection<'a, Message> {
             items,
             fill: false,
             collapse: None,
+            on_label: None,
+            on_add: None,
         }
+    }
+
+    /// Make the section label emit `msg` (e.g. collapse the group).
+    pub fn on_label(mut self, msg: Message) -> Self {
+        self.on_label = Some(msg);
+        self
+    }
+
+    /// Trailing `+` on the group header.
+    pub fn on_add(mut self, msg: Message) -> Self {
+        self.on_add = Some(msg);
+        self
     }
 
     /// This section's item body fills remaining panel height and scrolls
@@ -581,7 +599,7 @@ where
             col = col.push(Space::new().height(Length::Fixed(10.0)));
         }
         if let Some(label) = section.label {
-            col = col.push(section_header(label));
+            col = col.push(section_header(label, section.on_label, section.on_add));
         }
         for (i, item) in section.items.into_iter().enumerate() {
             // `sidebar()` never enables reorder, so `render_item` takes
@@ -764,25 +782,89 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
     item
 }
 
-fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
+fn section_header<'a, Message: Clone + 'a>(
+    label: String,
+    on_press: Option<Message>,
+    on_add: Option<Message>,
+) -> Element<'a, Message> {
     // Uppercase tracked section labels — graphite tool UI (sola-kit-ds).
-    container(
-        text(label.to_uppercase())
-            .font(fonts::ui_medium())
-            .size(10)
-            .style(|theme: &Theme| {
-                let p = theme.extended_palette();
-                iced::widget::text::Style {
-                    color: Some(p.secondary.base.text),
-                }
-            }),
-    )
-    .padding(Padding {
+    let label_el = text(label.to_uppercase())
+        .font(fonts::ui_medium())
+        .size(10)
+        .style(|theme: &Theme| {
+            let p = theme.extended_palette();
+            iced::widget::text::Style {
+                color: Some(p.secondary.base.text),
+            }
+        });
+    let pad = Padding {
         top: SPACE_SM + 2.0,  // 6
         bottom: SPACE_SM + 1.0,
         left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
-    })
+    };
+    let name: Element<'a, Message> = match on_press {
+        Some(msg) => button(label_el)
+            .padding(pad)
+            .style(|theme: &Theme, status| {
+                let p = theme.extended_palette();
+                let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+                button::Style {
+                    background: hover.then_some(Background::Color(p.background.weak.color)),
+                    text_color: p.secondary.base.text,
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    snap: true,
+                }
+            })
+            .on_press(msg)
+            .into(),
+        None => container(label_el).padding(pad).into(),
+    };
+    let Some(add) = on_add else {
+        return name;
+    };
+    let plus = {
+        let handle = icon_handle("lucide/plus");
+        button(icon_svg_colored(
+            handle,
+            12,
+            Color {
+                r: 0.55,
+                g: 0.58,
+                b: 0.64,
+                a: 0.95,
+            },
+        ))
+        .padding(Padding::from([2, 4]))
+        .style(|theme: &Theme, status| {
+            let p = theme.extended_palette();
+            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: hover.then_some(Background::Color(p.background.weak.color)),
+                text_color: p.secondary.base.text,
+                border: Border {
+                    radius: RADIUS_SM.into(),
+                    ..Default::default()
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            }
+        })
+        .on_press(add)
+    };
+    row![
+        name,
+        Space::new().width(Length::Fill),
+        container(plus).padding(Padding {
+            top: SPACE_SM,
+            bottom: SPACE_SM,
+            left: 0.0,
+            right: SPACE_MD,
+        }),
+    ]
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
     .into()
 }
 
@@ -1066,6 +1148,7 @@ where
         content: custom,
         height_hint: _,
         on_context,
+        indent,
     } = item;
 
     let m = density.metrics();
@@ -1077,7 +1160,12 @@ where
         (SidebarItemChrome::Card, true) => (0.0, 0.0),
         (SidebarItemChrome::Card, false) => (CARD_PAD_V, CARD_PAD_H),
     };
-    let pad = Padding::from([pad_v, pad_h]);
+    let pad = Padding {
+        top: pad_v,
+        bottom: pad_v,
+        left: pad_h + f32::from(indent) * 12.0,
+        right: pad_h,
+    };
     let hovered = show_hover_action;
 
     // Inline hover action only on the reorder + structured path; the plain
@@ -1349,7 +1437,11 @@ fn item_text_block<'a, Message: 'a>(
         .width(Length::Fill);
     if let Some(sub) = subtitle {
         // Indent subtitle under the title text when a leading dot is present.
-        let sub_pad = if indicator.is_some() { 14.0 } else { 0.0 };
+        let sub_pad = if indicator.is_some() {
+            STATUS_MARK_SLOT + SPACE_SM
+        } else {
+            0.0
+        };
         text_col = text_col.push(
             container(
                 text(sub.to_string())
@@ -1499,33 +1591,7 @@ fn hover_action_button<'a, Message: Clone + 'a>(
 }
 
 fn status_dot<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
-    let color = match indicator {
-        SidebarIndicator::Active => Color {
-            r: 0.24,
-            g: 0.81,
-            b: 0.56,
-            a: 1.0,
-        },
-        // Quiet placeholder — visible enough to reserve space, not attention.
-        SidebarIndicator::Idle => Color {
-            r: 0.45,
-            g: 0.48,
-            b: 0.55,
-            a: 0.55,
-        },
-    };
-    container(Space::new().width(6.0).height(6.0))
-        .width(Length::Fixed(6.0))
-        .height(Length::Fixed(6.0))
-        .style(move |_t: &Theme| container::Style {
-            background: Some(Background::Color(color)),
-            border: Border {
-                radius: 999.0.into(),
-                ..Default::default()
-            },
-            ..container::Style::default()
-        })
-        .into()
+    status_mark(indicator)
 }
 
 /// Collapsed-row content: just the shortcut number (or index+1), centred.
@@ -1897,7 +1963,11 @@ where
                 if section.collapse.is_none() {
                     if let Some(label) = section.label.clone() {
                         if !collapsed {
-                            sections_col = sections_col.push(section_header(label));
+                            sections_col = sections_col.push(section_header(
+                                label,
+                                section.on_label,
+                                section.on_add,
+                            ));
                         }
                     }
                 }

@@ -534,6 +534,12 @@ pub enum PointerButton {
     Middle,
 }
 
+/// Ephemeral menubar toast. Shell chrome only — no sound, no extra UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppToast {
+    pub text: String,
+}
+
 define_topics! {
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -691,6 +697,10 @@ define_topics! {
     // Image open. Ephemeral; default dest is sola-paint. Screenshots
     // set `app_id` to sola-preview. Cold-start uses LaunchApp + path.
     OpenImage(OpenImageRequest),
+
+    // Menubar toast. Ephemeral; shell shows `text` and expires it.
+    // Operator-plain copy — the sender owns the words.
+    AppToast(AppToast),
 
     // Lifecycle
     Shutdown,

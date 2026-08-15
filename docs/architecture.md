@@ -39,8 +39,8 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
-         │              │  browser · agent · mail ·    │
-         │              │  paint · …                   │
+         │              │  workspaces · browser        │
+         │              │  agent · mail · paint · …    │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -63,9 +63,10 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-shell` | Menubar, launcher, switcher, zoning (iced daemon) |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
-| `crates/sola-terminal` | Terminal (alacritty grid + iced) |
+| `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
+| `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `ws` (`solactl ws …`). Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
-| `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
+| `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
@@ -102,6 +103,8 @@ to the bus and tolerate compositor restarts.
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
+| Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
+| Workspaces calls | sola-call owner `ws` (`solactl ws …`) |
 | Grok sessions | `~/.grok/sessions/` + leader socket `~/.grok/leader.sock` |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
 

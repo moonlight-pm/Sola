@@ -13,8 +13,8 @@ use iced::{Element, Length, Theme};
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, heading, muted};
 use sola_kit::components::{
-    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarDensity, SidebarItem,
-    SidebarPanel, SidebarSection, panel_dragged_width,
+    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarDensity, SidebarIndicator,
+    SidebarItem, SidebarPanel, SidebarSection, panel_dragged_width,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -48,6 +48,8 @@ pub enum Msg {
     ToggleGroup,
     /// Demo placeholder (e.g. a close button) with no modelled effect.
     Noop,
+    /// Working-ring animation tick (parent frames subscription).
+    MarkTick,
 }
 
 pub struct State {
@@ -204,7 +206,7 @@ impl State {
             }
             Msg::ItemHover(id) => self.hovered = id,
             Msg::ToggleGroup => self.group_collapsed = !self.group_collapsed,
-            Msg::Noop => {}
+            Msg::Noop | Msg::MarkTick => {}
         }
     }
 
@@ -319,11 +321,45 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         )
         .style(muted),
         demo,
+        heading("Status marks"),
+        body(
+            "Reserved 12px slot. Working is an accent ring; waiting a warning diamond; \
+             done a success check; idle a dim disc. Who stays off the mark."
+        )
+        .style(muted),
+        marks_demo(),
         body("Density — Normal vs Large").style(muted),
         density_demo(state),
     ]
     .spacing(16)
     .into()
+}
+
+fn marks_demo<'a>() -> Element<'a, Msg> {
+    let rows = [
+        ("kvm-perf", "grok", SidebarIndicator::Working, true),
+        ("mail-kit", "grok", SidebarIndicator::Waiting, false),
+        ("distribution", "grok", SidebarIndicator::Done, false),
+        ("main", "", SidebarIndicator::Idle, false),
+    ];
+    let items: Vec<SidebarItem<Msg>> = rows
+        .into_iter()
+        .map(|(label, who, mark, active)| {
+            let mut item = SidebarItem::new(label, Msg::Noop)
+                .active(active)
+                .indicator(mark);
+            if !who.is_empty() {
+                item = item.secondary(who);
+            }
+            item
+        })
+        .collect();
+    let panel = SidebarPanel::new(vec![SidebarSection::new("Sola", items)]).build();
+    container(panel)
+        .style(card_style)
+        .width(Length::Fixed(260.0))
+        .height(Length::Fixed(220.0))
+        .into()
 }
 
 /// Etch strips at both densities — this is the product language now.

@@ -1,7 +1,7 @@
 use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 use sola_core::KeyCode;
 
-use crate::state::TabView;
+use sola_terminal::state::TabView;
 
 /// Build the terminal app menu reflecting the open tabs. Each tab is
 /// labelled by its cwd (the same label the sidebar shows), not "Tab N".
