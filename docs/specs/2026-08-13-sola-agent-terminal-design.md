@@ -30,7 +30,7 @@ deprecated for this line of work.
 | Topic | Choice |
 |---|---|
 | Product | Host user-launched CLI agents in PTYs, grouped by project / workspace |
-| Fan-out | **Spawn sibling** (UI + `sat`). `--prompt` / `--prompt-file` is the handoff. No mailbox, no Run/Dispatch |
+| Fan-out | **Spawn sibling** (UI + `solactl at workspace.spawn`). `--prompt` is the CLI handoff. No mailbox, no Run/Dispatch |
 | UI stack | iced + sola-kit. Design law: **impeccable** (Operate) + **frontend-design** before any UI |
 | Kit | Not a museum. Refine tokens/atoms/indicators when the improvement is generally true; keep app-local what is this product’s. Do not silently restyle mail / settings / terminal |
 | Engine | Reuse `sola-terminal` as a **library** (grid, PTY, input). Do not share tmux socket `sola` or `Topic::TerminalSession` |
@@ -40,7 +40,7 @@ deprecated for this line of work.
 | Status vocab | `working` / `waiting` / `done` / idle. Reserved indicator slot (no layout shift) |
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-agent-terminal` |
-| CLI | sola-call owner `at` (`solactl at …`). Optional `sat` alias. App/host down → fail |
+| CLI | sola-call owner `at`. Face is `solactl at …`. App/host down → fail |
 
 ---
 
@@ -73,7 +73,7 @@ dashboards, auto-rename, unread badges, setup-hook runners, sparse checkouts.
 ## Architecture
 
 ```text
-solactl at / sat  ──sola-call──▶  sola-agent-terminal (iced)
+solactl at  ──sola-call──▶  sola-agent-terminal (iced)
                                         │
                                         ├── sola-terminal lib
                                         ├── tmux socket sola-at
@@ -96,7 +96,6 @@ crates/sola-agent-terminal/
   src/workspace.rs     # project + workspace + catalog persist
   src/spawn.rs         # git worktree add under .worktrees/
   src/calls.rs         # sola-call MethodSpec list (owner at)
-  src/bin/sat.rs       # exec solactl at …
   src/menu.rs
 ```
 

@@ -7,10 +7,6 @@ edition.workspace = true
 name = "sola-agent-terminal"
 path = "src/main.rs"
 
-[[bin]]
-name = "sat"
-path = "src/bin/sat.rs"
-
 [dependencies]
 sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }

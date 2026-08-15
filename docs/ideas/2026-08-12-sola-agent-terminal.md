@@ -12,7 +12,7 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows gone.
 
-**Next:** dogfood `solactl at`. Remaining D4: name, Claude hooks.
+**Next:** dogfood `solactl at`. No `sat` binary. Remaining D4: name, Claude hooks.
 
 **Decided here (not still a fork):**
 

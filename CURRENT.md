@@ -19,12 +19,12 @@ Do not invent product policy.
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-agent-terminal/PRODUCT.md`](crates/sola-agent-terminal/PRODUCT.md)  
-   **Next:** dogfood install (`sola-call`, app, `sat`, shell). Polish:
+   **Next:** dogfood install (`sola-call`, app, `solactl`, shell). Polish:
    rename/recolor/reorder.  
    **Do not invent:** D4 interims (name, Claude hooks); call-plane **D3** confirm.  
    **Install:** ask first.  
    **Now:** persist + spawn modal + done toast. Methods on sola-call owner
-   `at` (`solactl at ps` / `workspace.spawn` / …). `sat` execs `solactl at`.
+   `at` (`solactl at ps` / `workspace.spawn` / …). No `sat` binary.
    Hooks + `sat-ws-main` reattach smoked earlier; spawn UI / call methods not
    smoked.  
 2. **Call plane** — on **master** (`65e0051d`). Host + `solactl compositor` /
@@ -86,5 +86,5 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Agent-terminal CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
 | Agent-terminal UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
 | Agent-terminal worktrees | **`<project-root>/.worktrees/<name>`** (D4.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
-| Agent-terminal calls | Register on **sola-call** as owner `at`. Do not add per-app sockets. `sat` if kept is an alias of `solactl at …`. Fail if app/host down. |
+| Agent-terminal calls | Register on **sola-call** as owner `at`. Face is `solactl at …`. No `sat` binary. Fail if app/host down. |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

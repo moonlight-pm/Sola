@@ -682,9 +682,9 @@ mod tests {
     #[test]
     #[test]
     fn bin_names_from_toml_collects_extra_bins() {
-        let toml = "[package]\nname = \"sola-agent-terminal\"\n\n[[bin]]\nname = \"sola-agent-terminal\"\npath = \"src/main.rs\"\n\n[[bin]]\nname = \"sat\"\npath = \"src/bin/sat.rs\"\n";
+        let toml = "[package]\nname = \"demo-pkg\"\n\n[[bin]]\nname = \"demo-pkg\"\npath = \"src/main.rs\"\n\n[[bin]]\nname = \"demo-extra\"\npath = \"src/bin/extra.rs\"\n";
         let names = bin_names_from_toml(toml);
-        assert_eq!(names, ["sola-agent-terminal", "sat"]);
+        assert_eq!(names, ["demo-pkg", "demo-extra"]);
     }
 
     #[test]

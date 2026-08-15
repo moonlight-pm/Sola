@@ -48,7 +48,7 @@ becoming this product.
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
 spawn sibling (UI: name only; `solactl at workspace.spawn` can pass
 `--agent grok` + `--prompt`), Grok hooks + OSC 9999 + process-tree
-presence, sola-call owner `at` (`sat` aliases `solactl at`), tmux persist
+presence, sola-call owner `at` (`solactl at …`), tmux persist
 on socket `sola-at`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
