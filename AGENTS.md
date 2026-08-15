@@ -94,7 +94,8 @@ crates/
   sola-agent/          # Coding agent (iced + ACP / Grok leader)
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
-  sola-preview/        # Image preview / selection capture
+  sola-preview/        # Simple image viewer (argv)
+  sola-paint/          # Default image viewer/editor (MIME + screenshots)
   sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
 nix/                   # NixOS module (Shape 1) + image/ISO profiles

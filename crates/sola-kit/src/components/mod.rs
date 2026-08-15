@@ -40,6 +40,7 @@ pub mod card;
 pub mod color_picker;
 pub mod divider;
 pub mod field;
+pub mod file_picker;
 pub mod form;
 pub mod icon;
 pub mod number_input;
@@ -65,6 +66,7 @@ pub use divider::{
     horizontal_divider_drag_with, vertical_divider, vertical_divider_with,
 };
 pub use field::field;
+pub use file_picker::{FilePicker, Filter as FileFilter, Mode as FilePickerMode, Outcome as FilePickerOutcome};
 pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use number_input::number_input;

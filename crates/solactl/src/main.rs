@@ -48,8 +48,8 @@ enum Command {
         payload: String,
     },
 
-    /// Open a URL in sola-browser (scheme handler). Not a call.
-    Open { url: String },
+    /// Open a URL in sola-browser, or an image path in sola-paint.
+    Open { target: String },
 
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.
     Media {
@@ -69,7 +69,7 @@ fn main() {
         Command::Session { cmd } => session::run(cmd),
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
-        Command::Open { url } => open::run(&url),
+        Command::Open { target } => open::run(&target),
         Command::Media { action } => media::run(action),
         Command::External(args) => dynamic::run(args),
     };

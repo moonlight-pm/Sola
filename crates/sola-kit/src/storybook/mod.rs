@@ -49,6 +49,7 @@ pub enum Page {
     NumberInput,
     Readable,
     ColorPicker,
+    FilePicker,
     Divider,
     Popover,
     Select,
@@ -79,6 +80,7 @@ impl Page {
         Page::NumberInput,
         Page::Readable,
         Page::ColorPicker,
+        Page::FilePicker,
         Page::Popover,
         Page::Select,
         Page::Sidebar,
@@ -99,6 +101,7 @@ impl Page {
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
             Page::ColorPicker => "ColorPicker",
+            Page::FilePicker => "FilePicker",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
             Page::Select => "Select",
@@ -126,6 +129,7 @@ impl Page {
             | Page::NumberInput
             | Page::Readable
             | Page::ColorPicker
+            | Page::FilePicker
             | Page::Popover
             | Page::Select
             | Page::Sidebar => Some("Components"),
@@ -159,6 +163,7 @@ impl Page {
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
+            Page::FilePicker => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted, Accent],
             Page::Popover => &[BgRaised, Border, Fg, FgMuted],
             Page::Select => &[BgRaised, BgHover, Selection, Border, Fg, FgMuted],
             Page::Sidebar => &[Bg, BgHover, Selection, Fg, FgMuted, Accent],
@@ -178,6 +183,7 @@ pub enum Msg {
     Form(pages::form::Msg),
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
+    FilePicker(pages::file_picker::Msg),
     Sidebar(pages::sidebar::Msg),
     Split(pages::split::Msg),
     SelectDemo(pages::select::Msg),
@@ -406,6 +412,7 @@ pub struct Storybook {
     form: pages::form::State,
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
+    file_picker: pages::file_picker::State,
     sidebar: pages::sidebar::State,
     split: pages::split::State,
     select: pages::select::State,
@@ -500,6 +507,7 @@ impl Storybook {
             form: pages::form::State::default(),
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
+            file_picker: pages::file_picker::State::default(),
             sidebar: pages::sidebar::State::default(),
             split: pages::split::State::default(),
             select: pages::select::State::default(),
@@ -630,6 +638,7 @@ impl Storybook {
             Msg::Form(m) => self.form.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
+            Msg::FilePicker(m) => self.file_picker.update(m),
             Msg::Sidebar(m) => self.sidebar.update(m),
             Msg::Split(m) => self.split.update(m),
             Msg::SelectDemo(m) => self.select.update(m),
@@ -1385,6 +1394,9 @@ impl Storybook {
             Page::ColorPicker => {
                 pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
             }
+            Page::FilePicker => {
+                pages::file_picker::view(&self.file_picker).map(Msg::FilePicker)
+            }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
             Page::Select => pages::select::view(&self.select).map(Msg::SelectDemo),
@@ -1443,6 +1455,7 @@ mod tests {
             Page::NumberInput,
             Page::Readable,
             Page::ColorPicker,
+            Page::FilePicker,
             Page::Divider,
             Page::Popover,
             Page::Select,
@@ -1469,6 +1482,7 @@ mod tests {
                 | Page::NumberInput
                 | Page::Readable
                 | Page::ColorPicker
+                | Page::FilePicker
                 | Page::Divider
                 | Page::Popover
                 | Page::Select

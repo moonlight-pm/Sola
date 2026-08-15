@@ -39,7 +39,8 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
-         │              │  browser · agent · mail · …  │
+         │              │  browser · agent · mail ·    │
+         │              │  paint · …                   │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -60,7 +61,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
 | `crates/sola-shell` | Menubar, launcher, switcher, zoning (iced daemon) |
-| `crates/sola-kit` | Iced app kit + storybook |
+| `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Terminal (alacritty grid + iced) |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
@@ -68,7 +69,8 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
-| `crates/sola-preview` | Image preview / selection capture handoff |
+| `crates/sola-preview` | Standalone argv image viewer |
+| `crates/sola-paint` | Default image viewer/editor (MIME, `OpenImage`, screenshots) |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |

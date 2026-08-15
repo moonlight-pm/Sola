@@ -8377,6 +8377,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-paint"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "image",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tracing",
+]
+
+[[package]]
 name = "sola-preview"
 version = "0.1.0"
 dependencies = [

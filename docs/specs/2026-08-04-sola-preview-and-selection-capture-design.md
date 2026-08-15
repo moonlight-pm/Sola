@@ -1,8 +1,8 @@
 # sola-preview + selection capture — Design
 
 **Date:** 2026-08-04  
-**Status:** approved (approach A); implementing on `screenshot-tool`  
-**Depends on:** `docs/specs/2026-07-20-screenshot-capture-plan.md` (screencopy live)
+**Status:** approved (approach A); capture still as-built; **image destination moved to sola-paint** (2026-08-14)  
+**Depends on:** `docs/specs/2026-07-20-screenshot-capture-plan.md` (screencopy live); [paint](2026-08-14-sola-paint-design.md)
 
 ## 1. Goal
 

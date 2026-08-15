@@ -13,7 +13,8 @@
 //! - theme construction from the shared sola palette
 //!
 //! Active consumers: `sola-monitor`, `sola-settings`, `sola-shell`,
-//! `sola-terminal`, agent, browser-core, and this crate's storybook.
+//! `sola-terminal`, agent, browser-core, `sola-paint`, and this crate's
+//! storybook.
 //!
 //! ## Theme protocol
 //!

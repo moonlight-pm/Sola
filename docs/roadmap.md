@@ -46,10 +46,11 @@ rows for feature-level progress.
 
 **Status: partial**
 
-- Terminal iced, browser WPE/CEF, agent ACP, mail kit, preview, kvm  
+- Terminal iced, browser WPE/CEF, agent ACP, mail kit, preview, kvm,
+  paint (first pass)  
 
 **Remaining:** agent UI backlog; browser chrome completeness; mail polish;
-kvm input ACL permanence; preview zoom/clipboard.
+kvm input ACL permanence; paint zoom/clipboard/single-instance.
 
 ---
 

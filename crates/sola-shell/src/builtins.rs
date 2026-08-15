@@ -56,6 +56,12 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/image".into(),
         },
         Application {
+            app_id: "sola-paint".into(),
+            label: "Paint".into(),
+            command: "/opt/sola/bin/sola-paint".into(),
+            icon: "lucide/paintbrush".into(),
+        },
+        Application {
             app_id: "sola-mail".into(),
             label: "Mail".into(),
             command: "/opt/sola/bin/sola-mail".into(),

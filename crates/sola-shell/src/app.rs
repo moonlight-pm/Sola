@@ -215,14 +215,14 @@ pub struct Shell {
     pub launcher: LauncherState,
     pub selection: SelectionState,
     /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
-    /// sola-preview. Set only by shell hotkey / selection paths.
+    /// sola-paint. Set only by shell hotkey / selection paths.
     pub open_preview_on_next: bool,
     /// Window that should keep keyboard after a shell-initiated capture
-    /// finishes (preview is raised without stealing focus). Set when a
-    /// Super+Shift+3/4/5 capture starts; applied after open/raise preview.
+    /// finishes (paint is raised without stealing focus). Set when a
+    /// Super+Shift+3/4/5 capture starts; applied after open/raise paint.
     pub screenshot_return_focus: Option<u32>,
     /// When `Some(app_id)`, the next `on_windows` "new app mapped" focus
-    /// steal for that app is skipped (screenshot cold-launch of preview
+    /// steal for that app is skipped (screenshot cold-launch of paint
     /// must not yank the keyboard off the pre-capture app).
     pub suppress_map_focus_for: Option<String>,
     pub zoning: ZoningState,

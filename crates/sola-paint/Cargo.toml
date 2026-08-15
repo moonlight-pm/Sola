@@ -1,0 +1,17 @@
+[package]
+name = "sola-paint"
+version.workspace = true
+edition.workspace = true
+description = "Kit image viewer/editor — default place Sola opens images"
+
+[[bin]]
+name = "sola-paint"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image", "svg", "canvas"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+tracing = "0.1"

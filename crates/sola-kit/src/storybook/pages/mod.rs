@@ -23,6 +23,7 @@ pub mod chrome;
 pub mod color_picker;
 pub mod divider;
 pub mod field;
+pub mod file_picker;
 pub mod form;
 pub mod icon;
 pub mod number_input;

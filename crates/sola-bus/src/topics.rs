@@ -470,7 +470,7 @@ pub enum CaptureTarget {
     },
 }
 
-/// Ask sola-preview (or a future image viewer) to open a file.
+/// Ask sola-paint (default image app) to open a file.
 /// Ephemeral — same pattern as [`OpenUrlRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenImageRequest {
@@ -654,7 +654,7 @@ define_topics! {
     // Browser
     OpenUrl(OpenUrlRequest),
 
-    // Image viewer (shell → sola-preview). Ephemeral; cold-start uses
+    // Image app (shell → sola-paint). Ephemeral; cold-start uses
     // LaunchApp with a path arg instead.
     OpenImage(OpenImageRequest),
 
