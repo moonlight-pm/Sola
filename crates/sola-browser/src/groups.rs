@@ -167,6 +167,22 @@ impl Groups {
         self.dissolve_empty();
     }
 
+    /// Insert `tab` immediately after `after` (or append). Same group as
+    /// `after`. Expands a collapsed group so the new row is visible.
+    pub fn insert_beside(&mut self, tabs: &mut Vec<TabInfo>, after: TabId, tab: TabInfo) {
+        let id = tab.id;
+        match tabs.iter().position(|t| t.id == after) {
+            Some(i) => tabs.insert(i + 1, tab),
+            None => tabs.push(tab),
+        }
+        if let Some(gid) = self.of_tab(after).map(str::to_string) {
+            self.add_to(id, &gid);
+            if let Some(g) = self.group_mut(&gid) {
+                g.collapsed = false;
+            }
+        }
+    }
+
     pub fn ungroup_tab(&mut self, tab: TabId) {
         self.leave(tab);
         self.dissolve_empty();
@@ -571,5 +587,31 @@ mod tests {
         );
         g.normalize(&mut tabs);
         assert_eq!(ids(&tabs), vec![3, 1, 2, 4, 5]);
+    }
+
+    #[test]
+    fn insert_beside_loose_goes_under_active() {
+        let (mut g, mut tabs) = setup();
+        g.insert_beside(&mut tabs, TabId(4), tab(9, "new"));
+        assert_eq!(ids(&tabs), vec![1, 2, 3, 4, 9, 5]);
+        assert!(g.of_tab(TabId(9)).is_none());
+    }
+
+    #[test]
+    fn insert_beside_joins_active_group() {
+        let (mut g, mut tabs) = setup();
+        g.insert_beside(&mut tabs, TabId(1), tab(9, "new"));
+        assert_eq!(g.of_tab(TabId(9)), Some("work"));
+        g.normalize(&mut tabs);
+        assert_eq!(ids(&tabs), vec![1, 9, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn insert_beside_expands_collapsed_group() {
+        let (mut g, mut tabs) = setup();
+        g.group_mut("work").unwrap().collapsed = true;
+        g.insert_beside(&mut tabs, TabId(2), tab(9, "new"));
+        assert!(!g.group("work").unwrap().collapsed);
+        assert_eq!(g.of_tab(TabId(9)), Some("work"));
     }
 }

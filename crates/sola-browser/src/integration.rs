@@ -8,6 +8,8 @@
 //! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`),
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
 //!   menubar clicks (Profiles switch / manage included),
+//! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
+//!   from the focused client; ⌘-click needs that bit),
 //! - `Topic::Theme` — restyle the chrome live (handled by the kit helper),
 //! - self-addressed quit (`MenuAction "quit"` / `CloseApp`).
 //!
@@ -45,19 +47,24 @@ pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
 pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
 /// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
 pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
-
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
 /// `OpenUrl` is subscribed for dogfood / `solactl emit OpenUrl` control of a
 /// running sola-browser. System http/https defaults go to sola-browser
 /// (D3) until we flip MIME; this does not change that default by itself.
+///
+/// Chord / ChordReleased: River does not deliver bound Super_L to the
+/// focused surface. The shell registers bare Super_L so switcher confirm
+/// works; we listen so ⌘-click still sees Super.
 pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::WindowFloating,
     TopicKind::OpenUrl,
+    TopicKind::Chord,
+    TopicKind::ChordReleased,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -279,6 +286,18 @@ pub fn handle_bus<E: Engine>(
             );
             run_intent(app, intent_for_menu_action(&m.action_id))
         }
+        Some(Topic::Chord(c)) => {
+            if crate::input::apply_super_chord(true, c.keysym) {
+                tracing::info!(keysym = c.keysym, "super down (bus chord)");
+            }
+            Task::none()
+        }
+        Some(Topic::ChordReleased(c)) => {
+            if crate::input::apply_super_chord(false, c.keysym) {
+                tracing::info!(keysym = c.keysym, "super up (bus chord)");
+            }
+            Task::none()
+        }
         _ => Task::none(),
     }
 }
@@ -388,6 +407,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscribes_to_super_chords() {
+        assert!(SUBSCRIBE.contains(&TopicKind::Chord));
+        assert!(SUBSCRIBE.contains(&TopicKind::ChordReleased));
+        assert!(SUBSCRIBE.contains(&TopicKind::MenuAction));
+    }
 
     #[test]
     fn menu_actions_map_to_intents() {

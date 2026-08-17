@@ -43,11 +43,16 @@ pub fn emit_geometry(state: &mut AppData, window_id: u32) {
 /// during a manage sequence: `xkb_binding_v1.enable` and `disable` are
 /// both manage-sequence requests per River's protocol.
 pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
-    let Some(qh) = state.qh.clone() else { return };
+    let Some(qh) = state.qh.clone() else {
+        tracing::warn!(n = new_pairs.len(), "drop RegisteredChords: no qh");
+        return;
+    };
     let Some(xb) = state.xkb_bindings.clone() else {
+        tracing::warn!(n = new_pairs.len(), "drop RegisteredChords: no xkb_bindings");
         return;
     };
     let Some(river_seat) = state.seat.clone() else {
+        tracing::warn!(n = new_pairs.len(), "drop RegisteredChords: no seat");
         return;
     };
 

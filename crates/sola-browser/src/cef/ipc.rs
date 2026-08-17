@@ -66,6 +66,8 @@ pub enum FromEngine {
     WebAuthn(WebAuthnEvent),
     /// Page right-click — chrome shows the kit context menu.
     PageContext(PageContext),
+    /// ⌘-click / popup: chrome opens a background tab (owns the id).
+    OpenBackgroundTab { url: String },
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).

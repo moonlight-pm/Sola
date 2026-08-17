@@ -8,7 +8,7 @@
 | | |
 |--|--|
 | **Implementation** | kit context menu + collapsible sections; chrome groups + persist + strip |
-| **Dogfood** | installed (`browser` + `kit`); smoke pending |
+| **Dogfood** | installed; ⌘-click / ⌘T insert below current tab (same group) |
 | **Gaps** | spaces; color; drag-to-create |
 
 ## Intent

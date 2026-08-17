@@ -6,6 +6,11 @@
 only — river-native interactive move/resize. The shell-drawn titlebar (D2) and
 window menu (D3) remain future work.
 
+**2026-08-16:** Super+left/right pointer bindings **removed**. Operator does
+not use Meta-drag; the steal blocked ⌘-click in the browser. Floats still
+move/resize from kit CSD titlebars (`pointer_move_requested` /
+`pointer_resize_requested` → the same op loop). Super+click reaches clients.
+
 ---
 
 ## 1. Goal & scope

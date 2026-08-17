@@ -82,6 +82,53 @@ pub fn fill_credentials_script_ex(
     )
 }
 
+/// IIFE that fills a one-time / authenticator code field.
+pub fn fill_totp_script(code: &str) -> String {
+    let code = serde_json::to_string(code).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        r#"(function(){{
+  var code={code};
+  function visible(el){{
+    if(!el) return false;
+    var s=window.getComputedStyle(el);
+    if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0') return false;
+    var r=el.getBoundingClientRect();
+    return r.width>0 && r.height>0;
+  }}
+  function setVal(el,v){{
+    if(!el||!v) return;
+    try{{ el.focus(); }}catch(e){{}}
+    var proto=window.HTMLInputElement&&window.HTMLInputElement.prototype;
+    var desc=proto&&Object.getOwnPropertyDescriptor(proto,'value');
+    if(desc&&desc.set) desc.set.call(el,v); else el.value=v;
+    el.dispatchEvent(new Event('input',{{bubbles:true}}));
+    el.dispatchEvent(new Event('change',{{bubbles:true}}));
+    try{{ el.dispatchEvent(new InputEvent('input',{{bubbles:true,data:v,inputType:'insertText'}})); }}catch(e){{}}
+  }}
+  function score(el){{
+    var a=((el.getAttribute('autocomplete')||'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('inputmode')||'')+' '+(el.getAttribute('aria-label')||'')).toLowerCase();
+    var s=0;
+    if(/one-time-code|one.time|otp|totp|2fa|mfa|authenticator|verification.?code|security.?code/.test(a)) s+=8;
+    if((el.maxLength===6||el.maxLength===7||el.maxLength===8)&&el.type!=='password') s+=3;
+    if(el.inputMode==='numeric'||el.getAttribute('inputmode')==='numeric') s+=2;
+    if(/password|search|email|username|card|cvv|cvc/.test(a)) s-=8;
+    return s;
+  }}
+  var els=Array.prototype.slice.call(document.querySelectorAll(
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="password"]):not([type="file"])'
+  )).filter(visible);
+  els.sort(function(a,b){{ return score(b)-score(a); }});
+  var el=els.length&&score(els[0])>0?els[0]:null;
+  if(!el){{
+    var ae=document.activeElement;
+    if(ae&&ae.tagName==='INPUT'&&visible(ae)&&ae.type!=='password') el=ae;
+  }}
+  if(el) setVal(el,code);
+  return !!el;
+}})();"#
+    )
+}
+
 /// IIFE that fills typical checkout card fields (number, name, expiry, CVC).
 pub fn fill_card_script(
     cardholder_name: Option<&str>,
@@ -255,6 +302,14 @@ mod tests {
         assert!(s.contains(r#"a\"b"#) || s.contains("a\\\"b"));
         assert!(s.contains("p'ass") || s.contains("p\\'ass") || s.contains("\"p'ass\""));
         assert!(!s.contains("\0"));
+    }
+
+    #[test]
+    fn totp_script_scores_otp_fields() {
+        let s = fill_totp_script("123456");
+        assert!(s.contains("123456"));
+        assert!(s.contains("one-time-code"));
+        assert!(s.contains("totp"));
     }
 
     #[test]

@@ -49,6 +49,12 @@ pub fn modifiers_to_cef_mouse(m: Modifiers) -> u32 {
     out
 }
 
+/// Left-click that should open a background tab: CONTROL (real Ctrl, or
+/// Super mapped in [`modifiers_to_cef_mouse`]) or COMMAND.
+pub fn mouse_is_new_tab(modifiers: u32) -> bool {
+    modifiers & (F::EVENTFLAG_CONTROL_DOWN.0 | F::EVENTFLAG_COMMAND_DOWN.0) != 0
+}
+
 /// CEF's `EVENTFLAG_*_MOUSE_BUTTON` bit for a given button number.
 /// We use the same 1-2-3 = L-M-R convention internally as on the
 /// WPE side; the mapping to CEF's bits is fixed.
@@ -388,6 +394,8 @@ mod tests {
         assert_ne!(m & F::EVENTFLAG_CONTROL_DOWN.0, 0, "super must set CONTROL");
         // The literal COMMAND bit is still present; it's just harmless on Linux.
         assert_ne!(m & F::EVENTFLAG_COMMAND_DOWN.0, 0);
+        assert!(mouse_is_new_tab(m));
+        assert!(!mouse_is_new_tab(0));
     }
 
     #[test]

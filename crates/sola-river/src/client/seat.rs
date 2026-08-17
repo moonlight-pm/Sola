@@ -22,7 +22,7 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             Event::PointerEnter { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
                     debug!(window_id = id, "pointer_enter");
-                    // Remember the hovered window so a Meta-drag knows its target.
+                    // Hovered window (CSD resize corner fallback).
                     state.pointer_window = Some(id);
                     state
                         .bus

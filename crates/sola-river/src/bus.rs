@@ -15,10 +15,10 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::Composition,
     TopicKind::Frame,
     TopicKind::Focus,
-    // Floating state gates interactive Meta+drag move/resize. Sticky, so
-    // subscribing replays the current float bit for every window (also on a
-    // sola-river restart). Without this, `floating` stays empty and every
-    // Meta-drag bails at the "not floating" guard.
+    // Floating state gates CSD move/resize. Sticky, so subscribing
+    // replays the current float bit for every window (also on a
+    // sola-river restart). Without this, `floating` stays empty and
+    // titlebar drag bails at the "not floating" guard.
     TopicKind::WindowFloating,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,

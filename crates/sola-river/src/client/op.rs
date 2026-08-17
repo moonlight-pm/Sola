@@ -7,11 +7,10 @@
 //! once `op_release` arrives. Move follows the pointer; resize drags the
 //! grabbed edge or corner, pinning the opposite side(s).
 //!
-//! Only floating windows participate — `on_pressed` ignores a press over a
-//! non-floating window (or empty space). The geometry math
-//! (`moved`/`pick_corner`/`resized`) is pure and unit-tested; the lifecycle
-//! helpers fold state into `AppData` and are exercised by the build + manual
-//! smoke, like the rest of the wayland wiring.
+//! Only floating windows participate in move/resize, and only via CSD
+//! (`pointer_move_requested` / `pointer_resize_requested` from a kit
+//! titlebar). Super+left/right are **not** bound — they reach clients
+//! (⌘-click in the browser).
 
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::river_window_v1::Edges;
@@ -158,26 +157,6 @@ pub fn resized(start: Rect, handle: ResizeHandle, dx: i32, dy: i32) -> Rect {
 
 // --- Lifecycle (folds into AppData) --------------------------------------
 
-pub fn on_pressed(state: &mut AppData, kind: OpKind) {
-    // A bound press over a non-floating window (or empty space) is a normal,
-    // frequent gesture — Meta+click is a reserved WM gesture that we simply
-    // swallow — so the gate logging is debug, not info. The op lifecycle itself
-    // (`begin interactive op`) is the info-level signal.
-    tracing::debug!(
-        ?kind,
-        pointer_window = ?state.pointer_window,
-        floating = ?state.floating,
-        op_active = state.op.is_some(),
-        "Meta-drag pointer binding pressed"
-    );
-    let Some(wid) = state.pointer_window else {
-        tracing::debug!("Meta-drag ignored: no window under pointer");
-        return;
-    };
-    // handle=None → begin_for picks a corner from pointer_pos for a resize.
-    begin_for(state, kind, wid, None);
-}
-
 /// Map an xdg-shell resize `edges` bitfield to our resize handle.
 /// The protocol guarantees `edges` never sets both top+bottom or both
 /// left+right; a single edge maps to that edge alone.
@@ -200,9 +179,8 @@ pub fn edges_to_handle(edges: Edges) -> ResizeHandle {
     }
 }
 
-/// Begin an interactive op on an explicit window. Shared by the Meta-drag
-/// pointer-binding path (`on_pressed`) and the CSD-request path
-/// (`pointer_move_requested` / `pointer_resize_requested`). Floating-gated.
+/// Begin an interactive op on an explicit window. Used by the CSD-request
+/// path (`pointer_move_requested` / `pointer_resize_requested`). Floating-gated.
 ///
 /// `handle`: `Some(h)` uses that edge/corner (resize from requested edges);
 /// `None` on a resize falls back to `pick_corner` from the pointer position;
@@ -303,32 +281,9 @@ pub fn drive(state: &mut AppData) {
     }
 }
 
-/// Create and enable the move/resize pointer bindings once the seat is ready.
-/// Idempotent. `enable` is a manage-sequence request, so this must be called
-/// from within a manage sequence.
-pub fn ensure_pointer_bindings(state: &mut AppData) {
-    use crate::protocol::river_window_management_v1::river_seat_v1::Modifiers;
-    // Linux input-event-codes.
-    const BTN_LEFT: u32 = 0x110;
-    const BTN_RIGHT: u32 = 0x111;
-    let Some(seat) = state.seat.clone() else {
-        return;
-    };
-    let Some(qh) = state.qh.clone() else {
-        return;
-    };
-    if state.move_binding.is_none() {
-        let b = seat.get_pointer_binding(BTN_LEFT, Modifiers::Mod4, &qh, OpKind::Move);
-        b.enable();
-        state.move_binding = Some(b);
-        tracing::info!("enabled Meta+LeftDrag move binding");
-    }
-    if state.resize_binding.is_none() {
-        let b = seat.get_pointer_binding(BTN_RIGHT, Modifiers::Mod4, &qh, OpKind::Resize);
-        b.enable();
-        state.resize_binding = Some(b);
-        tracing::info!("enabled Meta+RightDrag resize binding");
-    }
+/// Cursor-shape device for CSD move/resize feedback. Idempotent. Safe
+/// inside a manage sequence (no pointer bindings — Super+click reaches clients).
+pub fn ensure_op_cursor(state: &mut AppData) {
     ensure_cursor_device(state);
 }
 

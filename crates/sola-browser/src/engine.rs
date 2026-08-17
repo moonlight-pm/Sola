@@ -400,6 +400,9 @@ pub type DownloadsHandle = Arc<Mutex<Vec<(String, crate::cef::ipc::DownloadEvent
 pub type PasskeysHandle = Arc<Mutex<Vec<crate::cef::ipc::WebAuthnEvent>>>;
 /// Helper → chrome page context-menu requests (right-click on content).
 pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
+/// Helper → chrome: open these URLs as background tabs (⌘-click / popup).
+/// Chrome mints ids so they do not collide with the session strip.
+pub type BackgroundTabsHandle = Arc<Mutex<Vec<String>>>;
 
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
@@ -436,6 +439,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn downloads_handle(&self) -> DownloadsHandle;
     fn passkeys_handle(&self) -> PasskeysHandle;
     fn page_menus_handle(&self) -> PageMenusHandle;
+    fn background_tabs_handle(&self) -> BackgroundTabsHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

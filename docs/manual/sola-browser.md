@@ -133,17 +133,23 @@ No “show in folder” (Sola has no file manager yet). No delete-from-disk.
 
 ## Bitwarden vault
 
-Toolbar **key** opens logins. Toolbar **card** opens cards. They are
-separate panels (only one at a time). Unlock is shared. While locked
-both icons sit muted (key is a lock). After unlock both come up to
-full chrome color; the open panel’s icon is the accent wash.
+Toolbar **key** opens logins. Toolbar **shield** opens authenticator
+codes. Toolbar **card** opens cards. They are separate panels (only
+one at a time). Unlock is shared. While locked the icons sit muted
+(key is a lock). After unlock they come up to full chrome color; the
+open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
   The key button then opens the **fill login** list for the active page
-  (unless a passkey ceremony is already waiting). The card button unlocks
-  the same way, then opens **fill card**.
+  (unless a passkey ceremony is already waiting). The shield and card
+  buttons unlock the same way, then open **authenticator** / **fill card**.
 - **Fill login** lists URI-matching items (tall list; items with a passkey show
   a **passkey** badge). Click to fill username / password into the page.
+- **Authenticator** lists URI-matching logins that have a TOTP secret
+  (same site rule as fill-login; last-used first). Opening the panel
+  fills the top code into an OTP field on the page. The list shows the
+  current code and seconds remaining; click a row to copy that code
+  (and try to fill). The panel stays open so you can see the timeout.
 - **Fill card** lists every card in the vault (cards rarely have URIs). Each
   row shows the item name, brand, last digits, and expiry. Click fills
   number, name, expiry, and CVC on the page (standard `cc-*` autocomplete
@@ -193,7 +199,8 @@ and `document.execCommand('copy')`) are hooked the same way — Chromium’s
 own clipboard never reaches Wayland. Newlines in the copied text are kept.
 Triple-click selects a line / field the way Chromium expects.
 
-⌘-click (or Ctrl-click) a link opens it in a **background tab**. A
+⌘-click (or Ctrl-click) a link opens it in a **background tab**
+just below the current tab (same group, if the current tab is in one). A
 right-click on the page opens a kit menu (open/copy link, cut/copy/paste
 when editing, back / forward / reload) instead of Chromium’s empty OSR
 popup. Click back or forward to go one step; **hold** the button for a

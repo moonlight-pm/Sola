@@ -257,9 +257,8 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::PointerMoveRequested { .. } => {
                 // Client-side-decoration move (e.g. a kit titlebar drag → xdg_toplevel.move).
-                // Reuse D1's move op; begin_for gates on `floating` and is a no-op for
-                // tiled windows (Meta+drag still moves those). op_start_pointer is issued
-                // on the manage_start that follows this event.
+                // begin_for gates on `floating`. op_start_pointer is issued on the
+                // manage_start that follows this event.
                 op::begin_for(state, op::OpKind::Move, window_id, None);
             }
             Event::PointerResizeRequested { edges, .. } => {

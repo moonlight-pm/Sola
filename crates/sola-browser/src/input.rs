@@ -60,6 +60,26 @@ pub fn note_super_key(down: bool) {
     SUPER_HELD.store(down, Ordering::Relaxed);
 }
 
+/// XK_Super_L / XK_Super_R. River delivers these as `Topic::Chord` because
+/// bare Super_L is a registered binding (switcher confirm) — iced never sees
+/// the key, so [`note_super_key`] would stay false without the bus path.
+pub const KEYSYM_SUPER_L: u32 = 0xFFEB;
+pub const KEYSYM_SUPER_R: u32 = 0xFFEC;
+
+pub fn is_super_keysym(keysym: u32) -> bool {
+    keysym == KEYSYM_SUPER_L || keysym == KEYSYM_SUPER_R
+}
+
+/// Apply a River chord press/release to [`SUPER_HELD`]. Returns whether this
+/// was a Super key (other chords are ignored).
+pub fn apply_super_chord(pressed: bool, keysym: u32) -> bool {
+    if !is_super_keysym(keysym) {
+        return false;
+    }
+    note_super_key(pressed);
+    true
+}
+
 pub fn is_super_key(key: &Key) -> bool {
     matches!(
         key,
@@ -202,6 +222,24 @@ mod tests {
         note_super_key(true);
         assert!(stored_modifiers().logo());
         note_super_key(false);
+        assert!(!stored_modifiers().logo());
+    }
+
+    #[test]
+    fn super_keysym_is_l_or_r() {
+        assert!(is_super_keysym(KEYSYM_SUPER_L));
+        assert!(is_super_keysym(KEYSYM_SUPER_R));
+        assert!(!is_super_keysym(0xFF09)); // Tab
+    }
+
+    #[test]
+    fn bus_super_chord_sets_held() {
+        note_super_key(false);
+        assert!(apply_super_chord(true, KEYSYM_SUPER_L));
+        assert!(stored_modifiers().logo());
+        assert!(apply_super_chord(false, KEYSYM_SUPER_L));
+        assert!(!stored_modifiers().logo());
+        assert!(!apply_super_chord(true, 0x20)); // Space
         assert!(!stored_modifiers().logo());
     }
 }

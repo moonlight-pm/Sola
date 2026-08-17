@@ -8,7 +8,8 @@ use std::time::Duration;
 use zeroize::Zeroize;
 
 use super::client::{
-    CardSummary, LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
+    CardSummary, LoginOutcome, MatchSummary, TotpSummary, TwoFactorKind, VaultError, VaultService,
+    VaultStatus,
 };
 use super::passkey::PasskeyCandidate;
 
@@ -37,6 +38,14 @@ pub enum VaultCmd {
         url: String,
     },
     Fill {
+        id: String,
+    },
+    /// List logins that have a TOTP secret (page URL ranks matches first).
+    ListTotp {
+        url: String,
+    },
+    /// Decrypt + generate the current authenticator code.
+    FillTotp {
         id: String,
     },
     /// List every card cipher (no URI filter).
@@ -110,6 +119,10 @@ pub enum VaultEvent {
     },
     Matches(Vec<MatchSummary>),
     Cards(Vec<CardSummary>),
+    Totp(Vec<TotpSummary>),
+    TotpFillReady {
+        code: String,
+    },
     FillReady {
         username: Option<String>,
         password: Option<String>,
@@ -402,6 +415,27 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                 }
                 password.zeroize();
             }
+            VaultCmd::ListTotp { url } => match svc.list_totp(&url).await {
+                Ok(m) => {
+                    let _ = event_tx.send(VaultEvent::Totp(m));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(VaultEvent::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+            VaultCmd::FillTotp { id } => match svc.fill_totp(&id).await {
+                Ok(code) => {
+                    crate::vault::VaultPrefs::touch_cipher(&id);
+                    let _ = event_tx.send(VaultEvent::TotpFillReady { code });
+                }
+                Err(e) => {
+                    let _ = event_tx.send(VaultEvent::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
             VaultCmd::ListCards => match svc.list_cards().await {
                 Ok(m) => {
                     let _ = event_tx.send(VaultEvent::Cards(m));
