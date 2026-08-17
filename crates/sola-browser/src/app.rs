@@ -1995,7 +1995,7 @@ impl<E: Engine> App<E> {
                     .collect();
                 for url in bg {
                     tracing::info!(%url, "cmd-click → background tab");
-                    self.open_tab(url, false);
+                    self.open_tab_beside(url, false);
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
@@ -2326,8 +2326,18 @@ impl<E: Engine> App<E> {
 
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
     /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
-    /// `integration::run_intent`.
+    /// `integration::run_intent`. Always loose, at the bottom of the strip.
     pub fn open_tab(&mut self, url: String, activate: bool) {
+        self.mint_tab(url, activate, false);
+    }
+
+    /// ⌘-click background tab: insert immediately under the current tab
+    /// (same group if the current tab is in one).
+    pub fn open_tab_beside(&mut self, url: String, activate: bool) {
+        self.mint_tab(url, activate, true);
+    }
+
+    fn mint_tab(&mut self, url: String, activate: bool, beside: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
         let title = if url == BLANK_URL {
@@ -2339,8 +2349,12 @@ impl<E: Engine> App<E> {
             is_loading: url != BLANK_URL && !url.is_empty(),
             ..TabInfo::chrome(id, url.clone(), title.clone())
         };
-        self.groups
-            .insert_beside(&mut self.cached_tabs, self.cached_active, info);
+        if beside {
+            self.groups
+                .insert_beside(&mut self.cached_tabs, self.cached_active, info);
+        } else {
+            self.groups.append_loose(&mut self.cached_tabs, info);
+        }
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);

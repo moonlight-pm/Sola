@@ -167,8 +167,15 @@ impl Groups {
         self.dissolve_empty();
     }
 
+    /// Append `tab` as loose at the end of the strip (⌘T, xdg-open).
+    pub fn append_loose(&mut self, tabs: &mut Vec<TabInfo>, tab: TabInfo) {
+        self.leave(tab.id);
+        tabs.push(tab);
+    }
+
     /// Insert `tab` immediately after `after` (or append). Same group as
     /// `after`. Expands a collapsed group so the new row is visible.
+    /// ⌘-click only — not ⌘T / OpenUrl.
     pub fn insert_beside(&mut self, tabs: &mut Vec<TabInfo>, after: TabId, tab: TabInfo) {
         let id = tab.id;
         match tabs.iter().position(|t| t.id == after) {
@@ -587,6 +594,15 @@ mod tests {
         );
         g.normalize(&mut tabs);
         assert_eq!(ids(&tabs), vec![3, 1, 2, 4, 5]);
+    }
+
+    #[test]
+    fn append_loose_lands_at_bottom_even_when_active_is_grouped() {
+        let (mut g, mut tabs) = setup();
+        g.append_loose(&mut tabs, tab(9, "new"));
+        assert!(g.of_tab(TabId(9)).is_none());
+        g.normalize(&mut tabs);
+        assert_eq!(ids(&tabs), vec![1, 2, 3, 4, 5, 9]);
     }
 
     #[test]

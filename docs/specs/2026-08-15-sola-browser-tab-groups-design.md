@@ -1,14 +1,14 @@
 # sola-browser tab groups
 
 **Date:** 2026-08-15  
-**Status:** **Frozen** — implemented on `naturalethic/browser-polish`; installed, smoke pending  
+**Status:** **Frozen** — implemented on `naturalethic/browser-polish`; pocket + insert rules installed  
 **Branch / worktree:** `naturalethic/browser-polish`  
 **Related:** [unified sidebar](2026-08-13-unified-sidebar-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [session persist](2026-06-15-session-persistence-design.md)
 
 | | |
 |--|--|
-| **Implementation** | kit context menu + collapsible sections; chrome groups + persist + strip |
-| **Dogfood** | installed; ⌘-click / ⌘T insert below current tab (same group) |
+| **Implementation** | kit inset pocket + nested members + lucide header; reserved etch lip; chrome groups + persist + strip |
+| **Dogfood** | visual polish **installed**. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside |
 | **Gaps** | spaces; color; drag-to-create |
 
 ## Intent
@@ -46,8 +46,10 @@ loose tab
 loose tab           ← ⌘T lands here
 ```
 
-**Header (kit collapsible section, Large density):** chevron + name. Collapsed
-headers may show a member count. Not the uppercase settings section label.
+**Header (kit collapsible section, Large density):** lucide chevron + name
+(folder caption, not a tab title). Collapsed headers may show a member
+count. Members sit one indent step inside an inset pocket. Not the
+uppercase settings section label.
 
 **Click header** → expand / collapse (same 5px click-vs-drag threshold as
 tabs).
@@ -153,10 +155,12 @@ rename and collapse, not only url/title.
 
 **`SidebarSection` (opt-in; static labels unchanged)**
 
-- `collapsible(collapsed, on_toggle)`
+- `collapsible(collapsed, on_toggle)` — inset pocket; members nest one step
 - `header_active(bool)` — selected etch when the collapsed group holds the
   current page
 - Items are not built when `collapsed`
+- List etch reserves the 1px lip on every row so selecting does not shift
+  the title
 
 Settings / mail / terminal / agent keep today’s inert labels.
 
@@ -185,7 +189,7 @@ Kit does not learn membership.
 | Freeze | **this document** |
 | Kit collapsible section + context menu | **done** |
 | Chrome groups + persist + strip | **done** |
-| Dogfood | installed; smoke pending |
+| Dogfood | installed (pocket; ⌘T / OpenUrl append loose; ⌘-click beside) |
 
 ## Decision log
 
