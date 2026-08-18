@@ -9,13 +9,19 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (`naturalethic/distribution` → **master**)
+**As of:** 2026-08-07 (marketing site design in Paper; distribution still on master)
 
 ---
 
 ## Now
 
-1. **Distribution follow-through (next when resumed)** — freeze + plan still
+1. **Marketing site (sola.computer) — design in progress** — Paper file
+   **sola.computer** ([open](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ)):
+   desktop + mobile landing. Product truth in root [`PRODUCT.md`](PRODUCT.md).
+   Audience: Linux/NixOS builders; graphite product UI extended; primary CTA
+   **Download ISO** (assumed available); honest early-product framing.
+   **Next:** iterate design with human, then implement site (stack TBD).
+2. **Distribution follow-through (product when resumed)** — freeze + plan still
    open for remaining bars, not a separate branch:  
    - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
    - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
@@ -25,9 +31,9 @@ Do not invent product policy.
      timezone auto-detect (interim **US/Mountain** / `America/Denver`);
      Shape 1 release tarball refresh (v0.1.1 URL 404); operator manual page
      when ISO is dogfoodable.  
-2. **Progress docs** — keep this file + `docs/capabilities.md` honest; no
+3. **Progress docs** — keep this file + `docs/capabilities.md` honest; no
    second handoff.  
-3. **Follow-ups (unordered backlog, not priority):**  
+4. **Follow-ups (unordered backlog, not priority):**  
    - Optional per-app default sizes in `window_settings`; dogfood float chrome  
    - Permanent `/dev/input` ACL or udev for sola-kvm — **D2**  
    - Permission fan-out UX when TUI + sola-agent both attached — **D1**  
