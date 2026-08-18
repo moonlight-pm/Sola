@@ -55,6 +55,8 @@ pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 46.0;
 const NAV_BTN_W: f32 = 34.0;
+/// How long the copy-URL glyph stays on the check after a successful copy.
+const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 /// Tab sidebar width (logical px) — the value the draggable divider
 /// edits, clamped to `[MIN, MAX]`.
 pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
@@ -74,6 +76,8 @@ pub enum Msg {
     NavJump(i32),
     /// Reload when idle; stop when the active tab is loading.
     NavReloadOrStop,
+    /// Copy the current page URL to the system clipboard.
+    CopyUrl,
     /// Escape / explicit stop — always `NavCmd::Stop`.
     NavStop,
     UrlInput(String),
@@ -516,6 +520,8 @@ pub struct App<E: Engine> {
     downloads: crate::downloads::DownloadList,
     downloads_panel_open: bool,
     download_icon: iced::widget::svg::Handle,
+    /// Instant the copy-URL button last succeeded — drives the check flash.
+    copy_url_flash: Option<Instant>,
 }
 
 impl<E: Engine> App<E> {
@@ -649,6 +655,7 @@ impl<E: Engine> App<E> {
             downloads: crate::downloads::DownloadList::load(),
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
+            copy_url_flash: None,
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -1764,6 +1771,20 @@ impl<E: Engine> App<E> {
                     let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
                 }
             }
+            Msg::CopyUrl => {
+                let page_url = self
+                    .active_tab_info()
+                    .map(|t| t.url.as_str())
+                    .unwrap_or("");
+                let Some(url) =
+                    crate::util::copyable_page_url(page_url, &self.last_seen_url, &self.url_field)
+                else {
+                    return Task::none();
+                };
+                self.copy_url_flash = Some(Instant::now());
+                tracing::debug!(%url, "copy url → clipboard");
+                return iced::clipboard::write(url);
+            }
             Msg::NavStop => {
                 if self.renaming.is_some() {
                     self.renaming = None;
@@ -1865,14 +1886,22 @@ impl<E: Engine> App<E> {
                 self.persist_session();
             }
             Msg::Tick => {
+                if self
+                    .copy_url_flash
+                    .is_some_and(|t| t.elapsed() >= COPY_URL_FLASH)
+                {
+                    self.copy_url_flash = None;
+                }
                 while let Some(h) = crate::instance::try_recv_handoff() {
                     match h {
                         crate::instance::Handoff::OpenUrl(url) => {
                             tracing::info!(%url, "opening handed-off URL in this chrome");
-                            self.open_tab(url, true);
+                            self.open_tab(url.clone(), true);
+                            crate::integration::emit_open_url_for_raise(&url);
                         }
                         crate::instance::Handoff::Activate => {
-                            tracing::info!("activate handoff — chrome already front");
+                            tracing::info!("activate handoff — asking shell to raise");
+                            crate::integration::emit_open_url_for_raise("");
                         }
                     }
                 }
@@ -2674,7 +2703,7 @@ impl<E: Engine> App<E> {
     }
 
     /// Full-width chrome strip: profile (aligned to the tab column),
-    /// back / forward / reload, omnibox, vault.
+    /// back / forward / reload, copy-url, omnibox, vault.
     ///
     /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
     /// the click to place its caret, and `mouse_area` skips `on_press` for
@@ -2703,6 +2732,25 @@ impl<E: Engine> App<E> {
             true,
             NAV_BTN_W,
             Msg::NavReloadOrStop,
+            muted,
+        );
+        let page_url = info.map(|t| t.url.as_str()).unwrap_or("");
+        let copy_enabled =
+            crate::util::copyable_page_url(page_url, &self.last_seen_url, &self.url_field)
+                .is_some();
+        let copy_flashing = self
+            .copy_url_flash
+            .is_some_and(|t| t.elapsed() < COPY_URL_FLASH);
+        let copy_url = self.nav_icon_btn(
+            if copy_flashing {
+                nav_icon_copy_done()
+            } else {
+                nav_icon_copy()
+            },
+            16,
+            copy_enabled,
+            NAV_BTN_W,
+            Msg::CopyUrl,
             muted,
         );
 
@@ -2758,6 +2806,7 @@ impl<E: Engine> App<E> {
             back,
             forward,
             reload_or_stop,
+            copy_url,
             self.view_omnibox(),
             vault_btn,
             totp_btn,
@@ -5040,6 +5089,16 @@ fn nav_icon_reload() -> iced::widget::svg::Handle {
 fn nav_icon_stop() -> iced::widget::svg::Handle {
     static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
     H.get_or_init(|| icon_handle("lucide/x")).clone()
+}
+
+fn nav_icon_copy() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/copy")).clone()
+}
+
+fn nav_icon_copy_done() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/copy-check")).clone()
 }
 
 #[cfg(feature = "bitwarden")]

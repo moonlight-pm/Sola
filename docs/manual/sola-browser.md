@@ -28,6 +28,10 @@ Sola routes http(s) opens to **sola-browser**:
 | Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
 | `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
 
+If a Browser window is already open, an outside open **raises it**
+to the top and focuses the new tab. A second `sola-browser` process
+still hands off and exits.
+
 Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
 hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
@@ -115,6 +119,10 @@ Type a URL or a search and press Enter. Search text goes to Kagi.
 - While a real page is loading, a **thin accent line** grows along the
   bottom of the field. Reload becomes **Stop**; back / forward follow
   the engine. Escape also stops the load.
+- A **copy** button sits just left of the field. It puts the current
+  page URL on the clipboard (not a draft you are still typing). Empty
+  and `about:blank` tabs disable it. The glyph flashes a check for a
+  moment after a successful copy.
 
 ## Downloads
 

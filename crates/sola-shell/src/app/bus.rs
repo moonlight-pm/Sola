@@ -78,10 +78,16 @@ impl Shell {
             // External links. Live sola-browser already subscribed to
             // OpenUrl and will open a tab. Only spawn if chrome is down
             // (otherwise we used to start a second process that reaped
-            // the live CEF helpers).
+            // the live CEF helpers). When chrome is up and the request
+            // wants activation, raise the existing window to the top.
             Topic::OpenUrl(req) => {
                 if sola_core::sola_browser_is_running() {
-                    tracing::debug!(url = %req.url, "OpenUrl: chrome live, not spawning");
+                    if req.activate {
+                        tracing::info!(url = %req.url, "OpenUrl: chrome live, raising");
+                        self.raise_app("sola-browser");
+                    } else {
+                        tracing::debug!(url = %req.url, "OpenUrl: chrome live, not spawning");
+                    }
                 } else {
                     sola_core::open_url_logged(&req.url);
                 }
@@ -508,6 +514,16 @@ impl Shell {
             return;
         }
         self.focus_window_from_pointer(wid);
+    }
+
+    /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
+    /// No-op when that app has no mapped window yet.
+    fn raise_app(&mut self, app_id: &str) {
+        let Some(window_id) = self.lookup_any_window_id(app_id) else {
+            tracing::debug!(%app_id, "raise_app: no mapped window");
+            return;
+        };
+        self.raise_window_from_click(window_id);
     }
 
     /// Click activation: focus + raise to front of the composition stack.

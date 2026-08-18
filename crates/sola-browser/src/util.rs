@@ -38,6 +38,23 @@ pub fn editing_command_name(cmd: EditCmd) -> &'static str {
     }
 }
 
+/// URL the chrome Copy button should put on the clipboard.
+///
+/// Prefers the committed page URL; skips empty / `about:blank` so a
+/// mid-navigation flash does not overwrite a real address. Falls back to
+/// the omnibox only when that is the only non-blank candidate (typed,
+/// not yet loaded).
+pub fn copyable_page_url(page_url: &str, last_seen: &str, url_field: &str) -> Option<String> {
+    for candidate in [page_url, last_seen, url_field] {
+        let t = candidate.trim();
+        if t.is_empty() || t == "about:blank" {
+            continue;
+        }
+        return usable_clipboard_text(Some(t.to_string()));
+    }
+    None
+}
+
 /// Clipboard text that is safe to apply to a field. Drops `None`, empty,
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
@@ -225,6 +242,32 @@ mod tests {
         assert!(!href_is_new_tab_target("   "));
         assert!(!href_is_new_tab_target("javascript:void(0)"));
         assert!(!href_is_new_tab_target("data:text/html,hi"));
+    }
+
+    #[test]
+    fn copyable_page_url_prefers_committed() {
+        assert_eq!(
+            copyable_page_url(
+                "https://example.com/page",
+                "https://example.com/page",
+                "typed-draft",
+            ),
+            Some("https://example.com/page".into())
+        );
+    }
+
+    #[test]
+    fn copyable_page_url_skips_blank_and_uses_last_seen() {
+        assert_eq!(
+            copyable_page_url("about:blank", "https://example.com/", ""),
+            Some("https://example.com/".into())
+        );
+        assert_eq!(
+            copyable_page_url("", "", "github.com"),
+            Some("github.com".into())
+        );
+        assert_eq!(copyable_page_url("about:blank", "", ""), None);
+        assert_eq!(copyable_page_url("", "", "   "), None);
     }
 
     #[test]

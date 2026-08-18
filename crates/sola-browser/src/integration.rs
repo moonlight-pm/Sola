@@ -5,7 +5,9 @@
 //! `run()` via `sola_kit::app::BusSetup`; this module is the receive side.
 //! It reacts to:
 //!
-//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`),
+//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`);
+//!   a `chrome.sock` handoff re-emits this so the shell can raise the
+//!   window. Our own echo is ignored.
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
 //!   menubar clicks (Profiles switch / manage included),
 //! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
@@ -223,6 +225,24 @@ pub enum BrowserIntent {
     None,
 }
 
+/// True when this `OpenUrl` is the chrome re-broadcasting a `chrome.sock`
+/// handoff so the shell will raise the window. The tab is already open.
+pub fn open_url_is_self_echo(source: &str, app_id: &str) -> bool {
+    source == app_id
+}
+
+/// Re-broadcast a sock-handoff as `Topic::OpenUrl` so the shell raises
+/// the existing window (same path as mail / bus opens). The chrome
+/// ignores its own echo in [`handle_bus`].
+pub fn emit_open_url_for_raise(url: &str) {
+    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        let _ = bus.emit(Topic::OpenUrl(OpenUrlRequest {
+            url: url.to_string(),
+            activate: true,
+        }));
+    }
+}
+
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
 /// `activate` (matches the retired GTK browser's behaviour).
 pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
@@ -275,6 +295,12 @@ pub fn handle_bus<E: Engine>(
     }
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => {
+            // Sock handoff re-emits OpenUrl so the shell can raise us.
+            // Ignore our own echo or we would open the tab twice.
+            if open_url_is_self_echo(&message.source, app_id) {
+                tracing::debug!(url = %req.url, "OpenUrl self-echo — tab already opened");
+                return Task::none();
+            }
             tracing::info!(url = %req.url, activate = req.activate, "OpenUrl bus");
             run_intent(app, intent_for_open_url(&req))
         }
@@ -503,6 +529,13 @@ mod tests {
     #[test]
     fn unknown_action_is_none() {
         assert_eq!(intent_for_menu_action("bogus"), BrowserIntent::None);
+    }
+
+    #[test]
+    fn open_url_self_echo_is_detected() {
+        assert!(open_url_is_self_echo("sola-browser", "sola-browser"));
+        assert!(!open_url_is_self_echo("sola-mail", "sola-browser"));
+        assert!(!open_url_is_self_echo("", "sola-browser"));
     }
 
     #[test]
