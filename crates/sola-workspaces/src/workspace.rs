@@ -22,7 +22,7 @@ pub const LIVE_ID: &str = "ws-main";
 /// from a deleted / other workspace that reused the same id.
 pub const SOLA_WS_PATH: &str = "SOLA_WS_PATH";
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Main,
@@ -642,6 +642,21 @@ pub fn resolve_workspace<'a>(
     if let Some(w) = workspaces.iter().find(|w| w.id == q) {
         return Ok(w);
     }
+    if let Some(w) = workspaces.iter().find(|w| w.owns_pane(q)) {
+        return Ok(w);
+    }
+    let as_path = Path::new(q);
+    if as_path.is_absolute() {
+        let hits: Vec<&Workspace> = workspaces
+            .iter()
+            .filter(|w| path_matches(w, as_path))
+            .collect();
+        match hits.as_slice() {
+            [one] => return Ok(one),
+            [] => {}
+            _ => return Err(format!("workspace path '{q}' is ambiguous")),
+        }
+    }
     let hits: Vec<&Workspace> = workspaces
         .iter()
         .filter(|w| w.name.eq_ignore_ascii_case(q))
@@ -658,6 +673,16 @@ pub fn find_workspace_mut<'a>(
     id: &str,
 ) -> Option<&'a mut Workspace> {
     workspaces.iter_mut().find(|w| w.id == id)
+}
+
+pub fn path_matches(ws: &Workspace, path: &Path) -> bool {
+    if ws.path == path {
+        return true;
+    }
+    match (ws.path.canonicalize(), path.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -773,6 +798,32 @@ mod tests {
         assert_eq!(resolve_project(&projects, "Sola").unwrap().id, "proj-seed");
         assert_eq!(resolve_project(&projects, "sola").unwrap().id, "proj-seed");
         assert!(resolve_project(&projects, "nope").is_err());
+    }
+
+    #[test]
+    fn resolve_workspace_by_pane_and_path() {
+        let ws = Workspace {
+            id: "ws-kid".into(),
+            project_id: "p".into(),
+            name: "kid".into(),
+            path: PathBuf::from("/tmp/sola-ws-kid-resolve"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: Some(Layout::single("ws-kid-p2")),
+            active_pane: Some("ws-kid-p2".into()),
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let all = vec![ws];
+        assert_eq!(resolve_workspace(&all, "kid").unwrap().id, "ws-kid");
+        assert_eq!(resolve_workspace(&all, "ws-kid-p2").unwrap().id, "ws-kid");
+        assert_eq!(
+            resolve_workspace(&all, "/tmp/sola-ws-kid-resolve")
+                .unwrap()
+                .id,
+            "ws-kid"
+        );
+        assert!(resolve_workspace(&all, "nope").is_err());
     }
 
     #[test]

@@ -26,6 +26,7 @@ pointer to `CURRENT.md` (auto-load reminder).
 
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
+- `sola-workspaces-cli` — `solactl ws` control plane (fan-out from a root session)  
 
 ## Progress documentation is first-class (mandatory)
 

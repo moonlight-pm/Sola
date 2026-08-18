@@ -19,17 +19,23 @@ Do not invent product policy.
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
-   **Next:** dogfood `solactl ws` / sola-call. Polish:
+   **CLI freeze:** [`docs/specs/2026-08-18-workspaces-cli-design.md`](docs/specs/2026-08-18-workspaces-cli-design.md)  
+   **Next:** desk-smoke `solactl ws` (needs `install workspaces` + `solactl`). Polish:
    rename/recolor/reorder.  
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
    **Install:** standing OK to `install workspaces` after each finished
    round. Ask for any other target.  
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
-   Methods on sola-call owner `ws` (`solactl ws ps` / `workspace.spawn` / …).
+   Methods on sola-call owner `ws` (`solactl ws ps` / `workspace.spawn` /
+   `workspace.exec` / `pane.wait` / `whoami` / …). Control plane is
+   first-class: verb changes update `calls.rs` + dispatch + tests +
+   `docs/manual/solactl.md` together.
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
    `sola-ws` / `sws-`. App installed and dogfooded (rail, splits,
-   drop-project, dead-pane, `×N`). `solactl ws` / call methods still
-   unsmoked. Rail: Add project expands `~`;
+   drop-project, dead-pane, `×N`). `solactl ws` implemented (richer
+   payloads, `--prompt-file`, `project.add`, `workspace.select` /
+   `workspace.exec`, `pane.wait`, `whoami`; Grok-leaf targeting;
+   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. Rail: Add project expands `~`;
    groups stack at the top; no grok/agent label on the row. Sibling
    hover close is the kit ×; root has no row close (Drop Project is menu-only).
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
@@ -118,5 +124,5 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
 | Workspaces worktrees | **`<project-root>/.worktrees/<name>`** (D4.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
 | Workspaces names | Crate / app id **`sola-workspaces`**. Window **Workspaces**. Owner **`ws`**. Tmux **`sola-ws`** / **`sws-`**. Config **`~/.config/sola/workspaces/`**. |
-| Workspaces calls | Register on **sola-call** as owner `ws`. Face is `solactl ws …`. No `sat` binary. Fail if app/host down. |
+| Workspaces calls | Register on **sola-call** as owner `ws`. Face is `solactl ws …`. No `sat` binary. Fail if app/host down. First-class: verbs/payloads stay in lockstep with the app ([CLI freeze](docs/specs/2026-08-18-workspaces-cli-design.md)). |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

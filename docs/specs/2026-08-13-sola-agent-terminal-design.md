@@ -8,8 +8,8 @@
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
 
-**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→); leaf rows (presence `grok`/`shell`) only after a split; ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` only on a Grok leaf (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins  
-**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. `solactl ws` / call methods still unsmoked.  
+**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→); leaf rows (presence `grok`/`shell`) only after a split; ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` only on a Grok leaf (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md)  
+**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. `solactl ws` still needs a desk smoke.  
 **Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only (D4)
 
 ---
@@ -99,6 +99,7 @@ crates/sola-workspaces/
   src/workspace.rs     # project + workspace + catalog persist
   src/spawn.rs         # git worktree add under .worktrees/
   src/calls.rs         # sola-call MethodSpec list (owner ws)
+  src/cli.rs           # call-plane payloads, targeting, prompt, wait
   src/paths.rs         # config dir + legacy migrate
   src/menu.rs
 ```

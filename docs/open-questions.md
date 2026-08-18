@@ -109,6 +109,7 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-18 | workspaces CLI | `solactl ws` is first-class. New verbs: `project.add`, `workspace.select`, `workspace.exec`, `pane.wait`, `whoami`. `--prompt-file`; richer list/spawn payloads; Grok-leaf targeting; parent from `$SOLA_PANE_ID`. Confirm still **D3**. | [CLI freeze](specs/2026-08-18-workspaces-cli-design.md), CURRENT, capabilities, manual/solactl |
 | 2026-08-18 | workspaces | ⌘W closes the focused pane. Drop Project is menu-only. Kit splits (⌘⇧↓ / ⌘⇧→); leaf rows only after a split; last pane close keeps the workspace (Start new shell); a split leaf that exits retracts; hover does not spawn. Quiet `×N` only on a Grok leaf. | CURRENT, DESIGN, freeze header, capabilities |
 | 2026-08-15 | Browser tab groups | In-strip folders (spaces later); groups at top, loose run at bottom; menu + drag join/leave; New group is menu-only; collapse keeps the page; empty dissolves; kit context menu | [freeze](specs/2026-08-15-sola-browser-tab-groups-design.md), CURRENT, capabilities |
 | 2026-08-15 | Browser instance | One iced chrome via `chrome.sock`; second process hands off (does not reap live helpers). Helper death respawns + restores tabs. | CURRENT, capabilities, architecture, manual/sola-browser |

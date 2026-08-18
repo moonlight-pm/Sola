@@ -59,7 +59,7 @@ ask the human.
 | `crates/sola-install` | Installer wizard binary |
 | `var/images/` | Local ISO/qcow products (gitignored) |
 | `apocrypha/` | Legacy WebView stack — not built |
-| `.grok/skills/` | `sola-session-start`, `sola-progress-docs` |
+| `.grok/skills/` | `sola-session-start`, `sola-progress-docs`, `sola-workspaces-cli` |
 | `.grok/rules/active-work.md` | **Pointer** to `CURRENT.md` (auto-load reminder) |
 | `/opt/sola/` | Install root (bin, log, share) — runtime, not git |
 

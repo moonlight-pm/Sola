@@ -44,6 +44,10 @@ pub struct MethodSpec {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<ArgSpec>,
+    /// Suggested caller deadline. `solactl` uses this when the method
+    /// does not take a `timeout` arg. Omit for the 8s default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -12,7 +12,9 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows gone.
 
-**Next:** dogfood `solactl ws`. No `sat` binary. Remaining D4: Claude hooks.
+**Next:** desk-smoke `solactl ws`. CLI freeze:
+[`docs/specs/2026-08-18-workspaces-cli-design.md`](../specs/2026-08-18-workspaces-cli-design.md).
+No `sat` binary. Remaining D4: Claude hooks.
 
 **Decided here (not still a fork):**
 

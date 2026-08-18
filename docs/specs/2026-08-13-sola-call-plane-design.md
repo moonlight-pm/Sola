@@ -110,12 +110,12 @@ These are real follow-ups. Not v1 blockers.
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
 | **Monitor UI** | Show live owners/methods (needs catalog sticky or a call). |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
-| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws` on master (unsmoked). |
+| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
 
 **Dropped in this slice (were fake request/reply on the bus):** `Evaluate` / `Evaluation`, `CaptureScreen` / `Screenshot`, `SimulatePointer` / `SimulateKey`. Payload types `CaptureScreenPayload`, `CaptureTarget`, `PointerAction`, `PointerButton` remain for the call path.
 
 ## Implementation
 
-**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; shell screenshot via call.  
+**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; shell screenshot via call. `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
 **Dogfood:** not installed from this session (needs explicit `cargo make install`).  
 **Gaps:** see Later; D3; no desk dogfood yet.

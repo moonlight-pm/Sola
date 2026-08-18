@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
@@ -27,6 +27,7 @@ use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, tmux};
 
 mod calls;
+mod cli;
 mod hooks;
 mod menu;
 mod paths;
@@ -107,6 +108,16 @@ struct App {
     spawn: sidebar::SpawnDraft,
     add: sidebar::AddDraft,
     window_focused: bool,
+    pending_waits: Vec<PendingWait>,
+}
+
+struct PendingWait {
+    pane: String,
+    want: status::AgentStatus,
+    fresh: bool,
+    armed: bool,
+    reply: sola_call::ReplyTx,
+    deadline: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -221,6 +232,7 @@ impl App {
             spawn: sidebar::SpawnDraft::default(),
             add: sidebar::AddDraft::default(),
             window_focused: true,
+            pending_waits: Vec::new(),
         };
         app.sync_all_rows();
         let attach = if selected.is_empty() {
@@ -327,6 +339,7 @@ impl App {
                     status::persist_all(&self.pane_status);
                     self.sync_row(&id);
                     self.maybe_toast_done(&id, prev, now, unconfirmed);
+                    self.flush_waits();
                 }
                 Task::none()
             }
@@ -344,6 +357,7 @@ impl App {
                     status::persist_all(&self.pane_status);
                     self.sync_row(&id);
                     self.maybe_toast_done(&id, prev, now, unconfirmed);
+                    self.flush_waits();
                 }
                 Task::none()
             }
@@ -366,6 +380,7 @@ impl App {
                     }
                 }
                 self.sync_all_rows();
+                self.flush_waits();
                 Task::none()
             }
             Msg::SelectWorkspace(id) => {
@@ -1011,6 +1026,9 @@ impl App {
     }
 
     fn on_call(&mut self, inc: sola_call::Incoming) -> Task<Msg> {
+        if inc.method == "pane.wait" {
+            return self.cli_wait(inc);
+        }
         let (result, task) = self.dispatch_call(&inc.method, &inc.params);
         match result {
             Ok(data) => inc.reply.ok(data),
@@ -1027,15 +1045,21 @@ impl App {
         match method {
             "ps" => (Ok(self.ps_json()), Task::none()),
             "project.list" => {
-                let projects: Vec<serde_json::Value> = self
-                    .projects
-                    .iter()
-                    .map(|p| serde_json::json!({"id": p.id, "name": p.name}))
-                    .collect();
+                let projects: Vec<serde_json::Value> =
+                    self.projects.iter().map(cli::project_json).collect();
                 (
                     Ok(serde_json::json!({ "projects": projects })),
                     Task::none(),
                 )
+            }
+            "project.add" => {
+                let Some(path) = param_str(params, "path") else {
+                    return (Err("missing path".into()), Task::none());
+                };
+                match self.cli_add_project(&path) {
+                    Ok((data, task)) => (Ok(data), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
             }
             "project.rm" => {
                 let Some(q) = param_str(params, "project") else {
@@ -1062,9 +1086,10 @@ impl App {
                     &name,
                     param_str(params, "agent").as_deref(),
                     param_str(params, "prompt").as_deref(),
+                    param_str(params, "prompt-file").as_deref(),
                     param_str(params, "parent"),
                 ) {
-                    Ok((id, task)) => (Ok(serde_json::json!({ "id": id })), task),
+                    Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1074,6 +1099,29 @@ impl App {
                 };
                 match self.cli_rm(&ws) {
                     Ok(task) => (Ok(serde_json::json!({ "ok": true })), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            "workspace.select" => {
+                let Some(q) = param_str(params, "workspace") else {
+                    return (Err("missing workspace".into()), Task::none());
+                };
+                match self.cli_select(&q) {
+                    Ok((data, task)) => (Ok(data), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            "workspace.exec" => {
+                let Some(q) = param_str(params, "workspace") else {
+                    return (Err("missing workspace".into()), Task::none());
+                };
+                match self.cli_exec(
+                    &q,
+                    param_str(params, "agent").as_deref(),
+                    param_str(params, "prompt").as_deref(),
+                    param_str(params, "prompt-file").as_deref(),
+                ) {
+                    Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1090,7 +1138,7 @@ impl App {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 match self.cli_send(param_str(params, "pane").as_deref(), &text, enter) {
-                    Ok(()) => (Ok(serde_json::json!({ "ok": true })), Task::none()),
+                    Ok(pane) => (Ok(serde_json::json!({ "ok": true, "pane": pane })), Task::none()),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1100,10 +1148,19 @@ impl App {
                     .and_then(|v| v.as_u64())
                     .map(|n| n as u32);
                 match self.cli_read(param_str(params, "pane").as_deref(), lines) {
-                    Ok(text) => (Ok(serde_json::json!({ "text": text })), Task::none()),
+                    Ok((pane, text)) => {
+                        (Ok(serde_json::json!({ "text": text, "pane": pane })), Task::none())
+                    }
                     Err(e) => (Err(e), Task::none()),
                 }
             }
+            "whoami" => (
+                self.cli_whoami(
+                    param_str(params, "pane").as_deref(),
+                    param_str(params, "path").as_deref(),
+                ),
+                Task::none(),
+            ),
             other => (Err(format!("unknown method {other}")), Task::none()),
         }
     }
@@ -1116,26 +1173,11 @@ impl App {
                 let workspaces: Vec<serde_json::Value> =
                     workspace::ordered_for_project(&p.id, &self.workspaces)
                         .into_iter()
-                        .map(|w| {
-                            let title = if w.kind == workspace::Kind::Main {
-                                "root"
-                            } else {
-                                w.name.as_str()
-                            };
-                            serde_json::json!({
-                                "id": w.id,
-                                "name": title,
-                                "status": format!("{:?}", w.status).to_lowercase(),
-                                "agent": w.agent,
-                                "selected": w.id == self.selected,
-                            })
-                        })
+                        .map(|w| cli::workspace_json(w, Some(&self.selected)))
                         .collect();
-                serde_json::json!({
-                    "id": p.id,
-                    "name": p.name,
-                    "workspaces": workspaces,
-                })
+                let mut row = cli::project_json(p);
+                row["workspaces"] = serde_json::Value::Array(workspaces);
+                row
             })
             .collect();
         serde_json::json!({ "projects": projects, "selected": self.selected })
@@ -1150,14 +1192,7 @@ impl App {
             .workspaces
             .iter()
             .filter(|w| filter.as_ref().is_none_or(|id| w.project_id == *id))
-            .map(|w| {
-                serde_json::json!({
-                    "id": w.id,
-                    "name": w.name,
-                    "status": format!("{:?}", w.status).to_lowercase(),
-                    "project": w.project_id,
-                })
-            })
+            .map(|w| cli::workspace_json(w, None))
             .collect();
         Ok(serde_json::json!({ "workspaces": list }))
     }
@@ -1168,28 +1203,30 @@ impl App {
         name: &str,
         agent: Option<&str>,
         prompt: Option<&str>,
+        prompt_file: Option<&str>,
         parent: Option<String>,
-    ) -> Result<(String, Task<Msg>), String> {
-        let agent = match (agent, prompt) {
+    ) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let prompt = cli::read_prompt(prompt, prompt_file)?;
+        let agent = match (cli::only_grok(agent)?, prompt.as_deref()) {
             (Some(a), _) => Some(a),
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
         let id = self.spawn_workspace(project, name, parent, agent)?;
         let task = if agent == Some("grok") {
-            let mut args = vec!["grok".to_string()];
-            if let Some(p) = prompt {
-                let p = p.trim();
-                if !p.is_empty() {
-                    args.push(p.to_string());
-                }
-            }
+            let args = cli::grok_argv(prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             self.attach_pane(&id, &refs)
         } else {
             self.attach_pane(&id, &[])
         };
-        Ok((id, task))
+        let data = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(cli::spawn_json)
+            .unwrap_or_else(|| serde_json::json!({ "id": id }));
+        Ok((data, task))
     }
 
     fn cli_rm(&mut self, q: &str) -> Result<Task<Msg>, String> {
@@ -1204,6 +1241,92 @@ impl App {
     fn cli_rm_project(&mut self, q: &str) -> Result<Task<Msg>, String> {
         let id = workspace::resolve_project(&self.projects, q)?.id.clone();
         Ok(self.drop_project(&id))
+    }
+
+    fn cli_select(&mut self, q: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let focused = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.active_pane_id())
+            .unwrap_or_else(|| id.clone());
+        self.selected = id.clone();
+        self.focused = focused;
+        self.persist_catalog();
+        let task = self.attach_workspace(&id);
+        Ok((serde_json::json!({ "id": id, "selected": true }), task))
+    }
+
+    fn cli_exec(
+        &mut self,
+        q: &str,
+        agent: Option<&str>,
+        prompt: Option<&str>,
+        prompt_file: Option<&str>,
+    ) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let agent = cli::only_grok(agent)?.unwrap_or("grok");
+        if agent != "grok" {
+            return Err("only grok is first-class; other agents are presence-only".into());
+        }
+        let prompt = cli::read_prompt(prompt, prompt_file)?;
+        let ws_id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let pane = self.preferred_pane(Some(&ws_id))?;
+        let is_grok = self
+            .pane_status
+            .get(&pane)
+            .and_then(|s| s.agent.as_deref())
+            .is_some_and(|a| a.eq_ignore_ascii_case("grok"));
+        if is_grok {
+            if let Some(text) = prompt.as_deref() {
+                self.write_pane(&pane, text, true)?;
+            }
+            return Ok((
+                serde_json::json!({
+                    "workspace": ws_id,
+                    "pane": pane,
+                    "started": false,
+                    "sent": prompt.is_some(),
+                }),
+                Task::none(),
+            ));
+        }
+        let session = tmux::session_name(&pane);
+        let new_session = !tmux::has_session(&session);
+        let task = if new_session {
+            let args = cli::grok_argv(prompt.as_deref());
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            self.attach_pane(&pane, &refs)
+        } else {
+            let attach = self.attach_pane(&pane, &[]);
+            let line = cli::grok_shell_line(prompt.as_deref());
+            self.write_pane(&pane, &line, true)?;
+            attach
+        };
+        Ok((
+            serde_json::json!({
+                "workspace": ws_id,
+                "pane": pane,
+                "started": true,
+                "sent": false,
+            }),
+            task,
+        ))
+    }
+
+    fn cli_add_project(
+        &mut self,
+        path: &str,
+    ) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let (project_id, main_id, task) = self.register_project(path)?;
+        let project = self
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| "project vanished".to_string())?;
+        let mut data = cli::project_json(project);
+        data["workspace"] = serde_json::json!(main_id);
+        Ok((data, task))
     }
 
     fn cli_pane_list(&self, workspace: Option<&str>) -> Result<serde_json::Value, String> {
@@ -1226,34 +1349,59 @@ impl App {
             .into_iter()
             .map(|pid| {
                 let st = self.pane_status.get(&pid);
-                serde_json::json!({
-                    "id": pid,
-                    "status": format!("{:?}", st.map(|s| s.status).unwrap_or_default()).to_lowercase(),
-                    "agent": st.and_then(|s| s.agent.clone()),
-                })
+                cli::pane_json(
+                    &pid,
+                    st.map(|s| s.status).unwrap_or_default(),
+                    st.and_then(|s| s.agent.as_deref()),
+                )
             })
             .collect();
         Ok(serde_json::json!({ "panes": panes }))
     }
 
-    fn cli_pane_id(&self, pane: Option<&str>) -> Result<String, String> {
-        if let Some(q) = pane {
-            if self.workspaces.iter().any(|w| w.owns_pane(q)) {
+    fn pane_agents(&self, leaves: &[String]) -> Vec<(String, Option<String>)> {
+        leaves
+            .iter()
+            .map(|id| {
+                (
+                    id.clone(),
+                    self.pane_status.get(id).and_then(|s| s.agent.clone()),
+                )
+            })
+            .collect()
+    }
+
+    fn preferred_pane(&self, hint: Option<&str>) -> Result<String, String> {
+        if let Some(q) = hint {
+            if self.workspaces.iter().any(|w| w.owns_pane(q) && w.id != q) {
                 return Ok(q.to_string());
             }
-            return Ok(workspace::resolve_workspace(&self.workspaces, q)?
-                .active_pane_id());
+            let ws = workspace::resolve_workspace(&self.workspaces, q)?;
+            let leaves = ws.layout().leaves();
+            let agents = self.pane_agents(&leaves);
+            return Ok(cli::prefer_grok_pane(
+                &leaves,
+                &agents,
+                &ws.active_pane_id(),
+                None,
+            ));
         }
         if !self.focused.is_empty() {
             return Ok(self.focused.clone());
         }
+        if !self.selected.is_empty() {
+            return self.preferred_pane(Some(&self.selected));
+        }
         Err("no pane".into())
     }
 
-    fn cli_send(&self, pane: Option<&str>, text: &str, enter: bool) -> Result<(), String> {
-        let id = self.cli_pane_id(pane)?;
-        let session = tmux::session_name(&id);
-        if let Some(rt) = self.runtimes.get(&id) {
+    fn cli_pane_id(&self, pane: Option<&str>) -> Result<String, String> {
+        self.preferred_pane(pane)
+    }
+
+    fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
+        let session = tmux::session_name(id);
+        if let Some(rt) = self.runtimes.get(id) {
             rt.backend.write(text.as_bytes());
             if enter {
                 rt.backend.write(b"\r");
@@ -1269,43 +1417,181 @@ impl App {
         Ok(())
     }
 
-    fn cli_read(&self, pane: Option<&str>, lines: Option<u32>) -> Result<String, String> {
+    fn cli_send(&self, pane: Option<&str>, text: &str, enter: bool) -> Result<String, String> {
+        let id = self.cli_pane_id(pane)?;
+        self.write_pane(&id, text, enter)?;
+        Ok(id)
+    }
+
+    fn cli_read(
+        &self,
+        pane: Option<&str>,
+        lines: Option<u32>,
+    ) -> Result<(String, String), String> {
         let id = self.cli_pane_id(pane)?;
         let session = tmux::session_name(&id);
         let text = tmux::capture_scrollback(&session)?;
-        match lines {
+        let text = match lines {
             Some(n) if n > 0 => {
                 let keep = n as usize;
                 let mut v: Vec<&str> = text.lines().collect();
                 if v.len() > keep {
                     v = v.split_off(v.len() - keep);
                 }
-                Ok(v.join("\n"))
+                v.join("\n")
             }
-            _ => Ok(text),
-        }
+            _ => text,
+        };
+        Ok((id, text))
     }
 
-    fn add_project(&mut self) -> Task<Msg> {
-        let raw = self.add.path.trim();
-        if raw.is_empty() {
-            self.add.error = Some("folder path required".into());
-            return Task::none();
-        }
-        let root = match workspace::expand_user_path(raw).canonicalize() {
-            Ok(p) if p.is_dir() => p,
-            Ok(_) => {
-                self.add.error = Some("not a folder".into());
-                return Task::none();
+    fn cli_whoami(&self, pane: Option<&str>, path: Option<&str>) -> Result<serde_json::Value, String> {
+        let ws = if let Some(q) = pane {
+            workspace::resolve_workspace(&self.workspaces, q)?
+        } else if let Some(p) = path {
+            workspace::resolve_workspace(&self.workspaces, p)?
+        } else {
+            return Err(
+                "not in a workspaces pane (pass --pane/--path or run from a Workspaces PTY)"
+                    .into(),
+            );
+        };
+        let pane_id = if let Some(q) = pane {
+            if ws.owns_pane(q) {
+                q.to_string()
+            } else {
+                self.preferred_pane(Some(&ws.id))?
             }
+        } else {
+            self.preferred_pane(Some(&ws.id))?
+        };
+        let st = self.pane_status.get(&pane_id);
+        let project = workspace::resolve_project(&self.projects, &ws.project_id).ok();
+        Ok(serde_json::json!({
+            "pane": pane_id,
+            "workspace": ws.id,
+            "workspace_name": cli::display_name(ws),
+            "project": ws.project_id,
+            "project_name": project.map(|p| p.name.as_str()),
+            "path": ws.path,
+            "kind": cli::kind_str(ws.kind),
+            "status": cli::status_str(st.map(|s| s.status).unwrap_or(ws.status)),
+            "agent": st.and_then(|s| s.agent.clone()).or_else(|| ws.agent.clone()),
+        }))
+    }
+
+    fn cli_wait(&mut self, inc: sola_call::Incoming) -> Task<Msg> {
+        let want = match param_str(&inc.params, "status") {
+            Some(s) => match cli::parse_status(&s) {
+                Ok(st) => st,
+                Err(e) => {
+                    inc.reply.err(e);
+                    return Task::none();
+                }
+            },
+            None => status::AgentStatus::Done,
+        };
+        let pane = match self.cli_pane_id(param_str(&inc.params, "pane").as_deref()) {
+            Ok(id) => id,
             Err(e) => {
-                self.add.error = Some(format!("path: {e}"));
+                inc.reply.err(e);
                 return Task::none();
             }
         };
-        if self.projects.iter().any(|p| p.root == root) {
-            self.add.error = Some("already in the rail".into());
+        let secs = cli::wait_timeout_secs(inc.params.get("timeout").and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+        }));
+        let fresh = inc
+            .params
+            .get("fresh")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let now = self
+            .pane_status
+            .get(&pane)
+            .map(|s| s.status)
+            .unwrap_or_default();
+        if !fresh && now == want {
+            inc.reply.ok(serde_json::json!({
+                "pane": pane,
+                "status": cli::status_str(want),
+            }));
             return Task::none();
+        }
+        self.pending_waits.push(PendingWait {
+            pane,
+            want,
+            fresh,
+            armed: !fresh || now != want,
+            reply: inc.reply,
+            deadline: Instant::now() + Duration::from_secs(secs),
+        });
+        Task::none()
+    }
+
+    fn flush_waits(&mut self) {
+        let now = Instant::now();
+        let mut keep = Vec::new();
+        for mut wait in self.pending_waits.drain(..) {
+            if now >= wait.deadline {
+                wait.reply.err(format!(
+                    "timeout waiting for pane {} to be {}",
+                    wait.pane,
+                    cli::status_str(wait.want)
+                ));
+                continue;
+            }
+            let status = self
+                .pane_status
+                .get(&wait.pane)
+                .map(|s| s.status)
+                .unwrap_or_default();
+            if wait.fresh && !wait.armed {
+                if status != wait.want {
+                    wait.armed = true;
+                }
+                keep.push(wait);
+                continue;
+            }
+            if status == wait.want {
+                wait.reply.ok(serde_json::json!({
+                    "pane": wait.pane,
+                    "status": cli::status_str(wait.want),
+                }));
+                continue;
+            }
+            keep.push(wait);
+        }
+        self.pending_waits = keep;
+    }
+
+    fn add_project(&mut self) -> Task<Msg> {
+        let raw = self.add.path.clone();
+        match self.register_project(&raw) {
+            Ok((_, _, task)) => {
+                self.add = sidebar::AddDraft::default();
+                task
+            }
+            Err(e) => {
+                self.add.error = Some(e);
+                Task::none()
+            }
+        }
+    }
+
+    fn register_project(&mut self, raw: &str) -> Result<(String, String, Task<Msg>), String> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err("folder path required".into());
+        }
+        let root = match workspace::expand_user_path(raw).canonicalize() {
+            Ok(p) if p.is_dir() => p,
+            Ok(_) => return Err("not a folder".into()),
+            Err(e) => return Err(format!("path: {e}")),
+        };
+        if self.projects.iter().any(|p| p.root == root) {
+            return Err("already in the rail".into());
         }
         let slug = spawn::slug(
             root.file_name()
@@ -1325,13 +1611,13 @@ impl App {
         }
         let attach_id = ws.id.clone();
         self.workspaces.push(ws);
-        self.add = sidebar::AddDraft::default();
         self.persist_catalog();
-        if self.selected == attach_id {
+        let task = if self.selected == attach_id {
             self.attach_workspace(&attach_id)
         } else {
             Task::none()
-        }
+        };
+        Ok((project_id, attach_id, task))
     }
 
     fn teardown_pane(&mut self, id: &str) {
