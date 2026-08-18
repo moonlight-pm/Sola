@@ -9,6 +9,7 @@ pub struct MappedHook {
     pub status: Option<AgentStatus>,
     pub clear_turn: bool,
     pub session_end: bool,
+    pub compacted: bool,
     pub prompt: Option<String>,
     pub tool: Option<String>,
     pub session_id: Option<String>,
@@ -37,6 +38,18 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
             status: None,
             clear_turn: true,
             session_end: false,
+            compacted: false,
+            prompt: None,
+            tool: None,
+            session_id,
+        });
+    }
+    if event == "post_compact" {
+        return Some(MappedHook {
+            status: None,
+            clear_turn: false,
+            session_end: false,
+            compacted: true,
             prompt: None,
             tool: None,
             session_id,
@@ -66,6 +79,7 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
         status: Some(status),
         clear_turn: false,
         session_end: event == "session_end",
+        compacted: false,
         prompt: if event == "notification" {
             None
         } else {
@@ -167,6 +181,7 @@ mod tests {
 
     #[test]
     fn grok_events_map_first() {
+        assert!(map(json!({"hookEventName": "PostCompact"})).unwrap().compacted);
         assert_eq!(
             map(json!({"hookEventName": "UserPromptSubmit"})).unwrap().status,
             Some(AgentStatus::Working)

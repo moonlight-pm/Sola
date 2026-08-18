@@ -9,6 +9,11 @@ pub fn methods() -> Vec<MethodSpec> {
         method("ps", "Project → workspace → state table", &[]),
         method("project.list", "List projects", &[]),
         method(
+            "project.rm",
+            "Unregister a project and kill its tmux sessions",
+            &[req("project", Some('p'), "Project id or name")],
+        ),
+        method(
             "workspace.list",
             "List workspaces",
             &[opt("project", Some('p'), "Project id or name")],

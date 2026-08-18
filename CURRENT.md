@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-18 (workspaces rail polish + browser polish on master)
+**As of:** 2026-08-18 (workspaces-polish: splits + compaction; browser polish on master)
 
 ---
 
@@ -19,7 +19,7 @@ Do not invent product policy.
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
-   **Next:** dogfood install (`sola-call`, app, `solactl`, shell). Polish:
+   **Next:** dogfood `solactl ws` / sola-call. Polish:
    rename/recolor/reorder.  
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
    **Install:** standing OK to `install workspaces` after each finished
@@ -27,13 +27,23 @@ Do not invent product policy.
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
    Methods on sola-call owner `ws` (`solactl ws ps` / `workspace.spawn` / …).
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
-   `sola-ws` / `sws-`. Hooks + old `sat-ws-main` reattach smoked earlier;
-   spawn UI / call methods not smoked. Rail: Add project expands `~`;
+   `sola-ws` / `sws-`. App installed and dogfooded (rail, splits,
+   drop-project, dead-pane, `×N`). `solactl ws` / call methods still
+   unsmoked. Rail: Add project expands `~`;
    groups stack at the top; no grok/agent label on the row. Sibling
-   hover close is the kit ×; root is not closeable (close-project later).
+   hover close is the kit ×; root has no row close (Drop Project is menu-only).
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
-   Shortcuts: ⌘T spawn, ⌘N new project, ⌘W drop sibling. Working ring
-   spins (kit mark uses ms phase, not `as_secs_f32`).  
+   Shortcuts: ⌘T spawn, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
+   right, ⌘W close pane. Split leaves appear under the workspace
+   (`grok` / `shell`); last pane close keeps the workspace. Dead last
+   pane shows **Start new shell**; a split leaf that exits retracts.
+   Quiet `×N` only on a Grok leaf (session dir segments /
+   checkpoints; `signals.json` can stay 0 after a compact). Split
+   labels follow presence. Switching a split attaches every leaf;
+   hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
+   — leftover sessions from a deleted workspace are quarantined, not
+   attached to the next tab. Working ring spins (kit mark uses ms
+   phase, not `as_secs_f32`).  
 2. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
@@ -46,8 +56,8 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 5. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-6. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
-   preview, mail, kvm clipboard, switcher FFM holdoff
+6. **Follow-ups (unordered backlog):** create-card; float chrome,
+   D1/D2, preview, mail, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser polish on this
    worktree: tab-group **pocket** (kit; **installed**); **⌘-click**
    dogfooded (IMDb) — Super+drag removed; chrome opens a background tab

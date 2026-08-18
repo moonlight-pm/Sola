@@ -12,6 +12,7 @@ use sola_kit::components::{
 
 use crate::Msg;
 use crate::spawn;
+use crate::status::PaneStatus;
 use crate::workspace::{self, Kind, Project, Workspace};
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
@@ -69,6 +70,8 @@ pub fn view<'a>(
     projects: &'a [Project],
     workspaces: &'a [Workspace],
     selected: &str,
+    focused_pane: &str,
+    pane_status: &'a std::collections::HashMap<String, PaneStatus>,
     theme: &Theme,
     term_bg: iced::Color,
 ) -> Element<'a, Msg> {
@@ -82,17 +85,49 @@ pub fn view<'a>(
                 } else {
                     ws.name.clone()
                 };
+                let leaves = ws.layout().leaves();
+                let split = leaves.len() > 1;
                 let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
-                    .active(ws.id == selected)
+                    .active(ws.id == selected && !split)
                     .indicator(ws.status.indicator())
                     .id(ws.id.clone());
+                if !split {
+                    if let Some(n) = leaves
+                        .first()
+                        .and_then(|id| pane_status.get(id))
+                        .map(|s| s.compaction_count)
+                        .filter(|n| *n > 0)
+                    {
+                        item = item.secondary(format!("×{n}"));
+                    }
+                }
                 // Kit list `on_close` — hover × (lucide/x), vertically
                 // centered. Not `hover_action` (session-card trash).
-                // Root stays; close the project when we have that verb.
+                // Root stays; Drop Project unregisters the project.
                 if workspace::can_close(ws) {
                     item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
                 }
                 items.push(item);
+                if split {
+                    for pane_id in leaves {
+                        let st = pane_status.get(&pane_id);
+                        let label = pane_label(st);
+                        let mark = st.map(|s| s.status).unwrap_or_default();
+                        let mut leaf = SidebarItem::new(
+                            label,
+                            Msg::SelectPane(ws.id.clone(), pane_id.clone()),
+                        )
+                        .active(focused_pane == pane_id && ws.id == selected)
+                        .indicator(mark.indicator())
+                        .id(pane_id.clone())
+                        .indent(1)
+                        .on_close(Msg::ClosePane(pane_id.clone()));
+                        if let Some(n) = st.map(|s| s.compaction_count).filter(|n| *n > 0) {
+                            leaf = leaf.secondary(format!("×{n}"));
+                        }
+                        items.push(leaf);
+                    }
+                }
             }
         }
         let mark = if project.collapsed { "▸ " } else { "" };
@@ -123,6 +158,45 @@ pub fn view<'a>(
             divider,
         )
         .build()
+}
+
+/// Dead PTY (Ctrl-D / shell exit). One action: start a new shell.
+pub fn exited_pane(pane_id: impl Into<String>) -> Element<'static, Msg> {
+    let pane_id = pane_id.into();
+    container(
+        column![
+            sola_kit::components::text::caption("Shell exited.")
+                .style(sola_kit::components::text::muted),
+            kit_btn::labeled("Start new shell", kit_btn::primary)
+                .on_press(Msg::RestartShell(pane_id)),
+        ]
+        .spacing(12)
+        .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .into()
+}
+
+/// Rail has no projects yet.
+pub fn empty_pane<'a>() -> Element<'a, Msg> {
+    container(
+        sola_kit::components::text::caption("Add a project to open a pane.")
+            .style(sola_kit::components::text::muted),
+    )
+    .padding(sola_kit::components::style::SPACE_XL)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn pane_label(st: Option<&PaneStatus>) -> String {
+    st.and_then(|s| s.agent.as_deref())
+        .filter(|a| !a.is_empty())
+        .unwrap_or("shell")
+        .to_string()
 }
 
 fn empty_footer<'a>() -> Element<'a, Msg> {

@@ -2,14 +2,14 @@
 
 **Date:** 2026-08-13  
 **Renamed:** 2026-08-14 — crate / app id / face from `sola-agent-terminal` / `at` to `sola-workspaces` / `ws` (D4.1)  
-**Branch:** on master; work continues on `naturalethic/sola-agent-terminal`  
+**Branch:** base on master; polish on `workspaces-polish`  
 **Status:** approved for implementation (promoted from idea)  
 **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../ideas/2026-08-12-sola-agent-terminal.md)  
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
 
-**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the row; kit hover × on siblings (not root); shell launcher builtin **Workspaces**; ⌘T/⌘N/⌘W; working ring spins  
-**Dogfood:** hooks + reattach smoked under old `sat-` names; call methods / spawn UI await install  
+**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→); leaf rows (presence `grok`/`shell`) only after a split; ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` only on a Grok leaf (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins  
+**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. `solactl ws` / call methods still unsmoked.  
 **Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only (D4)
 
 ---

@@ -7,12 +7,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::{canvas, container, row, stack};
+use iced::widget::{canvas, container, mouse_area, row, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
 
 use sola_bus::Message;
-use sola_bus::topics::{AppToast, Topic, TopicKind};
+use sola_bus::topics::{AppToast, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
@@ -22,7 +22,7 @@ use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
-use sola_terminal::state::PaneRuntime;
+use sola_terminal::state::{self as term_state, PaneRuntime};
 use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, tmux};
 
@@ -45,6 +45,7 @@ const TMUX_PREFIX: &str = "sws-";
 
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
+const MIN_PANE_PX: f32 = 80.0;
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -86,7 +87,9 @@ struct App {
     projects: Vec<workspace::Project>,
     workspaces: Vec<workspace::Workspace>,
     selected: String,
+    focused: String,
     runtimes: HashMap<String, PaneRuntime>,
+    dragging_split: Option<String>,
     theme: Theme,
     palette: Palette,
     sidebar: sidebar::SidebarState,
@@ -99,7 +102,7 @@ struct App {
     window_id: Option<iced::window::Id>,
     pane_status: HashMap<String, status::PaneStatus>,
     hook_sock: String,
-    /// Previous pane id if we renamed an orphan tmux session onto `ws-main`.
+    /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
     adopted_from: Option<String>,
     spawn: sidebar::SpawnDraft,
     add: sidebar::AddDraft,
@@ -138,7 +141,12 @@ enum Msg {
     AddPath(String),
     AddProject,
     CloseWorkspace(String),
+    ClosePane(String),
+    SelectPane(String, String),
+    RestartShell(String),
     HoverSidebar(Option<String>),
+    PaneFocused(String),
+    SplitDividerPress(String),
     Ignore,
     StatusTick,
     Hook(hooks::Incoming),
@@ -167,26 +175,36 @@ impl App {
             .filter(|id| catalog.workspaces.iter().any(|w| w.id == *id))
             .or_else(|| catalog.workspaces.first().map(|w| w.id.clone()))
             .unwrap_or_default();
-        let adopted_from = if catalog
+        let adopted_from = catalog
             .workspaces
             .iter()
-            .any(|w| w.id == workspace::LIVE_ID)
-        {
-            workspace::adopt_orphan_session()
-        } else {
-            None
-        };
+            .find(|w| w.id == workspace::LIVE_ID)
+            .and_then(|w| {
+                let claimed: HashSet<String> =
+                    catalog.workspaces.iter().map(|x| x.id.clone()).collect();
+                workspace::adopt_orphan_session(&w.path, &claimed)
+            });
         let mut pane_status = HashMap::new();
         for ws in &catalog.workspaces {
-            if let Some(st) = status::hydrate(&ws.id) {
-                pane_status.insert(ws.id.clone(), st);
+            for pane_id in ws.layout().leaves() {
+                if let Some(st) = status::hydrate(&pane_id) {
+                    pane_status.insert(pane_id, st);
+                }
             }
         }
+        let focused = catalog
+            .workspaces
+            .iter()
+            .find(|w| w.id == selected)
+            .map(|w| w.active_pane_id())
+            .unwrap_or_else(|| selected.clone());
         let mut app = Self {
             projects: catalog.projects,
             workspaces: catalog.workspaces,
             selected: selected.clone(),
+            focused,
             runtimes: HashMap::new(),
+            dragging_split: None,
             theme: default_theme(),
             palette: Palette::from_kit_theme(&Atoms::default()),
             sidebar: sidebar::SidebarState::default(),
@@ -208,7 +226,7 @@ impl App {
         let attach = if selected.is_empty() {
             Task::none()
         } else {
-            app.attach_pane(&selected, &[])
+            app.attach_workspace(&selected)
         };
         (
             app,
@@ -291,8 +309,19 @@ impl App {
                         .get(&id)
                         .map(|s| s.status)
                         .unwrap_or_default();
+                    let cwd = self
+                        .workspace_for_pane(&id)
+                        .map(|w| w.path.clone());
                     let st = self.pane_status.entry(id.clone()).or_default();
                     st.apply_hook(&incoming);
+                    if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
+                        if let Some(cwd) = cwd.as_deref() {
+                            st.refresh_compaction(cwd);
+                        }
+                    }
+                    if incoming.mapped.compacted && st.compaction_count == 0 {
+                        st.compaction_count = 1;
+                    }
                     let now = st.status;
                     let unconfirmed = st.restored_unconfirmed;
                     status::persist_all(&self.pane_status);
@@ -319,21 +348,52 @@ impl App {
                 Task::none()
             }
             Msg::PresenceTick => {
-                let ids: Vec<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
+                let ids: Vec<String> = self
+                    .workspaces
+                    .iter()
+                    .flat_map(|w| w.layout().leaves())
+                    .collect();
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
                     let who = presence::scan_session(&tmux_session);
-                    self.pane_status.entry(id).or_default().apply_presence(who);
+                    let cwd = self
+                        .workspace_for_pane(&id)
+                        .map(|w| w.path.clone());
+                    let st = self.pane_status.entry(id).or_default();
+                    st.apply_presence(who);
+                    if let Some(cwd) = cwd.as_deref() {
+                        st.refresh_compaction(cwd);
+                    }
                 }
                 self.sync_all_rows();
                 Task::none()
             }
             Msg::SelectWorkspace(id) => {
-                if self.workspaces.iter().any(|w| w.id == id) {
+                if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
                     self.selected = id.clone();
+                    self.focused = ws.active_pane_id();
                     self.persist_catalog();
-                    return self.attach_pane(&id, &[]);
+                    return self.attach_workspace(&id);
                 }
+                Task::none()
+            }
+            Msg::SelectPane(ws_id, pane_id) => self.focus_pane(&ws_id, &pane_id),
+            Msg::PaneFocused(pane_id) => {
+                // Hover focuses for typing. It must not spawn a shell —
+                // only the Start new shell button (or a sidebar click)
+                // attaches a missing PTY.
+                if let Some(ws) = self
+                    .workspaces
+                    .iter()
+                    .find(|w| w.owns_pane(&pane_id))
+                {
+                    let ws_id = ws.id.clone();
+                    self.set_focus(&ws_id, &pane_id);
+                }
+                Task::none()
+            }
+            Msg::SplitDividerPress(id) => {
+                self.dragging_split = Some(id);
                 Task::none()
             }
             Msg::ToggleProject(id) => {
@@ -363,6 +423,8 @@ impl App {
             }
             Msg::AddProject => self.add_project(),
             Msg::CloseWorkspace(id) => self.close_workspace(&id),
+            Msg::ClosePane(id) => self.close_pane(&id),
+            Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::HoverSidebar(id) => {
                 self.sidebar.hovered = id;
                 Task::none()
@@ -375,6 +437,22 @@ impl App {
             }
             Msg::PtyExit(id) => {
                 tracing::info!(pane = %id, "pane PTY exited");
+                // Session is already gone — drop the client, do not
+                // `close()` (that would try to kill a dead tmux session).
+                self.runtimes.remove(&id);
+                if let Some(st) = self.pane_status.get_mut(&id) {
+                    st.status = status::AgentStatus::Idle;
+                    st.agent = None;
+                    st.tool = None;
+                    st.owner_session = None;
+                }
+                // A split leaf that dies retracts. Start new shell only
+                // on the last remaining pane (`close_pane` handles that).
+                if self.workspace_for_pane(&id).is_some() {
+                    return self.close_pane(&id);
+                }
+                self.sync_row(&id);
+                status::persist_all(&self.pane_status);
                 Task::none()
             }
             Msg::Title(id, title) => {
@@ -388,11 +466,11 @@ impl App {
             Msg::Input(event) => self.on_input(event),
             Msg::Resized(size) => {
                 self.window_size = size;
-                self.resize_pane();
+                self.resize_all_panes();
                 Task::none()
             }
             Msg::SelectionChanged => {
-                if let Some(rt) = self.runtimes.get(&self.selected) {
+                if let Some(rt) = self.runtimes.get(&self.focused) {
                     rt.cache.clear();
                 }
                 Task::none()
@@ -414,7 +492,7 @@ impl App {
                 Task::none()
             }
             Msg::Pasted(text) => {
-                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&self.selected)) {
+                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&self.focused)) {
                     let mode = { *rt.emulator.term().lock().mode() };
                     rt.backend.write(&input::paste(&text, mode));
                 }
@@ -425,59 +503,38 @@ impl App {
                 self.sidebar.drag_anchor = None;
                 Task::none()
             }
-            Msg::CursorMoved(x, _y) => {
+            Msg::CursorMoved(x, y) => {
                 if self.sidebar.dragging_divider {
                     if let Some((anchor_x, anchor_w)) = self.sidebar.drag_anchor {
                         self.sidebar.width =
                             sola_kit::components::panel_dragged_width(anchor_x, anchor_w, x);
-                        self.resize_pane();
+                        self.resize_all_panes();
                     } else {
                         self.sidebar.drag_anchor = Some((x, self.sidebar.width));
                     }
+                } else if let Some(split_id) = self.dragging_split.clone() {
+                    self.drag_split(&split_id, x, y);
                 }
                 Task::none()
             }
             Msg::CursorReleased => {
                 self.sidebar.dragging_divider = false;
                 self.sidebar.drag_anchor = None;
+                if self.dragging_split.take().is_some() {
+                    self.persist_catalog();
+                }
                 Task::none()
             }
         }
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        let pane: Element<'_, Msg> = match self.runtimes.get(&self.selected) {
-            Some(rt) => {
-                let view = term_view::TermView {
-                    term: rt.emulator.term(),
-                    cursor_snap: rt.emulator.cursor_snap(),
-                    cache: &rt.cache,
-                    palette: &self.palette,
-                    metrics: self.metrics,
-                    cursor_on: self.cursor_on,
-                    active: true,
-                    on_select: Msg::SelectionChanged,
-                    on_scroll: Msg::Scrolled(self.selected.clone()),
-                    on_open_url: Box::new(Msg::OpenUrl),
-                    on_wheel_pty: Box::new({
-                        let pid = self.selected.clone();
-                        move |bytes| Msg::WheelToPty(pid.clone(), bytes)
-                    }),
-                };
-                canvas(view).width(Length::Fill).height(Length::Fill).into()
-            }
-            None => container(
-                sola_kit::components::text::body(if self.workspaces.is_empty() {
-                    "Add a project to open a pane."
-                } else {
-                    "no pane"
-                })
-                .style(sola_kit::components::text::muted),
-            )
-            .padding(sola_kit::components::style::SPACE_MD)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
+        let pane: Element<'_, Msg> = if self.workspaces.is_empty() {
+            sidebar::empty_pane()
+        } else if let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) {
+            self.render_node(&ws.layout().to_node())
+        } else {
+            sidebar::empty_pane()
         };
 
         let rail_pane: Element<'_, Msg> = row![
@@ -486,6 +543,8 @@ impl App {
                 &self.projects,
                 &self.workspaces,
                 &self.selected,
+                &self.focused,
+                &self.pane_status,
                 &self.theme,
                 self.palette.bg,
             ),
@@ -524,7 +583,7 @@ impl App {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
                 self.palette = Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
                 self.metrics = CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
-                self.resize_pane();
+                self.resize_all_panes();
             }
             return Task::none();
         }
@@ -547,12 +606,25 @@ impl App {
                         }
                     }
                     "add-project" => self.open_add(),
-                    "drop-workspace" => {
-                        let id = self.selected.clone();
+                    "split-down" => self.split_focused(SplitDir::Horizontal),
+                    "split-right" => self.split_focused(SplitDir::Vertical),
+                    "close-pane" => {
+                        let id = self.focused.clone();
                         if id.is_empty() {
                             Task::none()
                         } else {
-                            self.close_workspace(&id)
+                            self.close_pane(&id)
+                        }
+                    }
+                    "drop-workspace" => {
+                        let pid = self
+                            .workspaces
+                            .iter()
+                            .find(|w| w.id == self.selected)
+                            .map(|w| w.project_id.clone());
+                        match pid {
+                            Some(id) => self.drop_project(&id),
+                            None => Task::none(),
                         }
                     }
                     _ => Task::none(),
@@ -575,18 +647,128 @@ impl App {
         (c.max(2), r.max(1))
     }
 
-    fn attach_pane(&mut self, id: &str, exec: &[&str]) -> Task<Msg> {
-        if self.runtimes.contains_key(id) {
-            self.resize_pane();
+    fn render_node(&self, node: &term_state::PaneNode) -> Element<'_, Msg> {
+        match node {
+            term_state::PaneNode::Leaf(pane_id) => self.render_leaf(pane_id),
+            term_state::PaneNode::Split {
+                id,
+                dir,
+                ratio,
+                a,
+                b,
+            } => {
+                let line = self.theme.extended_palette().background.stronger.color;
+                let colors = sola_kit::components::DividerColors::uniform(self.palette.bg, line);
+                sola_kit::components::split_with(
+                    *dir,
+                    self.render_node(a),
+                    *ratio,
+                    Msg::SplitDividerPress(id.clone()),
+                    self.render_node(b),
+                    colors,
+                )
+            }
+        }
+    }
+
+    fn render_leaf(&self, pane_id: &str) -> Element<'_, Msg> {
+        let inner: Element<'_, Msg> = match self.runtimes.get(pane_id) {
+            Some(rt) => {
+                let view = term_view::TermView {
+                    term: rt.emulator.term(),
+                    cursor_snap: rt.emulator.cursor_snap(),
+                    cache: &rt.cache,
+                    palette: &self.palette,
+                    metrics: self.metrics,
+                    cursor_on: self.cursor_on,
+                    active: pane_id == self.focused,
+                    on_select: Msg::SelectionChanged,
+                    on_scroll: Msg::Scrolled(pane_id.to_string()),
+                    on_open_url: Box::new(Msg::OpenUrl),
+                    on_wheel_pty: Box::new({
+                        let pid = pane_id.to_string();
+                        move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                };
+                canvas(view).width(Length::Fill).height(Length::Fill).into()
+            }
+            None if self.is_sole_leaf(pane_id) => sidebar::exited_pane(pane_id),
+            None => sidebar::empty_pane(),
+        };
+        mouse_area(inner)
+            .on_enter(Msg::PaneFocused(pane_id.to_string()))
+            .into()
+    }
+
+    fn attach_workspace(&mut self, workspace_id: &str) -> Task<Msg> {
+        let leaves = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .map(|w| w.layout().leaves())
+            .unwrap_or_default();
+        let mut tasks = Vec::new();
+        for id in leaves {
+            tasks.push(self.attach_pane(&id, &[]));
+        }
+        Task::batch(tasks)
+    }
+
+    fn is_sole_leaf(&self, pane_id: &str) -> bool {
+        self.workspace_for_pane(pane_id)
+            .map(|w| {
+                let leaves = w.layout().leaves();
+                leaves.len() <= 1 && leaves.first().map(String::as_str) == Some(pane_id)
+            })
+            .unwrap_or(true)
+    }
+
+    /// Record focus. Does not attach a PTY (hover must not spawn).
+    fn set_focus(&mut self, workspace_id: &str, pane_id: &str) -> bool {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == workspace_id) else {
+            return false;
+        };
+        if !ws.owns_pane(pane_id) {
+            return false;
+        }
+        let same = self.selected == workspace_id && self.focused == pane_id;
+        self.selected = workspace_id.to_string();
+        self.focused = pane_id.to_string();
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            let node = ws.layout().to_node();
+            ws.set_tree(node, pane_id.to_string());
+        }
+        if !same {
+            self.persist_catalog();
+        }
+        true
+    }
+
+    fn focus_pane(&mut self, workspace_id: &str, pane_id: &str) -> Task<Msg> {
+        if !self.set_focus(workspace_id, pane_id) {
             return Task::none();
         }
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+        // Sidebar click / explicit select: attach every leaf so a
+        // sibling shell is restored, not left as Start new shell.
+        self.attach_workspace(workspace_id)
+    }
+
+    fn attach_pane(&mut self, id: &str, exec: &[&str]) -> Task<Msg> {
+        if self.runtimes.contains_key(id) {
+            self.resize_all_panes();
+            return Task::none();
+        }
+        let Some(ws) = self.workspaces.iter().find(|w| w.owns_pane(id) || w.id == id) else {
             return Task::none();
         };
         let (cols, rows) = self.cols_rows();
         let cols = if cols == 0 { DEFAULT_COLS } else { cols };
         let rows = if rows == 0 { DEFAULT_ROWS } else { rows };
-        let tmux_session = tmux::session_name(id);
+        let tmux_session = workspace::bind_session(id, &ws.path);
+        if tmux_session.is_empty() {
+            tracing::error!(pane = %id, "refusing attach; leftover tmux is another checkout");
+            return Task::none();
+        }
         let cwd = ws.path.to_string_lossy().into_owned();
 
         let listener = Listener::new(
@@ -603,6 +785,7 @@ impl App {
         let env = [
             ("SOLA_PANE_ID", id),
             ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
+            (workspace::SOLA_WS_PATH, cwd.as_str()),
         ];
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
@@ -633,11 +816,12 @@ impl App {
                 cache: canvas::Cache::default(),
             },
         );
+        self.resize_all_panes();
         Task::none()
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
-        if self.workspaces.iter().any(|w| w.id == id) {
+        if self.workspaces.iter().any(|w| w.owns_pane(id) || w.id == id) {
             return Some(id.to_string());
         }
         if self.adopted_from.as_deref() == Some(id)
@@ -648,14 +832,39 @@ impl App {
         None
     }
 
-    fn sync_row(&mut self, id: &str) {
-        let Some(st) = self.pane_status.get(id) else {
+    fn workspace_for_pane(&self, pane_id: &str) -> Option<&workspace::Workspace> {
+        self.workspaces
+            .iter()
+            .find(|w| w.owns_pane(pane_id) || w.id == pane_id)
+    }
+
+    fn sync_row(&mut self, pane_id: &str) {
+        let Some(ws_id) = self
+            .workspace_for_pane(pane_id)
+            .map(|w| w.id.clone())
+        else {
             return;
         };
-        let status = st.status;
-        let agent = st.agent.clone();
-        if let Some(ws) = workspace::find_workspace_mut(&mut self.workspaces, id) {
-            ws.status = status;
+        let leaves = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == ws_id)
+            .map(|w| w.layout().leaves())
+            .unwrap_or_default();
+        let statuses: Vec<_> = leaves
+            .iter()
+            .map(|id| {
+                self.pane_status
+                    .get(id)
+                    .map(|s| s.status)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let agent = leaves
+            .iter()
+            .find_map(|id| self.pane_status.get(id).and_then(|s| s.agent.clone()));
+        if let Some(ws) = workspace::find_workspace_mut(&mut self.workspaces, &ws_id) {
+            ws.status = status::AgentStatus::rollup(statuses);
             ws.agent = agent;
         }
     }
@@ -663,7 +872,14 @@ impl App {
     fn sync_all_rows(&mut self) {
         let ids: Vec<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         for id in ids {
-            self.sync_row(&id);
+            if let Some(first) = self
+                .workspaces
+                .iter()
+                .find(|w| w.id == id)
+                .and_then(|w| w.layout().leaves().into_iter().next())
+            {
+                self.sync_row(&first);
+            }
         }
     }
 
@@ -756,10 +972,13 @@ impl App {
             path: dest,
             kind: workspace::Kind::Worktree,
             parent,
+            layout: None,
+            active_pane: None,
             status: status::AgentStatus::Idle,
             agent: agent.map(str::to_string),
         });
         self.selected = id.clone();
+        self.focused = id.clone();
         self.persist_catalog();
         Ok(id)
     }
@@ -777,7 +996,7 @@ impl App {
         if unconfirmed || self.window_focused {
             return;
         }
-        let ws = self.workspaces.iter().find(|w| w.id == id);
+        let ws = self.workspace_for_pane(id);
         let name = ws.map(|w| w.name.as_str()).unwrap_or(id);
         let agent = self
             .pane_status
@@ -817,6 +1036,15 @@ impl App {
                     Ok(serde_json::json!({ "projects": projects })),
                     Task::none(),
                 )
+            }
+            "project.rm" => {
+                let Some(q) = param_str(params, "project") else {
+                    return (Err("missing project".into()), Task::none());
+                };
+                match self.cli_rm_project(&q) {
+                    Ok(task) => (Ok(serde_json::json!({ "ok": true })), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
             }
             "workspace.list" => (
                 self.cli_workspace_list(param_str(params, "project").as_deref()),
@@ -973,6 +1201,11 @@ impl App {
         Ok(self.close_workspace(&id))
     }
 
+    fn cli_rm_project(&mut self, q: &str) -> Result<Task<Msg>, String> {
+        let id = workspace::resolve_project(&self.projects, q)?.id.clone();
+        Ok(self.drop_project(&id))
+    }
+
     fn cli_pane_list(&self, workspace: Option<&str>) -> Result<serde_json::Value, String> {
         let id = match workspace {
             Some(q) => workspace::resolve_workspace(&self.workspaces, q)?
@@ -983,24 +1216,36 @@ impl App {
         if id.is_empty() {
             return Err("no workspace selected".into());
         }
-        let st = self.pane_status.get(&id);
-        Ok(serde_json::json!({
-            "panes": [{
-                "id": id,
-                "status": format!("{:?}", st.map(|s| s.status).unwrap_or_default()).to_lowercase(),
-                "agent": st.and_then(|s| s.agent.clone()),
-            }]
-        }))
+        let leaves = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.layout().leaves())
+            .unwrap_or_else(|| vec![id.clone()]);
+        let panes: Vec<serde_json::Value> = leaves
+            .into_iter()
+            .map(|pid| {
+                let st = self.pane_status.get(&pid);
+                serde_json::json!({
+                    "id": pid,
+                    "status": format!("{:?}", st.map(|s| s.status).unwrap_or_default()).to_lowercase(),
+                    "agent": st.and_then(|s| s.agent.clone()),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "panes": panes }))
     }
 
     fn cli_pane_id(&self, pane: Option<&str>) -> Result<String, String> {
         if let Some(q) = pane {
+            if self.workspaces.iter().any(|w| w.owns_pane(q)) {
+                return Ok(q.to_string());
+            }
             return Ok(workspace::resolve_workspace(&self.workspaces, q)?
-                .id
-                .clone());
+                .active_pane_id());
         }
-        if !self.selected.is_empty() {
-            return Ok(self.selected.clone());
+        if !self.focused.is_empty() {
+            return Ok(self.focused.clone());
         }
         Err("no pane".into())
     }
@@ -1076,16 +1321,38 @@ impl App {
         self.projects.push(project);
         if self.selected.is_empty() {
             self.selected = ws.id.clone();
+            self.focused = ws.active_pane_id();
         }
         let attach_id = ws.id.clone();
         self.workspaces.push(ws);
         self.add = sidebar::AddDraft::default();
         self.persist_catalog();
         if self.selected == attach_id {
-            self.attach_pane(&attach_id, &[])
+            self.attach_workspace(&attach_id)
         } else {
             Task::none()
         }
+    }
+
+    fn teardown_pane(&mut self, id: &str) {
+        if let Some(rt) = self.runtimes.remove(id) {
+            rt.backend.close();
+        } else {
+            tmux::kill_session(&tmux::session_name(id));
+        }
+        self.pane_status.remove(id);
+    }
+
+    fn attach_selected_if_needed(&mut self) -> Task<Msg> {
+        if self.selected.is_empty() {
+            self.focused.clear();
+            return Task::none();
+        }
+        if let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) {
+            self.focused = ws.active_pane_id();
+        }
+        let next = self.selected.clone();
+        self.attach_workspace(&next)
     }
 
     fn close_workspace(&mut self, id: &str) -> Task<Msg> {
@@ -1097,12 +1364,15 @@ impl App {
         if !closable {
             return Task::none();
         }
-        if let Some(rt) = self.runtimes.remove(id) {
-            rt.backend.close();
-        } else {
-            tmux::kill_session(&tmux::session_name(id));
+        let panes = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.layout().leaves())
+            .unwrap_or_default();
+        for pane in &panes {
+            self.teardown_pane(pane);
         }
-        self.pane_status.remove(id);
         self.workspaces.retain(|w| w.id != id);
         for w in &mut self.workspaces {
             if w.parent.as_deref() == Some(id) {
@@ -1118,23 +1388,165 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        if self.selected.is_empty() || self.runtimes.contains_key(&self.selected) {
-            Task::none()
-        } else {
-            let next = self.selected.clone();
-            self.attach_pane(&next, &[])
+        self.attach_selected_if_needed()
+    }
+
+    /// Unregister the project and every workspace under it. Kills those
+    /// tmux sessions. Leaves git worktrees and folders on disk.
+    fn drop_project(&mut self, project_id: &str) -> Task<Msg> {
+        let pane_ids: Vec<String> = self
+            .workspaces
+            .iter()
+            .filter(|w| w.project_id == project_id)
+            .flat_map(|w| w.layout().leaves())
+            .collect();
+        let mut catalog = workspace::Catalog {
+            version: 1,
+            selected: if self.selected.is_empty() {
+                None
+            } else {
+                Some(self.selected.clone())
+            },
+            projects: std::mem::take(&mut self.projects),
+            workspaces: std::mem::take(&mut self.workspaces),
+        };
+        let removed = workspace::unregister_project(&mut catalog, project_id);
+        self.projects = catalog.projects;
+        self.workspaces = catalog.workspaces;
+        self.selected = catalog.selected.unwrap_or_default();
+        for id in pane_ids {
+            self.teardown_pane(&id);
+        }
+        if removed.is_empty() {
+            return Task::none();
+        }
+        self.persist_catalog();
+        status::persist_all(&self.pane_status);
+        self.attach_selected_if_needed()
+    }
+
+    fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {
+        let Some(ws_idx) = self.workspaces.iter().position(|w| w.id == self.selected) else {
+            return Task::none();
+        };
+        let source = self.workspaces[ws_idx].active_pane_id();
+        if !self.workspaces[ws_idx].owns_pane(&source) && source != self.workspaces[ws_idx].id {
+            return Task::none();
+        }
+        let mut taken: HashSet<String> = self
+            .workspaces
+            .iter()
+            .flat_map(|w| w.layout().leaves())
+            .collect();
+        for w in &self.workspaces {
+            taken.insert(w.id.clone());
+            taken.extend(w.layout().split_ids());
+        }
+        let ws_id = self.workspaces[ws_idx].id.clone();
+        let new_pane = workspace::unique_id(&ws_id, "p", &taken);
+        let split_id = workspace::unique_id("split", &ws_id, &taken);
+        let mut node = self.workspaces[ws_idx].layout().to_node();
+        if !term_state::split_leaf(&mut node, &source, &split_id, dir, &new_pane) {
+            return Task::none();
+        }
+        self.workspaces[ws_idx].set_tree(node, new_pane.clone());
+        self.focused = new_pane.clone();
+        self.persist_catalog();
+        self.attach_pane(&new_pane, &[])
+    }
+
+    fn close_pane(&mut self, pane_id: &str) -> Task<Msg> {
+        let Some(ws_idx) = self.workspaces.iter().position(|w| w.owns_pane(pane_id)) else {
+            return Task::none();
+        };
+        let ws_id = self.workspaces[ws_idx].id.clone();
+        let node = self.workspaces[ws_idx].layout().to_node();
+        let next_focus = term_state::sibling_first_leaf(&node, pane_id);
+        match term_state::close_leaf(node, pane_id) {
+            None => {
+                // Last leaf: kill the shell, keep the workspace, reuse
+                // the stable workspace id for the next Start new shell.
+                self.teardown_pane(pane_id);
+                self.workspaces[ws_idx].set_tree(term_state::PaneNode::Leaf(ws_id.clone()), ws_id.clone());
+                self.focused = ws_id;
+                self.sync_all_rows();
+                self.persist_catalog();
+                status::persist_all(&self.pane_status);
+                Task::none()
+            }
+            Some(kept) => {
+                let focus = next_focus
+                    .or_else(|| term_state::leaves_of(&kept).into_iter().next())
+                    .unwrap_or_else(|| ws_id.clone());
+                self.teardown_pane(pane_id);
+                self.workspaces[ws_idx].set_tree(kept, focus.clone());
+                self.focused = focus;
+                self.sync_all_rows();
+                self.persist_catalog();
+                status::persist_all(&self.pane_status);
+                self.resize_all_panes();
+                Task::none()
+            }
         }
     }
 
-    fn resize_pane(&mut self) {
-        let Some(rt) = self.runtimes.get(&self.selected) else {
+    fn drag_split(&mut self, split_id: &str, x: f32, y: f32) {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) else {
             return;
         };
-        let (cols, rows) = self.cols_rows();
-        rt.emulator.resize(cols, rows);
-        rt.backend.resize(cols, rows);
-        rt.backend.sigwinch();
-        rt.cache.clear();
+        let node = ws.layout().to_node();
+        let content = self.content_rect();
+        let Some((_, area, dir)) = term_state::split_rects(&node, content)
+            .into_iter()
+            .find(|(id, _, _)| id == split_id)
+        else {
+            return;
+        };
+        let ratio = term_state::ratio_for_drag(area, dir, x, y, MIN_PANE_PX);
+        let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == self.selected) else {
+            return;
+        };
+        let mut node = ws.layout().to_node();
+        if term_state::set_ratio(&mut node, split_id, ratio) {
+            let active = ws.active_pane_id();
+            ws.set_tree(node, active);
+            self.resize_all_panes();
+        }
+    }
+
+    fn content_rect(&self) -> term_state::Rect {
+        let chrome = self.sidebar.width + sola_kit::components::DIVIDER_HIT_PX;
+        let size = self.pane_size();
+        term_state::Rect {
+            x: chrome,
+            y: 0.0,
+            w: size.width,
+            h: size.height,
+        }
+    }
+
+    fn resize_all_panes(&mut self) {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) else {
+            return;
+        };
+        let node = ws.layout().to_node();
+        let content = self.content_rect();
+        let targets: Vec<(String, u16, u16)> = term_state::pane_rects(&node, content)
+            .into_iter()
+            .map(|(id, rect)| {
+                let (c, r) = term_view::cols_rows_for(iced::Size::new(rect.w, rect.h), self.metrics);
+                (id, c.max(2), r.max(1))
+            })
+            .collect();
+        for (pane_id, cols, rows) in targets {
+            let Some(rt) = self.runtimes.get(&pane_id) else {
+                continue;
+            };
+            rt.emulator.resize(cols, rows);
+            rt.backend.resize(cols, rows);
+            rt.backend.sigwinch();
+            rt.cache.clear();
+        }
     }
 
     fn dialog_open(&self) -> bool {
@@ -1193,11 +1605,11 @@ impl App {
             return Task::none();
         }
 
-        let Some(rt) = self.runtimes.get(&self.selected) else {
+        let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
         };
         let mut mode = { *rt.emulator.term().lock().mode() };
-        if extkeys::level(&self.selected) >= 1 {
+        if extkeys::level(&self.focused) >= 1 {
             mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;
         }
         let mods = Mods::from(modifiers);
@@ -1216,7 +1628,7 @@ impl App {
             location,
             text: text.as_deref(),
             repeat,
-            modify_other_keys: extkeys::level(&self.selected) >= 1,
+            modify_other_keys: extkeys::level(&self.focused) >= 1,
         }) else {
             return Task::none();
         };
