@@ -27,47 +27,57 @@ fn main() -> iced::Result {
         .subscribe(TopicKind::ALL)
         .app_menu_definition(MenuDefinition {
             label: "Mail".into(),
-            items: vec![MenuItem::Action {
-                id: "quit".into(),
-                label: "Quit Mail".into(),
-                shortcut: Some(KeyCode::Q.meta()),
-                disabled: false,
-                checked: false,
-            }],
+            items: vec![
+                item("refresh", "Get New Mail", Some(KeyCode::N.meta_shift())),
+                MenuItem::Divider,
+                MenuItem::Action {
+                    id: "quit".into(),
+                    label: "Quit Mail".into(),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
         })
-        // Edit menu — shell routes chords (⌘C/⌘A/…) here as MenuAction.
         .app_menu_definition(MenuDefinition {
             label: "Edit".into(),
             items: vec![
-                MenuItem::Action {
-                    id: "cut".into(),
-                    label: "Cut".into(),
-                    shortcut: Some(KeyCode::X.meta()),
-                    disabled: false,
-                    checked: false,
-                },
-                MenuItem::Action {
-                    id: "copy".into(),
-                    label: "Copy".into(),
-                    shortcut: Some(KeyCode::C.meta()),
-                    disabled: false,
-                    checked: false,
-                },
-                MenuItem::Action {
-                    id: "paste".into(),
-                    label: "Paste".into(),
-                    shortcut: Some(KeyCode::V.meta()),
-                    disabled: false,
-                    checked: false,
-                },
+                item("cut", "Cut", Some(KeyCode::X.meta())),
+                item("copy", "Copy", Some(KeyCode::C.meta())),
+                item("paste", "Paste", Some(KeyCode::V.meta())),
                 MenuItem::Divider,
-                MenuItem::Action {
-                    id: "select_all".into(),
-                    label: "Select All".into(),
-                    shortcut: Some(KeyCode::A.meta()),
-                    disabled: false,
-                    checked: false,
-                },
+                item("select_all", "Select All", Some(KeyCode::A.meta())),
+                item("copy_message", "Copy Message", None),
+            ],
+        })
+        .app_menu_definition(MenuDefinition {
+            label: "Mailbox".into(),
+            items: vec![
+                item("empty_junk", "Erase Junk Mail", None),
+                item("empty_trash", "Erase Deleted Items", None),
+            ],
+        })
+        .app_menu_definition(MenuDefinition {
+            label: "Message".into(),
+            items: vec![
+                item("compose", "New Message", Some(KeyCode::N.meta())),
+                MenuItem::Divider,
+                item("reply", "Reply", Some(KeyCode::R.meta())),
+                item("reply_all", "Reply All", Some(KeyCode::R.meta_shift())),
+                MenuItem::Divider,
+                item("archive", "Archive", None),
+                item("inbox", "Move to Inbox", None),
+                item("junk", "Move to Junk", None),
+                item("trash", "Delete", None),
+                MenuItem::Divider,
+                item("undo", "Undo Move", Some(KeyCode::Z.meta())),
+            ],
+        })
+        .app_menu_definition(MenuDefinition {
+            label: "View".into(),
+            items: vec![
+                item("next", "Next Message", Some(KeyCode::DOWN.meta())),
+                item("prev", "Previous Message", Some(KeyCode::UP.meta())),
             ],
         })
         .install();
@@ -79,4 +89,14 @@ fn main() -> iced::Result {
         .default_font(fonts::ui())
         .window(window_settings_transparent(APP_ID))
         .run()
+}
+
+fn item(id: &str, label: &str, shortcut: Option<sola_core::KeyChord>) -> MenuItem {
+    MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut,
+        disabled: false,
+        checked: false,
+    }
 }

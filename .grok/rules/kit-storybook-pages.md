@@ -39,6 +39,8 @@ for the component you touched must demonstrate the new look or behavior.
 | `field` / form helpers | `pages/field.rs`, `pages/form.rs` |
 | `sidebar` | `pages/sidebar.rs` |
 | `text_input` | `pages/field.rs` (and form demos) |
+| `prose` / `text::prose` | `pages/prose.rs`, `pages/text.rs` |
+| `readable` | `pages/readable.rs` |
 | theme / shell tokens | `pages/theme.rs`, `pages/shell.rs`, Overview |
 | shared `style.rs` materials | Overview + every control page that uses the token |
 

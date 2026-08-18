@@ -5,6 +5,7 @@ use std::sync::Arc;
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
 use sola_bus::Message;
@@ -15,7 +16,9 @@ use sola_kit::components::style::{
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::{button as kit_btn, sidebar, SidebarItem, SidebarSection};
+use sola_kit::components::{
+    button as kit_btn, field, prose, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
+};
 use sola_kit::fonts;
 use sola_kit::theme::{self, default_theme};
 
@@ -25,10 +28,10 @@ use crate::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
-const LIST_W: f32 = 300.0;
+const LIST_W: f32 = 328.0;
 const SIDEBAR_W: f32 = 200.0;
-/// Comfortable reading measure (~65ch at 13px).
-const READ_MAX_W: f32 = 560.0;
+/// Comfortable reading measure (~65ch at 14px prose).
+const READ_MAX_W: f32 = 640.0;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -38,6 +41,7 @@ pub enum Msg {
     SelectMessage(u32),
     SearchChanged(String),
     SearchSubmit,
+    SearchClear,
     LoadMore,
     Compose,
     Reply { all: bool },
@@ -47,13 +51,14 @@ pub enum Msg {
     ComposeCc(String),
     ComposeSubject(String),
     ComposeBodyAction(text_editor::Action),
-    /// Read-only body editor (selection / scroll only).
-    BodyAction(text_editor::Action),
     ClipboardPasted(Option<String>),
     Send,
+    CopyBody,
     MoveSelected(String),
     Undo,
     EmptyFolder,
+    EmptyNamed(String),
+    Refresh,
     OpenUrl(String),
     DismissToast,
     KeyPressed(keyboard::Key, keyboard::Modifiers),
@@ -93,10 +98,10 @@ pub struct App {
     total_messages: u32,
     selected_uid: Option<u32>,
     message_body: Option<MessageBody>,
-    /// Selectable body surface (read-only; Edit menu Select All / Copy).
+    /// Plain body for Edit → Copy / Select All (not shown as an editor).
     body_content: text_editor::Content,
-    /// Cached links for the open message (chips under meta).
-    body_links: Vec<String>,
+    /// Cached letter blocks for the open message.
+    reading_blocks: Vec<ProseBlock>,
     from_addresses: Vec<String>,
     rules: Vec<MailRule>,
     search_query: String,
@@ -130,7 +135,7 @@ impl Default for App {
             selected_uid: None,
             message_body: None,
             body_content: text_editor::Content::new(),
-            body_links: Vec::new(),
+            reading_blocks: Vec::new(),
             from_addresses: Vec::new(),
             rules: Vec::new(),
             search_query: String::new(),
@@ -235,7 +240,7 @@ impl App {
                 self.selected_uid = None;
                 self.message_body = None;
                 self.body_content = text_editor::Content::new();
-                self.body_links.clear();
+                self.reading_blocks.clear();
                 self.composing = false;
                 self.search_active = false;
                 self.search_query.clear();
@@ -248,6 +253,15 @@ impl App {
             }
             Msg::SearchChanged(q) => {
                 self.search_query = q;
+                Task::none()
+            }
+            Msg::SearchClear => {
+                self.search_query.clear();
+                if self.search_active {
+                    self.search_active = false;
+                    self.search_total = 0;
+                    self.load_folder(self.selected_folder.clone());
+                }
                 Task::none()
             }
             Msg::SearchSubmit => {
@@ -357,13 +371,6 @@ impl App {
                 self.draft.body.perform(action);
                 Task::none()
             }
-            Msg::BodyAction(action) => {
-                // Read-only: allow selection / cursor / scroll, ignore edits.
-                if !matches!(action, text_editor::Action::Edit(_)) {
-                    self.body_content.perform(action);
-                }
-                Task::none()
-            }
             Msg::ClipboardPasted(text) => {
                 if self.composing {
                     if let Some(t) = text {
@@ -373,6 +380,14 @@ impl App {
                     }
                 }
                 Task::none()
+            }
+            Msg::CopyBody => {
+                let t = self.body_content.text();
+                if t.is_empty() {
+                    Task::none()
+                } else {
+                    iced::clipboard::write(t)
+                }
             }
             Msg::Send => {
                 if self.draft.to.trim().is_empty() {
@@ -414,6 +429,25 @@ impl App {
                 mail_send(MailCmd::EmptyFolder {
                     folder: self.selected_folder.clone(),
                 });
+                Task::none()
+            }
+            Msg::EmptyNamed(folder) => {
+                mail_send(MailCmd::EmptyFolder {
+                    folder: folder.clone(),
+                });
+                if self.selected_folder.eq_ignore_ascii_case(&folder) {
+                    self.messages.clear();
+                    self.selected_uid = None;
+                    self.message_body = None;
+                    self.body_content = text_editor::Content::new();
+                    self.reading_blocks.clear();
+                }
+                Task::none()
+            }
+            Msg::Refresh => {
+                if self.connected && !self.loading {
+                    self.refresh_all();
+                }
                 Task::none()
             }
             Msg::OpenUrl(url) => {
@@ -472,6 +506,26 @@ impl App {
             "quit" => {
                 mail_send(MailCmd::Shutdown);
                 iced::exit()
+            }
+            "compose" => self.update(Msg::Compose),
+            "reply" => self.update(Msg::Reply { all: false }),
+            "reply_all" => self.update(Msg::Reply { all: true }),
+            "archive" => self.update(Msg::MoveSelected("Archive".into())),
+            "trash" => self.update(Msg::MoveSelected("Trash".into())),
+            "junk" => self.update(Msg::MoveSelected("Junk".into())),
+            "inbox" => self.update(Msg::MoveSelected("INBOX".into())),
+            "undo" => self.update(Msg::Undo),
+            "copy_message" => self.update(Msg::CopyBody),
+            "empty_junk" => self.update(Msg::EmptyNamed("Junk".into())),
+            "empty_trash" => self.update(Msg::EmptyNamed("Trash".into())),
+            "refresh" => self.update(Msg::Refresh),
+            "next" => {
+                self.select_next_or_first();
+                Task::none()
+            }
+            "prev" => {
+                self.select_prev_or_last();
+                Task::none()
             }
             _ => Task::none(),
         }
@@ -585,17 +639,17 @@ impl App {
                 self.total_messages = total;
             }
             MailEvent::Body(body) => {
-                let plain = body.display_text();
-                let links = crate::protocol::links::links_for_message(&body);
+                let blocks = body.reading_blocks();
+                let plain = sola_kit::components::prose::flatten(&blocks);
                 tracing::debug!(
                     uid = body.uid,
-                    n_links = links.len(),
+                    n_blocks = blocks.len(),
                     text_len = plain.len(),
                     has_html = body.html.is_some(),
                     "opened message body"
                 );
                 self.body_content = text_editor::Content::with_text(&plain);
-                self.body_links = links;
+                self.reading_blocks = blocks;
                 self.message_body = Some(body);
             }
             MailEvent::Sent => {
@@ -643,6 +697,14 @@ impl App {
         if self.composing {
             return Task::none();
         }
+        if matches!(key, keyboard::Key::Named(NamedKey::ArrowUp)) {
+            self.select_prev_or_last();
+            return Task::none();
+        }
+        if matches!(key, keyboard::Key::Named(NamedKey::ArrowDown)) {
+            self.select_next_or_first();
+            return Task::none();
+        }
         if mods.control() || mods.alt() || mods.logo() {
             return Task::none();
         }
@@ -652,8 +714,6 @@ impl App {
                 NamedKey::Tab
                     | NamedKey::Enter
                     | NamedKey::Escape
-                    | NamedKey::ArrowUp
-                    | NamedKey::ArrowDown
                     | NamedKey::ArrowLeft
                     | NamedKey::ArrowRight
             )
@@ -768,7 +828,7 @@ impl App {
             self.selected_uid = None;
             self.message_body = None;
             self.body_content = text_editor::Content::new();
-            self.body_links.clear();
+            self.reading_blocks.clear();
         } else if let Some(i) = idx {
             let next = if i > 0 { i - 1 } else { 0 };
             let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
@@ -800,6 +860,26 @@ impl App {
             return;
         }
         self.select_message(self.messages[idx + 1].uid);
+    }
+
+    fn select_next_or_first(&mut self) {
+        if self.selected_uid.is_none() {
+            if let Some(first) = self.messages.first() {
+                self.select_message(first.uid);
+            }
+            return;
+        }
+        self.select_next();
+    }
+
+    fn select_prev_or_last(&mut self) {
+        if self.selected_uid.is_none() {
+            if let Some(last) = self.messages.last() {
+                self.select_message(last.uid);
+            }
+            return;
+        }
+        self.select_prev();
     }
 
     // ── View ──────────────────────────────────────────────────────────
@@ -933,13 +1013,17 @@ impl App {
             .on_submit(Msg::SearchSubmit)
             .width(Length::Fill);
 
-        let header = row![
-            search,
+        let mut header = row![search].spacing(SPACE_SM).align_y(iced::Alignment::Center);
+        if !self.search_query.is_empty() || self.search_active {
+            header = header.push(
+                kit_btn::labeled_sm("Clear", kit_btn::ghost).on_press(Msg::SearchClear),
+            );
+        }
+        header = header.push(
             kit_btn::labeled_sm("Compose", kit_btn::primary).on_press(Msg::Compose),
-        ]
-        .spacing(SPACE_SM)
-        .padding(Padding::from([SPACE_MD, SPACE_MD]))
-        .align_y(iced::Alignment::Center);
+        );
+        let header = header
+            .padding(Padding::from([SPACE_MD, SPACE_MD]));
 
         let status = if self.search_active {
             kit_text::caption(format!("{} results", self.search_total)).style(kit_text::muted)
@@ -971,6 +1055,20 @@ impl App {
             .width(Length::Fill);
 
         let mut list = column![].spacing(0).width(Length::Fill);
+        if self.messages.is_empty() && !self.folder_loading {
+            list = list.push(
+                container(
+                    kit_text::caption(if self.search_active {
+                        "No matching messages"
+                    } else {
+                        "No messages"
+                    })
+                    .style(kit_text::muted),
+                )
+                .padding(Padding::from([SPACE_XL, SPACE_MD]))
+                .width(Length::Fill),
+            );
+        }
         for m in &self.messages {
             let selected = self.selected_uid == Some(m.uid);
             list = list.push(message_row(m, selected));
@@ -1008,13 +1106,20 @@ impl App {
 
     fn view_message(&self) -> Element<'_, Msg> {
         let Some(body) = &self.message_body else {
-            return container(kit_text::caption("Select a message").style(kit_text::muted))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(read_pane_style)
-                .into();
+            return container(
+                column![
+                    kit_text::body("No message selected").style(kit_text::muted),
+                    kit_text::caption("Pick one from the list, or press ↓").style(kit_text::muted),
+                ]
+                .spacing(SPACE_SM)
+                .align_x(iced::Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(read_pane_style)
+            .into();
         };
 
         let mut toolbar = row![
@@ -1030,12 +1135,11 @@ impl App {
         ]
         .spacing(SPACE_XS);
 
+        toolbar = toolbar
+            .push(Space::new().width(Length::Fill))
+            .push(kit_btn::labeled_sm("Copy", kit_btn::ghost).on_press(Msg::CopyBody));
         if self.last_move.is_some() {
-            toolbar = toolbar
-                .push(Space::new().width(Length::Fill))
-                .push(kit_btn::labeled_sm("Undo", kit_btn::ghost).on_press(Msg::Undo));
-        } else {
-            toolbar = toolbar.push(Space::new().width(Length::Fill));
+            toolbar = toolbar.push(kit_btn::labeled_sm("Undo", kit_btn::ghost).on_press(Msg::Undo));
         }
 
         let toolbar = container(toolbar)
@@ -1043,69 +1147,28 @@ impl App {
             .width(Length::Fill)
             .style(toolbar_style);
 
-        let subj = if body.subject.is_empty() {
-            "(no subject)".to_string()
-        } else {
-            body.subject.clone()
-        };
-
-        let mut meta = column![
-            kit_text::subheading(subj),
-            meta_line("From", body.from.clone()),
-            meta_line("To", body.to.clone()),
-        ]
-        .spacing(SPACE_XS)
-        .width(Length::Fill);
-
-        let date_s = short_date(&body.date);
-        if !body.cc.trim().is_empty() {
-            meta = meta.push(meta_line("Cc", body.cc.clone()));
-        }
-        meta = meta.push(meta_line("Date", date_s));
-
-        // Compact link chips (visible URLs only — see links_for_message).
-        let mut article_col = column![meta].spacing(SPACE_LG).width(Length::Fill);
-
-        if !self.body_links.is_empty() {
-            let mut link_col =
-                column![kit_text::caption("Links").style(kit_text::muted)].spacing(SPACE_SM);
-            let mut link_row = row![].spacing(SPACE_SM);
-            for (i, u) in self.body_links.iter().take(8).enumerate() {
-                let label = short_url_label(u, i);
-                link_row = link_row.push(
-                    kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::OpenUrl(u.clone())),
-                );
-            }
-            link_col = link_col.push(link_row);
-            article_col = article_col.push(link_col);
-        }
-
-        let body_editor = text_editor(&self.body_content)
-            .height(Length::Shrink)
-            .min_height(120.0)
-            .padding(0)
-            .size(13.0)
-            .style(body_editor_style)
-            .on_action(Msg::BodyAction);
-
-        article_col = article_col.push(
+        let letter = readable(
             column![
-                kit_text::caption("Message · select text, then Edit → Copy (⌘C)")
-                    .style(kit_text::muted),
-                body_editor,
+                letter_header(body),
+                h_hairline(),
+                prose(self.reading_blocks.clone(), &self.theme, Msg::OpenUrl),
             ]
-            .spacing(SPACE_SM)
-            .width(Length::Fill),
-        );
-
-        let article = container(article_col.padding(Padding::from([SPACE_LG, SPACE_XL])))
+            .spacing(20.0)
             .width(Length::Fill)
-            .max_width(READ_MAX_W);
+            .padding(Padding {
+                top: 28.0,
+                right: 8.0,
+                bottom: 40.0,
+                left: 8.0,
+            }),
+            READ_MAX_W,
+        )
+        .width(Length::Fill);
 
         container(
             column![
                 toolbar,
-                scrollable(article).height(Length::Fill).width(Length::Fill),
+                scrollable(letter).height(Length::Fill).width(Length::Fill),
             ]
             .height(Length::Fill),
         )
@@ -1117,27 +1180,40 @@ impl App {
 
     fn view_compose(&self) -> Element<'_, Msg> {
         let editor = text_editor(&self.draft.body)
-            .placeholder("Message…")
+            .placeholder("Write a message…")
             .height(Length::Fill)
             .padding(12)
             .style(compose_editor_style)
             .on_action(Msg::ComposeBodyAction);
 
         let form = column![
-            kit_text::subheading("Compose"),
-            field_label("From"),
-            text_input("from@", &self.draft.from).on_input(Msg::ComposeFrom),
-            field_label("To"),
-            text_input("to@", &self.draft.to).on_input(Msg::ComposeTo),
-            field_label("Cc"),
-            text_input("cc@", &self.draft.cc).on_input(Msg::ComposeCc),
-            field_label("Subject"),
-            text_input("Subject", &self.draft.subject).on_input(Msg::ComposeSubject),
-            field_label("Body"),
+            field(
+                "From",
+                text_input("from@", &self.draft.from).on_input(Msg::ComposeFrom),
+                None,
+                None,
+            ),
+            field(
+                "To",
+                text_input("to@", &self.draft.to).on_input(Msg::ComposeTo),
+                None,
+                None,
+            ),
+            field(
+                "Cc",
+                text_input("cc@", &self.draft.cc).on_input(Msg::ComposeCc),
+                None,
+                None,
+            ),
+            field(
+                "Subject",
+                text_input("Subject", &self.draft.subject).on_input(Msg::ComposeSubject),
+                None,
+                None,
+            ),
             container(editor)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .max_height(420.0)
                 .style(compose_field_style),
             row![
                 kit_btn::labeled("Send", kit_btn::primary).on_press(Msg::Send),
@@ -1145,16 +1221,19 @@ impl App {
             ]
             .spacing(SPACE_SM),
         ]
-        .spacing(SPACE_SM)
-        .padding(Padding::from([SPACE_LG, SPACE_XL]))
-        .width(Length::Fill)
-        .max_width(READ_MAX_W);
+        .spacing(SPACE_MD)
+        .padding(Padding::from([SPACE_XL, SPACE_XL]))
+        .width(Length::Fill);
 
-        container(scrollable(form).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(read_pane_style)
-            .into()
+        container(
+            readable(form, READ_MAX_W)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(read_pane_style)
+        .into()
     }
 }
 
@@ -1169,55 +1248,48 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
     };
     let date = short_date(&m.date);
 
-    let unread_dot: Element<'_, Msg> = if m.seen {
-        Space::new().width(8).height(8).into()
-    } else {
-        container(Space::new().width(6).height(6))
-            .width(8)
-            .height(8)
-            .center_x(Length::Fixed(8.0))
-            .center_y(Length::Fixed(8.0))
-            .style(unread_dot_style)
-            .into()
-    };
+    // Mail.app: unread is weight, not a leading dot. Both lines clip
+    // to one row so the column stays scannable.
+    let from_text = text(from)
+        .font(if m.seen {
+            fonts::ui()
+        } else {
+            fonts::ui_medium()
+        })
+        .size(13)
+        .wrapping(Wrapping::None)
+        .width(Length::Fill);
 
-    // Keep sender to one visual line (list column is narrow).
-    let from_disp = if from.chars().count() > 28 {
-        let mut s: String = from.chars().take(27).collect();
-        s.push('…');
-        s
-    } else {
-        from
-    };
-
-    let from_text = if m.seen {
-        text(from_disp)
-            .font(fonts::ui())
-            .size(13)
-            .style(|t: &Theme| kit_text::muted(t))
-    } else {
-        text(from_disp).font(fonts::ui_medium()).size(13)
-    };
-
-    let subj_text = if m.seen {
-        kit_text::caption(subj).style(kit_text::muted)
-    } else {
-        kit_text::body(subj)
-    };
+    let mut subj_text = text(subj)
+        .font(if m.seen {
+            fonts::ui()
+        } else {
+            fonts::ui_medium()
+        })
+        .size(13)
+        .wrapping(Wrapping::None)
+        .width(Length::Fill);
+    if m.seen {
+        subj_text = subj_text.style(kit_text::muted);
+    }
 
     let top = row![
-        unread_dot,
-        from_text.width(Length::Fill),
+        container(from_text).width(Length::Fill).clip(true),
         kit_text::caption(date).style(kit_text::muted),
     ]
-    .spacing(SPACE_SM)
+    .spacing(SPACE_MD)
     .align_y(iced::Alignment::Center)
     .width(Length::Fill);
 
-    let content = column![top, subj_text]
-        .spacing(SPACE_XS)
+    let content = column![top, container(subj_text).width(Length::Fill).clip(true)]
+        .spacing(6.0)
         .width(Length::Fill)
-        .padding(Padding::from([SPACE_MD, SPACE_MD]));
+        .padding(Padding {
+            top: 14.0,
+            right: 16.0,
+            bottom: 14.0,
+            left: 16.0,
+        });
 
     button(content)
         .on_press(Msg::SelectMessage(m.uid))
@@ -1232,6 +1304,87 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
 }
 
 // ── Display helpers ───────────────────────────────────────────────────
+
+fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
+    let subj = if body.subject.is_empty() {
+        "(no subject)".to_string()
+    } else {
+        body.subject.clone()
+    };
+    let (name, addr) = split_address(&body.from);
+    let date = letter_date(&body.date);
+
+    let mut from_value = column![text(name).font(fonts::ui_medium()).size(14)]
+        .spacing(2)
+        .width(Length::Fill);
+    if let Some(addr) = addr {
+        from_value = from_value.push(kit_text::caption(addr).style(kit_text::muted));
+    }
+
+    let mut meta = column![
+        letter_meta_row("From", from_value.into()),
+        letter_meta_row(
+            "Date",
+            kit_text::caption(date).style(kit_text::muted).into(),
+        ),
+    ]
+    .spacing(SPACE_LG)
+    .width(Length::Fill);
+
+    let to = body.to.trim();
+    if !to.is_empty() {
+        meta = meta.push(letter_meta_row(
+            "To",
+            kit_text::caption(to.to_string()).style(kit_text::muted).into(),
+        ));
+    }
+    let cc = body.cc.trim();
+    if !cc.is_empty() {
+        meta = meta.push(letter_meta_row(
+            "Cc",
+            kit_text::caption(cc.to_string()).style(kit_text::muted).into(),
+        ));
+    }
+
+    column![
+        text(subj)
+            .font(fonts::ui_medium())
+            .size(22)
+            .width(Length::Fill),
+        meta,
+    ]
+    .spacing(SPACE_XL)
+    .width(Length::Fill)
+    .into()
+}
+
+fn letter_meta_row(label: &'static str, value: Element<'static, Msg>) -> Element<'static, Msg> {
+    row![
+        kit_text::caption(label)
+            .style(kit_text::muted)
+            .width(Length::Fixed(44.0)),
+        value,
+    ]
+    .spacing(SPACE_LG)
+    .align_y(iced::Alignment::Start)
+    .width(Length::Fill)
+    .into()
+}
+
+fn split_address(from: &str) -> (String, Option<String>) {
+    let t = from.trim();
+    if let Some(start) = t.find('<') {
+        let name = t[..start].trim().trim_matches('"');
+        let addr = t[start + 1..].trim().trim_end_matches('>').trim();
+        if !name.is_empty() {
+            return (name.to_string(), Some(addr.to_string()));
+        }
+        if !addr.is_empty() {
+            return (addr.to_string(), None);
+        }
+    }
+    (short_from(t), None)
+}
 
 fn short_from(from: &str) -> String {
     let t = from.trim();
@@ -1250,6 +1403,52 @@ fn short_from(from: &str) -> String {
         }
     }
     t.to_string()
+}
+
+fn letter_date(date: &str) -> String {
+    let t = date.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
+        if let (Ok(year), Ok(mo), Ok(d)) = (
+            t[0..4].parse::<u16>(),
+            t[5..7].parse::<u8>(),
+            t[8..10].parse::<u8>(),
+        ) {
+            return format!("{d} {} {year}", month_name(mo));
+        }
+    }
+    let tokens: Vec<&str> = t.split_whitespace().collect();
+    for i in 0..tokens.len().saturating_sub(2) {
+        let day = tokens[i].trim_end_matches(',');
+        if day.parse::<u8>().is_ok() && is_month_token(tokens[i + 1]) {
+            let mon = tokens[i + 1];
+            let year = tokens[i + 2].trim_end_matches(',');
+            if year.parse::<u16>().is_ok() {
+                return format!("{day} {mon} {year}");
+            }
+        }
+    }
+    short_date(date)
+}
+
+fn month_name(mo: u8) -> &'static str {
+    match mo {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => month_abbr(mo),
+    }
 }
 
 fn short_date(date: &str) -> String {
@@ -1308,40 +1507,18 @@ fn is_month_token(s: &str) -> bool {
     )
 }
 
-fn short_url_label(url: &str, index: usize) -> String {
-    let stripped = url
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    // Prefer host + start of path so magic-link mails are recognizable.
-    let label = if stripped.len() > 56 {
-        format!("{}…", &stripped[..53])
-    } else if stripped.is_empty() {
-        format!("Open link {}", index + 1)
-    } else {
-        stripped.to_string()
-    };
-    format!("↗  {label}")
-}
-
-fn meta_line(label: &str, value: String) -> Element<'static, Msg> {
-    row![
-        kit_text::caption(format!("{label}:"))
-            .style(kit_text::muted)
-            .width(Length::Fixed(44.0)),
-        kit_text::caption(value).style(kit_text::muted),
-    ]
-    .spacing(SPACE_SM)
-    .into()
-}
-
-fn field_label(label: &str) -> Element<'_, Msg> {
-    kit_text::caption(label.to_string()).style(kit_text::muted).into()
-}
-
 fn v_hairline() -> Element<'static, Msg> {
     container(Space::new().width(1).height(Length::Fill))
         .width(1)
         .height(Length::Fill)
+        .style(hairline_style)
+        .into()
+}
+
+fn h_hairline() -> Element<'static, Msg> {
+    container(Space::new().width(Length::Fill).height(1))
+        .width(Length::Fill)
+        .height(1)
         .style(hairline_style)
         .into()
 }
@@ -1407,18 +1584,6 @@ fn hairline_style(theme: &Theme) -> container::Style {
             p.background.base.color,
             HAIRLINE_A,
         ))),
-        ..container::Style::default()
-    }
-}
-
-fn unread_dot_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.primary.base.color)),
-        border: Border {
-            radius: 99.0.into(),
-            ..Default::default()
-        },
         ..container::Style::default()
     }
 }
@@ -1490,21 +1655,5 @@ fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_edit
         },
         value: p.background.base.text,
         selection: p.primary.weak.color,
-    }
-}
-
-fn body_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
-    let p = theme.extended_palette();
-    let _ = status;
-    text_editor::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        placeholder: p.secondary.base.color,
-        value: p.background.base.text,
-        selection: theme::selection(),
     }
 }

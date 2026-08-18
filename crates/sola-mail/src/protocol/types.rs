@@ -50,15 +50,12 @@ pub fn sort_folders(folders: &mut [Folder]) {
     });
 }
 
-/// Sidebar badge: `unread/total` when unread > 0, else just `total` (apocrypha).
-pub fn folder_count_badge(unread: u32, total: u32) -> Option<String> {
-    if total == 0 {
-        return None;
-    }
-    if unread > 0 {
-        Some(format!("{unread}/{total}"))
+/// Sidebar badge: unread only. Hidden when the folder is fully read.
+pub fn folder_count_badge(unread: u32, _total: u32) -> Option<String> {
+    if unread == 0 {
+        None
     } else {
-        Some(total.to_string())
+        Some(unread.to_string())
     }
 }
 
@@ -123,8 +120,8 @@ mod tests {
     #[test]
     fn count_badge_formats() {
         assert_eq!(folder_count_badge(0, 0), None);
-        assert_eq!(folder_count_badge(0, 12), Some("12".into()));
-        assert_eq!(folder_count_badge(5, 12), Some("5/12".into()));
+        assert_eq!(folder_count_badge(0, 12), None);
+        assert_eq!(folder_count_badge(5, 12), Some("5".into()));
     }
 }
 
@@ -154,15 +151,26 @@ pub struct MessageBody {
 }
 
 impl MessageBody {
-    /// Prefer plain text; if empty, fall back to HTML→text.
+    /// Copy / reply text. Prefers a real plaintext part; uses HTML when
+    /// the plain part is a generator stub (the usual HTML-mail case).
     pub fn display_text(&self) -> String {
-        let plain = self.text.trim();
-        if !plain.is_empty() {
-            return self.text.clone();
-        }
+        sola_kit::components::prose::flatten(&self.reading_blocks())
+    }
+
+    /// Letter blocks for the reading pane. Prefer HTML whenever it is
+    /// present — that is the part mail apps actually render.
+    pub fn reading_blocks(&self) -> Vec<sola_kit::components::prose::ProseBlock> {
+        use crate::protocol::html_text::to_blocks;
+        use sola_kit::components::prose::parse_plain;
+
         if let Some(html) = &self.html {
-            return crate::protocol::html_text::to_plain(html);
+            if !html.trim().is_empty() {
+                return to_blocks(html);
+            }
         }
-        String::new()
+        if !self.text.trim().is_empty() {
+            return parse_plain(&self.text);
+        }
+        Vec::new()
     }
 }

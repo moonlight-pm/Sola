@@ -1,7 +1,7 @@
 //! Storybook app — global theme header + sidebar nav + showcase pane.
 //!
 //! Each kit-shipped component (badge, button, card, divider, field,
-//! icon, number_input, popover, readable, sidebar, split, text, theme
+//! icon, number_input, popover, prose, readable, sidebar, split, text, theme
 //! atoms, toolbar) gets a page in [`pages`]; `swatch` and `text_input`
 //! are folded into the Theme and Field pages respectively. The shell
 //! holds the selected page in state and re-renders on `Select(Page)`.
@@ -48,6 +48,7 @@ pub enum Page {
     Icon,
     NumberInput,
     Readable,
+    Prose,
     ColorPicker,
     FilePicker,
     Divider,
@@ -80,6 +81,7 @@ impl Page {
         Page::Icon,
         Page::NumberInput,
         Page::Readable,
+        Page::Prose,
         Page::ColorPicker,
         Page::FilePicker,
         Page::Popover,
@@ -102,6 +104,7 @@ impl Page {
             Page::Icon => "Icon",
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
+            Page::Prose => "Prose",
             Page::ColorPicker => "ColorPicker",
             Page::FilePicker => "FilePicker",
             Page::Divider => "Divider",
@@ -131,6 +134,7 @@ impl Page {
             | Page::Icon
             | Page::NumberInput
             | Page::Readable
+            | Page::Prose
             | Page::ColorPicker
             | Page::FilePicker
             | Page::Popover
@@ -166,6 +170,7 @@ impl Page {
             Page::Icon => &[Fg, FgMuted, Accent],
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
+            Page::Prose => &[Bg, BgRaised, Fg, FgMuted, Accent],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
             Page::FilePicker => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted, Accent],
             Page::Popover => &[BgRaised, Border, Fg, FgMuted],
@@ -1405,6 +1410,7 @@ impl Storybook {
                 pages::number_input::view(&self.number_input).map(Msg::NumberInput)
             }
             Page::Readable => pages::readable::view(),
+            Page::Prose => pages::prose::view(&self.theme),
             Page::ColorPicker => {
                 pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
             }
@@ -1471,6 +1477,7 @@ mod tests {
             Page::Icon,
             Page::NumberInput,
             Page::Readable,
+            Page::Prose,
             Page::ColorPicker,
             Page::FilePicker,
             Page::Divider,
@@ -1499,6 +1506,7 @@ mod tests {
                 | Page::Icon
                 | Page::NumberInput
                 | Page::Readable
+                | Page::Prose
                 | Page::ColorPicker
                 | Page::FilePicker
                 | Page::Divider

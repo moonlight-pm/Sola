@@ -46,6 +46,7 @@ pub mod form;
 pub mod icon;
 pub mod number_input;
 pub mod popover;
+pub mod prose;
 pub mod readable;
 pub mod select;
 pub mod sidebar;
@@ -74,6 +75,7 @@ pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use number_input::number_input;
 pub use popover::{popover, popover_anchored, Placement};
+pub use prose::{flatten as flatten_prose, parse_plain, prose, ProseBlock, ProseRun};
 pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use readable::readable;
 pub use sidebar::{
