@@ -1,26 +1,29 @@
 //! Kit UI: three-pane mail client (graphite list + reading composition).
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::widget::text::Wrapping;
+use iced::widget::scrollable::Viewport;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
+use sola_kit::components::icon::icon_handle;
 use sola_kit::components::style::{
     mix_white, HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
+use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::components::{
     button as kit_btn, field, prose, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{self, default_theme};
+use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
 use crate::protocol::{folder_count_badge, folder_label, Folder, MessageBody, MessageSummary};
@@ -30,6 +33,8 @@ const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
 const LIST_W: f32 = 328.0;
 const SIDEBAR_W: f32 = 200.0;
+/// Shared list-header / reader-toolbar height so icons sit on one line.
+const CHROME_H: f32 = 40.0;
 /// Comfortable reading measure (~65ch at 14px prose).
 const READ_MAX_W: f32 = 640.0;
 
@@ -43,6 +48,7 @@ pub enum Msg {
     SearchSubmit,
     SearchClear,
     LoadMore,
+    ListScrolled(Viewport),
     Compose,
     Reply { all: bool },
     CancelCompose,
@@ -274,19 +280,14 @@ impl App {
                 mail_send(MailCmd::Search { query: q });
                 Task::none()
             }
-            Msg::LoadMore => {
-                if self.is_loading_more || self.search_active {
-                    return Task::none();
+            Msg::LoadMore => self.load_more(),
+            Msg::ListScrolled(vp) => {
+                let remain = vp.content_bounds().height
+                    - vp.bounds().height
+                    - vp.absolute_offset().y;
+                if remain < 280.0 {
+                    return self.update(Msg::LoadMore);
                 }
-                if (self.messages.len() as u32) >= self.total_messages {
-                    return Task::none();
-                }
-                self.is_loading_more = true;
-                mail_send(MailCmd::ListMessages {
-                    folder: self.selected_folder.clone(),
-                    offset: self.messages.len() as u32,
-                    limit: PAGE,
-                });
                 Task::none()
             }
             Msg::Compose => {
@@ -426,22 +427,12 @@ impl App {
                 Task::none()
             }
             Msg::EmptyFolder => {
-                mail_send(MailCmd::EmptyFolder {
-                    folder: self.selected_folder.clone(),
-                });
+                let folder = self.selected_folder.clone();
+                self.begin_empty(&folder);
                 Task::none()
             }
             Msg::EmptyNamed(folder) => {
-                mail_send(MailCmd::EmptyFolder {
-                    folder: folder.clone(),
-                });
-                if self.selected_folder.eq_ignore_ascii_case(&folder) {
-                    self.messages.clear();
-                    self.selected_uid = None;
-                    self.message_body = None;
-                    self.body_content = text_editor::Content::new();
-                    self.reading_blocks.clear();
-                }
+                self.begin_empty(&folder);
                 Task::none()
             }
             Msg::Refresh => {
@@ -659,8 +650,14 @@ impl App {
                 mail_send(MailCmd::ListFolders);
             }
             MailEvent::Moved => {}
-            MailEvent::Emptied => {
-                self.load_folder(self.selected_folder.clone());
+            MailEvent::Emptied { folder } => {
+                self.folder_loading = false;
+                self.toast = Some(format!("{} erased", folder_label(&folder)));
+                self.toast_undo = false;
+                mail_send(MailCmd::ListFolders);
+                if self.selected_folder.eq_ignore_ascii_case(&folder) {
+                    self.load_folder(folder);
+                }
             }
             MailEvent::NewMail => {
                 self.refresh_all();
@@ -673,6 +670,9 @@ impl App {
                 self.toast_undo = false;
                 if context == "connect" {
                     self.connected = false;
+                }
+                if context == "empty_folder" {
+                    self.load_folder(self.selected_folder.clone());
                 }
             }
         }
@@ -757,6 +757,38 @@ impl App {
         } else {
             self.selected_folder.clone()
         }
+    }
+
+    fn load_more(&mut self) -> Task<Msg> {
+        if self.is_loading_more || self.search_active || self.folder_loading {
+            return Task::none();
+        }
+        if (self.messages.len() as u32) >= self.total_messages {
+            return Task::none();
+        }
+        self.is_loading_more = true;
+        mail_send(MailCmd::ListMessages {
+            folder: self.selected_folder.clone(),
+            offset: self.messages.len() as u32,
+            limit: PAGE,
+        });
+        Task::none()
+    }
+
+    fn begin_empty(&mut self, folder: &str) {
+        self.toast = Some(format!("Erasing {}…", folder_label(folder)));
+        self.toast_undo = false;
+        if self.selected_folder.eq_ignore_ascii_case(folder) {
+            self.folder_loading = true;
+            self.messages.clear();
+            self.selected_uid = None;
+            self.message_body = None;
+            self.body_content = text_editor::Content::new();
+            self.reading_blocks.clear();
+        }
+        mail_send(MailCmd::EmptyFolder {
+            folder: folder.to_string(),
+        });
     }
 
     fn is_emptyable_folder(&self) -> bool {
@@ -914,11 +946,16 @@ impl App {
                 v_hairline(),
                 self.view_message_list(),
                 v_hairline(),
-                if self.composing {
-                    self.view_compose()
-                } else {
-                    self.view_message()
-                },
+                column![
+                    self.view_reader_toolbar(),
+                    if self.composing {
+                        self.view_compose()
+                    } else {
+                        self.view_message()
+                    },
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill),
             ]
             .height(Length::Fill)
             .into()
@@ -1007,52 +1044,57 @@ impl App {
     }
 
     fn view_message_list(&self) -> Element<'_, Msg> {
-        // Single chrome row: search + Compose (one primary).
-        let search = text_input("Search…", &self.search_query)
+        let search = text_input("Search", &self.search_query)
             .on_input(Msg::SearchChanged)
             .on_submit(Msg::SearchSubmit)
-            .width(Length::Fill);
-
-        let mut header = row![search].spacing(SPACE_SM).align_y(iced::Alignment::Center);
-        if !self.search_query.is_empty() || self.search_active {
-            header = header.push(
-                kit_btn::labeled_sm("Clear", kit_btn::ghost).on_press(Msg::SearchClear),
-            );
-        }
-        header = header.push(
-            kit_btn::labeled_sm("Compose", kit_btn::primary).on_press(Msg::Compose),
-        );
-        let header = header
-            .padding(Padding::from([SPACE_MD, SPACE_MD]));
-
-        let status = if self.search_active {
-            kit_text::caption(format!("{} results", self.search_total)).style(kit_text::muted)
-        } else if self.folder_loading {
-            kit_text::caption("Loading…").style(kit_text::muted)
-        } else {
-            kit_text::caption(format!(
-                "{} · {}",
-                folder_label(&self.selected_folder),
-                self.total_messages
-            ))
-            .style(kit_text::muted)
-        };
-
-        let mut status_row = row![status, Space::new().width(Length::Fill)].spacing(SPACE_SM);
-        if self.is_emptyable_folder() && !self.search_active {
-            status_row = status_row.push(
-                kit_btn::labeled_sm("Empty", kit_btn::ghost).on_press(Msg::EmptyFolder),
-            );
-        }
-
-        let status_bar = container(status_row)
+            .size(13)
             .padding(Padding {
-                top: 0.0,
-                right: SPACE_MD,
-                bottom: SPACE_SM,
-                left: SPACE_MD,
+                top: 5.0,
+                right: 10.0,
+                bottom: 5.0,
+                left: 10.0,
             })
             .width(Length::Fill);
+
+        let count = if self.search_active {
+            format_count(self.search_total)
+        } else if self.folder_loading {
+            "…".into()
+        } else {
+            format_count(self.total_messages)
+        };
+
+        let mut header = row![
+            search,
+            kit_text::caption(count).style(kit_text::muted),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center);
+        if !self.search_query.is_empty() || self.search_active {
+            header = header.push(icon_tool(
+                "lucide/x",
+                "Clear search",
+                Some(Msg::SearchClear),
+            ));
+        }
+        if self.is_emptyable_folder() && !self.search_active {
+            header = header.push(icon_tool(
+                "lucide/trash-2",
+                "Erase folder",
+                Some(Msg::EmptyFolder),
+            ));
+        }
+        let header = container(header)
+            .width(Length::Fill)
+            .height(Length::Fixed(CHROME_H))
+            .padding(Padding {
+                top: 0.0,
+                right: SPACE_LG,
+                bottom: 0.0,
+                left: SPACE_LG,
+            })
+            .align_y(iced::Alignment::Center)
+            .style(toolbar_style);
 
         let mut list = column![].spacing(0).width(Length::Fill);
         if self.messages.is_empty() && !self.folder_loading {
@@ -1073,28 +1115,14 @@ impl App {
             let selected = self.selected_uid == Some(m.uid);
             list = list.push(message_row(m, selected));
         }
-        if !self.search_active && (self.messages.len() as u32) < self.total_messages {
-            let label = if self.is_loading_more {
-                "Loading…"
-            } else {
-                "Load more"
-            };
-            list = list.push(
-                container(
-                    kit_btn::labeled_sm(label, kit_btn::ghost)
-                        .on_press(Msg::LoadMore)
-                        .width(Length::Fill),
-                )
-                .padding(SPACE_MD)
-                .width(Length::Fill),
-            );
-        }
 
         container(
             column![
                 header,
-                status_bar,
-                scrollable(list).height(Length::Fill).width(Length::Fill),
+                scrollable(list)
+                    .height(Length::Fill)
+                    .width(Length::Fill)
+                    .on_scroll(Msg::ListScrolled),
             ]
             .height(Length::Fill),
         )
@@ -1102,6 +1130,61 @@ impl App {
         .height(Length::Fill)
         .style(list_pane_style)
         .into()
+    }
+
+    fn view_reader_toolbar(&self) -> Element<'_, Msg> {
+        let has_msg = self.selected_uid.is_some() && !self.composing;
+        let mut bar = row![
+            icon_tool("lucide/square-pen", "Compose", Some(Msg::Compose)),
+            icon_tool(
+                "lucide/reply",
+                "Reply",
+                has_msg.then_some(Msg::Reply { all: false }),
+            ),
+            icon_tool(
+                "lucide/reply-all",
+                "Reply all",
+                has_msg.then_some(Msg::Reply { all: true }),
+            ),
+            icon_tool(
+                "lucide/archive",
+                "Archive",
+                has_msg.then_some(Msg::MoveSelected("Archive".into())),
+            ),
+            icon_tool(
+                "lucide/trash-2",
+                "Trash",
+                has_msg.then_some(Msg::MoveSelected("Trash".into())),
+            ),
+            icon_tool(
+                "lucide/ban",
+                "Junk",
+                has_msg.then_some(Msg::MoveSelected("Junk".into())),
+            ),
+        ]
+        .spacing(SPACE_XS)
+        .align_y(iced::Alignment::Center);
+
+        bar = bar.push(Space::new().width(Length::Fill));
+        if has_msg {
+            bar = bar.push(icon_tool("lucide/copy", "Copy message", Some(Msg::CopyBody)));
+        }
+        if self.last_move.is_some() {
+            bar = bar.push(icon_tool("lucide/undo-2", "Undo move", Some(Msg::Undo)));
+        }
+
+        container(bar)
+            .width(Length::Fill)
+            .height(Length::Fixed(CHROME_H))
+            .padding(Padding {
+                top: 0.0,
+                right: SPACE_LG,
+                bottom: 0.0,
+                left: SPACE_LG,
+            })
+            .align_y(iced::Alignment::Center)
+            .style(toolbar_style)
+            .into()
     }
 
     fn view_message(&self) -> Element<'_, Msg> {
@@ -1122,31 +1205,6 @@ impl App {
             .into();
         };
 
-        let mut toolbar = row![
-            kit_btn::labeled_sm("Reply", kit_btn::secondary)
-                .on_press(Msg::Reply { all: false }),
-            kit_btn::labeled_sm("Reply all", kit_btn::ghost).on_press(Msg::Reply { all: true }),
-            kit_btn::labeled_sm("Archive", kit_btn::ghost)
-                .on_press(Msg::MoveSelected("Archive".into())),
-            kit_btn::labeled_sm("Trash", kit_btn::ghost)
-                .on_press(Msg::MoveSelected("Trash".into())),
-            kit_btn::labeled_sm("Junk", kit_btn::ghost)
-                .on_press(Msg::MoveSelected("Junk".into())),
-        ]
-        .spacing(SPACE_XS);
-
-        toolbar = toolbar
-            .push(Space::new().width(Length::Fill))
-            .push(kit_btn::labeled_sm("Copy", kit_btn::ghost).on_press(Msg::CopyBody));
-        if self.last_move.is_some() {
-            toolbar = toolbar.push(kit_btn::labeled_sm("Undo", kit_btn::ghost).on_press(Msg::Undo));
-        }
-
-        let toolbar = container(toolbar)
-            .padding(Padding::from([SPACE_MD, SPACE_LG]))
-            .width(Length::Fill)
-            .style(toolbar_style);
-
         let letter = readable(
             column![
                 letter_header(body),
@@ -1165,13 +1223,7 @@ impl App {
         )
         .width(Length::Fill);
 
-        container(
-            column![
-                toolbar,
-                scrollable(letter).height(Length::Fill).width(Length::Fill),
-            ]
-            .height(Length::Fill),
-        )
+        container(scrollable(letter).height(Length::Fill).width(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
         .style(read_pane_style)
@@ -1295,15 +1347,52 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
         .on_press(Msg::SelectMessage(m.uid))
         .padding(0)
         .width(Length::Fill)
-        .style(if selected {
-            list_row_selected
-        } else {
-            list_row_idle
-        })
+        .style(kit_btn::list_item(selected))
         .into()
 }
 
 // ── Display helpers ───────────────────────────────────────────────────
+
+fn icon_tool(name: &'static str, tip: &'static str, on_press: Option<Msg>) -> Element<'static, Msg> {
+    toolbar_icon_tip(cached_icon(name), tip, on_press)
+}
+
+fn cached_icon(name: &'static str) -> iced::widget::svg::Handle {
+    static HANDLES: OnceLock<std::collections::HashMap<&'static str, iced::widget::svg::Handle>> =
+        OnceLock::new();
+    HANDLES
+        .get_or_init(|| {
+            [
+                "lucide/square-pen",
+                "lucide/reply",
+                "lucide/reply-all",
+                "lucide/archive",
+                "lucide/trash-2",
+                "lucide/ban",
+                "lucide/copy",
+                "lucide/undo-2",
+                "lucide/x",
+            ]
+            .into_iter()
+            .map(|n| (n, icon_handle(n)))
+            .collect()
+        })
+        .get(name)
+        .cloned()
+        .unwrap_or_else(|| icon_handle(name))
+}
+
+fn format_count(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
 
 fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
     let subj = if body.subject.is_empty() {
@@ -1588,44 +1677,6 @@ fn hairline_style(theme: &Theme) -> container::Style {
     }
 }
 
-fn list_row_idle(theme: &Theme, status: button::Status) -> button::Style {
-    let p = theme.extended_palette();
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-        background: if hover {
-            Some(Background::Color(Color {
-                a: 0.55,
-                ..p.background.strong.color
-            }))
-        } else {
-            None
-        },
-        text_color: p.background.base.text,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_MD.into(),
-        },
-        shadow: Default::default(),
-        snap: true,
-    }
-}
-
-fn list_row_selected(theme: &Theme, _status: button::Status) -> button::Style {
-    let p = theme.extended_palette();
-    button::Style {
-        background: Some(Background::Color(theme::selection())),
-        text_color: p.background.base.text,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_MD.into(),
-        },
-        shadow: Default::default(),
-        snap: true,
-    }
-}
-
 fn compose_field_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
@@ -1654,6 +1705,6 @@ fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_edit
             ..p.secondary.base.color
         },
         value: p.background.base.text,
-        selection: p.primary.weak.color,
+        selection: mix_white(p.background.weaker.color, 0.16),
     }
 }

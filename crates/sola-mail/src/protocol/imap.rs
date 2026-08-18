@@ -110,8 +110,11 @@ impl ImapClient {
 
     /// Select a folder and fetch a page of message summaries (most recent first).
     ///
-    /// Excludes messages with the `\Deleted` flag so soft-deleted mail does
-    /// not linger in the list after another client (or a failed expunge) marks them.
+    /// Uses `SELECT` + sequence `FETCH`, not `UID SEARCH`. This server's
+    /// SEARCH replies (`ESEARCH` / empty-mailbox forms) make the rust imap
+    /// crate return `Unable to parse status response` and then panic on the
+    /// next command's tag (`a3` vs `a4`). `\Deleted` is dropped in
+    /// [`parse_summary`].
     pub fn list_messages(
         &mut self,
         folder: &str,
@@ -120,11 +123,8 @@ impl ImapClient {
     ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
         let folder = folder.to_string();
         self.with_reconnect(move |s| {
-            s.ensure_selected(&folder)?;
-            let mut uids: Vec<u32> = uid_search_undeleted(&mut s.session)?.into_iter().collect();
-            uids.sort_unstable_by(|a, b| b.cmp(a));
-            let total = uids.len() as u32;
-            fetch_envelopes(&mut s.session, &uids, offset, limit, total)
+            let exists = s.select_folder(&folder)?;
+            fetch_page_by_seq(&mut s.session, exists, offset, limit)
         })
     }
 
@@ -137,11 +137,23 @@ impl ImapClient {
     ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
         let rules = rules.to_vec();
         self.with_reconnect(move |s| {
-            s.ensure_selected("INBOX")?;
-            let all_uids = uid_search_undeleted(&mut s.session)?;
+            let exists = s.select_folder("INBOX")?;
+            if exists == 0 {
+                return Ok((Vec::new(), 0));
+            }
+            let fetches = s.session.fetch(
+                format!("1:{exists}"),
+                "(UID FLAGS)",
+            )?;
             let excluded = smart_mailbox_uids(&mut s.session, &rules);
-            let mut kept: Vec<u32> = all_uids
-                .into_iter()
+            let mut kept: Vec<u32> = fetches
+                .iter()
+                .filter(|f| {
+                    !f.flags()
+                        .iter()
+                        .any(|flag| matches!(flag, imap::types::Flag::Deleted))
+                })
+                .filter_map(|f| f.uid)
                 .filter(|uid| !excluded.contains(uid))
                 .collect();
             kept.sort_unstable_by(|a, b| b.cmp(a));
@@ -326,16 +338,33 @@ impl ImapClient {
             anyhow::bail!("Cannot empty protected folder: {folder}");
         }
         let folder = folder.to_string();
-        self.with_reconnect(move |s| {
-            let mailbox = s.session.select(&folder)?;
-            s.selected_folder = Some(folder.clone());
-            if mailbox.exists == 0 {
-                return Ok(());
+        let result = self.with_reconnect({
+            let folder = folder.clone();
+            move |s| {
+                // Batch so a large Trash does not sit on one STORE/EXPUNGE
+                // past the socket timeout (that surfaces as EAGAIN / os error 11).
+                const BATCH: u32 = 200;
+                loop {
+                    let mailbox = s.session.select(&folder)?;
+                    if mailbox.exists == 0 {
+                        break;
+                    }
+                    let end = mailbox.exists.min(BATCH);
+                    s.session.store(format!("1:{end}"), "+FLAGS (\\Deleted)")?;
+                    s.session.expunge()?;
+                    while s.session.unsolicited_responses.try_recv().is_ok() {}
+                }
+                s.selected_folder = None;
+                Ok(())
             }
-            s.session.store("1:*", "+FLAGS (\\Deleted)")?;
-            s.session.expunge()?;
-            Ok(())
-        })
+        });
+        // Fresh session so the next list/select starts at tag a1.
+        if result.is_ok() {
+            if let Err(e) = self.reconnect() {
+                warn!("IMAP reconnect after empty {folder} failed: {e}");
+            }
+        }
+        result
     }
 
     /// Append a raw message to a folder with the \Seen flag.
@@ -432,10 +461,17 @@ impl ImapClient {
     /// Ensure the given folder is selected, re-selecting if needed.
     fn ensure_selected(&mut self, folder: &str) -> anyhow::Result<()> {
         if self.selected_folder.as_deref() != Some(folder) {
-            self.session.select(folder)?;
-            self.selected_folder = Some(folder.to_string());
+            self.select_folder(folder)?;
         }
         Ok(())
+    }
+
+    /// Always `SELECT` so `EXISTS` is current. Returns the exists count.
+    fn select_folder(&mut self, folder: &str) -> anyhow::Result<u32> {
+        let mailbox = self.session.select(folder)?;
+        while self.session.unsolicited_responses.try_recv().is_ok() {}
+        self.selected_folder = Some(folder.to_string());
+        Ok(mailbox.exists)
     }
 
     /// Reconnect to the IMAP server, replacing the dead session.
@@ -484,9 +520,9 @@ impl ImapClient {
             Err(panic) => {
                 let msg = panic
                     .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| panic.downcast_ref::<&str>().copied())
-                    .unwrap_or("unknown");
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_else(|| "session desynced (tag mismatch)".into());
                 Err(anyhow::anyhow!("imap panic: {msg}"))
             }
         }
@@ -541,6 +577,9 @@ fn is_connection_error(err: &anyhow::Error) -> bool {
         || msg.contains("unexpected eof")
         || msg.contains("timed out")
         || msg.contains("not connected")
+        || msg.contains("temporarily unavailable")
+        || msg.contains("os error 11")
+        || msg.contains("would block")
 }
 
 /// Parse a FETCH response into a MessageSummary.
@@ -730,6 +769,30 @@ fn smart_mailbox_uids(session: &mut ImapSession, rules: &[MailRule]) -> HashSet<
     union
 }
 
+/// Page of envelopes via sequence numbers (highest seq = newest). No SEARCH.
+fn fetch_page_by_seq(
+    session: &mut ImapSession,
+    exists: u32,
+    offset: u32,
+    limit: u32,
+) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
+    if exists == 0 || limit == 0 {
+        return Ok((Vec::new(), exists));
+    }
+    let end = exists.saturating_sub(offset);
+    if end == 0 {
+        return Ok((Vec::new(), exists));
+    }
+    let start = end.saturating_sub(limit.saturating_sub(1)).max(1);
+    let fetches = session.fetch(
+        format!("{start}:{end}"),
+        "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
+    )?;
+    let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
+    messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
+    Ok((messages, exists))
+}
+
 /// Fetch envelope summaries for a paginated slice of a UID list (already sorted desc).
 fn fetch_envelopes(
     session: &mut ImapSession,
@@ -758,19 +821,6 @@ fn fetch_envelopes(
     let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
     messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
     Ok((messages, total))
-}
-
-/// UID SEARCH preferring undeleted messages; falls back to ALL if UNDELETED fails.
-fn uid_search_undeleted(
-    session: &mut ImapSession,
-) -> anyhow::Result<std::collections::HashSet<u32>> {
-    match session.uid_search("UNDELETED") {
-        Ok(uids) => Ok(uids),
-        Err(e) => {
-            warn!("UNDELETED search failed, falling back to ALL: {e}");
-            Ok(session.uid_search("ALL")?)
-        }
-    }
 }
 
 /// Build an IMAP SEARCH query string from mail rule conditions.

@@ -220,13 +220,13 @@ When not composing and focus is not a text input:
 
 | Key | Action |
 |---|---|
-| `j` | Move selected → Junk, advance |
-| `i` | Move selected → INBOX, advance |
-| `a` | Move selected → Archive, advance |
-| `d` | Move selected → Trash, advance |
-| `u` | Undo last move |
-| `w` / ↑ | Previous message |
-| `s` / ↓ | Next message |
+| `j` | Move selected → Junk, advance (Message menu) |
+| `i` | Move selected → INBOX, advance (Message menu) |
+| `a` | Move selected → Archive, advance (Message menu) |
+| `d` | Move selected → Trash, advance (Message menu) |
+| `u` | Undo last move (Message menu) |
+| `w` / ↑ | Previous message (View menu) |
+| `s` / ↓ | Next message (View menu) |
 
 ### Theme / kit components
 

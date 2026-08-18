@@ -65,19 +65,19 @@ fn main() -> iced::Result {
                 item("reply", "Reply", Some(KeyCode::R.meta())),
                 item("reply_all", "Reply All", Some(KeyCode::R.meta_shift())),
                 MenuItem::Divider,
-                item("archive", "Archive", None),
-                item("inbox", "Move to Inbox", None),
-                item("junk", "Move to Junk", None),
-                item("trash", "Delete", None),
+                item("archive", "Archive", Some(KeyCode::A.chord())),
+                item("inbox", "Move to Inbox", Some(KeyCode::I.chord())),
+                item("junk", "Move to Junk", Some(KeyCode::J.chord())),
+                item("trash", "Delete", Some(KeyCode::D.chord())),
                 MenuItem::Divider,
-                item("undo", "Undo Move", Some(KeyCode::Z.meta())),
+                item("undo", "Undo Move", Some(KeyCode::U.chord())),
             ],
         })
         .app_menu_definition(MenuDefinition {
             label: "View".into(),
             items: vec![
-                item("next", "Next Message", Some(KeyCode::DOWN.meta())),
-                item("prev", "Previous Message", Some(KeyCode::UP.meta())),
+                item("next", "Next Message", Some(KeyCode::S.chord())),
+                item("prev", "Previous Message", Some(KeyCode::W.chord())),
             ],
         })
         .install();
