@@ -9,13 +9,19 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-18 (workspaces rail polish + browser polish on master)
+**As of:** 2026-08-18 (marketing sola.computer messaging merged; workspaces + browser polish on master)
 
 ---
 
 ## Now
 
-1. **sola-workspaces** — **partial** (on master)  
+1. **Marketing site (sola.computer)** — Paper design in progress
+   ([file](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ));
+   copy authority [`docs/marketing/PRODUCT.md`](docs/marketing/PRODUCT.md)
+   (kit/theme lead, Steam, ISO CTA). **Next:** iterate design, then implement
+   site (stack TBD). Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop**
+   product truth — do not overwrite it with site messaging.
+2. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -34,19 +40,19 @@ Do not invent product policy.
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
    Shortcuts: ⌘T spawn, ⌘N new project, ⌘W drop sibling. Working ring
    spins (kit mark uses ms phase, not `as_secs_f32`).  
-2. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+3. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
-3. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+4. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
    kit helper. Workspaces already registers `ws` (unsmoked). **Needs install
    to dogfood.** **D3** (confirm gates) is open.  
-4. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+5. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
-5. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-6. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+6. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+7. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
    preview, mail, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser polish on this
    worktree: tab-group **pocket** (kit; **installed**); **⌘-click**
