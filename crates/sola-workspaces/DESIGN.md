@@ -68,21 +68,23 @@ state from hue alone — shape differs too.
 ## Typography
 
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
-Workspace title 14, subtitle 11 muted. Agent name (who) is a trailing
-secondary, never inside the mark.
+Workspace title 14. No agent name on the row — status is the mark, the
+toast names who. Sibling rows use the kit hover × (`on_close`, lucide/x).
+Root has no close; that is a project-level verb we do not ship yet.
 
 ## Layout
 
 ```
 [ PROJECT                    + ]
-[ ●  root              who     ]
-[ ●  workspace-a       who     ]
+[ ●  root                      ]
+[ ●  workspace-a               ]
+[ NEXT PROJECT               + ]
               terminal grid →
 ```
 
-Mark slot is always 12×12 so titles do not shift. Group `+` opens a
-name-only modal (worktree + branch). The new pane is a shell — start
-grok yourself.
+Mark slot is always 12×12 so titles do not shift. Groups stack at the
+top; a lone project may fill to scroll. Group `+` opens a name-only
+modal (worktree + branch). The new pane is a shell — start grok yourself.
 
 ## Shapes
 
@@ -97,15 +99,19 @@ Motion is state only (the working ring). No page-load choreography.
 ## Components
 
 Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Section labels
-toggle collapse; section `+` opens the name modal. App-local: catalog,
-modal, drop confirm. Do not restyle mail / settings / terminal.
+toggle collapse; section `+` opens the name modal. Hover close is kit
+`SidebarItem::on_close` (not the session-card trash). App-local: catalog,
+modal. Do not restyle mail / settings / terminal.
 
 ## Do's and Don'ts
 
 - Do reserve the mark slot on every row, including idle.
-- Do keep who (agent name) separate from state (the mark).
+- Do keep who off the row; state is the mark, toast names the agent.
+- Do stack project groups at the top (do not fill the selected group).
+- Do use the kit hover × on siblings only; never on root.
 - Do put `+` on the project group, not a form in the rail.
 - Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
+- Do bind ⌘T spawn sibling, ⌘N new project, ⌘W drop workspace.
 - Don't infer status from OSC 0/2 titles.
 - Don't cargo-cult Orca worktree cards or amber-everything dots.
 - Don't put siblings anywhere but `<root>/.worktrees/<slug>`.

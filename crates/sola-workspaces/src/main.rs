@@ -4,7 +4,6 @@
 //! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `ws`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,7 +103,6 @@ struct App {
     adopted_from: Option<String>,
     spawn: sidebar::SpawnDraft,
     add: sidebar::AddDraft,
-    drop_armed: Option<String>,
     window_focused: bool,
 }
 
@@ -204,7 +202,6 @@ impl App {
             adopted_from,
             spawn: sidebar::SpawnDraft::default(),
             add: sidebar::AddDraft::default(),
-            drop_armed: None,
             window_focused: true,
         };
         app.sync_all_rows();
@@ -334,7 +331,6 @@ impl App {
             Msg::SelectWorkspace(id) => {
                 if self.workspaces.iter().any(|w| w.id == id) {
                     self.selected = id.clone();
-                    self.drop_armed = None;
                     self.persist_catalog();
                     return self.attach_pane(&id, &[]);
                 }
@@ -490,7 +486,6 @@ impl App {
                 &self.projects,
                 &self.workspaces,
                 &self.selected,
-                self.drop_armed.as_deref(),
                 &self.theme,
                 self.palette.bg,
             ),
@@ -970,10 +965,11 @@ impl App {
     }
 
     fn cli_rm(&mut self, q: &str) -> Result<Task<Msg>, String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?
-            .id
-            .clone();
-        self.drop_armed = Some(id.clone());
+        let ws = workspace::resolve_workspace(&self.workspaces, q)?;
+        if !workspace::can_close(ws) {
+            return Err("cannot close the project root".into());
+        }
+        let id = ws.id.clone();
         Ok(self.close_workspace(&id))
     }
 
@@ -1051,7 +1047,7 @@ impl App {
             self.add.error = Some("folder path required".into());
             return Task::none();
         }
-        let root = match PathBuf::from(raw).canonicalize() {
+        let root = match workspace::expand_user_path(raw).canonicalize() {
             Ok(p) if p.is_dir() => p,
             Ok(_) => {
                 self.add.error = Some("not a folder".into());
@@ -1093,11 +1089,14 @@ impl App {
     }
 
     fn close_workspace(&mut self, id: &str) -> Task<Msg> {
-        if self.drop_armed.as_deref() != Some(id) {
-            self.drop_armed = Some(id.to_string());
+        let closable = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .is_some_and(workspace::can_close);
+        if !closable {
             return Task::none();
         }
-        self.drop_armed = None;
         if let Some(rt) = self.runtimes.remove(id) {
             rt.backend.close();
         } else {
