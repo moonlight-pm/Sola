@@ -284,8 +284,34 @@ pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Workspace]) -> Vec<&'
     out
 }
 
+/// Sibling worktrees can close. The project's root checkout cannot —
+/// that would be "close project," which is not a v1 verb.
+pub fn can_close(ws: &Workspace) -> bool {
+    ws.kind == Kind::Worktree
+}
+
 pub fn find_project<'a>(projects: &'a [Project], id: &str) -> Option<&'a Project> {
     projects.iter().find(|p| p.id == id)
+}
+
+/// Expand a leading `~` / `~/…` to `$HOME`. Other paths are unchanged.
+pub fn expand_user_path(raw: &str) -> PathBuf {
+    let raw = raw.trim();
+    if raw == "~" {
+        return home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(raw)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Match id, exact name, or case-insensitive name.
@@ -417,6 +443,45 @@ mod tests {
         assert_eq!(ids, ["ws-main", "ws-kid", "ws-z"]);
         assert_eq!(lineage_depth(&child, &all), 1);
         assert_eq!(lineage_depth(&main, &all), 0);
+    }
+
+    #[test]
+    fn only_worktrees_can_close() {
+        let main = Workspace {
+            id: "ws-main".into(),
+            project_id: "p".into(),
+            name: "root".into(),
+            path: PathBuf::from("/r"),
+            kind: Kind::Main,
+            parent: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let folder = Workspace {
+            kind: Kind::Folder,
+            ..main.clone()
+        };
+        let tree = Workspace {
+            id: "ws-kid".into(),
+            kind: Kind::Worktree,
+            ..main.clone()
+        };
+        assert!(!can_close(&main));
+        assert!(!can_close(&folder));
+        assert!(can_close(&tree));
+    }
+
+    #[test]
+    fn expand_user_path_tilde() {
+        let home = std::env::var("HOME").expect("HOME");
+        assert_eq!(expand_user_path("~"), PathBuf::from(&home));
+        assert_eq!(
+            expand_user_path("~/src/sola"),
+            PathBuf::from(&home).join("src/sola")
+        );
+        assert_eq!(expand_user_path("  ~/a  "), PathBuf::from(&home).join("a"));
+        assert_eq!(expand_user_path("/tmp/x"), PathBuf::from("/tmp/x"));
+        assert_eq!(expand_user_path("~root"), PathBuf::from("~root"));
     }
 
     #[test]

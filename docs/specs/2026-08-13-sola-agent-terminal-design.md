@@ -8,7 +8,7 @@
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
 
-**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`  
+**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the row; kit hover × on siblings (not root); shell launcher builtin **Workspaces**; ⌘T/⌘N/⌘W; working ring spins  
 **Dogfood:** hooks + reattach smoked under old `sat-` names; call methods / spawn UI await install  
 **Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only (D4)
 

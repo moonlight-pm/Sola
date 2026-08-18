@@ -323,8 +323,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         demo,
         heading("Status marks"),
         body(
-            "Reserved 12px slot. Working is an accent ring; waiting a warning diamond; \
-             done a success check; idle a dim disc. Who stays off the mark."
+            "Reserved 12px slot. Working is an accent ring that spins (~0.85s); \
+             waiting a warning diamond; done a success check; idle a dim disc. \
+             Who stays off the mark."
         )
         .style(muted),
         marks_demo(),

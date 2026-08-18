@@ -7,7 +7,7 @@ use sola_kit::components::card;
 use sola_kit::components::field::field;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    DividerColors, SidebarHoverAction, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, SidebarItem, SidebarPanel, SidebarSection,
 };
 
 use crate::Msg;
@@ -69,14 +69,9 @@ pub fn view<'a>(
     projects: &'a [Project],
     workspaces: &'a [Workspace],
     selected: &str,
-    drop_armed: Option<&'a str>,
     theme: &Theme,
     term_bg: iced::Color,
 ) -> Element<'a, Msg> {
-    let selected_project = workspaces
-        .iter()
-        .find(|w| w.id == selected)
-        .map(|w| w.project_id.as_str());
     let mut sections = Vec::new();
     for project in projects {
         let mut items = Vec::new();
@@ -90,25 +85,22 @@ pub fn view<'a>(
                 let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
                     .active(ws.id == selected)
                     .indicator(ws.status.indicator())
-                    .id(ws.id.clone())
-                    .hover_action(SidebarHoverAction {
-                        message: Msg::CloseWorkspace(ws.id.clone()),
-                        armed: drop_armed == Some(ws.id.as_str()),
-                    });
-                if let Some(agent) = &ws.agent {
-                    item = item.secondary(agent.clone());
+                    .id(ws.id.clone());
+                // Kit list `on_close` — hover × (lucide/x), vertically
+                // centered. Not `hover_action` (session-card trash).
+                // Root stays; close the project when we have that verb.
+                if workspace::can_close(ws) {
+                    item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
                 }
                 items.push(item);
             }
         }
         let mark = if project.collapsed { "▸ " } else { "" };
-        let mut section = SidebarSection::new(format!("{mark}{}", project.name), items)
-            .on_label(Msg::ToggleProject(project.id.clone()))
-            .on_add(Msg::OpenSpawn(project.id.clone()));
-        if selected_project == Some(project.id.as_str()) || selected_project.is_none() {
-            section = section.fill();
-        }
-        sections.push(section);
+        sections.push(
+            SidebarSection::new(format!("{mark}{}", project.name), items)
+                .on_label(Msg::ToggleProject(project.id.clone()))
+                .on_add(Msg::OpenSpawn(project.id.clone())),
+        );
     }
 
     let p = theme.extended_palette();
@@ -226,7 +218,7 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
                 sola_kit::components::text::body("Add project"),
                 field(
                     "Folder",
-                    text_input("/path/to/checkout", &draft.path)
+                    text_input("~/path/to/checkout", &draft.path)
                         .id(iced::widget::Id::new(ADD_INPUT_ID))
                         .on_input(Msg::AddPath)
                         .on_submit(Msg::AddProject),

@@ -9,25 +9,31 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-15 (workspaces landing on master; this worktree kept open)
+**As of:** 2026-08-18 (workspaces rail polish landing on master)
 
 ---
 
 ## Now
 
-1. **sola-workspaces** — **partial** (on master; this worktree kept open)  
+1. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
    **Next:** dogfood install (`sola-call`, app, `solactl`, shell). Polish:
    rename/recolor/reorder.  
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
-   **Install:** ask first.  
+   **Install:** standing OK to `install workspaces` after each finished
+   round. Ask for any other target.  
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
    Methods on sola-call owner `ws` (`solactl ws ps` / `workspace.spawn` / …).
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
    `sola-ws` / `sws-`. Hooks + old `sat-ws-main` reattach smoked earlier;
-   spawn UI / call methods not smoked.  
+   spawn UI / call methods not smoked. Rail: Add project expands `~`;
+   groups stack at the top; no grok/agent label on the row. Sibling
+   hover close is the kit ×; root is not closeable (close-project later).
+   Launcher builtin **Workspaces** is in shell (`lucide/folders`).
+   Shortcuts: ⌘T spawn, ⌘N new project, ⌘W drop sibling. Working ring
+   spins (kit mark uses ms phase, not `as_secs_f32`).  
 2. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
@@ -64,7 +70,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** (workspaces + browser polish + paint). This worktree `naturalethic/browser-polish` is synced with master | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (workspaces rail polish + browser + paint) | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; instant tab close (hover × opaque chip); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (on master); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** opens a background tab; **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **needs Outline dogfood**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. This slice **installed** (menus, ⌘-click, persist history, in-page Copy → Wayland). Smoke pending. | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
