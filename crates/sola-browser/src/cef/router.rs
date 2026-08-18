@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
-    ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle,
-    PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle,
+    BackgroundTabsHandle, ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver,
+    ImeCaret, ImeHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -45,6 +45,7 @@ struct Shared {
     downloads: DownloadsHandle,
     passkeys: PasskeysHandle,
     page_menus: PageMenusHandle,
+    background_tabs: BackgroundTabsHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -64,6 +65,7 @@ pub struct RouterHandles {
     pub downloads: DownloadsHandle,
     pub passkeys: PasskeysHandle,
     pub page_menus: PageMenusHandle,
+    pub background_tabs: BackgroundTabsHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -78,6 +80,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let downloads: DownloadsHandle = Arc::new(Mutex::new(Vec::new()));
     let passkeys: PasskeysHandle = Arc::new(Mutex::new(Vec::new()));
     let page_menus: PageMenusHandle = Arc::new(Mutex::new(Vec::new()));
+    let background_tabs: BackgroundTabsHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -90,6 +93,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         downloads: downloads.clone(),
         passkeys: passkeys.clone(),
         page_menus: page_menus.clone(),
+        background_tabs: background_tabs.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -114,6 +118,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         downloads,
         passkeys,
         page_menus,
+        background_tabs,
     }
 }
 
@@ -621,6 +626,11 @@ fn handle_from(
         FromEngine::PageContext(ctx) => {
             if is_front {
                 shared.page_menus.lock().unwrap().push(ctx);
+            }
+        }
+        FromEngine::OpenBackgroundTab { url } => {
+            if is_front && crate::util::href_is_new_tab_target(&url) {
+                shared.background_tabs.lock().unwrap().push(url);
             }
         }
     }

@@ -38,9 +38,10 @@ use crate::page_menu::{self, PageMenuKind};
 use crate::session::{self, SessionGroup, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
-    CardSummary, MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd,
-    VaultEvent, VaultHandle, VaultStatus, apex_domain, create_account_hint, fill_card_script,
-    fill_credentials_script, fill_credentials_script_ex, generate_password,
+    CardSummary, MatchSummary, PasskeyCandidate, PasskeyPageRequest, TotpSummary, TwoFactorKind,
+    VaultCmd, VaultEvent, VaultHandle, VaultStatus, apex_domain, create_account_hint,
+    fill_card_script, fill_credentials_script, fill_credentials_script_ex, fill_totp_script,
+    generate_password, totp_remaining_secs,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -54,6 +55,8 @@ pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 46.0;
 const NAV_BTN_W: f32 = 34.0;
+/// How long the copy-URL glyph stays on the check after a successful copy.
+const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 /// Tab sidebar width (logical px) — the value the draggable divider
 /// edits, clamped to `[MIN, MAX]`.
 pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
@@ -73,6 +76,8 @@ pub enum Msg {
     NavJump(i32),
     /// Reload when idle; stop when the active tab is loading.
     NavReloadOrStop,
+    /// Copy the current page URL to the system clipboard.
+    CopyUrl,
     /// Escape / explicit stop — always `NavCmd::Stop`.
     NavStop,
     UrlInput(String),
@@ -149,6 +154,13 @@ pub enum Msg {
     CardsFill(String),
     #[cfg(feature = "bitwarden")]
     CardsRefresh,
+    /// Toolbar authenticator: TOTP codes (unlock first if needed).
+    #[cfg(feature = "bitwarden")]
+    TotpToggle,
+    #[cfg(feature = "bitwarden")]
+    TotpFill(String),
+    #[cfg(feature = "bitwarden")]
+    TotpRefresh,
     VaultEmail(String),
     VaultPassword(String),
     VaultOtp(String),
@@ -267,6 +279,7 @@ enum VaultResume {
     #[default]
     Logins,
     Cards,
+    Totp,
 }
 
 /// Which form the vault panel shows.
@@ -417,6 +430,9 @@ pub struct App<E: Engine> {
     /// Separate cards panel (mutually exclusive with the login panel).
     #[cfg(feature = "bitwarden")]
     cards_panel_open: bool,
+    /// Authenticator / TOTP panel.
+    #[cfg(feature = "bitwarden")]
+    totp_panel_open: bool,
     #[cfg(feature = "bitwarden")]
     vault_resume: VaultResume,
     #[cfg(feature = "bitwarden")]
@@ -457,6 +473,22 @@ pub struct App<E: Engine> {
     vault_cards: Vec<CardSummary>,
     #[cfg(feature = "bitwarden")]
     vault_cards_loading: bool,
+    #[cfg(feature = "bitwarden")]
+    totp_icon: iced::widget::svg::Handle,
+    #[cfg(feature = "bitwarden")]
+    vault_totp: Vec<TotpSummary>,
+    #[cfg(feature = "bitwarden")]
+    vault_totp_loading: bool,
+    /// Fill the MRU authenticator once the list arrives.
+    #[cfg(feature = "bitwarden")]
+    totp_autofill_pending: bool,
+    /// Next `TotpFillReady` came from a row click — copy the code.
+    #[cfg(feature = "bitwarden")]
+    totp_copy_next: bool,
+    #[cfg(feature = "bitwarden")]
+    pending_totp_clipboard: Option<String>,
+    #[cfg(feature = "bitwarden")]
+    totp_last_refresh_secs: u64,
     /// Page WebAuthn get() waiting for passkey selection.
     #[cfg(feature = "bitwarden")]
     pending_passkey: Option<PendingPasskey>,
@@ -488,6 +520,8 @@ pub struct App<E: Engine> {
     downloads: crate::downloads::DownloadList,
     downloads_panel_open: bool,
     download_icon: iced::widget::svg::Handle,
+    /// Instant the copy-URL button last succeeded — drives the check flash.
+    copy_url_flash: Option<Instant>,
 }
 
 impl<E: Engine> App<E> {
@@ -548,6 +582,8 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             cards_panel_open: false,
             #[cfg(feature = "bitwarden")]
+            totp_panel_open: false,
+            #[cfg(feature = "bitwarden")]
             vault_resume: VaultResume::Logins,
             #[cfg(feature = "bitwarden")]
             vault_phase: VaultPanelPhase::Credentials,
@@ -581,6 +617,20 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             cards_icon: icon_handle("lucide/credit-card"),
             #[cfg(feature = "bitwarden")]
+            totp_icon: icon_handle("lucide/shield"),
+            #[cfg(feature = "bitwarden")]
+            vault_totp: Vec::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_totp_loading: false,
+            #[cfg(feature = "bitwarden")]
+            totp_autofill_pending: false,
+            #[cfg(feature = "bitwarden")]
+            totp_copy_next: false,
+            #[cfg(feature = "bitwarden")]
+            pending_totp_clipboard: None,
+            #[cfg(feature = "bitwarden")]
+            totp_last_refresh_secs: 0,
+            #[cfg(feature = "bitwarden")]
             vault_cards: Vec::new(),
             #[cfg(feature = "bitwarden")]
             vault_cards_loading: false,
@@ -605,6 +655,7 @@ impl<E: Engine> App<E> {
             downloads: crate::downloads::DownloadList::load(),
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
+            copy_url_flash: None,
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -625,6 +676,8 @@ impl<E: Engine> App<E> {
         // close must restore the same state when the lock icon is clicked again.
         if open {
             self.set_downloads_panel_open(false);
+            self.cards_panel_open = false;
+            self.totp_panel_open = false;
         }
     }
 
@@ -637,6 +690,7 @@ impl<E: Engine> App<E> {
                 self.vault_panel_open = false;
                 VAULT_PANEL_OPEN.store(false, Ordering::Relaxed);
                 self.cards_panel_open = false;
+                self.totp_panel_open = false;
             }
         }
     }
@@ -680,7 +734,33 @@ impl<E: Engine> App<E> {
         if open {
             self.set_downloads_panel_open(false);
             self.set_vault_panel_open(false);
+            self.totp_panel_open = false;
         }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn set_totp_panel_open(&mut self, open: bool) {
+        self.totp_panel_open = open;
+        if open {
+            self.set_downloads_panel_open(false);
+            self.set_vault_panel_open(false);
+            self.cards_panel_open = false;
+        }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn request_vault_totp(&mut self) {
+        if !self.vault_status.unlocked {
+            self.vault_totp.clear();
+            self.vault_totp_loading = false;
+            return;
+        }
+        let url = self
+            .active_tab_info()
+            .map(|t| t.url.clone())
+            .unwrap_or_default();
+        self.vault_totp_loading = true;
+        self.vault.send(VaultCmd::ListTotp { url });
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1223,6 +1303,7 @@ impl<E: Engine> App<E> {
                 {
                     self.vault_resume = VaultResume::Logins;
                     self.cards_panel_open = false;
+                    self.totp_panel_open = false;
                     let open = !self.vault_panel_open;
                     self.set_vault_panel_open(open);
                     if open {
@@ -1274,6 +1355,42 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             Msg::CardsRefresh => {
                 self.request_vault_cards();
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::TotpToggle => {
+                if self.totp_panel_open {
+                    self.set_totp_panel_open(false);
+                    return Task::none();
+                }
+                self.vault_error = None;
+                self.vault_resume = VaultResume::Totp;
+                if self.vault_status.unlocked {
+                    self.totp_autofill_pending = true;
+                    self.set_totp_panel_open(true);
+                    self.request_vault_totp();
+                    return Task::none();
+                }
+                self.totp_panel_open = false;
+                self.set_vault_panel_open(true);
+                if !self.vault_email.trim().is_empty() {
+                    self.vault_paste_target = VaultPasteTarget::Password;
+                    return iced::widget::operation::focus(vault_password_id());
+                }
+                return iced::widget::operation::focus(vault_email_id());
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::TotpFill(id) => {
+                if self.vault_busy || !self.vault_status.unlocked {
+                    return Task::none();
+                }
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.totp_copy_next = true;
+                self.vault.send(VaultCmd::FillTotp { id });
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::TotpRefresh => {
+                self.request_vault_totp();
             }
             Msg::VaultFill(id) => {
                 #[cfg(feature = "bitwarden")]
@@ -1510,6 +1627,7 @@ impl<E: Engine> App<E> {
                         self.vault_awaiting_fill = false;
                         self.set_vault_panel_open(false);
                         self.set_cards_panel_open(false);
+                        self.set_totp_panel_open(false);
                     }
                 }
             }
@@ -1653,6 +1771,20 @@ impl<E: Engine> App<E> {
                     let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
                 }
             }
+            Msg::CopyUrl => {
+                let page_url = self
+                    .active_tab_info()
+                    .map(|t| t.url.as_str())
+                    .unwrap_or("");
+                let Some(url) =
+                    crate::util::copyable_page_url(page_url, &self.last_seen_url, &self.url_field)
+                else {
+                    return Task::none();
+                };
+                self.copy_url_flash = Some(Instant::now());
+                tracing::debug!(%url, "copy url → clipboard");
+                return iced::clipboard::write(url);
+            }
             Msg::NavStop => {
                 if self.renaming.is_some() {
                     self.renaming = None;
@@ -1680,10 +1812,11 @@ impl<E: Engine> App<E> {
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
-                if self.vault_panel_open || self.cards_panel_open {
+                if self.vault_panel_open || self.cards_panel_open || self.totp_panel_open {
                     // Dismiss panel only — keep login / 2FA state for re-open.
                     self.set_vault_panel_open(false);
                     self.set_cards_panel_open(false);
+                    self.set_totp_panel_open(false);
                     return Task::none();
                 }
                 self.set_active_loading(false);
@@ -1753,14 +1886,22 @@ impl<E: Engine> App<E> {
                 self.persist_session();
             }
             Msg::Tick => {
+                if self
+                    .copy_url_flash
+                    .is_some_and(|t| t.elapsed() >= COPY_URL_FLASH)
+                {
+                    self.copy_url_flash = None;
+                }
                 while let Some(h) = crate::instance::try_recv_handoff() {
                     match h {
                         crate::instance::Handoff::OpenUrl(url) => {
                             tracing::info!(%url, "opening handed-off URL in this chrome");
-                            self.open_tab(url, true);
+                            self.open_tab(url.clone(), true);
+                            crate::integration::emit_open_url_for_raise(&url);
                         }
                         crate::instance::Handoff::Activate => {
-                            tracing::info!("activate handoff — chrome already front");
+                            tracing::info!("activate handoff — asking shell to raise");
+                            crate::integration::emit_open_url_for_raise("");
                         }
                     }
                 }
@@ -1788,6 +1929,16 @@ impl<E: Engine> App<E> {
                             if self.vault_awaiting_fill_ticks >= 8 {
                                 self.finish_create_fill(true);
                             }
+                        }
+                    }
+                    if self.totp_panel_open && self.vault_status.unlocked {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        if now != self.totp_last_refresh_secs {
+                            self.totp_last_refresh_secs = now;
+                            self.request_vault_totp();
                         }
                     }
                 }
@@ -1863,13 +2014,38 @@ impl<E: Engine> App<E> {
                         });
                     }
                 }
+                // ⌘-click / popup: helper found a URL; chrome owns the tab id.
+                let bg: Vec<String> = self
+                    .engine
+                    .background_tabs_handle()
+                    .lock()
+                    .unwrap()
+                    .drain(..)
+                    .collect();
+                for url in bg {
+                    tracing::info!(%url, "cmd-click → background tab");
+                    self.open_tab_beside(url, false);
+                }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
                 let clip = self.take_page_clipboard();
                 #[cfg(feature = "bitwarden")]
+                let totp_clip = self
+                    .pending_totp_clipboard
+                    .take()
+                    .map(iced::clipboard::write)
+                    .unwrap_or_else(Task::none);
+                #[cfg(feature = "bitwarden")]
                 if focus_otp {
-                    return Task::batch([clip, iced::widget::operation::focus(vault_otp_id())]);
+                    return Task::batch([
+                        clip,
+                        totp_clip,
+                        iced::widget::operation::focus(vault_otp_id()),
+                    ]);
                 }
+                #[cfg(feature = "bitwarden")]
+                return Task::batch([clip, totp_clip]);
+                #[cfg(not(feature = "bitwarden"))]
                 return clip;
             }
             Msg::Bus(message) => {
@@ -2179,8 +2355,18 @@ impl<E: Engine> App<E> {
 
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
     /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
-    /// `integration::run_intent`.
+    /// `integration::run_intent`. Always loose, at the bottom of the strip.
     pub fn open_tab(&mut self, url: String, activate: bool) {
+        self.mint_tab(url, activate, false);
+    }
+
+    /// ⌘-click background tab: insert immediately under the current tab
+    /// (same group if the current tab is in one).
+    pub fn open_tab_beside(&mut self, url: String, activate: bool) {
+        self.mint_tab(url, activate, true);
+    }
+
+    fn mint_tab(&mut self, url: String, activate: bool, beside: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
         let title = if url == BLANK_URL {
@@ -2188,10 +2374,16 @@ impl<E: Engine> App<E> {
         } else {
             String::new()
         };
-        self.cached_tabs.push(TabInfo {
+        let info = TabInfo {
             is_loading: url != BLANK_URL && !url.is_empty(),
             ..TabInfo::chrome(id, url.clone(), title.clone())
-        });
+        };
+        if beside {
+            self.groups
+                .insert_beside(&mut self.cached_tabs, self.cached_active, info);
+        } else {
+            self.groups.append_loose(&mut self.cached_tabs, info);
+        }
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);
@@ -2283,7 +2475,7 @@ impl<E: Engine> App<E> {
             && {
                 #[cfg(feature = "bitwarden")]
                 {
-                    !self.vault_panel_open && !self.cards_panel_open
+                    !self.vault_panel_open && !self.cards_panel_open && !self.totp_panel_open
                 }
                 #[cfg(not(feature = "bitwarden"))]
                 {
@@ -2325,7 +2517,9 @@ impl<E: Engine> App<E> {
         };
 
         #[cfg(feature = "bitwarden")]
-        let content: Element<'_, Msg> = if self.cards_panel_open {
+        let content: Element<'_, Msg> = if self.totp_panel_open {
+            stack![content, self.view_totp_panel()].into()
+        } else if self.cards_panel_open {
             stack![content, self.view_cards_panel()].into()
         } else if self.vault_panel_open {
             stack![content, self.view_vault_panel()].into()
@@ -2509,7 +2703,7 @@ impl<E: Engine> App<E> {
     }
 
     /// Full-width chrome strip: profile (aligned to the tab column),
-    /// back / forward / reload, omnibox, vault.
+    /// back / forward / reload, copy-url, omnibox, vault.
     ///
     /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
     /// the click to place its caret, and `mouse_area` skips `on_press` for
@@ -2540,6 +2734,25 @@ impl<E: Engine> App<E> {
             Msg::NavReloadOrStop,
             muted,
         );
+        let page_url = info.map(|t| t.url.as_str()).unwrap_or("");
+        let copy_enabled =
+            crate::util::copyable_page_url(page_url, &self.last_seen_url, &self.url_field)
+                .is_some();
+        let copy_flashing = self
+            .copy_url_flash
+            .is_some_and(|t| t.elapsed() < COPY_URL_FLASH);
+        let copy_url = self.nav_icon_btn(
+            if copy_flashing {
+                nav_icon_copy_done()
+            } else {
+                nav_icon_copy()
+            },
+            16,
+            copy_enabled,
+            NAV_BTN_W,
+            Msg::CopyUrl,
+            muted,
+        );
 
         #[cfg(feature = "bitwarden")]
         let vault_btn = {
@@ -2565,10 +2778,20 @@ impl<E: Engine> App<E> {
             muted,
             Msg::CardsToggle,
         );
+        #[cfg(feature = "bitwarden")]
+        let totp_btn = self.vault_tool_btn(
+            self.totp_icon.clone(),
+            self.vault_status.unlocked,
+            self.totp_panel_open,
+            muted,
+            Msg::TotpToggle,
+        );
         #[cfg(not(feature = "bitwarden"))]
         let vault_btn = Space::new().width(Length::Fixed(0.0));
         #[cfg(not(feature = "bitwarden"))]
         let cards_btn = Space::new().width(Length::Fixed(0.0));
+        #[cfg(not(feature = "bitwarden"))]
+        let totp_btn = Space::new().width(Length::Fixed(0.0));
 
         let downloads_btn = self.downloads_tool_btn(muted);
 
@@ -2583,8 +2806,10 @@ impl<E: Engine> App<E> {
             back,
             forward,
             reload_or_stop,
+            copy_url,
             self.view_omnibox(),
             vault_btn,
+            totp_btn,
             cards_btn,
             downloads_btn,
         ]
@@ -2890,6 +3115,11 @@ impl<E: Engine> App<E> {
                     self.vault_phase = VaultPanelPhase::Credentials;
                     self.set_cards_panel_open(true);
                     self.request_vault_cards();
+                } else if self.vault_resume == VaultResume::Totp {
+                    self.vault_phase = VaultPanelPhase::Credentials;
+                    self.totp_autofill_pending = true;
+                    self.set_totp_panel_open(true);
+                    self.request_vault_totp();
                 } else {
                     self.vault_phase = VaultPanelPhase::Credentials;
                     self.set_vault_panel_open(true);
@@ -2942,10 +3172,15 @@ impl<E: Engine> App<E> {
                 if self.cards_panel_open && self.vault_status.unlocked {
                     self.request_vault_cards();
                 }
+                if self.totp_panel_open && self.vault_status.unlocked {
+                    self.request_vault_totp();
+                }
             }
             VaultEvent::SyncFailed { message } => {
                 tracing::warn!(%message, "vault: sync failed");
-                if (self.vault_panel_open || self.cards_panel_open) && self.vault_status.unlocked {
+                if (self.vault_panel_open || self.cards_panel_open || self.totp_panel_open)
+                    && self.vault_status.unlocked
+                {
                     self.vault_error = Some(format!("Signed in, but sync failed: {message}"));
                 }
             }
@@ -2953,6 +3188,35 @@ impl<E: Engine> App<E> {
                 self.vault_matches_loading = false;
                 tracing::info!(n = list.len(), url = %self.vault_matches_url, "vault: matches");
                 self.vault_matches = list;
+            }
+            VaultEvent::Totp(list) => {
+                self.vault_totp_loading = false;
+                tracing::info!(n = list.len(), "vault: totp");
+                self.vault_totp = list;
+                if self.totp_autofill_pending {
+                    self.totp_autofill_pending = false;
+                    if let Some(first) = self.vault_totp.first() {
+                        if !self.vault_busy {
+                            self.vault_busy = true;
+                            self.vault.send(VaultCmd::FillTotp {
+                                id: first.id.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            VaultEvent::TotpFillReady { code } => {
+                self.vault_busy = false;
+                let script = fill_totp_script(&code);
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                if self.totp_copy_next {
+                    self.totp_copy_next = false;
+                    self.pending_totp_clipboard = Some(code);
+                    tracing::info!("vault: totp copied to clipboard");
+                } else {
+                    tracing::info!("vault: totp fill injected");
+                }
+                // Keep the panel open so the user can see the timeout / pick another.
             }
             VaultEvent::Cards(list) => {
                 self.vault_cards_loading = false;
@@ -3094,7 +3358,8 @@ impl<E: Engine> App<E> {
                 self.vault_busy = false;
                 self.vault_matches_loading = false;
                 self.vault_cards_loading = false;
-                if self.vault_panel_open || self.cards_panel_open {
+                self.vault_totp_loading = false;
+                if self.vault_panel_open || self.cards_panel_open || self.totp_panel_open {
                     self.vault_error = Some(message);
                 }
             }
@@ -3398,6 +3663,172 @@ impl<E: Engine> App<E> {
             .align_y(Alignment::Center);
 
         stack![backdrop, centered].into()
+    }
+
+    /// Authenticator panel — current TOTP + countdown; click fills the page.
+    #[cfg(feature = "bitwarden")]
+    fn view_totp_panel(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let soft = |s: String| {
+            text(s).size(12).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.72, ..t }),
+                }
+            })
+        };
+        let soft_sm = |s: String| {
+            text(s).size(11).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.62, ..t }),
+                }
+            })
+        };
+
+        let title = text("Authenticator")
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+        const MATCH_LIST_H: f32 = 420.0;
+        let page_url = self
+            .active_tab_info()
+            .map(|t| t.url.as_str())
+            .unwrap_or("");
+        let host_hint = page_host_hint(page_url);
+        let mut col = column![
+            title,
+            soft("Last-used fills the page. Click a code to copy it.".into()),
+        ]
+        .spacing(SPACE_SM)
+        .width(Length::Fixed(340.0));
+
+        if !host_hint.is_empty() {
+            col = col.push(soft(host_hint));
+        }
+
+        if let Some(err) = self.vault_error.as_ref() {
+            col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                iced::widget::text::Style {
+                    color: Some(theme.extended_palette().danger.base.color),
+                }
+            }));
+        }
+
+        if self.vault_totp_loading && self.vault_totp.is_empty() {
+            col = col.push(text("Looking up authenticators…").size(13));
+        } else if page_url.is_empty() || page_url == BLANK_URL {
+            col = col.push(text("Open a website to fill a code.").size(13));
+        } else if self.vault_totp.is_empty() {
+            col = col.push(text("No authenticator codes for this site.").size(13));
+            col = col.push(soft_sm(
+                "Add a TOTP secret on a login for this site in Bitwarden, then Refresh.".into(),
+            ));
+        } else {
+            let mut list = column![].spacing(4.0);
+            for t in &self.vault_totp {
+                let title_line = if t.name.is_empty() {
+                    t.username
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "Authenticator".into())
+                } else {
+                    t.name.clone()
+                };
+                let remaining = totp_remaining_secs(t.period, now);
+                let pretty = pretty_totp_code(&t.code);
+                let sub = if let Some(u) = t.username.as_deref().filter(|s| !s.is_empty()) {
+                    format!("{u} · {remaining}s")
+                } else {
+                    format!("{remaining}s")
+                };
+                let code_line = text(pretty)
+                    .size(18)
+                    .font(sola_kit::fonts::mono());
+                let row_body = column![
+                    text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
+                    code_line,
+                    soft_sm(sub),
+                ]
+                .spacing(2);
+                let id = t.id.clone();
+                let mut btn = button(row_body)
+                    .padding(Padding::from([8, 10]))
+                    .width(Length::Fill)
+                    .style(|theme: &iced::Theme, status| {
+                        let p = theme.extended_palette();
+                        let bg = match status {
+                            iced::widget::button::Status::Hovered
+                            | iced::widget::button::Status::Pressed => p.background.strong.color,
+                            _ => p.background.weak.color,
+                        };
+                        iced::widget::button::Style {
+                            background: Some(iced::Background::Color(bg)),
+                            text_color: p.background.base.text,
+                            border: iced::Border {
+                                color: p.background.strong.color,
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    });
+                if !self.vault_busy {
+                    btn = btn.on_press(Msg::TotpFill(id));
+                }
+                list = list.push(btn);
+            }
+            col = col.push(
+                scrollable(list)
+                    .height(Length::Fixed(MATCH_LIST_H))
+                    .width(Length::Fill),
+            );
+        }
+
+        let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
+        if !self.vault_busy && !self.vault_totp_loading {
+            refresh = refresh.on_press(Msg::TotpRefresh);
+        }
+        let close =
+            kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
+        col = col.push(
+            row![refresh, close]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+        );
+
+        let panel =
+            card::modal(container(col).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(360.0));
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.12,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::VaultPanelClose);
+
+        let anchored = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: CHROME_HEIGHT + 4.0,
+                right: 10.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
+
+        stack![backdrop, anchored].into()
     }
 
     /// Cards panel — list every Bitwarden card; click fills the page.
@@ -4660,6 +5091,16 @@ fn nav_icon_stop() -> iced::widget::svg::Handle {
     H.get_or_init(|| icon_handle("lucide/x")).clone()
 }
 
+fn nav_icon_copy() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/copy")).clone()
+}
+
+fn nav_icon_copy_done() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/copy-check")).clone()
+}
+
 #[cfg(feature = "bitwarden")]
 fn vault_password_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-password")
@@ -4683,6 +5124,17 @@ fn vault_create_password_id() -> iced::widget::Id {
 #[cfg(feature = "bitwarden")]
 fn vault_create_url_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-create-url")
+}
+
+#[cfg(feature = "bitwarden")]
+fn pretty_totp_code(code: &str) -> String {
+    if code.len() == 6 {
+        format!("{} {}", &code[..3], &code[3..])
+    } else if code.len() == 8 {
+        format!("{} {}", &code[..4], &code[4..])
+    } else {
+        code.to_string()
+    }
 }
 
 impl<E: Engine> Drop for App<E> {

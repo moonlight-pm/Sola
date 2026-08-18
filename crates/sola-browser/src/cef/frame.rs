@@ -114,6 +114,15 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                         Some(input::pointer_move(x, y, state.held_button_mods, kbd_mods))
                     }
                     mouse::Event::ButtonPressed(b) => input::button_number(*b).map(|button| {
+                        if *b == mouse::Button::Left {
+                            tracing::info!(
+                                x,
+                                y,
+                                logo = mods_now.logo(),
+                                ctrl = mods_now.control(),
+                                "page left-press (iced)"
+                            );
+                        }
                         state.held_button_mods |= input::button_to_modifier(button);
                         let prev = state.last_press.map(|(pb, px, py, at, count)| {
                             (pb, px, py, at.elapsed().as_millis(), count)

@@ -9,6 +9,9 @@ restore. **§1 root-cause claim is SUPERSEDED** — see
 [`2026-06-24-unreal-editor-crash-investigation.md`](./2026-06-24-unreal-editor-crash-investigation.md).
 D2 kit titlebar is opt-in per app (monitor only today).
 
+**2026-08-16:** Super+left/right Meta-drag bindings **removed** (operator
+unused; they stole ⌘-click). Floats move/resize from kit CSD titlebars.
+
 **Post-B refinements (2026-06-25):**
 - **Float now resizes for visible feedback, inset from where the window is.**
   The original "Float = position only, never resize" rule (A2/A4 below) left a

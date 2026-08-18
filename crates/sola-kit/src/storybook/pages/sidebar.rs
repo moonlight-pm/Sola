@@ -257,25 +257,28 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         })
         .collect();
 
-    // Two headed sections so section headers (title case, muted chrome)
-    // are visible in the showcase — not only a single group.
-    let mid = items.len().saturating_div(2).max(1);
-    let (primary, secondary): (Vec<_>, Vec<_>) = items
-        .into_iter()
-        .enumerate()
-        .partition(|(i, _)| *i < mid);
-    let primary: Vec<_> = primary.into_iter().map(|(_, it)| it).collect();
-    let secondary: Vec<_> = secondary.into_iter().map(|(_, it)| it).collect();
-    let n_smart = secondary.len();
+    // Settings-style headed section + a tab-group pocket + a loose run
+    // so membership (inset well, nested rows) is obvious against the
+    // unlabeled stack underneath.
+    let mut mailboxes = Vec::new();
+    let mut work = Vec::new();
+    let mut loose = Vec::new();
+    for it in items {
+        match it.label.as_str() {
+            "Inbox" | "Drafts" => mailboxes.push(it),
+            "Sent" | "Archive" => work.push(it),
+            _ => loose.push(it),
+        }
+    }
+    let n_work = work.len();
     let sections = vec![
-        SidebarSection::new("Mailboxes", primary),
-        // Fill + section_scroll → sticky label, bar-less list, overflow chips.
-        // Collapsible header dogfoods tab-group chrome (chevron + count).
-        SidebarSection::new("Smart folders", secondary)
-            .fill()
+        SidebarSection::new("Mailboxes", mailboxes),
+        SidebarSection::new("Work", work)
             .collapsible(state.group_collapsed, Msg::ToggleGroup)
-            .header_count(n_smart)
+            .header_count(n_work)
             .header_context(Msg::Noop),
+        SidebarSection::unlabeled(loose)
+            .fill(),
     ];
 
     let cfg = ReorderCfg {
@@ -314,10 +317,11 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     column![
         heading("Sidebar"),
         body(
-            "List etch: muted idle, inset active, hover-only ×. Collapse, \
-             resize, reorder. Smart folders is a collapsible section \
-             (tab-group header). Right-click Drafts. Overflow chips only \
-             when section_scroll is wired and the viewport is measured."
+            "List etch: muted idle, reserved lip so selected text does not \
+             shift, inset active, hover-only ×. Work is a collapsible group \
+             pocket (nested members); Spam sits in the loose run underneath. \
+             Right-click Drafts. Overflow chips only when section_scroll is \
+             wired and the viewport is measured."
         )
         .style(muted),
         demo,

@@ -11,9 +11,10 @@
 //! per-item shortcut hints / close buttons / secondary labels, and
 //! **section-scoped scroll with overflow chips** — use the opt-in
 //! [`SidebarPanel`] builder. List chrome ([`SidebarItemChrome::Row`]) is
-//! the browser etched title stack (muted idle, lip + inset active well,
-//! hover-only `×`). [`SidebarItemChrome::Card`] is a separate product
-//! surface and is not restyled by list etch.
+//! the browser etched title stack (muted idle, reserved 1px lip + inset
+//! active well, hover-only `×`). Collapsible sections render as an inset
+//! pocket with nested members. [`SidebarItemChrome::Card`] is a separate
+//! product surface and is not restyled by list etch.
 //!
 //! ## Section scroll (no scrollbar)
 //!
@@ -50,7 +51,7 @@ use iced::{
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
     inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_SM,
-    SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
 };
 use crate::fonts;
 
@@ -151,6 +152,9 @@ pub struct SidebarItem<'a, Message> {
     /// Extra leading steps (12px each) for lineage / nesting. Zero by
     /// default so existing rows stay aligned.
     pub indent: u8,
+    /// Collapsible section header: `Some(collapsed)` draws a lucide
+    /// chevron and folder-caption type instead of a tab title.
+    pub section_header: Option<bool>,
 }
 
 impl<'a, Message> SidebarItem<'a, Message> {
@@ -172,6 +176,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             height_hint: None,
             on_context: None,
             indent: 0,
+            section_header: None,
         }
     }
 
@@ -264,6 +269,13 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self.indent = steps;
         self
     }
+
+    /// Mark this row as a collapsible-section header (`collapsed` picks
+    /// the chevron). Members nest under it; the header stays flush.
+    pub fn section_header(mut self, collapsed: bool) -> Self {
+        self.section_header = Some(collapsed);
+        self
+    }
 }
 
 /// A group of sidebar rows with an optional section header label.
@@ -282,8 +294,9 @@ pub struct SidebarSection<'a, Message> {
     /// several are marked, the first wins the `Fill` slot and others
     /// still get a bounded scroll body.
     pub fill: bool,
-    /// Opt-in collapsible header (browser tab groups). Static section
-    /// labels are unchanged when this is `None`.
+    /// Opt-in collapsible header (browser tab groups). Renders as an
+    /// inset pocket with nested members. Static section labels are
+    /// unchanged when this is `None`.
     pub collapse: Option<SectionCollapse<'a, Message>>,
     /// When set, the section label is a quiet press target (collapse).
     pub on_label: Option<Message>,
@@ -346,8 +359,9 @@ impl<'a, Message> SidebarSection<'a, Message> {
         self
     }
 
-    /// Clickable Large-density header. Items are omitted while collapsed.
-    /// The header is a reorder row when the panel is reorderable.
+    /// Clickable Large-density header. Items nest one step inside an
+    /// inset pocket and are omitted while collapsed. The header is a
+    /// reorder row when the panel is reorderable.
     pub fn collapsible(mut self, collapsed: bool, on_toggle: Message) -> Self {
         self.collapse = Some(SectionCollapse {
             collapsed,
@@ -487,8 +501,9 @@ fn item_row_height<Message>(item: &SidebarItem<'_, Message>, density: SidebarDen
         .map(|s| s.lines().filter(|l| !l.is_empty()).count().max(1) as f32 * 12.0)
         .unwrap_or(0.0);
     let pad_v = m.row_pad_v as f32;
-    // Active list rows add a 1px etch lip on each side.
-    let lip = if item.active && item.chrome == SidebarItemChrome::Row {
+    // List rows always reserve the 1px etch lip so selecting a row
+    // never shifts the title (the lip paints only when active).
+    let lip = if item.chrome == SidebarItemChrome::Row {
         2.0
     } else {
         0.0
@@ -668,6 +683,65 @@ fn tab_etch_lip() -> container::Style {
     }
 }
 
+/// Gap between collapsible group pockets (and before the loose run).
+const GROUP_WELL_GAP: f32 = SPACE_LG;
+/// Inset of the pocket around header + members.
+const GROUP_WELL_PAD: f32 = SPACE_SM;
+
+/// Quiet inset pocket for a collapsible section — membership reads as
+/// containment, not a coloured pill. Fill only (no hairline): the
+/// selected etch still cuts into the well.
+fn group_well_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.12))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn wrap_group_well<'a, Message: 'a>(body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(body.into())
+        .width(Length::Fill)
+        .padding(GROUP_WELL_PAD)
+        .style(|_theme: &Theme| group_well_style())
+        .into()
+}
+
+/// Nest members one step under a collapsible header. Callers that already
+/// set [`SidebarItem::indent`] (lineage) keep their own depth.
+fn nest_group_members<'a, Message>(
+    items: Vec<SidebarItem<'a, Message>>,
+) -> Vec<SidebarItem<'a, Message>> {
+    items
+        .into_iter()
+        .map(|mut item| {
+            if item.indent == 0 {
+                item.indent = 1;
+            }
+            item
+        })
+        .collect()
+}
+
+fn section_chevron<'a, Message: 'a>(collapsed: bool) -> Element<'a, Message> {
+    let name = if collapsed {
+        "lucide/chevron-right"
+    } else {
+        "lucide/chevron-down"
+    };
+    let color = Color {
+        r: 0.55,
+        g: 0.58,
+        b: 0.64,
+        a: 0.95,
+    };
+    icon_svg_colored(icon_handle(name), 12, color)
+}
+
 fn tab_close_icon() -> iced::widget::svg::Handle {
     static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
     H.get_or_init(|| icon_handle("lucide/x")).clone()
@@ -764,10 +838,10 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
     collapse: SectionCollapse<'a, Message>,
 ) -> SidebarItem<'a, Message> {
     let name = label.unwrap_or_default();
-    let chevron = if collapse.collapsed { "▸" } else { "▾" };
-    let mut item = SidebarItem::new(format!("{chevron}  {name}"), collapse.on_toggle)
+    let mut item = SidebarItem::new(name.clone(), collapse.on_toggle)
         .active(collapse.header_active)
-        .id(format!("__section:{name}"));
+        .id(format!("__section:{name}"))
+        .section_header(collapse.collapsed);
     if collapse.collapsed {
         if let Some(n) = collapse.count {
             item = item.secondary(n);
@@ -1149,6 +1223,7 @@ where
         height_hint: _,
         on_context,
         indent,
+        section_header,
     } = item;
 
     let m = density.metrics();
@@ -1188,6 +1263,7 @@ where
             active,
             chrome,
             density,
+            section_header,
         )
     };
 
@@ -1311,8 +1387,10 @@ where
     )
 }
 
-/// Etch lip (list active) + hover-only stacked close. Card chrome skips the
-/// lip so agent session rows stay pixel-stable. Close sits *on top* of the
+/// Etch lip (list rows) + hover-only stacked close. The 1px pad is
+/// reserved on every list row so selecting does not shift the title;
+/// the lip colour paints only when active. Card chrome skips the lip
+/// so agent session rows stay pixel-stable. Close sits *on top* of the
 /// row via `stack` (never a trailing sibling) so the title width is stable
 /// and the × does not steal the reorder press target.
 fn finish_list_row<'a, Message: Clone + 'a>(
@@ -1324,11 +1402,17 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     hover_tracked: bool,
     density: SidebarDensity,
 ) -> Element<'a, Message> {
-    let etched: Element<'a, Message> = if chrome == SidebarItemChrome::Row && active {
+    let etched: Element<'a, Message> = if chrome == SidebarItemChrome::Row {
         container(row_el)
             .padding(1)
             .width(Length::Fill)
-            .style(|_theme: &Theme| tab_etch_lip())
+            .style(move |_theme: &Theme| {
+                if active {
+                    tab_etch_lip()
+                } else {
+                    container::Style::default()
+                }
+            })
             .into()
     } else {
         row_el
@@ -1400,6 +1484,7 @@ where
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
 ///
 /// List etch: idle muted + regular; active full fg + [`fonts::ui_medium`].
+/// Section headers stay medium with a lucide chevron (folder caption).
 /// Card structured rows keep the historical 14px regular face.
 fn item_text_block<'a, Message: 'a>(
     label: &str,
@@ -1408,10 +1493,12 @@ fn item_text_block<'a, Message: 'a>(
     active: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
+    section_header: Option<bool>,
 ) -> Element<'a, Message> {
+    let is_header = section_header.is_some();
     let (title_font, title_size) = match chrome {
         SidebarItemChrome::Row => {
-            let font = if active {
+            let font = if active || is_header {
                 fonts::ui_medium()
             } else {
                 fonts::ui()
@@ -1427,6 +1514,9 @@ fn item_text_block<'a, Message: 'a>(
         .width(Length::Fill);
 
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
+    if let Some(collapsed) = section_header {
+        title_row = title_row.push(section_chevron(collapsed));
+    }
     if let Some(ind) = indicator {
         title_row = title_row.push(status_dot(ind));
     }
@@ -1517,8 +1607,17 @@ fn item_content<'a, Message: Clone + 'a>(
     active: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
+    section_header: Option<bool>,
 ) -> Element<'a, Message> {
-    let text_box = item_text_block(label, subtitle, indicator, active, chrome, density);
+    let text_box = item_text_block(
+        label,
+        subtitle,
+        indicator,
+        active,
+        chrome,
+        density,
+        section_header,
+    );
     let has_trail =
         secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
@@ -1874,6 +1973,7 @@ where
                     .collapse
                     .as_ref()
                     .is_some_and(|c| c.collapsed);
+                let grouped = section.collapse.is_some();
                 if let Some(collapse) = section.collapse {
                     flat.push((row_index, collapse_header_item(section.label, collapse)));
                     row_index += 1;
@@ -1881,7 +1981,12 @@ where
                         continue;
                     }
                 }
-                for item in section.items {
+                let members = if grouped {
+                    nest_group_members(section.items)
+                } else {
+                    section.items
+                };
+                for item in members {
                     flat.push((row_index, item));
                     row_index += 1;
                 }
@@ -1927,9 +2032,14 @@ where
             let mut prev_collapsible = false;
             for (si, section) in sections.into_iter().enumerate() {
                 let is_collapsible = section.collapse.is_some();
-                if si > 0 && !collapsed && !is_collapsible && !prev_collapsible {
+                if si > 0 && !collapsed {
+                    let gap = if is_collapsible || prev_collapsible {
+                        GROUP_WELL_GAP
+                    } else {
+                        12.0
+                    };
                     sections_col =
-                        sections_col.push(Space::new().height(Length::Fixed(12.0)));
+                        sections_col.push(Space::new().height(Length::Fixed(gap)));
                 }
                 prev_collapsible = is_collapsible;
 
@@ -1939,20 +2049,23 @@ where
                     .is_some_and(|c| c.collapsed);
                 let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
                     Vec::new()
+                } else if is_collapsible {
+                    nest_group_members(section.items)
                 } else {
                     section.items
                 };
                 let n_in_section = visible_items.len()
                     + usize::from(section.collapse.is_some());
-                let content_h = section_content_height_with(
+                let mut content_h = section_content_height_with(
                     &visible_items,
                     item_spacing,
                     density,
-                ) + if section.collapse.is_some() {
-                    PANEL_ROW_H + item_spacing
-                } else {
-                    0.0
-                };
+                );
+                if is_collapsible {
+                    // Tighter body pad [2, 4] + pocket pad; header row.
+                    content_h = content_h - 8.0 + 4.0 + GROUP_WELL_PAD * 2.0;
+                    content_h += PANEL_ROW_H + item_spacing;
+                }
                 let wants_fill = !collapsed
                     && (section.fill || auto_fill_single)
                     && !assigned_fill;
@@ -1972,9 +2085,14 @@ where
                     }
                 }
 
+                let body_pad = if is_collapsible {
+                    Padding::from([2.0, 4.0])
+                } else {
+                    Padding::from([4.0, 8.0])
+                };
                 let mut body_items = column![]
                     .spacing(item_spacing)
-                    .padding(Padding::from([4.0, 8.0]));
+                    .padding(body_pad);
                 if let Some(collapse) = section.collapse {
                     if !collapsed {
                         let header = collapse_header_item(section.label, collapse);
@@ -2036,8 +2154,14 @@ where
                     // (browser / terminal tab strips), use a hidden iced
                     // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
+                    let fill_col = if is_collapsible {
+                        column![wrap_group_well(body_items)]
+                            .width(Length::Fill)
+                    } else {
+                        body_items
+                    };
                     let mut body = fill_section_body(
-                        body_items,
+                        fill_col,
                         n_in_section,
                         content_h,
                         scroll_snap,
@@ -2048,13 +2172,18 @@ where
                     }
                     sections_col = sections_col.push(body);
                 } else {
+                    let body_el: Element<'a, Message> = if is_collapsible {
+                        wrap_group_well(body_items)
+                    } else {
+                        body_items.into()
+                    };
                     let body: Element<'a, Message> =
                         if let Some(ref mut on_hover) = on_item_hover {
-                            mouse_area(body_items)
+                            mouse_area(body_el)
                                 .on_exit(on_hover(None))
                                 .into()
                         } else {
-                            body_items.into()
+                            body_el
                         };
                     sections_col = sections_col.push(body);
                 }
@@ -2731,6 +2860,43 @@ mod tests {
         assert_eq!(with_id.id.as_deref(), Some("keep"));
         let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
         assert_eq!(no_close.id, None);
+    }
+
+    #[test]
+    fn list_row_height_reserves_etch_lip_when_idle() {
+        let idle = SidebarItem::new("tab", ());
+        let active = SidebarItem::new("tab", ()).active(true);
+        let h_idle = item_row_height(&idle, SidebarDensity::Large);
+        let h_active = item_row_height(&active, SidebarDensity::Large);
+        assert_eq!(h_idle, h_active);
+    }
+
+    #[test]
+    fn nest_group_members_defaults_one_step() {
+        let nested = nest_group_members(vec![
+            SidebarItem::new("a", ()),
+            SidebarItem::new("b", ()).indent(2),
+        ]);
+        assert_eq!(nested[0].indent, 1);
+        assert_eq!(nested[1].indent, 2);
+    }
+
+    #[test]
+    fn collapse_header_is_folder_caption() {
+        let item = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: true,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                count: Some("3".into()),
+                header_content: None,
+            },
+        );
+        assert_eq!(item.label, "Work");
+        assert_eq!(item.section_header, Some(true));
+        assert_eq!(item.secondary.as_deref(), Some("3"));
     }
 
     fn sv(v: &[&str]) -> Vec<String> {

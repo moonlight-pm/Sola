@@ -28,6 +28,10 @@ Sola routes http(s) opens to **sola-browser**:
 | Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
 | `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
 
+If a Browser window is already open, an outside open **raises it**
+to the top and focuses the new tab. A second `sola-browser` process
+still hands off and exits.
+
 Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
 hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
@@ -93,12 +97,15 @@ selects the neighbor to the right (or the left if it was last). The last
 tab is replaced by a blank rather than closing the window. Order is
 saved in that profile’s `session.json`.
 
-**Groups** are named folders at the **top** of the strip. Loose tabs stay
-in one run underneath. Right-click a tab for **New group**, **Add to…**,
+**Groups** are named folders at the **top** of the strip. Each group is a
+quiet pocket — members sit indented under the header — and loose tabs
+stay in one run underneath. Right-click a tab for **New group**, **Add to…**,
 or **Ungroup**. Right-click a group header to **Rename** or **Ungroup**
 (members go loose). Click the header to collapse — the page stays if you
 were on a tab inside. Drag a loose tab into a group to join it; drag a
-member into the loose run to leave. `⌘T` always makes a loose tab.
+member into the loose run to leave. `⌘T` and links from other apps
+(`xdg-open`, `solactl open`) always make a **loose** tab at the **bottom**
+of the strip. Only ⌘-click inserts under the current tab.
 Empty groups disappear. There are no colors, nested groups, or spaces
 yet.
 
@@ -112,6 +119,10 @@ Type a URL or a search and press Enter. Search text goes to Kagi.
 - While a real page is loading, a **thin accent line** grows along the
   bottom of the field. Reload becomes **Stop**; back / forward follow
   the engine. Escape also stops the load.
+- A **copy** button sits just left of the field. It puts the current
+  page URL on the clipboard (not a draft you are still typing). Empty
+  and `about:blank` tabs disable it. The glyph flashes a check for a
+  moment after a successful copy.
 
 ## Downloads
 
@@ -133,17 +144,23 @@ No “show in folder” (Sola has no file manager yet). No delete-from-disk.
 
 ## Bitwarden vault
 
-Toolbar **key** opens logins. Toolbar **card** opens cards. They are
-separate panels (only one at a time). Unlock is shared. While locked
-both icons sit muted (key is a lock). After unlock both come up to
-full chrome color; the open panel’s icon is the accent wash.
+Toolbar **key** opens logins. Toolbar **shield** opens authenticator
+codes. Toolbar **card** opens cards. They are separate panels (only
+one at a time). Unlock is shared. While locked the icons sit muted
+(key is a lock). After unlock they come up to full chrome color; the
+open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
   The key button then opens the **fill login** list for the active page
-  (unless a passkey ceremony is already waiting). The card button unlocks
-  the same way, then opens **fill card**.
+  (unless a passkey ceremony is already waiting). The shield and card
+  buttons unlock the same way, then open **authenticator** / **fill card**.
 - **Fill login** lists URI-matching items (tall list; items with a passkey show
   a **passkey** badge). Click to fill username / password into the page.
+- **Authenticator** lists URI-matching logins that have a TOTP secret
+  (same site rule as fill-login; last-used first). Opening the panel
+  fills the top code into an OTP field on the page. The list shows the
+  current code and seconds remaining; click a row to copy that code
+  (and try to fill). The panel stays open so you can see the timeout.
 - **Fill card** lists every card in the vault (cards rarely have URIs). Each
   row shows the item name, brand, last digits, and expiry. Click fills
   number, name, expiry, and CVC on the page (standard `cc-*` autocomplete
@@ -193,7 +210,8 @@ and `document.execCommand('copy')`) are hooked the same way — Chromium’s
 own clipboard never reaches Wayland. Newlines in the copied text are kept.
 Triple-click selects a line / field the way Chromium expects.
 
-⌘-click (or Ctrl-click) a link opens it in a **background tab**. A
+⌘-click (or Ctrl-click) a link opens it in a **background tab**
+just below the current tab (same group, if the current tab is in one). A
 right-click on the page opens a kit menu (open/copy link, cut/copy/paste
 when editing, back / forward / reload) instead of Chromium’s empty OSR
 popup. Click back or forward to go one step; **hold** the button for a

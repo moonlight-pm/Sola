@@ -108,22 +108,38 @@ pub fn paste_into_focused_script(text: &str) -> String {
 }
 
 /// IIFE: href under view-pixel `(x, y)` in the main document (walks
-/// iframes when same-origin). Reports via `console.info`.
+/// same-origin iframes and open shadow trees). Reports via `console.info`.
 pub fn link_hit_script(x: i32, y: i32) -> String {
     format!(
         r#"(function(x,y){{
-  function hrefAt(doc,x,y){{
-    if(!doc) return '';
-    var el=doc.elementFromPoint(x,y);
-    if(!el) return '';
-    var n=el;
+  function tagOf(n){{ return (n&&n.tagName||'').toUpperCase(); }}
+  function hrefOf(n){{
     while(n){{
-      var tag=(n.tagName||'').toUpperCase();
-      if(tag==='A'||tag==='AREA'){{ return n.href||''; }}
+      var t=tagOf(n);
+      if(t==='A'||t==='AREA'){{ return n.href||''; }}
+      if(n.assignedSlot){{ n=n.assignedSlot; continue; }}
+      var root=n.getRootNode&&n.getRootNode();
+      if(root&&root.host){{ n=root.host; continue; }}
       n=n.parentElement;
     }}
-    var tag=(el.tagName||'').toUpperCase();
-    if((tag==='IFRAME'||tag==='FRAME')&&el.contentDocument){{
+    return '';
+  }}
+  function deepFromPoint(root,x,y){{
+    if(!root||!root.elementFromPoint) return null;
+    var el=root.elementFromPoint(x,y);
+    for(var i=0;el&&el.shadowRoot&&i<8;i++){{
+      var inner=el.shadowRoot.elementFromPoint(x,y);
+      if(!inner||inner===el) break;
+      el=inner;
+    }}
+    return el;
+  }}
+  function hrefAt(doc,x,y){{
+    if(!doc) return '';
+    var el=deepFromPoint(doc,x,y);
+    var href=hrefOf(el);
+    if(href) return href;
+    if((tagOf(el)==='IFRAME'||tagOf(el)==='FRAME')&&el.contentDocument){{
       try{{
         var r=el.getBoundingClientRect();
         return hrefAt(el.contentDocument,x-r.left,y-r.top);
@@ -224,5 +240,7 @@ mod tests {
         assert!(s.contains(LINK_HIT_PREFIX));
         assert!(s.contains("12,34"));
         assert!(s.contains("elementFromPoint"));
+        assert!(s.contains("shadowRoot"), "must pierce open shadow trees");
+        assert!(s.contains("assignedSlot"));
     }
 }

@@ -127,8 +127,7 @@ pub struct AppData {
     /// receives a `closed` event.
     pub focused_window: Option<u32>,
     /// Windows the shell has marked floating (`Topic::WindowFloating`). Gates
-    /// interactive move/resize: only a floating window under the pointer can be
-    /// Meta-dragged. Dropped when the window closes.
+    /// CSD move/resize. Dropped when the window closes.
     pub floating: std::collections::HashSet<u32>,
     /// Window currently under the pointer, tracked from `river_seat_v1`
     /// `pointer_enter`/`pointer_leave`. A move/resize op targets this window at
@@ -138,12 +137,8 @@ pub struct AppData {
     /// event). Used to pick the grabbed corner when a resize starts.
     pub pointer_pos: Option<(i32, i32)>,
     /// The in-flight interactive move/resize, if any. See `client::op`.
+    /// Started only from CSD (`pointer_move_requested` / resize).
     pub op: Option<op::OpState>,
-    /// Meta+LeftDrag move binding (`river_pointer_binding_v1`), created once the
-    /// seat is available and held so it keeps receiving press/release events.
-    pub move_binding: Option<RiverPointerBindingV1>,
-    /// Meta+RightDrag resize binding.
-    pub resize_binding: Option<RiverPointerBindingV1>,
     /// `wp_cursor_shape_manager_v1`, bound from the registry. Used to make a
     /// cursor-shape device for the seat's pointer.
     pub cursor_shape_manager: Option<WpCursorShapeManagerV1>,
@@ -200,8 +195,6 @@ impl AppData {
             pointer_window: None,
             pointer_pos: None,
             op: None,
-            move_binding: None,
-            resize_binding: None,
             cursor_shape_manager: None,
             wl_pointer: None,
             cursor_device: None,
@@ -665,27 +658,6 @@ impl Dispatch<RiverDecorationV1, ()> for AppData {
     ) {
     }
 }
-
-use crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1;
-impl Dispatch<RiverPointerBindingV1, op::OpKind> for AppData {
-    fn event(
-        state: &mut Self,
-        _: &RiverPointerBindingV1,
-        event: <RiverPointerBindingV1 as Proxy>::Event,
-        kind: &op::OpKind,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        use crate::protocol::river_window_management_v1::river_pointer_binding_v1::Event;
-        match event {
-            // A bound press over a floating window arms a move/resize; the op
-            // is started on the following manage sequence (op::drive).
-            Event::Pressed => op::on_pressed(state, *kind),
-            Event::Released => op::on_released(state),
-        }
-    }
-}
-
 
 impl Dispatch<wl_pointer::WlPointer, ()> for AppData {
     fn event(

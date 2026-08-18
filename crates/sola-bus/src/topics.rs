@@ -212,6 +212,8 @@ pub struct MouseClickedPayload {
     pub window_id: u32,
 }
 
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -541,6 +543,11 @@ pub struct AppToast {
 }
 
 define_topics! {
+    // TopicKind is postcard-encoded in Subscribe. Inserting a variant *above*
+    // existing ones shifts discriminants; a new client vs an old bus then
+    // silently subscribes to the wrong topics (this broke Super+Tab).
+    // Append new kinds at the **end**, or reuse an existing topic.
+    //
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
     #[sticky]

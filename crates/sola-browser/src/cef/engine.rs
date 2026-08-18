@@ -138,6 +138,7 @@ pub struct CefEngine {
     downloads: DownloadsHandle,
     passkeys: PasskeysHandle,
     page_menus: PageMenusHandle,
+    background_tabs: crate::engine::BackgroundTabsHandle,
 }
 
 impl Engine for CefEngine {
@@ -205,6 +206,7 @@ impl Engine for CefEngine {
             downloads: handles.downloads,
             passkeys: handles.passkeys,
             page_menus: handles.page_menus,
+            background_tabs: handles.background_tabs,
         }
     }
 
@@ -249,6 +251,10 @@ impl Engine for CefEngine {
 
     fn page_menus_handle(&self) -> PageMenusHandle {
         self.page_menus.clone()
+    }
+
+    fn background_tabs_handle(&self) -> crate::engine::BackgroundTabsHandle {
+        self.background_tabs.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -328,6 +334,13 @@ struct CefThreadState {
     download_cbs: RefCell<std::collections::HashMap<u32, cef::DownloadItemCallback>>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
     download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
+    /// ⌘/Ctrl+left-press: JS href fallback. If Chromium already opened a
+    /// tab via `on_before_popup`, this is ignored so we do not double-open.
+    pending_new_tab_click: Cell<Option<(i32, i32, u32, u32)>>,
+    /// Matching button-up still needs to be sent (we no longer swallow).
+    new_tab_click_armed: Cell<bool>,
+    /// True once this click opened a background tab (popup or JS).
+    cmd_click_opened: Cell<bool>,
 }
 
 /// Tabs to recreate after CEF recycle (new profile as root_cache_path).
@@ -425,6 +438,9 @@ pub(super) fn run_worker(
         shutting_down: Cell::new(false),
         download_cbs: RefCell::new(std::collections::HashMap::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
+        pending_new_tab_click: Cell::new(None),
+        new_tab_click_armed: Cell::new(false),
+        cmd_click_opened: Cell::new(false),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone())
@@ -850,9 +866,10 @@ cef::wrap_life_span_handler! {
                 return 1;
             }
             let state = cef_state();
-            let id = TabId(state.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-            open_tab(&state, id, url, String::new()); // no SetActiveTab → background tab
-            1 // cancel the native popup — handled as a tab.
+            state.cmd_click_opened.set(true);
+            state.pending_new_tab_click.take();
+            request_background_tab(&state, url);
+            1 // cancel the native popup — chrome opens the tab.
         }
     }
 }
@@ -947,6 +964,10 @@ cef::wrap_display_handler! {
                 if let Some(tx) = &cef_state().ipc_events {
                     let _ = tx.send(crate::cef::ipc::FromEngine::Clipboard(text));
                 }
+                return 1;
+            }
+            if let Some(rest) = msg.strip_prefix(crate::paste_js::LINK_HIT_PREFIX) {
+                handle_link_hit(&cef_state(), crate::paste_js::parse_js_json_string(rest));
                 return 1;
             }
 
@@ -1758,7 +1779,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             // dispatched to the active tab's browser host.
             if let Some(tab) = active_tab(state) {
                 if let Some(host) = tab.browser.host() {
-                    dispatch_input(&host, ev);
+                    dispatch_input(state, &host, ev);
                 }
             }
         }
@@ -1806,15 +1827,23 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::EvaluateJs(script) => {
-            // Vault fill + WebAuthn resolve. Google login (Gemini, etc.)
-            // runs credentials.get in an accounts.google.com iframe — the
-            // host can exec JS in every frame (no SOP). Main-only left
-            // Chromium's native passkey window to open.
             if let Some(tab) = active_tab(state) {
-                eval_js_all_frames(&tab.browser, &script);
+                // ⌘-click hit-test walks iframes itself — run once in main.
+                // Vault / WebAuthn still need every frame (Google iframe).
+                if script.contains(crate::paste_js::LINK_HIT_PREFIX) {
+                    eval_js_main(&tab.browser, &script);
+                } else {
+                    eval_js_all_frames(&tab.browser, &script);
+                }
             }
         }
         Cmd::OpenTab { id, url, title } => {
+            let next = id.0.saturating_add(1);
+            if next > state.next_id.load(std::sync::atomic::Ordering::Relaxed) {
+                state
+                    .next_id
+                    .store(next, std::sync::atomic::Ordering::Relaxed);
+            }
             open_tab(state, id, url, title);
         }
         Cmd::CloseTab(id) => {
@@ -2369,13 +2398,56 @@ fn rebuild_snapshot(state: &CefThreadState) {
 
 // ── Input dispatch (runs on CEF UI thread via CmdPumpTask) ────────
 
+fn send_mouse_click(
+    host: &cef::BrowserHost,
+    x: i32,
+    y: i32,
+    button: u32,
+    modifiers: u32,
+    click_count: u32,
+    down: bool,
+) {
+    use cef::{MouseButtonType, MouseEvent};
+    let me = MouseEvent { x, y, modifiers };
+    let bt = match button {
+        1 => MouseButtonType::LEFT,
+        2 => MouseButtonType::MIDDLE,
+        3 => MouseButtonType::RIGHT,
+        _ => return,
+    };
+    // OSR does not infer multi-click. Pass 1/2/3 so Chromium
+    // can word-select (double) and line/all-select (triple).
+    let n = click_count.max(1) as i32;
+    host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, n);
+}
+
+/// `__sola_linkhit__`: ask chrome to open a background tab. Chrome mints
+/// the id — helper `next_id` starts at 1 and would collide with the session.
+fn handle_link_hit(state: &CefThreadState, href: String) {
+    let _ = state.pending_new_tab_click.take();
+    tracing::info!(href = %href, already = state.cmd_click_opened.get(), "cmd-click link hit");
+    if state.cmd_click_opened.get() {
+        return;
+    }
+    if crate::util::href_is_new_tab_target(&href) {
+        state.cmd_click_opened.set(true);
+        request_background_tab(state, href);
+    }
+}
+
+fn request_background_tab(state: &CefThreadState, url: String) {
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab { url });
+    }
+}
+
 /// Materialize an `InputEvent` as CEF `MouseEvent` / `KeyEvent`
 /// and hand it to the browser host. Per CEF's docs a key press
 /// is three events: RAWKEYDOWN → optional CHAR (for printable
 /// input) → KEYUP. KeyEvent::default() sets `size` correctly so
 /// CEF accepts it.
-fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
-    use cef::{KeyEvent, KeyEventType, MouseButtonType, MouseEvent};
+fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEvent) {
+    use cef::{KeyEvent, KeyEventType, MouseEvent};
     match ev {
         InputEvent::PointerMove { x, y, modifiers } => {
             let me = MouseEvent { x, y, modifiers };
@@ -2396,21 +2468,31 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
                     "pointer button down"
                 );
             }
-            // ⌘ is mapped to CONTROL in modifiers_to_cef_mouse so Chromium
-            // raises on_before_popup (new background tab). Do not swallow
-            // the click — a JS hit-test that never reports left the page
-            // with a dead press.
-            let me = MouseEvent { x, y, modifiers };
-            let bt = match button {
-                1 => MouseButtonType::LEFT,
-                2 => MouseButtonType::MIDDLE,
-                3 => MouseButtonType::RIGHT,
-                _ => return,
-            };
-            // OSR does not infer multi-click. Pass 1/2/3 so Chromium
-            // can word-select (double) and line/all-select (triple).
-            let n = click_count.max(1) as i32;
-            host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, n);
+            // ⌘/Ctrl+left: do **not** send the click to CEF (OSR treats
+            // ctrl-click as same-tab nav). JS-hit-test the href; chrome
+            // opens a background tab. Swallow the matching button-up.
+            if down && button == 1 && crate::cef::input::mouse_is_new_tab(modifiers) {
+                state.new_tab_click_armed.set(true);
+                state.cmd_click_opened.set(false);
+                state
+                    .pending_new_tab_click
+                    .set(Some((x, y, modifiers, click_count)));
+                if let Some(tab) = active_tab(state) {
+                    eval_js_main(&tab.browser, &crate::paste_js::link_hit_script(x, y));
+                }
+                tracing::info!(
+                    x,
+                    y,
+                    modifiers = format_args!("{modifiers:#x}"),
+                    "cmd-click href (no CEF click)"
+                );
+                return;
+            }
+            if !down && button == 1 && state.new_tab_click_armed.get() {
+                state.new_tab_click_armed.set(false);
+                return;
+            }
+            send_mouse_click(host, x, y, button, modifiers, click_count, down);
         }
         InputEvent::Scroll {
             x,

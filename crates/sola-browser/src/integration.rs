@@ -5,9 +5,13 @@
 //! `run()` via `sola_kit::app::BusSetup`; this module is the receive side.
 //! It reacts to:
 //!
-//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`),
+//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`);
+//!   a `chrome.sock` handoff re-emits this so the shell can raise the
+//!   window. Our own echo is ignored.
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
 //!   menubar clicks (Profiles switch / manage included),
+//! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
+//!   from the focused client; ⌘-click needs that bit),
 //! - `Topic::Theme` — restyle the chrome live (handled by the kit helper),
 //! - self-addressed quit (`MenuAction "quit"` / `CloseApp`).
 //!
@@ -45,19 +49,24 @@ pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
 pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
 /// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
 pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
-
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
 /// `OpenUrl` is subscribed for dogfood / `solactl emit OpenUrl` control of a
 /// running sola-browser. System http/https defaults go to sola-browser
 /// (D3) until we flip MIME; this does not change that default by itself.
+///
+/// Chord / ChordReleased: River does not deliver bound Super_L to the
+/// focused surface. The shell registers bare Super_L so switcher confirm
+/// works; we listen so ⌘-click still sees Super.
 pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::WindowFloating,
     TopicKind::OpenUrl,
+    TopicKind::Chord,
+    TopicKind::ChordReleased,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -216,6 +225,24 @@ pub enum BrowserIntent {
     None,
 }
 
+/// True when this `OpenUrl` is the chrome re-broadcasting a `chrome.sock`
+/// handoff so the shell will raise the window. The tab is already open.
+pub fn open_url_is_self_echo(source: &str, app_id: &str) -> bool {
+    source == app_id
+}
+
+/// Re-broadcast a sock-handoff as `Topic::OpenUrl` so the shell raises
+/// the existing window (same path as mail / bus opens). The chrome
+/// ignores its own echo in [`handle_bus`].
+pub fn emit_open_url_for_raise(url: &str) {
+    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        let _ = bus.emit(Topic::OpenUrl(OpenUrlRequest {
+            url: url.to_string(),
+            activate: true,
+        }));
+    }
+}
+
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
 /// `activate` (matches the retired GTK browser's behaviour).
 pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
@@ -268,6 +295,12 @@ pub fn handle_bus<E: Engine>(
     }
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => {
+            // Sock handoff re-emits OpenUrl so the shell can raise us.
+            // Ignore our own echo or we would open the tab twice.
+            if open_url_is_self_echo(&message.source, app_id) {
+                tracing::debug!(url = %req.url, "OpenUrl self-echo — tab already opened");
+                return Task::none();
+            }
             tracing::info!(url = %req.url, activate = req.activate, "OpenUrl bus");
             run_intent(app, intent_for_open_url(&req))
         }
@@ -278,6 +311,18 @@ pub fn handle_bus<E: Engine>(
                 "menu action received"
             );
             run_intent(app, intent_for_menu_action(&m.action_id))
+        }
+        Some(Topic::Chord(c)) => {
+            if crate::input::apply_super_chord(true, c.keysym) {
+                tracing::info!(keysym = c.keysym, "super down (bus chord)");
+            }
+            Task::none()
+        }
+        Some(Topic::ChordReleased(c)) => {
+            if crate::input::apply_super_chord(false, c.keysym) {
+                tracing::info!(keysym = c.keysym, "super up (bus chord)");
+            }
+            Task::none()
         }
         _ => Task::none(),
     }
@@ -390,6 +435,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn subscribes_to_super_chords() {
+        assert!(SUBSCRIBE.contains(&TopicKind::Chord));
+        assert!(SUBSCRIBE.contains(&TopicKind::ChordReleased));
+        assert!(SUBSCRIBE.contains(&TopicKind::MenuAction));
+    }
+
+    #[test]
     fn menu_actions_map_to_intents() {
         assert_eq!(intent_for_menu_action(ACTION_RELOAD), BrowserIntent::Reload);
         assert_eq!(
@@ -477,6 +529,13 @@ mod tests {
     #[test]
     fn unknown_action_is_none() {
         assert_eq!(intent_for_menu_action("bogus"), BrowserIntent::None);
+    }
+
+    #[test]
+    fn open_url_self_echo_is_detected() {
+        assert!(open_url_is_self_echo("sola-browser", "sola-browser"));
+        assert!(!open_url_is_self_echo("sola-mail", "sola-browser"));
+        assert!(!open_url_is_self_echo("", "sola-browser"));
     }
 
     #[test]

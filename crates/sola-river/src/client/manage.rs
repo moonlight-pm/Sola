@@ -199,7 +199,7 @@ pub fn handle_manage_start(state: &mut AppData) {
         };
         // gamescope: hold + debounce host size so Steam prepare / shader
         // interstitials run on a stable nest (input-thread abort under thrash).
-        // Skip entirely during interactive Meta-drag resize/move — those
+        // Skip entirely during interactive CSD resize/move — those
         // must apply every delta or the gesture feels axis-locked / stuck.
         let op_on_this = state
             .op
@@ -309,10 +309,9 @@ pub fn handle_manage_start(state: &mut AppData) {
 
     apply_fullscreen_requests(state);
 
-    // Interactive move/resize: create the pointer bindings once the seat is up,
-    // then issue any pending op_start_pointer/op_end for this sequence. Both
-    // `enable` and the op requests are manage-sequence-only.
-    crate::client::op::ensure_pointer_bindings(state);
+    // CSD move/resize: cursor device + any pending op_start_pointer/op_end.
+    // No Super+button pointer bindings — those clicks reach clients.
+    crate::client::op::ensure_op_cursor(state);
     crate::client::op::drive(state);
 
     wm.manage_finish();

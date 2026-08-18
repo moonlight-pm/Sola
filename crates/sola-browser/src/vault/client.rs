@@ -71,6 +71,19 @@ pub struct CardFillMaterial {
     pub brand: Option<String>,
 }
 
+/// One authenticator (TOTP) login for the picker. `code` is the current
+/// token; chrome recomputes remaining seconds from [`Self::period`].
+/// Only URI-matching logins are listed (same rule as fill-login).
+#[derive(Debug, Clone)]
+pub struct TotpSummary {
+    pub id: String,
+    pub name: String,
+    pub username: Option<String>,
+    pub code: String,
+    pub period: u32,
+    pub last_used: i64,
+}
+
 /// Credentials for page fill — zeroize on drop.
 #[derive(Debug, Clone)]
 pub struct FillMaterial {
@@ -400,6 +413,63 @@ impl VaultService {
         Ok(out)
     }
 
+    /// URI-matching logins that have a TOTP secret, most recently used first.
+    pub async fn list_totp(&self, page_url: &str) -> Result<Vec<TotpSummary>, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let listed = self
+            .client
+            .vault()
+            .ciphers()
+            .get_all()
+            .await
+            .map_err(|e| VaultError::Other(e.to_string()))?;
+
+        let mru = super::prefs::VaultPrefs::last_used_map();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut out = Vec::new();
+        for view in listed.successes {
+            if let Some(summary) = totp_summary_if_login(&view, page_url, &mru, now) {
+                out.push(summary);
+            }
+        }
+        out.sort_by(|a, b| b.last_used.cmp(&a.last_used).then(a.name.cmp(&b.name)));
+        tracing::info!(n = out.len(), %page_url, "vault: totp list");
+        Ok(out)
+    }
+
+    pub async fn fill_totp(&self, cipher_id: &str) -> Result<String, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+        let view = self
+            .client
+            .vault()
+            .ciphers()
+            .get(cipher_id)
+            .await
+            .map_err(|_| VaultError::NotFound)?;
+        let login = view.login.ok_or(VaultError::NotFound)?;
+        let raw = login.totp.filter(|s| !s.is_empty()).ok_or(VaultError::NotFound)?;
+        let spec = super::totp::TotpSpec::parse(&raw).ok_or(VaultError::NotFound)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Ok(spec.code_at(now))
+    }
+
     pub async fn fill_card(&self, cipher_id: &str) -> Result<CardFillMaterial, VaultError> {
         if !self.session_authenticated {
             return Err(VaultError::NotLoggedIn);
@@ -654,6 +724,40 @@ fn card_summary_if_card(
         last4: card_last4(card.number.as_deref()),
         exp: card_exp_display(card.exp_month.as_deref(), card.exp_year.as_deref()),
         last_used,
+    })
+}
+
+fn totp_summary_if_login(
+    view: &CipherView,
+    page_url: &str,
+    mru: &std::collections::HashMap<String, i64>,
+    now: u64,
+) -> Option<TotpSummary> {
+    if view.r#type != CipherType::Login || view.deleted_date.is_some() {
+        return None;
+    }
+    let login = view.login.as_ref()?;
+    let raw = login.totp.as_deref().filter(|s| !s.is_empty())?;
+    let spec = super::totp::TotpSpec::parse(raw)?;
+    let uris = login.uris.as_ref()?;
+    if !uris.iter().any(|u| {
+        u.uri
+            .as_ref()
+            .is_some_and(|uri| uri_matches(page_url, uri, u.r#match))
+    }) {
+        return None;
+    }
+    let id = view.id.map(|id| id.to_string()).unwrap_or_default();
+    if id.is_empty() {
+        return None;
+    }
+    Some(TotpSummary {
+        id: id.clone(),
+        name: view.name.clone(),
+        username: login.username.clone(),
+        code: spec.code_at(now),
+        period: spec.period,
+        last_used: cipher_last_used(view, &id, mru),
     })
 }
 
