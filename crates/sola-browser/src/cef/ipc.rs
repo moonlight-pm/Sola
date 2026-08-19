@@ -42,6 +42,11 @@ pub enum ToEngine {
     CancelDownload {
         id: u32,
     },
+    ShowDevTools {
+        panel: String,
+        inspect_x: Option<i32>,
+        inspect_y: Option<i32>,
+    },
     Shutdown,
 }
 
@@ -67,7 +72,9 @@ pub enum FromEngine {
     /// Page right-click — chrome shows the kit context menu.
     PageContext(PageContext),
     /// ⌘-click / popup: chrome opens a background tab (owns the id).
-    OpenBackgroundTab { url: String },
+    OpenBackgroundTab {
+        url: String,
+    },
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).

@@ -701,6 +701,15 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         }),
         Cmd::CloseTab(id) => Some(ToEngine::CloseTab(id.0)),
         Cmd::SetActiveTab(id) => Some(ToEngine::SetActiveTab(id.0)),
+        Cmd::ShowDevTools {
+            panel,
+            inspect_x,
+            inspect_y,
+        } => Some(ToEngine::ShowDevTools {
+            panel,
+            inspect_x,
+            inspect_y,
+        }),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

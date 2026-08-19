@@ -541,6 +541,10 @@ impl Shell {
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
         self.emit_focus(window_id, prev_focused);
+        // Always re-`place_top`. If the app was already MRU-front the
+        // order is unchanged and `emit_composition` would skip — River
+        // can still have another surface (same zone) visually on top.
+        self.last_composition.clear();
         self.emit_composition();
     }
 

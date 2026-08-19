@@ -141,7 +141,11 @@ pub fn normalize_url(s: &str) -> String {
 /// is `https://`. Unbracketed IPv6 loopback (`::1`) is wrapped.
 fn with_default_scheme(s: &str) -> String {
     let host = scheme_less_host(s);
-    let scheme = if is_loopback_host(host) { "http" } else { "https" };
+    let scheme = if is_loopback_host(host) {
+        "http"
+    } else {
+        "https"
+    };
     if host.contains(':') && !s.starts_with('[') {
         let rest = &s[host.len()..];
         format!("{scheme}://[{host}]{rest}")
@@ -193,10 +197,7 @@ fn scheme_less_host(s: &str) -> &str {
     }
     let no_path = s.split_once('/').map(|(h, _)| h).unwrap_or(s);
     if let Some((host, port)) = no_path.rsplit_once(':') {
-        if !port.is_empty()
-            && port.chars().all(|c| c.is_ascii_digit())
-            && !host.contains(':')
-        {
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && !host.contains(':') {
             return host;
         }
     }
@@ -212,9 +213,7 @@ fn is_loopback_host(host: &str) -> bool {
     if is_ipv4_loopback(&h) {
         return true;
     }
-    h == "::1"
-        || h == "0:0:0:0:0:0:0:1"
-        || h.strip_prefix("::ffff:").is_some_and(is_ipv4_loopback)
+    h == "::1" || h == "0:0:0:0:0:0:0:1" || h.strip_prefix("::ffff:").is_some_and(is_ipv4_loopback)
 }
 
 fn is_ipv4_loopback(s: &str) -> bool {
@@ -424,7 +423,10 @@ mod tests {
     fn normalize_url_uses_http_for_loopback() {
         assert_eq!(normalize_url("localhost"), "http://localhost");
         assert_eq!(normalize_url("LocalHost/path"), "http://LocalHost/path");
-        assert_eq!(normalize_url("app.localhost:5173"), "http://app.localhost:5173");
+        assert_eq!(
+            normalize_url("app.localhost:5173"),
+            "http://app.localhost:5173"
+        );
         assert_eq!(normalize_url("127.0.0.1"), "http://127.0.0.1");
         assert_eq!(normalize_url("127.0.0.1:8080"), "http://127.0.0.1:8080");
         assert_eq!(normalize_url("[::1]"), "http://[::1]");

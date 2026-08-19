@@ -38,6 +38,11 @@ pub struct PageContext {
     pub editable: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
+    /// View-pixel hit from CEF (for Inspect element).
+    #[serde(default)]
+    pub x: i32,
+    #[serde(default)]
+    pub y: i32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -177,6 +182,14 @@ pub enum Cmd<E: Engine> {
     CancelDownload {
         profile_id: String,
         id: u32,
+    },
+    /// Open Chromium DevTools for the active tab as a chrome tab.
+    /// `panel` is `console` or `elements`. `inspect_*` selects the node
+    /// under that view point (Inspect element).
+    ShowDevTools {
+        panel: String,
+        inspect_x: Option<i32>,
+        inspect_y: Option<i32>,
     },
     /// Helper IPC died — router respawns and restores tabs.
     HelperDied {

@@ -40,6 +40,7 @@ pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
 pub const ACTION_FORWARD: &str = "forward";
 pub const ACTION_QUIT: &str = "quit";
+pub const ACTION_DEVTOOLS: &str = "devtools";
 pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
@@ -72,13 +73,14 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 8] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
     (ACTION_FORWARD, "Forward", KeyCode::RIGHT.meta()),
+    (ACTION_DEVTOOLS, "Developer Tools", KeyCode::I.meta().alt()),
     (ACTION_QUIT, "Quit Browser", KeyCode::Q.meta()),
 ];
 
@@ -221,6 +223,8 @@ pub enum BrowserIntent {
     RenameProfile,
     /// Open delete confirmation for the active profile.
     DeleteProfile,
+    /// Open DevTools (console) for the active tab.
+    ShowDevTools,
     Quit,
     None,
 }
@@ -265,6 +269,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
+        ACTION_DEVTOOLS => BrowserIntent::ShowDevTools,
         ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
@@ -385,6 +390,14 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             app.open_profile_dialog(ProfileDialog::DeleteConfirm);
             Task::none()
         }
+        BrowserIntent::ShowDevTools => {
+            let _ = app.cmd_tx.send(crate::engine::Cmd::ShowDevTools {
+                panel: "console".into(),
+                inspect_x: None,
+                inspect_y: None,
+            });
+            Task::none()
+        }
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
@@ -458,6 +471,10 @@ mod tests {
             BrowserIntent::FocusUrl
         );
         assert_eq!(intent_for_menu_action(ACTION_QUIT), BrowserIntent::Quit);
+        assert_eq!(
+            intent_for_menu_action(ACTION_DEVTOOLS),
+            BrowserIntent::ShowDevTools
+        );
     }
 
     #[test]

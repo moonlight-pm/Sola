@@ -246,6 +246,8 @@ pub enum PageMenuAction {
     Back,
     Forward,
     Reload,
+    DevTools,
+    InspectElement { x: i32, y: i32 },
 }
 
 #[derive(Debug, Clone)]
@@ -1772,10 +1774,7 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::CopyUrl => {
-                let page_url = self
-                    .active_tab_info()
-                    .map(|t| t.url.as_str())
-                    .unwrap_or("");
+                let page_url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
                 let Some(url) =
                     crate::util::copyable_page_url(page_url, &self.last_seen_url, &self.url_field)
                 else {
@@ -2023,8 +2022,13 @@ impl<E: Engine> App<E> {
                     .drain(..)
                     .collect();
                 for url in bg {
-                    tracing::info!(%url, "cmd-click → background tab");
-                    self.open_tab_beside(url, false);
+                    if url.contains("/devtools/inspector.html") {
+                        tracing::info!(%url, "DevTools frontend tab");
+                        self.open_tab(url, true);
+                    } else {
+                        tracing::info!(%url, "cmd-click → background tab");
+                        self.open_tab_beside(url, false);
+                    }
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
@@ -2156,6 +2160,14 @@ impl<E: Engine> App<E> {
                     .map(|g| g.name.clone())
                     .unwrap_or_default();
                 self.renaming = Some((id, name));
+                return Task::batch([
+                    iced::widget::operation::focus(group_rename_id()),
+                    iced::advanced::widget::operate(
+                        iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                            group_rename_id(),
+                        ),
+                    ),
+                ]);
             }
             Msg::RenameInput(s) => {
                 if let Some((_, draft)) = &mut self.renaming {
@@ -2640,10 +2652,14 @@ impl<E: Engine> App<E> {
             if let Some((rid, draft)) = &self.renaming {
                 if rid == &g.id {
                     let field = text_input("Group name", draft)
+                        .id(group_rename_id())
+                        .size(12)
+                        .font(sola_kit::fonts::ui_medium())
+                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
                         .on_input(Msg::RenameInput)
                         .on_submit(Msg::RenameCommit)
                         .style(sola_kit::components::text_input::style)
-                        .padding(Padding::from([2, 4]));
+                        .padding(Padding::from([1, 4]));
                     section = section.header_content(field);
                 }
             }
@@ -2984,6 +3000,7 @@ impl<E: Engine> App<E> {
     fn take_page_menu(&mut self) {
         let menus: Vec<PageContext> = self.page_menus.lock().unwrap().drain(..).collect();
         if let Some(ctx) = menus.into_iter().last() {
+            tracing::info!(x = ctx.x, y = ctx.y, "page context menu");
             self.context_menu = Some((last_cursor_point(), CtxTarget::Page(ctx)));
         }
     }
@@ -3088,6 +3105,22 @@ impl<E: Engine> App<E> {
             PageMenuAction::Back => self.update(Msg::NavBack),
             PageMenuAction::Forward => self.update(Msg::NavForward),
             PageMenuAction::Reload => self.update(Msg::NavReloadOrStop),
+            PageMenuAction::DevTools => {
+                let _ = self.cmd_tx.send(Cmd::ShowDevTools {
+                    panel: "console".into(),
+                    inspect_x: None,
+                    inspect_y: None,
+                });
+                Task::none()
+            }
+            PageMenuAction::InspectElement { x, y } => {
+                let _ = self.cmd_tx.send(Cmd::ShowDevTools {
+                    panel: "elements".into(),
+                    inspect_x: Some(x),
+                    inspect_y: Some(y),
+                });
+                Task::none()
+            }
         }
     }
 
@@ -3696,10 +3729,7 @@ impl<E: Engine> App<E> {
             .size(15)
             .font(sola_kit::fonts::ui_medium());
         const MATCH_LIST_H: f32 = 420.0;
-        let page_url = self
-            .active_tab_info()
-            .map(|t| t.url.as_str())
-            .unwrap_or("");
+        let page_url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
         let host_hint = page_host_hint(page_url);
         let mut col = column![
             title,
@@ -3747,9 +3777,7 @@ impl<E: Engine> App<E> {
                 } else {
                     format!("{remaining}s")
                 };
-                let code_line = text(pretty)
-                    .size(18)
-                    .font(sola_kit::fonts::mono());
+                let code_line = text(pretty).size(18).font(sola_kit::fonts::mono());
                 let row_body = column![
                     text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
                     code_line,
@@ -4932,6 +4960,14 @@ fn page_menu_items(ctx: &PageContext) -> Vec<MenuItem<Msg>> {
             PageMenuKind::Reload => {
                 MenuItem::action("Reload", Msg::PageMenu(PageMenuAction::Reload))
             }
+            PageMenuKind::DevTools => MenuItem::action(
+                "Open Developer Tools",
+                Msg::PageMenu(PageMenuAction::DevTools),
+            ),
+            PageMenuKind::InspectElement => MenuItem::action(
+                "Inspect Element",
+                Msg::PageMenu(PageMenuAction::InspectElement { x: ctx.x, y: ctx.y }),
+            ),
             PageMenuKind::Separator => MenuItem::separator(),
         })
         .collect()
@@ -5069,6 +5105,10 @@ fn vault_toolbar_btn_unlocked(
 #[cfg(feature = "bitwarden")]
 fn vault_email_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-email")
+}
+
+fn group_rename_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-group-rename")
 }
 
 fn nav_icon_back() -> iced::widget::svg::Handle {
@@ -5210,19 +5250,19 @@ fn omnibox_progress_overlay<'a>(frac: f32) -> Element<'a, Msg> {
 /// (url / title / loading). Engine-only ids (popups) are appended unless
 /// chrome already closed them.
 fn merge_tab_snapshot(prev: &[TabInfo], live: &[TabInfo], closed: &HashSet<TabId>) -> Vec<TabInfo> {
-    let mut out: Vec<TabInfo> = prev
-        .iter()
-        .filter(|p| !closed.contains(&p.id))
-        .map(|p| match live.iter().find(|t| t.id == p.id) {
-            Some(t) => merge_tab_fields(p, t),
-            None => p.clone(),
-        })
-        .collect();
-    for t in live {
-        if closed.contains(&t.id) {
+    let mut out: Vec<TabInfo> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in prev {
+        if closed.contains(&p.id) || !seen.insert(p.id) {
             continue;
         }
-        if prev.iter().any(|p| p.id == t.id) {
+        out.push(match live.iter().find(|t| t.id == p.id) {
+            Some(t) => merge_tab_fields(p, t),
+            None => p.clone(),
+        });
+    }
+    for t in live {
+        if closed.contains(&t.id) || !seen.insert(t.id) {
             continue;
         }
         out.push(t.clone());
