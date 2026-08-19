@@ -121,8 +121,10 @@ pub struct SidebarItem<'a, Message> {
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
     /// When set, [`SidebarPanel`] renders a hover-only stacked `×` that
-    /// emits this message. Requires [`SidebarPanel::item_hover`] plus
-    /// [`Self::id`] (auto-assigned from the row index when missing).
+    /// emits this message. Visibility is live pointer-over-row when
+    /// [`SidebarPanel::item_hover`] is wired (so a close that slides the
+    /// next row under a stationary cursor still shows the chip). `id` is
+    /// auto-assigned from the row index when missing.
     pub on_close: Option<Message>,
     /// Dim trailing label (e.g. relative time `19m`, unread count).
     /// Laid out in a fixed trailing column so it cannot crush the title.
@@ -191,7 +193,9 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self
     }
 
-    /// Attach a hover-only stacked `×` emitting `msg`.
+    /// Attach a hover-only stacked `×` emitting `msg`. With
+    /// [`SidebarPanel::item_hover`] the chip follows the pointer after
+    /// a row slides away (no mouse-out needed).
     pub fn on_close(mut self, msg: Message) -> Self {
         self.on_close = Some(msg);
         self
@@ -1193,8 +1197,10 @@ pub struct ReorderCfg<'a, Message> {
 /// title width.
 ///
 /// `hover_tracked` is true when the parent wired [`SidebarPanel::item_hover`].
-/// List `on_close` is then hover-only; without tracking the × stays visible
-/// so callers that have not migrated hover still get a close target.
+/// List `on_close` is then hover-only via live cursor-over-row (not enter
+/// tracking, so a close that slides the next row under the pointer still
+/// shows ×). Without tracking the × stays visible so callers that have
+/// not migrated hover still get a close target.
 fn render_item<'a, Message>(
     item: SidebarItem<'a, Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
@@ -1340,7 +1346,7 @@ where
                 .on_press(message)
                 .into()
         };
-        return finish_list_row(row_el, chrome, active, on_close, hovered, hover_tracked, density);
+        return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
     };
 
     // ── Reorder-enabled path. ──
@@ -1381,7 +1387,6 @@ where
         chrome,
         active,
         on_close,
-        hovered,
         hover_tracked,
         density,
     )
@@ -1398,7 +1403,6 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     chrome: SidebarItemChrome,
     active: bool,
     on_close: Option<Message>,
-    hovered: bool,
     hover_tracked: bool,
     density: SidebarDensity,
 ) -> Element<'a, Message> {
@@ -1421,27 +1425,158 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     let Some(close_msg) = on_close else {
         return etched;
     };
-    // Hover-only when the parent tracks hover; otherwise keep × visible
-    // (sidebar() helper, or a panel that never called `item_hover`).
-    let show_close = hovered || !hover_tracked;
-    if !show_close {
-        return etched;
+    let chip = close_chip(close_msg, active, chrome, density);
+    if hover_tracked {
+        // Always mount: paint/hit from live cursor-over-row, not enter
+        // tracking. After a close the next row slides under a stationary
+        // pointer; `on_enter` never fires, but the next draw still sees
+        // the cursor and the × stays available.
+        return stack![etched, HoverClose { chip }].into();
     }
+    // No hover tracking: × stays visible (`sidebar()` helper, or a
+    // panel that never called `item_hover`).
+    stack![etched, chip].into()
+}
+
+/// Right-aligned stacked ×. Shared by the always-visible fallback and
+/// the cursor-gated [`HoverClose`] overlay.
+fn close_chip<'a, Message: Clone + 'a>(
+    close_msg: Message,
+    active: bool,
+    chrome: SidebarItemChrome,
+    density: SidebarDensity,
+) -> Element<'a, Message> {
     let m = density.metrics();
     let close = button(icon_svg(tab_close_icon(), m.close as u16))
         .style(move |theme, status| tab_close_style(theme, status, active, chrome))
         .padding(Padding::from([3, 6]))
         .on_press(close_msg);
-    stack![
-        etched,
-        container(close)
-            .align_x(iced::alignment::Horizontal::Right)
-            .align_y(iced::alignment::Vertical::Center)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([0, 4])),
-    ]
-    .into()
+    container(close)
+        .align_x(iced::alignment::Horizontal::Right)
+        .align_y(iced::alignment::Vertical::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding::from([0, 4]))
+        .into()
+}
+
+/// Full-row overlay that paints the close chip only while the pointer is
+/// over the row. Mounted even when app-owned hover is `None`, so a row
+/// that slides under a stationary cursor (close, collapse, dissolve)
+/// still shows × without a mouse-out.
+struct HoverClose<'a, Message> {
+    chip: Element<'a, Message>,
+}
+
+impl<Message> Widget<Message, Theme, iced::Renderer> for HoverClose<'_, Message> {
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.chip)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.chip));
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size {
+            width: Length::Fill,
+            height: Length::Fill,
+        }
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let limits = limits.width(Length::Fill).height(Length::Fill);
+        let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
+        let child = self
+            .chip
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, &limits);
+        layout::Node::with_children(size, vec![child])
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if !cursor.is_over(layout.bounds()) {
+            return;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            child,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::None;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget().mouse_interaction(
+            &tree.children[0],
+            child,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        if !cursor.is_over(layout.bounds()) {
+            return;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child,
+            cursor,
+            viewport,
+        );
+    }
+}
+
+impl<'a, Message: 'a> From<HoverClose<'a, Message>> for Element<'a, Message> {
+    fn from(value: HoverClose<'a, Message>) -> Self {
+        Element::new(value)
+    }
 }
 
 /// Stable id for close-on-hover when the caller omitted [`SidebarItem::id`].
@@ -1868,6 +2003,10 @@ where
     /// Rows only emit **enter** (not exit). A list-level exit clears hover.
     /// Per-row exit races with the next row's enter (order depends on move
     /// direction) and left trash stuck off when sweeping upward.
+    ///
+    /// List `on_close` does **not** use this id for visibility — the ×
+    /// paints when the pointer is over the row, so a close that slides
+    /// the next row under a stationary cursor still shows the chip.
     pub fn item_hover(
         mut self,
         hovered: Option<String>,

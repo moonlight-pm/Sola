@@ -318,10 +318,11 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         heading("Sidebar"),
         body(
             "List etch: muted idle, reserved lip so selected text does not \
-             shift, inset active, hover-only ×. Work is a collapsible group \
-             pocket (nested members); Spam sits in the loose run underneath. \
-             Right-click Drafts. Overflow chips only when section_scroll is \
-             wired and the viewport is measured."
+             shift, inset active, hover-only × (follows the pointer after \
+             a row slides away — no mouse-out needed). Work is a \
+             collapsible group pocket (nested members); Spam sits in the \
+             loose run underneath. Right-click Drafts. Overflow chips only \
+             when section_scroll is wired and the viewport is measured."
         )
         .style(muted),
         demo,
