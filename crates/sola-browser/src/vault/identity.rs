@@ -28,6 +28,7 @@ use tracing::{info, warn};
 use zeroize::Zeroize;
 
 use super::client::{LoginOutcome, TwoFactorKind};
+use super::org_crypto::OrgCryptoSyncHandler;
 use super::sync_cipher::CipherSyncHandler;
 
 /// Same stable id the SDK password login uses (see bitwarden-core PasswordTokenRequest).
@@ -71,6 +72,7 @@ pub fn build_pm_client(
 ) -> (PasswordManagerClient, bitwarden_sync::SyncClient) {
     use bitwarden_core::auth::ClientManagedTokenHandler;
     use bitwarden_core::client::ClientBuilder;
+    use bitwarden_core::client::persisted_state::OrganizationSharedKey;
     use bitwarden_core::key_management::{LocalUserDataKeyState, UserKeyState};
     use bitwarden_vault::{Cipher, Folder};
 
@@ -91,6 +93,9 @@ pub fn build_pm_client(
     state.register_client_managed(Arc::new(
         MemoryRepository::<LocalUserDataKeyState>::default(),
     ));
+    state.register_client_managed(Arc::new(
+        MemoryRepository::<OrganizationSharedKey>::default(),
+    ));
 
     let pm = PasswordManagerClient(client);
     // Keep this SyncClient for the process lifetime — handlers live on it.
@@ -98,6 +103,8 @@ pub fn build_pm_client(
     sync.register_sync_handler(Arc::new(CryptoSyncHandler::new(pm.0.clone())));
     sync.register_sync_handler(Arc::new(FolderSyncHandler::from_client(&pm.0)));
     sync.register_sync_handler(Arc::new(CipherSyncHandler::from_client(&pm.0)));
+    // Org keys after ciphers are stored; decrypt happens later in get_all().
+    sync.register_sync_handler(Arc::new(OrgCryptoSyncHandler::new(pm.0.clone())));
     (pm, sync)
 }
 

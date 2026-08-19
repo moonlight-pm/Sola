@@ -341,6 +341,32 @@ struct CefThreadState {
     new_tab_click_armed: Cell<bool>,
     /// True once this click opened a background tab (popup or JS).
     cmd_click_opened: Cell<bool>,
+    /// In-page HTML5 drag (OSR `start_dragging`).
+    osr_drag: RefCell<Option<OsrDrag>>,
+    /// Remote-debugging port for DevTools-as-a-tab.
+    debug_port: Cell<u16>,
+    /// Inspect-element coords to run once the frontend tab has loaded.
+    pending_inspect: Cell<Option<(i32, i32, TabId)>>,
+}
+
+/// OSR drag session: CEF gave us `DragData`; we must echo target events.
+struct OsrDrag {
+    data: cef::DragData,
+    allowed: cef::DragOperationsMask,
+    entered: bool,
+    x: i32,
+    y: i32,
+    ghost: Option<DragGhost>,
+}
+
+/// Bitmap we composite onto the page while an HTML5 drag is live.
+/// Chromium expects the host to draw this; OSR has no OS ghost.
+struct DragGhost {
+    pixels: Vec<u8>,
+    w: u32,
+    h: u32,
+    hot_x: i32,
+    hot_y: i32,
 }
 
 /// Tabs to recreate after CEF recycle (new profile as root_cache_path).
@@ -441,6 +467,9 @@ pub(super) fn run_worker(
         pending_new_tab_click: Cell::new(None),
         new_tab_click_armed: Cell::new(false),
         cmd_click_opened: Cell::new(false),
+        osr_drag: RefCell::new(None),
+        debug_port: Cell::new(0),
+        pending_inspect: Cell::new(None),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone())
@@ -562,6 +591,13 @@ cef::wrap_app! {
                 let pw_key = CefString::from("password-store");
                 let pw_val = CefString::from("basic");
                 cmd.append_switch_with_value(Some(&pw_key), Some(&pw_val));
+
+                // DevTools frontend tab talks to this helper over
+                // websocket; Chromium 111+ blocks other origins unless
+                // we allow it.
+                let origin_key = CefString::from("remote-allow-origins");
+                let origin_val = CefString::from("*");
+                cmd.append_switch_with_value(Some(&origin_key), Some(&origin_val));
             }
         }
     }
@@ -751,6 +787,39 @@ cef::wrap_render_handler! {
                 "on_accelerated_paint fired with shared_texture_enabled=0 — \
                  this should not happen, ignoring frame"
             );
+        }
+
+        fn start_dragging(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            drag_data: Option<&mut cef::DragData>,
+            allowed_ops: cef::DragOperationsMask,
+            x: ::std::os::raw::c_int,
+            y: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(data) = drag_data else {
+                return 0;
+            };
+            let Some(owned) = ImplDragData::clone(data) else {
+                return 0;
+            };
+            let state = cef_state();
+            let ghost = drag_ghost_from_data(&owned)
+                .or_else(|| drag_ghost_from_last_frame(&state, x, y));
+            let mut session = OsrDrag {
+                data: owned,
+                allowed: allowed_ops,
+                entered: false,
+                x,
+                y,
+                ghost,
+            };
+            if let Some(host) = browser.and_then(|b| b.host()) {
+                osr_drag_enter(&host, &mut session, x, y);
+            }
+            *state.osr_drag.borrow_mut() = Some(session);
+            publish_drag_overlay(&state);
+            1
         }
 
         fn on_ime_composition_range_changed(
@@ -1048,7 +1117,22 @@ cef::wrap_load_handler! {
             frame: Option<&mut cef::Frame>,
             _http_status_code: ::std::os::raw::c_int,
         ) {
+            let inspector = frame.as_ref().is_some_and(|f| {
+                cef_string_userfree_display(&f.url()).contains("/devtools/inspector.html")
+            });
             inject_page_scripts(frame);
+            if !inspector {
+                return;
+            }
+            let state = cef_state();
+            let Some((x, y, page_id)) = state.pending_inspect.take() else {
+                return;
+            };
+            if let Some(tab) = tab_state_by_id(&state, page_id) {
+                if let Some(host) = tab.browser.host() {
+                    inspect_element_via_cdp(&host, x, y);
+                }
+            }
         }
     }
 }
@@ -1405,6 +1489,8 @@ cef::wrap_context_menu_handler! {
                 editable: params.is_editable() != 0,
                 can_go_back: false,
                 can_go_forward: false,
+                x: params.xcoord(),
+                y: params.ycoord(),
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;
@@ -1852,6 +1938,13 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             activate_tab(state, id);
         }
+        Cmd::ShowDevTools {
+            panel,
+            inspect_x,
+            inspect_y,
+        } => {
+            open_dev_tools_tab(state, &panel, inspect_x, inspect_y);
+        }
         Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
             resume_profile_id,
@@ -2033,6 +2126,321 @@ fn set_tab_load_progress_by_browser_id(
 /// invalidate the new one, and immediately re-push a parked frame so iced
 /// does not keep sampling the previous tab's texture while waiting for
 /// CEF (static pages often produce no `on_paint` from `was_resized` alone).
+fn osr_drag_mouse(x: i32, y: i32, modifiers: u32) -> cef::MouseEvent {
+    let left = cef::sys::cef_event_flags_t::EVENTFLAG_LEFT_MOUSE_BUTTON.0 as u32;
+    cef::MouseEvent {
+        x,
+        y,
+        modifiers: modifiers | left,
+    }
+}
+
+fn osr_drag_enter(host: &cef::BrowserHost, drag: &mut OsrDrag, x: i32, y: i32) {
+    let me = osr_drag_mouse(x, y, 0);
+    host.drag_target_drag_enter(Some(&mut drag.data), Some(&me), drag.allowed);
+    drag.entered = true;
+}
+
+fn osr_drag_move(
+    state: &CefThreadState,
+    host: &cef::BrowserHost,
+    x: i32,
+    y: i32,
+    modifiers: u32,
+) -> bool {
+    let mut slot = state.osr_drag.borrow_mut();
+    let Some(drag) = slot.as_mut() else {
+        return false;
+    };
+    if !drag.entered {
+        osr_drag_enter(host, drag, x, y);
+    }
+    let me = osr_drag_mouse(x, y, modifiers);
+    host.drag_target_drag_over(Some(&me), drag.allowed);
+    drag.x = x;
+    drag.y = y;
+    drop(slot);
+    publish_drag_overlay(state);
+    true
+}
+
+fn osr_drag_drop(
+    state: &CefThreadState,
+    host: &cef::BrowserHost,
+    x: i32,
+    y: i32,
+    modifiers: u32,
+) -> bool {
+    let Some(mut drag) = state.osr_drag.borrow_mut().take() else {
+        return false;
+    };
+    if !drag.entered {
+        osr_drag_enter(host, &mut drag, x, y);
+    }
+    let me = osr_drag_mouse(x, y, modifiers);
+    host.drag_target_drop(Some(&me));
+    host.drag_source_ended_at(x, y, drag.allowed);
+    host.drag_source_system_drag_ended();
+    // Restore a clean frame (no ghost) from the last CEF paint.
+    if let Some(tab) = active_tab(state) {
+        if let Some(frame) = tab.last_frame.borrow().clone() {
+            state.frames.push(TaggedFrame {
+                tab_id: tab.id,
+                frame,
+            });
+        }
+    }
+    true
+}
+
+fn drag_ghost_from_data(data: &cef::DragData) -> Option<DragGhost> {
+    if data.has_image() == 0 {
+        return None;
+    }
+    let img = data.image()?;
+    let mut w = 0i32;
+    let mut h = 0i32;
+    let bin = img.as_bitmap(
+        1.0,
+        cef::ColorType::BGRA_8888,
+        cef::AlphaType::PREMULTIPLIED,
+        Some(&mut w),
+        Some(&mut h),
+    )?;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let n = (w as usize) * (h as usize) * 4;
+    let ptr = bin.raw_data();
+    if ptr.is_null() || bin.size() < n {
+        return None;
+    }
+    let pixels = unsafe { std::slice::from_raw_parts(ptr as *const u8, n) }.to_vec();
+    let hot = data.image_hotspot();
+    Some(DragGhost {
+        pixels,
+        w: w as u32,
+        h: h as u32,
+        hot_x: hot.x,
+        hot_y: hot.y,
+    })
+}
+
+fn drag_ghost_from_last_frame(state: &CefThreadState, x: i32, y: i32) -> Option<DragGhost> {
+    let tab = active_tab(state)?;
+    let frame = tab.last_frame.borrow();
+    let frame = frame.as_ref()?;
+    let fw = frame.width as i32;
+    let fh = frame.height as i32;
+    if fw <= 0 || fh <= 0 {
+        return None;
+    }
+    let gw = 240i32.min(fw);
+    let gh = 80i32.min(fh);
+    let x0 = (x - gw / 2).clamp(0, fw - gw);
+    let y0 = (y - gh / 2).clamp(0, fh - gh);
+    let mut pixels = vec![0u8; (gw * gh * 4) as usize];
+    let src = frame.pixels.as_slice();
+    for row in 0..gh as usize {
+        let sy = (y0 as usize + row) * fw as usize * 4;
+        let dy = row * gw as usize * 4;
+        let sx = x0 as usize * 4;
+        pixels[dy..dy + gw as usize * 4].copy_from_slice(&src[sy + sx..sy + sx + gw as usize * 4]);
+    }
+    // Slightly fade so it reads as a lift, not a second ticket.
+    for px in pixels.chunks_exact_mut(4) {
+        px[3] = px[3].saturating_mul(4) / 5;
+    }
+    Some(DragGhost {
+        pixels,
+        w: gw as u32,
+        h: gh as u32,
+        hot_x: x - x0,
+        hot_y: y - y0,
+    })
+}
+
+fn publish_drag_overlay(state: &CefThreadState) {
+    let drag = state.osr_drag.borrow();
+    let Some(drag) = drag.as_ref() else {
+        return;
+    };
+    let Some(ghost) = drag.ghost.as_ref() else {
+        return;
+    };
+    let Some(tab) = active_tab(state) else {
+        return;
+    };
+    let Some(base) = tab.last_frame.borrow().clone() else {
+        return;
+    };
+    let mut pixels = (*base.pixels).clone();
+    blit_ghost(&mut pixels, base.width, base.height, ghost, drag.x, drag.y);
+    state.frames.push(TaggedFrame {
+        tab_id: tab.id,
+        frame: CefFrame {
+            pixels: Arc::new(pixels),
+            width: base.width,
+            height: base.height,
+            dirty: Vec::new(),
+        },
+    });
+}
+
+fn blit_ghost(dst: &mut [u8], dw: u32, dh: u32, ghost: &DragGhost, cx: i32, cy: i32) {
+    let ox = cx - ghost.hot_x;
+    let oy = cy - ghost.hot_y;
+    for gy in 0..ghost.h as i32 {
+        let dy = oy + gy;
+        if dy < 0 || dy >= dh as i32 {
+            continue;
+        }
+        for gx in 0..ghost.w as i32 {
+            let dx = ox + gx;
+            if dx < 0 || dx >= dw as i32 {
+                continue;
+            }
+            let si = ((gy as u32 * ghost.w + gx as u32) * 4) as usize;
+            let di = ((dy as u32 * dw + dx as u32) * 4) as usize;
+            let a = ghost.pixels[si + 3] as u16;
+            if a == 0 {
+                continue;
+            }
+            if a >= 255 {
+                dst[di..di + 4].copy_from_slice(&ghost.pixels[si..si + 4]);
+                continue;
+            }
+            let ia = 255 - a;
+            for c in 0..3 {
+                dst[di + c] =
+                    ((ghost.pixels[si + c] as u16 * a + dst[di + c] as u16 * ia) / 255) as u8;
+            }
+            dst[di + 3] = 255;
+        }
+    }
+}
+
+/// DevTools as a chrome tab. The helper is headless — a windowed
+/// `show_dev_tools` has no Wayland surface. Remote-debugging frontend
+/// loads in a normal OSR tab instead.
+fn open_dev_tools_tab(
+    state: &CefThreadState,
+    panel: &str,
+    inspect_x: Option<i32>,
+    inspect_y: Option<i32>,
+) {
+    let port = state.debug_port.get();
+    if port == 0 {
+        tracing::warn!("ShowDevTools: remote debugging port not set");
+        return;
+    }
+    let page_id = state.active.get();
+    let page_url = tab_state_by_id(state, page_id).map(|t| t.url.lock().unwrap().clone());
+    let Some(frontend) = devtools_frontend_url(port, page_url.as_deref(), panel) else {
+        tracing::warn!(port, url = ?page_url, "ShowDevTools: no inspectable page on /json");
+        return;
+    };
+    if let (Some(x), Some(y)) = (inspect_x, inspect_y) {
+        state.pending_inspect.set(Some((x, y, page_id)));
+        if let Some(tab) = tab_state_by_id(state, page_id) {
+            if let Some(host) = tab.browser.host() {
+                inspect_element_via_cdp(&host, x, y);
+            }
+        }
+    }
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab {
+            url: frontend.clone(),
+        });
+    }
+    tracing::info!(%frontend, panel, "DevTools frontend requested");
+}
+
+fn inspect_element_via_cdp(host: &cef::BrowserHost, x: i32, y: i32) {
+    let Some(mut params) = cef::dictionary_value_create() else {
+        return;
+    };
+    let expr = format!("inspect(document.elementFromPoint({x}, {y}))");
+    let k_expr = cef::CefString::from("expression");
+    let v_expr = cef::CefString::from(expr.as_str());
+    let k_cli = cef::CefString::from("includeCommandLineAPI");
+    let _ = params.set_string(Some(&k_expr), Some(&v_expr));
+    let _ = params.set_bool(Some(&k_cli), 1);
+    let method = cef::CefString::from("Runtime.evaluate");
+    let _ = host.execute_dev_tools_method(0, Some(&method), Some(&mut params));
+}
+
+fn pick_debug_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+        .unwrap_or(9222)
+}
+
+fn http_get_local(port: u16, path: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .ok()?;
+    // Connection: close so Chromium ends the body (HTTP/1.1 keep-alive
+    // left us hanging until the 400ms timeout with a truncated /json).
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut buf = Vec::new();
+    if let Err(e) = stream.read_to_end(&mut buf) {
+        if buf.is_empty() {
+            tracing::warn!(error = %e, port, "ShowDevTools: /json read failed");
+            return None;
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let body = text.split("\r\n\r\n").nth(1)?.to_string();
+    if body.trim().is_empty() {
+        tracing::warn!(port, bytes = buf.len(), "ShowDevTools: empty /json body");
+        return None;
+    }
+    Some(body)
+}
+
+fn devtools_frontend_url(port: u16, want_url: Option<&str>, panel: &str) -> Option<String> {
+    let body = http_get_local(port, "/json")?;
+    let targets: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
+    let page = targets
+        .iter()
+        .find(|t| {
+            t.get("type").and_then(|v| v.as_str()) == Some("page")
+                && t.get("url")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|u| !u.contains("/devtools/inspector.html"))
+                && want_url.is_none_or(|want| {
+                    t.get("url")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|u| u == want || u.starts_with(want) || want.starts_with(u))
+                })
+        })
+        .or_else(|| {
+            targets.iter().find(|t| {
+                t.get("type").and_then(|v| v.as_str()) == Some("page")
+                    && t.get("url")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|u| !u.contains("/devtools/inspector.html"))
+            })
+        })?;
+    let ws = page.get("webSocketDebuggerUrl")?.as_str()?;
+    let ws_path = ws
+        .strip_prefix("ws://")
+        .or_else(|| ws.strip_prefix("ws:"))
+        .unwrap_or(ws);
+    Some(format!(
+        "http://127.0.0.1:{port}/devtools/inspector.html?ws={ws_path}&panel={panel}"
+    ))
+}
+
 fn activate_tab(state: &CefThreadState, id: TabId) {
     let exists = state.tabs.borrow().iter().any(|t| t.id == id);
     if !exists {
@@ -2450,6 +2858,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
     use cef::{KeyEvent, KeyEventType, MouseEvent};
     match ev {
         InputEvent::PointerMove { x, y, modifiers } => {
+            if osr_drag_move(state, host, x, y, modifiers) {
+                return;
+            }
             let me = MouseEvent { x, y, modifiers };
             host.send_mouse_move_event(Some(&me), 0);
         }
@@ -2492,6 +2903,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
                 state.new_tab_click_armed.set(false);
                 return;
             }
+            if !down && button == 1 && osr_drag_drop(state, host, x, y, modifiers) {
+                return;
+            }
             send_mouse_click(host, x, y, button, modifiers, click_count, down);
         }
         InputEvent::Scroll {
@@ -2509,6 +2923,12 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
             host.send_mouse_wheel_event(Some(&me), delta_x, delta_y);
         }
         InputEvent::PointerLeave { x, y, modifiers } => {
+            if let Some(drag) = state.osr_drag.borrow_mut().as_mut() {
+                if drag.entered {
+                    host.drag_target_drag_leave();
+                    drag.entered = false;
+                }
+            }
             let me = MouseEvent { x, y, modifiers };
             host.send_mouse_move_event(Some(&me), 1);
         }
@@ -2645,6 +3065,10 @@ fn initialize_cef(app_id: &'static str) {
         // Silence Chromium's WARNING/ERROR stderr noise (UPower probe,
         // first-run warnings, etc.). FATAL still surfaces.
         settings.log_severity = cef::LogSeverity::DISABLE;
+        let port = pick_debug_port();
+        settings.remote_debugging_port = port as _;
+        cef_state().debug_port.set(port);
+        tracing::info!(port, "CEF remote debugging");
         settings
     }));
 

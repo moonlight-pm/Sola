@@ -488,7 +488,11 @@ fn item_row_height<Message>(item: &SidebarItem<'_, Message>, density: SidebarDen
     if let Some(h) = item.height_hint {
         return h;
     }
-    if item.content.is_some() || item.chrome == SidebarItemChrome::Card {
+    // Header rename fields use `content` but must stay a list row —
+    // card height is only for session/card chrome.
+    if item.section_header.is_none()
+        && (item.content.is_some() || item.chrome == SidebarItemChrome::Card)
+    {
         return CARD_HEIGHT_HINT;
     }
     let m = density.metrics();
@@ -855,7 +859,12 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         item = item.on_context(ctx);
     }
     if let Some(content) = collapse.header_content {
-        item = item.content(content);
+        // Keep the folder chevron; only the name is the field.
+        let body = row![section_chevron(collapse.collapsed), content]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill);
+        item = item.content(body);
     }
     item
 }
@@ -3036,6 +3045,37 @@ mod tests {
         assert_eq!(item.label, "Work");
         assert_eq!(item.section_header, Some(true));
         assert_eq!(item.secondary.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn header_rename_stays_list_row_height() {
+        let idle = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                count: None,
+                header_content: None,
+            },
+        );
+        let renaming = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                count: None,
+                header_content: Some(iced::widget::text("Work").into()),
+            },
+        );
+        assert_eq!(
+            item_row_height(&idle, SidebarDensity::Large),
+            item_row_height(&renaming, SidebarDensity::Large)
+        );
+        assert!(item_row_height(&renaming, SidebarDensity::Large) < CARD_HEIGHT_HINT);
     }
 
     fn sv(v: &[&str]) -> Vec<String> {

@@ -282,6 +282,15 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             profile_id: String::new(),
             id,
         },
+        ToEngine::ShowDevTools {
+            panel,
+            inspect_x,
+            inspect_y,
+        } => Cmd::ShowDevTools {
+            panel,
+            inspect_x,
+            inspect_y,
+        },
         ToEngine::Shutdown => return None,
     })
 }

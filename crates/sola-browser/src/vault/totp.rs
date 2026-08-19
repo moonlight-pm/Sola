@@ -40,7 +40,6 @@ impl TotpSpec {
         let counter = unix_secs / u64::from(self.period.max(1));
         hotp(&self.secret, counter, self.digits.max(1).min(10))
     }
-
 }
 
 /// Wall-clock remaining seconds for a standard 30 s window (chrome display).
