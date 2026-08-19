@@ -88,6 +88,7 @@ Follow a **role system**, not ad-hoc sizes:
 |------|-----|----------------|
 | Chrome | Menu bar labels, menu items, menubar status/clock | `fonts::chrome()` / kit UI roles |
 | Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` — kit `text::body` **13** |
+| Prose | Mail bodies, long-form reading | kit `text::prose` **14** + `prose` letter renderer |
 | Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly — `heading` 22 / `subheading` 15 |
 | Caption | Help, secondary labels | `text::caption` **11** |
 | Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` — `text::code` 12 |

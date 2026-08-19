@@ -28,6 +28,14 @@ pub fn body<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
     iced_text(content).font(fonts::ui()).size(13)
 }
 
+/// 14px UI — reading measure (mail bodies, long-form panes). Chrome
+/// stays on [`body`]; this is content, not controls.
+pub const PROSE_SIZE: f32 = 14.0;
+
+pub fn prose<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
+    iced_text(content).font(fonts::ui()).size(PROSE_SIZE)
+}
+
 /// 11px UI — timestamps, secondary labels, helper copy. Pair with
 /// [`muted`] when the caption should also deemphasize visually.
 pub fn caption<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {

@@ -240,22 +240,22 @@ pub fn confirm_button<'a, Message: Clone + 'a>(
     }
 }
 
-/// Style for a selectable list-row button (launcher, pickers, …).
+/// Style for a selectable list-row button (mail, launcher, pickers, …).
 ///
 /// `selected` is owned by the app (keyboard/MRU selection), independent of the
-/// pointer `Status`. Selected → quiet [`crate::theme::selection`] fill (not a
-/// full accent pill — Spotlight restraint). Unselected → transparent, lifting
-/// to `background.strong` on hover/press.
+/// pointer `Status`. Selected → graphite lift (`background.strong`), same
+/// language as sidebar etch — **not** the selection atom, **not** a darkened
+/// accent / dark-cyan wash. Unselected → transparent, softer lift on hover.
 pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = theme.extended_palette();
         if selected {
             return button::Style {
-                background: Some(Background::Color(crate::theme::selection())),
+                background: Some(Background::Color(p.background.strong.color)),
                 text_color: p.background.base.text,
                 border: Border {
-                    color: alpha(p.primary.base.color, 0.18),
-                    width: 1.0,
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
                     radius: RADIUS_SM.into(),
                 },
                 shadow: Default::default(),

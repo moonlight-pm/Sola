@@ -30,6 +30,7 @@ pub mod icon;
 pub mod number_input;
 pub mod overview;
 pub mod popover;
+pub mod prose;
 pub mod select;
 pub mod shell;
 pub mod readable;

@@ -3,8 +3,9 @@
 use iced::widget::{column, row};
 use iced::Element;
 
+use sola_kit::components::icon::icon_handle;
 use sola_kit::components::text::{body, muted};
-use sola_kit::components::toolbar_button;
+use sola_kit::components::toolbar::{toolbar_button, toolbar_icon_tip};
 
 use crate::storybook::pages::chrome::{lede, panel};
 
@@ -49,10 +50,29 @@ pub fn view(state: &State) -> Element<'_, Msg> {
     column![
         lede(
             "Toolbar",
-            "Condensed-bold labels. Same density as monitor Pause / Clear.",
+            "Condensed-bold labels, or icons with a delayed tooltip. Same density as monitor Pause / Clear.",
         ),
         panel(
-            column![bar, body(status).style(muted)].spacing(12),
+            column![
+                bar,
+                row![
+                    toolbar_icon_tip(
+                        icon_handle("lucide/square-pen"),
+                        "Compose",
+                        Some(Msg::Clicked("Compose")),
+                    ),
+                    toolbar_icon_tip(
+                        icon_handle("lucide/reply"),
+                        "Reply",
+                        Some(Msg::Clicked("Reply")),
+                    ),
+                    toolbar_icon_tip(icon_handle("lucide/archive"), "Archive", None),
+                    // None → muted, no tooltip (unavailable).
+                ]
+                .spacing(4),
+                body(status).style(muted),
+            ]
+            .spacing(12),
         ),
     ]
     .spacing(16)
