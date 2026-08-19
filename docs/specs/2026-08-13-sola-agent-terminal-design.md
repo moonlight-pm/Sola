@@ -8,8 +8,8 @@
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
 
-**Implementation:** persist + spawn modal + done toast + sola-call owner `ws`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→); leaf rows (presence `grok`/`shell`) only after a split; ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` only on a Grok leaf (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md)  
-**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. `solactl ws` still needs a desk smoke.  
+**Implementation:** persist + spawn modal + done toast + sola-call owner `workspaces`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→); leaf rows (presence `grok`/`shell`) only after a split; ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` only on a Grok leaf (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. Grok lead hooks (`SessionStart`, `UserPromptSubmit`) reclaim the pane after `/new` / `grok -r`; `StopCancelled` maps to done; child `subagentType` events ignored. **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md)  
+**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. Session-reclaim fix installed. `solactl workspaces` still needs a desk smoke.  
 **Gaps:** rename/recolor/reorder; drop does not remove the git worktree; Claude presence-only (D4)
 
 ---
@@ -31,7 +31,7 @@ deprecated for this line of work.
 | Topic | Choice |
 |---|---|
 | Product | Host user-launched CLI agents in PTYs, grouped by project / workspace |
-| Fan-out | **Spawn sibling** (UI + `solactl ws workspace.spawn`). `--prompt` is the CLI handoff. No mailbox, no Run/Dispatch |
+| Fan-out | **Spawn sibling** (UI + `solactl workspaces workspace.spawn`). `--prompt` is the CLI handoff. No mailbox, no Run/Dispatch |
 | UI stack | iced + sola-kit. Design law: **impeccable** (Operate) + **frontend-design** before any UI |
 | Kit | Not a museum. Refine tokens/atoms/indicators when the improvement is generally true; keep app-local what is this product’s. Do not silently restyle mail / settings / terminal |
 | Engine | Reuse `sola-terminal` as a **library** (grid, PTY, input). Do not share tmux socket `sola` or `Topic::TerminalSession` |
@@ -42,7 +42,7 @@ deprecated for this line of work.
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-workspaces` |
 | Window title | `Workspaces` |
-| CLI | sola-call owner `ws`. Face is `solactl ws …`. App/host down → fail |
+| CLI | sola-call owner `workspaces`. Face is `solactl workspaces …`. App/host down → fail |
 | Config | `~/.config/sola/workspaces/` (one-shot migrate from `agent-terminal/`) |
 
 ---
@@ -76,7 +76,7 @@ dashboards, auto-rename, unread badges, setup-hook runners, sparse checkouts.
 ## Architecture
 
 ```text
-solactl ws  ──sola-call──▶  sola-workspaces (iced)
+solactl workspaces  ──sola-call──▶  sola-workspaces (iced)
                                         │
                                         ├── sola-terminal lib
                                         ├── tmux socket sola-ws
@@ -98,8 +98,9 @@ crates/sola-workspaces/
   src/presence.rs      # process-tree who (Grok first)
   src/workspace.rs     # project + workspace + catalog persist
   src/spawn.rs         # git worktree add under .worktrees/
-  src/calls.rs         # sola-call MethodSpec list (owner ws)
+  src/calls.rs         # sola-call MethodSpec list (owner workspaces)
   src/cli.rs           # call-plane payloads, targeting, prompt, wait
+  src/startup.rs       # per-project script after sibling spawn
   src/paths.rs         # config dir + legacy migrate
   src/menu.rs
 ```

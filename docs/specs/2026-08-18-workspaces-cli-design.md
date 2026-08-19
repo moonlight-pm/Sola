@@ -7,19 +7,19 @@
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
 **Implementation:** methods + payloads + `solactl` invoke timeouts in this slice  
-**Dogfood:** `solactl ws` still needs a desk smoke after install  
+**Dogfood:** `solactl workspaces` still needs a desk smoke after install  
 **Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4)
 
 ---
 
 ## Goal
 
-Make `solactl ws` a **first-class** control plane for Workspaces: same verbs
+Make `solactl workspaces` a **first-class** control plane for Workspaces: same verbs
 the app understands, kept in lockstep with the iced surface. A root Grok
 session can list projects, spawn a sibling, brief it, read/send, and wait
 for done — without Orca’s mailbox.
 
-This is not a second product and not `sat`. Face stays `solactl ws …`.
+This is not a second product and not `sat`. Face stays `solactl workspaces …`.
 
 ---
 
@@ -43,7 +43,7 @@ an agent needs to orchestrate is on the call plane.
 
 | Topic | Choice |
 |---|---|
-| Face | `solactl ws <method> [flags]`. App or sola-call down → fail. No `sat` |
+| Face | `solactl workspaces <method> [flags]`. Owner is `workspaces` (not `ws`). App or sola-call down → fail. No `sat` |
 | Audience | Operators **and** agents (a root Grok in a Workspaces pane) |
 | Fan-out | `workspace.spawn --prompt` / `--prompt-file` is the briefed sibling. No mailbox |
 | First-class CLI | **Grok** only for `--agent`. Other names error |
@@ -68,7 +68,7 @@ an agent needs to orchestrate is on the call plane.
 | `project.list` | — | `{projects:[{id,name,root}]}` |
 | `project.rm` | `--project` | `{ok:true}` |
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
-| `workspace.spawn` | `--project --name [--agent] [--prompt] [--prompt-file] [--parent]` | `{id,name,path,kind,parent,project}` |
+| `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent]` | `{id,name,title,path,kind,parent,project}` |
 | `workspace.rm` | `--workspace` | `{ok:true}` |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` |
@@ -76,13 +76,18 @@ an agent needs to orchestrate is on the call plane.
 
 `--prompt` and `--prompt-file` are mutually exclusive. `--prompt-file` is
 read by the **app** (same machine). `--prompt` implies `--agent grok`.
+`project.list` includes `startup: bool` (script is non-empty). Spawn may
+include `startup_error` if the project script failed; the workspace still
+exists.
 
 ### New
 
 | Method | Args | Reply |
 |---|---|---|
 | `project.add` | `--path` | `{id,name,root,workspace}` — same as the Add project dialog (`~` expanded) |
+| `project.startup` | `--project? [--script]` | `{project,name,script}` — omit `--script` to read; pass it (including empty) to set. Runs after each sibling worktree is created. Script env: `PROJECT` (folder on disk), `WORKTREE` (this tab), `NAME` (tab name). |
 | `workspace.select` | `--workspace` | `{id,selected:true}` — rail + attach |
+| `workspace.set` | `--workspace [--title]` | workspace JSON — `--title` empty clears |
 | `workspace.exec` | `--workspace [--agent] [--prompt] [--prompt-file]` | `{workspace,pane,started,sent}` |
 | `pane.wait` | `[--pane] [--status] [--timeout] [--fresh]` | `{pane,status}` or error `timeout` |
 | `whoami` | `[--pane] [--path]` | `{pane,workspace,workspace_name,project,project_name,path,kind,status,agent}` |
@@ -106,7 +111,7 @@ read by the **app** (same machine). `--prompt` implies `--agent grok`.
 
 ## `solactl` behavior
 
-- Live owner: `solactl ws` lists methods; `solactl ws <method> …` invokes.
+- Live owner: `solactl workspaces` lists methods; `solactl workspaces <method> …` invokes.
 - Bool flags (`--enter`, `--fresh`) do not consume the next `--flag`.
 - Optional `timeout` arg (seconds) raises the invoke deadline to `timeout+2`.
 - Advertised `MethodSpec.timeout_ms` is the default invoke deadline when no

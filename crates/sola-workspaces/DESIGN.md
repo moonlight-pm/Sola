@@ -70,8 +70,12 @@ state from hue alone — shape differs too.
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
 Workspace title 14. No agent name on the row — status is the mark, the
 toast names who. Sibling rows use the kit hover × (`on_close`, lucide/x).
-Root has no row close. **Drop Project** is menu-only (no shortcut) —
-unregisters the project and kills its tmux. Worktrees stay on disk.
+Root has no row close. **Project** menu: New Project…, Startup Script…,
+Drop Project. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
+open, otherwise the focused pane (same as sola-terminal). Startup is a per-project `/bin/sh` run in each new
+worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
+`$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
+and kills its tmux. Worktrees stay on disk.
 ⌘W closes the focused **pane**. A split workspace lists leaf rows
 (`grok` / `shell`) under the workspace; a single pane stays one row.
 

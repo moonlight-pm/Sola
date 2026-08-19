@@ -8,6 +8,10 @@ use crate::status::AgentStatus;
 pub struct MappedHook {
     pub status: Option<AgentStatus>,
     pub clear_turn: bool,
+    /// Lead events that may take the pane from a previous session
+    /// (`session_start`, `user_prompt_submit`). Grok does not fire
+    /// those for a subagent's own session.
+    pub claim: bool,
     pub session_end: bool,
     pub compacted: bool,
     pub prompt: Option<String>,
@@ -28,6 +32,10 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
     ) {
         return None;
     }
+    // SessionEnd / Stop / tool events from a child session carry this.
+    if string_field(payload, &["subagentType", "subagent_type"]).is_some() {
+        return None;
+    }
 
     let session_id = string_field(payload, &["sessionId", "session_id"]);
     let prompt = string_field(payload, &["prompt", "userPrompt", "user_prompt"]);
@@ -37,6 +45,7 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
         return Some(MappedHook {
             status: None,
             clear_turn: true,
+            claim: true,
             session_end: false,
             compacted: false,
             prompt: None,
@@ -48,6 +57,7 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
         return Some(MappedHook {
             status: None,
             clear_turn: false,
+            claim: false,
             session_end: false,
             compacted: true,
             prompt: None,
@@ -67,7 +77,10 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
         } else {
             Some(AgentStatus::Working)
         }
-    } else if matches!(event.as_str(), "stop" | "session_end" | "stop_failure") {
+    } else if matches!(
+        event.as_str(),
+        "stop" | "session_end" | "stop_failure" | "stop_cancelled"
+    ) {
         Some(AgentStatus::Done)
     } else if event == "notification" {
         map_notification(payload)
@@ -78,6 +91,7 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
     status.map(|status| MappedHook {
         status: Some(status),
         clear_turn: false,
+        claim: event == "user_prompt_submit",
         session_end: event == "session_end",
         compacted: false,
         prompt: if event == "notification" {
@@ -207,13 +221,31 @@ mod tests {
             Some(AgentStatus::Done)
         );
         assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().clear_turn);
+        assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().claim);
         assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().status.is_none());
+        assert!(map(json!({"hookEventName": "UserPromptSubmit"})).unwrap().claim);
+        assert_eq!(
+            map(json!({"hookEventName": "StopCancelled"})).unwrap().status,
+            Some(AgentStatus::Done)
+        );
     }
 
     #[test]
     fn child_subagent_does_not_map() {
         assert!(map(json!({"hookEventName": "SubagentStop"})).is_none());
         assert!(map(json!({"hookEventName": "subagent_start"})).is_none());
+        assert!(map(json!({
+            "hookEventName": "SessionEnd",
+            "sessionId": "child",
+            "subagentType": "explore"
+        }))
+        .is_none());
+        assert!(map(json!({
+            "hookEventName": "Stop",
+            "sessionId": "child",
+            "subagentType": "explore"
+        }))
+        .is_none());
     }
 
     #[test]

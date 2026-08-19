@@ -1,7 +1,7 @@
 //! sola-workspaces — project / workspace rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `ws`.
+//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -34,6 +34,7 @@ mod paths;
 mod presence;
 mod sidebar;
 mod spawn;
+mod startup;
 mod status;
 mod workspace;
 
@@ -91,6 +92,9 @@ struct App {
     focused: String,
     runtimes: HashMap<String, PaneRuntime>,
     dragging_split: Option<String>,
+    /// Last applied grid per pane. Skip TIOCSWINSZ when a divider drag
+    /// has not changed cols/rows (same as sola-terminal).
+    pane_grids: HashMap<String, (u16, u16)>,
     theme: Theme,
     palette: Palette,
     sidebar: sidebar::SidebarState,
@@ -107,6 +111,7 @@ struct App {
     adopted_from: Option<String>,
     spawn: sidebar::SpawnDraft,
     add: sidebar::AddDraft,
+    startup: sidebar::StartupDraft,
     window_focused: bool,
     pending_waits: Vec<PendingWait>,
 }
@@ -132,7 +137,6 @@ enum Msg {
     Scrolled(String),
     OpenUrl(String),
     WheelToPty(String, Vec<u8>),
-    #[allow(dead_code)]
     Pasted(Option<String>),
     BlinkTick,
     SidebarDragStart,
@@ -146,6 +150,8 @@ enum Msg {
     ToggleProject(String),
     OpenSpawn(String),
     OpenAdd,
+    StartupAction(iced::widget::text_editor::Action),
+    SaveStartup,
     DismissDialog,
     SpawnName(String),
     Spawn,
@@ -216,6 +222,7 @@ impl App {
             focused,
             runtimes: HashMap::new(),
             dragging_split: None,
+            pane_grids: HashMap::new(),
             theme: default_theme(),
             palette: Palette::from_kit_theme(&Atoms::default()),
             sidebar: sidebar::SidebarState::default(),
@@ -231,6 +238,7 @@ impl App {
             adopted_from,
             spawn: sidebar::SpawnDraft::default(),
             add: sidebar::AddDraft::default(),
+            startup: sidebar::StartupDraft::default(),
             window_focused: true,
             pending_waits: Vec::new(),
         };
@@ -315,32 +323,38 @@ impl App {
             }
             Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
-                if let Some(id) = self.resolve_pane(&incoming.pane_id) {
-                    let prev = self
-                        .pane_status
-                        .get(&id)
-                        .map(|s| s.status)
-                        .unwrap_or_default();
-                    let cwd = self
-                        .workspace_for_pane(&id)
-                        .map(|w| w.path.clone());
-                    let st = self.pane_status.entry(id.clone()).or_default();
-                    st.apply_hook(&incoming);
-                    if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
-                        if let Some(cwd) = cwd.as_deref() {
-                            st.refresh_compaction(cwd);
-                        }
+                let Some(id) = self.resolve_pane(&incoming.pane_id) else {
+                    tracing::debug!(
+                        pane = %incoming.pane_id,
+                        session = ?incoming.mapped.session_id,
+                        "hook for unknown pane"
+                    );
+                    return Task::none();
+                };
+                let prev = self
+                    .pane_status
+                    .get(&id)
+                    .map(|s| s.status)
+                    .unwrap_or_default();
+                let cwd = self
+                    .workspace_for_pane(&id)
+                    .map(|w| w.path.clone());
+                let st = self.pane_status.entry(id.clone()).or_default();
+                st.apply_hook(&incoming);
+                if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
+                    if let Some(cwd) = cwd.as_deref() {
+                        st.refresh_compaction(cwd);
                     }
-                    if incoming.mapped.compacted && st.compaction_count == 0 {
-                        st.compaction_count = 1;
-                    }
-                    let now = st.status;
-                    let unconfirmed = st.restored_unconfirmed;
-                    status::persist_all(&self.pane_status);
-                    self.sync_row(&id);
-                    self.maybe_toast_done(&id, prev, now, unconfirmed);
-                    self.flush_waits();
                 }
+                if incoming.mapped.compacted && st.compaction_count == 0 {
+                    st.compaction_count = 1;
+                }
+                let now = st.status;
+                let unconfirmed = st.restored_unconfirmed;
+                status::persist_all(&self.pane_status);
+                self.sync_row(&id);
+                self.maybe_toast_done(&id, prev, now, unconfirmed);
+                self.flush_waits();
                 Task::none()
             }
             Msg::Osc(id, payload) => {
@@ -420,9 +434,15 @@ impl App {
             }
             Msg::OpenSpawn(project_id) => self.open_spawn(&project_id),
             Msg::OpenAdd => self.open_add(),
+            Msg::StartupAction(action) => {
+                self.startup.content.perform(action);
+                Task::none()
+            }
+            Msg::SaveStartup => self.save_startup(),
             Msg::DismissDialog => {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
+                self.startup = sidebar::StartupDraft::default();
                 Task::none()
             }
             Msg::SpawnName(s) => {
@@ -506,13 +526,7 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::Pasted(text) => {
-                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&self.focused)) {
-                    let mode = { *rt.emulator.term().lock().mode() };
-                    rt.backend.write(&input::paste(&text, mode));
-                }
-                Task::none()
-            }
+            Msg::Pasted(text) => self.on_pasted(text),
             Msg::SidebarDragStart => {
                 self.sidebar.dragging_divider = true;
                 self.sidebar.drag_anchor = None;
@@ -567,7 +581,12 @@ impl App {
         ]
         .into();
 
-        let body: Element<'_, Msg> = match sidebar::overlay(&self.spawn, &self.add, &self.projects)
+        let body: Element<'_, Msg> = match sidebar::overlay(
+            &self.spawn,
+            &self.add,
+            &self.startup,
+            &self.projects,
+        )
         {
             Some(veil) => stack![rail_pane, veil].into(),
             None => rail_pane,
@@ -621,6 +640,7 @@ impl App {
                         }
                     }
                     "add-project" => self.open_add(),
+                    "startup-script" => self.open_startup(),
                     "split-down" => self.split_focused(SplitDir::Horizontal),
                     "split-right" => self.split_focused(SplitDir::Vertical),
                     "close-pane" => {
@@ -642,6 +662,8 @@ impl App {
                             None => Task::none(),
                         }
                     }
+                    "copy" => self.copy_selection(),
+                    "paste" => self.paste_clipboard(),
                     _ => Task::none(),
                 };
             }
@@ -916,12 +938,14 @@ impl App {
             return Task::none();
         }
         self.add = sidebar::AddDraft::default();
+        self.startup = sidebar::StartupDraft::default();
         self.spawn = sidebar::SpawnDraft::open(project_id);
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::SPAWN_INPUT_ID))
     }
 
     fn open_add(&mut self) -> Task<Msg> {
         self.spawn = sidebar::SpawnDraft::default();
+        self.startup = sidebar::StartupDraft::default();
         self.add = sidebar::AddDraft {
             open: true,
             path: String::new(),
@@ -930,14 +954,52 @@ impl App {
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::ADD_INPUT_ID))
     }
 
+    fn selected_project_id(&self) -> Option<String> {
+        self.workspaces
+            .iter()
+            .find(|w| w.id == self.selected)
+            .map(|w| w.project_id.clone())
+            .or_else(|| self.projects.first().map(|p| p.id.clone()))
+    }
+
+    fn open_startup(&mut self) -> Task<Msg> {
+        let Some(pid) = self.selected_project_id() else {
+            return self.open_add();
+        };
+        let script = self
+            .projects
+            .iter()
+            .find(|p| p.id == pid)
+            .map(|p| p.startup.clone())
+            .unwrap_or_default();
+        self.spawn = sidebar::SpawnDraft::default();
+        self.add = sidebar::AddDraft::default();
+        self.startup = sidebar::StartupDraft::open(pid, &script);
+        Task::none()
+    }
+
+    fn save_startup(&mut self) -> Task<Msg> {
+        let Some(pid) = self.startup.project_id.clone() else {
+            return Task::none();
+        };
+        let text = self.startup.content.text();
+        if let Some(p) = self.projects.iter_mut().find(|p| p.id == pid) {
+            p.startup = text;
+        }
+        self.persist_catalog();
+        self.startup = sidebar::StartupDraft::default();
+        Task::none()
+    }
+
     fn spawn_sibling(&mut self) -> Task<Msg> {
         let Some(project_id) = self.spawn.project_id.clone() else {
             return Task::none();
         };
         let name = self.spawn.name.clone();
-        match self.spawn_workspace(&project_id, &name, None, None) {
-            Ok(id) => {
+        match self.spawn_workspace(&project_id, &name, None, None, None, None, None) {
+            Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
+                self.maybe_toast_startup(startup_err);
                 self.attach_pane(&id, &[])
             }
             Err(e) => {
@@ -948,13 +1010,17 @@ impl App {
     }
 
     /// Create a worktree + catalog row. Does not attach a PTY.
+    /// Second value is a startup-script error (workspace still exists).
     fn spawn_workspace(
         &mut self,
         project_q: &str,
         name: &str,
         parent: Option<String>,
         agent: Option<&str>,
-    ) -> Result<String, String> {
+        branch: Option<&str>,
+        base: Option<&str>,
+        title: Option<&str>,
+    ) -> Result<(String, Option<String>), String> {
         let project = workspace::resolve_project(&self.projects, project_q)?.clone();
         let slug = spawn::slug(name);
         if slug.is_empty() {
@@ -965,7 +1031,7 @@ impl App {
                 return Err("only grok is first-class; other agents are presence-only".into());
             }
         }
-        let dest = spawn::add_worktree(&project.root, &slug)?;
+        let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);
         let parent = match parent {
@@ -980,10 +1046,15 @@ impl App {
                 .find(|w| w.project_id == project.id && w.kind == workspace::Kind::Main)
                 .map(|w| w.id.clone()),
         };
-        self.workspaces.push(workspace::Workspace {
+        let title = title
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let ws = workspace::Workspace {
             id: id.clone(),
-            project_id: project.id,
+            project_id: project.id.clone(),
             name: name.trim().to_string(),
+            title,
             path: dest,
             kind: workspace::Kind::Worktree,
             parent,
@@ -991,11 +1062,25 @@ impl App {
             active_pane: None,
             status: status::AgentStatus::Idle,
             agent: agent.map(str::to_string),
-        });
+        };
+        let startup_err = startup::run(&project, &ws).err();
+        if let Some(e) = &startup_err {
+            tracing::warn!(workspace = %ws.id, "{e}");
+        }
+        self.workspaces.push(ws);
         self.selected = id.clone();
         self.focused = id.clone();
         self.persist_catalog();
-        Ok(id)
+        Ok((id, startup_err))
+    }
+
+    fn maybe_toast_startup(&self, err: Option<String>) {
+        let Some(e) = err else {
+            return;
+        };
+        if let Ok(mut client) = bus().lock() {
+            let _ = client.emit(Topic::AppToast(AppToast { text: e }));
+        }
     }
 
     fn maybe_toast_done(
@@ -1061,6 +1146,14 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
+            "project.startup" => (
+                self.cli_startup(
+                    param_str(params, "project").as_deref(),
+                    params.get("script").and_then(|v| v.as_str()),
+                    params.get("script").is_some(),
+                ),
+                Task::none(),
+            ),
             "project.rm" => {
                 let Some(q) = param_str(params, "project") else {
                     return (Err("missing project".into()), Task::none());
@@ -1088,6 +1181,9 @@ impl App {
                     param_str(params, "prompt").as_deref(),
                     param_str(params, "prompt-file").as_deref(),
                     param_str(params, "parent"),
+                    param_str(params, "branch").as_deref(),
+                    param_str(params, "base-branch").as_deref(),
+                    param_str(params, "title").as_deref(),
                 ) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
@@ -1110,6 +1206,15 @@ impl App {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
+            }
+            "workspace.set" => {
+                let Some(q) = param_str(params, "workspace") else {
+                    return (Err("missing workspace".into()), Task::none());
+                };
+                (
+                    self.cli_set(&q, params.get("title").and_then(|v| v.as_str())),
+                    Task::none(),
+                )
             }
             "workspace.exec" => {
                 let Some(q) = param_str(params, "workspace") else {
@@ -1205,6 +1310,9 @@ impl App {
         prompt: Option<&str>,
         prompt_file: Option<&str>,
         parent: Option<String>,
+        branch: Option<&str>,
+        base: Option<&str>,
+        title: Option<&str>,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let prompt = cli::read_prompt(prompt, prompt_file)?;
         let agent = match (cli::only_grok(agent)?, prompt.as_deref()) {
@@ -1212,7 +1320,8 @@ impl App {
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
-        let id = self.spawn_workspace(project, name, parent, agent)?;
+        let (id, startup_err) =
+            self.spawn_workspace(project, name, parent, agent, branch, base, title)?;
         let task = if agent == Some("grok") {
             let args = cli::grok_argv(prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1220,13 +1329,43 @@ impl App {
         } else {
             self.attach_pane(&id, &[])
         };
-        let data = self
+        let mut data = self
             .workspaces
             .iter()
             .find(|w| w.id == id)
             .map(cli::spawn_json)
             .unwrap_or_else(|| serde_json::json!({ "id": id }));
+        if let Some(e) = startup_err {
+            data["startup_error"] = serde_json::json!(e);
+        }
         Ok((data, task))
+    }
+
+    fn cli_startup(
+        &mut self,
+        project: Option<&str>,
+        script: Option<&str>,
+        set: bool,
+    ) -> Result<serde_json::Value, String> {
+        let q = match project {
+            Some(q) => q.to_string(),
+            None => self
+                .selected_project_id()
+                .ok_or_else(|| "no project selected".to_string())?,
+        };
+        let id = workspace::resolve_project(&self.projects, &q)?.id.clone();
+        if set {
+            if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                p.startup = script.unwrap_or("").to_string();
+            }
+            self.persist_catalog();
+        }
+        let p = workspace::resolve_project(&self.projects, &id)?;
+        Ok(serde_json::json!({
+            "project": p.id,
+            "name": p.name,
+            "script": p.startup,
+        }))
     }
 
     fn cli_rm(&mut self, q: &str) -> Result<Task<Msg>, String> {
@@ -1256,6 +1395,20 @@ impl App {
         self.persist_catalog();
         let task = self.attach_workspace(&id);
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
+    }
+
+    fn cli_set(&mut self, q: &str, title: Option<&str>) -> Result<serde_json::Value, String> {
+        let id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) else {
+            return Err(format!("unknown workspace '{q}'"));
+        };
+        if let Some(raw) = title {
+            let t = raw.trim();
+            ws.title = if t.is_empty() { None } else { Some(t.to_string()) };
+        }
+        self.persist_catalog();
+        let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
+        Ok(cli::workspace_json(ws, Some(&self.selected)))
     }
 
     fn cli_exec(
@@ -1627,6 +1780,7 @@ impl App {
             tmux::kill_session(&tmux::session_name(id));
         }
         self.pane_status.remove(id);
+        self.pane_grids.remove(id);
     }
 
     fn attach_selected_if_needed(&mut self) -> Task<Msg> {
@@ -1825,6 +1979,9 @@ impl App {
             })
             .collect();
         for (pane_id, cols, rows) in targets {
+            if self.pane_grids.get(&pane_id) == Some(&(cols, rows)) {
+                continue;
+            }
             let Some(rt) = self.runtimes.get(&pane_id) else {
                 continue;
             };
@@ -1832,11 +1989,71 @@ impl App {
             rt.backend.resize(cols, rows);
             rt.backend.sigwinch();
             rt.cache.clear();
+            self.pane_grids.insert(pane_id, (cols, rows));
         }
     }
 
     fn dialog_open(&self) -> bool {
-        self.spawn.is_open() || self.add.open
+        self.spawn.is_open() || self.add.open || self.startup.is_open()
+    }
+
+    fn copy_selection(&self) -> Task<Msg> {
+        if self.startup.is_open() {
+            if let Some(sel) = self.startup.content.selection() {
+                if !sel.is_empty() {
+                    return iced::clipboard::write(sel);
+                }
+            }
+            let t = self.startup.content.text();
+            if !t.is_empty() {
+                return iced::clipboard::write(t);
+            }
+            return Task::none();
+        }
+        if self.spawn.is_open() && !self.spawn.name.is_empty() {
+            return iced::clipboard::write(self.spawn.name.clone());
+        }
+        if self.add.open && !self.add.path.is_empty() {
+            return iced::clipboard::write(self.add.path.clone());
+        }
+        let Some(rt) = self.runtimes.get(&self.focused) else {
+            return Task::none();
+        };
+        let text = { rt.emulator.term().lock().selection_to_string() };
+        match text {
+            Some(s) if !s.is_empty() => iced::clipboard::write(s),
+            _ => Task::none(),
+        }
+    }
+
+    fn paste_clipboard(&self) -> Task<Msg> {
+        iced::clipboard::read().map(Msg::Pasted)
+    }
+
+    fn on_pasted(&mut self, text: Option<String>) -> Task<Msg> {
+        let Some(text) = text else {
+            return Task::none();
+        };
+        if self.startup.is_open() {
+            self.startup.content.perform(iced::widget::text_editor::Action::Edit(
+                iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
+            ));
+            return Task::none();
+        }
+        if self.spawn.is_open() {
+            self.spawn.name.push_str(&text.replace('\n', ""));
+            return Task::none();
+        }
+        if self.add.open {
+            self.add.path.push_str(&text.replace('\n', ""));
+            return Task::none();
+        }
+        let Some(rt) = self.runtimes.get(&self.focused) else {
+            return Task::none();
+        };
+        let mode = { *rt.emulator.term().lock().mode() };
+        rt.backend.write(&input::paste(&text, mode));
+        Task::none()
     }
 
     fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
@@ -1848,6 +2065,7 @@ impl App {
             if self.dialog_open() {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
+                self.startup = sidebar::StartupDraft::default();
                 return Task::none();
             }
         }

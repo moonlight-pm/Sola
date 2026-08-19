@@ -37,6 +37,9 @@ pub struct Project {
     #[serde(default)]
     pub collapsed: bool,
     pub root: PathBuf,
+    /// `/bin/sh -c` after each sibling worktree is created. Empty = skip.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub startup: String,
 }
 
 /// Binary split tree. Omitted in the catalog when the workspace is a
@@ -127,6 +130,9 @@ pub struct Workspace {
     pub id: String,
     pub project_id: String,
     pub name: String,
+    /// Extra rail label (`sc-1234 · short title`). Empty = just `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub path: PathBuf,
     pub kind: Kind,
     #[serde(default)]
@@ -399,6 +405,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
         name,
         collapsed: false,
         root: root.to_path_buf(),
+        startup: String::new(),
     };
     let kind = if spawn::is_git_checkout(root) {
         Kind::Main
@@ -409,6 +416,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
         id: main_id.into(),
         project_id: project.id.clone(),
         name: "root".into(),
+        title: None,
         path: root.to_path_buf(),
         kind,
         parent: None,
@@ -794,6 +802,7 @@ mod tests {
             name: "Sola".into(),
             collapsed: false,
             root: PathBuf::from("/tmp/sola"),
+            startup: String::new(),
         }];
         assert_eq!(resolve_project(&projects, "Sola").unwrap().id, "proj-seed");
         assert_eq!(resolve_project(&projects, "sola").unwrap().id, "proj-seed");
@@ -806,6 +815,7 @@ mod tests {
             id: "ws-kid".into(),
             project_id: "p".into(),
             name: "kid".into(),
+            title: None,
             path: PathBuf::from("/tmp/sola-ws-kid-resolve"),
             kind: Kind::Worktree,
             parent: None,
@@ -842,6 +852,7 @@ mod tests {
             id: "ws-main".into(),
             project_id: p.clone(),
             name: "main".into(),
+            title: None,
             path: PathBuf::from("/r"),
             kind: Kind::Main,
             parent: None,
@@ -854,6 +865,7 @@ mod tests {
             id: "ws-kid".into(),
             project_id: p.clone(),
             name: "kid".into(),
+            title: None,
             path: PathBuf::from("/r/.worktrees/kid"),
             kind: Kind::Worktree,
             parent: Some("ws-main".into()),
@@ -866,6 +878,7 @@ mod tests {
             id: "ws-z".into(),
             project_id: p.clone(),
             name: "zeta".into(),
+            title: None,
             path: PathBuf::from("/r/.worktrees/zeta"),
             kind: Kind::Worktree,
             parent: None,
@@ -893,17 +906,20 @@ mod tests {
             name: "A".into(),
             collapsed: false,
             root: PathBuf::from("/a"),
+            startup: String::new(),
         });
         c.projects.push(Project {
             id: "proj-b".into(),
             name: "B".into(),
             collapsed: false,
             root: PathBuf::from("/b"),
+            startup: String::new(),
         });
         c.workspaces.push(Workspace {
             id: "ws-main".into(),
             project_id: "proj-a".into(),
             name: "root".into(),
+            title: None,
             path: PathBuf::from("/a"),
             kind: Kind::Main,
             parent: None,
@@ -916,6 +932,7 @@ mod tests {
             id: "ws-kid".into(),
             project_id: "proj-a".into(),
             name: "kid".into(),
+            title: None,
             path: PathBuf::from("/a/.worktrees/kid"),
             kind: Kind::Worktree,
             parent: Some("ws-main".into()),
@@ -928,6 +945,7 @@ mod tests {
             id: "ws-b".into(),
             project_id: "proj-b".into(),
             name: "root".into(),
+            title: None,
             path: PathBuf::from("/b"),
             kind: Kind::Main,
             parent: None,
@@ -952,6 +970,7 @@ mod tests {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
+            title: None,
             path: PathBuf::from("/r"),
             kind: Kind::Main,
             parent: None,
@@ -997,11 +1016,13 @@ mod tests {
             name: "Sola".into(),
             collapsed: true,
             root: PathBuf::from("/tmp/sola"),
+            startup: String::new(),
         });
         c.workspaces.push(Workspace {
             id: "ws-main".into(),
             project_id: "proj-seed".into(),
             name: "main".into(),
+            title: None,
             path: PathBuf::from("/tmp/sola"),
             kind: Kind::Main,
             parent: None,
@@ -1028,6 +1049,7 @@ mod tests {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
+            title: None,
             path: PathBuf::from("/r"),
             kind: Kind::Main,
             parent: None,
@@ -1048,6 +1070,7 @@ mod tests {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
+            title: None,
             path: PathBuf::from("/r"),
             kind: Kind::Main,
             parent: None,

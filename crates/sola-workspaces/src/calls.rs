@@ -1,4 +1,4 @@
-//! Advertised sola-call methods for owner `ws`.
+//! Advertised sola-call methods for owner `workspaces`.
 //!
 //! First-class surface: keep this list, dispatch, tests, and
 //! `docs/manual/solactl.md` in the same change.
@@ -6,7 +6,7 @@
 
 use sola_call::{ArgSpec, ArgType, MethodSpec};
 
-pub const OWNER: &str = "ws";
+pub const OWNER: &str = "workspaces";
 
 pub const SPAWN_TIMEOUT_MS: u64 = 60_000;
 pub const ADD_TIMEOUT_MS: u64 = 15_000;
@@ -29,6 +29,14 @@ pub fn methods() -> Vec<MethodSpec> {
             &[req_s("project", Some('p'), "Project id or name")],
         ),
         method(
+            "project.startup",
+            "Get or set the project spawn script",
+            &[
+                opt_s("project", Some('p'), "Project id or name"),
+                opt_s("script", None, "Set the script; omit to read. Empty clears."),
+            ],
+        ),
+        method(
             "workspace.list",
             "List workspaces",
             &[opt_s("project", Some('p'), "Project id or name")],
@@ -38,7 +46,10 @@ pub fn methods() -> Vec<MethodSpec> {
             "Create a sibling worktree and open a pane",
             &[
                 req_s("project", Some('p'), "Project id or name"),
-                req_s("name", Some('n'), "Worktree / branch name"),
+                req_s("name", Some('n'), "Rail + .worktrees/ slug"),
+                opt_s("branch", Some('b'), "Git branch (default: same as name)"),
+                opt_s("base-branch", None, "Start-point (default: HEAD)"),
+                opt_s("title", None, "Rail subtitle (name · title)"),
                 opt_s("agent", Some('a'), "Only grok in v1"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
                 opt("prompt-file", None, ArgType::Path, "Read prompt from this file"),
@@ -55,6 +66,14 @@ pub fn methods() -> Vec<MethodSpec> {
             "workspace.select",
             "Focus a workspace in the rail and attach",
             &[req_s("workspace", Some('w'), "Workspace id or name")],
+        ),
+        method(
+            "workspace.set",
+            "Set workspace fields (title today)",
+            &[
+                req_s("workspace", Some('w'), "Workspace id or name"),
+                opt_s("title", None, "Rail subtitle; empty clears"),
+            ],
         ),
         method_ms(
             "workspace.exec",
@@ -173,10 +192,12 @@ mod tests {
             "project.list",
             "project.add",
             "project.rm",
+            "project.startup",
             "workspace.list",
             "workspace.spawn",
             "workspace.rm",
             "workspace.select",
+            "workspace.set",
             "workspace.exec",
             "pane.list",
             "pane.send",
@@ -189,5 +210,7 @@ mod tests {
         let spawn = methods.iter().find(|m| m.name == "workspace.spawn").unwrap();
         assert_eq!(spawn.timeout_ms, Some(SPAWN_TIMEOUT_MS));
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
+        assert!(spawn.args.iter().any(|a| a.name == "base-branch"));
+        assert!(spawn.args.iter().any(|a| a.name == "branch"));
     }
 }

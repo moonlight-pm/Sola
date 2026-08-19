@@ -12,6 +12,7 @@ pub fn project_json(p: &Project) -> serde_json::Value {
         "id": p.id,
         "name": p.name,
         "root": p.root,
+        "startup": !p.startup.is_empty(),
     })
 }
 
@@ -20,6 +21,7 @@ pub fn workspace_json(w: &Workspace, selected: Option<&str>) -> serde_json::Valu
     let mut v = serde_json::json!({
         "id": w.id,
         "name": title,
+        "title": w.title,
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -45,6 +47,7 @@ pub fn spawn_json(w: &Workspace) -> serde_json::Value {
     serde_json::json!({
         "id": w.id,
         "name": w.name,
+        "title": w.title,
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -57,6 +60,17 @@ pub fn display_name(w: &Workspace) -> &str {
         "root"
     } else {
         w.name.as_str()
+    }
+}
+
+/// Rail label: `root`, `sc-1234`, or `sc-1234 · short title`.
+pub fn rail_label(w: &Workspace) -> String {
+    if w.kind == Kind::Main {
+        return "root".into();
+    }
+    match w.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(t) => format!("{} · {t}", w.name),
+        None => w.name.clone(),
     }
 }
 
@@ -202,6 +216,7 @@ mod tests {
             id: id.into(),
             project_id: "proj".into(),
             name: name.into(),
+            title: None,
             path: PathBuf::from("/r"),
             kind,
             parent: None,
@@ -210,6 +225,14 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         }
+    }
+
+    #[test]
+    fn rail_label_joins_title() {
+        let mut w = ws("ws-kid", "sc-1234", Kind::Worktree);
+        assert_eq!(rail_label(&w), "sc-1234");
+        w.title = Some("fix login".into());
+        assert_eq!(rail_label(&w), "sc-1234 · fix login");
     }
 
     #[test]

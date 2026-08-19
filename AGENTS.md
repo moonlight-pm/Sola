@@ -26,7 +26,7 @@ pointer to `CURRENT.md` (auto-load reminder).
 
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
-- `sola-workspaces-cli` — `solactl ws` control plane (fan-out from a root session)  
+- `sola-workspaces-cli` — `solactl workspaces` control plane (fan-out from a root session)  
 
 ## Progress documentation is first-class (mandatory)
 
@@ -258,7 +258,7 @@ their own direct deps just to spell trait bounds or reference bus types).
   changes, so `cargo make install` picks up new code live; skipped when
   `SOLA_NO_SELF_WATCH=1`).
 - **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
-  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("ws", methods).install()`
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("workspaces", methods).install()`
   Advertises call-plane methods; fold `call_subscription()` into iced. Or use
   `CallSetup::new(owner, app_id).methods(…).install()` alone.
   hands the connected client to the kit's global slot.
