@@ -123,6 +123,35 @@ mod tests {
         assert_eq!(folder_count_badge(0, 12), None);
         assert_eq!(folder_count_badge(5, 12), Some("5".into()));
     }
+
+    #[test]
+    fn synthesized_html_plain_keeps_magic_link() {
+        let token = "A".repeat(43);
+        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
+        let text =
+            format!("Use this link to sign in to Wicket:\n\n  {url}\n\nIt expires shortly.\n");
+        let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
+        let body = MessageBody {
+            uid: 1,
+            from: "Wicket <noreply@example.com>".into(),
+            to: "you@example.com".into(),
+            cc: String::new(),
+            subject: "Sign in to Wicket".into(),
+            date: String::new(),
+            html: Some(html),
+            text,
+            in_reply_to: None,
+            message_id: None,
+        };
+        let blocks = body.reading_blocks();
+        let has = blocks.iter().any(|b| match b {
+            sola_kit::components::prose::ProseBlock::Paragraph(runs)
+            | sola_kit::components::prose::ProseBlock::Quote(runs) => {
+                runs.iter().any(|r| r.url.as_deref() == Some(url.as_str()))
+            }
+        });
+        assert!(has, "{blocks:?}");
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +194,14 @@ impl MessageBody {
 
         if let Some(html) = &self.html {
             if !html.trim().is_empty() {
+                // mail-parser lists text/plain parts in `html_body` too and
+                // `body_html` then synthesizes `<br/>` HTML. Prefer the real
+                // plaintext so bare URLs (Wicket magic links) stay links.
+                if crate::protocol::html_text::is_synthesized_plain_html(html) {
+                    if !self.text.trim().is_empty() {
+                        return parse_plain(&self.text);
+                    }
+                }
                 return to_blocks(html);
             }
         }

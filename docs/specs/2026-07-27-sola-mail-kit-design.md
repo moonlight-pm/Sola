@@ -5,7 +5,7 @@
 **Status:** implemented (partial) — dogfood installed locally 2026-08-18  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter); no in-body drag-select; no attachments; no offline store
+**Gaps:** no HTML engine (converted letter); no attachments; no offline store
 
 ## Goal
 
@@ -206,10 +206,11 @@ Parity behavior:
    Convert with `html2text` rich + raw tables, no link footnotes.
 2. Render through kit `prose`: paragraphs, `>` quotes, inline links.
    Tracking / click-wrapper hrefs show as a short label (“Link”), never
-   the raw `upn=` URL.
+   the raw `upn=` URL. First-party destinations (magic links) keep
+   host+path; a lone long URL is not dropped as tracking.
 3. Link activation: `on_link` → `Topic::OpenUrl` / `open_url_logged`.
-4. Copy / reply use `flatten` of those blocks (Edit menu + toolbar Copy).
-   In-body drag-select is not available (iced has no selectable rich text).
+4. Copy / reply use `flatten` of those blocks (toolbar Copy Message).
+   In-body drag-select is kit `prose` (visible text; Edit Copy / Select All).
 5. Menus: Mail, Edit, Mailbox, Message, View — not one stuffed app menu.
 
 No HTML widget tree in v1.

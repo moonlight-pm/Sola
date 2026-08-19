@@ -2,15 +2,11 @@
 //!
 //! Mail (and any other long-form pane) should render through this instead
 //! of a `text_editor`. Tokens only; no hex. Links are accent + underline
-//! and emit `on_link` on click.
+//! and emit `on_link` on click. Drag-select copies the visible text.
 
-use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{column, container, rich_text, row, span, Space};
-use iced::{Background, Border, Color, Element, Length, Theme};
+mod view;
 
-use crate::components::style::{mix_white, HAIRLINE_A, SPACE_LG, SPACE_MD};
-use crate::components::text::PROSE_SIZE;
-use crate::fonts;
+pub use view::{prose, prose_selectable};
 
 /// One styled run inside a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,97 +114,159 @@ pub fn flatten(blocks: &[ProseBlock]) -> String {
     out
 }
 
-/// Render `blocks` as a reading column. `on_link` receives the URL.
-pub fn prose<'a, Message: Clone + 'a>(
-    blocks: impl IntoIterator<Item = ProseBlock>,
-    theme: &Theme,
-    on_link: impl Fn(String) -> Message + Clone + 'a,
-) -> Element<'a, Message, Theme> {
-    let palette = theme.extended_palette();
-    let link = palette.primary.base.color;
-    let quote_ink = palette.secondary.base.text;
-    let mut col = column![].spacing(SPACE_LG).width(Length::Fill);
-    for block in blocks {
-        match block {
-            ProseBlock::Paragraph(runs) => {
-                col = col.push(rich_runs(runs, None, link, on_link.clone()));
-            }
-            ProseBlock::Quote(runs) => {
-                col = col.push(quote_block(runs, quote_ink, link, on_link.clone()));
+/// Visible reading text (what the letter shows). Link labels stay labels;
+/// quotes do not grow a `>` prefix. Use this for in-body selection copy.
+pub fn visible_text(blocks: &[ProseBlock]) -> String {
+    let mut out = String::new();
+    for line in iter_lines(blocks) {
+        out.push_str(&line.text);
+        for _ in 0..line.gap {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Slice of [`visible_text`] for a byte range, snapped to char boundaries.
+pub fn selected_visible(blocks: &[ProseBlock], start: usize, end: usize) -> String {
+    let doc = visible_text(blocks);
+    let a = snap_byte(&doc, start.min(end));
+    let b = snap_byte(&doc, start.max(end));
+    doc.get(a..b).unwrap_or("").to_string()
+}
+
+/// One hard line in the reading column (wrapping is the paragraph's job).
+#[derive(Debug, Clone)]
+pub(crate) struct LayoutLine {
+    pub runs: Vec<ProseRun>,
+    pub text: String,
+    pub start: usize,
+    pub gap: u8,
+    pub quote: bool,
+}
+
+pub(crate) fn iter_lines(blocks: &[ProseBlock]) -> Vec<LayoutLine> {
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for (bi, block) in blocks.iter().enumerate() {
+        let (runs, quote) = match block {
+            ProseBlock::Paragraph(r) => (r.as_slice(), false),
+            ProseBlock::Quote(r) => (r.as_slice(), true),
+        };
+        let hard = split_runs_on_newline(runs);
+        let n = hard.len();
+        for (li, runs) in hard.into_iter().enumerate() {
+            let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+            let last_in_block = li + 1 == n;
+            let last_block = bi + 1 == blocks.len();
+            let gap = if !last_in_block {
+                1
+            } else if !last_block {
+                2
+            } else {
+                0
+            };
+            let start = offset;
+            offset += text.len() + gap as usize;
+            out.push(LayoutLine {
+                runs,
+                text,
+                start,
+                gap,
+                quote,
+            });
+        }
+    }
+    out
+}
+
+pub(crate) fn snap_byte(s: &str, mut i: usize) -> usize {
+    if i > s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Word / whitespace cluster around `offset` in `text`.
+pub(crate) fn word_at(text: &str, offset: usize) -> (usize, usize) {
+    if text.is_empty() {
+        return (0, 0);
+    }
+    let offset = snap_byte(text, offset.min(text.len()));
+    let probe = if offset == text.len() {
+        text.char_indices().next_back().map(|(i, _)| i).unwrap_or(0)
+    } else {
+        offset
+    };
+    let ch = text[probe..].chars().next().unwrap_or(' ');
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    if is_word(ch) {
+        expand(text, probe, is_word)
+    } else if ch.is_whitespace() {
+        expand(text, probe, |c| c.is_whitespace())
+    } else {
+        (probe, probe + ch.len_utf8())
+    }
+}
+
+fn expand(text: &str, probe: usize, pred: impl Fn(char) -> bool) -> (usize, usize) {
+    let ch = text[probe..].chars().next().unwrap_or(' ');
+    let mut start = probe;
+    for (i, c) in text[..probe].char_indices().rev() {
+        if pred(c) {
+            start = i;
+        } else {
+            break;
+        }
+    }
+    let after = probe + ch.len_utf8();
+    let mut end = after;
+    for (i, c) in text[after..].char_indices() {
+        if pred(c) {
+            end = after + i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    (start, end)
+}
+
+fn split_runs_on_newline(runs: &[ProseRun]) -> Vec<Vec<ProseRun>> {
+    let mut lines: Vec<Vec<ProseRun>> = vec![Vec::new()];
+    for run in runs {
+        let mut rest = run.text.as_str();
+        loop {
+            match rest.split_once('\n') {
+                Some((head, tail)) => {
+                    if !head.is_empty() {
+                        lines.last_mut().unwrap().push(ProseRun {
+                            text: head.to_string(),
+                            url: run.url.clone(),
+                        });
+                    }
+                    lines.push(Vec::new());
+                    rest = tail;
+                }
+                None => {
+                    if !rest.is_empty() {
+                        lines.last_mut().unwrap().push(ProseRun {
+                            text: rest.to_string(),
+                            url: run.url.clone(),
+                        });
+                    }
+                    break;
+                }
             }
         }
     }
-    col.into()
-}
-
-fn quote_block<'a, Message: Clone + 'a>(
-    runs: Vec<ProseRun>,
-    quote_ink: Color,
-    link: Color,
-    on_link: impl Fn(String) -> Message + Clone + 'a,
-) -> Element<'a, Message, Theme> {
-    row![
-        container(Space::new().width(1).height(Length::Fill))
-            .width(1)
-            .height(Length::Fill)
-            .style(quote_rule_style),
-        rich_runs(runs, Some(quote_ink), link, on_link),
-    ]
-    .spacing(SPACE_MD)
-    .width(Length::Fill)
-    .into()
-}
-
-fn rich_runs<'a, Message: Clone + 'a>(
-    runs: Vec<ProseRun>,
-    ink: Option<Color>,
-    link: Color,
-    on_link: impl Fn(String) -> Message + 'a,
-) -> Element<'a, Message, Theme> {
-    if runs.is_empty() {
-        return Space::new().width(Length::Fill).height(0).into();
+    lines.retain(|l| !l.is_empty());
+    if lines.is_empty() {
+        lines.push(Vec::new());
     }
-    let spans: Vec<iced::widget::text::Span<'static, String>> = runs
-        .into_iter()
-        .map(|run| styled_span(run, ink, link))
-        .collect();
-    rich_text(spans)
-        .font(fonts::ui())
-        .size(PROSE_SIZE)
-        .line_height(LineHeight::Relative(1.45))
-        .wrapping(Wrapping::Word)
-        .width(Length::Fill)
-        .on_link_click(on_link)
-        .into()
-}
-
-fn styled_span(
-    run: ProseRun,
-    ink: Option<Color>,
-    link: Color,
-) -> iced::widget::text::Span<'static, String> {
-    let mut s = span(run.text)
-        .font(fonts::ui())
-        .size(PROSE_SIZE)
-        .line_height(LineHeight::Relative(1.45));
-    if let Some(url) = run.url {
-        s = s.link(url).underline(true).color(link);
-    } else if let Some(ink) = ink {
-        s = s.color(ink);
-    }
-    s
-}
-
-fn quote_rule_style(theme: &Theme) -> iced::widget::container::Style {
-    let p = theme.extended_palette();
-    iced::widget::container::Style {
-        background: Some(Background::Color(mix_white(
-            p.background.base.color,
-            HAIRLINE_A + 0.06,
-        ))),
-        border: Border::default(),
-        ..Default::default()
-    }
+    lines
 }
 
 fn strip_quote_prefix(line: &str) -> Option<&str> {
@@ -232,9 +290,9 @@ fn join_soft_wrap(lines: &[String]) -> String {
         let prev_end = out.chars().rev().find(|c| !c.is_whitespace());
         let next_start = line.chars().find(|c| !c.is_whitespace());
         // Soft-wrapped URL: "https://ex.com/very/long/\npath" → no space.
-        let url_cont = prev_end.is_some_and(|c| {
-            matches!(c, '/' | '&' | '=' | '-' | '_' | '%' | '#' | '?')
-        }) && next_start.is_some_and(|c| is_url_body(c) && !c.is_uppercase());
+        let url_cont = prev_end
+            .is_some_and(|c| matches!(c, '/' | '&' | '=' | '-' | '_' | '%' | '#' | '?'))
+            && next_start.is_some_and(|c| is_url_body(c) && !c.is_uppercase());
         if url_cont {
             out.push_str(line.trim_start());
             continue;
@@ -422,9 +480,18 @@ fn short_url_label(url: &str) -> String {
         || h.contains("click")
         || h.contains("track")
         || url.contains("upn=")
-        || url.len() > 96
     {
         return "Link".into();
+    }
+    // First-party destinations (magic links, signed URLs): host + path,
+    // never collapse a long URL to an anonymous "Link".
+    let stripped = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let no_query = stripped.split('?').next().unwrap_or(stripped);
+    let no_query = no_query.trim_end_matches('/');
+    if !no_query.is_empty() && no_query.len() <= 56 {
+        return no_query.to_string();
     }
     host.to_string()
 }
@@ -451,7 +518,9 @@ mod tests {
         }
         match &blocks[2] {
             ProseBlock::Paragraph(runs) => {
-                assert!(runs.iter().any(|r| r.url.as_deref() == Some("https://ex.com/a")));
+                assert!(runs
+                    .iter()
+                    .any(|r| r.url.as_deref() == Some("https://ex.com/a")));
             }
             _ => panic!("expected paragraph"),
         }
@@ -474,5 +543,56 @@ mod tests {
     fn flatten_round_trips_quote() {
         let blocks = parse_plain("> hi");
         assert_eq!(flatten(&blocks), "> hi");
+    }
+
+    #[test]
+    fn visible_text_skips_quote_prefix_and_url_expand() {
+        let blocks = parse_plain("Hi\n\n> quoted\n\nsee https://ex.com/a");
+        let vis = visible_text(&blocks);
+        assert!(vis.contains("Hi"));
+        assert!(vis.contains("quoted"));
+        assert!(!vis.contains("> quoted"));
+        assert!(!vis.contains("<https://"));
+        assert_eq!(vis.matches("Hi").count(), 1);
+        let lines = iter_lines(&blocks);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].text, "Hi");
+        assert_eq!(lines[1].text, "quoted");
+        assert!(lines[1].quote);
+        assert_eq!(lines[0].start, 0);
+        assert_eq!(lines[1].start, "Hi".len() + 2);
+    }
+
+    #[test]
+    fn selected_visible_snaps_range() {
+        let blocks = parse_plain("Hello there");
+        assert_eq!(selected_visible(&blocks, 0, 5), "Hello");
+        assert_eq!(selected_visible(&blocks, 6, 11), "there");
+    }
+
+    #[test]
+    fn long_first_party_url_is_not_anonymous_link() {
+        let token = "A".repeat(43);
+        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
+        let blocks = parse_plain(&format!("Use this link to sign in to Wicket:\n\n  {url}\n"));
+        let links: Vec<_> = blocks
+            .iter()
+            .flat_map(|b| match b {
+                ProseBlock::Paragraph(r) | ProseBlock::Quote(r) => r.iter(),
+            })
+            .filter(|r| r.url.is_some())
+            .collect();
+        assert_eq!(links.len(), 1, "{blocks:?}");
+        assert_eq!(links[0].url.as_deref(), Some(url.as_str()));
+        assert_ne!(links[0].text, "Link");
+        assert!(links[0].text.contains("auth.naturalethic.com"));
+    }
+
+    #[test]
+    fn word_at_expands_identifier() {
+        let t = "say hello-world";
+        assert_eq!(word_at(t, 5), (4, 9));
+        assert_eq!(word_at(t, 10), (10, 15));
+        assert_eq!(&t[10..15], "world");
     }
 }

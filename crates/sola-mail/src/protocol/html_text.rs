@@ -115,6 +115,8 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
 }
 
 /// Replace tracking-URL labels with a short host / "Link".
+/// Bare URLs (plain-text mail after mail-parser's `text_to_html`) become
+/// real links — they used to be dropped as "raw tracking".
 fn humanize_runs(runs: Vec<ProseRun>) -> Vec<ProseRun> {
     let mut out = Vec::new();
     for run in runs {
@@ -126,20 +128,33 @@ fn humanize_runs(runs: Vec<ProseRun>) -> Vec<ProseRun> {
             out.push(ProseRun::link(label, url));
         } else {
             let t = run.text.replace(['(', ')'], " ");
-            if t.trim().is_empty() {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
                 continue;
             }
-            if looks_like_raw_url(t.trim()) {
+            if looks_like_raw_url(trimmed) {
+                if let Some(url) = normalize_http_url(trimmed) {
+                    let label = display_link_label(trimmed, &url);
+                    if !label.is_empty() {
+                        out.push(ProseRun::link(label, url));
+                    }
+                }
                 continue;
             }
             out.push(ProseRun::text(t));
         }
     }
-    // Drop a paragraph that is only tracking links with no prose.
-    let has_prose = out.iter().any(|r| r.url.is_none() && r.text.chars().any(|c| c.is_alphabetic()));
-    let only_tracking = !has_prose
-        && out.iter().all(|r| r.url.as_deref().is_some_and(is_tracking_url));
-    if only_tracking {
+    // Drop ESP footer rows that are only unlabeled click-wrappers.
+    // Keep labeled CTAs and first-party destinations (magic links).
+    let has_prose = out
+        .iter()
+        .any(|r| r.url.is_none() && r.text.chars().any(|c| c.is_alphabetic()));
+    let only_unlabeled_tracking = !has_prose
+        && !out.is_empty()
+        && out.iter().all(|r| {
+            r.url.as_deref().is_some_and(is_tracking_url) && is_generic_link_label(&r.text)
+        });
+    if only_unlabeled_tracking {
         return Vec::new();
     }
     out
@@ -148,22 +163,59 @@ fn humanize_runs(runs: Vec<ProseRun>) -> Vec<ProseRun> {
 pub fn display_link_label(text: &str, url: &str) -> String {
     let t = text.trim();
     if t.is_empty() || looks_like_raw_url(t) || is_tracking_url(t) || t.len() > 48 {
-        return short_host_label(url);
+        return destination_label(url);
     }
     t.to_string()
 }
 
-fn short_host_label(url: &str) -> String {
+/// Host + path, no query. Tracking wrappers stay "Link".
+pub fn destination_label(url: &str) -> String {
+    let host = host_of(url);
+    if host.is_empty() || is_tracking_host(host) {
+        return "Link".into();
+    }
+    let stripped = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let no_query = stripped.split('?').next().unwrap_or(stripped);
+    let no_query = no_query.trim_end_matches('/');
+    if no_query.is_empty() {
+        return host.to_string();
+    }
+    if no_query.len() > 56 {
+        return host.to_string();
+    }
+    no_query.to_string()
+}
+
+fn host_of(url: &str) -> &str {
     let stripped = url
         .trim_start_matches("https://")
         .trim_start_matches("http://");
     let host = stripped.split('/').next().unwrap_or(stripped);
-    let host = host.split(':').next().unwrap_or(host);
-    let host = host.trim_start_matches("www.");
-    if host.is_empty() || is_tracking_host(host) {
-        return "Link".into();
+    host.split(':')
+        .next()
+        .unwrap_or(host)
+        .trim_start_matches("www.")
+}
+
+fn is_generic_link_label(s: &str) -> bool {
+    s.trim().is_empty() || s.trim().eq_ignore_ascii_case("link")
+}
+
+fn normalize_http_url(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.len() <= 10 {
+        return None;
     }
-    host.to_string()
+    let l = s.to_ascii_lowercase();
+    if l.starts_with("https://") || l.starts_with("http://") {
+        return Some(s.to_string());
+    }
+    if l.starts_with("www.") {
+        return Some(format!("https://{s}"));
+    }
+    None
 }
 
 fn looks_like_raw_url(s: &str) -> bool {
@@ -173,11 +225,7 @@ fn looks_like_raw_url(s: &str) -> bool {
 
 fn is_tracking_url(s: &str) -> bool {
     let l = s.to_ascii_lowercase();
-    l.contains("upn=")
-        || l.contains("utm_")
-        || l.contains("/ls/click")
-        || l.contains("list-manage")
-        || s.len() > 96
+    l.contains("upn=") || l.contains("utm_") || l.contains("/ls/click") || l.contains("list-manage")
 }
 
 fn is_tracking_host(host: &str) -> bool {
@@ -190,7 +238,8 @@ fn is_tracking_host(host: &str) -> bool {
 }
 
 fn runs_have_words(runs: &[ProseRun]) -> bool {
-    runs.iter().any(|r| r.text.chars().any(|c| !c.is_whitespace()))
+    runs.iter()
+        .any(|r| r.text.chars().any(|c| !c.is_whitespace()))
 }
 
 fn strip_leading_quote(runs: &mut [ProseRun]) {
@@ -221,6 +270,18 @@ fn crude_strip(html: &str) -> String {
 fn is_http_url(u: &str) -> bool {
     let l = u.to_ascii_lowercase();
     (l.starts_with("http://") || l.starts_with("https://")) && u.len() > 10
+}
+
+/// mail-parser `text_to_html`: `<html><body>…</body></html>` with only `<br/>`.
+pub fn is_synthesized_plain_html(html: &str) -> bool {
+    let t = html.trim();
+    const OPEN: &str = "<html><body>";
+    const CLOSE: &str = "</body></html>";
+    if !t.starts_with(OPEN) || !t.ends_with(CLOSE) {
+        return false;
+    }
+    let inner = &t[OPEN.len()..t.len() - CLOSE.len()];
+    !inner.replace("<br/>", "").contains('<')
 }
 
 /// True when the multipart/plain part is a generator stub and the HTML
@@ -295,6 +356,72 @@ mod tests {
             labels.iter().any(|l| l == "Link" || !l.contains("http")),
             "labels={labels:?}"
         );
+    }
+
+    /// Wicket magic-link mail is text/plain. mail-parser still feeds
+    /// `body_html` via `text_to_html` (`<br/>` only). A lone long URL
+    /// must stay a clickable destination — not get eaten as tracking.
+    #[test]
+    fn wicket_magic_link_is_not_dropped() {
+        let token = "A".repeat(43);
+        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
+        assert!(url.len() > 96, "len={} url={url}", url.len());
+        let body = format!(
+            "Use this link to sign in to Wicket:\n\n  {url}\n\n\
+             It expires shortly and can be used once. If you didn't request \
+             this, you can ignore this email.\n\n— Wicket"
+        );
+        let html = format!("<html><body>{}</body></html>", body.replace('\n', "<br/>"));
+        let blocks = to_blocks(&html);
+        let urls: Vec<String> = link_urls(&blocks);
+        assert!(
+            urls.iter().any(|u| u == &url),
+            "missing magic url in {blocks:?}"
+        );
+        let vis = flatten(&blocks);
+        assert!(
+            vis.contains("auth.naturalethic.com"),
+            "expected a visible destination, got {vis:?}"
+        );
+        let labels = link_labels(&blocks);
+        assert!(
+            labels.iter().all(|l| !l.contains(&token)),
+            "token should not be the visible label: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn labeled_cta_survives_tracking_href() {
+        let href = "https://click.list-manage.com/track/click?u=abc&id=def&e=0123456789abcdef";
+        let html =
+            format!(r#"<table><tr><td><a href="{href}">Sign in to Wicket</a></td></tr></table>"#);
+        let blocks = to_blocks(&html);
+        let labels: Vec<String> = link_labels(&blocks);
+        assert!(
+            labels.iter().any(|l| l.contains("Sign in")),
+            "cta dropped: {blocks:?}"
+        );
+    }
+
+    fn link_urls(blocks: &[ProseBlock]) -> Vec<String> {
+        blocks
+            .iter()
+            .flat_map(|b| match b {
+                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs.iter(),
+            })
+            .filter_map(|r| r.url.clone())
+            .collect()
+    }
+
+    fn link_labels(blocks: &[ProseBlock]) -> Vec<String> {
+        blocks
+            .iter()
+            .flat_map(|b| match b {
+                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs.iter(),
+            })
+            .filter(|r| r.url.is_some())
+            .map(|r| r.text.clone())
+            .collect()
     }
 
     #[test]

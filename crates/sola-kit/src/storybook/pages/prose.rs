@@ -27,7 +27,7 @@ pub fn view(theme: &iced::Theme) -> Element<'static, Msg> {
     column![
         lede(
             "Prose",
-            "Letter measure: paragraphs, quoted replies, inline links. Not an editor.",
+            "Letter measure: paragraphs, quoted replies, inline links. Drag to select; click a link.",
         ),
         readable(
             panel(
@@ -35,7 +35,7 @@ pub fn view(theme: &iced::Theme) -> Element<'static, Msg> {
                     prose(parse_plain(SAMPLE), theme, |_| Msg::Select(
                         crate::storybook::Page::Prose
                     )),
-                    body("Click a link — it should feel like mail, not a chip row.")
+                    body("Drag to select. Click a link — it should feel like mail, not a chip row.")
                         .style(muted),
                 ]
                 .spacing(16),

@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-18 (mail polish: letter pane, icon chrome, graphite selection)
+**As of:** 2026-08-18 (mail polish: letter pane drag-select + copy)
 
 ---
 
@@ -22,7 +22,10 @@ Do not invent product policy.
    loads the next page (no Load more button); list selection is kit
    `list_item` graphite lift (not dark cyan). IMAP lists via
    `SELECT`+`FETCH` (SEARCH desyncs this server). Empty Junk/Trash
-   batches + toasts. **Install after every finished round** (standing).
+   batches + toasts. In-body drag-select + Edit Copy / Select All
+   (visible text; Copy Message still flattens URLs). Magic-link /
+   long first-party URLs stay visible (Wicket “Sign in” mail). **Install
+   after every finished round** (standing).
 2. **sola-workspaces** — **partial** (on master; this worktree kept open)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
@@ -72,7 +75,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **master** (workspaces + browser polish + paint). This worktree `mail-polish` is the mail design pass | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); instant tab close (hover × opaque chip); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket + nested members; selected title no longer shifts — **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login**; **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **needs Outline dogfood**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
-| Mail | **Installed** this worktree: letter pane; HTML preferred; unread **bold**; always-on icon toolbar (actions muted with no selection); scroll-to-load; graphite `list_item` selection; SEARCH-free folder lists; empty batches. Still no HTML engine / attachments / in-body drag-select | — |
+| Mail | **Installed** this worktree: letter pane; HTML preferred; unread **bold**; always-on icon toolbar (actions muted with no selection); scroll-to-load; graphite `list_item` selection; SEARCH-free folder lists; empty batches; **in-body drag-select + copy** (this slice — reinstall `mail` to dogfood). Still no HTML engine / attachments | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

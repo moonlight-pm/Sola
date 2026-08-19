@@ -5,14 +5,15 @@ use std::sync::{Arc, OnceLock};
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
-use iced::widget::text::Wrapping;
 use iced::widget::scrollable::Viewport;
+use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
-use sola_bus::Message;
 use sola_bus::topics::{MailConfig, MailRule, Topic};
+use sola_bus::Message;
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::icon_handle;
+use sola_kit::components::prose::prose_selectable;
 use sola_kit::components::style::{
     mix_white, HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
 };
@@ -20,7 +21,7 @@ use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::components::{
-    button as kit_btn, field, prose, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
+    button as kit_btn, field, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -50,7 +51,9 @@ pub enum Msg {
     LoadMore,
     ListScrolled(Viewport),
     Compose,
-    Reply { all: bool },
+    Reply {
+        all: bool,
+    },
     CancelCompose,
     ComposeFrom(String),
     ComposeTo(String),
@@ -66,6 +69,8 @@ pub enum Msg {
     EmptyNamed(String),
     Refresh,
     OpenUrl(String),
+    /// Visible letter selection (None = caret / cleared).
+    BodySelect(Option<String>),
     DismissToast,
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
@@ -104,8 +109,10 @@ pub struct App {
     total_messages: u32,
     selected_uid: Option<u32>,
     message_body: Option<MessageBody>,
-    /// Plain body for Edit → Copy / Select All (not shown as an editor).
-    body_content: text_editor::Content,
+    /// Visible in-body selection (drag or Select All). Copy uses this.
+    body_selection: Option<String>,
+    /// Bump to force the letter widget to select everything.
+    prose_select_all: u64,
     /// Cached letter blocks for the open message.
     reading_blocks: Vec<ProseBlock>,
     from_addresses: Vec<String>,
@@ -140,7 +147,8 @@ impl Default for App {
             total_messages: 0,
             selected_uid: None,
             message_body: None,
-            body_content: text_editor::Content::new(),
+            body_selection: None,
+            prose_select_all: 0,
             reading_blocks: Vec::new(),
             from_addresses: Vec::new(),
             rules: Vec::new(),
@@ -245,7 +253,7 @@ impl App {
                 self.selected_folder = name.clone();
                 self.selected_uid = None;
                 self.message_body = None;
-                self.body_content = text_editor::Content::new();
+                self.body_selection = None;
                 self.reading_blocks.clear();
                 self.composing = false;
                 self.search_active = false;
@@ -282,9 +290,8 @@ impl App {
             }
             Msg::LoadMore => self.load_more(),
             Msg::ListScrolled(vp) => {
-                let remain = vp.content_bounds().height
-                    - vp.bounds().height
-                    - vp.absolute_offset().y;
+                let remain =
+                    vp.content_bounds().height - vp.bounds().height - vp.absolute_offset().y;
                 if remain < 280.0 {
                     return self.update(Msg::LoadMore);
                 }
@@ -383,12 +390,16 @@ impl App {
                 Task::none()
             }
             Msg::CopyBody => {
-                let t = self.body_content.text();
+                let t = sola_kit::components::prose::flatten(&self.reading_blocks);
                 if t.is_empty() {
                     Task::none()
                 } else {
                     iced::clipboard::write(t)
                 }
+            }
+            Msg::BodySelect(sel) => {
+                self.body_selection = sel;
+                Task::none()
             }
             Msg::Send => {
                 if self.draft.to.trim().is_empty() {
@@ -490,7 +501,9 @@ impl App {
                 if self.composing {
                     self.draft.body.perform(text_editor::Action::SelectAll);
                 } else if self.message_body.is_some() {
-                    self.body_content.perform(text_editor::Action::SelectAll);
+                    self.prose_select_all = self.prose_select_all.saturating_add(1);
+                    let vis = sola_kit::components::prose::visible_text(&self.reading_blocks);
+                    self.body_selection = if vis.is_empty() { None } else { Some(vis) };
                 }
                 Task::none()
             }
@@ -535,13 +548,13 @@ impl App {
             }
             return Task::none();
         }
-        if let Some(sel) = self.body_content.selection() {
+        if let Some(sel) = self.body_selection.as_deref() {
             if !sel.is_empty() {
-                return iced::clipboard::write(sel);
+                return iced::clipboard::write(sel.to_string());
             }
         }
-        // No selection → copy full open body (useful after open).
-        let t = self.body_content.text();
+        // No selection → copy the open letter (flatten includes URLs).
+        let t = sola_kit::components::prose::flatten(&self.reading_blocks);
         if !t.is_empty() {
             return iced::clipboard::write(t);
         }
@@ -639,7 +652,7 @@ impl App {
                     has_html = body.html.is_some(),
                     "opened message body"
                 );
-                self.body_content = text_editor::Content::with_text(&plain);
+                self.body_selection = None;
                 self.reading_blocks = blocks;
                 self.message_body = Some(body);
             }
@@ -783,7 +796,7 @@ impl App {
             self.messages.clear();
             self.selected_uid = None;
             self.message_body = None;
-            self.body_content = text_editor::Content::new();
+            self.body_selection = None;
             self.reading_blocks.clear();
         }
         mail_send(MailCmd::EmptyFolder {
@@ -795,9 +808,7 @@ impl App {
         matches!(
             self.selected_folder.as_str(),
             "Trash" | "Junk" | "trash" | "junk"
-        ) || self
-            .selected_folder
-            .eq_ignore_ascii_case("Trash")
+        ) || self.selected_folder.eq_ignore_ascii_case("Trash")
             || self.selected_folder.eq_ignore_ascii_case("Junk")
     }
 
@@ -820,6 +831,7 @@ impl App {
 
     fn select_message(&mut self, uid: u32) {
         self.selected_uid = Some(uid);
+        self.body_selection = None;
         self.composing = false;
         let folder = self.real_folder();
         mail_send(MailCmd::FetchBody {
@@ -850,16 +862,12 @@ impl App {
         });
         self.toast = Some(format!("Moved to {dest}"));
         self.toast_undo = true;
-        mail_send(MailCmd::Move {
-            folder,
-            uid,
-            dest,
-        });
+        mail_send(MailCmd::Move { folder, uid, dest });
         self.messages.retain(|m| m.uid != uid);
         if self.messages.is_empty() {
             self.selected_uid = None;
             self.message_body = None;
-            self.body_content = text_editor::Content::new();
+            self.body_selection = None;
             self.reading_blocks.clear();
         } else if let Some(i) = idx {
             let next = if i > 0 { i - 1 } else { 0 };
@@ -984,13 +992,11 @@ impl App {
     fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
         let mut actions = row![].spacing(SPACE_SM);
         if self.toast_undo && self.last_move.is_some() {
-            actions = actions.push(
-                kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo),
-            );
+            actions =
+                actions.push(kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo));
         }
-        actions = actions.push(
-            kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast),
-        );
+        actions = actions
+            .push(kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast));
 
         container(
             row![
@@ -1026,9 +1032,8 @@ impl App {
             let mut smart_items = Vec::new();
             for f in &self.smart_counts {
                 let id = format!("smart:{}", f.name);
-                let mut item =
-                    SidebarItem::new(f.name.clone(), Msg::SelectFolder(id.clone()))
-                        .active(self.selected_folder == id);
+                let mut item = SidebarItem::new(f.name.clone(), Msg::SelectFolder(id.clone()))
+                    .active(self.selected_folder == id);
                 if let Some(badge) = folder_count_badge(f.unread, f.total) {
                     item = item.secondary(badge);
                 }
@@ -1064,12 +1069,9 @@ impl App {
             format_count(self.total_messages)
         };
 
-        let mut header = row![
-            search,
-            kit_text::caption(count).style(kit_text::muted),
-        ]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center);
+        let mut header = row![search, kit_text::caption(count).style(kit_text::muted),]
+            .spacing(SPACE_MD)
+            .align_y(iced::Alignment::Center);
         if !self.search_query.is_empty() || self.search_active {
             header = header.push(icon_tool(
                 "lucide/x",
@@ -1167,7 +1169,11 @@ impl App {
 
         bar = bar.push(Space::new().width(Length::Fill));
         if has_msg {
-            bar = bar.push(icon_tool("lucide/copy", "Copy message", Some(Msg::CopyBody)));
+            bar = bar.push(icon_tool(
+                "lucide/copy",
+                "Copy message",
+                Some(Msg::CopyBody),
+            ));
         }
         if self.last_move.is_some() {
             bar = bar.push(icon_tool("lucide/undo-2", "Undo move", Some(Msg::Undo)));
@@ -1209,7 +1215,13 @@ impl App {
             column![
                 letter_header(body),
                 h_hairline(),
-                prose(self.reading_blocks.clone(), &self.theme, Msg::OpenUrl),
+                prose_selectable(
+                    self.reading_blocks.clone(),
+                    &self.theme,
+                    self.prose_select_all,
+                    Msg::OpenUrl,
+                    Msg::BodySelect,
+                ),
             ]
             .spacing(20.0)
             .width(Length::Fill)
@@ -1224,10 +1236,10 @@ impl App {
         .width(Length::Fill);
 
         container(scrollable(letter).height(Length::Fill).width(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(read_pane_style)
-        .into()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(read_pane_style)
+            .into()
     }
 
     fn view_compose(&self) -> Element<'_, Msg> {
@@ -1353,7 +1365,11 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
 
 // ── Display helpers ───────────────────────────────────────────────────
 
-fn icon_tool(name: &'static str, tip: &'static str, on_press: Option<Msg>) -> Element<'static, Msg> {
+fn icon_tool(
+    name: &'static str,
+    tip: &'static str,
+    on_press: Option<Msg>,
+) -> Element<'static, Msg> {
     toolbar_icon_tip(cached_icon(name), tip, on_press)
 }
 
@@ -1424,14 +1440,18 @@ fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
     if !to.is_empty() {
         meta = meta.push(letter_meta_row(
             "To",
-            kit_text::caption(to.to_string()).style(kit_text::muted).into(),
+            kit_text::caption(to.to_string())
+                .style(kit_text::muted)
+                .into(),
         ));
     }
     let cc = body.cc.trim();
     if !cc.is_empty() {
         meta = meta.push(letter_meta_row(
             "Cc",
-            kit_text::caption(cc.to_string()).style(kit_text::muted).into(),
+            kit_text::caption(cc.to_string())
+                .style(kit_text::muted)
+                .into(),
         ));
     }
 
@@ -1591,7 +1611,17 @@ fn is_month_token(s: &str) -> bool {
     let head = s.chars().take(3).collect::<String>().to_ascii_lowercase();
     matches!(
         head.as_str(),
-        "jan" | "feb" | "mar" | "apr" | "may" | "jun" | "jul" | "aug" | "sep" | "oct" | "nov"
+        "jan"
+            | "feb"
+            | "mar"
+            | "apr"
+            | "may"
+            | "jun"
+            | "jul"
+            | "aug"
+            | "sep"
+            | "oct"
+            | "nov"
             | "dec"
     )
 }
