@@ -23,7 +23,7 @@ pub fn run(args: Vec<String>) -> i32 {
         return 3;
     };
 
-    if args.len() == 1 {
+    if args.len() == 1 || matches!(args.get(1).map(String::as_str), Some("-h" | "--help")) {
         println!("solactl {owner} — {}", entry.app_id);
         if entry.methods.is_empty() {
             println!("  (no methods advertised)");
@@ -41,9 +41,13 @@ pub fn run(args: Vec<String>) -> i32 {
         return 3;
     };
     let rest: Vec<&str> = args[2..].iter().map(String::as_str).collect();
+    if rest.iter().any(|t| *t == "-h" || *t == "--help") || rest.is_empty() && method == "--help" {
+        print_method_help(owner, spec);
+        return 0;
+    }
     match params_from_args(spec, &rest) {
         Ok(mut params) => {
-            if entry.owner == "ws" {
+            if entry.owner == "workspaces" {
                 inject_ws_context(method, &mut params);
             }
             let timeout = invoke_timeout_secs(spec, &params);
@@ -97,6 +101,31 @@ fn invoke_timeout_secs(spec: &MethodSpec, params: &serde_json::Value) -> u64 {
 fn json_u64(v: &serde_json::Value) -> Option<u64> {
     v.as_u64()
         .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+}
+
+fn print_method_help(owner: &str, spec: &MethodSpec) {
+    println!("solactl {owner} {} — {}", spec.name, spec.summary);
+    if spec.args.is_empty() {
+        println!("  (no flags)");
+        return;
+    }
+    println!();
+    for a in &spec.args {
+        let long = a.long.as_deref().unwrap_or(a.name.as_str());
+        let mut flag = format!("--{long}");
+        if let Some(ch) = a.short {
+            flag = format!("-{ch}, {flag}");
+        }
+        if !matches!(a.ty, ArgType::Bool) {
+            flag.push_str(" <value>");
+        }
+        let req = if a.required { "required" } else { "optional" };
+        if a.help.is_empty() {
+            println!("  {flag:<28} ({req})");
+        } else {
+            println!("  {flag:<28} {} ({req})", a.help);
+        }
+    }
 }
 
 fn params_from_args(spec: &MethodSpec, rest: &[&str]) -> Result<serde_json::Value, String> {

@@ -26,22 +26,24 @@ Do not invent product policy.
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
    **CLI freeze:** [`docs/specs/2026-08-18-workspaces-cli-design.md`](docs/specs/2026-08-18-workspaces-cli-design.md)  
-   **Next:** desk-smoke `solactl ws` (needs `install workspaces` + `solactl`). Polish:
+   **Next:** desk-smoke `solactl workspaces` (needs `install workspaces` + `solactl`). Polish:
    rename/recolor/reorder.  
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
    **Install:** standing OK to `install workspaces` after each finished
    round. Ask for any other target.  
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
-   Methods on sola-call owner `ws` (`solactl ws ps` / `workspace.spawn` /
+   Methods on sola-call owner `workspaces` (`solactl workspaces ps` / `workspace.spawn` /
    `workspace.exec` / `pane.wait` / `whoami` / …). Control plane is
    first-class: verb changes update `calls.rs` + dispatch + tests +
    `docs/manual/solactl.md` together.
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
    `sola-ws` / `sws-`. App installed and dogfooded (rail, splits,
-   drop-project, dead-pane, `×N`). `solactl ws` implemented (richer
+   drop-project, dead-pane, `×N`). `solactl workspaces` implemented (richer
    payloads, `--prompt-file`, `project.add`, `workspace.select` /
    `workspace.exec`, `pane.wait`, `whoami`; Grok-leaf targeting;
-   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. Rail: Add project expands `~`;
+   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. Per-project
+   startup script after sibling spawn (**Project → Startup Script…** /
+   `project.startup`). Rail: Add project expands `~`;
    groups stack at the top; no grok/agent label on the row. Sibling
    hover close is the kit ×; root has no row close (Drop Project is menu-only).
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
@@ -55,15 +57,18 @@ Do not invent product policy.
    hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
    — leftover sessions from a deleted workspace are quarantined, not
    attached to the next tab. Working ring spins (kit mark uses ms
-   phase, not `as_secs_f32`).  
+   phase, not `as_secs_f32`). Rail marks reclaim on Grok
+   `SessionStart` / `UserPromptSubmit` after `/new` or `grok -r`
+   (was frozen on the old session). `StopCancelled` → done.
+   Installed and restarted.  
 3. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
 4. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
-   kit helper. Workspaces already registers `ws` (unsmoked). **Needs install
-   to dogfood.** **D3** (confirm gates) is open.  
+   kit helper. Workspaces registers owner `workspaces` (desk smoke
+   pending). **D3** (confirm gates) is open.  
 5. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
@@ -129,6 +134,6 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Workspaces CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
 | Workspaces worktrees | **`<project-root>/.worktrees/<name>`** (D4.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
-| Workspaces names | Crate / app id **`sola-workspaces`**. Window **Workspaces**. Owner **`ws`**. Tmux **`sola-ws`** / **`sws-`**. Config **`~/.config/sola/workspaces/`**. |
-| Workspaces calls | Register on **sola-call** as owner `ws`. Face is `solactl ws …`. No `sat` binary. Fail if app/host down. First-class: verbs/payloads stay in lockstep with the app ([CLI freeze](docs/specs/2026-08-18-workspaces-cli-design.md)). |
+| Workspaces names | Crate / app id **`sola-workspaces`**. Window **Workspaces**. Owner **`workspaces`**. Tmux **`sola-ws`** / **`sws-`**. Config **`~/.config/sola/workspaces/`**. |
+| Workspaces calls | Register on **sola-call** as owner `workspaces`. Face is `solactl workspaces …`. No `sat` binary. Fail if app/host down. First-class: verbs/payloads stay in lockstep with the app ([CLI freeze](docs/specs/2026-08-18-workspaces-cli-design.md)). |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

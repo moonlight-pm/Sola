@@ -1,7 +1,7 @@
 //! Project groups + workspace rows. `+` on the group opens a name modal.
 
-use iced::widget::{column, container, mouse_area, row};
-use iced::{Alignment, Element, Length, Theme};
+use iced::widget::{column, container, mouse_area, row, text_editor};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
@@ -9,11 +9,12 @@ use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
     DividerColors, SidebarItem, SidebarPanel, SidebarSection,
 };
+use sola_kit::fonts;
 
 use crate::Msg;
 use crate::spawn;
 use crate::status::PaneStatus;
-use crate::workspace::{self, Kind, Project, Workspace};
+use crate::workspace::{self, Project, Workspace};
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
@@ -65,6 +66,33 @@ pub struct AddDraft {
     pub error: Option<String>,
 }
 
+pub struct StartupDraft {
+    pub project_id: Option<String>,
+    pub content: text_editor::Content,
+}
+
+impl Default for StartupDraft {
+    fn default() -> Self {
+        Self {
+            project_id: None,
+            content: text_editor::Content::new(),
+        }
+    }
+}
+
+impl StartupDraft {
+    pub fn open(project_id: impl Into<String>, script: &str) -> Self {
+        Self {
+            project_id: Some(project_id.into()),
+            content: text_editor::Content::with_text(script),
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.project_id.is_some()
+    }
+}
+
 pub fn view<'a>(
     state: &'a SidebarState,
     projects: &'a [Project],
@@ -80,11 +108,7 @@ pub fn view<'a>(
         let mut items = Vec::new();
         if !project.collapsed {
             for ws in workspace::ordered_for_project(&project.id, workspaces) {
-                let title = if ws.kind == Kind::Main {
-                    "root".to_string()
-                } else {
-                    ws.name.clone()
-                };
+                let title = crate::cli::rail_label(ws);
                 let leaves = ws.layout().leaves();
                 let split = leaves.len() > 1;
                 let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
@@ -210,6 +234,7 @@ fn empty_footer<'a>() -> Element<'a, Msg> {
 pub fn overlay<'a>(
     spawn: &'a SpawnDraft,
     add: &'a AddDraft,
+    startup: &'a StartupDraft,
     projects: &'a [Project],
 ) -> Option<Element<'a, Msg>> {
     if spawn.is_open() {
@@ -223,6 +248,15 @@ pub fn overlay<'a>(
     }
     if add.open {
         return Some(veil(add_card(add)));
+    }
+    if startup.is_open() {
+        let project_name = startup
+            .project_id
+            .as_ref()
+            .and_then(|id| workspace::find_project(projects, id))
+            .map(|p| p.name.as_str())
+            .unwrap_or("project");
+        return Some(veil(startup_card(startup, project_name)));
     }
     None
 }
@@ -319,4 +353,79 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
     )
     .width(Length::Shrink)
     .into()
+}
+
+fn startup_card<'a>(draft: &'a StartupDraft, project_name: &str) -> Element<'a, Msg> {
+    let editor = text_editor(&draft.content)
+        .placeholder(r#"cp -a "$PROJECT/.grok" "$WORKTREE/""#)
+        .height(Length::Fixed(168.0))
+        .padding(10)
+        .size(13.0)
+        .font(fonts::mono())
+        .style(startup_editor_style)
+        .on_action(Msg::StartupAction);
+    let mut vars = column![].spacing(4);
+    for v in crate::startup::VARS {
+        vars = vars.push(
+            row![
+                sola_kit::components::text::code(format!("${}", v.name))
+                    .width(Length::Fixed(88.0)),
+                sola_kit::components::text::caption(v.help)
+                    .style(sola_kit::components::text::muted),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Start),
+        );
+    }
+    card::modal(
+        container(
+            column![
+                sola_kit::components::text::body(format!("Startup · {project_name}")),
+                sola_kit::components::text::caption(
+                    "Project = folder on disk. Worktree = this tab (.worktrees/<name>)."
+                )
+                .style(sola_kit::components::text::muted),
+                sola_kit::components::text::caption(
+                    "Runs in the new worktree after spawn. Empty skips."
+                )
+                .style(sola_kit::components::text::muted),
+                editor,
+                vars,
+                row![
+                    iced::widget::Space::new().width(Length::Fill),
+                    kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),
+                    kit_btn::labeled_sm("Save", kit_btn::primary).on_press(Msg::SaveStartup),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::Fixed(500.0)),
+    )
+    .width(Length::Shrink)
+    .into()
+}
+
+fn startup_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let p = theme.extended_palette();
+    let border = match status {
+        text_editor::Status::Focused { .. } => p.primary.strong.color,
+        _ => p.background.strong.color,
+    };
+    text_editor::Style {
+        background: Background::Color(p.background.weak.color),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        placeholder: Color {
+            a: 0.55,
+            ..p.background.base.text
+        },
+        value: p.background.base.text,
+        selection: p.primary.weak.color,
+    }
 }

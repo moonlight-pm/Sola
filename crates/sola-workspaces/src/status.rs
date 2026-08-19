@@ -63,12 +63,21 @@ pub struct PaneStatus {
 
 impl PaneStatus {
     pub fn apply_hook(&mut self, incoming: &Incoming) {
-        if self.is_foreign(incoming.mapped.session_id.as_deref()) {
+        let sid = incoming.mapped.session_id.as_deref();
+        // SessionStart / UserPromptSubmit are lead events for the grok
+        // in this pane. They must reclaim after `/new`, `grok -r`, or a
+        // child CLI that inherited SOLA_PANE_ID — otherwise the mark
+        // freezes on the previous session. Grok does not fire those
+        // events for a subagent's own session.
+        if incoming.mapped.claim || incoming.mapped.clear_turn {
+            if let Some(sid) = incoming.mapped.session_id.clone() {
+                self.owner_session = Some(sid);
+            }
+        } else if self.is_foreign(sid) {
             return;
-        }
-        if let Some(sid) = &incoming.mapped.session_id {
-            if self.owner_session.is_none() || incoming.mapped.clear_turn {
-                self.owner_session = Some(sid.clone());
+        } else if let Some(sid) = incoming.mapped.session_id.clone() {
+            if self.owner_session.is_none() {
+                self.owner_session = Some(sid);
             }
         }
         if incoming.mapped.clear_turn {
@@ -97,6 +106,11 @@ impl PaneStatus {
         }
         if status == AgentStatus::Done {
             self.tool = None;
+        }
+        // Owner session ended — the next lead event (or first hook)
+        // may claim. Child SessionEnd is dropped in map_grok.
+        if incoming.mapped.session_end {
+            self.owner_session = None;
         }
     }
 
@@ -352,7 +366,56 @@ mod tests {
             mapped: MappedHook {
                 status: Some(status),
                 clear_turn: false,
+                claim: false,
                 session_end: false,
+                compacted: false,
+                prompt: None,
+                tool: None,
+                session_id: Some(session.into()),
+            },
+        }
+    }
+
+    fn session_start(session: &str) -> Incoming {
+        Incoming {
+            pane_id: "p".into(),
+            mapped: MappedHook {
+                status: None,
+                clear_turn: true,
+                claim: true,
+                session_end: false,
+                compacted: false,
+                prompt: None,
+                tool: None,
+                session_id: Some(session.into()),
+            },
+        }
+    }
+
+    fn prompt_submit(session: &str) -> Incoming {
+        Incoming {
+            pane_id: "p".into(),
+            mapped: MappedHook {
+                status: Some(AgentStatus::Working),
+                clear_turn: false,
+                claim: true,
+                session_end: false,
+                compacted: false,
+                prompt: Some("hi".into()),
+                tool: None,
+                session_id: Some(session.into()),
+            },
+        }
+    }
+
+    fn session_end(session: &str) -> Incoming {
+        Incoming {
+            pane_id: "p".into(),
+            mapped: MappedHook {
+                status: Some(AgentStatus::Done),
+                clear_turn: false,
+                claim: false,
+                session_end: true,
                 compacted: false,
                 prompt: None,
                 tool: None,
@@ -486,6 +549,39 @@ mod tests {
         assert_eq!(pane.status, AgentStatus::Working);
         pane.apply_hook(&hook("owner", AgentStatus::Done));
         assert_eq!(pane.status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn session_start_reclaims_after_rotation() {
+        let mut pane = PaneStatus::default();
+        pane.apply_hook(&hook("old", AgentStatus::Working));
+        pane.apply_hook(&session_start("new"));
+        pane.apply_hook(&hook("new", AgentStatus::Waiting));
+        assert_eq!(pane.owner_session.as_deref(), Some("new"));
+        assert_eq!(pane.status, AgentStatus::Waiting);
+        pane.apply_hook(&hook("old", AgentStatus::Done));
+        assert_eq!(pane.status, AgentStatus::Waiting);
+    }
+
+    #[test]
+    fn user_prompt_reclaims_after_rotation() {
+        let mut pane = PaneStatus::default();
+        pane.apply_hook(&hook("old", AgentStatus::Done));
+        pane.apply_hook(&prompt_submit("new"));
+        assert_eq!(pane.owner_session.as_deref(), Some("new"));
+        assert_eq!(pane.status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn session_end_releases_owner() {
+        let mut pane = PaneStatus::default();
+        pane.apply_hook(&hook("old", AgentStatus::Working));
+        pane.apply_hook(&session_end("old"));
+        assert_eq!(pane.status, AgentStatus::Done);
+        assert_eq!(pane.owner_session, None);
+        pane.apply_hook(&hook("new", AgentStatus::Working));
+        assert_eq!(pane.owner_session.as_deref(), Some("new"));
+        assert_eq!(pane.status, AgentStatus::Working);
     }
 
     #[test]
