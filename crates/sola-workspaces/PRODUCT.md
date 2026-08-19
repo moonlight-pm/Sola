@@ -46,10 +46,12 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling (UI: name only; `solactl ws workspace.spawn` can pass
-`--agent grok` + `--prompt`), Grok hooks + OSC 9999 + process-tree
-presence, sola-call owner `ws` (`solactl ws …`), tmux persist
-on socket `sola-ws`, done-while-unfocused menubar toast.
+spawn sibling (UI: name only; `solactl workspaces workspace.spawn` can pass
+`--agent grok` + `--prompt` / `--prompt-file`), kit pane splits, Grok hooks
++ OSC 9999 + process-tree presence, quiet `×N` on a Grok leaf, sola-call
+owner `workspaces` (`solactl workspaces …` is first-class — verbs stay in lockstep with the
+app), per-project startup script after spawn (Project → Startup Script…),
+tmux persist on socket `sola-ws`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.
@@ -81,6 +83,7 @@ is fail (call plane).
 
 1. The sidebar is the orchestrator; status is the product.
 2. Spawn sibling is the only fan-out protocol; a prompt file is the handoff.
+   `solactl workspaces` is the same protocol agents use.
 3. Terminals stay terminals — no inferred state from titles.
 4. One signature (the status mark); everything else is quiet and scannable.
 5. Refuse Orca cruft. Refuse rebuilding `sola-agent`.

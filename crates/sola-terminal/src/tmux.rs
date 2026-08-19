@@ -249,6 +249,37 @@ pub fn list_sessions_activity() -> Option<Vec<(String, u64)>> {
     )
 }
 
+/// True when this socket already has `session`.
+pub fn has_session(session: &str) -> bool {
+    tmux_cmd()
+        .args(["has-session", "-t", session])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Session-local env (`show-environment -t`). `None` if unset or gone.
+pub fn get_environment(session: &str, key: &str) -> Option<String> {
+    let output = tmux_cmd()
+        .args(["show-environment", "-t", session, key])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&output.stdout);
+    let line = line.trim();
+    if line.starts_with('-') {
+        return None;
+    }
+    let prefix = format!("{key}=");
+    line.strip_prefix(&prefix).map(str::to_string)
+}
+
 pub fn rename_session(from: &str, to: &str) -> bool {
     if from == to {
         return true;

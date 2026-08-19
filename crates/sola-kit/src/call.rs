@@ -4,7 +4,7 @@
 //! then fold [`call_subscription`] into their iced `subscription`.
 //!
 //! ```ignore
-//! sola_kit::CallSetup::new("ws", App::APP_ID)
+//! sola_kit::CallSetup::new("workspaces", App::APP_ID)
 //!     .methods(my_methods())
 //!     .install();
 //!
