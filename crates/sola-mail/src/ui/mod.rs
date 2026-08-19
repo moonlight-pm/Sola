@@ -131,6 +131,8 @@ pub struct App {
     last_move: Option<LastMove>,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// Last inbox unread we published on `Topic::MailStatus`.
+    published_inbox_unread: Option<u32>,
 }
 
 impl Default for App {
@@ -165,6 +167,7 @@ impl Default for App {
             last_move: None,
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            published_inbox_unread: None,
         }
     }
 }
@@ -476,6 +479,7 @@ impl App {
         self.float.update(message);
         apply_theme_update(message, &mut self.theme);
         if is_self_quit(message, APP_ID) {
+            self.retract_mail_status();
             mail_send(MailCmd::Shutdown);
             return iced::exit();
         }
@@ -508,6 +512,7 @@ impl App {
                 Task::none()
             }
             "quit" => {
+                self.retract_mail_status();
                 mail_send(MailCmd::Shutdown);
                 iced::exit()
             }
@@ -600,6 +605,7 @@ impl App {
                 self.from_addresses = from_addresses;
                 self.rules = rules;
                 self.load_folder(self.selected_folder.clone());
+                self.publish_inbox_unread();
             }
             MailEvent::NotConfigured => {
                 self.connected = false;
@@ -607,6 +613,7 @@ impl App {
                 self.loading = false;
                 self.folders.clear();
                 self.messages.clear();
+                self.publish_inbox_unread();
             }
             MailEvent::Folders {
                 folders,
@@ -614,6 +621,7 @@ impl App {
             } => {
                 self.folders = folders;
                 self.smart_counts = smart_counts;
+                self.publish_inbox_unread();
             }
             MailEvent::Messages {
                 folder,
@@ -848,6 +856,7 @@ impl App {
                 if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
                     f.unread = f.unread.saturating_sub(1);
                 }
+                self.publish_inbox_unread();
             }
         }
     }
@@ -920,6 +929,36 @@ impl App {
             return;
         }
         self.select_prev();
+    }
+
+    fn inbox_unread(&self) -> u32 {
+        self.folders
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case("INBOX"))
+            .map(|f| f.unread)
+            .unwrap_or(0)
+    }
+
+    fn publish_inbox_unread(&mut self) {
+        let n = self.inbox_unread();
+        if self.published_inbox_unread == Some(n) {
+            return;
+        }
+        self.published_inbox_unread = Some(n);
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::MailStatus(sola_bus::topics::MailStatus {
+                inbox_unread: n,
+            }));
+        }
+    }
+
+    fn retract_mail_status(&mut self) {
+        self.published_inbox_unread = None;
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.retract(Topic::MailStatus(sola_bus::topics::MailStatus {
+                inbox_unread: 0,
+            }));
+        }
     }
 
     // ── View ──────────────────────────────────────────────────────────

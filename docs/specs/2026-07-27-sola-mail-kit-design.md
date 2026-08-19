@@ -208,6 +208,8 @@ Parity behavior:
    Tracking / click-wrapper hrefs show as a short label (“Link”), never
    the raw `upn=` URL. First-party destinations (magic links) keep
    host+path; a lone long URL is not dropped as tracking.
+   Inbox unread is published as sticky `Topic::MailStatus` for the
+   shell menubar (chip hidden when mail is not mapped).
 3. Link activation: `on_link` → `Topic::OpenUrl` / `open_url_logged`.
 4. Copy / reply use `flatten` of those blocks (toolbar Copy Message).
    In-body drag-select is kit `prose` (visible text; Edit Copy / Select All).
