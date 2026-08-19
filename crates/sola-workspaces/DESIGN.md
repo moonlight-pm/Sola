@@ -68,21 +68,32 @@ state from hue alone — shape differs too.
 ## Typography
 
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
-Workspace title 14, subtitle 11 muted. Agent name (who) is a trailing
-secondary, never inside the mark.
+Workspace title 14. No agent name on the row — status is the mark, the
+toast names who. Sibling rows use the kit hover × (`on_close`, lucide/x).
+Root has no row close. **Project** menu: New Project…, Startup Script…,
+Drop Project. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
+open, otherwise the focused pane (same as sola-terminal). Startup is a per-project `/bin/sh` run in each new
+worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
+`$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
+and kills its tmux. Worktrees stay on disk.
+⌘W closes the focused **pane**. A split workspace lists leaf rows
+(`grok` / `shell`) under the workspace; a single pane stays one row.
 
 ## Layout
 
 ```
 [ PROJECT                    + ]
-[ ●  root              who     ]
-[ ●  workspace-a       who     ]
+[ ●  root                      ]
+[    ●  grok                   ]   ← only when this workspace is split;
+[    ○  shell                  ]     labels follow who is live in the pane
+[ ●  workspace-a               ]
+[ NEXT PROJECT               + ]
               terminal grid →
 ```
 
-Mark slot is always 12×12 so titles do not shift. Group `+` opens a
-name-only modal (worktree + branch). The new pane is a shell — start
-grok yourself.
+Mark slot is always 12×12 so titles do not shift. Groups stack at the
+top; a lone project may fill to scroll. Group `+` opens a name-only
+modal (worktree + branch). The new pane is a shell — start grok yourself.
 
 ## Shapes
 
@@ -97,15 +108,32 @@ Motion is state only (the working ring). No page-load choreography.
 ## Components
 
 Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Section labels
-toggle collapse; section `+` opens the name modal. App-local: catalog,
-modal, drop confirm. Do not restyle mail / settings / terminal.
+toggle collapse; section `+` opens the name modal. Hover close is kit
+`SidebarItem::on_close` (not the session-card trash). App-local: catalog,
+modal. Do not restyle mail / settings / terminal.
 
 ## Do's and Don'ts
 
 - Do reserve the mark slot on every row, including idle.
-- Do keep who (agent name) separate from state (the mark).
+- Do keep who off the row; state is the mark, toast names the agent.
+- Do stack project groups at the top (do not fill the selected group).
+- Do use the kit hover × on siblings only; never on root.
+- Do drop the **project** from the menu only (unregister + kill every
+  tmux session in the group). Never `git worktree remove`.
+- Do show **Start new shell** only when the **last** pane's PTY has
+  exited (Ctrl-D). A split leaf that dies just closes. Hover must not
+  start a shell — only the button (or a sidebar click that attaches
+  every live leaf).
+- Do show a quiet `×N` only on a leaf that is actually Grok, when that
+  session has compacted (session dir: `compaction/segment_*.md`,
+  checkpoints, then `signals.json` `compactionCount` — Grok often
+  leaves the signal at 0).
+- Do list pane leaves only after a split; label them from presence
+  (`grok` / `claude` / `shell`) and keep the label current.
 - Do put `+` on the project group, not a form in the rail.
 - Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
+- Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
+  right, ⌘W close pane.
 - Don't infer status from OSC 0/2 titles.
 - Don't cargo-cult Orca worktree cards or amber-everything dots.
 - Don't put siblings anywhere but `<root>/.worktrees/<slug>`.

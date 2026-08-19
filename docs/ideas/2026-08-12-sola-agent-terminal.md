@@ -12,11 +12,13 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows gone.
 
-**Next:** dogfood `solactl ws`. No `sat` binary. Remaining D4: Claude hooks.
+**Next:** desk-smoke `solactl workspaces`. CLI freeze:
+[`docs/specs/2026-08-18-workspaces-cli-design.md`](../specs/2026-08-18-workspaces-cli-design.md).
+No `sat` binary. Remaining D4: Claude hooks.
 
 **Decided here (not still a fork):**
 
-- **Spawn sibling** is a v1 verb — UI and `solactl ws workspace.spawn`. `--prompt` is the CLI handoff.
+- **Spawn sibling** is a v1 verb — UI and `solactl workspaces workspace.spawn`. `--prompt` is the CLI handoff.
 - **Design law** below is mandatory for every UI slice of this app.
 
 ---
@@ -236,10 +238,10 @@ Lineage is **visual metadata**, not a scheduler: a child row indents under its p
 
 `--prompt` / `--prompt-file` on spawn *is* the handoff. Do not build ask/reply.
 
-### 5. A tiny CLI (`solactl ws`)
+### 5. A tiny CLI (`solactl workspaces`)
 
-As-built (2026-08-14): sola-call owner `ws`. No `sat` binary. Sketch below is
-the original command list; names map to `solactl ws <method>`.
+As-built (2026-08-18): sola-call owner `workspaces`. No `sat` binary. Sketch below is
+the original command list; names map to `solactl workspaces <method>`.
 
 Agents already know how to call `orca`. Give them a smaller surface, Unix-socket to the running app (same pattern as Orca’s runtime client, but talking to a Sola process).
 

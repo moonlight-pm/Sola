@@ -18,11 +18,11 @@ Do **not** put request/response on the bus. Do **not** grow per-app sockets (`sa
 | App down | **Fail.** Host does not launch Wayland windows. |
 | First client | `solactl` (MCP is a later adapter, not the Sola contract) |
 | Face | Real CLI: `solactl <owner> <command> …`. Not `solactl call 'sig'` |
-| Unknown apps | Anyone may **advertise**. Builtins get a compiled clap tree. Other live owners appear as `solactl <app-id>` from the registry |
+| Unknown apps | Anyone may **advertise**. Builtins get a compiled clap tree (`compositor`, `session`, `workspaces`). Other live owners appear as `solactl <app-id>` from the registry |
 | River on the CLI | **`compositor`**, not `river` |
 | Trust | Local-user Unix socket `0600`, same as the bus |
 | Confirm / ACL | **Not in v1.** See **D3** (cousin of D1). Do not invent |
-| `sat` | **Declined.** Face is `solactl ws …` only. |
+| `sat` | **Declined.** Face is `solactl workspaces …` only. |
 | `eval` | Remove. WebView / `Topic::Evaluate` is dead |
 
 ## Planes
@@ -102,7 +102,7 @@ These are real follow-ups. Not v1 blockers.
 | **MCP adapter** | Translator in front of the Sola protocol so Grok attaches as it already knows. Not the internal contract. |
 | **D3 confirm / ACL** | Which methods need a human in the loop; who owns the prompt. Cousin of D1. |
 | **Catalog sticky on the bus** | `sola-call` could emit live owners as a fact so monitor can audit without speaking RPC. |
-| **`sat` alias** | **Declined (2026-08-14).** Workspaces face is `solactl ws …`. |
+| **`sat` alias** | **Declined (2026-08-14).** Workspaces face is `solactl workspaces …`. |
 | **`LaunchResult`** | Leftover reply on the bus. `LaunchApp` stays an announcement (launcher → session). Session already replies on the call for `session.launch`. Shell “Opening…” toast still listens to `LaunchResult`. Move that toast to a call or keep the fact. |
 | **`CloseApp` as call** | Meta+Q is still a bus poke. Could be `session.close` with a real error. |
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |
@@ -110,12 +110,12 @@ These are real follow-ups. Not v1 blockers.
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
 | **Monitor UI** | Show live owners/methods (needs catalog sticky or a call). |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
-| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws` on master (unsmoked). |
+| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
 
 **Dropped in this slice (were fake request/reply on the bus):** `Evaluate` / `Evaluation`, `CaptureScreen` / `Screenshot`, `SimulatePointer` / `SimulateKey`. Payload types `CaptureScreenPayload`, `CaptureTarget`, `PointerAction`, `PointerButton` remain for the call path.
 
 ## Implementation
 
-**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; shell screenshot via call.  
+**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; shell screenshot via call. `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
 **Dogfood:** not installed from this session (needs explicit `cargo make install`).  
 **Gaps:** see Later; D3; no desk dogfood yet.

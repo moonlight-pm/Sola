@@ -96,7 +96,9 @@ fn hook_json(script: &Path) -> String {
             "UserPromptSubmit": [entry.clone()],
             "Stop": [entry.clone()],
             "StopFailure": [entry.clone()],
+            "StopCancelled": [entry.clone()],
             "SessionEnd": [entry.clone()],
+            "PostCompact": [entry.clone()],
             "PreToolUse": [tool.clone()],
             "PostToolUse": [tool.clone()],
             "PostToolUseFailure": [tool],
@@ -134,6 +136,8 @@ mod tests {
         let text = fs::read_to_string(paths.grok_hooks_dir.join(HOOK_FILE)).unwrap();
         assert!(text.contains("UserPromptSubmit"));
         assert!(text.contains("StopFailure"));
+        assert!(text.contains("StopCancelled"));
+        assert!(text.contains("PostCompact"));
         assert!(text.contains("sola-status") || text.contains("grok-hook.sh"));
         let _ = fs::remove_dir_all(root);
     }

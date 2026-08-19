@@ -19,11 +19,13 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
                 arg("width", Some("width"), None, ArgType::Int, false, "region width"),
                 arg("height", Some("height"), None, ArgType::Int, false, "region height"),
             ],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "windows".into(),
             summary: "List known windows grouped by app id".into(),
             args: vec![],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "input.click".into(),
@@ -33,6 +35,7 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
                 arg("y", None, None, ArgType::Int, true, "y"),
                 arg("button", Some("button"), Some('b'), ArgType::String, false, "left|right|middle"),
             ],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "input.move".into(),
@@ -41,6 +44,7 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
                 arg("x", None, None, ArgType::Int, true, "x"),
                 arg("y", None, None, ArgType::Int, true, "y"),
             ],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "input.scroll".into(),
@@ -49,6 +53,7 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
                 arg("dx", Some("dx"), Some('x'), ArgType::Float, false, "horizontal"),
                 arg("dy", Some("dy"), Some('y'), ArgType::Float, false, "vertical (down is +)"),
             ],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "input.key".into(),
@@ -61,6 +66,7 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
                 true,
                 "e.g. Meta+Tab",
             )],
+            timeout_ms: None,
         },
     ]
 }
@@ -81,11 +87,13 @@ pub fn session_methods() -> Vec<MethodSpec> {
                     "override command; default /opt/sola/bin/<app_id>",
                 ),
             ],
+            timeout_ms: None,
         },
         MethodSpec {
             name: "close".into(),
             summary: "Close a session-tracked app".into(),
             args: vec![arg("app_id", None, None, ArgType::String, true, "app id")],
+            timeout_ms: None,
         },
     ]
 }

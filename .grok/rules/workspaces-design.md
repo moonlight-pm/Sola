@@ -19,6 +19,11 @@ Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/id
 5. **Grok is the first-class CLI.** Implement and test Grok first (hooks,
    presence, OSC, spawn `--agent`). Other agents are presence-only until
    Grok status is trustworthy. Do not lead with Claude/Codex adapters.
+6. **`solactl workspaces` is a first-class surface.** Any change to verbs, args,
+   payloads, targeting, or timeouts updates `calls.rs`, dispatch, tests,
+   and `docs/manual/solactl.md` in the **same change**. Do not ship a
+   rail-only orchestration verb. Freeze:
+   [`docs/specs/2026-08-18-workspaces-cli-design.md`](../../docs/specs/2026-08-18-workspaces-cli-design.md).
 
 ## Do not
 

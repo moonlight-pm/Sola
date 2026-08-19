@@ -30,6 +30,14 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/terminal".into(),
         },
         Application {
+            app_id: "sola-workspaces".into(),
+            label: "Workspaces".into(),
+            command: "/opt/sola/bin/sola-workspaces".into(),
+            // `folders` — stacked project groups. Distinct from Terminal
+            // (`terminal`) and Agent (`bot`).
+            icon: "lucide/folders".into(),
+        },
+        Application {
             // Single-crate browser: iced chrome + CEF engine; app_id matches
             // the binary name (`sola-browser`).
             app_id: "sola-browser".into(),

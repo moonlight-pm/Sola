@@ -163,11 +163,25 @@ fn draw_done(frame: &mut Frame, cx: f32, cy: f32, color: Color) {
 }
 
 fn working_angle() -> Radians {
-    let t = SystemTime::now()
+    Radians(working_phase(unix_millis()) * std::f32::consts::TAU)
+}
+
+fn unix_millis() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f32())
-        .unwrap_or(0.0);
-    Radians(t * (std::f32::consts::TAU / RING_PERIOD_S))
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// Phase in `0..1` over [`RING_PERIOD_S`]. Uses millisecond modulo so
+/// the spin does not die to f32 precision at UNIX-epoch magnitude
+/// (`as_secs_f32()` only steps every ~128s around 2026).
+fn working_phase(ms: u128) -> f32 {
+    let period_ms = (RING_PERIOD_S * 1000.0) as u128;
+    if period_ms == 0 {
+        return 0.0;
+    }
+    (ms % period_ms) as f32 / period_ms as f32
 }
 
 #[cfg(test)]
@@ -200,6 +214,16 @@ mod tests {
         assert_ne!(
             mark_color(SidebarIndicator::Active, p),
             mark_color(SidebarIndicator::Waiting, p)
+        );
+    }
+
+    #[test]
+    fn working_phase_moves_within_a_second() {
+        let a = working_phase(1_700_000_000_000);
+        let b = working_phase(1_700_000_000_200);
+        assert!(
+            (b - a).abs() > 0.15,
+            "200ms should advance the 0.85s ring: {a} → {b}"
         );
     }
 }

@@ -112,6 +112,9 @@ yet.
 ## Omnibox
 
 Type a URL or a search and press Enter. Search text goes to Kagi.
+Scheme-less hosts get `https://`; **localhost and loopback**
+(`127.0.0.1`, `[::1]`, `*.localhost`) get `http://`. An explicit
+scheme is left as typed.
 
 - The field **unfocuses on submit** so the caret is gone while the page
   loads. The text swaps from what you typed to the resolved URL, then
