@@ -1,7 +1,7 @@
 # Sola call plane
 
 **Date:** 2026-08-13  
-**Status:** **Frozen** — infrastructure + compositor/session + kit helper; observer + monitor inspector in `monitor-polish` (install to dogfood)  
+**Status:** **Frozen** — infrastructure + compositor/session + kit helper; observer + monitor inspector on master (`monitor-polish` merged 2026-08-21)  
 **Related:** [bus freeze](2026-04-09-sola-bus-design.md); Workspaces freeze (other worktree, evidence only); [architecture](../architecture.md); **D3** confirm-policy in [open-questions](../open-questions.md)
 
 ## Intent
@@ -109,7 +109,7 @@ These are real follow-ups. Not v1 blockers.
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |
 | **`open` single-instance** | **Done on browser-polish (2026-08-15):** `chrome.sock` handoff; live chrome gets the URL; shell only spawns if chrome is down. |
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
-| **Monitor UI** | **Done (monitor-polish, 2026-08-20):** observer role + traces; live owners/methods in sola-monitor. Catalog sticky on the bus still later. |
+| **Monitor UI** | **Done (merged 2026-08-21):** observer role + traces; live owners/methods in sola-monitor. Catalog sticky on the bus still later. |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
 | **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
 
