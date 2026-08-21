@@ -11,7 +11,15 @@ web
 
 ## Stack
 
-Undecided for implementation. **Current work is design-only** (Paper → sola.computer). Stack to be chosen when building the site (static HTML/CSS vs framework TBD).
+**Thoxa HTTP container** in the Thoxa repo (`containers/sola`), same shape as
+thoxa.dev: JSX pages, `std/http/server`, SQLite notify list, Debian image,
+Wicket workload on aulos (`registry.wicket.cloud/sola-landing:latest`, host
+`sola.computer`).
+
+Design source: Paper file
+[sola.computer](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ)
+**Teaser · Desktop / Teaser · Mobile**. The longer **Landing** artboards are
+not the live site.
 
 ## Users
 
@@ -23,7 +31,9 @@ Undecided for implementation. **Current work is design-only** (Paper → sola.co
 
 **Sola** is a Wayland desktop shell — a full compositor session and desktop environment built in Rust. It ships a multi-process desktop (process manager, event bus, River bridge, shell chrome, first-party apps) meant to feel like a cool graphite tool UI with macOS Dark Mode density as craft reference.
 
-**sola.computer** is the public marketing site: explain what Sola is, show features, and drive **download / install** (ISO assumed available for the marketing story; NixOS module path also real).
+**sola.computer** is the public marketing site. **Live today** is a teaser:
+what Sola is, four spec rows, session roster, and **notify when the ISO is
+ready**. Download / NixOS install CTAs wait until media exists.
 
 ## Positioning
 
@@ -41,7 +51,7 @@ Undecided for implementation. **Current work is design-only** (Paper → sola.co
 
 1. **One kit for the whole desktop** — sola-kit + live theme across shell and first-party apps  
 2. **Steam is here** — in the launcher; works; no ceremony  
-3. **Install** — ISO primary; NixOS module alternate  
+3. **Install** — teaser: notify for ISO (not yet released). Later: ISO primary; NixOS module alternate  
 4. **Honest early** — dogfood, not a finished OS  
 
 Architecture (bus, supervisor, River) is optional “how it is built” — short, never the hero.
@@ -50,13 +60,21 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 
 **Eyebrow:** Wayland desktop · pure Rust  
 
-**Headline:** One kit. The whole desktop.  
+**Headline (teaser, live):** Sola Desktop  
 
-**Sub:** Sola is a graphite Wayland shell where menubar, launcher, and first-party apps share sola-kit — the same Iced components and a theme that updates live. Steam is in the launcher too.
+**Sub (teaser, live):** For Linux workstations that also have to be gaming machines.
 
-**Primary CTA:** Download ISO  
-**Secondary CTA:** NixOS install  
-**Aside:** x86_64 · early dogfood  
+**Primary CTA (teaser, live):** Notify me — one email when the ISO is ready.  
+
+**Aside (teaser, live):** ISO in progress · not yet released · Coming soon  
+
+**Headline (full landing, Paper only):** One kit. The whole desktop.  
+
+**Sub (full landing, Paper only):** Sola is a graphite Wayland shell where menubar, launcher, and first-party apps share sola-kit — the same Iced components and a theme that updates live. Steam is in the launcher too.
+
+**Primary CTA (full landing, not live):** Download ISO  
+**Secondary CTA (full landing, not live):** NixOS install  
+**Aside (full landing, not live):** x86_64 · early dogfood  
 
 **After screenshot — Kit**  
 **Title:** sola-kit  
@@ -105,16 +123,18 @@ Quiet, precise, technical-friendly. Prefer product experience over infrastructur
 
 ## Primary action (marketing)
 
-**Download / Install** — primary CTA assumes **ISO download** is available. Secondary: NixOS module install docs, install notes.
+**Live teaser:** **Notify me** (email when the ISO is ready).  
+**Later (full landing):** **Download / Install** once ISO hosting exists. Secondary: NixOS module.
 
 ## Constraints
 
 - No invented testimonials, customers, pricing, or performance numbers
 - Match as-built truth; early-product framing required
-- Design work lives in Paper; code implementation is a later slice
+- Live site is the Paper **Teaser**, not the full Landing artboard
+- Do not claim ISO download until media exists
 
 ## Open decisions
 
-- Site stack (static vs framework) when implementing
+- When to ship the full Landing artboard vs keep the teaser
 - Exact ISO hosting URL / release channel copy when wired
-- Whether download page is separate route or modal / anchor on landing
+- Whether download is a separate route or an anchor on landing
