@@ -1160,7 +1160,7 @@ impl App {
         container(
             column![
                 header,
-                scrollable(list)
+                scrollable(default_cursor(list))
                     .height(Length::Fill)
                     .width(Length::Fill)
                     .on_scroll(Msg::ListScrolled),
@@ -1679,6 +1679,140 @@ fn h_hairline() -> Element<'static, Msg> {
         .height(1)
         .style(hairline_style)
         .into()
+}
+
+// ── List cursor ───────────────────────────────────────────────────────
+
+/// Default arrow over the message list: no I-bar, no hand, no text copy.
+///
+/// `list_item` buttons would otherwise advertise `Pointer`, and iced's
+/// row/column take the max child interaction (`Text` from the letter
+/// outranks everything). Presses are captured so a drag here cannot
+/// start a letter selection.
+fn default_cursor<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+    use iced::advanced::layout::{self, Layout};
+    use iced::advanced::overlay;
+    use iced::advanced::renderer;
+    use iced::advanced::widget::tree::{self, Tree};
+    use iced::advanced::widget::{Operation, Widget};
+    use iced::advanced::{Clipboard, Shell};
+    use iced::mouse;
+    use iced::{Event, Rectangle, Size, Vector};
+
+    struct DefaultCursor<'a> {
+        content: Element<'a, Msg>,
+    }
+
+    impl Widget<Msg, Theme, iced::Renderer> for DefaultCursor<'_> {
+        fn tag(&self) -> tree::Tag {
+            self.content.as_widget().tag()
+        }
+
+        fn state(&self) -> tree::State {
+            self.content.as_widget().state()
+        }
+
+        fn children(&self) -> Vec<Tree> {
+            self.content.as_widget().children()
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            self.content.as_widget().diff(tree);
+        }
+
+        fn size(&self) -> Size<Length> {
+            self.content.as_widget().size()
+        }
+
+        fn size_hint(&self) -> Size<Length> {
+            self.content.as_widget().size_hint()
+        }
+
+        fn layout(
+            &mut self,
+            tree: &mut Tree,
+            renderer: &iced::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            self.content.as_widget_mut().layout(tree, renderer, limits)
+        }
+
+        fn draw(
+            &self,
+            tree: &Tree,
+            renderer: &mut iced::Renderer,
+            theme: &Theme,
+            style: &renderer::Style,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            self.content
+                .as_widget()
+                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            renderer: &iced::Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            self.content
+                .as_widget_mut()
+                .operate(tree, layout, renderer, operation);
+        }
+
+        fn update(
+            &mut self,
+            tree: &mut Tree,
+            event: &Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            renderer: &iced::Renderer,
+            clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Msg>,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget_mut().update(
+                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+            );
+            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
+                && cursor.is_over(layout.bounds())
+            {
+                shell.capture_event();
+            }
+        }
+
+        fn mouse_interaction(
+            &self,
+            _tree: &Tree,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+            _renderer: &iced::Renderer,
+        ) -> mouse::Interaction {
+            mouse::Interaction::None
+        }
+
+        fn overlay<'b>(
+            &'b mut self,
+            tree: &'b mut Tree,
+            layout: Layout<'b>,
+            renderer: &iced::Renderer,
+            viewport: &Rectangle,
+            translation: Vector,
+        ) -> Option<overlay::Element<'b, Msg, Theme, iced::Renderer>> {
+            self.content
+                .as_widget_mut()
+                .overlay(tree, layout, renderer, viewport, translation)
+        }
+    }
+
+    Element::new(DefaultCursor {
+        content: content.into(),
+    })
 }
 
 // ── Styles ────────────────────────────────────────────────────────────

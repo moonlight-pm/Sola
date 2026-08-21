@@ -27,7 +27,7 @@ pub fn view(theme: &iced::Theme) -> Element<'static, Msg> {
     column![
         lede(
             "Prose",
-            "Letter measure: paragraphs, quoted replies, inline links. Drag to select; click a link.",
+            "Letter measure: paragraphs, quoted replies, inline links. Drag to select; click a link. I-bar only over the letter — sibling chrome stays the default pointer.",
         ),
         readable(
             panel(

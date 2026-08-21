@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27  
 **Branch:** `mail-polish` (landed kit client; this pass is reading/list/menus)  
-**Status:** implemented (partial) — dogfood installed locally 2026-08-18  
+**Status:** implemented (partial) — dogfood installed locally 2026-08-19  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
 **Gaps:** no HTML engine (converted letter); no attachments; no offline store

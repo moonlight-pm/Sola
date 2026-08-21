@@ -431,11 +431,17 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
+        // iced row/column take the *max* child interaction, and Text outranks
+        // Pointer. Without a bounds check the I-bar leaks over sibling panes
+        // (mail's message list, chrome, …).
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::None;
+        }
         let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
         if state.hovered_link.is_some() {
             mouse::Interaction::Pointer
