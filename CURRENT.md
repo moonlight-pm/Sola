@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-19 (Bitwarden all-vaults decrypt; mail letter select + magic links; passkey create smoked)
+**As of:** 2026-08-20 (tab-group drag slots; Bitwarden all-vaults decrypt; mail letter select + magic links; passkey create smoked)
 
 ---
 
@@ -89,7 +89,11 @@ Do not invent product policy.
    fill decrypts **org vaults** (desk smoke after `install browser`);
    hover × follows the pointer after close; scheme-less localhost /
    loopback is `http://`. Passkey **create** smoked. Page menu
-   DevTools / Inspect Element; HTML5 drag/drop.
+   DevTools / Inspect Element; HTML5 drag/drop. Tab-group pockets
+   **installed**: flush members, hairline rim, header drag moves the
+   pocket, title drop is invalid, hole matches etch row height. Loose
+   is a real section (no box). Extra opens only on the well under the
+   ghost.
 
 **Explicit holds:** none.
 
@@ -109,7 +113,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **master** (workspaces + browser + paint + mail polish). Worktrees `browser-polish` and `mail-polish` kept open | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket + nested members; selected title no longer shifts — **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
 | Mail | **Installed** this worktree: letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy; magic-link / long first-party URLs stay clickable. Still no HTML engine / attachments | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |

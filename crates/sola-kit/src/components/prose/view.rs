@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::text::{self, Highlight, Paragraph as _, Span, Text};
-use iced::advanced::widget::{tree, Tree, Widget};
+use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
 use iced::widget::text::{LineHeight, Wrapping};
@@ -16,10 +16,10 @@ use iced::{
 };
 
 use super::{
-    iter_lines, selected_visible, snap_byte, visible_text, word_at, LayoutLine, ProseBlock,
-    ProseRun,
+    LayoutLine, ProseBlock, ProseRun, iter_lines, selected_visible, snap_byte, visible_text,
+    word_at,
 };
-use crate::components::style::{mix_white, HAIRLINE_A, SPACE_LG, SPACE_MD};
+use crate::components::style::{HAIRLINE_A, SPACE_LG, SPACE_MD, mix_white};
 use crate::components::text::PROSE_SIZE;
 use crate::fonts;
 
@@ -580,11 +580,7 @@ fn spans_for_line(
     let ink = if line.quote { quote_ink } else { ink };
     let sel = sel.and_then(|(a, b)| {
         let (lo, hi) = (a.min(b), a.max(b));
-        if lo == hi {
-            None
-        } else {
-            Some((lo, hi))
-        }
+        if lo == hi { None } else { Some((lo, hi)) }
     });
     let mut out = Vec::new();
     let mut cur = line.start;

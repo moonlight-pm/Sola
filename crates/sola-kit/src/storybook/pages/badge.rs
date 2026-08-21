@@ -1,7 +1,7 @@
 //! Badge — status in a product row, not a tone catalog.
 
-use iced::widget::{column, row};
 use iced::Element;
+use iced::widget::{column, row};
 
 use sola_kit::components::text::{body, muted};
 use sola_kit::components::{Tone, badge};

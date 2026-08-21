@@ -8,7 +8,7 @@
 use iced::widget::{Space, container};
 use iced::{Background, Color, Element, Length, Theme};
 
-use crate::components::style::{hairline, RADIUS_MD};
+use crate::components::style::{RADIUS_MD, hairline};
 
 const DEFAULT_SIZE: f32 = 56.0;
 
@@ -18,10 +18,7 @@ pub fn swatch<'a, Message: 'a>(color: Color) -> Element<'a, Message, Theme> {
     swatch_sized(color, DEFAULT_SIZE)
 }
 
-pub fn swatch_sized<'a, Message: 'a>(
-    color: Color,
-    size: f32,
-) -> Element<'a, Message, Theme> {
+pub fn swatch_sized<'a, Message: 'a>(color: Color, size: f32) -> Element<'a, Message, Theme> {
     container(Space::new())
         .style(move |t| style(t, color))
         .width(Length::Fixed(size))

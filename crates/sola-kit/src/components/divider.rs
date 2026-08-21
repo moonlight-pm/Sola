@@ -236,9 +236,13 @@ where
 
 /// A non-interactive 1px horizontal divider line (no hit strip).
 pub fn horizontal_divider<'a, Message: 'a>() -> Element<'a, Message, Theme> {
-    container(Space::new().width(Length::Fill).height(Length::Fixed(LINE_PX)))
-        .width(Length::Fill)
-        .height(Length::Fixed(LINE_PX))
-        .style(line_style)
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(LINE_PX)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(LINE_PX))
+    .style(line_style)
+    .into()
 }

@@ -518,9 +518,10 @@ mod tests {
         }
         match &blocks[2] {
             ProseBlock::Paragraph(runs) => {
-                assert!(runs
-                    .iter()
-                    .any(|r| r.url.as_deref() == Some("https://ex.com/a")));
+                assert!(
+                    runs.iter()
+                        .any(|r| r.url.as_deref() == Some("https://ex.com/a"))
+                );
             }
             _ => panic!("expected paragraph"),
         }

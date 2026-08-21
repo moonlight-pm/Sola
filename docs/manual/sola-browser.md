@@ -98,7 +98,11 @@ tab is replaced by a blank rather than closing the window. Order is
 saved in that profile’s `session.json`.
 
 **Groups** are named folders at the **top** of the strip. Each group is a
-quiet pocket — members sit indented under the header — and loose tabs
+quiet pocket with a hairline rim; members sit flush under the header.
+A hair of air between pockets stays put while you drag. Hovering members
+or the floor of a pocket grows that well by one row. Dropping on a
+group **title** is ignored (the tab returns). Dragging the **header**
+moves the whole pocket. Taking a tab out shrinks the well. Loose tabs
 stay in one run underneath. Right-click a tab for **New group**, **Add to…**,
 or **Ungroup**. Right-click a group header to **Rename** or **Ungroup**
 (members go loose). Click the header to collapse — the page stays if you

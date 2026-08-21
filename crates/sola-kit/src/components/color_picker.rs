@@ -95,7 +95,12 @@ fn from_chroma(h: f32, c: f32, m: f32, a: f32) -> Color {
         4 => (x, 0.0, c),
         _ => (c, 0.0, x),
     };
-    Color { r: r + m, g: g + m, b: b + m, a }
+    Color {
+        r: r + m,
+        g: g + m,
+        b: b + m,
+        a,
+    }
 }
 
 /// Which slot in a 3-channel text model (RGB or HSL) an edit targets.
@@ -350,7 +355,10 @@ mod tests {
     #[test]
     fn primaries_map_to_known_hsv() {
         let (h, s, v) = rgb_to_hsv(Color::from_rgb(1.0, 0.0, 0.0));
-        assert!(close(h, 0.0) && close(s, 1.0) && close(v, 1.0), "red: {h},{s},{v}");
+        assert!(
+            close(h, 0.0) && close(s, 1.0) && close(v, 1.0),
+            "red: {h},{s},{v}"
+        );
         let (h, _, _) = rgb_to_hsv(Color::from_rgb(0.0, 1.0, 0.0));
         assert!(close(h, 120.0), "green hue: {h}");
         let (h, _, _) = rgb_to_hsv(Color::from_rgb(0.0, 0.0, 1.0));
@@ -368,11 +376,23 @@ mod tests {
 
     #[test]
     fn hsv_to_rgb_hits_known_corners() {
-        assert!(color_close(hsv_to_rgb(0.0, 1.0, 1.0, 1.0), Color::from_rgb(1.0, 0.0, 0.0)));
-        assert!(color_close(hsv_to_rgb(120.0, 1.0, 1.0, 1.0), Color::from_rgb(0.0, 1.0, 0.0)));
-        assert!(color_close(hsv_to_rgb(240.0, 1.0, 1.0, 1.0), Color::from_rgb(0.0, 0.0, 1.0)));
+        assert!(color_close(
+            hsv_to_rgb(0.0, 1.0, 1.0, 1.0),
+            Color::from_rgb(1.0, 0.0, 0.0)
+        ));
+        assert!(color_close(
+            hsv_to_rgb(120.0, 1.0, 1.0, 1.0),
+            Color::from_rgb(0.0, 1.0, 0.0)
+        ));
+        assert!(color_close(
+            hsv_to_rgb(240.0, 1.0, 1.0, 1.0),
+            Color::from_rgb(0.0, 0.0, 1.0)
+        ));
         // Hue wraps at 360.
-        assert!(color_close(hsv_to_rgb(360.0, 1.0, 1.0, 1.0), Color::from_rgb(1.0, 0.0, 0.0)));
+        assert!(color_close(
+            hsv_to_rgb(360.0, 1.0, 1.0, 1.0),
+            Color::from_rgb(1.0, 0.0, 0.0)
+        ));
     }
 
     #[test]
@@ -385,7 +405,10 @@ mod tests {
         ];
         for c in samples {
             let (h, s, v) = rgb_to_hsv(c);
-            assert!(color_close(hsv_to_rgb(h, s, v, c.a), c), "round-trip failed for {c:?}");
+            assert!(
+                color_close(hsv_to_rgb(h, s, v, c.a), c),
+                "round-trip failed for {c:?}"
+            );
         }
     }
 
@@ -393,7 +416,10 @@ mod tests {
     fn hsl_primaries_and_grey() {
         // Pure red: hue 0, full sat, lightness 0.5.
         let (h, s, l) = rgb_to_hsl(Color::from_rgb(1.0, 0.0, 0.0));
-        assert!(close(h, 0.0) && close(s, 1.0) && close(l, 0.5), "red hsl: {h},{s},{l}");
+        assert!(
+            close(h, 0.0) && close(s, 1.0) && close(l, 0.5),
+            "red hsl: {h},{s},{l}"
+        );
         // Mid grey: zero saturation, lightness 0.5.
         let (_, s, l) = rgb_to_hsl(Color::from_rgb(0.5, 0.5, 0.5));
         assert!(close(s, 0.0) && close(l, 0.5), "grey hsl s/l: {s},{l}");
@@ -412,7 +438,10 @@ mod tests {
         ];
         for c in samples {
             let (h, s, l) = rgb_to_hsl(c);
-            assert!(color_close(hsl_to_rgb(h, s, l, c.a), c), "hsl round-trip failed for {c:?}");
+            assert!(
+                color_close(hsl_to_rgb(h, s, l, c.a), c),
+                "hsl round-trip failed for {c:?}"
+            );
         }
     }
 
@@ -444,9 +473,15 @@ mod tests {
         // Set R=255 (G/B already "0" from seed), expect pure-ish red.
         p.update(Message::Rgb(Channel::One, "255".to_string()));
         let c = p.color();
-        assert!(close(c.r, 1.0) && close(c.g, 0.0) && close(c.b, 0.0), "rgb adopt: {c:?}");
+        assert!(
+            close(c.r, 1.0) && close(c.g, 0.0) && close(c.b, 0.0),
+            "rgb adopt: {c:?}"
+        );
         // Out-of-range / non-numeric is ignored — colour unchanged.
         p.update(Message::Rgb(Channel::Two, "999".to_string()));
-        assert!(color_close(p.color(), c), "invalid rgb should not change colour");
+        assert!(
+            color_close(p.color(), c),
+            "invalid rgb should not change colour"
+        );
     }
 }

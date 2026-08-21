@@ -1,14 +1,14 @@
 # sola-browser tab groups
 
 **Date:** 2026-08-15  
-**Status:** **Frozen** — implemented on `naturalethic/browser-polish`; pocket + insert rules installed  
-**Branch / worktree:** `naturalethic/browser-polish`  
+**Status:** **Frozen** — implemented on `browser-polish`; pocket + insert rules installed  
+**Branch / worktree:** `browser-polish`  
 **Related:** [unified sidebar](2026-08-13-unified-sidebar-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [session persist](2026-06-15-session-persistence-design.md)
 
 | | |
 |--|--|
-| **Implementation** | kit inset pocket + nested members + lucide header; reserved etch lip; chrome groups + persist + strip |
-| **Dogfood** | visual polish **installed**. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside |
+| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip |
+| **Dogfood** | **installed** this worktree. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside |
 | **Gaps** | spaces; color; drag-to-create |
 
 ## Intent
@@ -48,8 +48,8 @@ loose tab           ← ⌘T lands here
 
 **Header (kit collapsible section, Large density):** lucide chevron + name
 (folder caption, not a tab title). Collapsed headers may show a member
-count. Members sit one indent step inside an inset pocket. Not the
-uppercase settings section label.
+count. Members sit flush in the inset pocket (the well is the
+containment — no extra indent). Not the uppercase settings section label.
 
 **Click header** → expand / collapse (same 5px click-vs-drag threshold as
 tabs).
@@ -65,9 +65,11 @@ targets are those rows plus the slots between them.
 | Gesture | Result |
 |---------|--------|
 | Loose tab → slot among a group's members | Join that group at that index |
-| Loose tab → group header (expanded or collapsed) | Join that group, **append** |
+| Loose tab → floor of a group well (top half of the next header / first loose) | Join that group, **append** |
+| Loose tab → group **title** | Invalid — tab returns to its origin |
 | Grouped tab → slot in the loose run | Ungroup; insert at that index |
-| Grouped tab → another group (member slot or header) | Move; member slot inserts, header appends |
+| Grouped tab → another group (member slot) | Move; member slot inserts |
+| Grouped tab → another group's **title** | Invalid — tab returns to its origin |
 | Last member dragged out | Group dissolves; tab is loose at the drop |
 | Member among siblings | Reorder only |
 | Loose among loose | Reorder only |

@@ -31,9 +31,7 @@ use crate::fonts;
 ///
 /// `label` accepts both `&str` and `String` (anything that's
 /// `IntoFragment` — matches iced's own `text(...)` signature).
-pub fn toolbar_button<'a, Message>(
-    label: impl IntoFragment<'a>,
-) -> button::Button<'a, Message>
+pub fn toolbar_button<'a, Message>(label: impl IntoFragment<'a>) -> button::Button<'a, Message>
 where
     Message: Clone + 'a,
 {

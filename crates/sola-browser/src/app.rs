@@ -24,9 +24,10 @@ use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{
-    DividerColors, MenuItem, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim, ReorderCfg,
-    SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field, horizontal_divider, menu_at,
-    panel_drop_index_relative,
+    DividerColors, MenuItem, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim,
+    ReorderCfg, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field,
+    horizontal_divider, menu_at, panel_drop_index_visual, panel_row_rest_ys, panel_section_at_y,
+    panel_shift_skip_header,
 };
 
 use crate::engine::{
@@ -1228,13 +1229,68 @@ impl<E: Engine> App<E> {
         if !self.reorder_dragging {
             return;
         }
-        let n = self.groups.visible_rows(&self.cached_tabs).len();
+        let rows = self.groups.visible_rows(&self.cached_tabs);
+        let n = rows.len();
         if n == 0 {
             return;
         }
-        let to = panel_drop_index_relative(from, start_y, self.reorder_cursor_y, PANEL_ROW_H, n);
-        self.reorder_anim
-            .sync(from, to, n, iced::time::Instant::now());
+        let lens = self.groups.section_lens(&self.cached_tabs);
+        let ys = panel_row_rest_ys(&lens, 3.0);
+        let to = panel_drop_index_visual(from, start_y, self.reorder_cursor_y, &ys, PANEL_ROW_H);
+        let from_si = crate::groups::Groups::section_index(&lens, from);
+        let to_si = crate::groups::Groups::section_index(&lens, to);
+        let ghost_mid = ys.get(from).copied().unwrap_or(0.0)
+            + (self.reorder_cursor_y - start_y)
+            + PANEL_ROW_H * 0.5;
+        let hover_si = panel_section_at_y(&lens, 3.0, ghost_mid, PANEL_ROW_H);
+        let over_foreign_well = !matches!(rows.get(from), Some(crate::groups::StripRow::Header(_)))
+            && lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
+            && hover_si != from_si;
+        let (a, b) = crate::groups::Groups::member_range(&lens, hover_si);
+        let to_in_hover_members = to >= a && to < b;
+        let header_i = crate::groups::Groups::section_start(&lens, hover_si);
+        let over_title = lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
+            && ys
+                .get(header_i)
+                .is_some_and(|y| ghost_mid >= *y && ghost_mid < *y + PANEL_ROW_H);
+        let gap = 3.0;
+        let row_h = sola_kit::components::sidebar::panel_etch_row_height(SidebarDensity::Large);
+        let pitch = row_h + gap;
+        let (extra, extra_si) = if over_foreign_well && !over_title {
+            (row_h, Some(hover_si))
+        } else {
+            (0.0, None)
+        };
+        // In the gap under a well, extra is the slot — don't also shift
+        // the top loose item (that gap then pops closed).
+        let shift_to = if matches!(rows.get(from), Some(crate::groups::StripRow::Header(_))) {
+            to
+        } else if over_foreign_well && !to_in_hover_members {
+            from
+        } else {
+            panel_shift_skip_header(&lens, from, to)
+        };
+        let dest = if matches!(rows.get(from), Some(crate::groups::StripRow::Header(_))) {
+            None
+        } else if over_foreign_well && !to_in_hover_members {
+            Some((0, 0))
+        } else {
+            let si = if over_foreign_well { hover_si } else { to_si };
+            Some(crate::groups::Groups::member_range(&lens, si))
+        };
+        let origin_hole = !over_title && (from_si == to_si || extra_si.is_some());
+        self.reorder_anim.sync_well(
+            from,
+            shift_to,
+            n,
+            extra,
+            extra_si,
+            dest,
+            lens.len(),
+            pitch,
+            origin_hole,
+            iced::time::Instant::now(),
+        );
     }
 
     /// Finish a strip gesture: click → activate / toggle; drag → drop.
@@ -1271,11 +1327,15 @@ impl<E: Engine> App<E> {
         if n == 0 {
             return;
         }
-        let to = panel_drop_index_relative(from, start_y, final_cursor_y, PANEL_ROW_H, n);
+        let lens = self.groups.section_lens(&self.cached_tabs);
+        let ys = panel_row_rest_ys(&lens, 3.0);
+        let to = panel_drop_index_visual(from, start_y, final_cursor_y, &ys, PANEL_ROW_H);
         if from == to {
             return;
         }
-        self.groups.apply_drop(&mut self.cached_tabs, from, to);
+        let bias = crate::groups::drop_bias(from, start_y, final_cursor_y, PANEL_ROW_H, to);
+        self.groups
+            .apply_drop_with(&mut self.cached_tabs, from, to, bias);
         self.persist_session();
     }
 

@@ -3,8 +3,8 @@
 use iced::widget::column;
 use iced::{Color, Element};
 
-use sola_kit::components::color_picker;
 use sola_kit::components::ColorPicker;
+use sola_kit::components::color_picker;
 
 use crate::storybook::pages::chrome::{lede, panel};
 

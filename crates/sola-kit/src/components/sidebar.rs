@@ -32,17 +32,17 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use iced::advanced::Renderer as _;
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{Clipboard, Shell, Widget};
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
     Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
     text,
 };
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::renderer;
-use iced::advanced::widget::{Operation, Tree};
-use iced::advanced::{Clipboard, Shell, Widget};
-use iced::advanced::Renderer as _;
 use iced::{
     Animation, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Shadow, Size,
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
@@ -50,8 +50,8 @@ use iced::{
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
-    inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_SM,
-    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    hairline_on, inset_surface, linear_bg, mix, mix_white,
 };
 use crate::fonts;
 
@@ -519,6 +519,17 @@ fn item_row_height<Message>(item: &SidebarItem<'_, Message>, density: SidebarDen
     pad_v * 2.0 + text_h.max(trail_h) + lip
 }
 
+/// Layout height of a Large/Normal list-etch row, matching iced's default
+/// [`LineHeight::Relative(1.3)`] (size 12 → 15.6). [`PANEL_ROW_H`] is 32;
+/// using it as a `Space` hole is ~0.4px taller and pixel-snaps as a 1px
+/// shift of whatever rows sit on a rounding boundary.
+pub fn panel_etch_row_height(density: SidebarDensity) -> f32 {
+    let m = density.metrics();
+    let text_h = m.font as f32 * 1.3;
+    let lip = 2.0;
+    m.row_pad_v as f32 * 2.0 + text_h + lip
+}
+
 /// Full scroll content height for a section body (padding + rows + gaps).
 pub fn section_content_height<Message>(items: &[SidebarItem<'_, Message>]) -> f32 {
     section_content_height_with_spacing(items, 0.0)
@@ -542,7 +553,10 @@ pub fn section_content_height_with<Message>(
     if items.is_empty() {
         return pad_v;
     }
-    let rows: f32 = items.iter().map(|item| item_row_height(item, density)).sum();
+    let rows: f32 = items
+        .iter()
+        .map(|item| item_row_height(item, density))
+        .sum();
     let gaps = item_spacing * items.len().saturating_sub(1) as f32;
     pad_v + rows + gaps
 }
@@ -567,8 +581,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     const EDGE: f32 = 2.0;
     if scroll.offset_y <= EDGE {
         // At top: nothing above; count only what's fully below.
-        let first_below =
-            ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+        let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+            .ceil()
+            .max(0.0) as usize;
         let below = n_items.saturating_sub(first_below.min(n_items));
         return (0, below);
     }
@@ -579,8 +594,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     // Item i occupies [i*avg, (i+1)*avg). Fully above when end ≤ offset.
     let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
     // Fully below when start ≥ offset + viewport.
-    let first_below =
-        ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+    let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+        .ceil()
+        .max(0.0) as usize;
     let above = above.min(n_items);
     let below = n_items.saturating_sub(first_below.min(n_items));
     (above, below)
@@ -645,7 +661,6 @@ where
         .height(Length::Fill)
 }
 
-
 /// Resolved per-density metrics. Values are deliberate, not derived.
 struct DensityMetrics {
     row_pad_v: u16,
@@ -691,48 +706,158 @@ fn tab_etch_lip() -> container::Style {
     }
 }
 
-/// Gap between collapsible group pockets (and before the loose run).
-const GROUP_WELL_GAP: f32 = SPACE_LG;
-/// Inset of the pocket around header + members.
-const GROUP_WELL_PAD: f32 = SPACE_SM;
+/// Air between collapsible group pockets (and before the loose run).
+/// Pockets already carry their own pad — this is only enough that two
+/// wells do not fuse. A large value jumps when reorder flatten drops
+/// the wells.
+const GROUP_WELL_GAP: f32 = SPACE_XS;
+/// Horizontal inset of the pocket around header + members.
+const GROUP_WELL_PAD_H: f32 = SPACE_SM;
+/// Vertical inset of the pocket. Keep tight so stacked groups do not
+/// open a band of empty chrome.
+const GROUP_WELL_PAD_V: f32 = SPACE_XS;
+/// Body pad inside a group well (`Padding::from([2, 4])`).
+const COLLAPSE_BODY_PAD_V: f32 = 2.0;
+
+/// Rest space between the last row of one pocket and the first row of
+/// the next (body pad + well pad + gap, both sides).
+#[cfg(test)]
+fn group_boundary_rest() -> f32 {
+    COLLAPSE_BODY_PAD_V * 2.0 + GROUP_WELL_PAD_V * 2.0 + GROUP_WELL_GAP
+}
+
+/// Former flatten-path spacer. Kept so the rest-pitch test still
+/// documents the well+gap budget after drag started keeping pockets.
+#[cfg(test)]
+fn group_boundary_spacer(item_spacing: f32) -> f32 {
+    (group_boundary_rest() - 2.0 * item_spacing).max(0.0)
+}
 
 /// Quiet inset pocket for a collapsible section — membership reads as
-/// containment, not a coloured pill. Fill only (no hairline): the
-/// selected etch still cuts into the well.
+/// containment. A 1px etch rim (same hairline as fields) marks the
+/// well so a drop at the floor stays in this group, not the next.
 fn group_well_style() -> container::Style {
+    let fill = inset_surface(CHROME_SURFACE, 0.12);
     container::Style {
-        background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.12))),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_SM.into(),
-        },
+        background: Some(Background::Color(fill)),
+        border: hairline_on(fill, HAIRLINE_A, RADIUS_SM),
         ..container::Style::default()
     }
 }
 
-fn wrap_group_well<'a, Message: 'a>(body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+fn wrap_group_well<'a, Message: 'a>(
+    body: impl Into<Element<'a, Message>>,
+    clip: bool,
+) -> Element<'a, Message> {
     container(body.into())
         .width(Length::Fill)
-        .padding(GROUP_WELL_PAD)
+        .padding(Padding {
+            top: GROUP_WELL_PAD_V,
+            bottom: GROUP_WELL_PAD_V,
+            left: GROUP_WELL_PAD_H,
+            right: GROUP_WELL_PAD_H,
+        })
         .style(|_theme: &Theme| group_well_style())
+        .clip(clip)
         .into()
 }
 
-/// Nest members one step under a collapsible header. Callers that already
-/// set [`SidebarItem::indent`] (lineage) keep their own depth.
-fn nest_group_members<'a, Message>(
-    items: Vec<SidebarItem<'a, Message>>,
-) -> Vec<SidebarItem<'a, Message>> {
-    items
-        .into_iter()
-        .map(|mut item| {
-            if item.indent == 0 {
-                item.indent = 1;
-            }
-            item
-        })
-        .collect()
+fn paint_drag_section<'a, Message: 'a>(
+    body: iced::widget::Column<'a, Message, Theme>,
+    grouped: bool,
+    clip: bool,
+    well_dy: f32,
+    lift_well: bool,
+) -> Element<'a, Message> {
+    let el: Element<'a, Message> = if grouped {
+        wrap_group_well(body, clip)
+    } else {
+        body.into()
+    };
+    if well_dy != 0.0 || lift_well {
+        with_reorder_motion(el, well_dy, lift_well)
+    } else {
+        el
+    }
+}
+
+fn reorder_preview_row<'a, Message: Clone + 'a>(
+    item: SidebarItem<'a, Message>,
+    stable_index: usize,
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    _to: usize,
+    anim: Option<&ReorderAnim>,
+    now: Instant,
+    collapsed: bool,
+    reorder_ref: Option<&ReorderCfg<'a, Message>>,
+    hovered_id: &Option<String>,
+    density: SidebarDensity,
+    hover_wired: bool,
+) -> Element<'a, Message> {
+    let is_dragged = stable_index == from;
+    let dy = if is_dragged {
+        cursor_y - start_y
+    } else if let Some(anim) = anim {
+        anim.offset(stable_index, now)
+    } else {
+        // Frozen. Never fall back to instant sibling offsets — that slides
+        // group members out of their well while a dest slot is also open.
+        0.0
+    };
+    let item = assign_close_id(item, stable_index);
+    let show_action = item
+        .id
+        .as_ref()
+        .is_some_and(|id| hovered_id.as_ref() == Some(id));
+    let row_el = if collapsed {
+        collapsed_row(&item, stable_index, reorder_ref)
+    } else {
+        render_item(
+            item,
+            reorder_ref,
+            stable_index,
+            show_action,
+            density,
+            hover_wired,
+        )
+    };
+    with_reorder_motion(row_el, dy, is_dragged)
+}
+
+fn section_block_height(span: &SectionSpan, item_spacing: f32) -> f32 {
+    if span.len == 0 {
+        return if span.grouped {
+            GROUP_WELL_PAD_V * 2.0 + COLLAPSE_BODY_PAD_V * 2.0
+        } else {
+            8.0
+        };
+    }
+    let rows = span.len as f32 * PANEL_ROW_H + (span.len - 1) as f32 * item_spacing;
+    if span.grouped {
+        rows + (GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V) * 2.0
+    } else {
+        rows + 8.0
+    }
+}
+
+/// Other groups slide by the dragged block's height (not one row).
+fn group_sibling_offset(from_si: usize, dest_si: usize, si: usize, block_h: f32) -> f32 {
+    if si == from_si || from_si == dest_si {
+        return 0.0;
+    }
+    if from_si < dest_si {
+        if si > from_si && si <= dest_si {
+            -block_h
+        } else {
+            0.0
+        }
+    } else if si >= dest_si && si < from_si {
+        block_h
+    } else {
+        0.0
+    }
 }
 
 fn section_chevron<'a, Message: 'a>(collapsed: bool) -> Element<'a, Message> {
@@ -885,7 +1010,7 @@ fn section_header<'a, Message: Clone + 'a>(
             }
         });
     let pad = Padding {
-        top: SPACE_SM + 2.0,  // 6
+        top: SPACE_SM + 2.0, // 6
         bottom: SPACE_SM + 1.0,
         left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
@@ -978,8 +1103,9 @@ pub const PANEL_HEADER_H: f32 = 32.0;
 pub const PANEL_REORDER_THRESHOLD: f32 = 5.0;
 /// Sibling glide duration while a row is mid-reorder.
 pub const PANEL_REORDER_ANIM_MS: u64 = 180;
-/// Subtle lift scale applied to the row under the cursor during reorder.
-pub const PANEL_REORDER_LIFT_SCALE: f32 = 1.02;
+/// No scale on the dragged row — a 1.02 lift made type look bigger than
+/// neighbors. Shadow alone is the pick-up cue.
+pub const PANEL_REORDER_LIFT_SCALE: f32 = 1.0;
 /// Vertical pitch of one panel row — used when siblings slide to open a
 /// drop slot. Matches packed item spacing (no inter-row gap).
 pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H;
@@ -1036,9 +1162,255 @@ pub fn panel_drop_index_relative(
     if n == 0 {
         return 0;
     }
-    let delta = ((cursor_y - start_y) / row_h).round() as i64;
+    let raw = (cursor_y - start_y) / row_h;
+    // 75% of a row before hopping — `round` (50%) yields the neighbour too early.
+    let delta = if raw >= 0.0 {
+        (raw + 0.25).floor() as i64
+    } else {
+        (raw - 0.25).ceil() as i64
+    };
     let to = from as i64 + delta;
     to.clamp(0, n as i64 - 1) as usize
+}
+
+/// Drop index using real row tops (well pad + inter-group gap), not a
+/// uniform 32px grid. Yields the neighbour only after ~75% overlap.
+pub fn panel_drop_index_visual(
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    row_ys: &[f32],
+    row_h: f32,
+) -> usize {
+    let n = row_ys.len();
+    if n == 0 {
+        return 0;
+    }
+    let from = from.min(n - 1);
+    let ghost_top = row_ys[from] + (cursor_y - start_y);
+    let mut to = from;
+    if ghost_top < row_ys[from] {
+        for i in (0..from).rev() {
+            if ghost_top <= row_ys[i] + row_h * 0.25 {
+                to = i;
+            } else {
+                break;
+            }
+        }
+    } else {
+        for i in from + 1..n {
+            if ghost_top + row_h >= row_ys[i] + row_h * 0.75 {
+                to = i;
+            } else {
+                break;
+            }
+        }
+    }
+    to
+}
+
+/// Rest Y of every visible row, including group-well pad and gaps.
+pub fn panel_row_rest_ys(sections: &[(bool, usize)], item_spacing: f32) -> Vec<f32> {
+    let spans = spans_from_lens(sections);
+    let n: usize = sections.iter().map(|(_, len)| *len).sum();
+    (0..n)
+        .map(|i| row_rest_y(&spans, i, item_spacing))
+        .collect()
+}
+
+/// Hovering a group header is append-to-well, not a member yield.
+pub fn panel_shift_skip_header(sections: &[(bool, usize)], from: usize, to: usize) -> usize {
+    let spans = spans_from_lens(sections);
+    for span in &spans {
+        if span.grouped && to == span.start {
+            return from;
+        }
+    }
+    to
+}
+
+/// Which strip section contains `y` (ghost center).
+///
+/// The gap between a group and the **loose** run is that group's floor
+/// (so approaching from ungrouped opens the well). The gap **between two
+/// groups** is neither well (`sections.len()`) so the lower extra can
+/// ease closed before the upper opens.
+pub fn panel_section_at_y(
+    sections: &[(bool, usize)],
+    item_spacing: f32,
+    y: f32,
+    row_h: f32,
+) -> usize {
+    let spans = spans_from_lens(sections);
+    let bounds = section_bounds(&spans, item_spacing, row_h);
+    if bounds.is_empty() {
+        return 0;
+    }
+    for (i, &(top, bot)) in bounds.iter().enumerate() {
+        if y >= top && y <= bot {
+            return i;
+        }
+    }
+    for (i, w) in bounds.windows(2).enumerate() {
+        if y > w[0].1 && y < w[1].0 {
+            let lower_g = spans[i].grouped;
+            let upper_g = spans[i + 1].grouped;
+            if lower_g && !upper_g {
+                return i;
+            }
+            if !lower_g && upper_g {
+                return i + 1;
+            }
+            if lower_g && upper_g {
+                return sections.len();
+            }
+            return i;
+        }
+    }
+    if y < bounds[0].0 { 0 } else { bounds.len() - 1 }
+}
+
+fn section_bounds(spans: &[SectionSpan], item_spacing: f32, row_h: f32) -> Vec<(f32, f32)> {
+    let mut out = Vec::with_capacity(spans.len());
+    let mut y = 0.0;
+    let mut prev_grouped = false;
+    for (si, span) in spans.iter().enumerate() {
+        if si > 0 && (span.grouped || prev_grouped) {
+            y += GROUP_WELL_GAP;
+        }
+        prev_grouped = span.grouped;
+        let pad_v = if span.grouped {
+            GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V
+        } else {
+            4.0
+        };
+        let top = y;
+        y += pad_v;
+        if span.len > 0 {
+            y += span.len as f32 * row_h + (span.len - 1) as f32 * item_spacing;
+        }
+        y += pad_v;
+        out.push((top, y));
+    }
+    out
+}
+
+fn spans_from_lens(lens: &[(bool, usize)]) -> Vec<SectionSpan> {
+    let mut start = 0usize;
+    lens.iter()
+        .map(|&(grouped, len)| {
+            let span = SectionSpan {
+                grouped,
+                start,
+                len,
+            };
+            start += len;
+            span
+        })
+        .collect()
+}
+
+/// Which side of drop slot `to` the pointer is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelDropBias {
+    /// Center or lower half — the row under the pointer.
+    OnSlot,
+    /// Top half — still the pocket above this row.
+    PocketAbove,
+}
+
+/// Upper half of slot `to` belongs to the pocket above.
+pub fn panel_drop_bias(
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    row_h: f32,
+    to: usize,
+) -> PanelDropBias {
+    if row_h <= 0.0 {
+        return PanelDropBias::OnSlot;
+    }
+    let raw = from as f32 + (cursor_y - start_y) / row_h;
+    if raw < to as f32 {
+        PanelDropBias::PocketAbove
+    } else {
+        PanelDropBias::OnSlot
+    }
+}
+
+/// One visible reorder section: `len` rows starting at global `start`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SectionSpan {
+    grouped: bool,
+    start: usize,
+    len: usize,
+}
+
+/// `(section, insert_before_local)` for a live drop. `local == len` appends.
+fn drop_slot_in_sections(spans: &[SectionSpan], to: usize, bias: PanelDropBias) -> (usize, usize) {
+    if spans.is_empty() {
+        return (0, 0);
+    }
+    let mut s = 0usize;
+    for (i, span) in spans.iter().enumerate() {
+        if to < span.start + span.len {
+            s = i;
+            break;
+        }
+        s = i;
+    }
+    let local = to.saturating_sub(spans[s].start);
+    if bias == PanelDropBias::PocketAbove && local == 0 && s > 0 {
+        return (s - 1, spans[s - 1].len);
+    }
+    if bias == PanelDropBias::OnSlot && local == 0 && spans[s].grouped {
+        return (s, spans[s].len);
+    }
+    (s, local)
+}
+
+fn drop_slot_height(item_spacing: f32) -> f32 {
+    PANEL_ROW_H + item_spacing
+}
+
+fn section_containing(spans: &[SectionSpan], row: usize) -> usize {
+    for (i, span) in spans.iter().enumerate() {
+        if row < span.start + span.len {
+            return i;
+        }
+    }
+    spans.len().saturating_sub(1)
+}
+
+fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32) -> f32 {
+    let mut y = 0.0;
+    let mut prev_grouped = false;
+    for (si, span) in spans.iter().enumerate() {
+        if si > 0 && (span.grouped || prev_grouped) {
+            y += GROUP_WELL_GAP;
+        }
+        prev_grouped = span.grouped;
+        y += if span.grouped {
+            GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V
+        } else {
+            4.0
+        };
+        for local in 0..span.len {
+            if span.start + local == from {
+                return y;
+            }
+            y += PANEL_ROW_H;
+            if local + 1 < span.len {
+                y += item_spacing;
+            }
+        }
+        y += if span.grouped {
+            GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V
+        } else {
+            4.0
+        };
+    }
+    y
 }
 
 /// Target vertical offset (px) for the row at `index` while the item at
@@ -1050,20 +1422,24 @@ pub fn panel_drop_index_relative(
 ///
 /// Pure — unit-tested without an iced runtime.
 pub fn panel_sibling_offset(from: usize, to: usize, index: usize) -> f32 {
+    sibling_offset(from, to, index, PANEL_ROW_STRIDE)
+}
+
+fn sibling_offset(from: usize, to: usize, index: usize, stride: f32) -> f32 {
     if index == from || from == to {
         return 0.0;
     }
     if from < to {
         // Dragging down: rows in (from, to] slide up into the vacated slot.
         if index > from && index <= to {
-            -PANEL_ROW_STRIDE
+            -stride
         } else {
             0.0
         }
     } else {
         // Dragging up: rows in [to, from) slide down.
         if index >= to && index < from {
-            PANEL_ROW_STRIDE
+            stride
         } else {
             0.0
         }
@@ -1075,9 +1451,31 @@ pub fn panel_sibling_offset(from: usize, to: usize, index: usize) -> f32 {
 /// Owned by the app (terminal / storybook). Call [`Self::sync`] on each
 /// cursor move and animation tick while a drag is live; [`Self::clear`]
 /// on release. [`SidebarPanel`] samples offsets at view time.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ReorderAnim {
     rows: Vec<Animation<f32>>,
+    /// Per-section well extra. Each eases independently so leaving one
+    /// group can shrink while the next grows — one shared extra snapped.
+    well_extras: Vec<Animation<f32>>,
+    /// When false, the origin placeholder stays closed (invalid drop,
+    /// e.g. over a group title). In-section reorder keeps this true.
+    origin_hole: bool,
+}
+
+impl Default for ReorderAnim {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            well_extras: Vec::new(),
+            origin_hole: true,
+        }
+    }
+}
+
+fn extra_anim(v: f32) -> Animation<f32> {
+    Animation::new(v)
+        .duration(std::time::Duration::from_millis(PANEL_REORDER_ANIM_MS))
+        .easing(Easing::EaseOut)
 }
 
 impl ReorderAnim {
@@ -1088,30 +1486,79 @@ impl ReorderAnim {
     /// Drop all row animations (gesture ended).
     pub fn clear(&mut self) {
         self.rows.clear();
+        self.well_extras.clear();
+        self.origin_hole = true;
     }
 
     /// True while any sibling offset is still in flight.
     pub fn is_animating(&self, at: Instant) -> bool {
-        self.rows.iter().any(|a| a.is_animating(at))
+        self.well_extras.iter().any(|a| a.is_animating(at))
+            || self.rows.iter().any(|a| a.is_animating(at))
     }
 
     /// Ensure `n` row animations and retarget each non-dragged row toward
     /// the offset for provisional drop slot `to`.
     pub fn sync(&mut self, from: usize, to: usize, n: usize, at: Instant) {
+        self.sync_well(from, to, n, 0.0, None, None, 0, PANEL_ROW_STRIDE, true, at);
+    }
+
+    /// Like [`Self::sync`], plus dest-well extra height (foreign group).
+    ///
+    /// `dest` is an exclusive `[start, end)` of rows allowed to take a
+    /// non-zero sibling offset. Other rows ease back to 0 — never snap.
+    /// `None` means the whole list (legacy / in-section strips).
+    /// Each section's extra eases toward `extra_target` if it is
+    /// `extra_si`, otherwise toward 0.
+    pub fn sync_well(
+        &mut self,
+        from: usize,
+        to: usize,
+        n: usize,
+        extra_target: f32,
+        extra_si: Option<usize>,
+        dest: Option<(usize, usize)>,
+        n_sections: usize,
+        stride: f32,
+        origin_hole: bool,
+        at: Instant,
+    ) {
+        self.origin_hole = origin_hole;
         while self.rows.len() < n {
-            self.rows.push(
-                Animation::new(0.0)
-                    .duration(std::time::Duration::from_millis(PANEL_REORDER_ANIM_MS))
-                    .easing(Easing::EaseOut),
-            );
+            self.rows.push(extra_anim(0.0));
         }
         if self.rows.len() > n {
             self.rows.truncate(n);
         }
+        let stride = if stride > 0.0 {
+            stride
+        } else {
+            PANEL_ROW_STRIDE
+        };
         for i in 0..n {
-            let target = panel_sibling_offset(from, to, i);
+            let mut target = sibling_offset(from, to, i, stride);
+            if let Some((a, b)) = dest {
+                if i < a || i >= b {
+                    target = 0.0;
+                }
+            }
             if self.rows[i].value() != target {
                 self.rows[i].go_mut(target, at);
+            }
+        }
+        while self.well_extras.len() < n_sections {
+            self.well_extras.push(extra_anim(0.0));
+        }
+        if self.well_extras.len() > n_sections {
+            self.well_extras.truncate(n_sections);
+        }
+        for si in 0..n_sections {
+            let target = if extra_si == Some(si) {
+                extra_target
+            } else {
+                0.0
+            };
+            if (self.well_extras[si].value() - target).abs() > 0.5 {
+                self.well_extras[si].go_mut(target, at);
             }
         }
     }
@@ -1122,6 +1569,51 @@ impl ReorderAnim {
             .get(index)
             .map(|a| a.interpolate_with(|v| v, at))
             .unwrap_or(0.0)
+    }
+
+    /// Animated extra height for dest well `si`.
+    pub fn well_extra_for(&self, si: usize, at: Instant) -> f32 {
+        self.well_extras
+            .get(si)
+            .map(|a| a.interpolate_with(|v| v, at))
+            .unwrap_or(0.0)
+    }
+
+    /// Layout extra for a well: the extra Space must not drop below the
+    /// remaining sibling offset, or rows below the group jump up while
+    /// members are still easing home.
+    ///
+    /// Only while this well actually has extra (foreign drop). In-group
+    /// reorder uses the hole at `from` — coupling member offsets here
+    /// collapsed that hole and made rows below slide into the slot.
+    pub fn well_layout_extra(
+        &self,
+        si: usize,
+        mem_start: usize,
+        mem_end: usize,
+        at: Instant,
+    ) -> f32 {
+        let extra = self.well_extra_for(si, at);
+        if extra < 0.5 {
+            return 0.0;
+        }
+        let mut m = extra;
+        for i in mem_start..mem_end {
+            m = m.max(self.offset(i, at).abs());
+        }
+        m
+    }
+
+    /// Current extra height regardless of section (for source hole).
+    pub fn keep_origin_hole(&self) -> bool {
+        self.origin_hole
+    }
+
+    pub fn well_extra_at(&self, at: Instant) -> f32 {
+        self.well_extras
+            .iter()
+            .map(|a| a.interpolate_with(|v| v, at))
+            .fold(0.0_f32, f32::max)
     }
 }
 
@@ -1290,71 +1782,64 @@ where
         // pattern as the list-etch close overlay — so showing it never steals width
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
-        let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let mut select = mouse_area(
-                container(body)
-                    .width(Length::Fill)
-                    .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, hovered)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context.clone() {
-                select = select.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                select = select.on_double_click(dbl);
-            }
-            if show_hover_action {
-                if let Some(action) = hover_action {
-                    // Float trash over the trailing age corner; stack sizes
-                    // to the base row so nothing reflows.
-                    let trash = container(hover_action_button(action))
-                        .align_x(iced::alignment::Horizontal::Right)
-                        .align_y(iced::alignment::Vertical::Bottom)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(Padding {
-                            top: 0.0,
-                            right: (pad_h - 2.0).max(0.0),
-                            bottom: (pad_v - 2.0).max(0.0),
-                            left: 0.0,
-                        });
-                    stack![select, trash].into()
+        let row_el: Element<'a, Message> =
+            if hover_action.is_some() {
+                let mut select =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, hovered),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context.clone() {
+                    select = select.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    select = select.on_double_click(dbl);
+                }
+                if show_hover_action {
+                    if let Some(action) = hover_action {
+                        // Float trash over the trailing age corner; stack sizes
+                        // to the base row so nothing reflows.
+                        let trash = container(hover_action_button(action))
+                            .align_x(iced::alignment::Horizontal::Right)
+                            .align_y(iced::alignment::Vertical::Bottom)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .padding(Padding {
+                                top: 0.0,
+                                right: (pad_h - 2.0).max(0.0),
+                                bottom: (pad_v - 2.0).max(0.0),
+                                left: 0.0,
+                            });
+                        stack![select, trash].into()
+                    } else {
+                        select.into()
+                    }
                 } else {
                     select.into()
                 }
+            } else if on_double_click.is_some() || on_context.is_some() {
+                let mut area =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, false),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context {
+                    area = area.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    area = area.on_double_click(dbl);
+                }
+                area.into()
             } else {
-                select.into()
-            }
-        } else if on_double_click.is_some() || on_context.is_some() {
-            let mut area = mouse_area(
-                container(body)
-                    .width(Length::Fill)
+                button(body)
+                    .style(move |t, status| item_style_chrome(t, status, active, chrome))
                     .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, false)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context {
-                area = area.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                area = area.on_double_click(dbl);
-            }
-            area.into()
-        } else {
-            button(body)
-                .style(move |t, status| item_style_chrome(t, status, active, chrome))
-                .padding(pad)
-                .width(Length::Fill)
-                .on_press(message)
-                .into()
-        };
+                    .width(Length::Fill)
+                    .on_press(message)
+                    .into()
+            };
         return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
     };
 
@@ -1371,9 +1856,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| {
-                row_container_style(theme, active, chrome, hovered)
-            }),
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1613,14 +2096,14 @@ where
     }
     let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
     if lifted {
-        f = f.scale(PANEL_REORDER_LIFT_SCALE).style(|_| float_widget::Style {
-            shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                offset: Vector::new(0.0, 2.0),
-                blur_radius: 8.0,
-            },
-            shadow_border_radius: RADIUS_SM.into(),
-        });
+        f = f.style(|_| float_widget::Style {
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                shadow_border_radius: RADIUS_SM.into(),
+            });
     }
     f.into()
 }
@@ -1762,8 +2245,7 @@ fn item_content<'a, Message: Clone + 'a>(
         density,
         section_header,
     );
-    let has_trail =
-        secondary.is_some() || shortcut.is_some() || hover_action.is_some();
+    let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
         .spacing(SPACE_MD)
         .align_y(iced::Alignment::Start)
@@ -2054,7 +2536,10 @@ where
 
         // Fixed chrome (collapse + header + footer). Section *labels* also
         // stay outside the scroll body; only item lists scroll.
-        let mut chrome = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+        let mut chrome = column![]
+            .spacing(0.0)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // Toggle header.
         if let Some((_, on_toggle)) = &collapse {
@@ -2070,19 +2555,17 @@ where
 
         if let Some(header) = header {
             if !collapsed {
-                chrome = chrome.push(
-                    container(header).padding(Padding {
-                        top: 10.0,
-                        right: 10.0,
-                        bottom: 8.0,
-                        left: 10.0,
-                    }),
-                );
+                chrome = chrome.push(container(header).padding(Padding {
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 8.0,
+                    left: 10.0,
+                }));
             }
         }
 
         // Visible reorder rows: collapsible headers + non-hidden items.
-        let total_items: usize = sections
+        let _total_items: usize = sections
             .iter()
             .map(|s| {
                 let header = usize::from(s.collapse.is_some());
@@ -2102,78 +2585,211 @@ where
         let dragging = reorder_ref.and_then(|r| r.active);
 
         let sections_el: Element<'a, Message, Theme> = if let Some((from, start_y)) = dragging {
-            // Live reorder preview: flatten rows (headers omitted). Scroll
-            // body is still bar-less so the gesture matches the rest state.
+            // Tab drag: the grabbed row is always an overlay ghost (same
+            // width from grab to drop). In-flow it is a placeholder so
+            // origins stay put. Dest wells grow by the max sibling offset
+            // in that well (does not reset when `to` hops members); members
+            // ease inside the well. Source hole + dest extra = one pitch.
             let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
-            let to = panel_drop_index_relative(
-                from,
-                start_y,
-                cursor_y,
-                PANEL_ROW_H,
-                total_items,
-            );
             let now = Instant::now();
             let anim = reorder_ref.and_then(|r| r.anim);
-            let mut flat: Vec<(usize, SidebarItem<'a, Message>)> = Vec::with_capacity(total_items);
-            let mut row_index = 0usize;
-            for section in sections {
-                let hide = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+
+            let mut spans: Vec<SectionSpan> = Vec::with_capacity(sections.len());
+            let mut start = 0usize;
+            for section in &sections {
+                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let grouped = section.collapse.is_some();
+                let n = usize::from(grouped) + if hide { 0 } else { section.items.len() };
+                spans.push(SectionSpan {
+                    grouped,
+                    start,
+                    len: n,
+                });
+                start += n;
+            }
+            let lens: Vec<(bool, usize)> = spans.iter().map(|s| (s.grouped, s.len)).collect();
+            let ys = panel_row_rest_ys(&lens, item_spacing);
+            let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, PANEL_ROW_H);
+            let bias = panel_drop_bias(from, start_y, cursor_y, PANEL_ROW_H, to);
+            let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
+            let from_si = section_containing(&spans, from);
+            let (dest_si, _dest_local) = drop_slot_in_sections(&spans, to, bias);
+            let dest_g = if spans.get(dest_si).is_some_and(|s| s.grouped) {
+                dest_si
+            } else {
+                spans.iter().rposition(|s| s.grouped).unwrap_or(dest_si)
+            };
+            let block_h = spans
+                .get(from_si)
+                .map(|s| section_block_height(s, item_spacing))
+                .unwrap_or(PANEL_ROW_H);
+
+            let hover_wired = on_item_hover.is_some();
+            let mut dragged_item: Option<SidebarItem<'a, Message>> = None;
+            let mut sections_col = column![].spacing(0.0).width(Length::Fill);
+            let mut row_index = 0usize;
+            let mut prev_collapsible = false;
+            let row_h = panel_etch_row_height(density);
+            let extra_v = anim
+                .map(|a| {
+                    spans
+                        .iter()
+                        .enumerate()
+                        .map(|(si, span)| {
+                            let mem_start = span.start + usize::from(span.grouped);
+                            a.well_layout_extra(si, mem_start, span.start + span.len, now)
+                        })
+                        .fold(0.0_f32, f32::max)
+                })
+                .unwrap_or(0.0);
+            // Hole is a column child: spacing is already between children,
+            // so this is the real etch row height (not PANEL_ROW_H / row+gap).
+            let hole_h = if anim.map(|a| a.keep_origin_hole()).unwrap_or(true) {
+                (row_h - extra_v).max(0.0)
+            } else {
+                0.0
+            };
+            let p = if dragging_header {
+                anim.map(|a| (a.offset(to, now).abs() / PANEL_ROW_STRIDE).clamp(0.0, 1.0))
+                    .unwrap_or(1.0)
+            } else if PANEL_ROW_STRIDE > 0.0 {
+                (extra_v / PANEL_ROW_STRIDE).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            for (si, section) in sections.into_iter().enumerate() {
+                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
+                let grouped = section.collapse.is_some();
+                if si > 0 && (grouped || prev_collapsible) {
+                    sections_col =
+                        sections_col.push(Space::new().height(Length::Fixed(GROUP_WELL_GAP)));
+                }
+                prev_collapsible = grouped;
+                let body_pad = if grouped {
+                    Padding::from([COLLAPSE_BODY_PAD_V, 4.0])
+                } else {
+                    Padding::from([4.0, 8.0])
+                };
+                let mut body = column![].spacing(item_spacing).padding(body_pad);
+                let extra = anim
+                    .map(|a| {
+                        let mem_start = row_index + usize::from(grouped);
+                        let mem_end = mem_start + if hide { 0 } else { section.items.len() };
+                        a.well_layout_extra(si, mem_start, mem_end, now)
+                    })
+                    .unwrap_or(0.0);
+                let row_from = usize::MAX;
+                let well_dy = if dragging_header {
+                    if si == from_si {
+                        cursor_y - start_y
+                    } else if grouped {
+                        group_sibling_offset(from_si, dest_g, si, block_h) * p
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+                let lift_well = dragging_header && si == from_si;
+
                 if let Some(collapse) = section.collapse {
-                    flat.push((row_index, collapse_header_item(section.label, collapse)));
+                    let item = collapse_header_item(section.label, collapse);
+                    body = body.push(reorder_preview_row(
+                        item,
+                        row_index,
+                        row_from,
+                        start_y,
+                        cursor_y,
+                        to,
+                        None,
+                        now,
+                        collapsed,
+                        reorder_ref,
+                        &hovered_id,
+                        density,
+                        hover_wired,
+                    ));
                     row_index += 1;
                     if hide {
+                        if extra > 0.5 {
+                            body = body.push(Space::new().height(Length::Fixed(extra)));
+                        }
+                        sections_col = sections_col
+                            .push(paint_drag_section(body, grouped, true, well_dy, lift_well));
                         continue;
                     }
                 }
-                let members = if grouped {
-                    nest_group_members(section.items)
-                } else {
-                    section.items
-                };
+
+                let members = section.items;
                 for item in members {
-                    flat.push((row_index, item));
+                    if !dragging_header && row_index == from {
+                        dragged_item = Some(item);
+                        if hole_h > 0.5 {
+                            body = body.push(Space::new().height(Length::Fixed(hole_h)));
+                        }
+                    } else {
+                        body = body.push(reorder_preview_row(
+                            item,
+                            row_index,
+                            row_from,
+                            start_y,
+                            cursor_y,
+                            to,
+                            anim,
+                            now,
+                            collapsed,
+                            reorder_ref,
+                            &hovered_id,
+                            density,
+                            hover_wired,
+                        ));
+                    }
                     row_index += 1;
                 }
+                if extra > 0.5 {
+                    body = body.push(Space::new().height(Length::Fixed(extra)));
+                }
+                sections_col =
+                    sections_col.push(paint_drag_section(body, grouped, true, well_dy, lift_well));
             }
-            let mut items = column![]
-                .spacing(item_spacing)
-                .padding(Padding::from([4.0, 8.0]));
-            for (stable_index, item) in flat {
-                let is_dragged = stable_index == from;
-                let dy = if is_dragged {
-                    cursor_y - start_y
-                } else if let Some(anim) = anim {
-                    anim.offset(stable_index, now)
-                } else {
-                    panel_sibling_offset(from, to, stable_index)
-                };
-                let item = assign_close_id(item, stable_index);
+
+            let list: Element<'a, Message> = hidden_scroll(sections_col, None, None).into();
+            if let Some(item) = dragged_item {
+                // Ghost origin is the *rest* position (spans are pre-drag).
+                // One translate: pointer delta only. Same horizontal inset
+                // as a list row so width does not pop when crossing a well.
+                let orig_y = row_rest_y(&spans, from, item_spacing);
+                let item = assign_close_id(item, from);
                 let show_action = item
                     .id
                     .as_ref()
                     .is_some_and(|id| hovered_id.as_ref() == Some(id));
                 let row_el = if collapsed {
-                    collapsed_row(&item, stable_index, reorder_ref)
+                    collapsed_row(&item, from, reorder_ref)
                 } else {
-                    render_item(
-                        item,
-                        reorder_ref,
-                        stable_index,
-                        show_action,
-                        density,
-                        on_item_hover.is_some(),
-                    )
+                    render_item(item, reorder_ref, from, show_action, density, hover_wired)
                 };
-                items = items.push(with_reorder_motion(row_el, dy, is_dragged));
+                let ghost = container(row_el).width(Length::Fill).padding(Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 8.0,
+                    right: 8.0,
+                });
+                stack![
+                    list,
+                    with_reorder_motion(ghost.into(), orig_y + cursor_y - start_y, true)
+                ]
+                .into()
+            } else {
+                list
             }
-            hidden_scroll(items, None, None).into()
         } else {
             // At rest: section labels sticky; item bodies scroll per-fill.
-            let mut sections_col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+            let mut sections_col = column![]
+                .spacing(0.0)
+                .width(Length::Fill)
+                .height(Length::Fill);
             let mut row_index = 0usize;
             let mut assigned_fill = false;
 
@@ -2186,37 +2802,26 @@ where
                     } else {
                         12.0
                     };
-                    sections_col =
-                        sections_col.push(Space::new().height(Length::Fixed(gap)));
+                    sections_col = sections_col.push(Space::new().height(Length::Fixed(gap)));
                 }
                 prev_collapsible = is_collapsible;
 
-                let hide_items = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+                let hide_items = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
                     Vec::new()
-                } else if is_collapsible {
-                    nest_group_members(section.items)
                 } else {
                     section.items
                 };
-                let n_in_section = visible_items.len()
-                    + usize::from(section.collapse.is_some());
-                let mut content_h = section_content_height_with(
-                    &visible_items,
-                    item_spacing,
-                    density,
-                );
+                let n_in_section = visible_items.len() + usize::from(section.collapse.is_some());
+                let mut content_h =
+                    section_content_height_with(&visible_items, item_spacing, density);
                 if is_collapsible {
-                    // Tighter body pad [2, 4] + pocket pad; header row.
-                    content_h = content_h - 8.0 + 4.0 + GROUP_WELL_PAD * 2.0;
+                    // Tighter body pad + pocket pad; header row.
+                    content_h =
+                        content_h - 8.0 + COLLAPSE_BODY_PAD_V * 2.0 + GROUP_WELL_PAD_V * 2.0;
                     content_h += PANEL_ROW_H + item_spacing;
                 }
-                let wants_fill = !collapsed
-                    && (section.fill || auto_fill_single)
-                    && !assigned_fill;
+                let wants_fill = !collapsed && (section.fill || auto_fill_single) && !assigned_fill;
                 if wants_fill {
                     assigned_fill = true;
                 }
@@ -2234,13 +2839,11 @@ where
                 }
 
                 let body_pad = if is_collapsible {
-                    Padding::from([2.0, 4.0])
+                    Padding::from([COLLAPSE_BODY_PAD_V, 4.0])
                 } else {
                     Padding::from([4.0, 8.0])
                 };
-                let mut body_items = column![]
-                    .spacing(item_spacing)
-                    .padding(body_pad);
+                let mut body_items = column![].spacing(item_spacing).padding(body_pad);
                 if let Some(collapse) = section.collapse {
                     if !collapsed {
                         let header = collapse_header_item(section.label, collapse);
@@ -2257,9 +2860,7 @@ where
                             density,
                             on_item_hover.is_some(),
                         );
-                        if let (Some(id), Some(ref mut on_hover)) =
-                            (hid, on_item_hover.as_mut())
-                        {
+                        if let (Some(id), Some(ref mut on_hover)) = (hid, on_item_hover.as_mut()) {
                             row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
                         }
                         body_items = body_items.push(row_el);
@@ -2268,8 +2869,7 @@ where
                 }
                 for item in visible_items {
                     if collapsed {
-                        body_items =
-                            body_items.push(collapsed_row(&item, row_index, reorder_ref));
+                        body_items = body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
                         let item = assign_close_id(item, row_index);
                         let item_id = item.id.clone();
@@ -2303,8 +2903,7 @@ where
                     // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
                     let fill_col = if is_collapsible {
-                        column![wrap_group_well(body_items)]
-                            .width(Length::Fill)
+                        column![wrap_group_well(body_items, true)].width(Length::Fill)
                     } else {
                         body_items
                     };
@@ -2321,18 +2920,15 @@ where
                     sections_col = sections_col.push(body);
                 } else {
                     let body_el: Element<'a, Message> = if is_collapsible {
-                        wrap_group_well(body_items)
+                        wrap_group_well(body_items, true)
                     } else {
                         body_items.into()
                     };
-                    let body: Element<'a, Message> =
-                        if let Some(ref mut on_hover) = on_item_hover {
-                            mouse_area(body_el)
-                                .on_exit(on_hover(None))
-                                .into()
-                        } else {
-                            body_el
-                        };
+                    let body: Element<'a, Message> = if let Some(ref mut on_hover) = on_item_hover {
+                        mouse_area(body_el).on_exit(on_hover(None)).into()
+                    } else {
+                        body_el
+                    };
                     sections_col = sections_col.push(body);
                 }
             }
@@ -2352,9 +2948,7 @@ where
         // Footer (hidden when collapsed).
         if let Some(footer) = footer {
             if !collapsed {
-                chrome = chrome.push(
-                    container(footer).padding(Padding::from([8.0, 10.0])),
-                );
+                chrome = chrome.push(container(footer).padding(Padding::from([8.0, 10.0])));
             }
         }
 
@@ -2479,31 +3073,20 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     let base = scroll;
 
     let cb_wheel = std::rc::Rc::clone(&cb);
-    let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
-        cb_wheel(base.wheel(delta))
-    });
+    let area =
+        mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| cb_wheel(base.wheel(delta)));
 
     let cb_show = std::rc::Rc::clone(&cb);
     let cb_resize = std::rc::Rc::clone(&cb);
     let list: Element<'a, Message, Theme> = sensor(area)
         .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
-        .on_resize(move |size: iced::Size| {
-            cb_resize(base.with_viewport_h(size.height))
-        })
+        .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
         .into();
 
     // Chips only take space when there is overflow on that side — no
     // permanent gap under the section title at rest. Click jumps to end.
-    let top_chip = overflow_slot(
-        OverflowDir::Up,
-        above,
-        Some(cb(scroll.jump_top())),
-    );
-    let bottom_chip = overflow_slot(
-        OverflowDir::Down,
-        below,
-        Some(cb(scroll.jump_bottom())),
-    );
+    let top_chip = overflow_slot(OverflowDir::Up, above, Some(cb(scroll.jump_top())));
+    let bottom_chip = overflow_slot(OverflowDir::Down, below, Some(cb(scroll.jump_bottom())));
 
     column![top_chip, list, bottom_chip]
         .spacing(0.0)
@@ -2763,9 +3346,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| {
-                    row_container_style(theme, active, chrome, false)
-                }),
+                .style(move |theme: &Theme| row_container_style(theme, active, chrome, false)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -2912,10 +3493,7 @@ pub fn item_style_chrome(
     match chrome {
         SidebarItemChrome::Row => tab_item_style(theme, status, active),
         SidebarItemChrome::Card => {
-            let hovered = matches!(
-                status,
-                button::Status::Hovered | button::Status::Pressed
-            );
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
             button::Style {
                 background: s.background,
@@ -2946,14 +3524,81 @@ mod tests {
     }
 
     #[test]
+    fn drop_slot_floor_appends_previous_section() {
+        let spans = [
+            SectionSpan {
+                grouped: true,
+                start: 0,
+                len: 3,
+            },
+            SectionSpan {
+                grouped: true,
+                start: 3,
+                len: 2,
+            },
+            SectionSpan {
+                grouped: false,
+                start: 5,
+                len: 2,
+            },
+        ];
+        // Top half of the next header → end of Work (len 3).
+        assert_eq!(
+            drop_slot_in_sections(&spans, 3, PanelDropBias::PocketAbove),
+            (0, 3)
+        );
+        // On the header itself → append Research.
+        assert_eq!(
+            drop_slot_in_sections(&spans, 3, PanelDropBias::OnSlot),
+            (1, 2)
+        );
+        // Top half of first loose → end of Research.
+        assert_eq!(
+            drop_slot_in_sections(&spans, 5, PanelDropBias::PocketAbove),
+            (1, 2)
+        );
+        // On first loose → start of loose run.
+        assert_eq!(
+            drop_slot_in_sections(&spans, 5, PanelDropBias::OnSlot),
+            (2, 0)
+        );
+    }
+
+    #[test]
+    fn hole_plus_slot_keeps_list_pitch() {
+        let pitch = drop_slot_height(3.0);
+        for p in [0.0, 0.25, 0.5, 1.0] {
+            let hole = pitch * (1.0 - p);
+            let slot = pitch * p;
+            assert!(
+                (hole + slot - pitch).abs() < f32::EPSILON,
+                "p={p}: hole+slot must stay one row"
+            );
+        }
+    }
+
+    #[test]
+    fn group_boundary_spacer_keeps_rest_pitch() {
+        // Rest: body pad + well pad + gap on both sides of the joint.
+        assert_eq!(group_boundary_rest(), 10.0);
+        // Drag column already applies item_spacing on both sides of the
+        // spacer; leftover is what we insert so the joint does not collapse.
+        let large = SidebarDensity::Large.metrics().gap;
+        assert_eq!(
+            2.0 * large + group_boundary_spacer(large),
+            group_boundary_rest()
+        );
+        let normal = SidebarDensity::Normal.metrics().gap;
+        assert_eq!(
+            2.0 * normal + group_boundary_spacer(normal),
+            group_boundary_rest()
+        );
+    }
+
+    #[test]
     fn row_chrome_is_etch_not_selection() {
         let theme = crate::default_theme();
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         match row.background {
             Some(Background::Color(c)) => {
                 assert_eq!(c, inset_surface(CHROME_SURFACE, 0.22));
@@ -2979,12 +3624,7 @@ mod tests {
             true,
             SidebarItemChrome::Card,
         );
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         // Card keeps a 1px hairline + graphite gradient; etch is inset fill.
         assert_eq!(card.border.width, 1.0);
         assert_eq!(row.border.width, 0.0);
@@ -3001,13 +3641,18 @@ mod tests {
     fn assign_close_id_only_when_needed() {
         let with_close = assign_close_id(SidebarItem::new("x", ()).on_close(()), 3);
         assert_eq!(with_close.id.as_deref(), Some("__row:3"));
-        let with_id = assign_close_id(
-            SidebarItem::new("x", ()).on_close(()).id("keep"),
-            3,
-        );
+        let with_id = assign_close_id(SidebarItem::new("x", ()).on_close(()).id("keep"), 3);
         assert_eq!(with_id.id.as_deref(), Some("keep"));
         let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
         assert_eq!(no_close.id, None);
+    }
+
+    #[test]
+    fn etch_row_height_includes_default_line_height() {
+        // 7+7 pad + 12*1.3 text + 2 lip = 31.6, not PANEL_ROW_H (32).
+        let h = panel_etch_row_height(SidebarDensity::Large);
+        assert!((h - 31.6).abs() < 0.01);
+        assert!(PANEL_ROW_H - h > 0.0 && PANEL_ROW_H - h < 1.0);
     }
 
     #[test]
@@ -3020,13 +3665,17 @@ mod tests {
     }
 
     #[test]
-    fn nest_group_members_defaults_one_step() {
-        let nested = nest_group_members(vec![
-            SidebarItem::new("a", ()),
-            SidebarItem::new("b", ()).indent(2),
-        ]);
-        assert_eq!(nested[0].indent, 1);
-        assert_eq!(nested[1].indent, 2);
+    fn group_sibling_offset_moves_block_not_row() {
+        let h = 100.0;
+        // Drag group 0 down onto group 2: groups 1 and 2 slide up by h.
+        assert_eq!(group_sibling_offset(0, 2, 0, h), 0.0);
+        assert_eq!(group_sibling_offset(0, 2, 1, h), -h);
+        assert_eq!(group_sibling_offset(0, 2, 2, h), -h);
+        assert_eq!(group_sibling_offset(0, 2, 3, h), 0.0);
+        // Drag group 2 up onto group 0.
+        assert_eq!(group_sibling_offset(2, 0, 0, h), h);
+        assert_eq!(group_sibling_offset(2, 0, 1, h), h);
+        assert_eq!(group_sibling_offset(2, 0, 2, h), 0.0);
     }
 
     #[test]
@@ -3249,15 +3898,23 @@ mod tests {
 
     #[test]
     fn drop_index_middle_slot() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 1.5, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 1.5,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 1);
     }
 
     #[test]
     fn drop_index_past_end_clamps() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 100.0, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 100.0,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 2);
     }
 
@@ -3288,13 +3945,60 @@ mod tests {
     }
 
     #[test]
-    fn drop_index_relative_rounds_to_nearest_row() {
-        // 0.6 of a row down rounds to a full row…
+    fn drop_index_relative_needs_three_quarters() {
+        // 60% of a row is not enough to hop.
         let to = panel_drop_index_relative(0, 0.0, PANEL_ROW_H * 0.6, PANEL_ROW_H, 5);
-        assert_eq!(to, 1);
-        // …0.4 of a row down rounds back to the same row.
-        let to = panel_drop_index_relative(0, 0.0, PANEL_ROW_H * 0.4, PANEL_ROW_H, 5);
         assert_eq!(to, 0);
+        // 75% yields the neighbour.
+        let to = panel_drop_index_relative(0, 0.0, PANEL_ROW_H * 0.75, PANEL_ROW_H, 5);
+        assert_eq!(to, 1);
+    }
+
+    #[test]
+    fn drop_index_visual_respects_group_gap() {
+        // Two grouped rows then a loose row; extra well pad + gap between.
+        let ys = panel_row_rest_ys(&[(true, 2), (false, 1)], 3.0);
+        assert_eq!(ys.len(), 3);
+        assert!(ys[2] - ys[1] > PANEL_ROW_H);
+        // Halfway in uniform-grid terms must not yet claim the grouped row.
+        let from = 2;
+        let start = 100.0;
+        let half = start - PANEL_ROW_H * 0.5;
+        let to = panel_drop_index_visual(from, start, half, &ys, PANEL_ROW_H);
+        assert_eq!(to, 2);
+    }
+
+    #[test]
+    fn shift_skip_header_stays_on_from() {
+        let lens = [(true, 3), (false, 2)];
+        assert_eq!(panel_shift_skip_header(&lens, 4, 0), 4);
+        assert_eq!(panel_shift_skip_header(&lens, 4, 1), 1);
+    }
+
+    #[test]
+    fn section_at_y_gap_belongs_to_group_floor() {
+        let lens = [(true, 2), (false, 1)];
+        let bounds_mid_loose = {
+            let ys = panel_row_rest_ys(&lens, 3.0);
+            ys[2] + PANEL_ROW_H * 0.5
+        };
+        // Center of the loose row is the loose section.
+        let loose_si = panel_section_at_y(&lens, 3.0, bounds_mid_loose, PANEL_ROW_H);
+        assert_eq!(loose_si, 1);
+        // Between last grouped row and the loose row is the group's floor.
+        let ys = panel_row_rest_ys(&lens, 3.0);
+        let in_gap = (ys[1] + PANEL_ROW_H + ys[2]) * 0.5;
+        let si = panel_section_at_y(&lens, 3.0, in_gap, PANEL_ROW_H);
+        assert_eq!(si, 0);
+    }
+
+    #[test]
+    fn section_at_y_between_groups_is_neither_well() {
+        let lens = [(true, 2), (true, 2)];
+        let ys = panel_row_rest_ys(&lens, 3.0);
+        let in_gap = (ys[1] + PANEL_ROW_H + ys[2]) * 0.5;
+        let si = panel_section_at_y(&lens, 3.0, in_gap, PANEL_ROW_H);
+        assert_eq!(si, lens.len());
     }
 
     #[test]

@@ -39,8 +39,7 @@ use sola_bus::topics::SplitDir;
 
 use crate::components::divider::DividerColors;
 use crate::components::{
-    horizontal_divider_drag, horizontal_divider_drag_with, vertical_divider,
-    vertical_divider_with,
+    horizontal_divider_drag, horizontal_divider_drag_with, vertical_divider, vertical_divider_with,
 };
 
 /// Build a two-pane split with theme-default divider colours

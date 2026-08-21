@@ -15,19 +15,18 @@
 //!
 //! Or hang it off [`crate::app::BusSetup::calls`] so one `install()` does both.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use iced::futures::Stream;
 use iced::Subscription;
+use iced::futures::Stream;
 use sola_call::{Incoming, MethodSpec};
 
 static CALL_RX: Mutex<Option<mpsc::Receiver<Incoming>>> = Mutex::new(None);
-static CALL_STREAM_TX: Mutex<
-    Option<iced::futures::channel::mpsc::UnboundedSender<Incoming>>,
-> = Mutex::new(None);
+static CALL_STREAM_TX: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<Incoming>>> =
+    Mutex::new(None);
 static CALL_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Builder: owner (CLI noun) + app_id + advertised methods.
@@ -98,29 +97,31 @@ fn ensure_call_poller() {
     }
     std::thread::Builder::new()
         .name("sola-kit-call".into())
-        .spawn(|| loop {
-            let next = match CALL_RX.lock() {
-                Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
-                Err(poisoned) => {
-                    let guard = poisoned.into_inner();
-                    let out = guard.as_ref().and_then(|rx| rx.try_recv().ok());
-                    CALL_RX.clear_poison();
-                    out
-                }
-            };
-            match next {
-                Some(inc) => {
-                    let mut slot = CALL_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(tx) = slot.as_ref() {
-                        if tx.unbounded_send(inc).is_err() {
-                            *slot = None;
-                        }
+        .spawn(|| {
+            loop {
+                let next = match CALL_RX.lock() {
+                    Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
+                    Err(poisoned) => {
+                        let guard = poisoned.into_inner();
+                        let out = guard.as_ref().and_then(|rx| rx.try_recv().ok());
+                        CALL_RX.clear_poison();
+                        out
                     }
-                    // No iced subscription yet: drop. The caller is waiting;
-                    // they will get a host timeout rather than a silent hang
-                    // after iced starts. Apps must wire `call_subscription`.
+                };
+                match next {
+                    Some(inc) => {
+                        let mut slot = CALL_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(tx) = slot.as_ref() {
+                            if tx.unbounded_send(inc).is_err() {
+                                *slot = None;
+                            }
+                        }
+                        // No iced subscription yet: drop. The caller is waiting;
+                        // they will get a host timeout rather than a silent hang
+                        // after iced starts. Apps must wire `call_subscription`.
+                    }
+                    None => std::thread::sleep(Duration::from_millis(8)),
                 }
-                None => std::thread::sleep(Duration::from_millis(8)),
             }
         })
         .ok();

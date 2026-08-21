@@ -5,8 +5,8 @@
 //! State stays parent-owned: these are layout + style helpers over iced
 //! widgets, not self-contained form controllers.
 
-use iced::widget::{checkbox, row, toggler};
 use iced::widget::row::Row;
+use iced::widget::{checkbox, row, toggler};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use crate::components::style::{RADIUS_SM, SPACE_MD};
@@ -33,14 +33,11 @@ pub fn form_row<'a, Message: 'a>(
     label: impl Into<String>,
     control: impl Into<Element<'a, Message, Theme>>,
 ) -> Row<'a, Message, Theme> {
-    row![
-        body(label.into()).width(Length::Fill),
-        control.into(),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(Alignment::Center)
-    .height(Length::Fixed(ROW_H))
-    .width(Length::Fill)
+    row![body(label.into()).width(Length::Fill), control.into(),]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::Center)
+        .height(Length::Fixed(ROW_H))
+        .width(Length::Fill)
 }
 
 /// Checkbox style: selected = accent fill + check; unselected = raised
@@ -54,8 +51,16 @@ pub fn checkbox_style(theme: &Theme, status: checkbox::Status) -> checkbox::Styl
     };
 
     let (background, border_color, icon_color) = if is_checked {
-        let accent = if hover { p.primary.strong } else { p.primary.base };
-        let accent = if disabled { p.background.strong } else { accent };
+        let accent = if hover {
+            p.primary.strong
+        } else {
+            p.primary.base
+        };
+        let accent = if disabled {
+            p.background.strong
+        } else {
+            accent
+        };
         (
             Background::Color(accent.color),
             accent.color,

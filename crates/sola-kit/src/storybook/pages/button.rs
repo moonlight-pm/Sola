@@ -1,12 +1,12 @@
 //! Button showcase — composed groups, not a widget zoo.
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon;
 use sola_kit::components::style::{
-    bevel_frame, mix, mix_white, stage_fill, HAIRLINE_A, PAD_CONTROL, RADIUS_MD, RADIUS_XL,
+    HAIRLINE_A, PAD_CONTROL, RADIUS_MD, RADIUS_XL, bevel_frame, mix, mix_white, stage_fill,
 };
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
@@ -54,9 +54,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 fn dialog(state: &State) -> Element<'_, Msg> {
     let face = container(
         column![
-            text("Save theme changes")
-                .font(fonts::display())
-                .size(16),
+            text("Save theme changes").font(fonts::display()).size(16),
             body("One primary in the footer. Everything else is secondary or destructive.")
                 .style(muted),
             hairline(),

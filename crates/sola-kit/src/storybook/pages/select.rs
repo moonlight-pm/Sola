@@ -1,10 +1,10 @@
 //! Select showcase — hanging menu in chrome and in a form row.
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{bevel_frame, stage_fill, CHROME_SURFACE, RADIUS_XL};
+use sola_kit::components::style::{CHROME_SURFACE, RADIUS_XL, bevel_frame, stage_fill};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
 
@@ -75,9 +75,13 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 }
 
 fn chrome_bar(state: &State) -> Element<'_, Msg> {
-    let options = NAMES.iter().zip(SEEDS).enumerate().map(|(i, (name, seed))| {
-        SelectOption::new(*name, i == state.chrome_active, Msg::ChromePick(i)).mark(seed)
-    });
+    let options = NAMES
+        .iter()
+        .zip(SEEDS)
+        .enumerate()
+        .map(|(i, (name, seed))| {
+            SelectOption::new(*name, i == state.chrome_active, Msg::ChromePick(i)).mark(seed)
+        });
 
     column![
         text("Chrome bar").font(fonts::ui_medium()).size(13),
@@ -110,17 +114,18 @@ fn chrome_bar(state: &State) -> Element<'_, Msg> {
 }
 
 fn form_panel(state: &State) -> Element<'_, Msg> {
-    let options = NAMES.iter().zip(SEEDS).enumerate().map(|(i, (name, seed))| {
-        SelectOption::new(*name, i == state.active, Msg::Pick(i)).mark(seed)
-    });
+    let options = NAMES
+        .iter()
+        .zip(SEEDS)
+        .enumerate()
+        .map(|(i, (name, seed))| {
+            SelectOption::new(*name, i == state.active, Msg::Pick(i)).mark(seed)
+        });
 
     let face = container(
         column![
-            text("Theme")
-                .font(fonts::display())
-                .size(16),
-            body("In a form the menu matches the field, start-aligned.")
-                .style(muted),
+            text("Theme").font(fonts::display()).size(16),
+            body("In a form the menu matches the field, start-aligned.").style(muted),
             row![
                 text("Preset")
                     .font(fonts::ui_medium())

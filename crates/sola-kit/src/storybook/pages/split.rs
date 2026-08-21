@@ -6,14 +6,14 @@
 //! logical sizes so cursor position maps cleanly to a ratio without
 //! layout probes.
 
-use iced::widget::{column, container, mouse_area, stack, Space};
+use iced::widget::{Space, column, container, mouse_area, stack};
 use iced::{Element, Length, Theme, mouse};
 
 use sola_bus::topics::SplitDir;
+use sola_kit::components::DividerColors;
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::split_with;
 use sola_kit::components::text::{body, heading, muted};
-use sola_kit::components::DividerColors;
 
 /// Logical size of each demo card's **content** area (inside the border).
 /// Fixed so drag→ratio math does not need widget layout geometry.
@@ -154,8 +154,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     // resize cursor even if the pointer races past the hairline (same
     // idea as SidebarPanel / terminal).
     let vertical = with_drag_overlay(vertical, state.dragging == Some(Axis::Vertical), true);
-    let horizontal =
-        with_drag_overlay(horizontal, state.dragging == Some(Axis::Horizontal), false);
+    let horizontal = with_drag_overlay(horizontal, state.dragging == Some(Axis::Horizontal), false);
 
     column![
         heading("Split"),
@@ -203,8 +202,7 @@ fn with_drag_overlay<'a>(
     };
     stack![
         demo,
-        mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-            .interaction(interaction),
+        mouse_area(Space::new().width(Length::Fill).height(Length::Fill)).interaction(interaction),
     ]
     .into()
 }
