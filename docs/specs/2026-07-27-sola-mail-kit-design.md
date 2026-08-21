@@ -1,10 +1,11 @@
 # sola-mail — kit-native design
 
 **Date:** 2026-07-27  
-**Branch:** `sola-mail`  
-**Status:** approved for implementation  
+**Branch:** master (mail-polish merged)  
+**Status:** implemented (partial) — dogfood installed locally 2026-08-21  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
-**Reference:** `apocrypha/apps/mail/` (logic + UX parity source)
+**Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
+**Gaps:** no HTML engine (converted letter); no attachments; no offline store
 
 ## Goal
 
@@ -16,7 +17,7 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 |---|---|
 | v1 scope | Feature parity with apocrypha mail |
 | UI stack | sola-kit / iced (no WebView) |
-| Message bodies | Prefer `text/plain`; if only HTML, strip to readable plain text (links as text + URL). No embedded HTML engine |
+| Message bodies | Prefer HTML when present (what mail apps render); convert with `html2text` rich + kit `prose`. Tracking hrefs show as a short label. No embedded HTML engine |
 | Compose | Plain text only (parity). Same window, mode swap (compose replaces message pane) |
 | Process model | In-process background worker (agent-style), not a bus daemon |
 | Architecture | Layered single crate **B** — `protocol/` + `worker/` + `ui/` |
@@ -184,9 +185,9 @@ Single iced window, three columns (kit `split` / sidebar + panes):
 └──────────┴────────────────────┴──────────────────────────┘
 ```
 
-- **Folder list:** real IMAP folders + smart mailboxes derived from rules (`action == "smart_mailbox"`). Unread/total badges.
+- **Folder list:** real IMAP folders + smart mailboxes derived from rules (`action == "smart_mailbox"`). Unread-only badges (hidden when 0).
 - **Message list:** summaries for selected folder; search; load-more; archive-all / trash-all when applicable; empty-folder for Trash/Junk-style folders (parity).
-- **Message view:** subject/from/to/cc/date; plain-text body (or HTML→text); Reply / Reply All / Archive / Trash / Compose entry points.
+- **Message view:** letter header (subject, person + address, date); kit `prose` body (paragraphs, quotes, inline links); Reply / Reply All / Archive / Trash / Copy.
 - **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (pick from wicket list), To, Cc, Subject, body. Send / Cancel.
 
 Loading / fatal / toast states mirror the reference app without WebView chrome.
@@ -201,9 +202,18 @@ Parity behavior:
 
 ### Message body rendering
 
-1. If `MessageBody.text` is non-empty after fetch → show it.
-2. Else if `html` present → `html_text::to_plain(html)` (prefer a maintained crate such as `html2text`, or a small sanitizing stripper if dependency weight is undesirable — pick during implementation; unit-test a few fixtures).
-3. Link activation: detect URLs in the displayed text (or structured link spans if the converter yields them) and emit `Topic::OpenUrl { url, activate: true }`.
+1. Prefer the HTML part whenever it is present (what mail apps render).
+   Convert with `html2text` rich + raw tables, no link footnotes.
+2. Render through kit `prose`: paragraphs, `>` quotes, inline links.
+   Tracking / click-wrapper hrefs show as a short label (“Link”), never
+   the raw `upn=` URL. First-party destinations (magic links) keep
+   host+path; a lone long URL is not dropped as tracking.
+   Inbox unread is published as sticky `Topic::MailStatus` for the
+   shell menubar (chip hidden when mail is not mapped).
+3. Link activation: `on_link` → `Topic::OpenUrl` / `open_url_logged`.
+4. Copy / reply use `flatten` of those blocks (toolbar Copy Message).
+   In-body drag-select is kit `prose` (visible text; Edit Copy / Select All).
+5. Menus: Mail, Edit, Mailbox, Message, View — not one stuffed app menu.
 
 No HTML widget tree in v1.
 
@@ -213,17 +223,17 @@ When not composing and focus is not a text input:
 
 | Key | Action |
 |---|---|
-| `j` | Move selected → Junk, advance |
-| `i` | Move selected → INBOX, advance |
-| `a` | Move selected → Archive, advance |
-| `d` | Move selected → Trash, advance |
-| `u` | Undo last move |
-| `w` | Previous message |
-| `s` | Next message |
+| `j` | Move selected → Junk, advance (Message menu) |
+| `i` | Move selected → INBOX, advance (Message menu) |
+| `a` | Move selected → Archive, advance (Message menu) |
+| `d` | Move selected → Trash, advance (Message menu) |
+| `u` | Undo last move (Message menu) |
+| `w` / ↑ | Previous message (View menu) |
+| `s` / ↓ | Next message (View menu) |
 
 ### Theme / kit components
 
-- Use sola-kit: `sidebar`, `split`, `button`, `field` / `text_input`, `text`, `badge`, `card` as needed, `toolbar` where it fits.
+- Use sola-kit: `sidebar`, `split`, `button`, `field` / `text_input`, `text`, `prose`, `readable`, `badge`, `card` as needed, `toolbar` where it fits.
 - Graphite DS tokens via bus theme; no app-local palette snowflakes.
 - Density matches agent/settings (HIG-ish tooling density).
 

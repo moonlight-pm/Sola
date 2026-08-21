@@ -213,21 +213,27 @@ pub struct Palette {
     pub bg: Color,
     /// Block-cursor colour.
     pub cursor: Color,
-    /// Selection highlight background.
+    /// Selection highlight background (neon accent wash over the grid).
     pub selection: Color,
     /// The 16 ANSI base colours (0..=7 normal, 8..=15 bright).
     pub ansi: [Color; 16],
 }
 
+/// Grid selection overlay. Full-chroma kit accent at this alpha — mixing
+/// neon toward black is the muddy dark cyan we dropped; overlaying it
+/// keeps the wash neon and scannable on ANSI cells.
+const SELECTION_WASH_ALPHA: f32 = 0.55;
+
 impl Default for Palette {
     fn default() -> Self {
+        let accent = sola_kit::theme::parse(sola_kit::theme::hex::ACCENT);
         Self {
             bg: rgb(0x0a, 0x0c, 0x10),
             fg: rgb(0xc8, 0xcd, 0xd6),
             // Deep gold block cursor — fixed, not theme-derived, so it stays a
             // warm gold (never brown) on any palette. See `from_kit_theme`.
             cursor: rgb(0xff, 0xb8, 0x00),
-            selection: Color::from_rgba8(0x33, 0x66, 0xcc, 0.35),
+            selection: with_alpha(accent, SELECTION_WASH_ALPHA),
             ansi: [
                 rgb(0x00, 0x00, 0x00), // 0  black
                 rgb(0xcc, 0x33, 0x33), // 1  red
@@ -268,8 +274,8 @@ impl Palette {
     /// | ------------------ | ----------------------------------------- |
     /// | default bg         | `bg` (bg-primary)                         |
     /// | default fg         | `fg` (text-primary)                       |
-    /// | cursor             | `accent`                                  |
-    /// | selection bg       | `selection` atom @ 55% alpha (quiet wash) |
+    /// | cursor             | fixed gold (`#ffb800`)                    |
+    /// | selection bg       | `accent` @ 55% alpha (neon wash)          |
     ///
     /// ### ANSI table (0..=7 normal, 8..=15 bright)
     ///
@@ -308,8 +314,9 @@ impl Palette {
             // Fixed deep gold, independent of the theme accent — a warm gold
             // cursor reads clearly on every palette and never muddies to brown.
             cursor: rgb(0xff, 0xb8, 0x00),
-            // Quiet selection atom wash (P8) — not a shouting accent fill.
-            selection: with_alpha(atoms.selection, 0.55),
+            // Neon accent wash — not the graphite `selection` atom (UI rows)
+            // and not a darkened-cyan mix of that neon toward black.
+            selection: with_alpha(atoms.accent, SELECTION_WASH_ALPHA),
             ansi: [
                 atoms.bg_hover,        // 0  black
                 atoms.danger,          // 1  red
@@ -1415,11 +1422,18 @@ mod tests {
         assert_eq!(p.fg, a.fg, "default fg ← text-primary");
         // Cursor is a fixed deep gold, not theme-derived.
         assert_eq!(p.cursor, Color::from_rgb8(0xff, 0xb8, 0x00), "cursor ← fixed gold");
-        // Selection is the quiet selection atom wash at 55% alpha.
-        assert_eq!(p.selection.r, a.selection.r);
-        assert_eq!(p.selection.g, a.selection.g);
-        assert_eq!(p.selection.b, a.selection.b);
-        assert!((p.selection.a - 0.55).abs() < 1e-6, "selection ← selection atom @ 0.55");
+        // Selection is the neon accent wash, not the graphite selection atom.
+        assert_eq!(p.selection.r, a.accent.r);
+        assert_eq!(p.selection.g, a.accent.g);
+        assert_eq!(p.selection.b, a.accent.b);
+        assert!(
+            (p.selection.a - SELECTION_WASH_ALPHA).abs() < 1e-6,
+            "selection ← accent @ {SELECTION_WASH_ALPHA}"
+        );
+        assert_ne!(
+            p.selection.r, a.selection.r,
+            "grid selection must not follow the graphite selection atom"
+        );
 
         // Semantic ANSI slots map to the matching kit atoms.
         assert_eq!(p.ansi[1], a.danger, "ansi[1] red ← danger");
@@ -1460,5 +1474,17 @@ mod tests {
         assert!(green.g > green.r && green.g > green.b, "ansi[2] should be green-dominant");
         let blue = p.ansi[4];
         assert!(blue.b > blue.r && blue.b > blue.g, "ansi[4] should be blue-dominant");
+    }
+
+    #[test]
+    fn default_selection_is_kit_neon_accent_wash() {
+        let accent = sola_kit::theme::parse(sola_kit::theme::hex::ACCENT);
+        let p = Palette::default();
+        assert_eq!(p.selection.r, accent.r);
+        assert_eq!(p.selection.g, accent.g);
+        assert_eq!(p.selection.b, accent.b);
+        assert!((p.selection.a - SELECTION_WASH_ALPHA).abs() < 1e-6);
+        // Neon cyan, not a darkened mix (g and b both well above r).
+        assert!(p.selection.g > p.selection.r && p.selection.b > p.selection.r);
     }
 }

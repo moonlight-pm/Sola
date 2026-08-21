@@ -28,6 +28,14 @@ pub fn body<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
     iced_text(content).font(fonts::ui()).size(13)
 }
 
+/// 14px UI — reading measure (mail bodies, long-form panes). Chrome
+/// stays on [`body`]; this is content, not controls.
+pub const PROSE_SIZE: f32 = 14.0;
+
+pub fn prose<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
+    iced_text(content).font(fonts::ui()).size(PROSE_SIZE)
+}
+
 /// 11px UI — timestamps, secondary labels, helper copy. Pair with
 /// [`muted`] when the caption should also deemphasize visually.
 pub fn caption<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
@@ -43,25 +51,35 @@ pub fn code<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
 /// deemphasized chrome. Pulls `secondary.base.text` which is bound to
 /// `FG_MUTED` in [`crate::theme::build_theme`].
 pub fn muted(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().secondary.base.text) }
+    text::Style {
+        color: Some(theme.extended_palette().secondary.base.text),
+    }
 }
 
 /// Accent-colored text — links, active selections, called-out values.
 pub fn accent(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().primary.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().primary.base.color),
+    }
 }
 
 /// Success-colored — confirmation messages, "ok" status pills.
 pub fn success(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().success.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().success.base.color),
+    }
 }
 
 /// Warning-colored — soft "heads up" copy, non-blocking issues.
 pub fn warning(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().warning.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().warning.base.color),
+    }
 }
 
 /// Danger-colored — error messages, destructive-action labels.
 pub fn danger(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().danger.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().danger.base.color),
+    }
 }

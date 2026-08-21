@@ -67,8 +67,8 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
-| `crates/sola-mail` | Kit-native mail client |
-| `crates/sola-monitor` | System monitor / bus audit |
+| `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
+| `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Screenshot + standalone argv image viewer |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
@@ -111,10 +111,15 @@ to the bus and tolerate compositor restarts.
 ### Communication layers
 
 1. **Sola Bus** — lifecycle, focus, themes, app menus, session commands,
-   stickies. Fan-out facts. No request/reply.  
+   stickies. Fan-out facts. No request/reply. Mail unread is
+   `Topic::MailStatus` (sticky, not persisted).  
 2. **sola-call** — live method registry; request id, timeout, error to the
    caller. `solactl compositor` / `session`; kit apps advertise via
-   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.  
+   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.
+   `Role::Observer` is a long-lived auditor: host fans out `Catalog`
+   snapshots and `Trace` copies of invoke/reply/timeout/advertise/unregister.
+   sola-monitor is the consumer (`install_observer`). RPC still does not
+   travel on the bus.  
 3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
 
 ---
@@ -125,7 +130,7 @@ to the bus and tolerate compositor restarts.
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, stats, toasts |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), stats, toasts |
 | Menu | Open application menus |
 | Launcher | App launch |
 | Switcher | MRU window/app switch |
@@ -156,7 +161,7 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 |-------|------|
 | `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox + downloads; etch tab strip with kit reorder; vault logins + cards) + CEF CPU OSR under `src/cef/` |
 | App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window) |
-| Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. Paste is `ToEngine::PasteText` (JS insert in the **focused** frame only). ⌘-click hit-test is JS → `FromEngine::OpenBackgroundTab` → chrome `open_tab_beside` (below current tab, same group; click not sent to CEF). ⌘T / `OpenUrl` / `xdg-open` use `open_tab` (loose, end of strip). An outside open (`chrome.sock` / `Topic::OpenUrl` with `activate`) asks the shell to raise the existing window (click-activation: MRU + composition + seat). Super+left/right are not WM pointer bindings (CSD titlebar still moves floats). Page right-click is `ContextMenuHandler::run_context_menu` (native cancelled) → `FromEngine::PageContext` → kit menu. Session history rides the tab snapshot (`TabInfo.history`); hold-nav uses `NavCmd::GoHistory`. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. Downloads: helper `DownloadHandler` → `FromEngine::Download` (any helper, including parked) → chrome list; cancel is `ToEngine::CancelDownload`. Passkey **get** / **create**: helper injects WebAuthn intercept in every frame → `FromEngine::WebAuthn` → chrome vault picker (same-site same-action coalesced; `create()` confirms then `Fido2Client::register` + POST/PUT cipher). One iced chrome (`chrome.sock`); a second process hands off a URL and exits. Helper death respawns CEF and restores tabs. Reap only orphan / pre-`exec_self` helpers. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
+| Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. Paste is `ToEngine::PasteText` (JS insert in the **focused** frame only). ⌘-click hit-test is JS → `FromEngine::OpenBackgroundTab` → chrome `open_tab_beside` (below current tab, same group; click not sent to CEF). ⌘T / `OpenUrl` / `xdg-open` use `open_tab` (loose, end of strip). An outside open (`chrome.sock` / `Topic::OpenUrl` with `activate`) asks the shell to raise the existing window (click-activation: MRU + composition + seat; sock probes are not activate). F12 / Browser → Developer Tools opens windowed CEF DevTools. Super+left/right are not WM pointer bindings (CSD titlebar still moves floats). Page right-click is `ContextMenuHandler::run_context_menu` (native cancelled) → `FromEngine::PageContext` → kit menu. Session history rides the tab snapshot (`TabInfo.history`); hold-nav uses `NavCmd::GoHistory`. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. Downloads: helper `DownloadHandler` → `FromEngine::Download` (any helper, including parked) → chrome list; cancel is `ToEngine::CancelDownload`. Passkey **get** / **create**: helper injects WebAuthn intercept in every frame → `FromEngine::WebAuthn` → chrome vault picker (same-site same-action coalesced; `create()` confirms then `Fido2Client::register` + POST/PUT cipher). One iced chrome (`chrome.sock`); a second process hands off a URL and exits. Helper death respawns CEF and restores tabs. Reap only orphan / pre-`exec_self` helpers. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
 | Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json` (tabs + optional `group_id` + `groups[]`); shared downloads index `shared/downloads.json`; chrome parks tab-strip snapshots + last CPU composites (`FrameSlot.parked_frames`); switch points the router at the target helper (pages stay loaded). Eviction: `tab_cache` (idle 30m, max 4 parks, max 48 tabs total) |
 | Tab / profile paint | `present_tab`: same-size parked frame → GPU this frame; miss → blank immediately (never keep the previous page). Helpers skip same-size `Resize` so the parked compositor stays live. Iced presents paints via the shader `request_redraw` pump (does not rebuild chrome at 60 Hz). |

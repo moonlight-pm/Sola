@@ -131,7 +131,14 @@ fn read_handoff(stream: UnixStream) -> Option<Handoff> {
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
     let line = line.trim();
-    if line.is_empty() || line == ACTIVATE {
+    // Connect-only (no line) is a liveness probe — `chrome_is_running`
+    // and `sock_is_live` just connect and drop. Treating that as
+    // Activate made every shell OpenUrl check queue a raise, which
+    // re-probed the sock and flooded the chrome.
+    if line.is_empty() {
+        return None;
+    }
+    if line == ACTIVATE {
         Some(Handoff::Activate)
     } else {
         Some(Handoff::OpenUrl(line.to_string()))
@@ -178,20 +185,23 @@ mod tests {
 
     #[test]
     fn activate_line_round_trip() {
-        assert!(matches!(parse_line(""), Handoff::Activate));
-        assert!(matches!(parse_line(ACTIVATE), Handoff::Activate));
+        assert!(parse_line("").is_none(), "empty connect is a probe");
+        assert!(matches!(parse_line(ACTIVATE), Some(Handoff::Activate)));
         match parse_line("https://wiki.example") {
-            Handoff::OpenUrl(u) => assert_eq!(u, "https://wiki.example"),
+            Some(Handoff::OpenUrl(u)) => assert_eq!(u, "https://wiki.example"),
             other => panic!("{other:?}"),
         }
     }
 
-    fn parse_line(line: &str) -> Handoff {
+    fn parse_line(line: &str) -> Option<Handoff> {
         let line = line.trim();
-        if line.is_empty() || line == ACTIVATE {
-            Handoff::Activate
+        if line.is_empty() {
+            return None;
+        }
+        if line == ACTIVATE {
+            Some(Handoff::Activate)
         } else {
-            Handoff::OpenUrl(line.to_string())
+            Some(Handoff::OpenUrl(line.to_string()))
         }
     }
 }

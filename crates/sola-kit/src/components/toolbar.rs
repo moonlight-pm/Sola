@@ -9,10 +9,15 @@
 //! styling can pass `.style(sola_kit::components::toolbar::style)`
 //! directly.
 
-use iced::widget::{button, text};
-use iced::widget::text::IntoFragment;
-use iced::{Background, Border, Color, Element, Length, Theme};
+use std::time::Duration;
 
+use iced::widget::text::IntoFragment;
+use iced::widget::tooltip::Position as TooltipPosition;
+use iced::widget::{button, container, svg, text, tooltip};
+use iced::{Background, Border, Color, Element, Length, Padding, Theme};
+
+use crate::components::icon::icon_svg;
+use crate::components::popover;
 use crate::components::style::{PAD_CONTROL_SM, RADIUS_SM};
 
 use crate::fonts;
@@ -26,9 +31,7 @@ use crate::fonts;
 ///
 /// `label` accepts both `&str` and `String` (anything that's
 /// `IntoFragment` — matches iced's own `text(...)` signature).
-pub fn toolbar_button<'a, Message>(
-    label: impl IntoFragment<'a>,
-) -> button::Button<'a, Message>
+pub fn toolbar_button<'a, Message>(label: impl IntoFragment<'a>) -> button::Button<'a, Message>
 where
     Message: Clone + 'a,
 {
@@ -44,10 +47,53 @@ pub fn toolbar_icon<'a, Message: Clone + 'a>(
     handle: iced::widget::svg::Handle,
     size: u16,
 ) -> button::Button<'a, Message> {
-    button(crate::components::icon::icon_svg(handle, size))
+    button(icon_svg(handle, size))
         .padding(PAD_CONTROL_SM)
         .width(Length::Shrink)
         .style(style)
+}
+
+/// Icon tool with a delayed hover tooltip. `on_press = None` is muted
+/// and has no tip — the action is not available.
+pub fn toolbar_icon_tip<'a, Message: Clone + 'a>(
+    handle: iced::widget::svg::Handle,
+    tip: &'static str,
+    on_press: Option<Message>,
+) -> Element<'a, Message, Theme> {
+    let enabled = on_press.is_some();
+    let icon = if enabled {
+        icon_svg(handle, 16)
+    } else {
+        svg(handle)
+            .width(Length::Fixed(16.0))
+            .height(Length::Fixed(16.0))
+            .style(|theme: &Theme, _status| svg::Style {
+                color: Some(theme.extended_palette().secondary.base.text),
+            })
+            .into()
+    };
+    let mut btn = button(icon)
+        .padding(PAD_CONTROL_SM)
+        .width(Length::Shrink)
+        .style(style);
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg);
+    }
+    if !enabled {
+        return btn.into();
+    }
+    let tip = container(text(tip).font(fonts::ui()).size(12))
+        .padding(Padding {
+            top: 5.0,
+            right: 8.0,
+            bottom: 5.0,
+            left: 8.0,
+        })
+        .style(popover::style);
+    tooltip(btn, tip, TooltipPosition::Bottom)
+        .gap(6)
+        .delay(Duration::from_millis(280))
+        .into()
 }
 
 /// Boxed `Element` form for callers that want to stash a row of

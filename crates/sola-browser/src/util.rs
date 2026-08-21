@@ -114,9 +114,10 @@ pub fn tab_strip_label(title: &str, url: &str, sidebar_w: f32) -> String {
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
 /// Normalize input into a navigable URL. An explicit scheme (`https:`,
-/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact; everything else
-/// gets a `https://` prefix. `host:port` (digits after the colon) counts as a
-/// bare host, not a scheme, so it is prefixed too.
+/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. Everything else
+/// gets a scheme prefix: `http://` for localhost / loopback (local servers
+/// almost never present a trusted cert), `https://` otherwise. `host:port`
+/// (digits after the colon) counts as a bare host, not a scheme.
 pub fn normalize_url(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -133,7 +134,24 @@ pub fn normalize_url(s: &str) -> String {
     if explicit_scheme(trimmed).is_some() {
         return trimmed.to_string();
     }
-    format!("https://{trimmed}")
+    with_default_scheme(trimmed)
+}
+
+/// Prefix a scheme-less token. Loopback is `http://`; everything else
+/// is `https://`. Unbracketed IPv6 loopback (`::1`) is wrapped.
+fn with_default_scheme(s: &str) -> String {
+    let host = scheme_less_host(s);
+    let scheme = if is_loopback_host(host) {
+        "http"
+    } else {
+        "https"
+    };
+    if host.contains(':') && !s.starts_with('[') {
+        let rest = &s[host.len()..];
+        format!("{scheme}://[{host}]{rest}")
+    } else {
+        format!("{scheme}://{s}")
+    }
 }
 
 /// HTML for [`SCROLL_STRESS_URL`] (embedded asset).
@@ -147,8 +165,8 @@ const SEARCH_PREFIX: &str = "https://kagi.com/search?q=";
 /// Decide whether chrome input should be loaded as a URL (vs. searched).
 /// The common browser-omnibox heuristic, deliberately simple:
 /// - whitespace anywhere → search ("how to tie a tie")
-/// - an explicit scheme, a dotted host, or localhost → URL
-///   ("https://x", "about:blank", "github.com", "localhost:3000")
+/// - an explicit scheme, a dotted host, or loopback → URL
+///   ("https://x", "about:blank", "github.com", "localhost:3000", "[::1]")
 /// - anything else (a single bare word) → search ("weather", "rust")
 pub fn looks_like_url(s: &str) -> bool {
     let t = s.trim();
@@ -161,12 +179,59 @@ pub fn looks_like_url(s: &str) -> bool {
     if t.eq_ignore_ascii_case("scroll-stress") || t.to_ascii_lowercase().starts_with("sola:") {
         return true;
     }
-    if t == "localhost" || t.starts_with("localhost:") || t.starts_with("localhost/") {
+    if is_loopback_host(scheme_less_host(t)) {
         return true;
     }
     // A dotted host like "github.com" or "a.b/c": a dot that is neither the
     // first nor the last character.
     matches!(t.find('.'), Some(i) if i > 0 && i < t.len() - 1)
+}
+
+/// Host of a scheme-less omnibox token (`host`, `host:port`, `host/path`,
+/// `[::1]`, `[::1]:8080`).
+fn scheme_less_host(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return &rest[..end];
+        }
+    }
+    let no_path = s.split_once('/').map(|(h, _)| h).unwrap_or(s);
+    if let Some((host, port)) = no_path.rsplit_once(':') {
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && !host.contains(':') {
+            return host;
+        }
+    }
+    no_path
+}
+
+/// `localhost`, `*.localhost`, `127.0.0.0/8`, and IPv6 `::1`.
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    if h == "localhost" || h.ends_with(".localhost") {
+        return true;
+    }
+    if is_ipv4_loopback(&h) {
+        return true;
+    }
+    h == "::1" || h == "0:0:0:0:0:0:0:1" || h.strip_prefix("::ffff:").is_some_and(is_ipv4_loopback)
+}
+
+fn is_ipv4_loopback(s: &str) -> bool {
+    let mut parts = s.split('.');
+    let Some(first) = parts.next().and_then(|p| p.parse::<u8>().ok()) else {
+        return false;
+    };
+    if first != 127 {
+        return false;
+    }
+    let mut n = 1usize;
+    for p in parts {
+        if p.parse::<u8>().is_err() {
+            return false;
+        }
+        n += 1;
+    }
+    n == 4
 }
 
 /// Turn chrome input into a final navigation target: the URL itself when it
@@ -347,10 +412,33 @@ mod tests {
 
     #[test]
     fn normalize_url_treats_host_port_as_bare_host() {
-        assert_eq!(normalize_url("localhost:3000"), "https://localhost:3000");
+        assert_eq!(normalize_url("localhost:3000"), "http://localhost:3000");
         assert_eq!(
             normalize_url("192.168.1.1:8080"),
             "https://192.168.1.1:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_url_uses_http_for_loopback() {
+        assert_eq!(normalize_url("localhost"), "http://localhost");
+        assert_eq!(normalize_url("LocalHost/path"), "http://LocalHost/path");
+        assert_eq!(
+            normalize_url("app.localhost:5173"),
+            "http://app.localhost:5173"
+        );
+        assert_eq!(normalize_url("127.0.0.1"), "http://127.0.0.1");
+        assert_eq!(normalize_url("127.0.0.1:8080"), "http://127.0.0.1:8080");
+        assert_eq!(normalize_url("[::1]"), "http://[::1]");
+        assert_eq!(normalize_url("[::1]:3000"), "http://[::1]:3000");
+        assert_eq!(normalize_url("::1"), "http://[::1]");
+    }
+
+    #[test]
+    fn normalize_url_keeps_explicit_http_on_loopback() {
+        assert_eq!(
+            normalize_url("https://localhost:3000"),
+            "https://localhost:3000"
         );
     }
 
@@ -362,6 +450,9 @@ mod tests {
         assert!(looks_like_url("192.168.1.1"));
         assert!(looks_like_url("localhost"));
         assert!(looks_like_url("localhost:3000"));
+        assert!(looks_like_url("127.0.0.1:8080"));
+        assert!(looks_like_url("[::1]"));
+        assert!(looks_like_url("::1"));
     }
 
     #[test]
@@ -377,6 +468,7 @@ mod tests {
     fn resolve_query_navigates_to_urls() {
         assert_eq!(resolve_query("github.com"), "https://github.com");
         assert_eq!(resolve_query("https://slate.auto"), "https://slate.auto");
+        assert_eq!(resolve_query("localhost:3000"), "http://localhost:3000");
     }
 
     #[test]

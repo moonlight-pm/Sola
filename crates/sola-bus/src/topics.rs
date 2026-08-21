@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-pub use sola_core::KeyChord;
-use sola_core::Encrypted;
 pub use sola_core::applications::{Application, ApplicationsConfig};
 pub use sola_core::theme::{NamedTheme, Theme};
+use sola_core::Encrypted;
+pub use sola_core::KeyChord;
 
 use crate::define_topics;
 
@@ -211,8 +211,6 @@ pub struct ChordEvent {
 pub struct MouseClickedPayload {
     pub window_id: u32,
 }
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -542,6 +540,14 @@ pub struct AppToast {
     pub text: String,
 }
 
+/// Live inbox unread count. `sola-mail` emits this; `sola-shell` paints
+/// a menubar chip. Not persisted — sticky so a restarting shell can
+/// replay the last value while mail is still up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MailStatus {
+    pub inbox_unread: u32,
+}
+
 define_topics! {
     // TopicKind is postcard-encoded in Subscribe. Inserting a variant *above*
     // existing ones shifts discriminants; a new client vs an old bus then
@@ -711,6 +717,13 @@ define_topics! {
 
     // Lifecycle
     Shutdown,
+
+    // Inbox unread for the menubar. Appended last so TopicKind postcard
+    // discriminants stay stable. Sticky (not persistent): replay to late
+    // subscribers; mail retracts on exit. Shell also hides the chip when
+    // no sola-mail window is mapped.
+    #[sticky]
+    MailStatus(MailStatus),
 }
 
 #[cfg(test)]
@@ -724,9 +737,7 @@ mod tests {
             selected: Some(PathBuf::from("/tmp/b.jpg")),
         };
         let topic = Topic::PaintSession(session.clone());
-        let value = topic
-            .to_yaml_value()
-            .expect("PaintSession is persistent");
+        let value = topic.to_yaml_value().expect("PaintSession is persistent");
         let restored = Topic::from_yaml_section(TopicKind::PaintSession, value)
             .expect("section should deserialize");
         match restored {
@@ -752,6 +763,17 @@ mod tests {
         };
         assert!(preview.for_app("sola-preview"));
         assert!(!preview.for_app("sola-paint"));
+    }
+
+    #[test]
+    fn mail_status_roundtrips_on_the_wire() {
+        let topic = Topic::MailStatus(MailStatus { inbox_unread: 4 });
+        let msg = topic.to_message();
+        match Topic::parse(&msg) {
+            Some(Topic::MailStatus(s)) => assert_eq!(s.inbox_unread, 4),
+            other => panic!("expected MailStatus, got {other:?}"),
+        }
+        assert_eq!(TopicKind::MailStatus.as_str(), "MailStatus");
     }
 
     #[test]
@@ -814,6 +836,7 @@ mod tests {
         assert_eq!(TopicKind::OutputGeometry.behavior(), Behavior::Sticky);
         assert_eq!(TopicKind::RegisteredChords.behavior(), Behavior::Sticky);
         assert_eq!(TopicKind::SetAppMenu.behavior(), Behavior::Sticky);
+        assert_eq!(TopicKind::MailStatus.behavior(), Behavior::Sticky);
         // Ephemeral variants
         assert_eq!(TopicKind::LaunchApp.behavior(), Behavior::Ephemeral);
         assert_eq!(TopicKind::Frame.behavior(), Behavior::Ephemeral);
@@ -953,7 +976,10 @@ mod tests {
         match Topic::from_yaml_section(TopicKind::FloatGeometry, value) {
             Some(Topic::FloatGeometry(back)) => {
                 assert_eq!(back.app_id, fg.app_id);
-                assert_eq!((back.x, back.y, back.width, back.height), (10, 20, 1280, 800));
+                assert_eq!(
+                    (back.x, back.y, back.width, back.height),
+                    (10, 20, 1280, 800)
+                );
             }
             other => panic!("expected FloatGeometry, got {other:?}"),
         }
@@ -980,8 +1006,14 @@ mod tests {
     #[test]
     fn session_apps_roundtrip_via_message() {
         let apps = vec![
-            SessionApp { app_id: "helium".into(), command: "helium".into() },
-            SessionApp { app_id: "sola-terminal".into(), command: "/opt/sola/bin/sola-terminal".into() },
+            SessionApp {
+                app_id: "helium".into(),
+                command: "helium".into(),
+            },
+            SessionApp {
+                app_id: "sola-terminal".into(),
+                command: "/opt/sola/bin/sola-terminal".into(),
+            },
         ];
         let msg = Topic::SessionApps(apps.clone()).to_message();
         assert_eq!(msg.topic, "SessionApps");
@@ -1253,8 +1285,8 @@ mod tests {
         let value = topic
             .to_yaml_value()
             .expect("Theme is persistent; must serialize to TOML");
-        let restored = Topic::from_yaml_section(TopicKind::Theme, value)
-            .expect("section should deserialize");
+        let restored =
+            Topic::from_yaml_section(TopicKind::Theme, value).expect("section should deserialize");
         match restored {
             Topic::Theme(back) => assert_eq!(theme, back),
             other => panic!("expected Theme, got {other:?}"),

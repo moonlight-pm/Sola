@@ -279,12 +279,7 @@ pub fn accent_glow(accent: Color) -> Shadow {
     }
 }
 
-pub fn filled(
-    base: Pair,
-    strong: Pair,
-    weak: Pair,
-    status: button::Status,
-) -> button::Style {
+pub fn filled(base: Pair, strong: Pair, weak: Pair, status: button::Status) -> button::Style {
     filled_with(base, strong, weak, status, base.text, None)
 }
 
@@ -362,13 +357,21 @@ mod tests {
     use crate::theme;
 
     fn pair(bg: f32, text: f32) -> Pair {
-        Pair::new(Color::from_rgb(bg, bg, bg), Color::from_rgb(text, text, text))
+        Pair::new(
+            Color::from_rgb(bg, bg, bg),
+            Color::from_rgb(text, text, text),
+        )
     }
 
     #[test]
     fn filled_active_uses_base_color_and_text() {
         let base = pair(0.1, 0.9);
-        let s = filled(base, pair(0.2, 0.9), pair(0.05, 0.9), button::Status::Active);
+        let s = filled(
+            base,
+            pair(0.2, 0.9),
+            pair(0.05, 0.9),
+            button::Status::Active,
+        );
         assert_eq!(s.background, Some(Background::Color(base.color)));
         assert_eq!(s.text_color, base.text);
     }
@@ -405,7 +408,12 @@ mod tests {
     #[test]
     fn filled_pressed_uses_weak_bg() {
         let weak = pair(0.05, 0.9);
-        let s = filled(pair(0.1, 0.9), pair(0.2, 0.9), weak, button::Status::Pressed);
+        let s = filled(
+            pair(0.1, 0.9),
+            pair(0.2, 0.9),
+            weak,
+            button::Status::Pressed,
+        );
         assert_eq!(s.background, Some(Background::Color(weak.color)));
     }
 
@@ -432,7 +440,10 @@ mod tests {
         let t = theme::default_theme();
         let ext = t.extended_palette();
         let b = hairline(ext, RADIUS_LG);
-        assert!((b.color.a - 1.0).abs() < 1e-6, "must be opaque for iced linear path");
+        assert!(
+            (b.color.a - 1.0).abs() < 1e-6,
+            "must be opaque for iced linear path"
+        );
         // Lighter than the raised surface, darker than pure mid-grey.
         let raised = ext.background.weaker.color;
         assert!(b.color.r > raised.r);

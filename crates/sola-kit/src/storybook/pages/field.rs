@@ -4,7 +4,7 @@ use iced::widget::{column, container, text};
 use iced::{Border, Color, Element, Length};
 
 use sola_kit::components::field;
-use sola_kit::components::style::{bevel_frame, stage_fill, RADIUS_XL};
+use sola_kit::components::style::{RADIUS_XL, bevel_frame, stage_fill};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::components::text_input as kit_input;
 use sola_kit::fonts;
@@ -36,11 +36,8 @@ impl State {
 pub fn view(state: &State) -> Element<'_, Msg> {
     let form = container(
         column![
-            text("Account")
-                .font(fonts::display())
-                .size(16),
-            body("Stacked label + control. Error replaces help in the same slot.")
-                .style(muted),
+            text("Account").font(fonts::display()).size(16),
+            body("Stacked label + control. Error replaces help in the same slot.").style(muted),
             field(
                 "Username",
                 kit_input::text_input("naturalethic", &state.username)

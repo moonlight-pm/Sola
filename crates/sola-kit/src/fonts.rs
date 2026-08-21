@@ -55,7 +55,6 @@ pub fn ensure_system_fonts() {
     });
 }
 
-
 /// Semantic font roles — what kit components actually reach for.
 ///
 /// Each field is a `Font` (a family + weight + style). Defaults prefer
@@ -118,11 +117,21 @@ fn current() -> Fonts {
     FONTS.read().map(|g| g.clone()).unwrap_or_default()
 }
 
-pub fn ui() -> Font { current().ui }
-pub fn ui_medium() -> Font { current().ui_medium }
-pub fn display() -> Font { current().display }
-pub fn chrome() -> Font { current().chrome }
-pub fn mono() -> Font { current().mono }
+pub fn ui() -> Font {
+    current().ui
+}
+pub fn ui_medium() -> Font {
+    current().ui_medium
+}
+pub fn display() -> Font {
+    current().display
+}
+pub fn chrome() -> Font {
+    current().chrome
+}
+pub fn mono() -> Font {
+    current().mono
+}
 
 /// Real per-em metrics of a monospace font, read from its TTF tables.
 ///
@@ -144,7 +153,10 @@ impl Default for FontMetrics {
         // (1020 − (−300) + 0) / 1000 = 1.32. Matches what the parser
         // reads from JetBrainsMono-Regular.ttf, so the fallback path and
         // the parsed path agree when the active mono IS JetBrains Mono.
-        Self { advance_per_em: 0.6, line_per_em: 1.32 }
+        Self {
+            advance_per_em: 0.6,
+            line_per_em: 1.32,
+        }
     }
 }
 
@@ -209,8 +221,6 @@ fn mono_metrics_from_db(want: &str) -> Option<FontMetrics> {
     .flatten()
 }
 
-
-
 /// Read advance/line ratios off a parsed face. `None` if `units_per_em` is 0
 /// (malformed) or no representative glyph has an advance.
 fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
@@ -238,7 +248,6 @@ fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
         line_per_em: line / upm,
     })
 }
-
 
 /// Recommended families Sola defaults to (and common fallbacks). These seed
 /// the font picker vocabulary; [`pickable_families`] folds in every
@@ -333,7 +342,6 @@ fn static_family(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
 }
 
-
 /// Every family name an in-app font picker can offer: the shipped
 /// Families the picker offers = exactly what's installed system-wide
 /// (fontconfig); falls back to [`INSTALLED_FAMILIES`] only when no system
@@ -347,7 +355,8 @@ pub fn pickable_families() -> Vec<String> {
     } else {
         sys
     }
-}/// Family names fontdb finds installed on the system, sorted and
+}
+/// Family names fontdb finds installed on the system, sorted and
 
 /// True when `family` is present in iced's font database (i.e. the renderer
 /// can actually draw it). Mirrors the DB the renderer uses, so "available"
@@ -456,7 +465,11 @@ mod tests {
             }
             return;
         }
-        for fam in [FALLBACK_UI_FAMILY, FALLBACK_MONO_FAMILY, DEFAULT_MONO_FAMILY] {
+        for fam in [
+            FALLBACK_UI_FAMILY,
+            FALLBACK_MONO_FAMILY,
+            DEFAULT_MONO_FAMILY,
+        ] {
             if family_available(fam) {
                 assert!(
                     all.contains(&fam.to_string()),
@@ -484,7 +497,11 @@ mod tests {
         let mut sorted = all.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(all.len(), sorted.len(), "pickable_families contains duplicates");
+        assert_eq!(
+            all.len(),
+            sorted.len(),
+            "pickable_families contains duplicates"
+        );
         // Every returned family either passes family_available() or is one of
         // the INSTALLED_FAMILIES fallback entries (which are valid system names
         // on this machine since sys was non-empty above).

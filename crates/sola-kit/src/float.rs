@@ -86,7 +86,9 @@ impl FloatState {
 
     /// Is any of this app's surfaces floating? Convenient for single-window apps.
     pub fn is_floating_any(&self) -> bool {
-        self.ids_by_title.values().any(|id| self.floating.contains(id))
+        self.ids_by_title
+            .values()
+            .any(|id| self.floating.contains(id))
     }
 
     /// Any compositor `window_id` belonging to this app, if known.
@@ -188,17 +190,35 @@ mod tests {
         assert!(!fs.is_floating_any());
 
         // our window floats
-        fs.update(&Topic::WindowFloating(WindowFloating { window_id: 7, floating: true }).to_message());
+        fs.update(
+            &Topic::WindowFloating(WindowFloating {
+                window_id: 7,
+                floating: true,
+            })
+            .to_message(),
+        );
         assert!(fs.is_floating_any());
         assert!(fs.is_floating("Monitor"));
 
         // another app's float does not count as ours
-        fs.update(&Topic::WindowFloating(WindowFloating { window_id: 9, floating: true }).to_message());
+        fs.update(
+            &Topic::WindowFloating(WindowFloating {
+                window_id: 9,
+                floating: true,
+            })
+            .to_message(),
+        );
         assert!(fs.is_floating("Monitor"));
         assert!(!fs.is_floating("Other")); // "Other" isn't ours
 
         // unfloat clears it
-        fs.update(&Topic::WindowFloating(WindowFloating { window_id: 7, floating: false }).to_message());
+        fs.update(
+            &Topic::WindowFloating(WindowFloating {
+                window_id: 7,
+                floating: false,
+            })
+            .to_message(),
+        );
         assert!(!fs.is_floating_any());
         assert!(!fs.is_floating("Monitor"));
     }
@@ -207,7 +227,13 @@ mod tests {
     fn closed_window_drops_from_tracking() {
         let mut fs = FloatState::new("sola-monitor");
         fs.update(&Topic::Windows(vec![win(7, "sola-monitor", "Monitor")]).to_message());
-        fs.update(&Topic::WindowFloating(WindowFloating { window_id: 7, floating: true }).to_message());
+        fs.update(
+            &Topic::WindowFloating(WindowFloating {
+                window_id: 7,
+                floating: true,
+            })
+            .to_message(),
+        );
         assert!(fs.is_floating_any());
         // window closes → Windows no longer lists it
         fs.update(&Topic::Windows(vec![]).to_message());

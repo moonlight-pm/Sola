@@ -4,9 +4,9 @@ use iced::widget::{column, container, row};
 use iced::{Element, Length};
 
 use sola_kit::components::button as kit_btn;
+use sola_kit::components::card as card_mod;
 use sola_kit::components::text::{body, caption, muted};
 use sola_kit::components::{card, modal, plain};
-use sola_kit::components::card as card_mod;
 
 use crate::storybook::Msg;
 use crate::storybook::pages::chrome::{lede, panel, scene};
@@ -23,16 +23,10 @@ pub fn view() -> Element<'static, Msg> {
     .width(Length::Fill);
 
     let stacked = column![
-        plain(
-            body("Plain — raised, no border. Quieter when cards stack.")
-                .style(muted),
-        )
-        .width(Length::Fill),
-        plain(
-            body("Another plain row. Hairlines would chatter here.")
-                .style(muted),
-        )
-        .width(Length::Fill),
+        plain(body("Plain — raised, no border. Quieter when cards stack.").style(muted),)
+            .width(Length::Fill),
+        plain(body("Another plain row. Hairlines would chatter here.").style(muted),)
+            .width(Length::Fill),
     ]
     .spacing(8);
 

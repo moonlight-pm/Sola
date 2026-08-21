@@ -14,5 +14,7 @@ pub fn readable<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
     max_width: f32,
 ) -> Container<'a, Message, Theme> {
-    container(content).max_width(max_width).center_x(Length::Fill)
+    container(content)
+        .max_width(max_width)
+        .center_x(Length::Fill)
 }

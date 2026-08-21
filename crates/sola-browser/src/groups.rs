@@ -37,12 +37,16 @@ impl Groups {
             if m.id.trim().is_empty() || m.name.trim().is_empty() {
                 continue;
             }
+            if g.groups.iter().any(|gr| gr.id == m.id) {
+                continue;
+            }
             g.groups.push(TabGroup {
                 id: m.id.clone(),
                 name: m.name.clone(),
                 collapsed: m.collapsed,
             });
         }
+        bump_id_counter(&g.groups);
         for (tab, id) in tabs.iter().zip(ids.iter()) {
             let Some(gid) = tab.group_id.as_deref() else {
                 continue;
@@ -148,7 +152,7 @@ impl Groups {
     /// New group at the end of the groups region. Tab leaves any old group.
     pub fn new_group(&mut self, tab: TabId) {
         self.leave(tab);
-        let id = new_group_id();
+        let id = new_group_id(&self.groups);
         self.groups.push(TabGroup {
             id: id.clone(),
             name: self.next_name(),
@@ -399,8 +403,25 @@ impl Groups {
     }
 }
 
-fn new_group_id() -> String {
-    format!("g{}", NEXT_GROUP.fetch_add(1, Ordering::Relaxed))
+fn new_group_id(existing: &[TabGroup]) -> String {
+    loop {
+        let id = format!("g{}", NEXT_GROUP.fetch_add(1, Ordering::Relaxed));
+        if !existing.iter().any(|g| g.id == id) {
+            return id;
+        }
+    }
+}
+
+/// After restore, skip past the highest `gN` already on disk so the
+/// next [`Groups::new_group`] cannot reuse Research's id (and pull
+/// every `g1` member into the new folder).
+fn bump_id_counter(groups: &[TabGroup]) {
+    let max = groups
+        .iter()
+        .filter_map(|g| g.id.strip_prefix('g')?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    let _ = NEXT_GROUP.fetch_max(max.saturating_add(1), Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -538,6 +559,47 @@ mod tests {
             Some(g.groups[2].id.clone())
         );
         assert_eq!(tabs.last().map(|t| t.id.0), Some(4)); // remaining loose
+    }
+
+    #[test]
+    fn new_group_after_restore_does_not_reuse_ids() {
+        let session_tabs = vec![SessionTab {
+            url: "https://a/".into(),
+            title: "a".into(),
+            group_id: Some("g1".into()),
+            ..SessionTab::default()
+        }];
+        let g = Groups::restore(
+            &session_tabs,
+            &[TabId(1)],
+            &[SessionGroup {
+                id: "g1".into(),
+                name: "Research".into(),
+                collapsed: false,
+            }],
+        );
+        let mut g = g;
+        g.new_group(TabId(2));
+        assert_ne!(g.groups[1].id, "g1");
+        assert_eq!(g.of_tab(TabId(1)), Some("g1"));
+        assert_eq!(
+            g.of_tab(TabId(2)).map(str::to_string),
+            Some(g.groups[1].id.clone())
+        );
+        assert_eq!(g.groups[0].name, "Research");
+        assert_eq!(g.groups[1].name, "Group");
+        // Each group lists only its own members (no doubled strip).
+        let tabs = vec![tab(1, "a"), tab(2, "b")];
+        let rows = g.visible_rows(&tabs);
+        assert_eq!(
+            rows,
+            vec![
+                StripRow::Header("g1".into()),
+                StripRow::Tab(TabId(1)),
+                StripRow::Header(g.groups[1].id.clone()),
+                StripRow::Tab(TabId(2)),
+            ]
+        );
     }
 
     #[test]

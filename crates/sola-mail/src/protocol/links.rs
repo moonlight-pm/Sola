@@ -1,7 +1,7 @@
-//! Extract clickable http(s) URLs from plain text and HTML mail bodies.
-//!
-//! Soft-wrapped URLs (line break mid-path, common at ~78 columns or from
-//! `html2text`) are rejoined so they still produce a full clickable target.
+//! URL extraction tests (production reading uses kit `prose`).
+//! Soft-wrapped URLs (line break mid-path) are rejoined so they still
+//! produce a full clickable target.
+#![allow(dead_code)]
 
 use crate::protocol::types::MessageBody;
 

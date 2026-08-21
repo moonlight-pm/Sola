@@ -1,7 +1,7 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [stats] [clock]
+//!   [≡] [App Name] [Menu1] [Menu2] … ──────── [mail?] [stats] [clock]
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
 //!
 //! Transient toasts are overlaid at the **horizontal center** of the bar
@@ -255,6 +255,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .into();
         cluster.push(chip);
     }
+    if let Some(unread) = shell.mail_unread_badge() {
+        let accent = shell.theme.extended_palette().primary.base.color;
+        cluster.push(mail_unread_chip(unread, accent));
+    }
     cluster.push(cpu_btn);
     if let Some(g) = shell.stats.gpu {
         let gpu_btn: Element<'_, Msg> = bar_button(
@@ -454,6 +458,32 @@ fn stat_indicator<'a>(
     ]
     .spacing(STAT_INNER_SPACING)
     .align_y(iced::alignment::Vertical::Center)
+    .into()
+}
+
+/// Inbox unread: mail glyph + accent count. Hidden by the caller when
+/// mail is closed or the count is zero.
+fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
+    let label = if unread > 99 {
+        "99+".to_string()
+    } else {
+        unread.to_string()
+    };
+    bar_button(
+        row![
+            icon_colored("lucide/mail", ICON_SIZE, accent),
+            text(label)
+                .font(fonts::chrome())
+                .size(CHROME_SIZE)
+                .style(move |_: &Theme| iced::widget::text::Style {
+                    color: Some(accent)
+                }),
+        ]
+        .spacing(STAT_INNER_SPACING)
+        .align_y(Alignment::Center),
+        false,
+        Msg::RaiseMail,
+    )
     .into()
 }
 

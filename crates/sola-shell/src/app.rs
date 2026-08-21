@@ -96,6 +96,8 @@ pub enum Msg {
     LaunchApp(String),
     /// Menubar chip: unhide a composition-hidden app (AppHidden retract) and raise it.
     UnhideApp(String),
+    /// Menubar unread chip: raise (and unhide) sola-mail.
+    RaiseMail,
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
@@ -271,6 +273,9 @@ pub struct Shell {
     pub net_down_hist: crate::stats::History,
     pub net_up_hist: crate::stats::History,
     pub gpu_hist: crate::stats::History,
+    /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
+    /// is mapped and this is `Some(n)` with `n > 0`.
+    pub inbox_unread: Option<u32>,
 }
 
 impl Shell {
@@ -359,6 +364,7 @@ impl Shell {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
+            inbox_unread: None,
         };
 
         (state, task)
@@ -416,6 +422,30 @@ impl Shell {
             }
         }
         self.emit_composition();
+    }
+
+    pub fn mail_is_mapped(&self) -> bool {
+        self.known_windows
+            .iter()
+            .any(|w| w.app_id.eq_ignore_ascii_case("sola-mail"))
+    }
+
+    /// Unread to show in the menubar, if any.
+    pub fn mail_unread_badge(&self) -> Option<u32> {
+        let n = self.inbox_unread.filter(|n| *n > 0)?;
+        if self.mail_is_mapped() {
+            Some(n)
+        } else {
+            None
+        }
+    }
+
+    /// Raise sola-mail (unhide first if it is composition-hidden).
+    pub fn activate_mail(&mut self) {
+        if self.is_app_hidden("sola-mail") {
+            self.unhide_app("sola-mail");
+        }
+        self.raise_app("sola-mail");
     }
 
     /// Dismiss transient shell overlays so a capture doesn't leave the
@@ -858,7 +888,7 @@ impl Shell {
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
-        // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
+                                          // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
         bindings.push(KeyCode::KEY_5.meta_shift());
@@ -1391,6 +1421,10 @@ impl Shell {
                 self.unhide_app(&app_id);
                 iced::Task::none()
             }
+            Msg::RaiseMail => {
+                self.activate_mail();
+                iced::Task::none()
+            }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {
                 if next {
@@ -1666,6 +1700,7 @@ mod pending_launch_tests {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
+            inbox_unread: None,
         };
         shell.menubar.toast_generation = 1;
         shell.menubar.toast = Some("Opening Terminal…".into());

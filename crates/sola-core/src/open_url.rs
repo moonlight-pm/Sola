@@ -76,6 +76,9 @@ fn try_handoff_running_chrome(uri: &str) -> bool {
 }
 
 /// True when iced chrome is bound to `chrome.sock`.
+///
+/// Connect-only: the chrome treats an empty read as a probe, not an
+/// activate / open (see `sola-browser` `instance::read_handoff`).
 pub fn chrome_is_running() -> bool {
     UnixStream::connect(chrome_sock_path()).is_ok()
 }

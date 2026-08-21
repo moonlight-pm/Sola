@@ -38,10 +38,10 @@
 //! their atoms; iced auto-derives weak/strong tiers we don't need to
 //! pin.
 
-use iced::{Color, Theme};
 use iced::theme::palette::{
     Background, Danger, Extended, Pair, Palette, Primary, Secondary, Success, Warning,
 };
+use iced::{Color, Theme};
 
 use sola_core::theme::Theme as BusTheme;
 
@@ -69,10 +69,14 @@ pub mod hex {
     pub const BG_HOVER: &str = "#1e2533";
     /// Stronger edges / hard chrome (soft hairlines use white@α in style).
     pub const BORDER: &str = "#2a3344";
-    /// Selected-row / text-selection fill — cool graphite lift, not a
+    /// Selected-row / field text-selection fill — cool graphite lift, not a
     /// darkened neon. `#3dd6f5` goes muddy when mixed toward black, so
-    /// selection is a slate step above raised (distinct from `BG_HOVER`)
+    /// this atom is a slate step above raised (distinct from `BG_HOVER`)
     /// and neon stays full-chroma for accent only.
+    ///
+    /// Terminal / Workspaces **cell** selection is not this atom: those
+    /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
+    /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
     pub const SELECTION: &str = "#2c333e";
 }
 
@@ -129,7 +133,16 @@ fn extended_from_atoms(a: &Atoms) -> Extended {
     // `selection` is intentionally not bound — it has no iced palette
     // slot and is delivered via the process-wide cell, not this binding.
     let Atoms {
-        bg, bg_raised, bg_hover, border, fg, fg_muted, accent, success, warning, danger,
+        bg,
+        bg_raised,
+        bg_hover,
+        border,
+        fg,
+        fg_muted,
+        accent,
+        success,
+        warning,
+        danger,
         selection: _,
     } = *a;
     Extended {
@@ -267,7 +280,6 @@ pub fn to_bus_theme() -> BusTheme {
     bus_theme_from_atoms(&Atoms::default())
 }
 
-
 /// Editable atom set — every colour the iced kit's theme depends on,
 /// held as `iced::Color` so the storybook can mutate one and rebuild.
 ///
@@ -341,19 +353,74 @@ struct AtomBinding {
 }
 
 const ATOM_BINDINGS: &[AtomBinding] = &[
-    AtomBinding { token: "bg-primary",    fallback: hex::BG,        get: |a| a.bg,        set: |a, c| a.bg = c },
-    AtomBinding { token: "bg-secondary",  fallback: hex::BG_RAISED, get: |a| a.bg_raised, set: |a, c| a.bg_raised = c },
+    AtomBinding {
+        token: "bg-primary",
+        fallback: hex::BG,
+        get: |a| a.bg,
+        set: |a, c| a.bg = c,
+    },
+    AtomBinding {
+        token: "bg-secondary",
+        fallback: hex::BG_RAISED,
+        get: |a| a.bg_raised,
+        set: |a, c| a.bg_raised = c,
+    },
     // Hover elevation reads the seed's real `bg-hover`, not `bg-tertiary`.
-    AtomBinding { token: "bg-hover",      fallback: hex::BG_HOVER,  get: |a| a.bg_hover,  set: |a, c| a.bg_hover = c },
-    AtomBinding { token: "border",        fallback: hex::BORDER,    get: |a| a.border,    set: |a, c| a.border = c },
-    AtomBinding { token: "text-primary",  fallback: hex::FG,        get: |a| a.fg,        set: |a, c| a.fg = c },
-    AtomBinding { token: "text-tertiary", fallback: hex::FG_MUTED,  get: |a| a.fg_muted,  set: |a, c| a.fg_muted = c },
-    AtomBinding { token: "accent",        fallback: hex::ACCENT,    get: |a| a.accent,    set: |a, c| a.accent = c },
-    AtomBinding { token: "success",       fallback: hex::SUCCESS,   get: |a| a.success,   set: |a, c| a.success = c },
-    AtomBinding { token: "warning",       fallback: hex::WARNING,   get: |a| a.warning,   set: |a, c| a.warning = c },
-    AtomBinding { token: "danger",        fallback: hex::DANGER,    get: |a| a.danger,    set: |a, c| a.danger = c },
+    AtomBinding {
+        token: "bg-hover",
+        fallback: hex::BG_HOVER,
+        get: |a| a.bg_hover,
+        set: |a, c| a.bg_hover = c,
+    },
+    AtomBinding {
+        token: "border",
+        fallback: hex::BORDER,
+        get: |a| a.border,
+        set: |a, c| a.border = c,
+    },
+    AtomBinding {
+        token: "text-primary",
+        fallback: hex::FG,
+        get: |a| a.fg,
+        set: |a, c| a.fg = c,
+    },
+    AtomBinding {
+        token: "text-tertiary",
+        fallback: hex::FG_MUTED,
+        get: |a| a.fg_muted,
+        set: |a, c| a.fg_muted = c,
+    },
+    AtomBinding {
+        token: "accent",
+        fallback: hex::ACCENT,
+        get: |a| a.accent,
+        set: |a, c| a.accent = c,
+    },
+    AtomBinding {
+        token: "success",
+        fallback: hex::SUCCESS,
+        get: |a| a.success,
+        set: |a, c| a.success = c,
+    },
+    AtomBinding {
+        token: "warning",
+        fallback: hex::WARNING,
+        get: |a| a.warning,
+        set: |a, c| a.warning = c,
+    },
+    AtomBinding {
+        token: "danger",
+        fallback: hex::DANGER,
+        get: |a| a.danger,
+        set: |a, c| a.danger = c,
+    },
     // No iced palette slot; round-trips on the bus, delivered process-wide.
-    AtomBinding { token: "selection",     fallback: hex::SELECTION, get: |a| a.selection, set: |a, c| a.selection = c },
+    AtomBinding {
+        token: "selection",
+        fallback: hex::SELECTION,
+        get: |a| a.selection,
+        set: |a, c| a.selection = c,
+    },
 ];
 
 /// Build a `BusTheme` from an editable atom set, writing every token in
@@ -379,7 +446,6 @@ pub fn bus_theme_from_atoms(atoms: &Atoms) -> BusTheme {
     }
     t
 }
-
 
 /// Per-role family selection — what `Topic::Theme` carries on the wire
 /// for the kit's font roles. Defaults match seed strings (SF Pro Text +
@@ -413,11 +479,11 @@ impl Default for FontSelection {
 pub fn bus_theme_with_fonts(mut t: BusTheme, fonts: &FontSelection) -> BusTheme {
     use sola_core::theme::{Token, TokenKind};
     let writes = [
-        ("font-ui",        fonts.ui.clone()),
+        ("font-ui", fonts.ui.clone()),
         ("font-ui-medium", fonts.ui_medium.clone()),
-        ("font-display",   fonts.display.clone()),
-        ("font-chrome",    fonts.chrome.clone()),
-        ("font-mono",      fonts.mono.clone()),
+        ("font-display", fonts.display.clone()),
+        ("font-chrome", fonts.chrome.clone()),
+        ("font-mono", fonts.mono.clone()),
     ];
     for (name, value) in writes {
         t.palette.tokens.insert(
@@ -453,7 +519,6 @@ pub fn fonts_from_bus_theme(bus: &BusTheme) -> crate::fonts::Fonts {
     let mono = read("font-mono", &default.mono);
     crate::fonts::fonts_from_families(&ui, &ui_medium, &display, &chrome, &mono)
 }
-
 
 /// Read the colour atoms out of a `BusTheme` (the inverse of
 /// [`bus_theme_from_atoms`]). Missing or malformed tokens fall back to
@@ -588,7 +653,14 @@ fn shell_space(bus: &BusTheme, token: &str, fallback: f32) -> f32 {
     bus.palette
         .tokens
         .get(token)
-        .and_then(|t| t.value.trim().strip_suffix("px")?.trim().parse::<f32>().ok())
+        .and_then(|t| {
+            t.value
+                .trim()
+                .strip_suffix("px")?
+                .trim()
+                .parse::<f32>()
+                .ok()
+        })
         .unwrap_or(fallback)
 }
 
@@ -605,7 +677,11 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
         switcher_border: shell_color(bus, "shell-switcher-border", d.switcher_border),
         switcher_icon_bg: shell_color(bus, "shell-switcher-icon-bg", d.switcher_icon_bg),
         switcher_icon_fg: shell_color(bus, "shell-switcher-icon-fg", d.switcher_icon_fg),
-        switcher_icon_fg_sel: shell_color(bus, "shell-switcher-icon-fg-sel", d.switcher_icon_fg_sel),
+        switcher_icon_fg_sel: shell_color(
+            bus,
+            "shell-switcher-icon-fg-sel",
+            d.switcher_icon_fg_sel,
+        ),
         switcher_pad: shell_space(bus, "shell-switcher-pad", d.switcher_pad),
         switcher_tile_pad: shell_space(bus, "shell-switcher-tile-pad", d.switcher_tile_pad),
         launcher_width: shell_space(bus, "shell-launcher-width", d.launcher_width),
@@ -621,17 +697,61 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
 pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
     use sola_core::theme::{Token, TokenKind};
     let entries: [(&str, TokenKind, String); 11] = [
-        ("shell-menubar-bg", TokenKind::Color, color_to_hex(shell.menubar_bg)),
-        ("shell-backdrop-dim", TokenKind::Color, color_to_hex(shell.backdrop_dim)),
-        ("shell-switcher-bg", TokenKind::Color, color_to_hex(shell.switcher_bg)),
-        ("shell-switcher-border", TokenKind::Color, color_to_hex(shell.switcher_border)),
-        ("shell-switcher-icon-bg", TokenKind::Color, color_to_hex(shell.switcher_icon_bg)),
-        ("shell-switcher-icon-fg", TokenKind::Color, color_to_hex(shell.switcher_icon_fg)),
-        ("shell-switcher-icon-fg-sel", TokenKind::Color, color_to_hex(shell.switcher_icon_fg_sel)),
-        ("shell-switcher-pad", TokenKind::Space, format!("{}px", shell.switcher_pad)),
-        ("shell-switcher-tile-pad", TokenKind::Space, format!("{}px", shell.switcher_tile_pad)),
-        ("shell-launcher-width", TokenKind::Space, format!("{}px", shell.launcher_width)),
-        ("shell-launcher-pad", TokenKind::Space, format!("{}px", shell.launcher_pad)),
+        (
+            "shell-menubar-bg",
+            TokenKind::Color,
+            color_to_hex(shell.menubar_bg),
+        ),
+        (
+            "shell-backdrop-dim",
+            TokenKind::Color,
+            color_to_hex(shell.backdrop_dim),
+        ),
+        (
+            "shell-switcher-bg",
+            TokenKind::Color,
+            color_to_hex(shell.switcher_bg),
+        ),
+        (
+            "shell-switcher-border",
+            TokenKind::Color,
+            color_to_hex(shell.switcher_border),
+        ),
+        (
+            "shell-switcher-icon-bg",
+            TokenKind::Color,
+            color_to_hex(shell.switcher_icon_bg),
+        ),
+        (
+            "shell-switcher-icon-fg",
+            TokenKind::Color,
+            color_to_hex(shell.switcher_icon_fg),
+        ),
+        (
+            "shell-switcher-icon-fg-sel",
+            TokenKind::Color,
+            color_to_hex(shell.switcher_icon_fg_sel),
+        ),
+        (
+            "shell-switcher-pad",
+            TokenKind::Space,
+            format!("{}px", shell.switcher_pad),
+        ),
+        (
+            "shell-switcher-tile-pad",
+            TokenKind::Space,
+            format!("{}px", shell.switcher_tile_pad),
+        ),
+        (
+            "shell-launcher-width",
+            TokenKind::Space,
+            format!("{}px", shell.launcher_width),
+        ),
+        (
+            "shell-launcher-pad",
+            TokenKind::Space,
+            format!("{}px", shell.launcher_pad),
+        ),
     ];
     for (name, kind, value) in entries {
         match t.palette.tokens.get_mut(name) {
@@ -723,10 +843,19 @@ mod tests {
     #[test]
     fn seed_speaks_font_role_vocabulary() {
         let tokens = &BusTheme::default().palette.tokens;
-        for role in ["font-ui", "font-ui-medium", "font-display", "font-chrome", "font-mono"] {
+        for role in [
+            "font-ui",
+            "font-ui-medium",
+            "font-display",
+            "font-chrome",
+            "font-mono",
+        ] {
             assert!(tokens.contains_key(role), "seed missing {role}");
         }
-        assert!(!tokens.contains_key("font-sans"), "seed still carries font-sans");
+        assert!(
+            !tokens.contains_key("font-sans"),
+            "seed still carries font-sans"
+        );
     }
 
     // The seed's font roles must resolve to the kit's default font table.
@@ -764,7 +893,10 @@ mod tests {
         assert_eq!(ext.background.base.color.a, 0.0, "base must be transparent");
         assert!(ext.background.weak.color.a > 0.0, "weak must be opaque");
         assert!(ext.background.strong.color.a > 0.0, "strong must be opaque");
-        assert!(ext.background.base.text.a > 0.0, "base text must be readable");
+        assert!(
+            ext.background.base.text.a > 0.0,
+            "base text must be readable"
+        );
     }
 
     // overlay must preserve sola atom tiers — not iced Extended::generate greys.
@@ -807,7 +939,10 @@ mod tests {
         let ext = t.extended_palette();
         let bg = ext.background.base.color;
         assert!(bg.a > 0.0, "menubar base must be opaque");
-        assert!(bg.r < 0.1 && bg.g < 0.1 && bg.b < 0.1, "menubar base must be black-ish");
+        assert!(
+            bg.r < 0.1 && bg.g < 0.1 && bg.b < 0.1,
+            "menubar base must be black-ish"
+        );
         assert_eq!(
             ext.primary.base.color,
             default_theme().extended_palette().primary.base.color,
@@ -873,7 +1008,11 @@ mod tests {
         assert_eq!(atoms.bg, parse("#0c0e12"));
         assert_eq!(atoms.bg_raised, parse("#151922"));
         assert_eq!(atoms.accent, parse("#3dd6f5"), "soft cyan accent");
-        assert_eq!(atoms.selection, parse("#2c333e"), "graphite selection, not dark cyan");
+        assert_eq!(
+            atoms.selection,
+            parse("#2c333e"),
+            "graphite selection, not dark cyan"
+        );
         // Not the old Primer canvas or macOS system greys
         assert_ne!(atoms.bg, parse("#0d1117"));
         assert_ne!(atoms.bg, parse("#1c1c1e"));
@@ -896,12 +1035,18 @@ mod tests {
         // BusTheme::default() seeds the shell-* tokens (Task 1), and
         // ShellStyle::default() parses the same constant strings — the
         // two must agree byte-for-byte for preset resync matching.
-        assert_eq!(shell_style_from_bus_theme(&BusTheme::default()), ShellStyle::default());
+        assert_eq!(
+            shell_style_from_bus_theme(&BusTheme::default()),
+            ShellStyle::default()
+        );
     }
 
     #[test]
     fn shell_style_defaults_from_empty_palette() {
-        let empty = BusTheme { palette: Default::default(), components: Default::default() };
+        let empty = BusTheme {
+            palette: Default::default(),
+            components: Default::default(),
+        };
         assert_eq!(shell_style_from_bus_theme(&empty), ShellStyle::default());
     }
 
@@ -920,7 +1065,11 @@ mod tests {
     #[test]
     fn shell_style_malformed_token_falls_back() {
         let mut bus = BusTheme::default();
-        bus.palette.tokens.get_mut("shell-switcher-pad").unwrap().value = "garbage".into();
+        bus.palette
+            .tokens
+            .get_mut("shell-switcher-pad")
+            .unwrap()
+            .value = "garbage".into();
         let style = shell_style_from_bus_theme(&bus);
         assert_eq!(style.switcher_pad, ShellStyle::default().switcher_pad);
     }

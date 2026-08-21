@@ -3,7 +3,7 @@
 use iced::widget::{column, container, text};
 use iced::{Border, Color, Element, Length, Theme};
 
-use sola_kit::components::style::{bevel_frame, stage_fill, RADIUS_XL};
+use sola_kit::components::style::{RADIUS_XL, bevel_frame, stage_fill};
 use sola_kit::components::text::{body, heading, muted};
 
 /// Page title + one muted sentence.
@@ -37,9 +37,12 @@ pub fn panel<'a, Message: 'a>(
                 ..Default::default()
             }
         });
-    container(face).padding(1).width(Length::Fill).style(|theme: &Theme| {
-        bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
-    })
+    container(face)
+        .padding(1)
+        .width(Length::Fill)
+        .style(|theme: &Theme| {
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_XL)
+        })
 }
 
 /// Small section label inside a page.

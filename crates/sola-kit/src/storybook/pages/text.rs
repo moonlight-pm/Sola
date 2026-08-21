@@ -1,10 +1,10 @@
 //! Typography — roles in a reading column, tones on a second.
 
-use iced::widget::column;
 use iced::Element;
+use iced::widget::column;
 
 use sola_kit::components::text::{
-    accent, body, caption, code, danger, heading, muted, subheading, success, warning,
+    accent, body, caption, code, danger, heading, muted, prose, subheading, success, warning,
 };
 
 use crate::storybook::Msg;
@@ -20,6 +20,7 @@ pub fn view() -> Element<'static, Msg> {
         panel(column![
             heading("Heading · 22 display"),
             subheading("Subheading · 15 display"),
+            prose("Prose · 14 — mail bodies, long-form reading"),
             body("Body · 13 — settings rows, dialogs, lists"),
             caption("Caption · 11 — help, secondary labels").style(muted),
             code("Code · 12 mono — IDs, hex, detail panels"),

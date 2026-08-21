@@ -32,17 +32,17 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use iced::advanced::Renderer as _;
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{Clipboard, Shell, Widget};
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
     Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
     text,
 };
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::renderer;
-use iced::advanced::widget::{Operation, Tree};
-use iced::advanced::{Clipboard, Shell, Widget};
-use iced::advanced::Renderer as _;
 use iced::{
     Animation, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Shadow, Size,
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
@@ -50,8 +50,8 @@ use iced::{
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
-    inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_SM,
-    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    CHROME_SURFACE, RADIUS_LG, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    inset_surface, linear_bg, mix, mix_white,
 };
 use crate::fonts;
 
@@ -121,8 +121,10 @@ pub struct SidebarItem<'a, Message> {
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
     /// When set, [`SidebarPanel`] renders a hover-only stacked `×` that
-    /// emits this message. Requires [`SidebarPanel::item_hover`] plus
-    /// [`Self::id`] (auto-assigned from the row index when missing).
+    /// emits this message. Visibility is live pointer-over-row when
+    /// [`SidebarPanel::item_hover`] is wired (so a close that slides the
+    /// next row under a stationary cursor still shows the chip). `id` is
+    /// auto-assigned from the row index when missing.
     pub on_close: Option<Message>,
     /// Dim trailing label (e.g. relative time `19m`, unread count).
     /// Laid out in a fixed trailing column so it cannot crush the title.
@@ -191,7 +193,9 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self
     }
 
-    /// Attach a hover-only stacked `×` emitting `msg`.
+    /// Attach a hover-only stacked `×` emitting `msg`. With
+    /// [`SidebarPanel::item_hover`] the chip follows the pointer after
+    /// a row slides away (no mouse-out needed).
     pub fn on_close(mut self, msg: Message) -> Self {
         self.on_close = Some(msg);
         self
@@ -484,7 +488,11 @@ fn item_row_height<Message>(item: &SidebarItem<'_, Message>, density: SidebarDen
     if let Some(h) = item.height_hint {
         return h;
     }
-    if item.content.is_some() || item.chrome == SidebarItemChrome::Card {
+    // Header rename fields use `content` but must stay a list row —
+    // card height is only for session/card chrome.
+    if item.section_header.is_none()
+        && (item.content.is_some() || item.chrome == SidebarItemChrome::Card)
+    {
         return CARD_HEIGHT_HINT;
     }
     let m = density.metrics();
@@ -534,7 +542,10 @@ pub fn section_content_height_with<Message>(
     if items.is_empty() {
         return pad_v;
     }
-    let rows: f32 = items.iter().map(|item| item_row_height(item, density)).sum();
+    let rows: f32 = items
+        .iter()
+        .map(|item| item_row_height(item, density))
+        .sum();
     let gaps = item_spacing * items.len().saturating_sub(1) as f32;
     pad_v + rows + gaps
 }
@@ -559,8 +570,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     const EDGE: f32 = 2.0;
     if scroll.offset_y <= EDGE {
         // At top: nothing above; count only what's fully below.
-        let first_below =
-            ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+        let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+            .ceil()
+            .max(0.0) as usize;
         let below = n_items.saturating_sub(first_below.min(n_items));
         return (0, below);
     }
@@ -571,8 +583,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     // Item i occupies [i*avg, (i+1)*avg). Fully above when end ≤ offset.
     let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
     // Fully below when start ≥ offset + viewport.
-    let first_below =
-        ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+    let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+        .ceil()
+        .max(0.0) as usize;
     let above = above.min(n_items);
     let below = n_items.saturating_sub(first_below.min(n_items));
     (above, below)
@@ -636,7 +649,6 @@ where
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
 }
-
 
 /// Resolved per-density metrics. Values are deliberate, not derived.
 struct DensityMetrics {
@@ -851,7 +863,12 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         item = item.on_context(ctx);
     }
     if let Some(content) = collapse.header_content {
-        item = item.content(content);
+        // Keep the folder chevron; only the name is the field.
+        let body = row![section_chevron(collapse.collapsed), content]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill);
+        item = item.content(body);
     }
     item
 }
@@ -872,7 +889,7 @@ fn section_header<'a, Message: Clone + 'a>(
             }
         });
     let pad = Padding {
-        top: SPACE_SM + 2.0,  // 6
+        top: SPACE_SM + 2.0, // 6
         bottom: SPACE_SM + 1.0,
         left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
@@ -1193,8 +1210,10 @@ pub struct ReorderCfg<'a, Message> {
 /// title width.
 ///
 /// `hover_tracked` is true when the parent wired [`SidebarPanel::item_hover`].
-/// List `on_close` is then hover-only; without tracking the × stays visible
-/// so callers that have not migrated hover still get a close target.
+/// List `on_close` is then hover-only via live cursor-over-row (not enter
+/// tracking, so a close that slides the next row under the pointer still
+/// shows ×). Without tracking the × stays visible so callers that have
+/// not migrated hover still get a close target.
 fn render_item<'a, Message>(
     item: SidebarItem<'a, Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
@@ -1275,72 +1294,65 @@ where
         // pattern as the list-etch close overlay — so showing it never steals width
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
-        let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let mut select = mouse_area(
-                container(body)
-                    .width(Length::Fill)
-                    .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, hovered)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context.clone() {
-                select = select.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                select = select.on_double_click(dbl);
-            }
-            if show_hover_action {
-                if let Some(action) = hover_action {
-                    // Float trash over the trailing age corner; stack sizes
-                    // to the base row so nothing reflows.
-                    let trash = container(hover_action_button(action))
-                        .align_x(iced::alignment::Horizontal::Right)
-                        .align_y(iced::alignment::Vertical::Bottom)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(Padding {
-                            top: 0.0,
-                            right: (pad_h - 2.0).max(0.0),
-                            bottom: (pad_v - 2.0).max(0.0),
-                            left: 0.0,
-                        });
-                    stack![select, trash].into()
+        let row_el: Element<'a, Message> =
+            if hover_action.is_some() {
+                let mut select =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, hovered),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context.clone() {
+                    select = select.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    select = select.on_double_click(dbl);
+                }
+                if show_hover_action {
+                    if let Some(action) = hover_action {
+                        // Float trash over the trailing age corner; stack sizes
+                        // to the base row so nothing reflows.
+                        let trash = container(hover_action_button(action))
+                            .align_x(iced::alignment::Horizontal::Right)
+                            .align_y(iced::alignment::Vertical::Bottom)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .padding(Padding {
+                                top: 0.0,
+                                right: (pad_h - 2.0).max(0.0),
+                                bottom: (pad_v - 2.0).max(0.0),
+                                left: 0.0,
+                            });
+                        stack![select, trash].into()
+                    } else {
+                        select.into()
+                    }
                 } else {
                     select.into()
                 }
+            } else if on_double_click.is_some() || on_context.is_some() {
+                let mut area =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, false),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context {
+                    area = area.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    area = area.on_double_click(dbl);
+                }
+                area.into()
             } else {
-                select.into()
-            }
-        } else if on_double_click.is_some() || on_context.is_some() {
-            let mut area = mouse_area(
-                container(body)
-                    .width(Length::Fill)
+                button(body)
+                    .style(move |t, status| item_style_chrome(t, status, active, chrome))
                     .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, false)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context {
-                area = area.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                area = area.on_double_click(dbl);
-            }
-            area.into()
-        } else {
-            button(body)
-                .style(move |t, status| item_style_chrome(t, status, active, chrome))
-                .padding(pad)
-                .width(Length::Fill)
-                .on_press(message)
-                .into()
-        };
-        return finish_list_row(row_el, chrome, active, on_close, hovered, hover_tracked, density);
+                    .width(Length::Fill)
+                    .on_press(message)
+                    .into()
+            };
+        return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
     };
 
     // ── Reorder-enabled path. ──
@@ -1356,9 +1368,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| {
-                row_container_style(theme, active, chrome, hovered)
-            }),
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1381,7 +1391,6 @@ where
         chrome,
         active,
         on_close,
-        hovered,
         hover_tracked,
         density,
     )
@@ -1398,7 +1407,6 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     chrome: SidebarItemChrome,
     active: bool,
     on_close: Option<Message>,
-    hovered: bool,
     hover_tracked: bool,
     density: SidebarDensity,
 ) -> Element<'a, Message> {
@@ -1421,27 +1429,158 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     let Some(close_msg) = on_close else {
         return etched;
     };
-    // Hover-only when the parent tracks hover; otherwise keep × visible
-    // (sidebar() helper, or a panel that never called `item_hover`).
-    let show_close = hovered || !hover_tracked;
-    if !show_close {
-        return etched;
+    let chip = close_chip(close_msg, active, chrome, density);
+    if hover_tracked {
+        // Always mount: paint/hit from live cursor-over-row, not enter
+        // tracking. After a close the next row slides under a stationary
+        // pointer; `on_enter` never fires, but the next draw still sees
+        // the cursor and the × stays available.
+        return stack![etched, HoverClose { chip }].into();
     }
+    // No hover tracking: × stays visible (`sidebar()` helper, or a
+    // panel that never called `item_hover`).
+    stack![etched, chip].into()
+}
+
+/// Right-aligned stacked ×. Shared by the always-visible fallback and
+/// the cursor-gated [`HoverClose`] overlay.
+fn close_chip<'a, Message: Clone + 'a>(
+    close_msg: Message,
+    active: bool,
+    chrome: SidebarItemChrome,
+    density: SidebarDensity,
+) -> Element<'a, Message> {
     let m = density.metrics();
     let close = button(icon_svg(tab_close_icon(), m.close as u16))
         .style(move |theme, status| tab_close_style(theme, status, active, chrome))
         .padding(Padding::from([3, 6]))
         .on_press(close_msg);
-    stack![
-        etched,
-        container(close)
-            .align_x(iced::alignment::Horizontal::Right)
-            .align_y(iced::alignment::Vertical::Center)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([0, 4])),
-    ]
-    .into()
+    container(close)
+        .align_x(iced::alignment::Horizontal::Right)
+        .align_y(iced::alignment::Vertical::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding::from([0, 4]))
+        .into()
+}
+
+/// Full-row overlay that paints the close chip only while the pointer is
+/// over the row. Mounted even when app-owned hover is `None`, so a row
+/// that slides under a stationary cursor (close, collapse, dissolve)
+/// still shows × without a mouse-out.
+struct HoverClose<'a, Message> {
+    chip: Element<'a, Message>,
+}
+
+impl<Message> Widget<Message, Theme, iced::Renderer> for HoverClose<'_, Message> {
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.chip)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.chip));
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size {
+            width: Length::Fill,
+            height: Length::Fill,
+        }
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let limits = limits.width(Length::Fill).height(Length::Fill);
+        let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
+        let child = self
+            .chip
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, &limits);
+        layout::Node::with_children(size, vec![child])
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if !cursor.is_over(layout.bounds()) {
+            return;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            child,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::None;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget().mouse_interaction(
+            &tree.children[0],
+            child,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        if !cursor.is_over(layout.bounds()) {
+            return;
+        }
+        let child = layout.children().next().expect("hover-close chip");
+        self.chip.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child,
+            cursor,
+            viewport,
+        );
+    }
+}
+
+impl<'a, Message: 'a> From<HoverClose<'a, Message>> for Element<'a, Message> {
+    fn from(value: HoverClose<'a, Message>) -> Self {
+        Element::new(value)
+    }
 }
 
 /// Stable id for close-on-hover when the caller omitted [`SidebarItem::id`].
@@ -1469,14 +1608,16 @@ where
     }
     let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
     if lifted {
-        f = f.scale(PANEL_REORDER_LIFT_SCALE).style(|_| float_widget::Style {
-            shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                offset: Vector::new(0.0, 2.0),
-                blur_radius: 8.0,
-            },
-            shadow_border_radius: RADIUS_SM.into(),
-        });
+        f = f
+            .scale(PANEL_REORDER_LIFT_SCALE)
+            .style(|_| float_widget::Style {
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                shadow_border_radius: RADIUS_SM.into(),
+            });
     }
     f.into()
 }
@@ -1618,8 +1759,7 @@ fn item_content<'a, Message: Clone + 'a>(
         density,
         section_header,
     );
-    let has_trail =
-        secondary.is_some() || shortcut.is_some() || hover_action.is_some();
+    let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
         .spacing(SPACE_MD)
         .align_y(iced::Alignment::Start)
@@ -1868,6 +2008,10 @@ where
     /// Rows only emit **enter** (not exit). A list-level exit clears hover.
     /// Per-row exit races with the next row's enter (order depends on move
     /// direction) and left trash stuck off when sweeping upward.
+    ///
+    /// List `on_close` does **not** use this id for visibility — the ×
+    /// paints when the pointer is over the row, so a close that slides
+    /// the next row under a stationary cursor still shows the chip.
     pub fn item_hover(
         mut self,
         hovered: Option<String>,
@@ -1906,7 +2050,10 @@ where
 
         // Fixed chrome (collapse + header + footer). Section *labels* also
         // stay outside the scroll body; only item lists scroll.
-        let mut chrome = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+        let mut chrome = column![]
+            .spacing(0.0)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // Toggle header.
         if let Some((_, on_toggle)) = &collapse {
@@ -1922,14 +2069,12 @@ where
 
         if let Some(header) = header {
             if !collapsed {
-                chrome = chrome.push(
-                    container(header).padding(Padding {
-                        top: 10.0,
-                        right: 10.0,
-                        bottom: 8.0,
-                        left: 10.0,
-                    }),
-                );
+                chrome = chrome.push(container(header).padding(Padding {
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 8.0,
+                    left: 10.0,
+                }));
             }
         }
 
@@ -1957,22 +2102,13 @@ where
             // Live reorder preview: flatten rows (headers omitted). Scroll
             // body is still bar-less so the gesture matches the rest state.
             let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
-            let to = panel_drop_index_relative(
-                from,
-                start_y,
-                cursor_y,
-                PANEL_ROW_H,
-                total_items,
-            );
+            let to = panel_drop_index_relative(from, start_y, cursor_y, PANEL_ROW_H, total_items);
             let now = Instant::now();
             let anim = reorder_ref.and_then(|r| r.anim);
             let mut flat: Vec<(usize, SidebarItem<'a, Message>)> = Vec::with_capacity(total_items);
             let mut row_index = 0usize;
             for section in sections {
-                let hide = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let grouped = section.collapse.is_some();
                 if let Some(collapse) = section.collapse {
                     flat.push((row_index, collapse_header_item(section.label, collapse)));
@@ -2025,7 +2161,10 @@ where
             hidden_scroll(items, None, None).into()
         } else {
             // At rest: section labels sticky; item bodies scroll per-fill.
-            let mut sections_col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+            let mut sections_col = column![]
+                .spacing(0.0)
+                .width(Length::Fill)
+                .height(Length::Fill);
             let mut row_index = 0usize;
             let mut assigned_fill = false;
 
@@ -2038,15 +2177,11 @@ where
                     } else {
                         12.0
                     };
-                    sections_col =
-                        sections_col.push(Space::new().height(Length::Fixed(gap)));
+                    sections_col = sections_col.push(Space::new().height(Length::Fixed(gap)));
                 }
                 prev_collapsible = is_collapsible;
 
-                let hide_items = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+                let hide_items = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
                     Vec::new()
                 } else if is_collapsible {
@@ -2054,21 +2189,15 @@ where
                 } else {
                     section.items
                 };
-                let n_in_section = visible_items.len()
-                    + usize::from(section.collapse.is_some());
-                let mut content_h = section_content_height_with(
-                    &visible_items,
-                    item_spacing,
-                    density,
-                );
+                let n_in_section = visible_items.len() + usize::from(section.collapse.is_some());
+                let mut content_h =
+                    section_content_height_with(&visible_items, item_spacing, density);
                 if is_collapsible {
                     // Tighter body pad [2, 4] + pocket pad; header row.
                     content_h = content_h - 8.0 + 4.0 + GROUP_WELL_PAD * 2.0;
                     content_h += PANEL_ROW_H + item_spacing;
                 }
-                let wants_fill = !collapsed
-                    && (section.fill || auto_fill_single)
-                    && !assigned_fill;
+                let wants_fill = !collapsed && (section.fill || auto_fill_single) && !assigned_fill;
                 if wants_fill {
                     assigned_fill = true;
                 }
@@ -2090,9 +2219,7 @@ where
                 } else {
                     Padding::from([4.0, 8.0])
                 };
-                let mut body_items = column![]
-                    .spacing(item_spacing)
-                    .padding(body_pad);
+                let mut body_items = column![].spacing(item_spacing).padding(body_pad);
                 if let Some(collapse) = section.collapse {
                     if !collapsed {
                         let header = collapse_header_item(section.label, collapse);
@@ -2109,9 +2236,7 @@ where
                             density,
                             on_item_hover.is_some(),
                         );
-                        if let (Some(id), Some(ref mut on_hover)) =
-                            (hid, on_item_hover.as_mut())
-                        {
+                        if let (Some(id), Some(ref mut on_hover)) = (hid, on_item_hover.as_mut()) {
                             row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
                         }
                         body_items = body_items.push(row_el);
@@ -2120,8 +2245,7 @@ where
                 }
                 for item in visible_items {
                     if collapsed {
-                        body_items =
-                            body_items.push(collapsed_row(&item, row_index, reorder_ref));
+                        body_items = body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
                         let item = assign_close_id(item, row_index);
                         let item_id = item.id.clone();
@@ -2155,8 +2279,7 @@ where
                     // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
                     let fill_col = if is_collapsible {
-                        column![wrap_group_well(body_items)]
-                            .width(Length::Fill)
+                        column![wrap_group_well(body_items)].width(Length::Fill)
                     } else {
                         body_items
                     };
@@ -2177,14 +2300,11 @@ where
                     } else {
                         body_items.into()
                     };
-                    let body: Element<'a, Message> =
-                        if let Some(ref mut on_hover) = on_item_hover {
-                            mouse_area(body_el)
-                                .on_exit(on_hover(None))
-                                .into()
-                        } else {
-                            body_el
-                        };
+                    let body: Element<'a, Message> = if let Some(ref mut on_hover) = on_item_hover {
+                        mouse_area(body_el).on_exit(on_hover(None)).into()
+                    } else {
+                        body_el
+                    };
                     sections_col = sections_col.push(body);
                 }
             }
@@ -2204,9 +2324,7 @@ where
         // Footer (hidden when collapsed).
         if let Some(footer) = footer {
             if !collapsed {
-                chrome = chrome.push(
-                    container(footer).padding(Padding::from([8.0, 10.0])),
-                );
+                chrome = chrome.push(container(footer).padding(Padding::from([8.0, 10.0])));
             }
         }
 
@@ -2331,31 +2449,20 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     let base = scroll;
 
     let cb_wheel = std::rc::Rc::clone(&cb);
-    let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
-        cb_wheel(base.wheel(delta))
-    });
+    let area =
+        mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| cb_wheel(base.wheel(delta)));
 
     let cb_show = std::rc::Rc::clone(&cb);
     let cb_resize = std::rc::Rc::clone(&cb);
     let list: Element<'a, Message, Theme> = sensor(area)
         .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
-        .on_resize(move |size: iced::Size| {
-            cb_resize(base.with_viewport_h(size.height))
-        })
+        .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
         .into();
 
     // Chips only take space when there is overflow on that side — no
     // permanent gap under the section title at rest. Click jumps to end.
-    let top_chip = overflow_slot(
-        OverflowDir::Up,
-        above,
-        Some(cb(scroll.jump_top())),
-    );
-    let bottom_chip = overflow_slot(
-        OverflowDir::Down,
-        below,
-        Some(cb(scroll.jump_bottom())),
-    );
+    let top_chip = overflow_slot(OverflowDir::Up, above, Some(cb(scroll.jump_top())));
+    let bottom_chip = overflow_slot(OverflowDir::Down, below, Some(cb(scroll.jump_bottom())));
 
     column![top_chip, list, bottom_chip]
         .spacing(0.0)
@@ -2615,9 +2722,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| {
-                    row_container_style(theme, active, chrome, false)
-                }),
+                .style(move |theme: &Theme| row_container_style(theme, active, chrome, false)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -2764,10 +2869,7 @@ pub fn item_style_chrome(
     match chrome {
         SidebarItemChrome::Row => tab_item_style(theme, status, active),
         SidebarItemChrome::Card => {
-            let hovered = matches!(
-                status,
-                button::Status::Hovered | button::Status::Pressed
-            );
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
             button::Style {
                 background: s.background,
@@ -2800,12 +2902,7 @@ mod tests {
     #[test]
     fn row_chrome_is_etch_not_selection() {
         let theme = crate::default_theme();
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         match row.background {
             Some(Background::Color(c)) => {
                 assert_eq!(c, inset_surface(CHROME_SURFACE, 0.22));
@@ -2831,12 +2928,7 @@ mod tests {
             true,
             SidebarItemChrome::Card,
         );
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         // Card keeps a 1px hairline + graphite gradient; etch is inset fill.
         assert_eq!(card.border.width, 1.0);
         assert_eq!(row.border.width, 0.0);
@@ -2853,10 +2945,7 @@ mod tests {
     fn assign_close_id_only_when_needed() {
         let with_close = assign_close_id(SidebarItem::new("x", ()).on_close(()), 3);
         assert_eq!(with_close.id.as_deref(), Some("__row:3"));
-        let with_id = assign_close_id(
-            SidebarItem::new("x", ()).on_close(()).id("keep"),
-            3,
-        );
+        let with_id = assign_close_id(SidebarItem::new("x", ()).on_close(()).id("keep"), 3);
         assert_eq!(with_id.id.as_deref(), Some("keep"));
         let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
         assert_eq!(no_close.id, None);
@@ -2897,6 +2986,37 @@ mod tests {
         assert_eq!(item.label, "Work");
         assert_eq!(item.section_header, Some(true));
         assert_eq!(item.secondary.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn header_rename_stays_list_row_height() {
+        let idle = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                count: None,
+                header_content: None,
+            },
+        );
+        let renaming = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                count: None,
+                header_content: Some(iced::widget::text("Work").into()),
+            },
+        );
+        assert_eq!(
+            item_row_height(&idle, SidebarDensity::Large),
+            item_row_height(&renaming, SidebarDensity::Large)
+        );
+        assert!(item_row_height(&renaming, SidebarDensity::Large) < CARD_HEIGHT_HINT);
     }
 
     fn sv(v: &[&str]) -> Vec<String> {
@@ -3070,15 +3190,23 @@ mod tests {
 
     #[test]
     fn drop_index_middle_slot() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 1.5, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 1.5,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 1);
     }
 
     #[test]
     fn drop_index_past_end_clamps() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 100.0, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 100.0,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 2);
     }
 

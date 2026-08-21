@@ -88,6 +88,7 @@ Follow a **role system**, not ad-hoc sizes:
 |------|-----|----------------|
 | Chrome | Menu bar labels, menu items, menubar status/clock | `fonts::chrome()` / kit UI roles |
 | Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` — kit `text::body` **13** |
+| Prose | Mail bodies, long-form reading | kit `text::prose` **14** + `prose` letter renderer |
 | Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly — `heading` 22 / `subheading` 15 |
 | Caption | Help, secondary labels | `text::caption` **11** |
 | Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` — `text::code` 12 |
@@ -133,8 +134,11 @@ For Sola:
 - Ghost buttons: muted text at rest; hover = grey lift + full fg (no cyan
   wash). One primary (filled accent, dark label) per control group.
 - Secondary: soft fill + strong hairline — not a bare outline.
-- Text selection uses the quiet `selection` atom (graphite lift, not
-  darkened neon), not `primary.weak`.
+- Field / letter text selection uses the quiet `selection` atom
+  (graphite lift, not darkened neon), not `primary.weak`.
+- Terminal / Workspaces **grid** selection overlays the neon `accent`
+  (`#3dd6f5`) at alpha — same chroma as focus, not the graphite atom
+  and not a darkened-cyan mix.
 - Cards: soft hairline + light shadow; use `card::plain` when elevation is
   enough without a border.
 - Badges: soft tone@α fills + matching borders (not solid slabs).

@@ -15,19 +15,18 @@
 //!
 //! Or hang it off [`crate::app::BusSetup::calls`] so one `install()` does both.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use iced::futures::Stream;
 use iced::Subscription;
-use sola_call::{Incoming, MethodSpec};
+use iced::futures::Stream;
+use sola_call::{Incoming, MethodSpec, ObserveEvent};
 
 static CALL_RX: Mutex<Option<mpsc::Receiver<Incoming>>> = Mutex::new(None);
-static CALL_STREAM_TX: Mutex<
-    Option<iced::futures::channel::mpsc::UnboundedSender<Incoming>>,
-> = Mutex::new(None);
+static CALL_STREAM_TX: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<Incoming>>> =
+    Mutex::new(None);
 static CALL_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Builder: owner (CLI noun) + app_id + advertised methods.
@@ -98,29 +97,102 @@ fn ensure_call_poller() {
     }
     std::thread::Builder::new()
         .name("sola-kit-call".into())
-        .spawn(|| loop {
-            let next = match CALL_RX.lock() {
-                Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
-                Err(poisoned) => {
-                    let guard = poisoned.into_inner();
-                    let out = guard.as_ref().and_then(|rx| rx.try_recv().ok());
-                    CALL_RX.clear_poison();
-                    out
+        .spawn(|| {
+            loop {
+                let next = match CALL_RX.lock() {
+                    Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
+                    Err(poisoned) => {
+                        let guard = poisoned.into_inner();
+                        let out = guard.as_ref().and_then(|rx| rx.try_recv().ok());
+                        CALL_RX.clear_poison();
+                        out
+                    }
+                };
+                match next {
+                    Some(inc) => {
+                        let mut slot = CALL_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(tx) = slot.as_ref() {
+                            if tx.unbounded_send(inc).is_err() {
+                                *slot = None;
+                            }
+                        }
+                        // No iced subscription yet: drop. The caller is waiting;
+                        // they will get a host timeout rather than a silent hang
+                        // after iced starts. Apps must wire `call_subscription`.
+                    }
+                    None => std::thread::sleep(Duration::from_millis(8)),
                 }
-            };
-            match next {
-                Some(inc) => {
-                    let mut slot = CALL_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(tx) = slot.as_ref() {
-                        if tx.unbounded_send(inc).is_err() {
-                            *slot = None;
+            }
+        })
+        .ok();
+}
+
+static OBSERVE_RX: Mutex<Option<mpsc::Receiver<ObserveEvent>>> = Mutex::new(None);
+static OBSERVE_STREAM_TX: Mutex<
+    Option<iced::futures::channel::mpsc::UnboundedSender<ObserveEvent>>,
+> = Mutex::new(None);
+static OBSERVE_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Connect as a call-plane observer (catalog + traces). Monitor is the
+/// intended consumer; not a provider.
+pub fn install_observer(app_id: &str) {
+    let rx = sola_call::start_observer(app_id);
+    match OBSERVE_RX.lock() {
+        Ok(mut slot) => *slot = Some(rx),
+        Err(poisoned) => {
+            *poisoned.into_inner() = Some(rx);
+        }
+    }
+    tracing::info!(%app_id, "call observer installed");
+    ensure_observe_poller();
+}
+
+/// Iced subscription of observer events. Use **or** a manual drain of
+/// the observer receiver — not both.
+pub fn observe_subscription() -> Subscription<ObserveEvent> {
+    Subscription::run(observe_stream)
+}
+
+fn observe_stream() -> impl Stream<Item = ObserveEvent> {
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded::<ObserveEvent>();
+    match OBSERVE_STREAM_TX.lock() {
+        Ok(mut slot) => *slot = Some(tx),
+        Err(poisoned) => {
+            *poisoned.into_inner() = Some(tx);
+        }
+    }
+    ensure_observe_poller();
+    rx
+}
+
+fn ensure_observe_poller() {
+    if OBSERVE_POLLER_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("sola-kit-observe".into())
+        .spawn(|| {
+            loop {
+                let next = match OBSERVE_RX.lock() {
+                    Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
+                    Err(poisoned) => {
+                        let guard = poisoned.into_inner();
+                        let out = guard.as_ref().and_then(|rx| rx.try_recv().ok());
+                        OBSERVE_RX.clear_poison();
+                        out
+                    }
+                };
+                match next {
+                    Some(ev) => {
+                        let mut slot = OBSERVE_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(tx) = slot.as_ref() {
+                            if tx.unbounded_send(ev).is_err() {
+                                *slot = None;
+                            }
                         }
                     }
-                    // No iced subscription yet: drop. The caller is waiting;
-                    // they will get a host timeout rather than a silent hang
-                    // after iced starts. Apps must wire `call_subscription`.
+                    None => std::thread::sleep(Duration::from_millis(8)),
                 }
-                None => std::thread::sleep(Duration::from_millis(8)),
             }
         })
         .ok();

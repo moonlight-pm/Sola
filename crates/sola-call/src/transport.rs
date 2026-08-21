@@ -5,10 +5,10 @@ use std::io::{self, Read, Write};
 use crate::protocol::Wire;
 
 pub fn write_msg(stream: &mut impl Write, msg: &Wire) -> io::Result<()> {
-    let bytes = serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let len = u32::try_from(bytes.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "call frame larger than u32")
-    })?;
+    let bytes =
+        serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let len = u32::try_from(bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "call frame larger than u32"))?;
     stream.write_all(&len.to_le_bytes())?;
     stream.write_all(&bytes)?;
     stream.flush()
@@ -30,8 +30,8 @@ pub fn read_msg(stream: &mut impl Read) -> io::Result<Option<Wire>> {
     }
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf)?;
-    let msg = serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let msg =
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(msg))
 }
 

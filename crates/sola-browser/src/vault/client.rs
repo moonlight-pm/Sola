@@ -333,6 +333,11 @@ impl VaultService {
 
         let n_ok = listed.successes.len();
         let n_fail = listed.failures.len();
+        let n_org = listed
+            .successes
+            .iter()
+            .filter(|v| v.organization_id.is_some())
+            .count();
         let mru = super::prefs::VaultPrefs::last_used_map();
         let mut out = Vec::new();
         for view in listed.successes {
@@ -344,10 +349,21 @@ impl VaultService {
         // local last-used, then cipher revision).
         out.sort_by(|a, b| b.last_used.cmp(&a.last_used));
         if n_fail > 0 {
-            tracing::warn!(n = n_fail, "vault: some ciphers failed to decrypt");
+            let fail_orgs: Vec<String> = listed
+                .failures
+                .iter()
+                .filter_map(|c| c.organization_id.map(|id| id.to_string()))
+                .collect();
+            tracing::warn!(
+                n = n_fail,
+                org_ids = ?fail_orgs,
+                "vault: some ciphers failed to decrypt"
+            );
         }
         tracing::info!(
             decrypted = n_ok,
+            org = n_org,
+            personal = n_ok.saturating_sub(n_org),
             decrypt_fail = n_fail,
             matches = out.len(),
             %page_url,
@@ -461,7 +477,10 @@ impl VaultService {
             .await
             .map_err(|_| VaultError::NotFound)?;
         let login = view.login.ok_or(VaultError::NotFound)?;
-        let raw = login.totp.filter(|s| !s.is_empty()).ok_or(VaultError::NotFound)?;
+        let raw = login
+            .totp
+            .filter(|s| !s.is_empty())
+            .ok_or(VaultError::NotFound)?;
         let spec = super::totp::TotpSpec::parse(&raw).ok_or(VaultError::NotFound)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

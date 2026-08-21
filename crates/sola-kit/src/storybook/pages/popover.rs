@@ -1,7 +1,7 @@
 //! Popover — a menu sitting next to its trigger.
 
-use iced::widget::{column, row};
 use iced::Element;
+use iced::widget::{column, row};
 
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::popover;

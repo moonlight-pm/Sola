@@ -15,11 +15,9 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Shell, Widget, mouse, overlay, renderer};
 use iced::widget::{Container, container};
-use iced::{
-    Background, Element, Event, Length, Point, Rectangle, Shadow, Size, Theme, Vector,
-};
+use iced::{Background, Element, Event, Length, Point, Rectangle, Shadow, Size, Theme, Vector};
 
-use crate::components::style::{hairline, RADIUS_MD, SPACE_SM};
+use crate::components::style::{RADIUS_MD, SPACE_SM, hairline};
 
 /// Wrap `content` in a popover-styled container. Default padding is
 /// 4px (menu-bar dropdown density); override with `.padding(...)` if needed.
@@ -79,12 +77,7 @@ pub enum Placement {
 }
 
 /// Choose the panel's top-left so it sits next to `anchor`.
-fn anchor_offset(
-    anchor: Rectangle,
-    panel: Size,
-    viewport: Size,
-    placement: Placement,
-) -> Point {
+fn anchor_offset(anchor: Rectangle, panel: Size, viewport: Size, placement: Placement) -> Point {
     match placement {
         Placement::End => {
             let gap = ANCHOR_GAP_END;
@@ -204,7 +197,9 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.base.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+        self.base
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn update(
@@ -346,8 +341,7 @@ where
         );
         let size = node.size();
         let offset = anchor_offset(self.anchor, size, bounds, self.placement);
-        layout::Node::with_children(size, vec![node])
-            .translate(Vector::new(offset.x, offset.y))
+        layout::Node::with_children(size, vec![node]).translate(Vector::new(offset.x, offset.y))
     }
 
     fn draw(
@@ -440,7 +434,12 @@ mod tests {
     use iced::{Rectangle, Size};
 
     fn anchor(x: f32, y: f32) -> Rectangle {
-        Rectangle { x, y, width: 56.0, height: 56.0 }
+        Rectangle {
+            x,
+            y,
+            width: 56.0,
+            height: 56.0,
+        }
     }
 
     #[test]

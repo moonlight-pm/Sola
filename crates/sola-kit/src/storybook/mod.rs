@@ -1,7 +1,7 @@
 //! Storybook app — global theme header + sidebar nav + showcase pane.
 //!
 //! Each kit-shipped component (badge, button, card, divider, field,
-//! icon, number_input, popover, readable, sidebar, split, text, theme
+//! icon, number_input, popover, prose, readable, sidebar, split, text, theme
 //! atoms, toolbar) gets a page in [`pages`]; `swatch` and `text_input`
 //! are folded into the Theme and Field pages respectively. The shell
 //! holds the selected page in state and re-renders on `Select(Page)`.
@@ -22,7 +22,7 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{mix_white, PAD_CONTROL_SM, HAIRLINE_A, CHROME_SURFACE};
+use sola_kit::components::style::{CHROME_SURFACE, HAIRLINE_A, PAD_CONTROL_SM, mix_white};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
@@ -40,6 +40,7 @@ pub enum Page {
     Theme,
     Shell,
     Text,
+    Json,
     Button,
     Badge,
     Card,
@@ -48,6 +49,7 @@ pub enum Page {
     Icon,
     NumberInput,
     Readable,
+    Prose,
     ColorPicker,
     FilePicker,
     Divider,
@@ -71,6 +73,7 @@ impl Page {
         Page::Split,
         Page::Toolbar,
         Page::Text,
+        Page::Json,
         Page::Button,
         Page::Titlebar,
         Page::Badge,
@@ -80,6 +83,7 @@ impl Page {
         Page::Icon,
         Page::NumberInput,
         Page::Readable,
+        Page::Prose,
         Page::ColorPicker,
         Page::FilePicker,
         Page::Popover,
@@ -94,6 +98,7 @@ impl Page {
             Page::Theme => "Theme",
             Page::Shell => "Shell",
             Page::Text => "Text",
+            Page::Json => "JSON",
             Page::Button => "Button",
             Page::Badge => "Badge",
             Page::Card => "Card",
@@ -102,6 +107,7 @@ impl Page {
             Page::Icon => "Icon",
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
+            Page::Prose => "Prose",
             Page::ColorPicker => "ColorPicker",
             Page::FilePicker => "FilePicker",
             Page::Divider => "Divider",
@@ -122,6 +128,7 @@ impl Page {
             Page::Overview | Page::Theme | Page::Shell => Some("System"),
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
+            | Page::Json
             | Page::Button
             | Page::Titlebar
             | Page::Badge
@@ -131,6 +138,7 @@ impl Page {
             | Page::Icon
             | Page::NumberInput
             | Page::Readable
+            | Page::Prose
             | Page::ColorPicker
             | Page::FilePicker
             | Page::Popover
@@ -148,8 +156,7 @@ impl Page {
     /// slot usage.
     pub fn atoms(self) -> &'static [AtomField] {
         use AtomField::{
-            Accent, Bg, BgHover, BgRaised, Border, Danger, Fg, FgMuted, Selection, Success,
-            Warning,
+            Accent, Bg, BgHover, BgRaised, Border, Danger, Fg, FgMuted, Selection, Success, Warning,
         };
         match self {
             Page::Overview | Page::Theme | Page::Shell => &[],
@@ -158,6 +165,7 @@ impl Page {
             Page::Titlebar => &[Bg, BgRaised, Border, Fg],
             Page::Toolbar => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted],
             Page::Text => &[Fg, FgMuted, Accent, Success, Warning, Danger],
+            Page::Json => &[Fg, FgMuted, Accent, Success, Warning],
             Page::Button => &[Accent, Danger, Bg, BgHover, Border, Fg],
             Page::Badge => &[Accent, Success, Warning, Danger, Border, FgMuted],
             Page::Card => &[Bg, BgRaised, Border, Fg, Accent],
@@ -166,6 +174,7 @@ impl Page {
             Page::Icon => &[Fg, FgMuted, Accent],
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
+            Page::Prose => &[Bg, BgRaised, Fg, FgMuted, Accent],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
             Page::FilePicker => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted, Accent],
             Page::Popover => &[BgRaised, Border, Fg, FgMuted],
@@ -560,8 +569,7 @@ impl Storybook {
         // confirm/disarm). `every` first fires ~2s after it starts.
         if self.delete_armed {
             subs.push(
-                iced::time::every(std::time::Duration::from_secs(2))
-                    .map(|_| Msg::DisarmDelete),
+                iced::time::every(std::time::Duration::from_secs(2)).map(|_| Msg::DisarmDelete),
             );
         }
 
@@ -598,9 +606,7 @@ impl Storybook {
             );
         }
         if self.page == Page::Sidebar {
-            subs.push(
-                iced::window::frames().map(|_| Msg::Sidebar(pages::sidebar::Msg::MarkTick)),
-            );
+            subs.push(iced::window::frames().map(|_| Msg::Sidebar(pages::sidebar::Msg::MarkTick)));
         }
 
         // Split dogfood: live divider drag on the Split page.
@@ -670,9 +676,7 @@ impl Storybook {
                         // no longer does it as a side effect.
                         self.theme = theme::theme_from_bus(&bus_theme);
                         crate::fonts::install(theme::fonts_from_bus_theme(&bus_theme));
-                        theme::install_selection(
-                            theme::atoms_from_bus_theme(&bus_theme).selection,
-                        );
+                        theme::install_selection(theme::atoms_from_bus_theme(&bus_theme).selection);
                         self.last_live_theme = Some(bus_theme);
                         self.resync_active_theme();
                         // A clean storybook re-baselines its Revert target to
@@ -749,7 +753,9 @@ impl Storybook {
                 self.picker = None;
             }
             Msg::Picker(m) => {
-                let Some(picker) = self.picker.as_mut() else { return iced::Task::none(); };
+                let Some(picker) = self.picker.as_mut() else {
+                    return iced::Task::none();
+                };
                 picker.update(m);
                 let color = picker.color();
                 if let Some(field) = self.editing_atom {
@@ -815,7 +821,9 @@ impl Storybook {
                 }
             }
             Msg::NewThemeCommit => {
-                let Some(buffer) = self.naming.take() else { return iced::Task::none(); };
+                let Some(buffer) = self.naming.take() else {
+                    return iced::Task::none();
+                };
                 let name = buffer.trim().to_string();
                 if !sola_core::theme::is_valid_theme_name(&name)
                     || self.themes.iter().any(|t| t.name == name)
@@ -950,7 +958,11 @@ impl Storybook {
     fn install_active_fonts(&self) {
         let f = &self.active().fonts;
         sola_kit::fonts::install(sola_kit::fonts::fonts_from_families(
-            &f.ui, &f.ui_medium, &f.display, &f.chrome, &f.mono,
+            &f.ui,
+            &f.ui_medium,
+            &f.display,
+            &f.chrome,
+            &f.mono,
         ));
     }
 
@@ -970,7 +982,6 @@ impl Storybook {
             }
         }
     }
-
 
     /// Persist the active preset on the bus under `Topic::CustomTheme`.
     /// No-op for Default (its values are reconstituted from Rust
@@ -1054,7 +1065,6 @@ impl Storybook {
             self.active_theme -= 1;
         }
     }
-
 
     /// If a live `Topic::Theme` has landed, point `active_theme` at the
     /// preset whose value matches it. Called after every `Topic::Theme`
@@ -1329,12 +1339,11 @@ impl Storybook {
                 // the read-only Default editing is a no-op so this never
                 // shows there.
                 if self.dirty {
-                    let indicator =
-                        text("Edited •").size(11).style(|theme: &iced::Theme| {
-                            iced::widget::text::Style {
-                                color: Some(theme.extended_palette().warning.base.color),
-                            }
-                        });
+                    let indicator = text("Edited •").size(11).style(|theme: &iced::Theme| {
+                        iced::widget::text::Style {
+                            color: Some(theme.extended_palette().warning.base.color),
+                        }
+                    });
                     let save = kit_button::labeled_sm("Save", kit_button::primary)
                         .on_press(Msg::SaveTheme);
                     let revert = kit_button::labeled_sm("Revert", kit_button::ghost)
@@ -1394,6 +1403,7 @@ impl Storybook {
                 self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
             ),
             Page::Text => pages::text::view(),
+            Page::Json => pages::json::view(&self.theme),
             Page::Button => pages::button::view(&self.button).map(Msg::Button),
             Page::Titlebar => pages::titlebar::view(),
             Page::Badge => pages::badge::view(),
@@ -1405,12 +1415,11 @@ impl Storybook {
                 pages::number_input::view(&self.number_input).map(Msg::NumberInput)
             }
             Page::Readable => pages::readable::view(),
+            Page::Prose => pages::prose::view(&self.theme),
             Page::ColorPicker => {
                 pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
             }
-            Page::FilePicker => {
-                pages::file_picker::view(&self.file_picker).map(Msg::FilePicker)
-            }
+            Page::FilePicker => pages::file_picker::view(&self.file_picker).map(Msg::FilePicker),
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
             Page::ContextMenu => {
@@ -1463,6 +1472,7 @@ mod tests {
             Page::Theme,
             Page::Shell,
             Page::Text,
+            Page::Json,
             Page::Button,
             Page::Badge,
             Page::Card,
@@ -1471,6 +1481,7 @@ mod tests {
             Page::Icon,
             Page::NumberInput,
             Page::Readable,
+            Page::Prose,
             Page::ColorPicker,
             Page::FilePicker,
             Page::Divider,
@@ -1491,6 +1502,7 @@ mod tests {
                 | Page::Theme
                 | Page::Shell
                 | Page::Text
+                | Page::Json
                 | Page::Button
                 | Page::Badge
                 | Page::Card
@@ -1499,6 +1511,7 @@ mod tests {
                 | Page::Icon
                 | Page::NumberInput
                 | Page::Readable
+                | Page::Prose
                 | Page::ColorPicker
                 | Page::FilePicker
                 | Page::Divider
@@ -1608,7 +1621,10 @@ mod tests {
         // token existed.
         let mut stale = sb.themes[1].bus_theme();
         let removed = stale.palette.tokens.remove("shell-switcher-icon-fg-sel");
-        assert!(removed.is_some(), "token must exist to model its later addition");
+        assert!(
+            removed.is_some(),
+            "token must exist to model its later addition"
+        );
         // Sanity: the raw forms differ, so the old value-match would miss.
         assert_ne!(stale, sb.themes[1].bus_theme());
         sb.last_live_theme = Some(stale);

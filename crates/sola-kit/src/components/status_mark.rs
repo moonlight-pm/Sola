@@ -11,8 +11,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::theme::palette::Extended;
-use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
 use iced::widget::canvas::path::Arc;
+use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
 use iced::{Color, Element, Event, Length, Point, Radians, Rectangle, Theme, Vector, mouse};
 
 /// Leading status mark for a sidebar row (activity / health, not selection).

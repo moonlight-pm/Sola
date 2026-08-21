@@ -1,7 +1,7 @@
 //! NumberInput — token steppers in a settings panel.
 
-use iced::widget::column;
 use iced::Element;
+use iced::widget::column;
 
 use sola_kit::components::form::form_row;
 use sola_kit::components::number_input;

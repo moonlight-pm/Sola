@@ -9,7 +9,7 @@ use iced::advanced::overlay;
 use iced::advanced::renderer;
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Shell, Widget};
-use iced::widget::{button, column, container, text, Space};
+use iced::widget::{Space, button, column, container, text};
 use iced::{
     Background, Color, Element, Event, Length, Padding, Point, Rectangle, Size, Theme, Vector,
     keyboard, mouse,
@@ -91,31 +91,25 @@ fn menu_row<'a, Message: Clone + 'a>(item: MenuItem<Message>) -> Element<'a, Mes
                 }
             })
             .into(),
-        MenuItem::Disabled { label } => container(
-            text(label)
-                .font(fonts::ui())
-                .size(13)
-                .style(|theme: &Theme| {
-                    let c = theme.extended_palette().background.base.text;
-                    iced::widget::text::Style {
-                        color: Some(Color { a: 0.38, ..c }),
-                    }
-                }),
-        )
+        MenuItem::Disabled { label } => container(text(label).font(fonts::ui()).size(13).style(
+            |theme: &Theme| {
+                let c = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(Color { a: 0.38, ..c }),
+                }
+            },
+        ))
         .padding(Padding::from([5, 10]))
         .width(Length::Fill)
         .into(),
-        MenuItem::Action { label, message } => button(
-            text(label)
-                .font(fonts::ui())
-                .size(13)
-                .width(Length::Fill),
-        )
-        .style(item_style)
-        .padding(Padding::from([5, 10]))
-        .width(Length::Fill)
-        .on_press(message)
-        .into(),
+        MenuItem::Action { label, message } => {
+            button(text(label).font(fonts::ui()).size(13).width(Length::Fill))
+                .style(item_style)
+                .padding(Padding::from([5, 10]))
+                .width(Length::Fill)
+                .on_press(message)
+                .into()
+        }
     }
 }
 
@@ -134,7 +128,10 @@ fn item_style(theme: &Theme, status: button::Status) -> button::Style {
     };
     match status {
         button::Status::Hovered | button::Status::Pressed => button::Style {
-            background: Some(Background::Color(mix_white(p.background.strong.color, 0.08))),
+            background: Some(Background::Color(mix_white(
+                p.background.strong.color,
+                0.08,
+            ))),
             ..idle
         },
         _ => idle,

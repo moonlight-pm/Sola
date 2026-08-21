@@ -424,7 +424,7 @@ fn do_empty(state: &WorkerState, folder: String) {
     };
     let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
     match c.empty_folder(&folder) {
-        Ok(()) => bridge::emit(MailEvent::Emptied),
+        Ok(()) => bridge::emit(MailEvent::Emptied { folder }),
         Err(e) => bridge::emit(MailEvent::Error {
             context: "empty_folder".into(),
             message: e.to_string(),

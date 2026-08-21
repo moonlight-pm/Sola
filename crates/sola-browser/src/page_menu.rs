@@ -14,6 +14,8 @@ pub enum PageMenuKind {
     Back,
     Forward,
     Reload,
+    DevTools,
+    InspectElement,
     Separator,
 }
 
@@ -41,6 +43,9 @@ pub fn page_menu_kinds(ctx: &PageContext) -> Vec<PageMenuKind> {
     rows.push(PageMenuKind::Back);
     rows.push(PageMenuKind::Forward);
     rows.push(PageMenuKind::Reload);
+    rows.push(PageMenuKind::Separator);
+    rows.push(PageMenuKind::DevTools);
+    rows.push(PageMenuKind::InspectElement);
     rows
 }
 
@@ -190,7 +195,10 @@ mod tests {
             vec![
                 PageMenuKind::Back,
                 PageMenuKind::Forward,
-                PageMenuKind::Reload
+                PageMenuKind::Reload,
+                PageMenuKind::Separator,
+                PageMenuKind::DevTools,
+                PageMenuKind::InspectElement,
             ]
         );
     }
@@ -212,6 +220,9 @@ mod tests {
                 PageMenuKind::Back,
                 PageMenuKind::Forward,
                 PageMenuKind::Reload,
+                PageMenuKind::Separator,
+                PageMenuKind::DevTools,
+                PageMenuKind::InspectElement,
             ]
         );
     }
