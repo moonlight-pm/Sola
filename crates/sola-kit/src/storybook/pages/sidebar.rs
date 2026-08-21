@@ -1,82 +1,40 @@
-//! Sidebar showcase — meta-page that dogfoods the kit's [`SidebarPanel`]
-//! with every opt-in turned on: collapse, drag-to-resize, drag-reorder,
-//! plus per-item shortcut hints / a close button / a secondary label.
+//! Sidebar showcase — dogfoods [`SidebarPanel`] with collapse, resize,
+//! reorder, shortcuts, close, and a collapsible group pocket.
 //!
-//! Stateful so the gestures actually work in the storybook. The app owns
-//! the cursor-move/release subscription (see the parent `storybook/mod.rs`
-//! wiring) — this page just renders the panel and folds the gesture
-//! messages into its own `State`.
+//! Gesture state lives in kit [`SidebarState`]. This page only applies
+//! [`SidebarEvent`].
 
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use sola_kit::components::card::style as card_style;
+use sola_kit::components::sidebar::{self, Dest, Event as SidebarEvent};
 use sola_kit::components::text::{body, heading, muted};
 use sola_kit::components::{
-    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarDensity, SidebarIndicator,
-    SidebarItem, SidebarPanel, SidebarSection, panel_dragged_width,
+    DividerColors, SectionScroll, SidebarDensity, SidebarIndicator, SidebarItem, SidebarPanel,
+    SidebarSection, SidebarState,
 };
 
-/// The demo item labels, in their current (reorderable) order.
 const ITEMS: [&str; 5] = ["Inbox", "Drafts", "Sent", "Archive", "Spam"];
 
 #[derive(Clone, Debug)]
 pub enum Msg {
-    /// Toggle the collapse/expand state.
     Toggle,
-    /// Resize divider pressed — begin a width drag.
-    DividerPress,
-    /// Cursor moved during a width drag (carries cursor x).
-    DividerMove(f32),
-    /// Width drag released.
-    DividerRelease,
-    /// Row `usize` pressed — begin a potential reorder gesture.
-    ReorderStart(usize),
-    /// Cursor moved during a reorder gesture (carries cursor y).
-    ReorderMove(f32),
-    /// Reorder gesture released — commit the drop (or treat as a click).
-    ReorderEnd,
-    /// Animation tick while a reorder drag is live (sibling glides).
-    ReorderTick,
-    /// Fill-section scroll viewport (overflow chips).
+    Panel(sidebar::Msg),
     SectionScroll(SectionScroll),
-    /// A plain row click (collapsed buttons use this).
     ItemPress(usize),
-    /// Hovered list item id (for hover-only ×).
-    ItemHover(Option<String>),
-    /// Collapse the demo group section.
     ToggleGroup,
-    /// Demo placeholder (e.g. a close button) with no modelled effect.
     Noop,
-    /// Working-ring animation tick (parent frames subscription).
     MarkTick,
 }
 
 pub struct State {
     pub collapsed: bool,
     pub width: f32,
-    pub dragging: bool,
-    /// `(cursor_x, width)` captured on the first `DividerMove` after a
-    /// press, mirroring the monitor/terminal anchor-on-first-move pattern.
-    pub drag_anchor: Option<(f32, f32)>,
-    /// `Some((from_index, start_y))` while a reorder gesture is active.
-    pub reorder: Option<(usize, f32)>,
-    /// Last cursor-y seen during a reorder gesture.
-    pub reorder_cursor_y: f32,
-    /// True once a reorder gesture passes the movement threshold. Gates the
-    /// drag chrome so a plain click never flashes a drop highlight.
-    pub reorder_dragging: bool,
-    /// Sibling glide offsets while a reorder drag is live.
-    pub reorder_anim: ReorderAnim,
-    /// Current item order (indices into [`ITEMS`]).
+    pub panel: SidebarState,
     pub order: Vec<usize>,
-    /// Selected row (by item index), for the active highlight.
     pub selected: usize,
-    /// Fill-section scroll snapshot for overflow chips.
     pub section_scroll: SectionScroll,
-    /// Hovered item id (close-on-hover + hover_action).
-    pub hovered: Option<String>,
-    /// Demo collapsible section (tab-group header).
     pub group_collapsed: bool,
 }
 
@@ -85,158 +43,79 @@ impl Default for State {
         Self {
             collapsed: false,
             width: 200.0,
-            dragging: false,
-            drag_anchor: None,
-            reorder: None,
-            reorder_cursor_y: 0.0,
-            reorder_dragging: false,
-            reorder_anim: ReorderAnim::new(),
+            panel: SidebarState::new(),
             order: (0..ITEMS.len()).collect(),
             selected: 0,
             section_scroll: SectionScroll::default(),
-            hovered: None,
             group_collapsed: false,
         }
     }
 }
 
 impl State {
-    /// True while a gesture needs the global cursor subscription — used by
-    /// the parent to gate its `event::listen_with` listener.
-    pub fn needs_cursor_subscription(&self) -> bool {
-        self.dragging || self.reorder.is_some()
+    pub fn subscription(&self) -> iced::Subscription<Msg> {
+        self.panel.subscription().map(Msg::Panel)
     }
 
     pub fn update(&mut self, msg: Msg) {
         match msg {
             Msg::Toggle => self.collapsed = !self.collapsed,
-            Msg::DividerPress => {
-                self.dragging = true;
-                self.drag_anchor = None; // captured on first move
-            }
-            Msg::DividerMove(cursor_x) => {
-                if self.dragging {
-                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
-                        self.width = panel_dragged_width(anchor_x, anchor_w, cursor_x);
-                    } else {
-                        self.drag_anchor = Some((cursor_x, self.width));
-                    }
+            Msg::Panel(m) => {
+                if let Some(ev) = self.panel.update(m) {
+                    self.on_event(ev);
                 }
-            }
-            Msg::DividerRelease => {
-                self.dragging = false;
-                self.drag_anchor = None;
-            }
-            Msg::ReorderStart(index) => {
-                // start_y = 0.0 sentinel; captured on first ReorderMove. The
-                // drag isn't "live" until it passes the movement threshold.
-                self.reorder = Some((index, 0.0));
-                self.reorder_cursor_y = 0.0;
-                self.reorder_dragging = false;
-                self.reorder_anim.clear();
-            }
-            Msg::ReorderMove(cursor_y) => {
-                if let Some((_, ref mut start_y)) = self.reorder {
-                    if *start_y == 0.0 {
-                        *start_y = cursor_y;
-                    }
-                    self.reorder_cursor_y = cursor_y;
-                    // Promote to a live drag once the cursor moves past the
-                    // threshold — until then it stays a candidate click.
-                    if (cursor_y - *start_y).abs() >= sola_kit::components::PANEL_REORDER_THRESHOLD
-                    {
-                        self.reorder_dragging = true;
-                    }
-                    if self.reorder_dragging {
-                        self.sync_reorder_anim();
-                    }
-                }
-            }
-            Msg::ReorderTick => {
-                self.sync_reorder_anim();
-            }
-            Msg::ReorderEnd => {
-                let gesture = self.reorder.take();
-                let final_y = self.reorder_cursor_y;
-                let was_dragging = self.reorder_dragging;
-                self.reorder_cursor_y = 0.0;
-                self.reorder_dragging = false;
-                self.reorder_anim.clear();
-                let Some((from, start_y)) = gesture else {
-                    return;
-                };
-
-                // Never crossed the threshold → it was a click, not a drag:
-                // select the row instead of reordering.
-                if !was_dragging {
-                    if let Some(&item) = self.order.get(from) {
-                        self.selected = item;
-                    }
-                    return;
-                }
-
-                let n = self.order.len();
-                // Anchor-relative: the grabbed row shifted by how many
-                // row-heights the cursor travelled (no absolute geometry).
-                let to = sola_kit::components::panel_drop_index_relative(
-                    from,
-                    start_y,
-                    final_y,
-                    sola_kit::components::PANEL_ROW_H,
-                    n,
-                );
-                if from == to {
-                    return;
-                }
-                // Reorder by stringified index (the helper works on ids).
-                let ids: Vec<String> = self.order.iter().map(|i| i.to_string()).collect();
-                let new_ids = sola_kit::components::panel_reordered(&ids, from, to);
-                self.order = new_ids
-                    .iter()
-                    .filter_map(|s| s.parse::<usize>().ok())
-                    .collect();
             }
             Msg::ItemPress(index) => {
                 if let Some(&item) = self.order.get(index) {
                     self.selected = item;
                 }
             }
-            Msg::SectionScroll(s) => {
-                self.section_scroll = s;
-            }
-            Msg::ItemHover(id) => self.hovered = id,
+            Msg::SectionScroll(s) => self.section_scroll = s,
             Msg::ToggleGroup => self.group_collapsed = !self.group_collapsed,
             Msg::Noop | Msg::MarkTick => {}
         }
     }
 
-    fn sync_reorder_anim(&mut self) {
-        let Some((from, start_y)) = self.reorder else {
+    fn on_event(&mut self, ev: SidebarEvent) {
+        match ev {
+            SidebarEvent::Activate { id } => {
+                if let Ok(item) = id.parse::<usize>() {
+                    self.selected = item;
+                }
+            }
+            SidebarEvent::ToggleSection { .. } => {
+                self.group_collapsed = !self.group_collapsed;
+            }
+            SidebarEvent::Resize { width } => self.width = width,
+            SidebarEvent::Drop(drop) => self.apply_drop(drop),
+        }
+    }
+
+    fn apply_drop(&mut self, drop: sidebar::Drop) {
+        let Ok(dragged) = drop.id.parse::<usize>() else {
             return;
         };
-        if !self.reorder_dragging {
-            return;
-        }
-        let n = self.order.len();
-        if n == 0 {
-            return;
-        }
-        let to = sola_kit::components::panel_drop_index_relative(
-            from,
-            start_y,
-            self.reorder_cursor_y,
-            sola_kit::components::PANEL_ROW_H,
-            n,
-        );
-        self.reorder_anim
-            .sync(from, to, n, iced::time::Instant::now());
+        self.order.retain(|&i| i != dragged);
+        let insert = match drop.dest {
+            Dest::Join {
+                before: Some(next), ..
+            }
+            | Dest::Loose { before: Some(next) } => next
+                .parse::<usize>()
+                .ok()
+                .and_then(|p| self.order.iter().position(|&i| i == p))
+                .unwrap_or(self.order.len()),
+            Dest::Join { before: None, .. } | Dest::Loose { before: None } => self.order.len(),
+            Dest::Sections(_) => {
+                self.order.insert(self.order.len(), dragged);
+                return;
+            }
+        };
+        self.order.insert(insert.min(self.order.len()), dragged);
     }
 }
 
 pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
-    // Build one section of items in the current order, decorating each
-    // with a shortcut hint, and demoing a close button + a secondary
-    // label on two of them.
     let items: Vec<SidebarItem<Msg>> = state
         .order
         .iter()
@@ -257,9 +136,6 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         })
         .collect();
 
-    // Settings-style headed section + a tab-group pocket + a loose run
-    // so membership (inset well, nested rows) is obvious against the
-    // unlabeled stack underneath.
     let mut mailboxes = Vec::new();
     let mut work = Vec::new();
     let mut loose = Vec::new();
@@ -274,36 +150,21 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     let sections = vec![
         SidebarSection::new("Mailboxes", mailboxes),
         SidebarSection::new("Work", work)
+            .id("work")
             .collapsible(state.group_collapsed, Msg::ToggleGroup)
             .header_count(n_work)
             .header_context(Msg::Noop),
         SidebarSection::unlabeled(loose).fill(),
     ];
 
-    let cfg = ReorderCfg {
-        on_press: Box::new(Msg::ReorderStart),
-        // Expose the gesture as "active" only once it's a real drag, so the
-        // panel shows no drag chrome on a plain (un-moved) press.
-        active: if state.reorder_dragging {
-            state.reorder
-        } else {
-            None
-        },
-        cursor_y: state.reorder_cursor_y,
-        anim: state.reorder_dragging.then_some(&state.reorder_anim),
-    };
-
-    // Demo sits in a raised card; the sidebar panel is also raised. Match
-    // both divider side-bands to raised so only the 1px hairline shows
-    // (theme-default canvas bands read as a black/grey/black gutter).
     let divider = DividerColors::raised(theme);
 
     let panel = SidebarPanel::new(sections)
         .density(SidebarDensity::Normal)
-        .item_hover(state.hovered.clone(), Msg::ItemHover)
+        .controller(&state.panel, Msg::Panel)
         .collapsible(state.collapsed, Msg::Toggle)
-        .resizable_with(state.width, state.dragging, Msg::DividerPress, divider)
-        .reorderable(cfg)
+        .resizable_with(state.width, divider)
+        .reorderable()
         .section_scroll(state.section_scroll, Msg::SectionScroll)
         .footer(footer())
         .build();
@@ -329,7 +190,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
              the dest so members stay inside the well. Spam sits \
              in the loose run underneath. Right-click Drafts. Overflow \
              chips only when section_scroll is wired and the viewport is \
-             measured."
+             measured. Gesture and animation live in the kit."
         )
         .style(muted),
         demo,
@@ -342,7 +203,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         .style(muted),
         marks_demo(),
         body("Density — Normal vs Large").style(muted),
-        density_demo(state),
+        density_demo(),
     ]
     .spacing(16)
     .into()
@@ -375,8 +236,7 @@ fn marks_demo<'a>() -> Element<'a, Msg> {
         .into()
 }
 
-/// Etch strips at both densities — this is the product language now.
-fn density_demo(state: &State) -> Element<'_, Msg> {
+fn density_demo<'a>() -> Element<'a, Msg> {
     let mk = |density: SidebarDensity| {
         let items: Vec<SidebarItem<Msg>> = ["Inbox", "A long tab title that truncates", "Sent"]
             .into_iter()
@@ -390,7 +250,6 @@ fn density_demo(state: &State) -> Element<'_, Msg> {
             .collect();
         SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
             .density(density)
-            .item_hover(state.hovered.clone(), Msg::ItemHover)
             .fill_width()
             .build()
     };

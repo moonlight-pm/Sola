@@ -20,14 +20,13 @@ use sola_kit::components::card;
 use sola_kit::components::divider::DIVIDER_HIT_PX;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use sola_kit::components::select::{SelectOption, select_sized};
+use sola_kit::components::sidebar::{self, Event as SidebarEvent};
 use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{
-    DividerColors, MenuItem, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, ReorderAnim,
-    ReorderCfg, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection, field,
-    horizontal_divider, menu_at, panel_drop_index_visual, panel_row_rest_ys, panel_section_at_y,
-    panel_shift_skip_header,
+    DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection,
+    SidebarState, field, horizontal_divider, menu_at,
 };
 
 use crate::engine::{
@@ -91,19 +90,15 @@ pub enum Msg {
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
-    /// User pressed the mouse on the sidebar divider.
-    DividerPress,
-    /// Press on a tab row (potential reorder), carrying the strip index.
-    ReorderStart(usize),
-    /// Animation tick while a tab reorder drag is live (sibling glides).
+    /// Kit sidebar gesture. Forward into [`SidebarState::update`].
+    Sidebar(sidebar::Msg),
+    /// Animation / page-menu pulse.
     ReorderTick,
-    /// Global cursor moved — acted on while dragging the divider or
-    /// reordering tabs. `(x, y)` in window-logical pixels.
+    /// Global cursor moved (nav-hold / leftover chrome). Sidebar gestures
+    /// do not use this.
     CursorMoved(f32, f32),
-    /// Global left-button released — ends a divider drag or tab reorder.
+    /// Global left-button released — ends a nav-hold, not a sidebar drag.
     CursorReleased,
-    /// Hovered tab row changed (string id of [`TabId`]), or `None`.
-    TabHover(Option<String>),
     ToggleGroup(String),
     TabContext(TabId),
     GroupContext(String),
@@ -386,25 +381,8 @@ pub struct App<E: Engine> {
     pub theme: iced::Theme,
     /// Tab sidebar width; edited by the draggable divider.
     pub sidebar_w: f32,
-    /// True while the divider is being dragged.
-    pub dragging_divider: bool,
-    /// Most-recent global cursor x, tracked continuously so the drag
-    /// anchor is current at `DividerPress` time.
-    pub last_cursor_x: Option<f32>,
-    /// `(cursor_x_at_press, sidebar_w_at_press)` — anchor-relative drag
-    /// (recompute from displacement, never accumulate deltas).
-    pub drag_anchor: Option<(f32, f32)>,
-    /// Hovered tab id (string form of [`TabId`]) — drives the float-in
-    /// close button. Wired through [`sola_kit::components::SidebarPanel::item_hover`].
-    pub hovered_tab: Option<String>,
-    /// Active tab-reorder gesture (`from_index`, start_y). `start_y` is
-    /// `0.0` until the first cursor sample after press (same sentinel as
-    /// the terminal strip).
-    reorder: Option<(usize, f32)>,
-    reorder_cursor_y: f32,
-    /// True once movement has crossed [`PANEL_REORDER_THRESHOLD`].
-    reorder_dragging: bool,
-    reorder_anim: ReorderAnim,
+    /// Kit-owned hover / drag / animation.
+    sidebar: SidebarState,
     groups: Groups,
     context_menu: Option<(iced::Point, CtxTarget)>,
     nav_hold: Option<NavHold>,
@@ -559,14 +537,7 @@ impl<E: Engine> App<E> {
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
             sidebar_w,
-            dragging_divider: false,
-            last_cursor_x: None,
-            drag_anchor: None,
-            hovered_tab: None,
-            reorder: None,
-            reorder_cursor_y: 0.0,
-            reorder_dragging: false,
-            reorder_anim: ReorderAnim::new(),
+            sidebar: SidebarState::new(),
             groups: Groups::default(),
             context_menu: None,
             nav_hold: None,
@@ -1221,122 +1192,27 @@ impl<E: Engine> App<E> {
         self.session_fp = fp;
     }
 
-    /// Drive sibling-offset animations for the live tab-reorder preview.
-    fn sync_reorder_anim(&mut self) {
-        let Some((from, start_y)) = self.reorder else {
-            return;
-        };
-        if !self.reorder_dragging {
-            return;
-        }
-        let rows = self.groups.visible_rows(&self.cached_tabs);
-        let n = rows.len();
-        if n == 0 {
-            return;
-        }
-        let lens = self.groups.section_lens(&self.cached_tabs);
-        let ys = panel_row_rest_ys(&lens, 3.0);
-        let to = panel_drop_index_visual(from, start_y, self.reorder_cursor_y, &ys, PANEL_ROW_H);
-        let from_si = crate::groups::Groups::section_index(&lens, from);
-        let to_si = crate::groups::Groups::section_index(&lens, to);
-        let ghost_mid = ys.get(from).copied().unwrap_or(0.0)
-            + (self.reorder_cursor_y - start_y)
-            + PANEL_ROW_H * 0.5;
-        let hover_si = panel_section_at_y(&lens, 3.0, ghost_mid, PANEL_ROW_H);
-        let over_foreign_well = !matches!(rows.get(from), Some(crate::groups::StripRow::Header(_)))
-            && lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
-            && hover_si != from_si;
-        let (a, b) = crate::groups::Groups::member_range(&lens, hover_si);
-        let to_in_hover_members = to >= a && to < b;
-        let header_i = crate::groups::Groups::section_start(&lens, hover_si);
-        let over_title = lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
-            && ys
-                .get(header_i)
-                .is_some_and(|y| ghost_mid >= *y && ghost_mid < *y + PANEL_ROW_H);
-        let gap = 3.0;
-        let row_h = sola_kit::components::sidebar::panel_etch_row_height(SidebarDensity::Large);
-        let pitch = row_h + gap;
-        let (extra, extra_si) = if over_foreign_well && !over_title {
-            (row_h, Some(hover_si))
-        } else {
-            (0.0, None)
-        };
-        // In the gap under a well, extra is the slot — don't also shift
-        // the top loose item (that gap then pops closed).
-        let shift_to = if matches!(rows.get(from), Some(crate::groups::StripRow::Header(_))) {
-            to
-        } else if over_foreign_well && !to_in_hover_members {
-            from
-        } else {
-            panel_shift_skip_header(&lens, from, to)
-        };
-        let dest = if matches!(rows.get(from), Some(crate::groups::StripRow::Header(_))) {
-            None
-        } else if over_foreign_well && !to_in_hover_members {
-            Some((0, 0))
-        } else {
-            let si = if over_foreign_well { hover_si } else { to_si };
-            Some(crate::groups::Groups::member_range(&lens, si))
-        };
-        let origin_hole = !over_title && (from_si == to_si || extra_si.is_some());
-        self.reorder_anim.sync_well(
-            from,
-            shift_to,
-            n,
-            extra,
-            extra_si,
-            dest,
-            lens.len(),
-            pitch,
-            origin_hole,
-            iced::time::Instant::now(),
-        );
-    }
-
-    /// Finish a strip gesture: click → activate / toggle; drag → drop.
-    fn finish_reorder(&mut self) {
-        let gesture = self.reorder.take();
-        let final_cursor_y = self.reorder_cursor_y;
-        let was_dragging = self.reorder_dragging;
-        self.reorder_cursor_y = 0.0;
-        self.reorder_dragging = false;
-        self.reorder_anim.clear();
-        REORDER_TRACKING.store(false, Ordering::Relaxed);
-
-        let Some((from, start_y)) = gesture else {
-            return;
-        };
-
-        let rows = self.groups.visible_rows(&self.cached_tabs);
-        if !was_dragging || start_y == 0.0 {
-            match rows.get(from) {
-                Some(crate::groups::StripRow::Tab(id)) => {
-                    self.switch_active_tab(*id);
+    fn on_sidebar_event(&mut self, ev: SidebarEvent) {
+        match ev {
+            SidebarEvent::Activate { id } => {
+                if let Ok(n) = id.parse::<u64>() {
+                    self.switch_active_tab(TabId(n));
                     self.persist_session();
                 }
-                Some(crate::groups::StripRow::Header(gid)) => {
-                    self.groups.toggle(gid);
-                    self.persist_session();
-                }
-                None => {}
             }
-            return;
+            SidebarEvent::ToggleSection { id } => {
+                self.groups.toggle(&id);
+                self.persist_session();
+            }
+            SidebarEvent::Resize { width } => {
+                self.sidebar_w = width;
+                self.persist_session();
+            }
+            SidebarEvent::Drop(drop) => {
+                self.groups.apply_kit_drop(&mut self.cached_tabs, &drop);
+                self.persist_session();
+            }
         }
-
-        let n = rows.len();
-        if n == 0 {
-            return;
-        }
-        let lens = self.groups.section_lens(&self.cached_tabs);
-        let ys = panel_row_rest_ys(&lens, 3.0);
-        let to = panel_drop_index_visual(from, start_y, final_cursor_y, &ys, PANEL_ROW_H);
-        if from == to {
-            return;
-        }
-        let bias = crate::groups::drop_bias(from, start_y, final_cursor_y, PANEL_ROW_H, to);
-        self.groups
-            .apply_drop_with(&mut self.cached_tabs, from, to, bias);
-        self.persist_session();
     }
 
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
@@ -1935,9 +1811,6 @@ impl<E: Engine> App<E> {
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
                 self.groups.on_tab_closed(id);
-                if self.hovered_tab.as_deref() == Some(&id.0.to_string()) {
-                    self.hovered_tab = None;
-                }
                 self.persist_session();
             }
             Msg::ActivateTab(id) => {
@@ -2115,65 +1988,21 @@ impl<E: Engine> App<E> {
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
             }
-            Msg::DividerPress => {
-                self.dragging_divider = true;
-                DIVIDER_DRAGGING.store(true, Ordering::Relaxed);
-                let x = f32::from_bits(CURSOR_X_BITS.load(Ordering::Relaxed));
-                self.last_cursor_x = Some(x);
-                self.drag_anchor = Some((x, self.sidebar_w));
-            }
-            Msg::ReorderStart(index) => {
-                // start_y = 0.0 sentinel; captured on first CursorMoved.
-                // Live-reorder stays off until movement crosses the threshold.
-                self.reorder = Some((index, 0.0));
-                self.reorder_cursor_y = 0.0;
-                self.reorder_dragging = false;
-                self.reorder_anim.clear();
-                REORDER_TRACKING.store(true, Ordering::Relaxed);
+            Msg::Sidebar(m) => {
+                if let Some(ev) = self.sidebar.update(m) {
+                    self.on_sidebar_event(ev);
+                }
+                DIVIDER_DRAGGING.store(self.sidebar.resizing(), Ordering::Relaxed);
+                REORDER_TRACKING.store(self.sidebar.capturing(), Ordering::Relaxed);
             }
             Msg::ReorderTick => {
-                if self.reorder_dragging {
-                    self.sync_reorder_anim();
-                }
                 self.take_page_menu();
                 return self.take_page_clipboard();
             }
-            Msg::CursorMoved(x, y) => {
-                self.last_cursor_x = Some(x);
-                if self.dragging_divider {
-                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
-                        // Sidebar is on the LEFT: it grows as the cursor
-                        // moves right of the anchor, shrinks moving left.
-                        let desired = anchor_w + (x - anchor_x);
-                        self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
-                    }
-                }
-                if let Some((_from, ref mut start_y)) = self.reorder {
-                    if *start_y == 0.0 {
-                        *start_y = y;
-                    }
-                    self.reorder_cursor_y = y;
-                    if (y - *start_y).abs() >= PANEL_REORDER_THRESHOLD {
-                        self.reorder_dragging = true;
-                    }
-                    if self.reorder_dragging {
-                        self.sync_reorder_anim();
-                    }
-                }
-            }
-            // sidebar width / tab order persisted on Tick / drop
+            Msg::CursorMoved(_x, _y) => {}
             Msg::CursorReleased => {
-                if self.dragging_divider {
-                    self.dragging_divider = false;
-                    self.drag_anchor = None;
-                }
-                DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
-                if self.reorder.is_some() {
-                    self.finish_reorder();
-                }
                 return self.finish_nav_hold();
             }
-            Msg::TabHover(i) => self.hovered_tab = i,
             Msg::ToggleGroup(id) => {
                 self.groups.toggle(&id);
                 self.persist_session();
@@ -2705,6 +2534,7 @@ impl<E: Engine> App<E> {
             let header_active =
                 g.collapsed && self.groups.of_tab(active_id).is_some_and(|id| id == g.id);
             let mut section = SidebarSection::new(g.name.clone(), members)
+                .id(g.id.clone())
                 .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
                 .header_active(header_active)
                 .header_context(Msg::GroupContext(g.id.clone()))
@@ -2736,23 +2566,9 @@ impl<E: Engine> App<E> {
         }
         SidebarPanel::new(sections)
             .density(SidebarDensity::Large)
-            .item_hover(self.hovered_tab.clone(), Msg::TabHover)
-            .resizable_with(
-                self.sidebar_w,
-                self.dragging_divider,
-                Msg::DividerPress,
-                DividerColors::raised_to_canvas(&self.theme),
-            )
-            .reorderable(ReorderCfg {
-                on_press: Box::new(Msg::ReorderStart),
-                active: if self.reorder_dragging {
-                    self.reorder
-                } else {
-                    None
-                },
-                cursor_y: self.reorder_cursor_y,
-                anim: self.reorder_dragging.then_some(&self.reorder_anim),
-            })
+            .controller(&self.sidebar, Msg::Sidebar)
+            .resizable_with(self.sidebar_w, DividerColors::raised_to_canvas(&self.theme))
+            .reorderable()
             .build()
     }
 
@@ -4886,6 +4702,7 @@ impl<E: Engine> App<E> {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             // Always registered; `update` no-ops when not dragging.
             iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
+            self.sidebar.subscription().map(Msg::Sidebar),
             event::listen_with(|event, status, _| {
                 match &event {
                     Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {

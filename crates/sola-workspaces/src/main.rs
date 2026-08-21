@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
-use iced::{event, keyboard};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::{event, keyboard};
 
-use sola_bus::topics::{AppToast, SplitDir, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{AppToast, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
-    apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings_transparent,
-    BusSetup,
+    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{atoms_from_bus_theme, default_theme, Atoms};
+use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
@@ -139,7 +139,7 @@ enum Msg {
     WheelToPty(String, Vec<u8>),
     Pasted(Option<String>),
     BlinkTick,
-    SidebarDragStart,
+    Sidebar(sola_kit::components::SidebarMsg),
     CursorMoved(f32, f32),
     CursorReleased,
     WindowReady(Option<iced::window::Id>),
@@ -161,7 +161,6 @@ enum Msg {
     ClosePane(String),
     SelectPane(String, String),
     RestartShell(String),
-    HoverSidebar(Option<String>),
     PaneFocused(String),
     SplitDividerPress(String),
     Ignore,
@@ -290,6 +289,7 @@ impl App {
             } else {
                 Subscription::none()
             },
+            self.sidebar.gestures.subscription().map(Msg::Sidebar),
             event::listen_with(|ev, _, _| match ev {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x, position.y))
@@ -467,8 +467,13 @@ impl App {
             Msg::CloseWorkspace(id) => self.close_workspace(&id),
             Msg::ClosePane(id) => self.close_pane(&id),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
-            Msg::HoverSidebar(id) => {
-                self.sidebar.hovered = id;
+            Msg::Sidebar(m) => {
+                if let Some(sola_kit::components::SidebarEvent::Resize { width }) =
+                    self.sidebar.gestures.update(m)
+                {
+                    self.sidebar.width = width;
+                    self.resize_all_panes();
+                }
                 Task::none()
             }
             Msg::PtyOutput(id) => {
@@ -534,28 +539,13 @@ impl App {
                 Task::none()
             }
             Msg::Pasted(text) => self.on_pasted(text),
-            Msg::SidebarDragStart => {
-                self.sidebar.dragging_divider = true;
-                self.sidebar.drag_anchor = None;
-                Task::none()
-            }
             Msg::CursorMoved(x, y) => {
-                if self.sidebar.dragging_divider {
-                    if let Some((anchor_x, anchor_w)) = self.sidebar.drag_anchor {
-                        self.sidebar.width =
-                            sola_kit::components::panel_dragged_width(anchor_x, anchor_w, x);
-                        self.resize_all_panes();
-                    } else {
-                        self.sidebar.drag_anchor = Some((x, self.sidebar.width));
-                    }
-                } else if let Some(split_id) = self.dragging_split.clone() {
+                if let Some(split_id) = self.dragging_split.clone() {
                     self.drag_split(&split_id, x, y);
                 }
                 Task::none()
             }
             Msg::CursorReleased => {
-                self.sidebar.dragging_divider = false;
-                self.sidebar.drag_anchor = None;
                 if self.dragging_split.take().is_some() {
                     self.persist_catalog();
                 }

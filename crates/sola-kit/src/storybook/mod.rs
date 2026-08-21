@@ -573,39 +573,8 @@ impl Storybook {
             );
         }
 
-        // Sidebar dogfood: while a resize or reorder gesture is in
-        // progress, listen for global cursor moves + release. Two
-        // listeners mirror the terminal's pattern — one feeds the x
-        // (divider width), one feeds the y (reorder drop). The update
-        // arms are independent (each guards on its own gesture state), so
-        // the cross-fired release messages are harmless.
-        if self.sidebar.needs_cursor_subscription() {
-            subs.push(event::listen_with(|ev, _, _| match ev {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::Sidebar(pages::sidebar::Msg::DividerMove(position.x)))
-                }
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Msg::Sidebar(pages::sidebar::Msg::DividerRelease))
-                }
-                _ => None,
-            }));
-            subs.push(event::listen_with(|ev, _, _| match ev {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::Sidebar(pages::sidebar::Msg::ReorderMove(position.y)))
-                }
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Msg::Sidebar(pages::sidebar::Msg::ReorderEnd))
-                }
-                _ => None,
-            }));
-        }
-        if self.sidebar.reorder_dragging {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(16))
-                    .map(|_| Msg::Sidebar(pages::sidebar::Msg::ReorderTick)),
-            );
-        }
         if self.page == Page::Sidebar {
+            subs.push(self.sidebar.subscription().map(Msg::Sidebar));
             subs.push(iced::window::frames().map(|_| Msg::Sidebar(pages::sidebar::Msg::MarkTick)));
         }
 

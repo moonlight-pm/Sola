@@ -14,11 +14,11 @@ use std::sync::Arc as StdArc; // text_editor paste payload
 
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::text_editor;
-use iced::widget::Id as ScrollId;
-use iced::{event, mouse, Element, Event, Subscription, Task, Theme};
+use iced::{Element, Event, Subscription, Task, Theme, event, mouse};
 
 use sola_bus::Message;
 use sola_bus::topics::{MenuDefinition, MenuItem, Topic, TopicKind};
@@ -250,18 +250,14 @@ pub(crate) struct App {
     pub(crate) scroll_bottom_pending: bool,
     /// Resizable left session column width.
     pub(crate) sidebar_w: f32,
+    pub(crate) sidebar: sola_kit::components::SidebarState,
     /// Sidebar session filter (title / path substring).
     pub(crate) session_filter: String,
-    pub(crate) dragging_divider: bool,
-    pub(crate) last_cursor_x: Option<f32>,
-    /// `(cursor_x_at_press, sidebar_w_at_press)`.
-    pub(crate) drag_anchor: Option<(f32, f32)>,
     /// Double-click rename: last session row click (id, instant).
     pub(crate) last_session_click: Option<(String, Instant)>,
     /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
     pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
-    /// Hovered session row id (hover-only trash control).
-    pub(crate) session_hover: Option<String>,
+
     /// Two-click delete: first trash click arms this id; second deletes.
     pub(crate) delete_armed: Option<String>,
     /// Permission mode (default always-approve).
@@ -335,10 +331,7 @@ pub(crate) enum Msg {
     RenameDraft(String),
     RenameCommit,
     RenameCancel,
-    // Sidebar resize
-    DividerPress,
-    CursorMoved(f32),
-    CursorReleased,
+    Sidebar(sola_kit::components::SidebarMsg),
     /// Periodic list refresh (activity dots, ages).
     RefreshSessionsTick,
     /// Sessions fill-section scroll viewport (for overflow chips).
@@ -358,7 +351,7 @@ pub(crate) enum Msg {
     /// Footer: pick reasoning effort id.
     SetEffort(String),
     /// Sidebar row hover (for trash visibility).
-    SessionHover(Option<String>),
+
     /// Trash control: arm on first click, delete on second (same id).
     SessionDeleteClick(String),
 }
@@ -402,13 +395,10 @@ impl App {
             bulk_delete: None,
             scroll_bottom_pending: false,
             sidebar_w,
+            sidebar: sola_kit::components::SidebarState::new(),
             session_filter: String::new(),
-            dragging_divider: false,
-            last_cursor_x: None,
-            drag_anchor: None,
             last_session_click: None,
             session_section_scroll: sola_kit::components::SectionScroll::default(),
-            session_hover: None,
             delete_armed: None,
             permission_mode: PermissionMode::default_mode(),
             efforts: Vec::new(),
@@ -424,10 +414,7 @@ impl App {
     }
 
     fn boot() -> (Self, Task<Msg>) {
-        (
-            Self::new(),
-            sola_kit::window_ready_task(Msg::WindowReady),
-        )
+        (Self::new(), sola_kit::window_ready_task(Msg::WindowReady))
     }
 
     fn title(&self) -> String {
@@ -447,15 +434,10 @@ impl App {
             bus_subscription().map(Msg::Bus),
             bridge::agent_subscription().map(Msg::Acp),
             iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
-            // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
-            // Also track Shift held — Wayland Enter events often omit the SHIFT mask.
+            self.sidebar.subscription().map(Msg::Sidebar),
+            // Wheel-up for history when no scrollbar. Also track Shift held —
+            // Wayland Enter events often omit the SHIFT mask.
             event::listen_with(|event, _status, _id| match event {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::CursorMoved(position.x))
-                }
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Msg::CursorReleased)
-                }
                 Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                     let up = match delta {
                         mouse::ScrollDelta::Lines { y, .. } => y > 0.0,
@@ -467,14 +449,18 @@ impl App {
                         None
                     }
                 }
-                Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, .. }) => {
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key, physical_key, ..
+                }) => {
                     if is_shift_key(&key, physical_key) {
                         Some(Msg::ShiftHeld(true))
                     } else {
                         None
                     }
                 }
-                Event::Keyboard(keyboard::Event::KeyReleased { key, physical_key, .. }) => {
+                Event::Keyboard(keyboard::Event::KeyReleased {
+                    key, physical_key, ..
+                }) => {
                     if is_shift_key(&key, physical_key) {
                         Some(Msg::ShiftHeld(false))
                     } else {
@@ -626,10 +612,8 @@ impl App {
                 // Plain Enter submits; Shift+Enter inserts a newline.
                 // Intercept here (not key_binding Custom) so submit rides the
                 // same proven Action path that typing uses.
-                if matches!(
-                    action,
-                    text_editor::Action::Edit(text_editor::Edit::Enter)
-                ) && !self.shift_held
+                if matches!(action, text_editor::Action::Edit(text_editor::Edit::Enter))
+                    && !self.shift_held
                 {
                     return self.submit_draft();
                 }
@@ -645,9 +629,10 @@ impl App {
                 if self.pending.is_some() {
                     return Task::none();
                 }
-                self.draft.perform(text_editor::Action::Edit(
-                    text_editor::Edit::Paste(StdArc::new(text)),
-                ));
+                self.draft
+                    .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                        StdArc::new(text),
+                    )));
             }
             Msg::ShiftHeld(held) => {
                 self.shift_held = held;
@@ -775,10 +760,7 @@ impl App {
                     overlay::set_title_override(&r.id, &title);
                     if self.session_id.as_deref() == Some(r.id.as_str()) {
                         self.session_title = if title.is_empty() {
-                            sessions::title_for(
-                                &self.project_root.to_string_lossy(),
-                                &r.id,
-                            )
+                            sessions::title_for(&self.project_root.to_string_lossy(), &r.id)
                         } else {
                             Some(title.clone())
                         };
@@ -789,26 +771,21 @@ impl App {
             Msg::RenameCancel => {
                 self.rename = None;
             }
-            Msg::DividerPress => {
-                self.dragging_divider = true;
-                if let Some(x) = self.last_cursor_x {
-                    self.drag_anchor = Some((x, self.sidebar_w));
-                }
-            }
-            Msg::CursorMoved(x) => {
-                self.last_cursor_x = Some(x);
-                if self.dragging_divider {
-                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
-                        // Left sidebar grows when cursor moves right.
-                        let desired = anchor_w + (x - anchor_x);
-                        self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+            Msg::Sidebar(m) => {
+                if let sola_kit::components::sidebar::Msg::Hover(ref id) = m {
+                    if let Some(armed) = self.delete_armed.as_ref() {
+                        if id.as_ref() != Some(armed) {
+                            self.delete_armed = None;
+                        }
                     }
                 }
-            }
-            Msg::CursorReleased => {
-                if self.dragging_divider {
-                    self.dragging_divider = false;
-                    self.drag_anchor = None;
+                let was_resize = self.sidebar.resizing();
+                if let Some(sola_kit::components::SidebarEvent::Resize { width }) =
+                    self.sidebar.update(m)
+                {
+                    self.sidebar_w = width.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                }
+                if was_resize && !self.sidebar.resizing() {
                     overlay::set_sidebar_w(self.sidebar_w);
                 }
             }
@@ -951,11 +928,7 @@ impl App {
                         return Task::none();
                     }
                     p.keep_open = v;
-                    p.criteria.keep_open_id = if v {
-                        self.session_id.clone()
-                    } else {
-                        None
-                    };
+                    p.criteria.keep_open_id = if v { self.session_id.clone() } else { None };
                     p.phase = BulkDeletePhase::Idle;
                     self.refresh_bulk_preview();
                 }
@@ -1031,22 +1004,15 @@ impl App {
                     });
                 }
             }
-            Msg::SessionHover(id) => {
-                self.session_hover = id.clone();
-                // Leaving the row (or switching rows) clears arm — two
-                // clicks must be on the same visible trash control.
-                if let Some(armed) = self.delete_armed.as_ref() {
-                    if id.as_ref() != Some(armed) {
-                        self.delete_armed = None;
-                    }
-                }
-            }
+
             Msg::SessionDeleteClick(id) => {
                 if self.delete_armed.as_deref() == Some(id.as_str()) {
                     self.delete_armed = None;
                     let was_open = self.session_id.as_deref() == Some(id.as_str());
                     // Sync delete on worker; refresh list after.
-                    bridge::agent_send(AgentCmd::BulkDelete { ids: vec![id.clone()] });
+                    bridge::agent_send(AgentCmd::BulkDelete {
+                        ids: vec![id.clone()],
+                    });
                     self.transcript_cache.remove(&id);
                     if was_open {
                         self.session_id = None;
@@ -1464,9 +1430,7 @@ impl App {
                 // Order: effort first (also uses set_mode on Grok), then
                 // permission so YOLO is the last modeId applied.
                 if let Some(effort) = self.effort_id.clone() {
-                    bridge::agent_send(AgentCmd::SetEffort {
-                        effort_id: effort,
-                    });
+                    bridge::agent_send(AgentCmd::SetEffort { effort_id: effort });
                 }
                 bridge::agent_send(AgentCmd::SetPermissionMode {
                     mode_id: self.permission_mode.as_mode_id().to_string(),

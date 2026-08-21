@@ -26,7 +26,6 @@ enum Msg {
     Bus(Arc<Message>),
     Select(u64),
     Close(u64),
-    HoverTab(Option<String>),
     OpenDialog,
     SaveAsDialog,
     Picker(sola_kit::components::file_picker::Message),

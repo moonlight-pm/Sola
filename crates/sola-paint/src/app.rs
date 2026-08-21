@@ -7,7 +7,7 @@ use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::widget::tooltip::Position as TooltipPosition;
-use iced::widget::{column, container, row, text, tooltip, Space};
+use iced::widget::{Space, column, container, row, text, tooltip};
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
     Theme,
@@ -16,26 +16,26 @@ use iced::{
 use sola_bus::topics::{FocusTarget, PaintSession, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    apply_theme_update, bus_subscription, is_self_quit, startup, window_settings_transparent,
-    BusSetup,
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::components::button as kit_btn;
+use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::popover;
 use sola_kit::components::style::{
-    mix_white, CHROME_SURFACE, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL,
+    CHROME_SURFACE, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
 };
-use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon;
 use sola_kit::components::{SidebarDensity, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
+use crate::Msg;
 use crate::doc::{Doc, Loaded};
 use crate::geom;
 use crate::stage::{self, CropGesture};
-use crate::Msg;
 
 pub const APP_ID: &str = "sola-paint";
 const HEADER_H: f32 = 52.0;
@@ -135,7 +135,6 @@ pub struct App {
     docs: Vec<Doc>,
     selected: Option<u64>,
     next_id: u64,
-    hovered_tab: Option<String>,
     cropping: bool,
     crop: Option<CropGesture>,
     /// Pointer at pan start + the pan vector at that moment.
@@ -162,7 +161,6 @@ impl Default for App {
             docs: Vec::new(),
             selected: None,
             next_id: 1,
-            hovered_tab: None,
             cropping: false,
             crop: None,
             panning: None,
@@ -336,11 +334,8 @@ impl App {
             return Task::none();
         }
         self.restored = true;
-        let have: std::collections::HashSet<PathBuf> = self
-            .docs
-            .iter()
-            .filter_map(|d| d.path.clone())
-            .collect();
+        let have: std::collections::HashSet<PathBuf> =
+            self.docs.iter().filter_map(|d| d.path.clone()).collect();
         let keep_sel = self.selected.is_some();
         let select = if keep_sel {
             None
@@ -479,12 +474,10 @@ impl App {
     }
 
     fn zoom_from_key(&mut self, factor: f32) {
-        let cursor = self
-            .last_cursor
-            .unwrap_or(iced::Point::new(
-                self.stage_size.width * 0.5,
-                self.stage_size.height * 0.5,
-            ));
+        let cursor = self.last_cursor.unwrap_or(iced::Point::new(
+            self.stage_size.width * 0.5,
+            self.stage_size.height * 0.5,
+        ));
         self.apply_zoom(cursor, self.stage_size, factor);
     }
 
@@ -559,22 +552,20 @@ impl App {
             }
             Msg::DocLoaded(result) => self.on_loaded(result),
             Msg::SessionLoaded { loaded, select } => self.on_session_loaded(loaded, select),
-            Msg::HoverTab(id) => self.hovered_tab = id,
+
             Msg::OpenDialog => self.open_picker(),
             Msg::SaveAsDialog => self.save_picker(),
             Msg::Picker(m) => return self.on_picker(m),
-            Msg::Save => {
-                match self.selected_doc_mut() {
-                    Some(doc) if doc.path.is_some() => match doc.save() {
-                        Ok(()) => self.set_ok("Saved"),
-                        Err(e) => self.set_err(e),
-                    },
-                    Some(_) => {
-                        return self.update(Msg::SaveAsDialog);
-                    }
-                    None => self.set_err("No image open"),
+            Msg::Save => match self.selected_doc_mut() {
+                Some(doc) if doc.path.is_some() => match doc.save() {
+                    Ok(()) => self.set_ok("Saved"),
+                    Err(e) => self.set_err(e),
+                },
+                Some(_) => {
+                    return self.update(Msg::SaveAsDialog);
                 }
-            }
+                None => self.set_err("No image open"),
+            },
             Msg::ToggleCrop => {
                 if self.selected_doc().is_none() {
                     self.set_err("Open an image first");
@@ -609,10 +600,8 @@ impl App {
                     self.invalidate_stage();
                 } else if let Some((origin, start_pan)) = self.panning {
                     if let Some(doc) = self.selected_doc_mut() {
-                        let img = iced::Size::new(
-                            doc.pixels.width() as f32,
-                            doc.pixels.height() as f32,
-                        );
+                        let img =
+                            iced::Size::new(doc.pixels.width() as f32, doc.pixels.height() as f32);
                         let pan = iced::Vector::new(
                             start_pan.x + (pt.x - origin.x),
                             start_pan.y + (pt.y - origin.y),
@@ -759,9 +748,7 @@ impl App {
     fn start_dir(&self) -> PathBuf {
         self.last_dir
             .clone()
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Pictures"))
-            })
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Pictures")))
             .unwrap_or_else(|| PathBuf::from("/"))
     }
 
@@ -871,7 +858,6 @@ impl App {
 
         SidebarPanel::new(sections)
             .density(SidebarDensity::Large)
-            .item_hover(self.hovered_tab.clone(), Msg::HoverTab)
             .build()
     }
 
@@ -927,7 +913,10 @@ impl App {
                 let sub = text(format!("{} · {}", doc.dims_label(), doc.zoom_label()))
                     .size(11)
                     .style(kit_text::muted);
-                column![title, sub].spacing(SPACE_SM).width(Length::Fill).into()
+                column![title, sub]
+                    .spacing(SPACE_SM)
+                    .width(Length::Fill)
+                    .into()
             }
             None => column![
                 text("Paint").font(fonts::ui_medium()).size(14),
@@ -963,16 +952,14 @@ impl App {
 
     fn body_pane(&self) -> Element<'_, Msg> {
         match self.selected_doc() {
-            Some(doc) => {
-                stage::view(
-                    doc,
-                    self.cropping,
-                    self.crop,
-                    self.panning.is_some(),
-                    &self.theme,
-                    &self.stage_cache,
-                )
-            }
+            Some(doc) => stage::view(
+                doc,
+                self.cropping,
+                self.crop,
+                self.panning.is_some(),
+                &self.theme,
+                &self.stage_cache,
+            ),
             None => container(
                 column![
                     kit_text::heading("Paint"),
@@ -993,7 +980,6 @@ impl App {
             .into(),
         }
     }
-
 }
 
 fn abs_path(path: PathBuf) -> PathBuf {

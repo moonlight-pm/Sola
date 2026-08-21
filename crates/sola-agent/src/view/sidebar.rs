@@ -4,11 +4,11 @@
 //! selection, slim bottom context progress bar (no numeric label), rail with
 //! hover X close on top and relative time below. No LIVE badge.
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
-    linear_bg, mix, mix_white, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM,
+    RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, linear_bg, mix, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
@@ -69,11 +69,9 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         // OD: margin-bottom 8px between session cards.
         .item_spacing(SPACE_MD)
         .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
-        .item_hover(app.session_hover.clone(), Msg::SessionHover)
+        .controller(&app.sidebar, Msg::Sidebar)
         .resizable_with(
             app.sidebar_w,
-            app.dragging_divider,
-            Msg::DividerPress,
             DividerColors {
                 a: side_bg,
                 line,
@@ -187,15 +185,14 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
         (summary.usage_used, summary.usage_size)
     };
 
-    let working =
-        summary.busy || (selected && (app.streaming || app.pending.is_some() || busy));
+    let working = summary.busy || (selected && (app.streaming || app.pending.is_some() || busy));
     let indicator = if working {
         SidebarIndicator::Active
     } else {
         SidebarIndicator::Idle
     };
 
-    let hovered = app.session_hover.as_deref() == Some(summary.id.as_str());
+    let hovered = app.sidebar.hover() == Some(summary.id.as_str());
     let armed = app.delete_armed.as_deref() == Some(summary.id.as_str());
     let body = session_card_body(
         &dir,
@@ -270,9 +267,7 @@ fn session_card_body(
         })
         .width(Length::Fill);
 
-    let meta = column![project, subtitle]
-        .spacing(3.0)
-        .width(Length::Fill);
+    let meta = column![project, subtitle].spacing(3.0).width(Length::Fill);
 
     let when_el = text(when.to_string())
         .font(fonts::ui())
@@ -285,10 +280,7 @@ fn session_card_body(
                 color: Some(if selected {
                     mix(fg, muted, 0.55)
                 } else {
-                    Color {
-                        a: 0.85,
-                        ..muted
-                    }
+                    Color { a: 0.85, ..muted }
                 }),
             }
         });
@@ -452,11 +444,12 @@ fn close_button(session_id: String, armed: bool) -> Element<'static, Msg> {
             a: 0.95,
         }
     };
-    button(text("×").font(fonts::ui()).size(14).style(move |_t: &Theme| {
-        iced::widget::text::Style {
-            color: Some(color),
-        }
-    }))
+    button(
+        text("×")
+            .font(fonts::ui())
+            .size(14)
+            .style(move |_t: &Theme| iced::widget::text::Style { color: Some(color) }),
+    )
     .padding(Padding::from([2, 6]))
     .style(move |theme: &Theme, status| {
         let p = theme.extended_palette();

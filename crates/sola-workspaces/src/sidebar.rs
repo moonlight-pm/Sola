@@ -9,10 +9,10 @@ use sola_kit::components::text_input::text_input;
 use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
 
+use crate::Msg;
 use crate::spawn;
 use crate::status::PaneStatus;
 use crate::workspace::{self, Project, Workspace};
-use crate::Msg;
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
@@ -20,18 +20,14 @@ pub const ADD_INPUT_ID: &str = "ws-add-path";
 
 pub struct SidebarState {
     pub width: f32,
-    pub dragging_divider: bool,
-    pub drag_anchor: Option<(f32, f32)>,
-    pub hovered: Option<String>,
+    pub gestures: sola_kit::components::SidebarState,
 }
 
 impl Default for SidebarState {
     fn default() -> Self {
         Self {
             width: SIDEBAR_W_DEFAULT,
-            dragging_divider: false,
-            drag_anchor: None,
-            hovered: None,
+            gestures: sola_kit::components::SidebarState::new(),
         }
     }
 }
@@ -167,19 +163,11 @@ pub fn view<'a>(
         b: term_bg,
     };
 
-    let mut panel =
-        SidebarPanel::new(sections).item_hover(state.hovered.clone(), Msg::HoverSidebar);
+    let mut panel = SidebarPanel::new(sections).controller(&state.gestures, Msg::Sidebar);
     if projects.is_empty() {
         panel = panel.footer(empty_footer());
     }
-    panel
-        .resizable_with(
-            state.width,
-            state.dragging_divider,
-            Msg::SidebarDragStart,
-            divider,
-        )
-        .build()
+    panel.resizable_with(state.width, divider).build()
 }
 
 /// Dead PTY (Ctrl-D / shell exit). One action: start a new shell.

@@ -83,14 +83,12 @@ pub use prose::{ProseBlock, ProseRun, flatten as flatten_prose, parse_plain, pro
 pub use readable::readable;
 pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use sidebar::{
-    PANEL_HEADER_H, PANEL_REORDER_ANIM_MS, PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD,
-    PANEL_ROW_H, PANEL_ROW_STRIDE, PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, ReorderAnim,
-    ReorderCfg, SIDEBAR_WIDTH, SectionCollapse, SectionScroll, SidebarDensity, SidebarHoverAction,
-    SidebarItem, SidebarItemChrome, SidebarPanel, SidebarSection, panel_dragged_width,
-    panel_drop_index, panel_drop_index_relative, panel_drop_index_visual, panel_etch_row_height,
-    panel_renumber_changed,
-    panel_reordered, panel_row_rest_ys, panel_section_at_y, panel_shift_skip_header,
-    panel_sibling_offset, section_overflow_counts, sidebar, sidebar_with_header,
+    Dest, Drop, Event as SidebarEvent, Msg as SidebarMsg, PANEL_HEADER_H, PANEL_REORDER_ANIM_MS,
+    PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_ROW_STRIDE,
+    PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, Row as SidebarRow, SIDEBAR_WIDTH, SectionCollapse,
+    SectionScroll, SidebarDensity, SidebarHoverAction, SidebarItem, SidebarItemChrome,
+    SidebarPanel, SidebarSection, State as SidebarState, StripSnapshot, panel_etch_row_height,
+    section_overflow_counts, sidebar, sidebar_with_header,
 };
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};

@@ -7,8 +7,8 @@
 
 | | |
 |--|--|
-| **Implementation** | Kit `SidebarDensity` + etch list chrome; browser/terminal on `SidebarPanel` (both **reorderable**); `vertical_tabs*` deleted |
-| **Dogfood** | Merged; browser tab reorder + width-aware titles dogfooded 2026-08-15. Overflow chips require `section_scroll` + a measured viewport (no fake 480px pane) |
+| **Implementation** | Kit `SidebarDensity` + etch list chrome; **kit-owned gesture** (`sidebar::State` + `Event`); browser/terminal/agent/workspaces on `SidebarPanel`; `vertical_tabs*` deleted |
+| **Dogfood** | Gesture rewrite on `browser-polish` (2026-08-21) — **not installed**. Overflow chips require `section_scroll` + a measured viewport |
 | **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 
 ---
@@ -58,8 +58,10 @@ though both live under `crates/sola-kit/src/components/sidebar.rs`.
    etched active, muted idle, no selection-teal wash on rows.
 4. **Capabilities stay opt-in** — reorder, shortcuts, close, secondary,
    subtitle, indicator, hover_action, custom content: default off / empty.
-5. **Apps own messages and gesture state** — kit still does not own cursor
-   subscriptions; `ReorderCfg` / divider press patterns stay as today.
+5. **Kit owns gesture, hover, and animation** — the consumer holds an
+   opaque [`State`] and maps [`Msg`] through [`State::update`]. Product
+   meaning arrives as [`Event`] (`Activate`, `ToggleSection`, `Drop`,
+   `Resize`). Overlay captures pointer while a press is live.
 6. **Strictly additive migration where possible** — rename/redefault chrome;
    deprecate `vertical_tabs*` with thin wrappers until the last caller is
    gone, then delete.

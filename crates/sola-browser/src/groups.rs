@@ -343,6 +343,43 @@ impl Groups {
         self.normalize(tabs);
     }
 
+    /// Apply a kit [`sola_kit::components::Drop`] (ids, not geometry).
+    pub fn apply_kit_drop(&mut self, tabs: &mut Vec<TabInfo>, drop: &sola_kit::components::Drop) {
+        use sola_kit::components::Dest;
+        match &drop.dest {
+            Dest::Sections(order) => {
+                let mut next = Vec::with_capacity(order.len());
+                for id in order {
+                    if let Some(g) = self.groups.iter().find(|g| g.id == *id).cloned() {
+                        next.push(g);
+                    }
+                }
+                for g in &self.groups {
+                    if !next.iter().any(|n| n.id == g.id) {
+                        next.push(g.clone());
+                    }
+                }
+                self.groups = next;
+            }
+            Dest::Join { section, before } => {
+                let Some(tid) = parse_tab(&drop.id) else {
+                    return;
+                };
+                self.member.insert(tid, section.clone());
+                splice_before(tabs, tid, before.as_deref().and_then(parse_tab), self);
+            }
+            Dest::Loose { before } => {
+                let Some(tid) = parse_tab(&drop.id) else {
+                    return;
+                };
+                self.member.remove(&tid);
+                splice_before(tabs, tid, before.as_deref().and_then(parse_tab), self);
+            }
+        }
+        self.dissolve_empty();
+        self.normalize(tabs);
+    }
+
     fn drop_header(&mut self, _tabs: &[TabInfo], rows: &[StripRow], gid: &str, to: usize) {
         let Some(from_g) = self.groups.iter().position(|g| g.id == gid) else {
             return;
@@ -473,9 +510,14 @@ impl Groups {
 }
 
 enum Dest {
-    Join { gid: String, after: Option<TabId> },
+    Join {
+        gid: String,
+        after: Option<TabId>,
+    },
     JoinAppend(String),
-    Loose { after: Option<TabId> },
+    Loose {
+        after: Option<TabId>,
+    },
     /// Group title is not a drop target.
     Noop,
 }
@@ -557,6 +599,30 @@ fn dest_on_slot(
             None => Dest::Loose { after: None },
         },
     }
+}
+
+fn parse_tab(id: &str) -> Option<TabId> {
+    id.parse::<u64>().ok().map(TabId)
+}
+
+fn splice_before(tabs: &mut Vec<TabInfo>, tid: TabId, before: Option<TabId>, groups: &Groups) {
+    let Some(pos) = tabs.iter().position(|t| t.id == tid) else {
+        return;
+    };
+    let tab = tabs.remove(pos);
+    let insert = if let Some(next) = before {
+        tabs.iter().position(|t| t.id == next).unwrap_or(tabs.len())
+    } else if let Some(gid) = groups.member.get(&tid) {
+        tabs.iter()
+            .rposition(|t| groups.member.get(&t.id).map(String::as_str) == Some(gid.as_str()))
+            .map(|i| i + 1)
+            .unwrap_or(tabs.len())
+    } else {
+        tabs.iter()
+            .position(|t| !groups.member.contains_key(&t.id))
+            .unwrap_or(tabs.len())
+    };
+    tabs.insert(insert.min(tabs.len()), tab);
 }
 
 fn new_group_id(existing: &[TabGroup]) -> String {

@@ -10,11 +10,11 @@ pub(crate) mod sidebar;
 
 use iced::widget::scrollable::Viewport;
 use iced::widget::text_editor::{self, Binding, KeyPress};
-use iced::widget::{button, column, container, row, scrollable, stack, text, Space, Column};
+use iced::widget::{Column, Space, button, column, container, row, scrollable, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
-    hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+    RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, hairline,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
@@ -64,8 +64,7 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    // Full-window resize overlay is already composed inside SidebarPanel
-    // when `dragging_divider` is set; keep shell plain.
+    // Full-window resize overlay is composed inside SidebarPanel.
     let body: Element<'_, Msg> = shell.into();
 
     if let Some(panel) = &app.bulk_delete {
@@ -114,9 +113,7 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
                     },
                     ..container::Style::default()
                 }),
-            text(leaf)
-                .font(fonts::ui_medium())
-                .size(12),
+            text(leaf).font(fonts::ui_medium()).size(12),
             text("·").size(12).style(kit_text::muted),
             text(path)
                 .font(fonts::mono())
@@ -130,11 +127,7 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
     .style(project_chip_style);
 
     let model = kit_btn::labeled_sm(
-        format!(
-            "{} · {}",
-            app.backend_label,
-            app.connection_mode.as_str()
-        ),
+        format!("{} · {}", app.backend_label, app.connection_mode.as_str()),
         kit_btn::ghost,
     );
 
@@ -329,12 +322,10 @@ fn transcript(app: &App) -> Element<'_, Msg> {
                     .style(|theme: &Theme, status| {
                         let p = theme.extended_palette();
                         let bg = match status {
-                            button::Status::Hovered | button::Status::Pressed => {
-                                Color {
-                                    a: 0.65,
-                                    ..p.background.strong.color
-                                }
-                            }
+                            button::Status::Hovered | button::Status::Pressed => Color {
+                                a: 0.65,
+                                ..p.background.strong.color
+                            },
                             _ => Color::TRANSPARENT,
                         };
                         button::Style {
@@ -388,18 +379,14 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             left: SIDE_PAD,
         });
 
-    scrollable(
-        container(padded)
-            .width(Length::Fill)
-            .center_x(Length::Fill),
-    )
-    .id(crate::transcript_scroll_id())
-    .height(Length::Fill)
-    .on_scroll(|vp: Viewport| {
-        let rel = vp.relative_offset();
-        Msg::TranscriptScrolled(rel.y)
-    })
-    .into()
+    scrollable(container(padded).width(Length::Fill).center_x(Length::Fill))
+        .id(crate::transcript_scroll_id())
+        .height(Length::Fill)
+        .on_scroll(|vp: Viewport| {
+            let rel = vp.relative_offset();
+            Msg::TranscriptScrolled(rel.y)
+        })
+        .into()
 }
 
 fn empty_transcript(app: &App) -> Element<'_, Msg> {
@@ -449,8 +436,8 @@ const COMPOSER_V_PAD: f32 = 12.0;
 fn composer(app: &App) -> Element<'_, Msg> {
     let gated = app.pending.is_some();
     let lines = app.draft.line_count().max(1);
-    let height = ((lines as f32) * COMPOSER_LINE_PX + COMPOSER_V_PAD)
-        .clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
+    let height =
+        ((lines as f32) * COMPOSER_LINE_PX + COMPOSER_V_PAD).clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
 
     let placeholder = if gated {
         "Resolve the pending approval to continue…"
@@ -516,13 +503,11 @@ fn composer_key_binding(key_press: KeyPress, shift_held: bool) -> Option<Binding
     use iced::keyboard;
     use iced::keyboard::key::Named;
 
-    let is_enter = matches!(
-        key_press.key.as_ref(),
-        keyboard::Key::Named(Named::Enter)
-    ) || matches!(
-        key_press.modified_key.as_ref(),
-        keyboard::Key::Named(Named::Enter)
-    );
+    let is_enter = matches!(key_press.key.as_ref(), keyboard::Key::Named(Named::Enter))
+        || matches!(
+            key_press.modified_key.as_ref(),
+            keyboard::Key::Named(Named::Enter)
+        );
 
     if is_enter {
         // Always produce Edit::Enter via the default binding path semantics.

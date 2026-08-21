@@ -7,7 +7,7 @@
 
 | | |
 |--|--|
-| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip |
+| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip |
 | **Dogfood** | **installed** this worktree. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside |
 | **Gaps** | spaces; color; drag-to-create |
 
@@ -170,9 +170,9 @@ Settings / mail / terminal / agent keep today’s inert labels.
 **Sidebar** page demos collapsible sections + row/header right-click; add a
 Context menu page (or a section on Sidebar) in the **same change**.
 
-Reorder maths stay app-driven (`ReorderCfg` + chrome `finish_reorder`).
-Chrome maps visible-row index → tab or header and applies the table above.
-Kit does not learn membership.
+Reorder maths live in kit (`sidebar::State` + `Event::Drop`). Chrome
+applies `Dest` (join / loose / section order) to `Groups`. Kit does not
+learn membership.
 
 ## Out of scope
 

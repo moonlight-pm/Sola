@@ -14,8 +14,8 @@ use iced::widget::{canvas, container, mouse_area, row};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, mouse};
 
-use sola_bus::topics::{PaneLayout, SplitDir, TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{PaneLayout, SplitDir, TerminalConfig, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
@@ -141,11 +141,7 @@ fn main() -> iced::Result {
     // races the poller handoff and was dropping every tab on restart
     // (tmux sessions still alive, UI empty).
     BusSetup::new(APP_ID)
-        .subscribe(&[
-            TopicKind::Theme,
-            TopicKind::MenuAction,
-            TopicKind::CloseApp,
-        ])
+        .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
         .install();
 
     // Publish the full multi-menu payload directly (BusSetup::app_menu only
@@ -226,12 +222,8 @@ enum Msg {
     /// A pane's shell exited (EOF) — carries the PaneId.
     PtyExit(String),
     Noop,
-    /// Press on the sidebar resize divider.
-    SidebarDragStart,
-    /// Press on a tab row (potential reorder), carrying the row index.
-    ReorderStart(usize),
-    /// Animation tick while a tab reorder drag is live (sibling glides).
-    ReorderTick,
+    /// Kit sidebar gesture.
+    Sidebar(sola_kit::components::SidebarMsg),
     /// Press on a pane split divider (carries the SplitId).
     SplitDividerPress(String),
     /// Pointer entered a pane's area (focus-follows-mouse) — carries PaneId.
@@ -364,8 +356,8 @@ impl App {
                 }
                 _ => None,
             }),
-            // Always registered; `update` no-ops when not dragging.
-            iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
+            // Sidebar anim frames while a drag is live.
+            self.sidebar.subscription().map(Msg::Sidebar),
         ])
     }
 
@@ -409,7 +401,9 @@ impl App {
                         let (h, o) = rt.emulator.scrollback_stats();
                         tracing::debug!(
                             "SCROLLBACK ptyout pane={} hist={} off={}",
-                            &pane_id[..8.min(pane_id.len())], h, o
+                            &pane_id[..8.min(pane_id.len())],
+                            h,
+                            o
                         );
                     }
                 }
@@ -439,25 +433,10 @@ impl App {
             Msg::WheelToPty(pane, bytes) => self.on_wheel_to_pty(pane, bytes),
             Msg::FlushWheel(pane) => self.flush_wheel(&pane),
             Msg::Pasted(text) => self.on_pasted(text),
-            Msg::SidebarDragStart => {
-                self.sidebar.dragging_divider = true;
-                self.sidebar.drag_anchor = None;
-                Task::none()
-            }
-            Msg::ReorderStart(index) => {
-                // start_y = 0.0 sentinel; captured on first CursorMoved.
-                // Live-reorder stays off until movement crosses the threshold.
-                self.sidebar.reorder = Some((index, 0.0));
-                self.sidebar.reorder_cursor_y = 0.0;
-                self.sidebar.reorder_dragging = false;
-                self.sidebar.reorder_anim.clear();
-                Task::none()
-            }
-            Msg::ReorderTick => {
-                if !self.sidebar.reorder_dragging {
-                    return Task::none();
+            Msg::Sidebar(m) => {
+                if let Some(ev) = self.sidebar.update(m) {
+                    return self.on_sidebar(ev);
                 }
-                self.sync_reorder_anim();
                 Task::none()
             }
             Msg::SplitDividerPress(split_id) => {
@@ -487,33 +466,6 @@ impl App {
                 Task::none()
             }
             Msg::CursorMoved(x, y) => {
-                // Sidebar resize divider.
-                if self.sidebar.dragging_divider {
-                    if let Some((anchor_x, anchor_w)) = self.sidebar.drag_anchor {
-                        let new_w =
-                            sola_kit::components::panel_dragged_width(anchor_x, anchor_w, x);
-                        self.config.sidebar_width = new_w as u32;
-                        self.resize_all_panes();
-                    } else {
-                        let current_w = self.config.sidebar_width as f32;
-                        self.sidebar.drag_anchor = Some((x, current_w));
-                    }
-                }
-                // Tab reorder.
-                if let Some((_from, ref mut start_y)) = self.sidebar.reorder {
-                    if *start_y == 0.0 {
-                        *start_y = y;
-                    }
-                    self.sidebar.reorder_cursor_y = y;
-                    // Promote to a live drag once the cursor moves past the
-                    // threshold — until then it stays a candidate click.
-                    if (y - *start_y).abs() >= sola_kit::components::PANEL_REORDER_THRESHOLD {
-                        self.sidebar.reorder_dragging = true;
-                    }
-                    if self.sidebar.reorder_dragging {
-                        self.sync_reorder_anim();
-                    }
-                }
                 // Pane split divider.
                 if let Some(split_id) = self.dragging_split.clone() {
                     if let Some(tab_id) = self.active.clone() {
@@ -537,20 +489,7 @@ impl App {
                 Task::none()
             }
             Msg::CursorReleased => {
-                let mut task = Task::none();
-                if self.sidebar.dragging_divider {
-                    self.sidebar.dragging_divider = false;
-                    self.sidebar.drag_anchor = None;
-                    if let Ok(mut client) = bus().lock() {
-                        if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
-                            tracing::warn!("emit TerminalConfig failed: {e:?}");
-                        }
-                    }
-                    self.resize_all_panes();
-                }
-                if self.sidebar.reorder.is_some() {
-                    task = self.finish_reorder();
-                }
+                let task = Task::none();
                 if self.dragging_split.take().is_some() {
                     if let Some(tab_id) = self.active.clone() {
                         self.persist_tab(&tab_id);
@@ -574,10 +513,10 @@ impl App {
                     sola_kit::components::text::body("terminal pane (placeholder)")
                         .style(sola_kit::components::text::muted),
                 )
-                    .padding(sola_kit::components::style::SPACE_MD)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into(),
+                .padding(sola_kit::components::style::SPACE_MD)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
             };
 
         let body: Element<'_, Msg> = row![
@@ -618,7 +557,13 @@ impl App {
     fn render_node<'a>(&'a self, node: &state::PaneNode, active_pane: &str) -> Element<'a, Msg> {
         match node {
             state::PaneNode::Leaf(pane_id) => self.render_leaf(pane_id, active_pane),
-            state::PaneNode::Split { id, dir, ratio, a, b } => {
+            state::PaneNode::Split {
+                id,
+                dir,
+                ratio,
+                a,
+                b,
+            } => {
                 let a_el = self.render_node(a, active_pane);
                 let b_el = self.render_node(b, active_pane);
                 // Match both panes' cell bg so only the 1px hairline shows
@@ -661,9 +606,9 @@ impl App {
             None => container(
                 sola_kit::components::text::caption("…").style(sola_kit::components::text::muted),
             )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
         };
 
         // Pointer-enter focuses this pane (sloppy focus). Focus is shown by
@@ -785,9 +730,7 @@ impl App {
         // Alt+Enter correctly gets ESC+CR. If we see KeyPressed/Released for
         // Shift itself, we can still arm Shift+Enter.
         if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
-            key,
-            physical_key,
-            ..
+            key, physical_key, ..
         }) = &event
         {
             self.apply_modifier_key(key, physical_key, false);
@@ -1074,12 +1017,19 @@ impl App {
                 // (could not reproduce 2026-06-18). Debug-gated: zero cost unless
                 // enabled via `RUST_LOG=sola_terminal=debug`. Grep `SCROLLBACK`.
                 let dbg = tracing::enabled!(tracing::Level::DEBUG);
-                let hb = if dbg { rt.emulator.scrollback_stats().0 } else { 0 };
+                let hb = if dbg {
+                    rt.emulator.scrollback_stats().0
+                } else {
+                    0
+                };
                 rt.emulator.resize(c, r);
                 if dbg {
                     tracing::debug!(
                         "SCROLLBACK resize pane={} -> {}x{} hist {}->{}",
-                        &pane_id[..8.min(pane_id.len())], c, r, hb,
+                        &pane_id[..8.min(pane_id.len())],
+                        c,
+                        r,
+                        hb,
                         rt.emulator.scrollback_stats().0
                     );
                 }
@@ -1097,8 +1047,7 @@ impl App {
         //    then reflow every pane.
         if apply_theme_update(m, &mut self.theme) {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
-                self.palette =
-                    term_view::Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
+                self.palette = term_view::Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
                 self.metrics =
                     term_view::CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
                 self.resize_all_panes();
@@ -1164,9 +1113,9 @@ impl App {
 
     fn republish_menu(&self) {
         if let Ok(mut client) = bus().lock() {
-            if let Err(e) =
-                client.emit(Topic::SetAppMenu(menu::terminal_menu(&self.tabs.tab_strip())))
-            {
+            if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(
+                &self.tabs.tab_strip(),
+            ))) {
                 tracing::warn!("republish_menu failed: {e:?}");
             }
         }
@@ -1336,12 +1285,7 @@ impl App {
         let source_cwd = self.active_pane().and_then(|p| self.tabs.pane_cwd(&p));
         let cwd = state::inherit_cwd(source_cwd.as_deref());
 
-        let ordinals: Vec<u32> = self
-            .tabs
-            .tab_strip()
-            .iter()
-            .map(|t| t.ordinal)
-            .collect();
+        let ordinals: Vec<u32> = self.tabs.tab_strip().iter().map(|t| t.ordinal).collect();
         let ordinal = state::next_ordinal(&ordinals);
 
         self.tabs.upsert_pane_meta(state::PaneMeta {
@@ -1590,88 +1534,26 @@ impl App {
         }
     }
 
-    /// Drive sibling-offset animations for the live tab-reorder preview.
-    fn sync_reorder_anim(&mut self) {
-        let Some((from, start_y)) = self.sidebar.reorder else {
-            return;
-        };
-        if !self.sidebar.reorder_dragging {
-            return;
-        }
-        let n = self.tabs.tab_ids_in_order().len();
-        if n == 0 {
-            return;
-        }
-        let to = sola_kit::components::panel_drop_index_relative(
-            from,
-            start_y,
-            self.sidebar.reorder_cursor_y,
-            sola_kit::components::PANEL_ROW_H,
-            n,
-        );
-        self.sidebar
-            .reorder_anim
-            .sync(from, to, n, iced::time::Instant::now());
-    }
-
-    /// Finish a tab-reorder gesture: click → select; drag → renumber ordinals.
-    fn finish_reorder(&mut self) -> Task<Msg> {
-        let gesture = self.sidebar.reorder.take();
-        let final_cursor_y = self.sidebar.reorder_cursor_y;
-        let was_dragging = self.sidebar.reorder_dragging;
-        self.sidebar.reorder_cursor_y = 0.0;
-        self.sidebar.reorder_dragging = false;
-        self.sidebar.reorder_anim.clear();
-
-        let Some((from, start_y)) = gesture else {
-            return Task::none();
-        };
-
-        let ids = self.tabs.tab_ids_in_order();
-        // Never crossed the threshold → click, not drag: select the tab.
-        // (`start_y == 0.0` covers press-with-no-move before the first sample.)
-        if !was_dragging || start_y == 0.0 {
-            if let Some(id) = ids.get(from) {
-                return self.select_tab(&id.clone());
+    fn on_sidebar(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
+        use sola_kit::components::SidebarEvent;
+        match ev {
+            SidebarEvent::Activate { id } => self.select_tab(&id),
+            SidebarEvent::Resize { width } => {
+                self.config.sidebar_width = width as u32;
+                self.resize_all_panes();
+                self.persist_config();
+                Task::none()
             }
-            return Task::none();
-        }
-
-        let n = ids.len();
-        if n == 0 {
-            return Task::none();
-        }
-        // Anchor-relative: same formula the kit uses for the drop-slot
-        // highlight. Absolute `panel_drop_index` + PANEL_HEADER_H was wrong
-        // here (terminal has no collapse header, and Y is window-absolute).
-        let to = sola_kit::components::panel_drop_index_relative(
-            from,
-            start_y,
-            final_cursor_y,
-            sola_kit::components::PANEL_ROW_H,
-            n,
-        );
-        if from == to {
-            return Task::none();
-        }
-
-        let new_order = sola_kit::components::panel_reordered(&ids, from, to);
-        let ordinals: HashMap<String, u32> = ids
-            .iter()
-            .filter_map(|id| self.tabs.get_tab(id).map(|t| (id.clone(), t.ordinal)))
-            .collect();
-        let changed = sola_kit::components::panel_renumber_changed(&ordinals, &new_order);
-
-        for (id, new_ordinal) in &changed {
-            if let Some(tab) = self.tabs.get_tab_mut(id) {
-                tab.ordinal = *new_ordinal;
+            SidebarEvent::Drop(drop) => {
+                crate::sidebar::apply_drop(&mut self.tabs, drop);
+                for id in self.tabs.tab_ids_in_order() {
+                    self.persist_tab(&id);
+                }
+                self.republish_menu();
+                Task::none()
             }
-            self.persist_tab(id);
+            SidebarEvent::ToggleSection { .. } => Task::none(),
         }
-        if !changed.is_empty() {
-            self.republish_menu();
-        }
-        Task::none()
     }
 }
 

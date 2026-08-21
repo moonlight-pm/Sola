@@ -10,11 +10,22 @@
 //! For richer panels — collapse/expand, drag-to-resize, drag-reorder,
 //! per-item shortcut hints / close buttons / secondary labels, and
 //! **section-scoped scroll with overflow chips** — use the opt-in
-//! [`SidebarPanel`] builder. List chrome ([`SidebarItemChrome::Row`]) is
-//! the browser etched title stack (muted idle, reserved 1px lip + inset
-//! active well, hover-only `×`). Collapsible sections render as an inset
-//! pocket with nested members. [`SidebarItemChrome::Card`] is a separate
-//! product surface and is not restyled by list etch.
+//! [`SidebarPanel`] builder plus a [`State`] blob. Gesture, hover, and
+//! animation live in the kit; the consumer maps [`Msg`] through
+//! [`State::update`] and handles [`Event`]. List chrome
+//! ([`SidebarItemChrome::Row`]) is the browser etched title stack
+//! (muted idle, reserved 1px lip + inset active well, hover-only `×`).
+//! Collapsible sections render as an inset pocket with nested members.
+//! [`SidebarItemChrome::Card`] is a separate product surface and is not
+//! restyled by list etch.
+//!
+//! ```ignore
+//! SidebarPanel::new(sections)
+//!     .controller(&self.sidebar, Msg::Sidebar)
+//!     .reorderable()
+//!     .resizable_with(self.width, colors)
+//!     .build()
+//! ```
 //!
 //! ## Section scroll (no scrollbar)
 //!
@@ -30,7 +41,11 @@
 //! never see a raw `hex::*`.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
+
+mod gesture;
+pub use gesture::{Dest, Drop, Event, Msg, Row, State, StripSnapshot};
 
 use iced::advanced::Renderer as _;
 use iced::advanced::layout::{self, Layout};
@@ -44,8 +59,8 @@ use iced::widget::{
     text,
 };
 use iced::{
-    Animation, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Shadow, Size,
-    Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
+    Animation, Background, Border, Color, Element, Length, Padding, Rectangle, Shadow, Size, Theme,
+    Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
@@ -291,6 +306,9 @@ impl<'a, Message> SidebarItem<'a, Message> {
 /// takes remaining panel height and scrolls without a scrollbar. Wire
 /// [`SidebarPanel::section_scroll`] for `↑ N …` / `↓ N …` overflow chips.
 pub struct SidebarSection<'a, Message> {
+    /// Stable id for collapsible sections (drop / toggle). Optional for
+    /// unlabeled or static groups.
+    pub id: Option<String>,
     pub label: Option<String>,
     pub items: Vec<SidebarItem<'a, Message>>,
     /// When true, this section's item list fills remaining height and
@@ -323,6 +341,7 @@ pub struct SectionCollapse<'a, Message> {
 impl<'a, Message> SidebarSection<'a, Message> {
     pub fn new(label: impl Into<String>, items: Vec<SidebarItem<'a, Message>>) -> Self {
         Self {
+            id: None,
             label: Some(label.into()),
             items,
             fill: false,
@@ -334,6 +353,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
 
     pub fn unlabeled(items: Vec<SidebarItem<'a, Message>>) -> Self {
         Self {
+            id: None,
             label: None,
             items,
             fill: false,
@@ -341,6 +361,12 @@ impl<'a, Message> SidebarSection<'a, Message> {
             on_label: None,
             on_add: None,
         }
+    }
+
+    /// Identity used by reorder / toggle events.
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// Make the section label emit `msg` (e.g. collapse the group).
@@ -1662,6 +1688,49 @@ pub fn panel_renumber_changed(
 /// The `'a` lifetime ties the boxed `on_press` closure to the same scope
 /// as the rest of the built `Element` (it borrows the consumer's state to
 /// produce a message per row index).
+fn snapshot_of_sections<Message>(
+    sections: &[SidebarSection<'_, Message>],
+    item_spacing: f32,
+    row_h: f32,
+) -> StripSnapshot {
+    let mut rows = Vec::new();
+    let mut lens = Vec::new();
+    for (si, section) in sections.iter().enumerate() {
+        let grouped = section.collapse.is_some();
+        let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
+        let sid = section
+            .id
+            .clone()
+            .or_else(|| grouped.then(|| format!("s{si}")));
+        let start = rows.len();
+        if grouped {
+            let id = sid.clone().unwrap_or_else(|| format!("s{si}"));
+            rows.push(Row::Header { id });
+            if !hide {
+                for (ii, item) in section.items.iter().enumerate() {
+                    let id = item.id.clone().unwrap_or_else(|| format!("s{si}i{ii}"));
+                    rows.push(Row::Item {
+                        id,
+                        section: sid.clone(),
+                    });
+                }
+            }
+        } else if !hide {
+            for (ii, item) in section.items.iter().enumerate() {
+                let id = item.id.clone().unwrap_or_else(|| format!("s{si}i{ii}"));
+                rows.push(Row::Item { id, section: None });
+            }
+        }
+        lens.push((grouped, rows.len() - start));
+    }
+    StripSnapshot {
+        rows,
+        lens,
+        item_spacing,
+        row_h,
+    }
+}
+
 pub struct ReorderCfg<'a, Message> {
     /// Maps a pressed row's index → the message that begins the gesture
     /// (the consumer's `ReorderStart(usize)`).
@@ -1994,7 +2063,7 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for HoverClose<'_, Message>
     fn update(
         &mut self,
         tree: &mut Tree,
-        event: &Event,
+        event: &iced::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &iced::Renderer,
@@ -2350,18 +2419,17 @@ fn dim_label<'a, Message: 'a>(s: &str) -> Element<'a, Message> {
 /// per-item shortcut hints / close buttons / secondary labels, section-
 /// scoped scroll with overflow chips, plus an optional footer.
 ///
-/// The APP owns the cursor-move/release subscription (mirroring
-/// sola-monitor's `DividerPress` + global listener pattern); this builder
-/// only renders the divider `mouse_area` and the full-window overlay that
-/// keeps the resize cursor while `dragging`. Returns an `Element` (a
-/// `row!`/`stack!`), not a `Container`, so it composes directly.
+/// Gesture / hover / animation live in [`State`]. Wire
+/// [`Self::controller`] then opt into [`Self::reorderable`] and
+/// [`Self::resizable`]. Returns an `Element` (a `row!`/`stack!`), not a
+/// `Container`, so it composes directly.
 pub struct SidebarPanel<'a, Message> {
     sections: Vec<SidebarSection<'a, Message>>,
     collapse: Option<(bool, Message)>,
-    /// `(width, dragging, on_press, colors)` — `colors` is `None` for
-    /// theme-default divider chrome.
-    resize: Option<(f32, bool, Message, Option<crate::components::DividerColors>)>,
-    reorder: Option<ReorderCfg<'a, Message>>,
+    /// `(width, colors)` — `colors` is `None` for theme-default chrome.
+    resize: Option<(f32, Option<crate::components::DividerColors>)>,
+    reorder: bool,
+    controller: Option<(&'a State, Rc<dyn Fn(Msg) -> Message + 'a>)>,
     /// Optional leading content (search field, brand, rename bar).
     /// Stacked above the section list; never scrolls with items.
     header: Option<Element<'a, Message, Theme>>,
@@ -2369,8 +2437,6 @@ pub struct SidebarPanel<'a, Message> {
     /// Viewport snapshot + callback for the fill section's scroll body.
     /// When set, fill sections show `↑ N …` / `↓ N …` overflow chips.
     section_scroll: Option<(SectionScroll, Box<dyn Fn(SectionScroll) -> Message + 'a>)>,
-    /// Per-row hover id + callback (for hover-only trailing actions).
-    item_hover: Option<(Option<String>, Box<dyn Fn(Option<String>) -> Message + 'a>)>,
     /// Vertical gap between item rows in a section body. `None` means
     /// "use density default" (list etch gap). Explicit `0` keeps a packed
     /// clickable band. Card stacks pass e.g. [`SPACE_MD`].
@@ -2391,15 +2457,21 @@ where
             sections,
             collapse: None,
             resize: None,
-            reorder: None,
+            reorder: false,
+            controller: None,
             header: None,
             footer: None,
             section_scroll: None,
-            item_hover: None,
             item_spacing: None,
             density: SidebarDensity::Normal,
             fill_width: false,
         }
+    }
+
+    /// Kit-owned gesture blob. Forward every [`Msg`] into [`State::update`].
+    pub fn controller(mut self, state: &'a State, f: impl Fn(Msg) -> Message + 'a) -> Self {
+        self.controller = Some((state, Rc::new(f)));
+        self
     }
 
     /// Space between consecutive item rows (`0` = packed / fully clickable).
@@ -2436,33 +2508,26 @@ where
         self
     }
 
-    /// Render a drag divider on the right edge. `width` is the current
-    /// column width; `dragging` toggles the full-window overlay;
-    /// `on_divider_press` begins the resize gesture. Divider colours
-    /// use the theme default (canvas | border | canvas); prefer
-    /// [`Self::resizable_with`] when the adjacent surfaces differ.
-    pub fn resizable(mut self, width: f32, dragging: bool, on_divider_press: Message) -> Self {
-        self.resize = Some((width, dragging, on_divider_press, None));
+    /// Render a drag divider on the right edge. Requires [`Self::controller`].
+    /// Divider colours use the theme default; prefer [`Self::resizable_with`]
+    /// when the adjacent surfaces differ.
+    pub fn resizable(mut self, width: f32) -> Self {
+        self.resize = Some((width, None));
         self
     }
 
     /// Like [`Self::resizable`], but with explicit **a | line | b**
     /// divider colours so the hit strip matches the panel and its
     /// neighbour (e.g. raised sidebar | terminal canvas).
-    pub fn resizable_with(
-        mut self,
-        width: f32,
-        dragging: bool,
-        on_divider_press: Message,
-        colors: crate::components::DividerColors,
-    ) -> Self {
-        self.resize = Some((width, dragging, on_divider_press, Some(colors)));
+    pub fn resizable_with(mut self, width: f32, colors: crate::components::DividerColors) -> Self {
+        self.resize = Some((width, Some(colors)));
         self
     }
 
-    /// Enable drag-to-reorder using the supplied [`ReorderCfg`].
-    pub fn reorderable(mut self, cfg: ReorderCfg<'a, Message>) -> Self {
-        self.reorder = Some(cfg);
+    /// Enable drag-to-reorder. Requires [`Self::controller`]. Click vs
+    /// drag is decided on release; drop arrives as [`Event::Drop`].
+    pub fn reorderable(mut self) -> Self {
+        self.reorder = true;
         self
     }
 
@@ -2486,52 +2551,57 @@ where
         self
     }
 
-    /// Track which item id is hovered so [`SidebarItem::hover_action`] can
-    /// appear only on that row. `hovered` is the app-owned id (or `None`);
-    /// `on_hover` receives `Some(id)` when the pointer enters a row and
-    /// `None` when it leaves the item list entirely.
-    ///
-    /// Rows only emit **enter** (not exit). A list-level exit clears hover.
-    /// Per-row exit races with the next row's enter (order depends on move
-    /// direction) and left trash stuck off when sweeping upward.
-    ///
-    /// List `on_close` does **not** use this id for visibility — the ×
-    /// paints when the pointer is over the row, so a close that slides
-    /// the next row under a stationary cursor still shows the chip.
-    pub fn item_hover(
-        mut self,
-        hovered: Option<String>,
-        on_hover: impl Fn(Option<String>) -> Message + 'a,
-    ) -> Self {
-        self.item_hover = Some((hovered, Box::new(on_hover)));
-        self
-    }
-
     pub fn build(self) -> Element<'a, Message, Theme> {
         let SidebarPanel {
             sections,
             collapse,
             resize,
-            reorder,
+            reorder: reorder_enabled,
+            controller,
             header,
             footer,
             section_scroll,
-            item_hover,
             item_spacing,
             density,
             fill_width,
         } = self;
         let item_spacing = item_spacing.unwrap_or(density.metrics().gap);
+        let row_h = panel_etch_row_height(density);
+        let snapshot = snapshot_of_sections(&sections, item_spacing, row_h);
+        let snap_rc = Rc::new(snapshot);
+
+        let on_action = controller.as_ref().map(|(_, f)| Rc::clone(f));
+        let hovered_id: Option<String> = controller
+            .as_ref()
+            .and_then(|(s, _)| s.hover().map(str::to_string));
+        let hover_wired = on_action.is_some();
+
+        let reorder_owned: Option<ReorderCfg<'a, Message>> = if reorder_enabled {
+            on_action.as_ref().and_then(|act| {
+                let state = controller.as_ref()?.0;
+                let act_press = Rc::clone(act);
+                let snap = Rc::clone(&snap_rc);
+                Some(ReorderCfg {
+                    on_press: Box::new(move |i| {
+                        act_press(Msg::PressRow {
+                            index: i,
+                            snapshot: (*snap).clone(),
+                        })
+                    }),
+                    active: state.preview_active(),
+                    cursor_y: state.cursor_y(),
+                    anim: state.preview_anim(),
+                })
+            })
+        } else {
+            None
+        };
+        let reorder_ref = reorder_owned.as_ref();
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
-        let reorder_ref = reorder.as_ref();
         let (scroll_snap, mut on_section_scroll) = match section_scroll {
             Some((snap, cb)) => (snap, Some(cb)),
             None => (SectionScroll::default(), None),
-        };
-        let (hovered_id, mut on_item_hover) = match item_hover {
-            Some((id, cb)) => (id, Some(cb)),
-            None => (None, None),
         };
 
         // Fixed chrome (collapse + header + footer). Section *labels* also
@@ -2624,7 +2694,6 @@ where
                 .map(|s| section_block_height(s, item_spacing))
                 .unwrap_or(PANEL_ROW_H);
 
-            let hover_wired = on_item_hover.is_some();
             let mut dragged_item: Option<SidebarItem<'a, Message>> = None;
             let mut sections_col = column![].spacing(0.0).width(Length::Fill);
             let mut row_index = 0usize;
@@ -2852,16 +2921,13 @@ where
                         let show_action = hid
                             .as_ref()
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                        let mut row_el = render_item(
-                            header,
-                            reorder_ref,
-                            row_index,
-                            show_action,
-                            density,
-                            on_item_hover.is_some(),
-                        );
-                        if let (Some(id), Some(ref mut on_hover)) = (hid, on_item_hover.as_mut()) {
-                            row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
+                        let mut row_el =
+                            render_item(header, reorder_ref, row_index, show_action, density, true);
+                        if let (Some(id), Some(act)) = (hid, on_action.as_ref()) {
+                            let act = Rc::clone(act);
+                            row_el = mouse_area(row_el)
+                                .on_enter(act(Msg::Hover(Some(id))))
+                                .into();
                         }
                         body_items = body_items.push(row_el);
                         row_index += 1;
@@ -2876,20 +2942,15 @@ where
                         let show_action = item_id
                             .as_ref()
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                        let mut row_el = render_item(
-                            item,
-                            reorder_ref,
-                            row_index,
-                            show_action,
-                            density,
-                            on_item_hover.is_some(),
-                        );
+                        let mut row_el =
+                            render_item(item, reorder_ref, row_index, show_action, density, true);
                         // Enter only — list-level exit clears hover so A→B
                         // cannot race (exit A after enter B → stuck None).
-                        if let (Some(id), Some(ref mut on_hover)) =
-                            (item_id, on_item_hover.as_mut())
-                        {
-                            row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
+                        if let (Some(id), Some(act)) = (item_id, on_action.as_ref()) {
+                            let act = Rc::clone(act);
+                            row_el = mouse_area(row_el)
+                                .on_enter(act(Msg::Hover(Some(id))))
+                                .into();
                         }
                         body_items = body_items.push(row_el);
                     }
@@ -2914,8 +2975,9 @@ where
                         scroll_snap,
                         scroll_cb,
                     );
-                    if let Some(ref mut on_hover) = on_item_hover {
-                        body = mouse_area(body).on_exit(on_hover(None)).into();
+                    if let Some(act) = on_action.as_ref() {
+                        let act = Rc::clone(act);
+                        body = mouse_area(body).on_exit(act(Msg::Hover(None))).into();
                     }
                     sections_col = sections_col.push(body);
                 } else {
@@ -2924,8 +2986,9 @@ where
                     } else {
                         body_items.into()
                     };
-                    let body: Element<'a, Message> = if let Some(ref mut on_hover) = on_item_hover {
-                        mouse_area(body_el).on_exit(on_hover(None)).into()
+                    let body: Element<'a, Message> = if let Some(act) = on_action.as_ref() {
+                        let act = Rc::clone(act);
+                        mouse_area(body_el).on_exit(act(Msg::Hover(None))).into()
                     } else {
                         body_el
                     };
@@ -2953,7 +3016,7 @@ where
         }
 
         let width = match &resize {
-            Some((w, _, _, _)) if !collapsed => Length::Fixed(*w),
+            Some((w, _)) if !collapsed => Length::Fixed(*w),
             _ if collapsed => Length::Fixed(36.0),
             _ if fill_width => Length::Fill,
             _ => Length::Fixed(SIDEBAR_WIDTH),
@@ -2964,43 +3027,53 @@ where
             .width(width)
             .height(Length::Fill);
 
-        // Gesture flags captured before we move `resize` into the divider.
-        let resize_dragging = resize.as_ref().is_some_and(|(_, d, _, _)| *d);
-        // `active` is only set after the movement threshold, so this is a
-        // real drag (not a plain press).
-        let reorder_dragging = reorder_ref.is_some_and(|r| r.active.is_some());
+        let capturing = controller.as_ref().is_some_and(|(s, _)| s.capturing());
+        let resize_dragging = controller.as_ref().is_some_and(|(s, _)| s.resizing());
+        let reorder_dragging = controller.as_ref().is_some_and(|(s, _)| s.reordering());
 
         // Compose optional resize divider — same three-band hit strip as
         // kit `split` / terminal pane dividers.
         let body: Element<'a, Message, Theme> = match resize {
-            Some((_, _, on_press, colors)) => {
-                let divider = match colors {
-                    Some(c) => crate::components::vertical_divider_with(on_press, c),
-                    None => crate::components::vertical_divider(on_press),
+            Some((w, colors)) => {
+                let on_press = on_action
+                    .as_ref()
+                    .map(|act| act(Msg::PressDivider { width: w }));
+                let divider = match (on_press, colors) {
+                    (Some(msg), Some(c)) => crate::components::vertical_divider_with(msg, c),
+                    (Some(msg), None) => crate::components::vertical_divider(msg),
+                    (None, _) => Space::new()
+                        .width(Length::Fixed(crate::components::DIVIDER_HIT_PX))
+                        .into(),
                 };
                 row![panel, divider].height(Length::Fill).into()
             }
             None => panel.into(),
         };
 
-        // Full-window transparent overlay while a gesture is live so a fast
-        // drag keeps the right cursor (iced has no pointer capture). Resize
-        // and reorder are mutually exclusive in practice (different press
-        // targets); resize wins if both somehow fire.
-        if resize_dragging {
-            stack![
-                body,
-                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                    .interaction(iced::mouse::Interaction::ResizingColumn),
-            ]
-            .into()
-        } else if reorder_dragging {
-            stack![
-                body,
-                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                    .interaction(iced::mouse::Interaction::Grabbing),
-            ]
-            .into()
+        // Full-window overlay while a press is live so move/release keep
+        // landing on the kit (iced has no pointer capture).
+        if capturing {
+            if let Some(act) = on_action {
+                let act_move = Rc::clone(&act);
+                let act_up = Rc::clone(&act);
+                let interaction = if resize_dragging {
+                    iced::mouse::Interaction::ResizingColumn
+                } else if reorder_dragging {
+                    iced::mouse::Interaction::Grabbing
+                } else {
+                    iced::mouse::Interaction::Pointer
+                };
+                stack![
+                    body,
+                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                        .interaction(interaction)
+                        .on_move(move |p| act_move(Msg::Pointer { x: p.x, y: p.y }))
+                        .on_release(act_up(Msg::Release)),
+                ]
+                .into()
+            } else {
+                body
+            }
         } else {
             body
         }
@@ -3154,7 +3227,7 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for ClipScroll<'_, Message>
     fn update(
         &mut self,
         tree: &mut Tree,
-        event: &Event,
+        event: &iced::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &iced::Renderer,
