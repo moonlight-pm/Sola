@@ -105,11 +105,8 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
 }
 
 fn map_notification(payload: &Value) -> Option<AgentStatus> {
-    let ntype = string_field(
-        payload,
-        &["notificationType", "notification_type", "type"],
-    )
-    .unwrap_or_default();
+    let ntype = string_field(payload, &["notificationType", "notification_type", "type"])
+        .unwrap_or_default();
     let message = string_field(payload, &["message"]).unwrap_or_default();
     let level = string_field(payload, &["level"]).unwrap_or_default();
     let ntype_n = normalize_event(&ntype);
@@ -121,10 +118,7 @@ fn map_notification(payload: &Value) -> Option<AgentStatus> {
     {
         return None;
     }
-    if ntype_n == "idle_prompt"
-        || msg.contains("type your message")
-        || msg.contains("enter send")
-    {
+    if ntype_n == "idle_prompt" || msg.contains("type your message") || msg.contains("enter send") {
         return Some(AgentStatus::Done);
     }
     if ntype_n == "permission_prompt"
@@ -195,9 +189,15 @@ mod tests {
 
     #[test]
     fn grok_events_map_first() {
-        assert!(map(json!({"hookEventName": "PostCompact"})).unwrap().compacted);
+        assert!(
+            map(json!({"hookEventName": "PostCompact"}))
+                .unwrap()
+                .compacted
+        );
         assert_eq!(
-            map(json!({"hookEventName": "UserPromptSubmit"})).unwrap().status,
+            map(json!({"hookEventName": "UserPromptSubmit"}))
+                .unwrap()
+                .status,
             Some(AgentStatus::Working)
         );
         assert_eq!(
@@ -220,12 +220,25 @@ mod tests {
             map(json!({"hookEventName": "StopFailure"})).unwrap().status,
             Some(AgentStatus::Done)
         );
-        assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().clear_turn);
+        assert!(
+            map(json!({"hookEventName": "SessionStart"}))
+                .unwrap()
+                .clear_turn
+        );
         assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().claim);
-        assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().status.is_none());
-        assert!(map(json!({"hookEventName": "UserPromptSubmit"})).unwrap().claim);
+        assert!(map(json!({"hookEventName": "SessionStart"}))
+            .unwrap()
+            .status
+            .is_none());
+        assert!(
+            map(json!({"hookEventName": "UserPromptSubmit"}))
+                .unwrap()
+                .claim
+        );
         assert_eq!(
-            map(json!({"hookEventName": "StopCancelled"})).unwrap().status,
+            map(json!({"hookEventName": "StopCancelled"}))
+                .unwrap()
+                .status,
             Some(AgentStatus::Done)
         );
     }
@@ -250,15 +263,13 @@ mod tests {
 
     #[test]
     fn routine_permission_prompt_ignored() {
-        assert!(
-            map(json!({
-                "hookEventName": "Notification",
-                "notificationType": "permission_prompt",
-                "message": "Tool permission requested",
-                "level": "info"
-            }))
-            .is_none()
-        );
+        assert!(map(json!({
+            "hookEventName": "Notification",
+            "notificationType": "permission_prompt",
+            "message": "Tool permission requested",
+            "level": "info"
+        }))
+        .is_none());
     }
 
     #[test]

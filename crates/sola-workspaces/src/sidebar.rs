@@ -6,15 +6,13 @@ use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::{
-    DividerColors, SidebarItem, SidebarPanel, SidebarSection,
-};
+use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
 
-use crate::Msg;
 use crate::spawn;
 use crate::status::PaneStatus;
 use crate::workspace::{self, Project, Workspace};
+use crate::Msg;
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
@@ -368,8 +366,7 @@ fn startup_card<'a>(draft: &'a StartupDraft, project_name: &str) -> Element<'a, 
     for v in crate::startup::VARS {
         vars = vars.push(
             row![
-                sola_kit::components::text::code(format!("${}", v.name))
-                    .width(Length::Fixed(88.0)),
+                sola_kit::components::text::code(format!("${}", v.name)).width(Length::Fixed(88.0)),
                 sola_kit::components::text::caption(v.help)
                     .style(sola_kit::components::text::muted),
             ]

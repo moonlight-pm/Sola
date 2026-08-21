@@ -127,7 +127,10 @@ pub fn parse_buf(buf: &[u8]) -> std::io::Result<Option<Incoming>> {
     incoming_from_json(pane, body)
 }
 
-fn incoming_from_json(pane_header: Option<String>, body: &[u8]) -> std::io::Result<Option<Incoming>> {
+fn incoming_from_json(
+    pane_header: Option<String>,
+    body: &[u8],
+) -> std::io::Result<Option<Incoming>> {
     if body.is_empty() {
         return Ok(None);
     }
@@ -145,8 +148,7 @@ fn incoming_from_json(pane_header: Option<String>, body: &[u8]) -> std::io::Resu
     if pane_id.is_empty() {
         return Ok(None);
     }
-    let event = if value.get("hookEventName").is_some() || value.get("hook_event_name").is_some()
-    {
+    let event = if value.get("hookEventName").is_some() || value.get("hook_event_name").is_some() {
         value
     } else {
         value.get("payload").cloned().unwrap_or(value)

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sola_kit::components::SidebarIndicator;
 
 use crate::hooks::Incoming;
+use crate::presence::Presence;
 use sola_terminal::osc9999::{OscState, OscStatus};
 
 /// What a pane (or the workspace roll-up) is doing.
@@ -158,19 +159,19 @@ impl PaneStatus {
         self.agent.as_deref() == Some("grok")
     }
 
-    /// Presence names who is here. It never sets working/waiting/done.
-    /// The sidebar leaf label follows this every tick.
-    pub fn apply_presence(&mut self, who: Option<&str>) {
+    /// Presence names who is here. It never *raises* working/waiting/done
+    /// (hooks/OSC own those). When the process tree is a shell, the mark
+    /// returns to idle — SessionEnd leaves `done`, and that must not stick
+    /// after `/exit` back to the prompt.
+    pub fn apply_presence(&mut self, who: Presence) {
         match who {
-            Some(name) => self.agent = Some(name.to_string()),
-            None => {
+            Presence::Unknown => {}
+            Presence::Agent(name) => self.agent = Some(name.to_string()),
+            Presence::Shell => {
                 self.agent = None;
-                if self.restored_unconfirmed
-                    && matches!(self.status, AgentStatus::Working | AgentStatus::Waiting)
-                {
-                    self.status = AgentStatus::Idle;
-                    self.restored_unconfirmed = false;
-                }
+                self.tool = None;
+                self.status = AgentStatus::Idle;
+                self.restored_unconfirmed = false;
             }
         }
     }
@@ -463,8 +464,11 @@ mod tests {
         std::fs::create_dir_all(dir.join("compaction_checkpoints")).unwrap();
         std::fs::write(dir.join("signals.json"), signals).unwrap();
         for i in 0..segments {
-            std::fs::write(dir.join("compaction").join(format!("segment_{i:03}.md")), "x")
-                .unwrap();
+            std::fs::write(
+                dir.join("compaction").join(format!("segment_{i:03}.md")),
+                "x",
+            )
+            .unwrap();
         }
         for i in 0..checkpoints {
             std::fs::write(
@@ -486,10 +490,7 @@ mod tests {
         ));
         let cwd = Path::new("/home/joshua/Workspace/Sola/.worktrees/workspaces-polish");
         write_session(&root, cwd, "sid-a", r#"{"compactionCount":0}"#, 1, 1);
-        assert_eq!(
-            read_compaction_count_in(&root, cwd, Some("sid-a")),
-            Some(1)
-        );
+        assert_eq!(read_compaction_count_in(&root, cwd, Some("sid-a")), Some(1));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -504,10 +505,7 @@ mod tests {
         ));
         let cwd = Path::new("/tmp/proj");
         write_session(&root, cwd, "sid-b", r#"{"compactionCount":8}"#, 4, 4);
-        assert_eq!(
-            read_compaction_count_in(&root, cwd, Some("sid-b")),
-            Some(8)
-        );
+        assert_eq!(read_compaction_count_in(&root, cwd, Some("sid-b")), Some(8));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -587,7 +585,7 @@ mod tests {
     #[test]
     fn presence_does_not_set_working() {
         let mut pane = PaneStatus::default();
-        pane.apply_presence(Some("grok"));
+        pane.apply_presence(Presence::Agent("grok"));
         assert_eq!(pane.status, AgentStatus::Idle);
         assert_eq!(pane.agent.as_deref(), Some("grok"));
     }
@@ -595,12 +593,34 @@ mod tests {
     #[test]
     fn presence_tracks_who_is_live() {
         let mut pane = PaneStatus::default();
-        pane.apply_presence(Some("grok"));
+        pane.apply_presence(Presence::Agent("grok"));
         assert_eq!(pane.agent.as_deref(), Some("grok"));
-        pane.apply_presence(Some("claude"));
+        pane.apply_presence(Presence::Agent("claude"));
         assert_eq!(pane.agent.as_deref(), Some("claude"));
-        pane.apply_presence(None);
+        pane.apply_presence(Presence::Shell);
         assert_eq!(pane.agent, None);
+        assert_eq!(pane.status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn presence_shell_idles_after_done() {
+        let mut pane = PaneStatus::default();
+        pane.apply_hook(&hook("owner", AgentStatus::Working));
+        pane.apply_hook(&session_end("owner"));
+        assert_eq!(pane.status, AgentStatus::Done);
+        pane.apply_presence(Presence::Shell);
+        assert_eq!(pane.status, AgentStatus::Idle);
+        assert_eq!(pane.agent, None);
+        assert_eq!(pane.tool, None);
+    }
+
+    #[test]
+    fn presence_unknown_does_not_idle() {
+        let mut pane = PaneStatus::default();
+        pane.apply_hook(&hook("owner", AgentStatus::Working));
+        pane.apply_presence(Presence::Unknown);
+        assert_eq!(pane.status, AgentStatus::Working);
+        assert_eq!(pane.agent.as_deref(), Some("grok"));
     }
 
     #[test]

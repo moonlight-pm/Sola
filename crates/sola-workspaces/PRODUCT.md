@@ -46,8 +46,9 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling (UI: name only; `solactl workspaces workspace.spawn` can pass
-`--agent grok` + `--prompt` / `--prompt-file`), kit pane splits, Grok hooks
+spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
+is background unless `--select`; can pass `--agent grok` + `--prompt` /
+`--prompt-file`), kit pane splits, Grok hooks
 + OSC 9999 + process-tree presence, quiet `×N` on a Grok leaf, sola-call
 owner `workspaces` (`solactl workspaces …` is first-class — verbs stay in lockstep with the
 app), per-project startup script after spawn (Project → Startup Script…),

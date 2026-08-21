@@ -2,10 +2,10 @@
 //!
 //! Other agents wait. Identity is `SOLA_PANE_ID`, not the hook file name.
 
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::sync::{mpsc, Mutex, OnceLock};
 
-use iced::Subscription;
 use iced::futures::Stream;
+use iced::Subscription;
 
 pub mod install;
 pub mod map;

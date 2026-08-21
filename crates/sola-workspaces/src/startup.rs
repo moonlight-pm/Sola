@@ -107,7 +107,8 @@ mod tests {
 
     #[test]
     fn writes_using_env() {
-        let root = std::env::temp_dir().join(format!("sola-ws-startup-root-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("sola-ws-startup-root-{}", std::process::id()));
         let dest = std::env::temp_dir().join(format!("sola-ws-startup-ws-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&dest).unwrap();
@@ -118,7 +119,10 @@ mod tests {
         );
         let w = ws(dest.clone());
         run(&p, &w).unwrap();
-        assert_eq!(std::fs::read_to_string(dest.join("copied")).unwrap(), "from-root");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("copied")).unwrap(),
+            "from-root"
+        );
         assert_eq!(std::fs::read_to_string(dest.join("name")).unwrap(), "kid");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&dest);
@@ -126,7 +130,8 @@ mod tests {
 
     #[test]
     fn nonzero_is_err() {
-        let dest = std::env::temp_dir().join(format!("sola-ws-startup-fail-{}", std::process::id()));
+        let dest =
+            std::env::temp_dir().join(format!("sola-ws-startup-fail-{}", std::process::id()));
         std::fs::create_dir_all(&dest).unwrap();
         let p = project(dest.clone(), "echo nope >&2; exit 7");
         let w = ws(dest.clone());

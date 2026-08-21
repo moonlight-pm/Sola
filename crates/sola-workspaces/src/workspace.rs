@@ -207,6 +207,15 @@ impl Catalog {
     }
 }
 
+/// CLI spawn is quiet unless `select`. UI / `--select` take the rail.
+pub fn apply_spawn_focus(selected: &mut String, focused: &mut String, new_id: &str, select: bool) {
+    if !select {
+        return;
+    }
+    *selected = new_id.to_string();
+    *focused = new_id.to_string();
+}
+
 fn catalog_path() -> PathBuf {
     crate::paths::config_dir().join("catalog.json")
 }
@@ -269,7 +278,10 @@ pub struct OrphanCandidate {
 ///
 /// Returns the previous pane id so hooks from a still-running Grok
 /// still match, or `None`.
-pub fn adopt_orphan_session(workspace_path: &Path, catalog_ids: &HashSet<String>) -> Option<String> {
+pub fn adopt_orphan_session(
+    workspace_path: &Path,
+    catalog_ids: &HashSet<String>,
+) -> Option<String> {
     let want = sola_terminal::tmux::session_name(LIVE_ID);
     if sola_terminal::tmux::has_session(&want) {
         return None;
@@ -706,6 +718,24 @@ mod tests {
     }
 
     #[test]
+    fn cli_spawn_leaves_selected_on_previous() {
+        let mut selected = "ws-main".into();
+        let mut focused = "ws-main".into();
+        apply_spawn_focus(&mut selected, &mut focused, "ws-bg-test", false);
+        assert_eq!(selected, "ws-main");
+        assert_eq!(focused, "ws-main");
+    }
+
+    #[test]
+    fn select_and_ui_spawn_switch_rail() {
+        let mut selected = "ws-main".into();
+        let mut focused = "ws-main".into();
+        apply_spawn_focus(&mut selected, &mut focused, "ws-bg-test", true);
+        assert_eq!(selected, "ws-bg-test");
+        assert_eq!(focused, "ws-bg-test");
+    }
+
+    #[test]
     fn pick_adoptable_skips_when_stable_exists() {
         let want = "sws-ws-main";
         let listed = vec![
@@ -746,17 +776,13 @@ mod tests {
         // Catalog no longer lists the sibling (deleted outside) but its
         // tmux is still in `.worktrees/`. That is not the project root.
         let listed = vec![orphan("sws-ws-kid", 80, Some("/a/.worktrees/kid"))];
-        assert!(
-            pick_adoptable(&listed, "sws-ws-main", Path::new("/a"), &HashSet::new()).is_none()
-        );
+        assert!(pick_adoptable(&listed, "sws-ws-main", Path::new("/a"), &HashSet::new()).is_none());
     }
 
     #[test]
     fn pick_adoptable_none_when_only_foreign() {
         let listed = vec![orphan("sws-other", 50, Some("/b"))];
-        assert!(
-            pick_adoptable(&listed, "sws-ws-main", Path::new("/a"), &HashSet::new()).is_none()
-        );
+        assert!(pick_adoptable(&listed, "sws-ws-main", Path::new("/a"), &HashSet::new()).is_none());
     }
 
     #[test]
@@ -792,7 +818,10 @@ mod tests {
         );
         let mut taken = HashSet::new();
         taken.insert("ws-main".into());
-        assert_eq!(choose_main_id(root, &taken, LiveSession::Absent), "ws-main-2");
+        assert_eq!(
+            choose_main_id(root, &taken, LiveSession::Absent),
+            "ws-main-2"
+        );
     }
 
     #[test]

@@ -41,7 +41,11 @@ Do not invent product policy.
    drop-project, dead-pane, `×N`). `solactl workspaces` implemented (richer
    payloads, `--prompt-file`, `project.add`, `workspace.select` /
    `workspace.exec`, `pane.wait`, `whoami`; Grok-leaf targeting;
-   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. Per-project
+   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. CLI
+   `workspace.spawn` is background unless `--select` (UI + / ⌘T still
+   jump). Skill `sola-workspaces-cli`: “review/work ticket”, “create
+   worktree”, “tell that grok” → spawn/exec, never steal the rail.
+   Per-project
    startup script after sibling spawn (**Project → Startup Script…** /
    `project.startup`). Rail: Add project expands `~`;
    groups stack at the top; no grok/agent label on the row. Sibling
@@ -60,7 +64,11 @@ Do not invent product policy.
    phase, not `as_secs_f32`). Rail marks reclaim on Grok
    `SessionStart` / `UserPromptSubmit` after `/new` or `grok -r`
    (was frozen on the old session). `StopCancelled` → done.
-   Installed and restarted.  
+   Super-chord no longer latches LOGO: ⌘T / ⌘N / ⌘V used to swallow
+   every later key until quit (River eats Super-up; the union was
+   written back into `keyboard_mods`). Exiting Grok back to the shell
+   idles the rail mark (grey disc; SessionEnd used to leave done).
+   Installed (self-restart).  
 3. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.

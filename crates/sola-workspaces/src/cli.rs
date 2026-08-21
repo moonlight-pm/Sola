@@ -43,7 +43,7 @@ pub fn pane_json(id: &str, status: AgentStatus, agent: Option<&str>) -> serde_js
     })
 }
 
-pub fn spawn_json(w: &Workspace) -> serde_json::Value {
+pub fn spawn_json(w: &Workspace, selected: bool) -> serde_json::Value {
     serde_json::json!({
         "id": w.id,
         "name": w.name,
@@ -52,6 +52,7 @@ pub fn spawn_json(w: &Workspace) -> serde_json::Value {
         "kind": kind_str(w.kind),
         "parent": w.parent,
         "project": w.project_id,
+        "selected": selected,
     })
 }
 
@@ -152,8 +153,8 @@ pub fn read_prompt(
             }
         }
         (None, Some(path)) => {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| format!("prompt-file {path}: {e}"))?;
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("prompt-file {path}: {e}"))?;
             let t = text.trim_end();
             if t.is_empty() {
                 Ok(None)
@@ -258,17 +259,17 @@ mod tests {
     #[test]
     fn prefer_active_when_no_grok() {
         let leaves = vec!["a".into(), "b".into()];
-        let agents = vec![
-            ("a".into(), Some("shell".into())),
-            ("b".into(), None),
-        ];
+        let agents = vec![("a".into(), Some("shell".into())), ("b".into(), None)];
         assert_eq!(prefer_grok_pane(&leaves, &agents, "b", None), "b");
     }
 
     #[test]
     fn prompt_xor_file() {
         assert!(read_prompt(Some("hi"), Some("/tmp/x")).is_err());
-        assert_eq!(read_prompt(Some("  hi  "), None).unwrap(), Some("hi".into()));
+        assert_eq!(
+            read_prompt(Some("  hi  "), None).unwrap(),
+            Some("hi".into())
+        );
         assert_eq!(read_prompt(Some("   "), None).unwrap(), None);
     }
 
@@ -299,6 +300,14 @@ mod tests {
         assert_eq!(wait_timeout_secs(Some(0)), WAIT_DEFAULT_SECS);
         assert_eq!(wait_timeout_secs(Some(12)), 12);
         assert_eq!(wait_timeout_secs(Some(9_999)), 3_600);
+    }
+
+    #[test]
+    fn spawn_json_reports_selected() {
+        let w = ws("ws-kid", "bg-test", Kind::Worktree);
+        assert_eq!(spawn_json(&w, false)["selected"], false);
+        assert_eq!(spawn_json(&w, true)["selected"], true);
+        assert_eq!(spawn_json(&w, false)["name"], "bg-test");
     }
 
     #[test]

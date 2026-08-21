@@ -98,7 +98,10 @@ pub fn add_worktree_at(
     if !is_git_checkout(root) {
         return Err("project root is not a git checkout".into());
     }
-    let branch = branch.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(slug);
+    let branch = branch
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(slug);
     if !valid_branch(branch) {
         return Err(format!("branch name is not safe ({branch})"));
     }
@@ -158,7 +161,10 @@ fn valid_branch(name: &str) -> bool {
 }
 
 fn rev_exists(root: &Path, rev: &str) -> bool {
-    git_ok(root, &["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+    git_ok(
+        root,
+        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+    )
 }
 
 fn git_ok(root: &Path, args: &[&str]) -> bool {
@@ -280,7 +286,13 @@ mod tests {
         assert_eq!(fs::read_to_string(dest.join("README")).unwrap(), "x");
         let head = String::from_utf8(
             Command::new("git")
-                .args(["-C", dest.to_str().unwrap(), "rev-parse", "--abbrev-ref", "HEAD"])
+                .args([
+                    "-C",
+                    dest.to_str().unwrap(),
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "HEAD",
+                ])
                 .output()
                 .unwrap()
                 .stdout,
