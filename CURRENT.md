@@ -9,19 +9,23 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-21 (`monitor-polish` merged: Bus/Call inspector + GPU panel; mail on master)
+**As of:** 2026-08-21 (`terminal-polish` merged: neon grid selection; monitor + mail on master)
 
 ---
 
 ## Now
 
-1. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
+1. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
+   Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
+   `selection` atom. Workspaces PTYs share the palette. **Installed**
+   `terminal` (2026-08-21).
+2. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
    `Role::Observer` + `Wire::Trace` (not RPC on the bus). Kit JSON
    highlighter. **Installed** `call` + `monitor` (debug, 2026-08-21).
    Desk smoke pending. GPU menubar ranking (SM % + VRAM) also lands.
-2. **sola-mail** — **partial** (on **master**; `mail-polish` merged).
+3. **sola-mail** — **partial** (on **master**; `mail-polish` merged).
    Letter reading (kit `prose`, HTML preferred); Mail.app list (bold
    unread, one-line subjects); always-on reader toolbar (icons +
    tooltips; message actions muted until a row is selected); scroll
@@ -33,7 +37,7 @@ Do not invent product policy.
    stay visible (Wicket “Sign in” mail). Menubar inbox unread chip
    (accent; click raises mail; hidden when mail is closed).
    **Install:** ask; last slice was `install mail`.
-3. **Marketing site (sola.computer)** — **teaser live** at
+4. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
    `sola`, image `sola-landing`). Paper
@@ -43,7 +47,7 @@ Do not invent product policy.
    **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
-4. **sola-workspaces** — **partial** (on master)  
+5. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -83,20 +87,20 @@ Do not invent product policy.
    `SessionStart` / `UserPromptSubmit` after `/new` or `grok -r`
    (was frozen on the old session). `StopCancelled` → done.
    Installed and restarted.  
-5. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+6. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
-6. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+7. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
    kit helper + `Role::Observer`. Workspaces registers owner `workspaces`
    (desk smoke pending). **D3** (confirm gates) is open. Catalog sticky
    on the bus still later (monitor observes the call socket instead).  
-7. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+8. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
-8. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-9. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+9. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+10. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
    preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: Bitwarden
    fill decrypts **org vaults** (desk smoke after `install browser`);
@@ -120,11 +124,12 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** (workspaces + browser + paint + mail + **monitor**). Worktree `browser-polish` kept open | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (workspaces + browser + paint + mail + monitor + **terminal**). Worktree `browser-polish` kept open | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket + nested members; selected title no longer shifts — **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
+| Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
