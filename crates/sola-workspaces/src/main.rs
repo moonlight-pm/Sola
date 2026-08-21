@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
-use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
+use iced::{Element, Event, Length, Subscription, Task, Theme};
 
-use sola_bus::Message;
 use sola_bus::topics::{AppToast, SplitDir, Topic, TopicKind};
+use sola_bus::Message;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
-    window_settings_transparent,
+    apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings_transparent,
+    BusSetup,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
+use sola_kit::theme::{atoms_from_bus_theme, default_theme, Atoms};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
@@ -319,6 +319,13 @@ impl App {
             Msg::StatusTick => Task::none(),
             Msg::WindowFocus(on) => {
                 self.window_focused = on;
+                if !on {
+                    // Super release is often eaten by River while we are
+                    // unfocused (switcher, another window). Drop the latch
+                    // so the next focus does not treat every key as ⌘.
+                    self.keyboard_mods = keyboard::Modifiers::empty();
+                    self.keys_held_mods = keyboard::Modifiers::empty();
+                }
                 Task::none()
             }
             Msg::Call(incoming) => self.on_call(incoming),
@@ -336,9 +343,7 @@ impl App {
                     .get(&id)
                     .map(|s| s.status)
                     .unwrap_or_default();
-                let cwd = self
-                    .workspace_for_pane(&id)
-                    .map(|w| w.path.clone());
+                let cwd = self.workspace_for_pane(&id).map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
                 st.apply_hook(&incoming);
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
@@ -381,17 +386,23 @@ impl App {
                     .iter()
                     .flat_map(|w| w.layout().leaves())
                     .collect();
+                let mut dirty = false;
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
                     let who = presence::scan_session(&tmux_session);
-                    let cwd = self
-                        .workspace_for_pane(&id)
-                        .map(|w| w.path.clone());
+                    let cwd = self.workspace_for_pane(&id).map(|w| w.path.clone());
                     let st = self.pane_status.entry(id).or_default();
+                    let before = (st.status, st.agent.clone());
                     st.apply_presence(who);
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(cwd);
                     }
+                    if (st.status, st.agent.clone()) != before {
+                        dirty = true;
+                    }
+                }
+                if dirty {
+                    status::persist_all(&self.pane_status);
                 }
                 self.sync_all_rows();
                 self.flush_waits();
@@ -411,11 +422,7 @@ impl App {
                 // Hover focuses for typing. It must not spawn a shell —
                 // only the Start new shell button (or a sidebar click)
                 // attaches a missing PTY.
-                if let Some(ws) = self
-                    .workspaces
-                    .iter()
-                    .find(|w| w.owns_pane(&pane_id))
-                {
+                if let Some(ws) = self.workspaces.iter().find(|w| w.owns_pane(&pane_id)) {
                     let ws_id = ws.id.clone();
                     self.set_focus(&ws_id, &pane_id);
                 }
@@ -581,16 +588,11 @@ impl App {
         ]
         .into();
 
-        let body: Element<'_, Msg> = match sidebar::overlay(
-            &self.spawn,
-            &self.add,
-            &self.startup,
-            &self.projects,
-        )
-        {
-            Some(veil) => stack![rail_pane, veil].into(),
-            None => rail_pane,
-        };
+        let body: Element<'_, Msg> =
+            match sidebar::overlay(&self.spawn, &self.add, &self.startup, &self.projects) {
+                Some(veil) => stack![rail_pane, veil].into(),
+                None => rail_pane,
+            };
 
         let bg = self.palette.bg;
         let framed = container(body)
@@ -795,7 +797,11 @@ impl App {
             self.resize_all_panes();
             return Task::none();
         }
-        let Some(ws) = self.workspaces.iter().find(|w| w.owns_pane(id) || w.id == id) else {
+        let Some(ws) = self
+            .workspaces
+            .iter()
+            .find(|w| w.owns_pane(id) || w.id == id)
+        else {
             return Task::none();
         };
         let (cols, rows) = self.cols_rows();
@@ -858,7 +864,11 @@ impl App {
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
-        if self.workspaces.iter().any(|w| w.owns_pane(id) || w.id == id) {
+        if self
+            .workspaces
+            .iter()
+            .any(|w| w.owns_pane(id) || w.id == id)
+        {
             return Some(id.to_string());
         }
         if self.adopted_from.as_deref() == Some(id)
@@ -876,10 +886,7 @@ impl App {
     }
 
     fn sync_row(&mut self, pane_id: &str) {
-        let Some(ws_id) = self
-            .workspace_for_pane(pane_id)
-            .map(|w| w.id.clone())
-        else {
+        let Some(ws_id) = self.workspace_for_pane(pane_id).map(|w| w.id.clone()) else {
             return;
         };
         let leaves = self
@@ -996,7 +1003,7 @@ impl App {
             return Task::none();
         };
         let name = self.spawn.name.clone();
-        match self.spawn_workspace(&project_id, &name, None, None, None, None, None) {
+        match self.spawn_workspace(&project_id, &name, None, None, None, None, None, true) {
             Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.maybe_toast_startup(startup_err);
@@ -1011,6 +1018,7 @@ impl App {
 
     /// Create a worktree + catalog row. Does not attach a PTY.
     /// Second value is a startup-script error (workspace still exists).
+    /// `select` takes the rail (UI / `--select`). CLI default is false.
     fn spawn_workspace(
         &mut self,
         project_q: &str,
@@ -1020,6 +1028,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        select: bool,
     ) -> Result<(String, Option<String>), String> {
         let project = workspace::resolve_project(&self.projects, project_q)?.clone();
         let slug = spawn::slug(name);
@@ -1068,8 +1077,7 @@ impl App {
             tracing::warn!(workspace = %ws.id, "{e}");
         }
         self.workspaces.push(ws);
-        self.selected = id.clone();
-        self.focused = id.clone();
+        workspace::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, select);
         self.persist_catalog();
         Ok((id, startup_err))
     }
@@ -1184,6 +1192,10 @@ impl App {
                     param_str(params, "branch").as_deref(),
                     param_str(params, "base-branch").as_deref(),
                     param_str(params, "title").as_deref(),
+                    params
+                        .get("select")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 ) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
@@ -1243,7 +1255,10 @@ impl App {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 match self.cli_send(param_str(params, "pane").as_deref(), &text, enter) {
-                    Ok(pane) => (Ok(serde_json::json!({ "ok": true, "pane": pane })), Task::none()),
+                    Ok(pane) => (
+                        Ok(serde_json::json!({ "ok": true, "pane": pane })),
+                        Task::none(),
+                    ),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1253,9 +1268,10 @@ impl App {
                     .and_then(|v| v.as_u64())
                     .map(|n| n as u32);
                 match self.cli_read(param_str(params, "pane").as_deref(), lines) {
-                    Ok((pane, text)) => {
-                        (Ok(serde_json::json!({ "text": text, "pane": pane })), Task::none())
-                    }
+                    Ok((pane, text)) => (
+                        Ok(serde_json::json!({ "text": text, "pane": pane })),
+                        Task::none(),
+                    ),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1313,6 +1329,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        select: bool,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let prompt = cli::read_prompt(prompt, prompt_file)?;
         let agent = match (cli::only_grok(agent)?, prompt.as_deref()) {
@@ -1321,7 +1338,7 @@ impl App {
             (None, None) => None,
         };
         let (id, startup_err) =
-            self.spawn_workspace(project, name, parent, agent, branch, base, title)?;
+            self.spawn_workspace(project, name, parent, agent, branch, base, title, select)?;
         let task = if agent == Some("grok") {
             let args = cli::grok_argv(prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1333,8 +1350,8 @@ impl App {
             .workspaces
             .iter()
             .find(|w| w.id == id)
-            .map(cli::spawn_json)
-            .unwrap_or_else(|| serde_json::json!({ "id": id }));
+            .map(|w| cli::spawn_json(w, select))
+            .unwrap_or_else(|| serde_json::json!({ "id": id, "selected": select }));
         if let Some(e) = startup_err {
             data["startup_error"] = serde_json::json!(e);
         }
@@ -1383,7 +1400,9 @@ impl App {
     }
 
     fn cli_select(&mut self, q: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let id = workspace::resolve_workspace(&self.workspaces, q)?
+            .id
+            .clone();
         let focused = self
             .workspaces
             .iter()
@@ -1398,13 +1417,19 @@ impl App {
     }
 
     fn cli_set(&mut self, q: &str, title: Option<&str>) -> Result<serde_json::Value, String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let id = workspace::resolve_workspace(&self.workspaces, q)?
+            .id
+            .clone();
         let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) else {
             return Err(format!("unknown workspace '{q}'"));
         };
         if let Some(raw) = title {
             let t = raw.trim();
-            ws.title = if t.is_empty() { None } else { Some(t.to_string()) };
+            ws.title = if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            };
         }
         self.persist_catalog();
         let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
@@ -1423,7 +1448,9 @@ impl App {
             return Err("only grok is first-class; other agents are presence-only".into());
         }
         let prompt = cli::read_prompt(prompt, prompt_file)?;
-        let ws_id = workspace::resolve_workspace(&self.workspaces, q)?.id.clone();
+        let ws_id = workspace::resolve_workspace(&self.workspaces, q)?
+            .id
+            .clone();
         let pane = self.preferred_pane(Some(&ws_id))?;
         let is_grok = self
             .pane_status
@@ -1467,10 +1494,7 @@ impl App {
         ))
     }
 
-    fn cli_add_project(
-        &mut self,
-        path: &str,
-    ) -> Result<(serde_json::Value, Task<Msg>), String> {
+    fn cli_add_project(&mut self, path: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
         let (project_id, main_id, task) = self.register_project(path)?;
         let project = self
             .projects
@@ -1576,11 +1600,7 @@ impl App {
         Ok(id)
     }
 
-    fn cli_read(
-        &self,
-        pane: Option<&str>,
-        lines: Option<u32>,
-    ) -> Result<(String, String), String> {
+    fn cli_read(&self, pane: Option<&str>, lines: Option<u32>) -> Result<(String, String), String> {
         let id = self.cli_pane_id(pane)?;
         let session = tmux::session_name(&id);
         let text = tmux::capture_scrollback(&session)?;
@@ -1598,15 +1618,18 @@ impl App {
         Ok((id, text))
     }
 
-    fn cli_whoami(&self, pane: Option<&str>, path: Option<&str>) -> Result<serde_json::Value, String> {
+    fn cli_whoami(
+        &self,
+        pane: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
         let ws = if let Some(q) = pane {
             workspace::resolve_workspace(&self.workspaces, q)?
         } else if let Some(p) = path {
             workspace::resolve_workspace(&self.workspaces, p)?
         } else {
             return Err(
-                "not in a workspaces pane (pass --pane/--path or run from a Workspaces PTY)"
-                    .into(),
+                "not in a workspaces pane (pass --pane/--path or run from a Workspaces PTY)".into(),
             );
         };
         let pane_id = if let Some(q) = pane {
@@ -1907,7 +1930,8 @@ impl App {
                 // Last leaf: kill the shell, keep the workspace, reuse
                 // the stable workspace id for the next Start new shell.
                 self.teardown_pane(pane_id);
-                self.workspaces[ws_idx].set_tree(term_state::PaneNode::Leaf(ws_id.clone()), ws_id.clone());
+                self.workspaces[ws_idx]
+                    .set_tree(term_state::PaneNode::Leaf(ws_id.clone()), ws_id.clone());
                 self.focused = ws_id;
                 self.sync_all_rows();
                 self.persist_catalog();
@@ -1974,7 +1998,8 @@ impl App {
         let targets: Vec<(String, u16, u16)> = term_state::pane_rects(&node, content)
             .into_iter()
             .map(|(id, rect)| {
-                let (c, r) = term_view::cols_rows_for(iced::Size::new(rect.w, rect.h), self.metrics);
+                let (c, r) =
+                    term_view::cols_rows_for(iced::Size::new(rect.w, rect.h), self.metrics);
                 (id, c.max(2), r.max(1))
             })
             .collect();
@@ -2035,9 +2060,11 @@ impl App {
             return Task::none();
         };
         if self.startup.is_open() {
-            self.startup.content.perform(iced::widget::text_editor::Action::Edit(
-                iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
-            ));
+            self.startup
+                .content
+                .perform(iced::widget::text_editor::Action::Edit(
+                    iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
+                ));
             return Task::none();
         }
         if self.spawn.is_open() {
@@ -2057,6 +2084,22 @@ impl App {
     }
 
     fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
+        // Modifier tracking must run even while a spawn / add / startup
+        // dialog is open. ⌘T and ⌘N open those dialogs; if Super-up is
+        // dropped here, `keys_held_mods` / a latched snapshot keep LOGO
+        // and every later key is swallowed until quit.
+        if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
+            self.keyboard_mods = mods;
+            return Task::none();
+        }
+        if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
+            key, physical_key, ..
+        }) = &event
+        {
+            self.apply_modifier_key(key, physical_key, false);
+            return Task::none();
+        }
+
         if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
             ..
@@ -2070,17 +2113,6 @@ impl App {
             }
         }
         if self.dialog_open() {
-            return Task::none();
-        }
-        if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
-            self.keyboard_mods = mods;
-            return Task::none();
-        }
-        if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
-            key, physical_key, ..
-        }) = &event
-        {
-            self.apply_modifier_key(key, physical_key, false);
             return Task::none();
         }
 
@@ -2103,8 +2135,7 @@ impl App {
             return Task::none();
         }
 
-        let modifiers = modifiers | self.keyboard_mods | self.keys_held_mods;
-        self.keyboard_mods = modifiers;
+        let modifiers = input::merge_modifiers(modifiers, self.keyboard_mods, self.keys_held_mods);
         if modifiers.logo() {
             return Task::none();
         }

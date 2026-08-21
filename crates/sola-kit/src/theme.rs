@@ -69,10 +69,14 @@ pub mod hex {
     pub const BG_HOVER: &str = "#1e2533";
     /// Stronger edges / hard chrome (soft hairlines use white@α in style).
     pub const BORDER: &str = "#2a3344";
-    /// Selected-row / text-selection fill — cool graphite lift, not a
+    /// Selected-row / field text-selection fill — cool graphite lift, not a
     /// darkened neon. `#3dd6f5` goes muddy when mixed toward black, so
-    /// selection is a slate step above raised (distinct from `BG_HOVER`)
+    /// this atom is a slate step above raised (distinct from `BG_HOVER`)
     /// and neon stays full-chroma for accent only.
+    ///
+    /// Terminal / Workspaces **cell** selection is not this atom: those
+    /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
+    /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
     pub const SELECTION: &str = "#2c333e";
 }
 

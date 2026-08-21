@@ -7,6 +7,7 @@
 //!
 //! - bus connection + subscription ([`BusSetup`], [`app::bus_subscription`])
 //! - call-plane advertise + subscription ([`CallSetup`], [`call::call_subscription`])
+//! - call-plane observer ([`install_observer`], [`observe_subscription`])
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
 //! - system font resolution (no bundled fonts; see `fonts::ensure_system_fonts`)
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
@@ -39,7 +40,7 @@ pub mod fonts;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
-pub use call::{CallSetup, call_subscription};
+pub use call::{CallSetup, call_subscription, install_observer, observe_subscription};
 pub use float::{
     FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating,
 };

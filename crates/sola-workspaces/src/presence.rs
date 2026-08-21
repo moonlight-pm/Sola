@@ -2,17 +2,31 @@
 //!
 //! Grok is first. Other known CLIs are presence-only.
 
+use sola_terminal::tmux;
 use std::collections::VecDeque;
 use std::fs;
-use sola_terminal::tmux;
 
 /// Known agent binaries, Grok first.
 pub const AGENTS: &[&str] = &["grok", "claude", "codex", "opencode"];
 
+/// Who is live in the pane. `Unknown` means the walk failed — do not
+/// treat that as “back to shell” or a live agent will flicker idle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    Unknown,
+    Shell,
+    Agent(&'static str),
+}
+
 /// Walk the tmux pane's descendants. Prefer Grok if both are present.
-pub fn scan_session(tmux_session: &str) -> Option<&'static str> {
-    let pid = tmux::pane_pid(tmux_session)?;
-    scan_pid(pid)
+pub fn scan_session(tmux_session: &str) -> Presence {
+    let Some(pid) = tmux::pane_pid(tmux_session) else {
+        return Presence::Unknown;
+    };
+    match scan_pid(pid) {
+        Some(name) => Presence::Agent(name),
+        None => Presence::Shell,
+    }
 }
 
 pub fn scan_pid(root: i32) -> Option<&'static str> {

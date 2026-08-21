@@ -55,6 +55,7 @@ an agent needs to orchestrate is on the call plane.
 | Timeouts | MethodSpec may advertise `timeout_ms`. `solactl` uses that, or `timeout` arg + 2s slack. Spawn **60s**, add-project **15s**, wait default **300s** (arg overrides) |
 | Confirm | **D3** still open. Every live method is as privileged as the socket |
 | Drop | Unregister + kill tmux. Still not `git worktree remove` |
+| Spawn focus | CLI `workspace.spawn` is background (rail stays). `--select` jumps. UI spawn / ⌘T always select. `workspace.exec` does not select |
 
 ---
 
@@ -68,7 +69,7 @@ an agent needs to orchestrate is on the call plane.
 | `project.list` | — | `{projects:[{id,name,root}]}` |
 | `project.rm` | `--project` | `{ok:true}` |
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
-| `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent]` | `{id,name,title,path,kind,parent,project}` |
+| `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
 | `workspace.rm` | `--workspace` | `{ok:true}` |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` |
@@ -79,6 +80,12 @@ read by the **app** (same machine). `--prompt` implies `--agent grok`.
 `project.list` includes `startup: bool` (script is non-empty). Spawn may
 include `startup_error` if the project script failed; the workspace still
 exists.
+
+`workspace.spawn` is **background** by default: worktree + catalog row +
+tmux/PTY, rail and grid stay put. `--select` jumps to the new workspace
+(same as the UI name modal / ⌘T). Do not invert with `--background` /
+`--no-select`. `workspace.exec` does not select. `workspace.select` is the
+dedicated interrupt. Reply includes `selected: true|false`.
 
 ### New
 
@@ -112,7 +119,7 @@ exists.
 ## `solactl` behavior
 
 - Live owner: `solactl workspaces` lists methods; `solactl workspaces <method> …` invokes.
-- Bool flags (`--enter`, `--fresh`) do not consume the next `--flag`.
+- Bool flags (`--enter`, `--fresh`, `--select`) do not consume the next `--flag`.
 - Optional `timeout` arg (seconds) raises the invoke deadline to `timeout+2`.
 - Advertised `MethodSpec.timeout_ms` is the default invoke deadline when no
   `timeout` arg is present (spawn / add / wait).
@@ -134,5 +141,6 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - Grok pane preference
 - `resolve_workspace` by id, name, pane id, path
 - Shell-quoting for `grok '…'`
-- `solactl` bool-flag parse (`--enter --text` order)
+- `solactl` bool-flag parse (`--enter --text` order; `--select --name` order)
+- CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout

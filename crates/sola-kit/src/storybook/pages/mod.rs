@@ -27,6 +27,7 @@ pub mod field;
 pub mod file_picker;
 pub mod form;
 pub mod icon;
+pub mod json;
 pub mod number_input;
 pub mod overview;
 pub mod popover;

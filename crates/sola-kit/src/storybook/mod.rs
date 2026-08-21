@@ -40,6 +40,7 @@ pub enum Page {
     Theme,
     Shell,
     Text,
+    Json,
     Button,
     Badge,
     Card,
@@ -72,6 +73,7 @@ impl Page {
         Page::Split,
         Page::Toolbar,
         Page::Text,
+        Page::Json,
         Page::Button,
         Page::Titlebar,
         Page::Badge,
@@ -96,6 +98,7 @@ impl Page {
             Page::Theme => "Theme",
             Page::Shell => "Shell",
             Page::Text => "Text",
+            Page::Json => "JSON",
             Page::Button => "Button",
             Page::Badge => "Badge",
             Page::Card => "Card",
@@ -125,6 +128,7 @@ impl Page {
             Page::Overview | Page::Theme | Page::Shell => Some("System"),
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
+            | Page::Json
             | Page::Button
             | Page::Titlebar
             | Page::Badge
@@ -161,6 +165,7 @@ impl Page {
             Page::Titlebar => &[Bg, BgRaised, Border, Fg],
             Page::Toolbar => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted],
             Page::Text => &[Fg, FgMuted, Accent, Success, Warning, Danger],
+            Page::Json => &[Fg, FgMuted, Accent, Success, Warning],
             Page::Button => &[Accent, Danger, Bg, BgHover, Border, Fg],
             Page::Badge => &[Accent, Success, Warning, Danger, Border, FgMuted],
             Page::Card => &[Bg, BgRaised, Border, Fg, Accent],
@@ -1398,6 +1403,7 @@ impl Storybook {
                 self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
             ),
             Page::Text => pages::text::view(),
+            Page::Json => pages::json::view(&self.theme),
             Page::Button => pages::button::view(&self.button).map(Msg::Button),
             Page::Titlebar => pages::titlebar::view(),
             Page::Badge => pages::badge::view(),
@@ -1466,6 +1472,7 @@ mod tests {
             Page::Theme,
             Page::Shell,
             Page::Text,
+            Page::Json,
             Page::Button,
             Page::Badge,
             Page::Card,
@@ -1495,6 +1502,7 @@ mod tests {
                 | Page::Theme
                 | Page::Shell
                 | Page::Text
+                | Page::Json
                 | Page::Button
                 | Page::Badge
                 | Page::Card

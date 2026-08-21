@@ -131,6 +131,8 @@ pub struct App {
     last_move: Option<LastMove>,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// Last inbox unread we published on `Topic::MailStatus`.
+    published_inbox_unread: Option<u32>,
 }
 
 impl Default for App {
@@ -165,6 +167,7 @@ impl Default for App {
             last_move: None,
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            published_inbox_unread: None,
         }
     }
 }
@@ -476,6 +479,7 @@ impl App {
         self.float.update(message);
         apply_theme_update(message, &mut self.theme);
         if is_self_quit(message, APP_ID) {
+            self.retract_mail_status();
             mail_send(MailCmd::Shutdown);
             return iced::exit();
         }
@@ -508,6 +512,7 @@ impl App {
                 Task::none()
             }
             "quit" => {
+                self.retract_mail_status();
                 mail_send(MailCmd::Shutdown);
                 iced::exit()
             }
@@ -600,6 +605,7 @@ impl App {
                 self.from_addresses = from_addresses;
                 self.rules = rules;
                 self.load_folder(self.selected_folder.clone());
+                self.publish_inbox_unread();
             }
             MailEvent::NotConfigured => {
                 self.connected = false;
@@ -607,6 +613,7 @@ impl App {
                 self.loading = false;
                 self.folders.clear();
                 self.messages.clear();
+                self.publish_inbox_unread();
             }
             MailEvent::Folders {
                 folders,
@@ -614,6 +621,7 @@ impl App {
             } => {
                 self.folders = folders;
                 self.smart_counts = smart_counts;
+                self.publish_inbox_unread();
             }
             MailEvent::Messages {
                 folder,
@@ -848,6 +856,7 @@ impl App {
                 if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
                     f.unread = f.unread.saturating_sub(1);
                 }
+                self.publish_inbox_unread();
             }
         }
     }
@@ -920,6 +929,36 @@ impl App {
             return;
         }
         self.select_prev();
+    }
+
+    fn inbox_unread(&self) -> u32 {
+        self.folders
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case("INBOX"))
+            .map(|f| f.unread)
+            .unwrap_or(0)
+    }
+
+    fn publish_inbox_unread(&mut self) {
+        let n = self.inbox_unread();
+        if self.published_inbox_unread == Some(n) {
+            return;
+        }
+        self.published_inbox_unread = Some(n);
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::MailStatus(sola_bus::topics::MailStatus {
+                inbox_unread: n,
+            }));
+        }
+    }
+
+    fn retract_mail_status(&mut self) {
+        self.published_inbox_unread = None;
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.retract(Topic::MailStatus(sola_bus::topics::MailStatus {
+                inbox_unread: 0,
+            }));
+        }
     }
 
     // ── View ──────────────────────────────────────────────────────────
@@ -1121,7 +1160,7 @@ impl App {
         container(
             column![
                 header,
-                scrollable(list)
+                scrollable(default_cursor(list))
                     .height(Length::Fill)
                     .width(Length::Fill)
                     .on_scroll(Msg::ListScrolled),
@@ -1640,6 +1679,140 @@ fn h_hairline() -> Element<'static, Msg> {
         .height(1)
         .style(hairline_style)
         .into()
+}
+
+// ── List cursor ───────────────────────────────────────────────────────
+
+/// Default arrow over the message list: no I-bar, no hand, no text copy.
+///
+/// `list_item` buttons would otherwise advertise `Pointer`, and iced's
+/// row/column take the max child interaction (`Text` from the letter
+/// outranks everything). Presses are captured so a drag here cannot
+/// start a letter selection.
+fn default_cursor<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+    use iced::advanced::layout::{self, Layout};
+    use iced::advanced::overlay;
+    use iced::advanced::renderer;
+    use iced::advanced::widget::tree::{self, Tree};
+    use iced::advanced::widget::{Operation, Widget};
+    use iced::advanced::{Clipboard, Shell};
+    use iced::mouse;
+    use iced::{Event, Rectangle, Size, Vector};
+
+    struct DefaultCursor<'a> {
+        content: Element<'a, Msg>,
+    }
+
+    impl Widget<Msg, Theme, iced::Renderer> for DefaultCursor<'_> {
+        fn tag(&self) -> tree::Tag {
+            self.content.as_widget().tag()
+        }
+
+        fn state(&self) -> tree::State {
+            self.content.as_widget().state()
+        }
+
+        fn children(&self) -> Vec<Tree> {
+            self.content.as_widget().children()
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            self.content.as_widget().diff(tree);
+        }
+
+        fn size(&self) -> Size<Length> {
+            self.content.as_widget().size()
+        }
+
+        fn size_hint(&self) -> Size<Length> {
+            self.content.as_widget().size_hint()
+        }
+
+        fn layout(
+            &mut self,
+            tree: &mut Tree,
+            renderer: &iced::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            self.content.as_widget_mut().layout(tree, renderer, limits)
+        }
+
+        fn draw(
+            &self,
+            tree: &Tree,
+            renderer: &mut iced::Renderer,
+            theme: &Theme,
+            style: &renderer::Style,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            self.content
+                .as_widget()
+                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            renderer: &iced::Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            self.content
+                .as_widget_mut()
+                .operate(tree, layout, renderer, operation);
+        }
+
+        fn update(
+            &mut self,
+            tree: &mut Tree,
+            event: &Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            renderer: &iced::Renderer,
+            clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Msg>,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget_mut().update(
+                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+            );
+            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
+                && cursor.is_over(layout.bounds())
+            {
+                shell.capture_event();
+            }
+        }
+
+        fn mouse_interaction(
+            &self,
+            _tree: &Tree,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+            _renderer: &iced::Renderer,
+        ) -> mouse::Interaction {
+            mouse::Interaction::None
+        }
+
+        fn overlay<'b>(
+            &'b mut self,
+            tree: &'b mut Tree,
+            layout: Layout<'b>,
+            renderer: &iced::Renderer,
+            viewport: &Rectangle,
+            translation: Vector,
+        ) -> Option<overlay::Element<'b, Msg, Theme, iced::Renderer>> {
+            self.content
+                .as_widget_mut()
+                .overlay(tree, layout, renderer, viewport, translation)
+        }
+    }
+
+    Element::new(DefaultCursor {
+        content: content.into(),
+    })
 }
 
 // ── Styles ────────────────────────────────────────────────────────────

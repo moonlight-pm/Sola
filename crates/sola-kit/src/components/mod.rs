@@ -44,6 +44,7 @@ pub mod field;
 pub mod file_picker;
 pub mod form;
 pub mod icon;
+pub mod json;
 pub mod number_input;
 pub mod popover;
 pub mod prose;
@@ -75,6 +76,7 @@ pub use file_picker::{
 };
 pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
+pub use json::{line as json_line, pretty as json_pretty};
 pub use number_input::number_input;
 pub use popover::{Placement, popover, popover_anchored};
 pub use prose::{ProseBlock, ProseRun, flatten as flatten_prose, parse_plain, prose};

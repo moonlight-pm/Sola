@@ -2097,13 +2097,13 @@ where
     let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
     if lifted {
         f = f.style(|_| float_widget::Style {
-                shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                    offset: Vector::new(0.0, 2.0),
-                    blur_radius: 8.0,
-                },
-                shadow_border_radius: RADIUS_SM.into(),
-            });
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 8.0,
+            },
+            shadow_border_radius: RADIUS_SM.into(),
+        });
     }
     f.into()
 }

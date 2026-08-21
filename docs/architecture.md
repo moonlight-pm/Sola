@@ -67,8 +67,8 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
-| `crates/sola-mail` | Kit-native mail client |
-| `crates/sola-monitor` | System monitor / bus audit |
+| `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
+| `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Screenshot + standalone argv image viewer |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
@@ -111,10 +111,15 @@ to the bus and tolerate compositor restarts.
 ### Communication layers
 
 1. **Sola Bus** — lifecycle, focus, themes, app menus, session commands,
-   stickies. Fan-out facts. No request/reply.  
+   stickies. Fan-out facts. No request/reply. Mail unread is
+   `Topic::MailStatus` (sticky, not persisted).  
 2. **sola-call** — live method registry; request id, timeout, error to the
    caller. `solactl compositor` / `session`; kit apps advertise via
-   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.  
+   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.
+   `Role::Observer` is a long-lived auditor: host fans out `Catalog`
+   snapshots and `Trace` copies of invoke/reply/timeout/advertise/unregister.
+   sola-monitor is the consumer (`install_observer`). RPC still does not
+   travel on the bus.  
 3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
 
 ---
@@ -125,7 +130,7 @@ to the bus and tolerate compositor restarts.
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, stats, toasts |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), stats, toasts |
 | Menu | Open application menus |
 | Launcher | App launch |
 | Switcher | MRU window/app switch |

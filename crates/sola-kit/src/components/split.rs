@@ -20,7 +20,7 @@
 //! Drag state stays with the caller (iced has no pointer-capture): the
 //! divider emits `on_drag` on press, and the consumer's update fn
 //! listens for that plus global cursor motion / release to compute the
-//! new `ratio` — see `sola-monitor::App` and `sola-terminal` for the
+//! new `ratio` — see `sola-monitor` and `sola-terminal` for the
 //! canonical pattern.
 //!
 //! ```ignore

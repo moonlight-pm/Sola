@@ -9,7 +9,7 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppToast, Application, ChordEvent, FloatGeometry, FocusTarget,
-    LaunchAppPayload, LaunchResultPayload, MouseClickedPayload, MouseEnteredPayload,
+    LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
     OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating,
     WindowGeometry,
 };
@@ -94,6 +94,10 @@ impl Shell {
                 Task::none()
             }
             Topic::AppToast(t) => self.on_app_toast(t),
+            Topic::MailStatus(s) => {
+                self.on_mail_status(s, message.sticky);
+                Task::none()
+            }
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -111,10 +115,9 @@ impl Shell {
         }
         self.menubar.push_toast(text.to_string());
         let toast_gen = self.menubar.toast_generation;
-        Task::perform(
-            tokio::time::sleep(Duration::from_secs(5)),
-            move |_| Msg::ToastExpire(toast_gen),
-        )
+        Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+            Msg::ToastExpire(toast_gen)
+        })
     }
 
     /// Apply an updated bus theme to the iced renderer.
@@ -518,7 +521,7 @@ impl Shell {
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
     /// No-op when that app has no mapped window yet.
-    fn raise_app(&mut self, app_id: &str) {
+    pub(crate) fn raise_app(&mut self, app_id: &str) {
         let Some(window_id) = self.lookup_any_window_id(app_id) else {
             tracing::debug!(%app_id, "raise_app: no mapped window");
             return;
@@ -587,7 +590,18 @@ impl Shell {
     ///
     /// If we were still showing "Opening …" for this app, clear that pending
     /// state either way so a hung toast does not outlive a dead process.
+    fn on_mail_status(&mut self, s: MailStatus, sticky: bool) {
+        if sticky {
+            self.inbox_unread = Some(s.inbox_unread);
+        } else {
+            self.inbox_unread = None;
+        }
+    }
+
     fn on_user_app_exited(&mut self, e: UserAppExitedPayload) -> Task<Msg> {
+        if e.app_id.eq_ignore_ascii_case("sola-mail") {
+            self.inbox_unread = None;
+        }
         let pending = self.take_pending_for_app(&e.app_id);
         let msg = if let Some(sig) = e.signal {
             format!("{} killed (signal {})", e.app_id, sig)

@@ -1,8 +1,8 @@
 # sola-mail — kit-native design
 
 **Date:** 2026-07-27  
-**Branch:** `mail-polish` (landed kit client; this pass is reading/list/menus)  
-**Status:** implemented (partial) — dogfood installed locally 2026-08-18  
+**Branch:** master (mail-polish merged)  
+**Status:** implemented (partial) — dogfood installed locally 2026-08-21  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
 **Gaps:** no HTML engine (converted letter); no attachments; no offline store
@@ -208,6 +208,8 @@ Parity behavior:
    Tracking / click-wrapper hrefs show as a short label (“Link”), never
    the raw `upn=` URL. First-party destinations (magic links) keep
    host+path; a lone long URL is not dropped as tracking.
+   Inbox unread is published as sticky `Topic::MailStatus` for the
+   shell menubar (chip hidden when mail is not mapped).
 3. Link activation: `on_link` → `Topic::OpenUrl` / `open_url_logged`.
 4. Copy / reply use `flatten` of those blocks (toolbar Copy Message).
    In-body drag-select is kit `prose` (visible text; Edit Copy / Select All).

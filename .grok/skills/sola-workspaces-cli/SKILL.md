@@ -1,94 +1,98 @@
 ---
 name: sola-workspaces-cli
 description: >
-  Drive sola-workspaces from solactl (list/spawn/exec/send/read/wait).
-  Use when the user is in Workspaces, wants a sibling worktree, or says
-  solactl workspaces, spawn workspace, brief grok, or fan out a ticket.
+  Drive sola-workspaces from solactl. Use when the user says review ticket,
+  work ticket, implement ticket, fan out, create worktree, spawn sibling,
+  new workspace, tell that worktree, tell grok in X, brief a workspace,
+  send to a pane, or solactl workspaces. Default is background — never
+  steal the rail. /sola-workspaces-cli
 ---
 
 # sola-workspaces CLI
 
-Workspaces is running as sola-call owner **`workspaces`**. The face is
-`solactl workspaces …`. The app must be up — the command fails if it is not
-(it will not launch a window).
+Workspaces is sola-call owner **`workspaces`**. Face is `solactl workspaces …`.
+The app must be up — the command fails if it is not (it will not launch a
+window).
 
-Full contract: `docs/specs/2026-08-18-workspaces-cli-design.md`.
-Operator list: `docs/manual/solactl.md`.
+Contract: `docs/specs/2026-08-18-workspaces-cli-design.md`.  
+Operator list: `docs/manual/solactl.md`. Do not copy those here.
 
-## Discover
+You are usually the **root** Grok. Fan-out means a **sibling worktree +
+pane**, not you leaving this checkout, and not `git worktree add`.
 
-```bash
-solactl workspaces              # methods
-solactl workspaces whoami       # this pane (needs $SOLA_PANE_ID or --pane/--path)
-solactl workspaces ps
-```
+## Rail (locked)
 
-## Fan out a ticket (usual loop)
+CLI spawn is **background**. The new row appears; this pane and the rail
+stay put.
 
-From the project **root** session:
+- Do **not** pass `--select` unless the user asks to jump / switch / open /
+  show that workspace.
+- `workspace.exec`, `pane.send`, `pane.read`, `pane.wait` never select.
+- `workspace.select` is the only dedicated interrupt.
+- Do not invert with `--background` / `--no-select`. Quiet is the default.
 
-```bash
-solactl workspaces workspace.list --project Sola
-solactl workspaces workspace.spawn --project Sola --name ticket-123 --agent grok \
-  --base-branch origin/dev --branch joshua/sc-1234/fix \
-  --prompt 'Look at ticket 123 and implement …'
-# or --prompt-file /tmp/brief.md
+## Intent → verb
 
-solactl workspaces pane.wait --pane ticket-123 --status done --timeout 300
-solactl workspaces pane.read --pane ticket-123 --lines 80
-solactl workspaces pane.send --pane ticket-123 --text 'also check X' --enter
-solactl workspaces pane.wait --pane ticket-123 --status done --fresh
-```
+Resolve project/parent with `whoami` (or `ps`) when you are in a Workspaces
+pane. `--name` is the rail slug and `.worktrees/<name>`.
 
-Spawn parent defaults to `$SOLA_PANE_ID` when you are already in a
-Workspaces pane, so a sibling nests under the caller.
-
-`--prompt` and `--prompt-file` are exclusive. `--prompt` implies grok.
-Only `--agent grok` is allowed.
-
-`--name` is the rail / `.worktrees/` slug. `--branch` is the git branch
-(default: same as name). `--base-branch` is the start-point (default:
-HEAD). Do **not** fetch/checkout after spawn to fix the branch.
-
-```bash
-solactl workspaces workspace.spawn --project Illuno --name sc-1234 \
-  --base-branch origin/dev --branch joshua/sc-1234/fix-login
-```
-
-A project may have a **startup script** that runs in the new worktree
-after spawn (copy `.grok`, etc.):
-
-```bash
-solactl workspaces project.startup --project Illuno
-solactl workspaces project.startup --project Illuno \
-  --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
-```
-
-Script env (cwd is the new worktree):
-
-| Var | Meaning |
+| User says | Do |
 |---|---|
-| `PROJECT` | Project folder on disk (the root checkout) |
-| `WORKTREE` | This tab — `<project>/.worktrees/<name>` |
-| `NAME` | Tab name |
+| review / work / implement / look at **ticket** *N*; fan out this work | If that workspace already exists → `workspace.exec --prompt`. Else **spawn** grok + `--prompt`. **No `--select`.** Do not wait unless they want a report. |
+| create worktree / spawn sibling / new workspace | `workspace.spawn`. Prompt only if they gave a brief. **No `--select`.** |
+| tell *name* / tell that grok / send to *name* / brief *name* | `workspace.exec --prompt` (or `pane.send --enter` for a follow-up line). Do not spawn a second row. Do not select. |
+| when it's done / wait / report back | `pane.wait --status done` (add `--fresh` if it may already be done) |
+| what's on that pane / read *name* | `pane.read` |
+| jump to / switch to / show me / open *name* | `workspace.select`, or spawn with `--select` if they are creating *and* want to land there |
+| drop / close that workspace | `workspace.rm` — unregister + kill tmux, **not** `git worktree remove` |
 
-## Existing checkout
+## Fan-out a ticket (stay here)
 
 ```bash
-solactl workspaces workspace.exec --workspace ticket-123 --prompt 'continue'
+solactl workspaces whoami
+solactl workspaces workspace.list --project PROJECT
+
+# exists:
+solactl workspaces workspace.exec --workspace SLUG --prompt '…'
+
+# new (no --select):
+solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent grok \
+  --prompt '…'
+# optional: --base-branch origin/dev --branch joshua/sc-1234/fix --title '…'
+# long brief: --prompt-file /tmp/brief.md  (not both)
 ```
 
-Reuses a Grok leaf if one is there; otherwise starts `grok` in the
-preferred pane.
+Then **keep talking in this pane**. Do not `pane.wait` unless they asked.
+Do not `workspace.select`.
 
-## Targeting
+`--prompt` implies grok. Only `--agent grok` is allowed. Spawn parent
+defaults from `$SOLA_PANE_ID`. Do not fetch/checkout after spawn to “fix”
+the branch — pass `--branch` / `--base-branch` on spawn.
 
-A workspace name prefers the **Grok** leaf (then the active leaf).
-Pass a pane id from `pane.list` to pin a split.
+## Talk to an existing row
+
+```bash
+solactl workspaces workspace.exec --workspace SLUG --prompt 'also check X'
+solactl workspaces pane.send --pane SLUG --text 'also check X' --enter
+solactl workspaces pane.read --pane SLUG --lines 80
+solactl workspaces pane.wait --pane SLUG --status done --timeout 300
+```
+
+A workspace name prefers the **Grok** leaf. Pass a pane id from `pane.list`
+to pin a split.
+
+## Jump (only if they asked)
+
+```bash
+solactl workspaces workspace.select --workspace SLUG
+solactl workspaces workspace.spawn --project PROJECT --name SLUG --select
+```
 
 ## Do not
 
-- Build a mailbox / ask-reply / `worker_done` on top of this
-- Pass `--agent claude` (rejected)
-- Treat `workspace.rm` as `git worktree remove` (it is not)
+- Steal the rail (`--select`, `workspace.select`) on a ticket/fan-out/create
+- `git worktree add` / `git worktree remove` as the product verb
+- `--agent claude` (rejected; presence-only)
+- Build a mailbox / ask-reply / `worker_done`
 - Call `sat` (there is no such binary)
+- Wait out a sibling unless they want a report back

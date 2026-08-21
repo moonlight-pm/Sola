@@ -2,9 +2,10 @@
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, row, stack, text};
-use iced::{Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse};
+use iced::{mouse, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
 
 use crate::app::{Msg, Shell};
+use crate::stats::cpu::Proc;
 use crate::stats::Metric;
 use sola_kit::components::popover;
 
@@ -80,14 +81,12 @@ fn stat_card<'a>(
     let header = row![
         column![
             text(label).size(11).style(dim),
-            row![
-                text(value)
-                    .font(sola_kit::fonts::MONO)
-                    .size(30)
-                    .style(move |_: &Theme| iced::widget::text::Style {
-                        color: Some(value_color)
-                    }),
-            ],
+            row![text(value)
+                .font(sola_kit::fonts::MONO)
+                .size(30)
+                .style(move |_: &Theme| iced::widget::text::Style {
+                    color: Some(value_color)
+                }),],
         ]
         .spacing(3),
         iced::widget::Space::new().width(Length::Fill),
@@ -353,6 +352,24 @@ fn core_bar<'a>(pct: f32) -> Element<'a, Msg> {
             ..Default::default()
         })
         .into()
+}
+
+/// Ranked process list: caption `Top processes` / `by {kind}` then rows.
+fn push_top_procs<'a>(
+    body: &mut Vec<Element<'a, Msg>>,
+    kind: &'static str,
+    rows: &'a [Proc],
+    value: impl Fn(&Proc) -> String,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    body.push(divider());
+    body.push(caption("Top processes", format!("by {kind}")));
+    let max = rows.first().map(|t| t.value).unwrap_or(1.0);
+    for p in rows {
+        body.push(proc_row(&p.name, value(p), p.value, max));
+    }
 }
 
 fn divider<'a>() -> Element<'a, Msg> {
@@ -657,6 +674,10 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
             .spacing(6)
             .into(),
         );
+        push_top_procs(&mut body, "GPU", &d.top_gpu, |p| format!("{:.0}%", p.value));
+        push_top_procs(&mut body, "VRAM", &d.top_vram, |p| {
+            format!("{:.0} MB", p.value)
+        });
         body.push(divider());
         body.push(footer_pair(
             "TEMP",
@@ -670,19 +691,6 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
             "CLOCK",
             format!("{} MHz", d.clock_mhz),
         ));
-        if !d.top.is_empty() {
-            body.push(divider());
-            body.push(caption("Top processes", "by VRAM".into()));
-            let max = d.top.first().map(|t| t.value).unwrap_or(1.0);
-            for p in &d.top {
-                body.push(proc_row(
-                    &p.name,
-                    format!("{:.0} MB", p.value),
-                    p.value,
-                    max,
-                ));
-            }
-        }
     }
 
     stat_card(

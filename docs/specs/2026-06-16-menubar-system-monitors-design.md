@@ -79,7 +79,7 @@ Per-metric middle sections and footers:
 | Metric | Middle section | Footer stats | Top processes |
 | ------ | -------------- | ------------ | ------------- |
 | **CPU** | Per-thread load — row of 32 small vertical meters | Load average · Uptime | by CPU % |
-| **GPU** | VRAM used/total bar (e.g. `2.1 / 24 GB`) | Temp · Power · Fan · Clock | by VRAM (NVML process list) |
+| **GPU** | VRAM used/total bar (e.g. `2.1 / 24 GB`) | Temp · Power · Fan · Clock | by GPU (SM %) then by VRAM (compute + graphics) |
 | **MEM** | Segmented bar: used / cache+buffers / free | Swap used/total · Total RAM | by RSS |
 | **NET** | Dual ↓/↑ history (the graph itself is dual-series) | Interface + local IP · Session ↓/↑ totals | *deferred (see below)* |
 
@@ -135,11 +135,13 @@ opens. For NET the buffer holds `(down, up)` pairs.
 - **GPU** — **`nvml-wrapper`** crate (direct NVML library calls; init the
   `Nvml` handle once and reuse). Reads: `utilization_rates()`,
   `memory_info()`, `temperature(Sensor::Gpu)`, `power_usage()`,
-  `fan_speed(0)`, `clock_info(Clock::Graphics)`, and the running compute /
-  graphics process lists for the per-process VRAM table. **Fallback:** if
-  `Nvml::init()` fails, optionally shell out to `nvidia-smi`; if that also
-  fails, the GPU indicator is hidden. Chosen over spawning `nvidia-smi` every
-  tick to avoid a per-second subprocess.
+  `fan_speed(0)`, `clock_info(Clock::Graphics)`, `process_utilization_stats()`
+  for per-process SM (compute) %, and the running compute / graphics process
+  lists for the per-process VRAM table. **Fallback:** if `Nvml::init()` fails,
+  optionally shell out to `nvidia-smi`; if that also fails, the GPU indicator
+  is hidden. Chosen over spawning `nvidia-smi` every tick to avoid a
+  per-second subprocess. SM util is Maxwell+; if the call is unsupported the
+  GPU process list is omitted and VRAM ranking still shows.
 
 ## Dropdown plumbing (reuse the calendar's panel mechanism)
 

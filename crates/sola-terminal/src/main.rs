@@ -815,12 +815,13 @@ impl App {
             return Task::none();
         }
 
-        // Union: event mask | ModifiersChanged | keys-held tracking.
+        // Union Shift/Ctrl/Alt from snapshot + keys-held. Do not write
+        // the union back into `keyboard_mods` — that latches Super after
+        // a ⌘-chord when River eats the Super release.
         let event_mods = modifiers;
         let tracked_mods = self.keyboard_mods;
         let keys_held = self.keys_held_mods;
-        let modifiers = event_mods | tracked_mods | keys_held;
-        self.keyboard_mods = modifiers;
+        let modifiers = input::merge_modifiers(event_mods, tracked_mods, keys_held);
 
         // ⌘/Super shortcuts are handled by the shell (menu → MenuAction). A
         // Super-modified key must never encode to the PTY, so ⌘W (unbound) and

@@ -280,6 +280,52 @@ mod tests {
         assert_eq!(p["text"], "hi");
     }
 
+    fn spawn_spec() -> MethodSpec {
+        MethodSpec {
+            name: "workspace.spawn".into(),
+            summary: String::new(),
+            args: vec![
+                ArgSpec {
+                    name: "project".into(),
+                    long: Some("project".into()),
+                    short: Some('p'),
+                    ty: ArgType::String,
+                    required: true,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "name".into(),
+                    long: Some("name".into()),
+                    short: Some('n'),
+                    ty: ArgType::String,
+                    required: true,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "select".into(),
+                    long: Some("select".into()),
+                    short: Some('s'),
+                    ty: ArgType::Bool,
+                    required: false,
+                    help: String::new(),
+                },
+            ],
+            timeout_ms: Some(60_000),
+        }
+    }
+
+    #[test]
+    fn select_before_name_does_not_eat_flag() {
+        let p = params_from_args(
+            &spawn_spec(),
+            &["--select", "--name", "bg-test", "--project", "Illuno"],
+        )
+        .unwrap();
+        assert_eq!(p["select"], true);
+        assert_eq!(p["name"], "bg-test");
+        assert_eq!(p["project"], "Illuno");
+    }
+
     #[test]
     fn invoke_timeout_follows_arg() {
         let spec = spec();

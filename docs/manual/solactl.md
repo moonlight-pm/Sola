@@ -36,7 +36,7 @@ solactl workspaces project.rm --project Sola
 solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
-    [--agent grok] [--prompt '…' | --prompt-file FILE] [--parent …]
+    [--agent grok] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.exec --workspace ticket-123 [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
@@ -50,7 +50,9 @@ solactl workspaces whoami                  # from a Workspaces pane; or --pane /
 
 `--name` is the rail slug and `.worktrees/<name>` folder. `--branch`
 defaults to that name; `--base-branch` defaults to HEAD. `--title` is a
-rail subtitle (`sc-1234 · fix login`).
+rail subtitle (`sc-1234 · fix login`). Spawn is background: the new
+row appears, the rail/grid stay on the caller. `--select` jumps
+(same as the UI + / ⌘T). `workspace.exec` does not select.
 
 Lists include `path`, `kind`, and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also
@@ -63,7 +65,7 @@ to `$SOLA_PANE_ID` when you run from a Workspaces pane. `--agent` is Grok
 only. `pane.wait` holds until status matches (`--fresh` waits for a
 transition). Drop unregisters; it does not `git worktree remove`.
 
-Bool flags (`--enter`, `--fresh`) can sit before other flags. Spawn /
+Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags. Spawn /
 add / wait use a longer call deadline than the default 8s.
 
 ## Not calls

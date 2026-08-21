@@ -20,7 +20,12 @@ pub fn methods() -> Vec<MethodSpec> {
         method_ms(
             "project.add",
             "Register a project from a folder path",
-            &[req("path", Some('p'), ArgType::Path, "Folder path (`~` ok)")],
+            &[req(
+                "path",
+                Some('p'),
+                ArgType::Path,
+                "Folder path (`~` ok)",
+            )],
             ADD_TIMEOUT_MS,
         ),
         method(
@@ -33,7 +38,11 @@ pub fn methods() -> Vec<MethodSpec> {
             "Get or set the project spawn script",
             &[
                 opt_s("project", Some('p'), "Project id or name"),
-                opt_s("script", None, "Set the script; omit to read. Empty clears."),
+                opt_s(
+                    "script",
+                    None,
+                    "Set the script; omit to read. Empty clears.",
+                ),
             ],
         ),
         method(
@@ -52,8 +61,18 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s("title", None, "Rail subtitle (name · title)"),
                 opt_s("agent", Some('a'), "Only grok in v1"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
-                opt("prompt-file", None, ArgType::Path, "Read prompt from this file"),
+                opt(
+                    "prompt-file",
+                    None,
+                    ArgType::Path,
+                    "Read prompt from this file",
+                ),
                 opt_s("parent", None, "Parent workspace, pane, or path"),
+                flag(
+                    "select",
+                    's',
+                    "Focus the new workspace (CLI default is background)",
+                ),
             ],
             SPAWN_TIMEOUT_MS,
         ),
@@ -82,7 +101,12 @@ pub fn methods() -> Vec<MethodSpec> {
                 req_s("workspace", Some('w'), "Workspace id or name"),
                 opt_s("agent", Some('a'), "Only grok in v1"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
-                opt("prompt-file", None, ArgType::Path, "Read prompt from this file"),
+                opt(
+                    "prompt-file",
+                    None,
+                    ArgType::Path,
+                    "Read prompt from this file",
+                ),
             ],
             SPAWN_TIMEOUT_MS,
         ),
@@ -113,8 +137,17 @@ pub fn methods() -> Vec<MethodSpec> {
             "Wait until a pane reaches a status",
             &[
                 opt_s("pane", None, "Workspace / pane id"),
-                opt_s("status", Some('s'), "working|waiting|done|idle (default done)"),
-                opt("timeout", None, ArgType::Int, "Seconds to wait (default 300)"),
+                opt_s(
+                    "status",
+                    Some('s'),
+                    "working|waiting|done|idle (default done)",
+                ),
+                opt(
+                    "timeout",
+                    None,
+                    ArgType::Int,
+                    "Seconds to wait (default 300)",
+                ),
                 flag("fresh", 'f', "Wait for a transition onto that status"),
             ],
             WAIT_TIMEOUT_MS,
@@ -123,8 +156,17 @@ pub fn methods() -> Vec<MethodSpec> {
             "whoami",
             "Resolve this pane / path to a workspace",
             &[
-                opt_s("pane", None, "Pane or workspace id (default: $SOLA_PANE_ID)"),
-                opt("path", None, ArgType::Path, "Checkout path (default: $SOLA_WS_PATH)"),
+                opt_s(
+                    "pane",
+                    None,
+                    "Pane or workspace id (default: $SOLA_PANE_ID)",
+                ),
+                opt(
+                    "path",
+                    None,
+                    ArgType::Path,
+                    "Checkout path (default: $SOLA_WS_PATH)",
+                ),
             ],
         ),
     ]
@@ -207,10 +249,16 @@ mod tests {
         ] {
             assert!(names.contains(&need), "missing {need}");
         }
-        let spawn = methods.iter().find(|m| m.name == "workspace.spawn").unwrap();
+        let spawn = methods
+            .iter()
+            .find(|m| m.name == "workspace.spawn")
+            .unwrap();
         assert_eq!(spawn.timeout_ms, Some(SPAWN_TIMEOUT_MS));
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
         assert!(spawn.args.iter().any(|a| a.name == "base-branch"));
         assert!(spawn.args.iter().any(|a| a.name == "branch"));
+        let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
+        assert!(matches!(select.ty, ArgType::Bool));
+        assert!(!select.required);
     }
 }

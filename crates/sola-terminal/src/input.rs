@@ -65,6 +65,30 @@ impl From<keyboard::Modifiers> for Mods {
     }
 }
 
+/// Combine the three modifier sources used by the PTY input path.
+///
+/// - `event` — the mask on this `KeyPressed`
+/// - `snapshot` — last `ModifiersChanged`
+/// - `keys_held` — modifier keys seen as `KeyPressed` without `KeyReleased`
+///
+/// Shift / Ctrl / Alt are unioned from all three: Wayland/winit can deliver
+/// Shift+Enter with an empty event mask while Shift is still held.
+///
+/// Super / Logo is compositor-owned on River. Writing the union back into the
+/// snapshot (or trusting a stale `ModifiersChanged` that still has LOGO)
+/// latches Super after a ⌘-chord when the Super *release* never arrives.
+/// Every later key then looks Super-modified and is dropped until restart.
+/// Trust only the current event mask and Super *key* tracking for LOGO.
+pub fn merge_modifiers(
+    event: keyboard::Modifiers,
+    snapshot: keyboard::Modifiers,
+    keys_held: keyboard::Modifiers,
+) -> keyboard::Modifiers {
+    let latchable =
+        keyboard::Modifiers::SHIFT | keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT;
+    event | keys_held | (snapshot & latchable)
+}
+
 // ── MouseButton ───────────────────────────────────────────────────────────
 
 /// Terminal mouse button identity for [`encode_mouse_sgr`] / [`wheel_dispatch`].
@@ -242,7 +266,7 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
         let lc = c.to_ascii_lowercase();
         if lc.is_ascii_alphabetic() {
             let code = (lc as u8) - b'a' + 1; // a=0x01 … z=0x1a
-            // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
+                                              // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
             return if mods.alt() {
                 Some(vec![0x1b, code])
             } else {
@@ -251,14 +275,14 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
         }
         // Ctrl-symbol cases (common subset xterm honours).
         let code = match c {
-            ' ' => Some(0x00u8),        // Ctrl-Space = NUL
-            '[' | '{' => Some(0x1b),    // Ctrl-[ = ESC
-            '\\' | '|' => Some(0x1c),   // Ctrl-\ = FS
-            ']' | '}' => Some(0x1d),    // Ctrl-] = GS
-            '^' | '~' => Some(0x1e),    // Ctrl-^ = RS  (0x5e & 0x1f = 0x1e)
-            '`' => Some(0x00),          // Ctrl-` = NUL (0x60 & 0x1f = 0x00)
-            '_' => Some(0x1f),          // Ctrl-_ = US
-            '?' => Some(0x7f),          // Ctrl-? = DEL (readline backward-delete-char)
+            ' ' => Some(0x00u8),      // Ctrl-Space = NUL
+            '[' | '{' => Some(0x1b),  // Ctrl-[ = ESC
+            '\\' | '|' => Some(0x1c), // Ctrl-\ = FS
+            ']' | '}' => Some(0x1d),  // Ctrl-] = GS
+            '^' | '~' => Some(0x1e),  // Ctrl-^ = RS  (0x5e & 0x1f = 0x1e)
+            '`' => Some(0x00),        // Ctrl-` = NUL (0x60 & 0x1f = 0x00)
+            '_' => Some(0x1f),        // Ctrl-_ = US
+            '?' => Some(0x7f),        // Ctrl-? = DEL (readline backward-delete-char)
             _ => None,
         };
         if let Some(b) = code {
@@ -494,8 +518,7 @@ fn should_build_sequence(input: &KeyInput) -> bool {
             || input.location == keyboard::Location::Numpad);
 
     let disambiguate = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
-        && (unmodified_disambiguate
-            || (any_mods && (!shift_only(mods) || is_tab_enter_bs)));
+        && (unmodified_disambiguate || (any_mods && (!shift_only(mods) || is_tab_enter_bs)));
 
     if disambiguate {
         return true;
@@ -600,7 +623,11 @@ fn build_numpad(input: &KeyInput) -> Option<(String, Terminator)> {
 /// (and no event-type/associated-text) the leading parameter is omitted, so
 /// these reproduce the exact legacy sequences; with modifiers they gain the
 /// `1;<mods>` parameter (e.g. Shift+Up → `CSI 1;2A`).
-fn build_named(input: &KeyInput, has_assoc: bool, event_type: bool) -> Option<(String, Terminator)> {
+fn build_named(
+    input: &KeyInput,
+    has_assoc: bool,
+    event_type: bool,
+) -> Option<(String, Terminator)> {
     let named = match input.modified_key {
         keyboard::Key::Named(n) => n,
         _ => return None,
@@ -699,13 +726,12 @@ fn build_textual(input: &KeyInput) -> Option<(String, Terminator)> {
         }
     }
 
-    let payload = if input.mode.contains(TermMode::REPORT_ALTERNATE_KEYS)
-        && alternate_code != unicode_code
-    {
-        format!("{unicode_code}:{alternate_code}")
-    } else {
-        unicode_code.to_string()
-    };
+    let payload =
+        if input.mode.contains(TermMode::REPORT_ALTERNATE_KEYS) && alternate_code != unicode_code {
+            format!("{unicode_code}:{alternate_code}")
+        } else {
+            unicode_code.to_string()
+        };
     Some((payload, Terminator::Kitty))
 }
 
@@ -798,11 +824,16 @@ pub fn encode_mouse_sgr(
     // Wheel events are always "press"; for normal buttons M=press, m=release.
     let action = match button {
         MouseButton::WheelUp | MouseButton::WheelDown => b'M',
-        _ => if pressed { b'M' } else { b'm' },
+        _ => {
+            if pressed {
+                b'M'
+            } else {
+                b'm'
+            }
+        }
     };
 
-    format!("\x1b[<{};{};{}{}", code, col, row, action as char)
-        .into_bytes()
+    format!("\x1b[<{};{};{}{}", code, col, row, action as char).into_bytes()
 }
 
 /// What a mouse-wheel notch should do, given the terminal's current mode.
@@ -958,6 +989,52 @@ mod tests {
         TermMode::APP_CURSOR
     }
 
+    // ── merge_modifiers: Super must not latch ─────────────────────────
+
+    #[test]
+    fn merge_keeps_snapshot_shift_when_event_mask_is_empty() {
+        // Shift+Enter on Wayland: Enter arrives with an empty mask.
+        let merged = merge_modifiers(
+            keyboard::Modifiers::empty(),
+            keyboard::Modifiers::SHIFT,
+            keyboard::Modifiers::empty(),
+        );
+        assert!(merged.shift());
+        assert!(!merged.logo());
+    }
+
+    #[test]
+    fn merge_keeps_logo_on_the_chord_event() {
+        let merged = merge_modifiers(
+            keyboard::Modifiers::LOGO,
+            keyboard::Modifiers::empty(),
+            keyboard::Modifiers::empty(),
+        );
+        assert!(merged.logo());
+    }
+
+    #[test]
+    fn merge_drops_stale_snapshot_logo() {
+        // Super+T latched LOGO into ModifiersChanged; Super-up never came.
+        let merged = merge_modifiers(
+            keyboard::Modifiers::empty(),
+            keyboard::Modifiers::LOGO | keyboard::Modifiers::SHIFT,
+            keyboard::Modifiers::empty(),
+        );
+        assert!(merged.shift(), "Shift+Enter still needs the snapshot");
+        assert!(!merged.logo(), "stale Super must not kill later keys");
+    }
+
+    #[test]
+    fn merge_keeps_logo_while_super_key_is_held() {
+        let merged = merge_modifiers(
+            keyboard::Modifiers::empty(),
+            keyboard::Modifiers::empty(),
+            keyboard::Modifiers::LOGO,
+        );
+        assert!(merged.logo());
+    }
+
     // ── resolve_bytes: case + priority chain ──────────────────────────
 
     // Build a legacy-path KeyInput: standard location, no repeat, base key ==
@@ -987,7 +1064,12 @@ mod tests {
     #[test]
     fn shift_letter_is_uppercase() {
         assert_eq!(
-            resolve_bytes(&ki(&Key::Character("A".into()), Mods::SHIFT, normal(), Some("A"))),
+            resolve_bytes(&ki(
+                &Key::Character("A".into()),
+                Mods::SHIFT,
+                normal(),
+                Some("A")
+            )),
             Some(b"A".to_vec())
         );
     }
@@ -996,7 +1078,12 @@ mod tests {
     #[test]
     fn plain_letter_is_lowercase() {
         assert_eq!(
-            resolve_bytes(&ki(&Key::Character("a".into()), Mods::NONE, normal(), Some("a"))),
+            resolve_bytes(&ki(
+                &Key::Character("a".into()),
+                Mods::NONE,
+                normal(),
+                Some("a")
+            )),
             Some(b"a".to_vec())
         );
     }
@@ -1466,11 +1553,7 @@ mod tests {
     fn ctrl_letter_via_encode_key() {
         // Ctrl-C through encode_key (Character variant) → ETX.
         assert_eq!(
-            encode_key(
-                &Key::Character("c".into()),
-                Mods::CTRL,
-                normal()
-            ),
+            encode_key(&Key::Character("c".into()), Mods::CTRL, normal()),
             Some(vec![0x03])
         );
     }
@@ -1737,11 +1820,7 @@ mod tests {
     fn alt_ctrl_letter_via_encode_key() {
         // Alt+Ctrl+C through encode_key → ESC ETX.
         assert_eq!(
-            encode_key(
-                &Key::Character("c".into()),
-                ctrl_alt(),
-                normal()
-            ),
+            encode_key(&Key::Character("c".into()), ctrl_alt(), normal()),
             Some(vec![0x1b, 0x03])
         );
     }

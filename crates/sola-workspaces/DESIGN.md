@@ -130,6 +130,8 @@ modal. Do not restyle mail / settings / terminal.
   leaves the signal at 0).
 - Do list pane leaves only after a split; label them from presence
   (`grok` / `claude` / `shell`) and keep the label current.
+- Do return the mark to idle (grey disc) when the pane is a shell
+  again. `/exit` / process gone is idle, not a stuck done check.
 - Do put `+` on the project group, not a form in the rail.
 - Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
 - Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
