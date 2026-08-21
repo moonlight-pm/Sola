@@ -19,7 +19,7 @@
 //! `cursor.land()` when the pointer leaves the bounds mid-drag).
 
 use iced::advanced::layout::{self, Layout};
-use iced::advanced::widget::{tree, Tree};
+use iced::advanced::widget::{Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, mouse, renderer};
 use iced::gradient::Linear;
 use iced::{Background, Border, Color, Element, Event, Length, Radians, Rectangle, Size};
@@ -70,7 +70,12 @@ pub fn sv_square<'a, Message>(
     v: f32,
     on_change: impl Fn(f32, f32) -> Message + 'a,
 ) -> SvSquare<'a, Message> {
-    SvSquare { hue_color, s, v, on_change: Box::new(on_change) }
+    SvSquare {
+        hue_color,
+        s,
+        v,
+        on_change: Box::new(on_change),
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for SvSquare<'_, Message>
@@ -86,7 +91,10 @@ where
     }
 
     fn size(&self) -> Size<Length> {
-        Size { width: Length::Fixed(SQUARE_W), height: Length::Fixed(SQUARE_H) }
+        Size {
+            width: Length::Fixed(SQUARE_W),
+            height: Length::Fixed(SQUARE_H),
+        }
     }
 
     fn layout(
@@ -161,7 +169,10 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
-                border: Border { radius: 6.0.into(), ..Border::default() },
+                border: Border {
+                    radius: 6.0.into(),
+                    ..Border::default()
+                },
                 ..renderer::Quad::default()
             },
             Background::Gradient(hue_ramp.into()),
@@ -174,7 +185,10 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
-                border: Border { radius: 6.0.into(), ..Border::default() },
+                border: Border {
+                    radius: 6.0.into(),
+                    ..Border::default()
+                },
                 ..renderer::Quad::default()
             },
             Background::Gradient(dark_ramp.into()),
@@ -264,7 +278,11 @@ pub fn alpha_strip<'a, Message>(
         (0.0, Color { a: 0.0, ..color }),
         (1.0, Color { a: 1.0, ..color }),
     ];
-    GradientStrip { value: a.clamp(0.0, 1.0), stops, on_change: Box::new(on_change) }
+    GradientStrip {
+        value: a.clamp(0.0, 1.0),
+        stops,
+        on_change: Box::new(on_change),
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GradientStrip<'_, Message>
@@ -280,7 +298,10 @@ where
     }
 
     fn size(&self) -> Size<Length> {
-        Size { width: Length::Fixed(STRIP_LEN), height: Length::Fixed(STRIP_THICK) }
+        Size {
+            width: Length::Fixed(STRIP_LEN),
+            height: Length::Fixed(STRIP_THICK),
+        }
     }
 
     fn layout(
@@ -353,7 +374,10 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
-                border: Border { radius: (STRIP_THICK / 2.0).into(), ..Border::default() },
+                border: Border {
+                    radius: (STRIP_THICK / 2.0).into(),
+                    ..Border::default()
+                },
                 ..renderer::Quad::default()
             },
             Background::Gradient(ramp.into()),
@@ -410,12 +434,21 @@ fn thumb_ring<Renderer: renderer::Renderer>(renderer: &mut Renderer, cx: f32, cy
                     width: radius * 2.0,
                     height: radius * 2.0,
                 },
-                border: Border { radius: radius.into(), width, color },
+                border: Border {
+                    radius: radius.into(),
+                    width,
+                    color,
+                },
                 ..renderer::Quad::default()
             },
             Background::Color(Color::TRANSPARENT),
         );
     };
-    ring(renderer, r + 1.0, 1.0, Color::from_rgba(0.0, 0.0, 0.0, 0.45));
+    ring(
+        renderer,
+        r + 1.0,
+        1.0,
+        Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+    );
     ring(renderer, r, 2.0, Color::WHITE);
 }

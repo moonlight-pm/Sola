@@ -32,17 +32,17 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use iced::advanced::Renderer as _;
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{Clipboard, Shell, Widget};
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
     Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
     text,
 };
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::renderer;
-use iced::advanced::widget::{Operation, Tree};
-use iced::advanced::{Clipboard, Shell, Widget};
-use iced::advanced::Renderer as _;
 use iced::{
     Animation, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Shadow, Size,
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
@@ -50,8 +50,8 @@ use iced::{
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
-    inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_SM,
-    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    CHROME_SURFACE, RADIUS_LG, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    inset_surface, linear_bg, mix, mix_white,
 };
 use crate::fonts;
 
@@ -542,7 +542,10 @@ pub fn section_content_height_with<Message>(
     if items.is_empty() {
         return pad_v;
     }
-    let rows: f32 = items.iter().map(|item| item_row_height(item, density)).sum();
+    let rows: f32 = items
+        .iter()
+        .map(|item| item_row_height(item, density))
+        .sum();
     let gaps = item_spacing * items.len().saturating_sub(1) as f32;
     pad_v + rows + gaps
 }
@@ -567,8 +570,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     const EDGE: f32 = 2.0;
     if scroll.offset_y <= EDGE {
         // At top: nothing above; count only what's fully below.
-        let first_below =
-            ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+        let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+            .ceil()
+            .max(0.0) as usize;
         let below = n_items.saturating_sub(first_below.min(n_items));
         return (0, below);
     }
@@ -579,8 +583,9 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     // Item i occupies [i*avg, (i+1)*avg). Fully above when end ≤ offset.
     let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
     // Fully below when start ≥ offset + viewport.
-    let first_below =
-        ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+    let first_below = ((scroll.offset_y + scroll.viewport_h) / avg)
+        .ceil()
+        .max(0.0) as usize;
     let above = above.min(n_items);
     let below = n_items.saturating_sub(first_below.min(n_items));
     (above, below)
@@ -644,7 +649,6 @@ where
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
 }
-
 
 /// Resolved per-density metrics. Values are deliberate, not derived.
 struct DensityMetrics {
@@ -885,7 +889,7 @@ fn section_header<'a, Message: Clone + 'a>(
             }
         });
     let pad = Padding {
-        top: SPACE_SM + 2.0,  // 6
+        top: SPACE_SM + 2.0, // 6
         bottom: SPACE_SM + 1.0,
         left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
@@ -1290,71 +1294,64 @@ where
         // pattern as the list-etch close overlay — so showing it never steals width
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
-        let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let mut select = mouse_area(
-                container(body)
-                    .width(Length::Fill)
-                    .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, hovered)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context.clone() {
-                select = select.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                select = select.on_double_click(dbl);
-            }
-            if show_hover_action {
-                if let Some(action) = hover_action {
-                    // Float trash over the trailing age corner; stack sizes
-                    // to the base row so nothing reflows.
-                    let trash = container(hover_action_button(action))
-                        .align_x(iced::alignment::Horizontal::Right)
-                        .align_y(iced::alignment::Vertical::Bottom)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(Padding {
-                            top: 0.0,
-                            right: (pad_h - 2.0).max(0.0),
-                            bottom: (pad_v - 2.0).max(0.0),
-                            left: 0.0,
-                        });
-                    stack![select, trash].into()
+        let row_el: Element<'a, Message> =
+            if hover_action.is_some() {
+                let mut select =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, hovered),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context.clone() {
+                    select = select.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    select = select.on_double_click(dbl);
+                }
+                if show_hover_action {
+                    if let Some(action) = hover_action {
+                        // Float trash over the trailing age corner; stack sizes
+                        // to the base row so nothing reflows.
+                        let trash = container(hover_action_button(action))
+                            .align_x(iced::alignment::Horizontal::Right)
+                            .align_y(iced::alignment::Vertical::Bottom)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .padding(Padding {
+                                top: 0.0,
+                                right: (pad_h - 2.0).max(0.0),
+                                bottom: (pad_v - 2.0).max(0.0),
+                                left: 0.0,
+                            });
+                        stack![select, trash].into()
+                    } else {
+                        select.into()
+                    }
                 } else {
                     select.into()
                 }
+            } else if on_double_click.is_some() || on_context.is_some() {
+                let mut area =
+                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                        move |theme: &Theme| row_container_style(theme, active, chrome, false),
+                    ))
+                    .interaction(mouse::Interaction::Pointer)
+                    .on_press(message);
+                if let Some(ctx) = on_context {
+                    area = area.on_right_press(ctx);
+                }
+                if let Some(dbl) = on_double_click {
+                    area = area.on_double_click(dbl);
+                }
+                area.into()
             } else {
-                select.into()
-            }
-        } else if on_double_click.is_some() || on_context.is_some() {
-            let mut area = mouse_area(
-                container(body)
-                    .width(Length::Fill)
+                button(body)
+                    .style(move |t, status| item_style_chrome(t, status, active, chrome))
                     .padding(pad)
-                    .style(move |theme: &Theme| {
-                        row_container_style(theme, active, chrome, false)
-                    }),
-            )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message);
-            if let Some(ctx) = on_context {
-                area = area.on_right_press(ctx);
-            }
-            if let Some(dbl) = on_double_click {
-                area = area.on_double_click(dbl);
-            }
-            area.into()
-        } else {
-            button(body)
-                .style(move |t, status| item_style_chrome(t, status, active, chrome))
-                .padding(pad)
-                .width(Length::Fill)
-                .on_press(message)
-                .into()
-        };
+                    .width(Length::Fill)
+                    .on_press(message)
+                    .into()
+            };
         return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
     };
 
@@ -1371,9 +1368,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| {
-                row_container_style(theme, active, chrome, hovered)
-            }),
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1613,14 +1608,16 @@ where
     }
     let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
     if lifted {
-        f = f.scale(PANEL_REORDER_LIFT_SCALE).style(|_| float_widget::Style {
-            shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                offset: Vector::new(0.0, 2.0),
-                blur_radius: 8.0,
-            },
-            shadow_border_radius: RADIUS_SM.into(),
-        });
+        f = f
+            .scale(PANEL_REORDER_LIFT_SCALE)
+            .style(|_| float_widget::Style {
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                shadow_border_radius: RADIUS_SM.into(),
+            });
     }
     f.into()
 }
@@ -1762,8 +1759,7 @@ fn item_content<'a, Message: Clone + 'a>(
         density,
         section_header,
     );
-    let has_trail =
-        secondary.is_some() || shortcut.is_some() || hover_action.is_some();
+    let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
         .spacing(SPACE_MD)
         .align_y(iced::Alignment::Start)
@@ -2054,7 +2050,10 @@ where
 
         // Fixed chrome (collapse + header + footer). Section *labels* also
         // stay outside the scroll body; only item lists scroll.
-        let mut chrome = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+        let mut chrome = column![]
+            .spacing(0.0)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // Toggle header.
         if let Some((_, on_toggle)) = &collapse {
@@ -2070,14 +2069,12 @@ where
 
         if let Some(header) = header {
             if !collapsed {
-                chrome = chrome.push(
-                    container(header).padding(Padding {
-                        top: 10.0,
-                        right: 10.0,
-                        bottom: 8.0,
-                        left: 10.0,
-                    }),
-                );
+                chrome = chrome.push(container(header).padding(Padding {
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 8.0,
+                    left: 10.0,
+                }));
             }
         }
 
@@ -2105,22 +2102,13 @@ where
             // Live reorder preview: flatten rows (headers omitted). Scroll
             // body is still bar-less so the gesture matches the rest state.
             let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
-            let to = panel_drop_index_relative(
-                from,
-                start_y,
-                cursor_y,
-                PANEL_ROW_H,
-                total_items,
-            );
+            let to = panel_drop_index_relative(from, start_y, cursor_y, PANEL_ROW_H, total_items);
             let now = Instant::now();
             let anim = reorder_ref.and_then(|r| r.anim);
             let mut flat: Vec<(usize, SidebarItem<'a, Message>)> = Vec::with_capacity(total_items);
             let mut row_index = 0usize;
             for section in sections {
-                let hide = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let grouped = section.collapse.is_some();
                 if let Some(collapse) = section.collapse {
                     flat.push((row_index, collapse_header_item(section.label, collapse)));
@@ -2173,7 +2161,10 @@ where
             hidden_scroll(items, None, None).into()
         } else {
             // At rest: section labels sticky; item bodies scroll per-fill.
-            let mut sections_col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+            let mut sections_col = column![]
+                .spacing(0.0)
+                .width(Length::Fill)
+                .height(Length::Fill);
             let mut row_index = 0usize;
             let mut assigned_fill = false;
 
@@ -2186,15 +2177,11 @@ where
                     } else {
                         12.0
                     };
-                    sections_col =
-                        sections_col.push(Space::new().height(Length::Fixed(gap)));
+                    sections_col = sections_col.push(Space::new().height(Length::Fixed(gap)));
                 }
                 prev_collapsible = is_collapsible;
 
-                let hide_items = section
-                    .collapse
-                    .as_ref()
-                    .is_some_and(|c| c.collapsed);
+                let hide_items = section.collapse.as_ref().is_some_and(|c| c.collapsed);
                 let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
                     Vec::new()
                 } else if is_collapsible {
@@ -2202,21 +2189,15 @@ where
                 } else {
                     section.items
                 };
-                let n_in_section = visible_items.len()
-                    + usize::from(section.collapse.is_some());
-                let mut content_h = section_content_height_with(
-                    &visible_items,
-                    item_spacing,
-                    density,
-                );
+                let n_in_section = visible_items.len() + usize::from(section.collapse.is_some());
+                let mut content_h =
+                    section_content_height_with(&visible_items, item_spacing, density);
                 if is_collapsible {
                     // Tighter body pad [2, 4] + pocket pad; header row.
                     content_h = content_h - 8.0 + 4.0 + GROUP_WELL_PAD * 2.0;
                     content_h += PANEL_ROW_H + item_spacing;
                 }
-                let wants_fill = !collapsed
-                    && (section.fill || auto_fill_single)
-                    && !assigned_fill;
+                let wants_fill = !collapsed && (section.fill || auto_fill_single) && !assigned_fill;
                 if wants_fill {
                     assigned_fill = true;
                 }
@@ -2238,9 +2219,7 @@ where
                 } else {
                     Padding::from([4.0, 8.0])
                 };
-                let mut body_items = column![]
-                    .spacing(item_spacing)
-                    .padding(body_pad);
+                let mut body_items = column![].spacing(item_spacing).padding(body_pad);
                 if let Some(collapse) = section.collapse {
                     if !collapsed {
                         let header = collapse_header_item(section.label, collapse);
@@ -2257,9 +2236,7 @@ where
                             density,
                             on_item_hover.is_some(),
                         );
-                        if let (Some(id), Some(ref mut on_hover)) =
-                            (hid, on_item_hover.as_mut())
-                        {
+                        if let (Some(id), Some(ref mut on_hover)) = (hid, on_item_hover.as_mut()) {
                             row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
                         }
                         body_items = body_items.push(row_el);
@@ -2268,8 +2245,7 @@ where
                 }
                 for item in visible_items {
                     if collapsed {
-                        body_items =
-                            body_items.push(collapsed_row(&item, row_index, reorder_ref));
+                        body_items = body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
                         let item = assign_close_id(item, row_index);
                         let item_id = item.id.clone();
@@ -2303,8 +2279,7 @@ where
                     // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
                     let fill_col = if is_collapsible {
-                        column![wrap_group_well(body_items)]
-                            .width(Length::Fill)
+                        column![wrap_group_well(body_items)].width(Length::Fill)
                     } else {
                         body_items
                     };
@@ -2325,14 +2300,11 @@ where
                     } else {
                         body_items.into()
                     };
-                    let body: Element<'a, Message> =
-                        if let Some(ref mut on_hover) = on_item_hover {
-                            mouse_area(body_el)
-                                .on_exit(on_hover(None))
-                                .into()
-                        } else {
-                            body_el
-                        };
+                    let body: Element<'a, Message> = if let Some(ref mut on_hover) = on_item_hover {
+                        mouse_area(body_el).on_exit(on_hover(None)).into()
+                    } else {
+                        body_el
+                    };
                     sections_col = sections_col.push(body);
                 }
             }
@@ -2352,9 +2324,7 @@ where
         // Footer (hidden when collapsed).
         if let Some(footer) = footer {
             if !collapsed {
-                chrome = chrome.push(
-                    container(footer).padding(Padding::from([8.0, 10.0])),
-                );
+                chrome = chrome.push(container(footer).padding(Padding::from([8.0, 10.0])));
             }
         }
 
@@ -2479,31 +2449,20 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     let base = scroll;
 
     let cb_wheel = std::rc::Rc::clone(&cb);
-    let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
-        cb_wheel(base.wheel(delta))
-    });
+    let area =
+        mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| cb_wheel(base.wheel(delta)));
 
     let cb_show = std::rc::Rc::clone(&cb);
     let cb_resize = std::rc::Rc::clone(&cb);
     let list: Element<'a, Message, Theme> = sensor(area)
         .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
-        .on_resize(move |size: iced::Size| {
-            cb_resize(base.with_viewport_h(size.height))
-        })
+        .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
         .into();
 
     // Chips only take space when there is overflow on that side — no
     // permanent gap under the section title at rest. Click jumps to end.
-    let top_chip = overflow_slot(
-        OverflowDir::Up,
-        above,
-        Some(cb(scroll.jump_top())),
-    );
-    let bottom_chip = overflow_slot(
-        OverflowDir::Down,
-        below,
-        Some(cb(scroll.jump_bottom())),
-    );
+    let top_chip = overflow_slot(OverflowDir::Up, above, Some(cb(scroll.jump_top())));
+    let bottom_chip = overflow_slot(OverflowDir::Down, below, Some(cb(scroll.jump_bottom())));
 
     column![top_chip, list, bottom_chip]
         .spacing(0.0)
@@ -2763,9 +2722,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| {
-                    row_container_style(theme, active, chrome, false)
-                }),
+                .style(move |theme: &Theme| row_container_style(theme, active, chrome, false)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -2912,10 +2869,7 @@ pub fn item_style_chrome(
     match chrome {
         SidebarItemChrome::Row => tab_item_style(theme, status, active),
         SidebarItemChrome::Card => {
-            let hovered = matches!(
-                status,
-                button::Status::Hovered | button::Status::Pressed
-            );
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
             button::Style {
                 background: s.background,
@@ -2948,12 +2902,7 @@ mod tests {
     #[test]
     fn row_chrome_is_etch_not_selection() {
         let theme = crate::default_theme();
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         match row.background {
             Some(Background::Color(c)) => {
                 assert_eq!(c, inset_surface(CHROME_SURFACE, 0.22));
@@ -2979,12 +2928,7 @@ mod tests {
             true,
             SidebarItemChrome::Card,
         );
-        let row = item_style_chrome(
-            &theme,
-            button::Status::Active,
-            true,
-            SidebarItemChrome::Row,
-        );
+        let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
         // Card keeps a 1px hairline + graphite gradient; etch is inset fill.
         assert_eq!(card.border.width, 1.0);
         assert_eq!(row.border.width, 0.0);
@@ -3001,10 +2945,7 @@ mod tests {
     fn assign_close_id_only_when_needed() {
         let with_close = assign_close_id(SidebarItem::new("x", ()).on_close(()), 3);
         assert_eq!(with_close.id.as_deref(), Some("__row:3"));
-        let with_id = assign_close_id(
-            SidebarItem::new("x", ()).on_close(()).id("keep"),
-            3,
-        );
+        let with_id = assign_close_id(SidebarItem::new("x", ()).on_close(()).id("keep"), 3);
         assert_eq!(with_id.id.as_deref(), Some("keep"));
         let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
         assert_eq!(no_close.id, None);
@@ -3249,15 +3190,23 @@ mod tests {
 
     #[test]
     fn drop_index_middle_slot() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 1.5, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 1.5,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 1);
     }
 
     #[test]
     fn drop_index_past_end_clamps() {
-        let idx =
-            panel_drop_index(PANEL_HEADER_H + PANEL_ROW_H * 100.0, PANEL_HEADER_H, PANEL_ROW_H, 3);
+        let idx = panel_drop_index(
+            PANEL_HEADER_H + PANEL_ROW_H * 100.0,
+            PANEL_HEADER_H,
+            PANEL_ROW_H,
+            3,
+        );
         assert_eq!(idx, 2);
     }
 

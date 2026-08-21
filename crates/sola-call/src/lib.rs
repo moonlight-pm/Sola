@@ -5,10 +5,12 @@ pub mod protocol;
 pub mod transport;
 
 pub use client::{
-    catalog, default_timeout, invoke, start_provider, CallError, Incoming, ReplyTx,
+    CallError, Incoming, ObserveEvent, ReplyTx, catalog, default_timeout, invoke, start_observer,
+    start_provider,
 };
 pub use protocol::{
-    ArgSpec, ArgType, MethodSpec, OwnerCatalog, Role, Wire, DEFAULT_TIMEOUT_MS, new_id,
+    ArgSpec, ArgType, DEFAULT_TIMEOUT_MS, MethodSpec, OwnerCatalog, Role, TraceEvent, TraceKind,
+    Wire, new_id,
 };
 
 /// `$SOLA_CALL_PATH` or `$XDG_RUNTIME_DIR/sola-call`.

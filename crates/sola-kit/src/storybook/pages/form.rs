@@ -4,7 +4,7 @@ use iced::widget::{checkbox, column, container, text, toggler};
 use iced::{Border, Color, Element, Length};
 
 use sola_kit::components::form::{checkbox_style, form_row, toggle_style};
-use sola_kit::components::style::{bevel_frame, stage_fill, SPACE_MD, RADIUS_XL};
+use sola_kit::components::style::{RADIUS_XL, SPACE_MD, bevel_frame, stage_fill};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
 
@@ -41,16 +41,11 @@ impl State {
 pub fn view(state: &State) -> Element<'_, Msg> {
     let prefs = container(
         column![
-            text("Preferences")
-                .font(fonts::display())
-                .size(16),
-            body("Label left, control right. Height 32. Parent owns state.")
-                .style(muted),
+            text("Preferences").font(fonts::display()).size(16),
+            body("Label left, control right. Height 32. Parent owns state.").style(muted),
             form_row(
                 "Wi‑Fi",
-                toggler(state.wifi)
-                    .on_toggle(Msg::Wifi)
-                    .style(toggle_style),
+                toggler(state.wifi).on_toggle(Msg::Wifi).style(toggle_style),
             ),
             form_row(
                 "Bluetooth",
@@ -101,8 +96,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 
     column![
         heading("Form"),
-        body("Settings-grade path. One panel, not two stacked sample cards.")
-            .style(muted),
+        body("Settings-grade path. One panel, not two stacked sample cards.").style(muted),
         container(prefs)
             .padding(1)
             .width(Length::Fill)

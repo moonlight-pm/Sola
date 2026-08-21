@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::protocol::{
-    MethodSpec, OwnerCatalog, Role, Wire, DEFAULT_TIMEOUT_MS, new_id,
+    DEFAULT_TIMEOUT_MS, MethodSpec, OwnerCatalog, Role, TraceEvent, Wire, new_id,
 };
 use crate::socket_path;
 use crate::transport::{read_msg, write_msg};
@@ -43,11 +43,8 @@ impl From<io::Error> for CallError {
 
 fn connect_stream() -> Result<UnixStream, CallError> {
     let path = socket_path();
-    UnixStream::connect(&path).map_err(|_| {
-        CallError::Connect(format!(
-            "call host is not running ({path})"
-        ))
-    })
+    UnixStream::connect(&path)
+        .map_err(|_| CallError::Connect(format!("call host is not running ({path})")))
 }
 
 /// One-shot caller: hello, one request, wait for reply, disconnect.
@@ -93,9 +90,7 @@ pub fn invoke(
                 if ok {
                     return Ok(data.unwrap_or(serde_json::Value::Null));
                 }
-                return Err(CallError::Remote(
-                    error.unwrap_or_else(|| "failed".into()),
-                ));
+                return Err(CallError::Remote(error.unwrap_or_else(|| "failed".into())));
             }
             Some(_) => continue,
             None => {
@@ -238,7 +233,9 @@ fn serve_provider(
 
     loop {
         match read_msg(&mut reader) {
-            Ok(Some(Wire::Invoke { id, method, params, .. })) => {
+            Ok(Some(Wire::Invoke {
+                id, method, params, ..
+            })) => {
                 let incoming_msg = Incoming {
                     method,
                     params,
@@ -261,4 +258,70 @@ fn serve_provider(
 /// Default invoke timeout for CLIs that do not take `--timeout`.
 pub fn default_timeout() -> Duration {
     Duration::from_millis(DEFAULT_TIMEOUT_MS)
+}
+
+/// Events delivered to a call-plane observer (monitor).
+#[derive(Debug, Clone)]
+pub enum ObserveEvent {
+    Catalog(Vec<OwnerCatalog>),
+    Trace(TraceEvent),
+    /// Socket closed or connect failed; the loop will retry.
+    Down,
+}
+
+/// Reconnecting observer. Catalog snapshots and traces are sent on the
+/// returned channel. Dropping the receiver does not stop the IO thread.
+pub fn start_observer(app_id: &str) -> mpsc::Receiver<ObserveEvent> {
+    let (tx, rx) = mpsc::channel();
+    let app_id = app_id.to_string();
+    thread::Builder::new()
+        .name("sola-call-observer".into())
+        .spawn(move || observer_loop(app_id, tx))
+        .expect("spawn call observer");
+    rx
+}
+
+fn observer_loop(app_id: String, tx: mpsc::Sender<ObserveEvent>) {
+    loop {
+        match serve_observer(&app_id, &tx) {
+            Ok(()) => info!("call observer disconnected"),
+            Err(e) => warn!("call observer: {e}"),
+        }
+        let _ = tx.send(ObserveEvent::Down);
+        thread::sleep(Duration::from_millis(400));
+    }
+}
+
+fn serve_observer(app_id: &str, tx: &mpsc::Sender<ObserveEvent>) -> Result<(), String> {
+    let stream = UnixStream::connect(socket_path()).map_err(|e| e.to_string())?;
+    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
+    let mut reader = stream;
+    write_msg(
+        &mut writer,
+        &Wire::Hello {
+            role: Role::Observer,
+            app_id: app_id.to_string(),
+            owner: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    info!(%app_id, "call observer connected");
+
+    loop {
+        match read_msg(&mut reader) {
+            Ok(Some(Wire::Catalog { owners })) => {
+                if tx.send(ObserveEvent::Catalog(owners)).is_err() {
+                    return Ok(());
+                }
+            }
+            Ok(Some(Wire::Trace(event))) => {
+                if tx.send(ObserveEvent::Trace(event)).is_err() {
+                    return Ok(());
+                }
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }

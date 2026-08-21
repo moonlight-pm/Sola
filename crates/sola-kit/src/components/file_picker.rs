@@ -27,17 +27,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use iced::widget::{column, container, mouse_area, row, scrollable, text, Space};
-use iced::{
-    Alignment, Background, Border, Color, Element, Length, Padding, Theme,
-};
+use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
 use crate::components::button as kit_btn;
 use crate::components::card;
 use crate::components::icon::{icon_handle, icon_svg};
 use crate::components::style::{
-    hairline_on, inset_surface, HAIRLINE_A, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM, SPACE_LG,
-    SPACE_MD, SPACE_SM, SPACE_XL,
+    HAIRLINE_A, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL,
+    hairline_on, inset_surface,
 };
 use crate::components::text as kit_text;
 use crate::components::text_input::text_input;
@@ -158,9 +156,7 @@ impl FilePicker {
         let dir = if path.is_dir() {
             path
         } else {
-            path.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or(path)
+            path.parent().map(Path::to_path_buf).unwrap_or(path)
         };
         self.cd(dir);
         self
@@ -337,13 +333,9 @@ impl FilePicker {
         let cancel = kit_btn::labeled("Cancel", kit_btn::secondary).on_press(Message::Cancel);
 
         let mut footer = column![
-            row![
-                container(name).width(Length::Fill),
-                cancel,
-                confirm,
-            ]
-            .spacing(SPACE_MD)
-            .align_y(Alignment::Center),
+            row![container(name).width(Length::Fill), cancel, confirm,]
+                .spacing(SPACE_MD)
+                .align_y(Alignment::Center),
         ]
         .spacing(SPACE_SM);
 
@@ -412,8 +404,7 @@ impl FilePicker {
     }
 
     fn file_list(&self) -> Element<'_, Message, Theme> {
-        let body: Element<'_, Message, Theme> = if self.entries.is_empty() && self.error.is_none()
-        {
+        let body: Element<'_, Message, Theme> = if self.entries.is_empty() && self.error.is_none() {
             container(kit_text::caption("This folder is empty").style(kit_text::muted))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -424,7 +415,12 @@ impl FilePicker {
             let rows: Vec<Element<'_, Message, Theme>> = self
                 .entries
                 .iter()
-                .map(|entry| file_row(entry, self.selected.as_deref() == Some(entry.path.as_path())))
+                .map(|entry| {
+                    file_row(
+                        entry,
+                        self.selected.as_deref() == Some(entry.path.as_path()),
+                    )
+                })
                 .collect();
             scrollable(column(rows).spacing(1).width(Length::Fill))
                 .width(Length::Fill)
@@ -474,10 +470,7 @@ fn file_row(entry: &Entry, selected: bool) -> Element<'static, Message, Theme> {
     } else {
         file_handle()
     };
-    let size = entry
-        .size
-        .map(human_size)
-        .unwrap_or_default();
+    let size = entry.size.map(human_size).unwrap_or_default();
     let size_el: Element<'static, Message, Theme> = if size.is_empty() {
         Space::new().width(0).into()
     } else {
@@ -489,7 +482,10 @@ fn file_row(entry: &Entry, selected: bool) -> Element<'static, Message, Theme> {
     };
     let content = row![
         icon_svg(icon, 14),
-        text(entry.name.clone()).font(fonts::ui()).size(13).width(Length::Fill),
+        text(entry.name.clone())
+            .font(fonts::ui())
+            .size(13)
+            .width(Length::Fill),
         size_el,
     ]
     .spacing(SPACE_MD)
@@ -613,10 +609,7 @@ pub(crate) fn breadcrumbs(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathB
                 let mut acc = home.to_path_buf();
                 for comp in rel.components() {
                     acc.push(&comp);
-                    out.push((
-                        comp.as_os_str().to_string_lossy().into_owned(),
-                        acc.clone(),
-                    ));
+                    out.push((comp.as_os_str().to_string_lossy().into_owned(), acc.clone()));
                 }
             }
             return out;
@@ -629,10 +622,7 @@ pub(crate) fn breadcrumbs(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathB
     let mut acc = PathBuf::from("/");
     for comp in cwd.components().skip(1) {
         acc.push(&comp);
-        out.push((
-            comp.as_os_str().to_string_lossy().into_owned(),
-            acc.clone(),
-        ));
+        out.push((comp.as_os_str().to_string_lossy().into_owned(), acc.clone()));
     }
     out
 }
@@ -700,11 +690,7 @@ fn is_image_name(name: &str) -> bool {
     Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-            IMAGE_EXTS
-                .iter()
-                .any(|want| ext.eq_ignore_ascii_case(want))
-        })
+        .is_some_and(|ext| IMAGE_EXTS.iter().any(|want| ext.eq_ignore_ascii_case(want)))
 }
 
 pub(crate) fn human_size(bytes: u64) -> String {
@@ -725,7 +711,8 @@ pub(crate) fn human_size(bytes: u64) -> String {
 
 fn chevron_handle() -> iced::widget::svg::Handle {
     static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
-    H.get_or_init(|| icon_handle("lucide/chevron-right")).clone()
+    H.get_or_init(|| icon_handle("lucide/chevron-right"))
+        .clone()
 }
 
 fn folder_handle() -> iced::widget::svg::Handle {

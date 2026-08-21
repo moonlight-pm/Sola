@@ -379,7 +379,12 @@ mod resize_zone_tests {
         let c = 18.0;
         // Mid-right → East (not a corner). Direction has no PartialEq.
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height / 2.0), e, c),
+            resize_zone(
+                b,
+                Point::new(b.x + b.width - 2.0, b.y + b.height / 2.0),
+                e,
+                c
+            ),
             Some(Direction::East)
         ));
         assert!(matches!(
@@ -388,22 +393,43 @@ mod resize_zone_tests {
         ));
         // Geometric AABB corner (outside the visual curve) → SouthEast.
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 1.0, b.y + b.height - 1.0), e, c),
+            resize_zone(
+                b,
+                Point::new(b.x + b.width - 1.0, b.y + b.height - 1.0),
+                e,
+                c
+            ),
             Some(Direction::SouthEast)
         ));
         // On the rounded-arc region near SE → still SouthEast (square corner cell).
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 4.0, b.y + b.height - 4.0), e, c),
+            resize_zone(
+                b,
+                Point::new(b.x + b.width - 4.0, b.y + b.height - 4.0),
+                e,
+                c
+            ),
             Some(Direction::SouthEast)
         ));
         // Hairline mid-right → East.
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 0.5, b.y + b.height / 2.0), e, c),
+            resize_zone(
+                b,
+                Point::new(b.x + b.width - 0.5, b.y + b.height / 2.0),
+                e,
+                c
+            ),
             Some(Direction::East)
         ));
         // Centre → None (pass through).
         assert!(
-            resize_zone(b, Point::new(b.x + b.width / 2.0, b.y + b.height / 2.0), e, c).is_none()
+            resize_zone(
+                b,
+                Point::new(b.x + b.width / 2.0, b.y + b.height / 2.0),
+                e,
+                c
+            )
+            .is_none()
         );
     }
 }

@@ -4,14 +4,14 @@
 //! a thin seed footnote. Theme still owns the atom editor. Selection
 //! compare / type stack / spacing chips live on their own pages.
 
-use iced::widget::{column, container, row, stack, text, Space};
+use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::select::{SelectOption, select};
 use sola_kit::components::style::{
-    bevel_frame, mix, mix_white, stage_fill, HAIRLINE_A, PAD_CONTROL, RADIUS_MD, RADIUS_XL,
+    HAIRLINE_A, PAD_CONTROL, RADIUS_MD, RADIUS_XL, bevel_frame, mix, mix_white, stage_fill,
 };
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};

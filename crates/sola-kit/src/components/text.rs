@@ -51,25 +51,35 @@ pub fn code<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
 /// deemphasized chrome. Pulls `secondary.base.text` which is bound to
 /// `FG_MUTED` in [`crate::theme::build_theme`].
 pub fn muted(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().secondary.base.text) }
+    text::Style {
+        color: Some(theme.extended_palette().secondary.base.text),
+    }
 }
 
 /// Accent-colored text — links, active selections, called-out values.
 pub fn accent(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().primary.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().primary.base.color),
+    }
 }
 
 /// Success-colored — confirmation messages, "ok" status pills.
 pub fn success(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().success.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().success.base.color),
+    }
 }
 
 /// Warning-colored — soft "heads up" copy, non-blocking issues.
 pub fn warning(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().warning.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().warning.base.color),
+    }
 }
 
 /// Danger-colored — error messages, destructive-action labels.
 pub fn danger(theme: &Theme) -> text::Style {
-    text::Style { color: Some(theme.extended_palette().danger.base.color) }
+    text::Style {
+        color: Some(theme.extended_palette().danger.base.color),
+    }
 }

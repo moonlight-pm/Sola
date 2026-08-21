@@ -20,7 +20,7 @@
 //! Drag state stays with the caller (iced has no pointer-capture): the
 //! divider emits `on_drag` on press, and the consumer's update fn
 //! listens for that plus global cursor motion / release to compute the
-//! new `ratio` — see `sola-monitor::App` and `sola-terminal` for the
+//! new `ratio` — see `sola-monitor` and `sola-terminal` for the
 //! canonical pattern.
 //!
 //! ```ignore
@@ -39,8 +39,7 @@ use sola_bus::topics::SplitDir;
 
 use crate::components::divider::DividerColors;
 use crate::components::{
-    horizontal_divider_drag, horizontal_divider_drag_with, vertical_divider,
-    vertical_divider_with,
+    horizontal_divider_drag, horizontal_divider_drag_with, vertical_divider, vertical_divider_with,
 };
 
 /// Build a two-pane split with theme-default divider colours

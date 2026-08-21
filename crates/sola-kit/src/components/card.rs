@@ -15,9 +15,7 @@
 use iced::widget::{Container, container};
 use iced::{Background, Border, Color, Element, Length, Shadow, Theme, Vector};
 
-use crate::components::style::{
-    bevel_frame, card_fill, hairline, RADIUS_LG, RADIUS_XL, SPACE_XL,
-};
+use crate::components::style::{RADIUS_LG, RADIUS_XL, SPACE_XL, bevel_frame, card_fill, hairline};
 
 /// Wrap `content` in a card-styled container. Default padding is 16px
 /// on the **face** (inside the 1px bevel); override with `.padding(...)`

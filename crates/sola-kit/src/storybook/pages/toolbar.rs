@@ -1,7 +1,7 @@
 //! Toolbar — a monitor-style action row.
 
-use iced::widget::{column, row};
 use iced::Element;
+use iced::widget::{column, row};
 
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::text::{body, muted};

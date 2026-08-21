@@ -7,8 +7,8 @@ use sola_kit::components::prose::{parse_plain, prose};
 use sola_kit::components::readable;
 use sola_kit::components::text::{body, muted};
 
-use crate::storybook::pages::chrome::{lede, panel};
 use crate::storybook::Msg;
+use crate::storybook::pages::chrome::{lede, panel};
 
 const SAMPLE: &str = "\
 Hi Joshua,

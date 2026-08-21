@@ -68,7 +68,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
 | `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
-| `crates/sola-monitor` | System monitor / bus audit |
+| `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Screenshot + standalone argv image viewer |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
@@ -115,7 +115,11 @@ to the bus and tolerate compositor restarts.
    `Topic::MailStatus` (sticky, not persisted).  
 2. **sola-call** — live method registry; request id, timeout, error to the
    caller. `solactl compositor` / `session`; kit apps advertise via
-   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.  
+   `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.
+   `Role::Observer` is a long-lived auditor: host fans out `Catalog`
+   snapshots and `Trace` copies of invoke/reply/timeout/advertise/unregister.
+   sola-monitor is the consumer (`install_observer`). RPC still does not
+   travel on the bus.  
 3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
 
 ---

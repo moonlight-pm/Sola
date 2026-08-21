@@ -60,11 +60,29 @@ fn fonts_grid<'a>(
     editable: bool,
 ) -> Element<'a, Msg> {
     column![
-        font_row("ui",        FontRole::Ui,       &fonts.ui,        families, editable),
-        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium, families, editable),
-        font_row("display",   FontRole::Display,  &fonts.display,   families, editable),
-        font_row("chrome",    FontRole::Chrome,   &fonts.chrome,    families, editable),
-        font_row("mono",      FontRole::Mono,     &fonts.mono,      families, editable),
+        font_row("ui", FontRole::Ui, &fonts.ui, families, editable),
+        font_row(
+            "ui_medium",
+            FontRole::UiMedium,
+            &fonts.ui_medium,
+            families,
+            editable
+        ),
+        font_row(
+            "display",
+            FontRole::Display,
+            &fonts.display,
+            families,
+            editable
+        ),
+        font_row(
+            "chrome",
+            FontRole::Chrome,
+            &fonts.chrome,
+            families,
+            editable
+        ),
+        font_row("mono", FontRole::Mono, &fonts.mono, families, editable),
     ]
     .spacing(12)
     .into()
@@ -149,8 +167,14 @@ fn swatch_flow<'a>(
         let mut r = row![].spacing(GRID_GAP);
         for field in chunk {
             let (name, slot) = atom_meta(*field);
-            let picker = if editing == Some(*field) { picker_view.take() } else { None };
-            r = r.push(swatch_tile(atoms, name, *field, slot, editable, editing, picker));
+            let picker = if editing == Some(*field) {
+                picker_view.take()
+            } else {
+                None
+            };
+            r = r.push(swatch_tile(
+                atoms, name, *field, slot, editable, editing, picker,
+            ));
         }
         col = col.push(r);
     }
@@ -215,19 +239,24 @@ fn swatch_tile<'a>(
         // layout size — otherwise the selected swatch grows and shoves the
         // grid below it down.
         const RING: f32 = 2.0;
-        let framed = container(tile)
-            .padding(Padding::from(RING))
-            .style(move |theme: &iced::Theme| {
-                let p = theme.extended_palette();
-                iced::widget::container::Style {
-                    border: iced::Border {
-                        color: if selected { p.primary.base.color } else { Color::TRANSPARENT },
-                        width: RING,
-                        radius: 8.0.into(),
-                    },
-                    ..iced::widget::container::Style::default()
-                }
-            });
+        let framed =
+            container(tile)
+                .padding(Padding::from(RING))
+                .style(move |theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    iced::widget::container::Style {
+                        border: iced::Border {
+                            color: if selected {
+                                p.primary.base.color
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                            width: RING,
+                            radius: 8.0.into(),
+                        },
+                        ..iced::widget::container::Style::default()
+                    }
+                });
         let trigger = mouse_area(framed).on_press(Msg::EditAtom(field));
         // While this atom is the one being edited, anchor its colour
         // picker to the swatch as a popover; a click outside dismisses it.
@@ -265,4 +294,3 @@ fn swatch_tile<'a>(
         .width(Length::Fixed(SWATCH_SIZE + 16.0))
         .into()
 }
-

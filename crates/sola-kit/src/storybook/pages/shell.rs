@@ -25,11 +25,9 @@ pub fn view<'a>(
     mut picker_view: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
-        body(
-            "Shell chrome tokens. Colors carry alpha. The running shell restyles as you edit.",
-        )
-        .style(muted)
-        .into()
+        body("Shell chrome tokens. Colors carry alpha. The running shell restyles as you edit.")
+            .style(muted)
+            .into()
     } else {
         body(
             "Default theme — read-only. Click \"New Theme\" in the header \
@@ -42,35 +40,69 @@ pub fn view<'a>(
 
     let colors: &[(&str, ShellColorField, &str)] = &[
         ("MENUBAR_BG", ShellColorField::MenubarBg, "shell-menubar-bg"),
-        ("BACKDROP", ShellColorField::BackdropDim, "shell-backdrop-dim"),
-        ("SWITCHER_BG", ShellColorField::SwitcherBg, "shell-switcher-bg"),
-        ("SWITCHER_BORDER", ShellColorField::SwitcherBorder, "shell-switcher-border"),
+        (
+            "BACKDROP",
+            ShellColorField::BackdropDim,
+            "shell-backdrop-dim",
+        ),
+        (
+            "SWITCHER_BG",
+            ShellColorField::SwitcherBg,
+            "shell-switcher-bg",
+        ),
+        (
+            "SWITCHER_BORDER",
+            ShellColorField::SwitcherBorder,
+            "shell-switcher-border",
+        ),
     ];
     let mut color_row = row![].spacing(GRID_GAP);
     for (name, field, token) in colors {
-        let picker = if editing == Some(*field) { picker_view.take() } else { None };
-        color_row = color_row.push(swatch_tile(shell, name, *field, token, editable, editing, picker));
+        let picker = if editing == Some(*field) {
+            picker_view.take()
+        } else {
+            None
+        };
+        color_row = color_row.push(swatch_tile(
+            shell, name, *field, token, editable, editing, picker,
+        ));
     }
 
     // Switcher icon colors live under the Switcher group (they're chrome for
     // the switcher tiles, not the global palette). Separate row keeps the
     // top color row at four swatches so it doesn't overflow narrow windows.
     let icon_colors: &[(&str, ShellColorField, &str)] = &[
-        ("ICON_BG", ShellColorField::SwitcherIconBg, "shell-switcher-icon-bg"),
-        ("ICON_FG", ShellColorField::SwitcherIconFg, "shell-switcher-icon-fg"),
-        ("ICON_FG_SEL", ShellColorField::SwitcherIconFgSel, "shell-switcher-icon-fg-sel"),
+        (
+            "ICON_BG",
+            ShellColorField::SwitcherIconBg,
+            "shell-switcher-icon-bg",
+        ),
+        (
+            "ICON_FG",
+            ShellColorField::SwitcherIconFg,
+            "shell-switcher-icon-fg",
+        ),
+        (
+            "ICON_FG_SEL",
+            ShellColorField::SwitcherIconFgSel,
+            "shell-switcher-icon-fg-sel",
+        ),
     ];
     let mut icon_color_row = row![].spacing(GRID_GAP);
     for (name, field, token) in icon_colors {
-        let picker = if editing == Some(*field) { picker_view.take() } else { None };
-        icon_color_row =
-            icon_color_row.push(swatch_tile(shell, name, *field, token, editable, editing, picker));
+        let picker = if editing == Some(*field) {
+            picker_view.take()
+        } else {
+            None
+        };
+        icon_color_row = icon_color_row.push(swatch_tile(
+            shell, name, *field, token, editable, editing, picker,
+        ));
     }
 
     column![
         heading("Shell"),
         intro,
-
         subheading("Colors"),
         body(
             "Click a swatch to edit. The picker's alpha rail is live — \
@@ -79,7 +111,6 @@ pub fn view<'a>(
         )
         .style(muted),
         color_row,
-
         subheading("Switcher"),
         body(
             "Cmd+Tab HUD: ICON_BG is a soft light plate under the selected \
@@ -89,12 +120,39 @@ pub fn view<'a>(
         )
         .style(muted),
         icon_color_row,
-        space_row("Backplate padding", ShellSpaceField::SwitcherPad, shell.switcher_pad, 0.0..=64.0, 2.0, editable),
-        space_row("Tile padding", ShellSpaceField::SwitcherTilePad, shell.switcher_tile_pad, 0.0..=48.0, 2.0, editable),
-
+        space_row(
+            "Backplate padding",
+            ShellSpaceField::SwitcherPad,
+            shell.switcher_pad,
+            0.0..=64.0,
+            2.0,
+            editable
+        ),
+        space_row(
+            "Tile padding",
+            ShellSpaceField::SwitcherTilePad,
+            shell.switcher_tile_pad,
+            0.0..=48.0,
+            2.0,
+            editable
+        ),
         subheading("Launcher"),
-        space_row("Card width", ShellSpaceField::LauncherWidth, shell.launcher_width, 320.0..=1280.0, 20.0, editable),
-        space_row("Row padding", ShellSpaceField::LauncherPad, shell.launcher_pad, 0.0..=32.0, 2.0, editable),
+        space_row(
+            "Card width",
+            ShellSpaceField::LauncherWidth,
+            shell.launcher_width,
+            320.0..=1280.0,
+            20.0,
+            editable
+        ),
+        space_row(
+            "Row padding",
+            ShellSpaceField::LauncherPad,
+            shell.launcher_pad,
+            0.0..=32.0,
+            2.0,
+            editable
+        ),
     ]
     .spacing(28)
     .into()
@@ -122,19 +180,24 @@ fn swatch_tile<'a>(
         // layout size — otherwise the selected swatch grows and shoves the
         // grid below it down.
         const RING: f32 = 2.0;
-        let framed = container(tile)
-            .padding(Padding::from(RING))
-            .style(move |theme: &iced::Theme| {
-                let p = theme.extended_palette();
-                iced::widget::container::Style {
-                    border: iced::Border {
-                        color: if selected { p.primary.base.color } else { Color::TRANSPARENT },
-                        width: RING,
-                        radius: 8.0.into(),
-                    },
-                    ..iced::widget::container::Style::default()
-                }
-            });
+        let framed =
+            container(tile)
+                .padding(Padding::from(RING))
+                .style(move |theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    iced::widget::container::Style {
+                        border: iced::Border {
+                            color: if selected {
+                                p.primary.base.color
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                            width: RING,
+                            radius: 8.0.into(),
+                        },
+                        ..iced::widget::container::Style::default()
+                    }
+                });
         let trigger = mouse_area(framed).on_press(Msg::EditShellColor(field));
         match picker {
             Some(view) => popover_anchored(trigger, popover(view), Msg::ClosePicker).into(),
@@ -166,15 +229,14 @@ fn space_row<'a>(
     editable: bool,
 ) -> Element<'a, Msg> {
     let control: Element<'a, Msg> = if editable {
-        number_input(value, range, step, "px", move |v| Msg::SetShellSpace(field, v))
+        number_input(value, range, step, "px", move |v| {
+            Msg::SetShellSpace(field, v)
+        })
     } else {
         container(body(format!("{value:.0} px"))).into()
     };
-    row![
-        container(body(label)).width(Length::Fixed(160.0)),
-        control,
-    ]
-    .spacing(16)
-    .align_y(iced::Alignment::Center)
-    .into()
+    row![container(body(label)).width(Length::Fixed(160.0)), control,]
+        .spacing(16)
+        .align_y(iced::Alignment::Center)
+        .into()
 }

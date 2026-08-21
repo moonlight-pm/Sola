@@ -1,7 +1,7 @@
 //! FilePicker showcase — live Open/Save panel on a desk.
 
-use iced::widget::{column, text};
 use iced::Element;
+use iced::widget::{column, text};
 
 use sola_kit::components::file_picker::{self, FilePicker, Outcome};
 use sola_kit::components::text::muted;

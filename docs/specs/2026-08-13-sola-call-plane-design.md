@@ -1,7 +1,7 @@
 # Sola call plane
 
 **Date:** 2026-08-13  
-**Status:** **Frozen** — infrastructure + compositor/session + kit helper in this worktree; dogfood after install  
+**Status:** **Frozen** — infrastructure + compositor/session + kit helper; observer + monitor inspector in `monitor-polish` (install to dogfood)  
 **Related:** [bus freeze](2026-04-09-sola-bus-design.md); Workspaces freeze (other worktree, evidence only); [architecture](../architecture.md); **D3** confirm-policy in [open-questions](../open-questions.md)
 
 ## Intent
@@ -53,11 +53,12 @@ Do **not** put request/response on the bus. Do **not** grow per-app sockets (`sa
 
 Length-prefixed JSON (u32 LE + UTF-8). Not MCP. Not postcard.
 
-1. **Hello** — `role: caller | provider`, `app_id`, provider also sends `owner` (CLI noun).
+1. **Hello** — `role: caller | provider | observer`, `app_id`, provider also sends `owner` (CLI noun).
 2. **Advertise** — provider: list of methods (name, summary, args).
 3. **Invoke** — caller: `owner`, `method`, `params` (JSON object), optional `timeout_ms`. Host forwards to the provider (owner omitted).
 4. **Reply** — `ok`, `error?`, `data?`, same `id`.
 5. **List / Catalog** — live owners and their advertised methods.
+6. **Observer** — hello as `observer`; host pushes `Catalog` on connect and on provider change, plus `Trace` copies of invoke/reply/timeout/advertise/unregister. Same socket privilege as a caller. Not RPC on the bus.
 
 Owner not connected → immediate error (`not running`). No launch.
 
@@ -108,7 +109,7 @@ These are real follow-ups. Not v1 blockers.
 | **`media.*` methods** | Today the shell execs `solactl media`. Same verbs could register if agents need them. |
 | **`open` single-instance** | **Done on browser-polish (2026-08-15):** `chrome.sock` handoff; live chrome gets the URL; shell only spawns if chrome is down. |
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
-| **Monitor UI** | Show live owners/methods (needs catalog sticky or a call). |
+| **Monitor UI** | **Done (monitor-polish, 2026-08-20):** observer role + traces; live owners/methods in sola-monitor. Catalog sticky on the bus still later. |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
 | **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
 
@@ -116,6 +117,6 @@ These are real follow-ups. Not v1 blockers.
 
 ## Implementation
 
-**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; shell screenshot via call. `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
-**Dogfood:** not installed from this session (needs explicit `cargo make install`).  
-**Gaps:** see Later; D3; no desk dogfood yet.
+**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; `Role::Observer` + `Wire::Trace` + kit `install_observer` / `observe_subscription`; sola-monitor Bus/Call inspector; shell screenshot via call. `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
+**Dogfood:** `cargo make install call monitor` ran 2026-08-21 (debug); desk smoke pending.  
+**Gaps:** see Later; D3; monitor desk smoke pending; catalog sticky still not on the bus.

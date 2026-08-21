@@ -44,6 +44,7 @@ pub mod field;
 pub mod file_picker;
 pub mod form;
 pub mod icon;
+pub mod json;
 pub mod number_input;
 pub mod popover;
 pub mod prose;
@@ -66,29 +67,32 @@ pub use card::{accent_backplate, backplate, card, modal, plain};
 pub use color_picker::ColorPicker;
 pub use context_menu::{MenuItem, menu as context_menu, menu_at};
 pub use divider::{
-    DIVIDER_HIT_PX, LINE_PX, DividerColors, horizontal_divider, horizontal_divider_drag,
+    DIVIDER_HIT_PX, DividerColors, LINE_PX, horizontal_divider, horizontal_divider_drag,
     horizontal_divider_drag_with, vertical_divider, vertical_divider_with,
 };
 pub use field::field;
-pub use file_picker::{FilePicker, Filter as FileFilter, Mode as FilePickerMode, Outcome as FilePickerOutcome};
+pub use file_picker::{
+    FilePicker, Filter as FileFilter, Mode as FilePickerMode, Outcome as FilePickerOutcome,
+};
 pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
+pub use json::{line as json_line, pretty as json_pretty};
 pub use number_input::number_input;
-pub use popover::{popover, popover_anchored, Placement};
-pub use prose::{flatten as flatten_prose, parse_plain, prose, ProseBlock, ProseRun};
-pub use select::{SelectOption, identity_mark, select, select_sized};
+pub use popover::{Placement, popover, popover_anchored};
+pub use prose::{ProseBlock, ProseRun, flatten as flatten_prose, parse_plain, prose};
 pub use readable::readable;
+pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use sidebar::{
     PANEL_HEADER_H, PANEL_REORDER_ANIM_MS, PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD,
     PANEL_ROW_H, PANEL_ROW_STRIDE, PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, ReorderAnim,
-    ReorderCfg, SIDEBAR_WIDTH, SectionCollapse, SectionScroll, SidebarHoverAction, SidebarDensity,
+    ReorderCfg, SIDEBAR_WIDTH, SectionCollapse, SectionScroll, SidebarDensity, SidebarHoverAction,
     SidebarItem, SidebarItemChrome, SidebarPanel, SidebarSection, panel_dragged_width,
     panel_drop_index, panel_drop_index_relative, panel_renumber_changed, panel_reordered,
     panel_sibling_offset, section_overflow_counts, sidebar, sidebar_with_header,
 };
-pub use status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
+pub use status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 pub use swatch::{swatch, swatch_sized};
 pub use titlebar::{floating_frame, titlebar};
 pub use toolbar::{toolbar_button, toolbar_button_msg, toolbar_icon, toolbar_icon_tip};

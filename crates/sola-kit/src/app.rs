@@ -18,13 +18,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 // BUS_KINDS uses std::sync::RwLock (see static below).
 
-use iced::futures::Stream;
 use iced::Subscription;
+use iced::futures::Stream;
 use sola_bus::BusClient;
 use sola_bus::Message;
-use sola_bus::topics::{
-    AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind,
-};
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyChord;
 
 /// Bus singleton — the kit installs one global `BusClient` per
@@ -45,7 +43,9 @@ static BUS_KINDS: std::sync::RwLock<Option<&'static [TopicKind]>> = std::sync::R
 /// has not been called yet — that's a setup-order bug, not a
 /// recoverable runtime condition.
 pub fn bus() -> &'static Mutex<BusClient> {
-    BUS.get().expect("sola_kit::bus: BUS not initialised").as_ref()
+    BUS.get()
+        .expect("sola_kit::bus: BUS not initialised")
+        .as_ref()
 }
 
 /// Remember the process's bus subscription kinds for reconnect.
@@ -115,11 +115,7 @@ impl BusSetup {
     /// helper covers that 90% case. For richer menus, build a
     /// `MenuDefinition` directly and pass it to
     /// [`Self::app_menu_definition`].
-    pub fn app_menu<I>(
-        self,
-        menu_label: impl Into<String>,
-        items: I,
-    ) -> Self
+    pub fn app_menu<I>(self, menu_label: impl Into<String>, items: I) -> Self
     where
         I: IntoIterator<Item = (&'static str, &'static str, KeyChord)>,
     {
@@ -411,9 +407,7 @@ fn forward_or_buffer(msg: Arc<Message>) {
     }
 }
 
-fn install_bus_stream_tx(
-    tx: iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>,
-) {
+fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>) {
     // Install first so the poller stops buffering into PENDING and starts
     // forwarding to this stream, then flush anything already buffered.
     match BUS_STREAM_TX.lock() {
@@ -515,17 +509,26 @@ mod tests {
 
     #[test]
     fn self_menu_quit_matches() {
-        assert!(matches_self_quit(&menu_action("sola-foo", "quit"), "sola-foo"));
+        assert!(matches_self_quit(
+            &menu_action("sola-foo", "quit"),
+            "sola-foo"
+        ));
     }
 
     #[test]
     fn other_app_menu_quit_ignored() {
-        assert!(!matches_self_quit(&menu_action("sola-bar", "quit"), "sola-foo"));
+        assert!(!matches_self_quit(
+            &menu_action("sola-bar", "quit"),
+            "sola-foo"
+        ));
     }
 
     #[test]
     fn non_quit_action_ignored() {
-        assert!(!matches_self_quit(&menu_action("sola-foo", "reload"), "sola-foo"));
+        assert!(!matches_self_quit(
+            &menu_action("sola-foo", "reload"),
+            "sola-foo"
+        ));
     }
 
     // C3 regression: a CloseApp addressed to us must count as a self-quit
@@ -548,20 +551,29 @@ mod tests {
 
     #[test]
     fn theme_topic_is_not_quit() {
-        assert!(!matches_self_quit(&Some(Topic::Theme(Default::default())), "sola-foo"));
+        assert!(!matches_self_quit(
+            &Some(Topic::Theme(Default::default())),
+            "sola-foo"
+        ));
     }
 
     #[test]
     fn apply_theme_topic_applies_theme_delivery() {
         let mut theme = iced::Theme::Light;
-        assert!(apply_theme_topic(&Some(Topic::Theme(Default::default())), &mut theme));
+        assert!(apply_theme_topic(
+            &Some(Topic::Theme(Default::default())),
+            &mut theme
+        ));
         assert!(matches!(theme, iced::Theme::Custom(_)));
     }
 
     #[test]
     fn apply_theme_topic_ignores_non_theme() {
         let mut theme = iced::Theme::Light;
-        assert!(!apply_theme_topic(&menu_action("sola-foo", "quit"), &mut theme));
+        assert!(!apply_theme_topic(
+            &menu_action("sola-foo", "quit"),
+            &mut theme
+        ));
         assert!(matches!(theme, iced::Theme::Light));
     }
 }

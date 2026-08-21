@@ -143,8 +143,7 @@ impl State {
                     self.reorder_cursor_y = cursor_y;
                     // Promote to a live drag once the cursor moves past the
                     // threshold — until then it stays a candidate click.
-                    if (cursor_y - *start_y).abs()
-                        >= sola_kit::components::PANEL_REORDER_THRESHOLD
+                    if (cursor_y - *start_y).abs() >= sola_kit::components::PANEL_REORDER_THRESHOLD
                     {
                         self.reorder_dragging = true;
                     }
@@ -163,7 +162,9 @@ impl State {
                 self.reorder_cursor_y = 0.0;
                 self.reorder_dragging = false;
                 self.reorder_anim.clear();
-                let Some((from, start_y)) = gesture else { return };
+                let Some((from, start_y)) = gesture else {
+                    return;
+                };
 
                 // Never crossed the threshold → it was a click, not a drag:
                 // select the row instead of reordering.
@@ -188,8 +189,7 @@ impl State {
                     return;
                 }
                 // Reorder by stringified index (the helper works on ids).
-                let ids: Vec<String> =
-                    self.order.iter().map(|i| i.to_string()).collect();
+                let ids: Vec<String> = self.order.iter().map(|i| i.to_string()).collect();
                 let new_ids = sola_kit::components::panel_reordered(&ids, from, to);
                 self.order = new_ids
                     .iter()
@@ -277,15 +277,18 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
             .collapsible(state.group_collapsed, Msg::ToggleGroup)
             .header_count(n_work)
             .header_context(Msg::Noop),
-        SidebarSection::unlabeled(loose)
-            .fill(),
+        SidebarSection::unlabeled(loose).fill(),
     ];
 
     let cfg = ReorderCfg {
         on_press: Box::new(Msg::ReorderStart),
         // Expose the gesture as "active" only once it's a real drag, so the
         // panel shows no drag chrome on a plain (un-moved) press.
-        active: if state.reorder_dragging { state.reorder } else { None },
+        active: if state.reorder_dragging {
+            state.reorder
+        } else {
+            None
+        },
         cursor_y: state.reorder_cursor_y,
         anim: state.reorder_dragging.then_some(&state.reorder_anim),
     };

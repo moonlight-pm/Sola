@@ -1,7 +1,7 @@
 //! Typography — roles in a reading column, tones on a second.
 
-use iced::widget::column;
 use iced::Element;
+use iced::widget::column;
 
 use sola_kit::components::text::{
     accent, body, caption, code, danger, heading, muted, prose, subheading, success, warning,

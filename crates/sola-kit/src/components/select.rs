@@ -11,13 +11,13 @@
 
 use std::sync::OnceLock;
 
-use iced::widget::{button, column, container, row, svg, text, Space};
+use iced::widget::{Space, button, column, container, row, svg, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
 use crate::components::button as kit_button;
 use crate::components::icon::{icon_handle, icon_svg};
 use crate::components::popover::{self, popover, popover_anchored};
-use crate::components::style::{hairline, mix_white, RADIUS_SM, SPACE_SM};
+use crate::components::style::{RADIUS_SM, SPACE_SM, hairline, mix_white};
 use crate::fonts;
 
 /// Default hanging-menu width when the caller pins one via [`select_sized`].
@@ -74,29 +74,24 @@ pub fn enamel(seed: &str) -> Color {
 
 /// Small rounded enamel plate. Rim is a soft white mix so the chip
 /// reads as glazed, not a flat swatch.
-pub fn identity_mark<'a, Message: 'a>(
-    seed: &str,
-    size: f32,
-) -> Element<'a, Message, Theme> {
+pub fn identity_mark<'a, Message: 'a>(seed: &str, size: f32) -> Element<'a, Message, Theme> {
     let fill = enamel(seed);
     container(Space::new().width(size).height(size))
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
-        .style(move |_theme: &Theme| {
-            container::Style {
-                background: Some(Background::Color(fill)),
-                border: Border {
-                    color: Color {
-                        r: (fill.r * 0.55 + 0.45).min(1.0),
-                        g: (fill.g * 0.55 + 0.45).min(1.0),
-                        b: (fill.b * 0.55 + 0.45).min(1.0),
-                        a: 1.0,
-                    },
-                    width: 1.0,
-                    radius: 3.0.into(),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(fill)),
+            border: Border {
+                color: Color {
+                    r: (fill.r * 0.55 + 0.45).min(1.0),
+                    g: (fill.g * 0.55 + 0.45).min(1.0),
+                    b: (fill.b * 0.55 + 0.45).min(1.0),
+                    a: 1.0,
                 },
-                ..container::Style::default()
-            }
+                width: 1.0,
+                radius: 3.0.into(),
+            },
+            ..container::Style::default()
         })
         .into()
 }
@@ -149,8 +144,8 @@ fn select_inner<'a, Message: Clone + 'a>(
         .and_then(|o| o.mark_seed.clone())
         .or_else(|| options.first().and_then(|o| o.mark_seed.clone()));
 
-    let trigger = trigger_button(label, trigger_seed.as_deref(), open, on_toggle)
-        .width(Length::Fill);
+    let trigger =
+        trigger_button(label, trigger_seed.as_deref(), open, on_toggle).width(Length::Fill);
 
     if !open {
         return trigger.into();
@@ -166,8 +161,8 @@ fn select_inner<'a, Message: Clone + 'a>(
         .width(menu_w)
         .style(popover::style);
 
-    let mut hanging = popover_anchored(trigger, menu, on_dismiss)
-        .placement(popover::Placement::Below);
+    let mut hanging =
+        popover_anchored(trigger, menu, on_dismiss).placement(popover::Placement::Below);
     if menu_width.is_none() {
         hanging = hanging.match_anchor_width();
     }
@@ -199,19 +194,13 @@ fn trigger_button<'a, Message: Clone + 'a>(
     );
     kids.push(chevron);
 
-    button(
-        row(kids)
-            .align_y(Alignment::Center)
-            .spacing(SPACE_SM),
-    )
-    .padding(Padding::from([5, 8]))
-    .style(move |theme, status| trigger_style(theme, status, open))
-    .on_press(on_toggle)
+    button(row(kids).align_y(Alignment::Center).spacing(SPACE_SM))
+        .padding(Padding::from([5, 8]))
+        .style(move |theme, status| trigger_style(theme, status, open))
+        .on_press(on_toggle)
 }
 
-fn option_row<'a, Message: Clone + 'a>(
-    opt: SelectOption<Message>,
-) -> Element<'a, Message, Theme> {
+fn option_row<'a, Message: Clone + 'a>(opt: SelectOption<Message>) -> Element<'a, Message, Theme> {
     let selected = opt.selected;
     let mut kids: Vec<Element<'a, Message, Theme>> = Vec::new();
     if let Some(seed) = opt.mark_seed.as_deref() {
@@ -236,16 +225,12 @@ fn option_row<'a, Message: Clone + 'a>(
         kids.push(Space::new().width(12.0).height(12.0).into());
     }
 
-    button(
-        row(kids)
-            .align_y(Alignment::Center)
-            .spacing(SPACE_SM),
-    )
-    .padding(Padding::from([6, 8]))
-    .width(Length::Fill)
-    .style(kit_button::list_item(selected))
-    .on_press(opt.message)
-    .into()
+    button(row(kids).align_y(Alignment::Center).spacing(SPACE_SM))
+        .padding(Padding::from([6, 8]))
+        .width(Length::Fill)
+        .style(kit_button::list_item(selected))
+        .on_press(opt.message)
+        .into()
 }
 
 fn trigger_style(theme: &Theme, status: button::Status, open: bool) -> button::Style {
@@ -259,9 +244,7 @@ fn trigger_style(theme: &Theme, status: button::Status, open: bool) -> button::S
         (open_fill, mix_white(open_fill, 0.10))
     } else {
         match status {
-            button::Status::Hovered | button::Status::Pressed => {
-                (hover, mix_white(hover, 0.10))
-            }
+            button::Status::Hovered | button::Status::Pressed => (hover, mix_white(hover, 0.10)),
             _ => (rest, hairline(p, RADIUS_SM).color),
         }
     };
