@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-19 (mail unread menubar chip; Bitwarden org vaults; passkey create smoked)
+**As of:** 2026-08-20 (sola.computer teaser live; mail unread menubar chip; Bitwarden org vaults; passkey create smoked)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -81,6 +81,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | design-language | Documented visual law | partial | [design-language](manual/design-language.md) | — | Not all apps comply | yes |
 | screenshot | Capture + handoff to preview | partial | [screenshot plan](specs/2026-07-20-screenshot-capture-plan.md); [call plane](specs/2026-08-13-sola-call-plane-design.md); [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local (bus pair retired; shell + `solactl compositor screenshot` use call; dest is sola-preview) | **Gaps:** install dogfood pending if dest was flipped to paint; multi-output | no |
 | doc-truth | Progress + manual match as-built | partial | [progress-model](progress-model.md) | — | Freeze headers not backfilled; vault stale | n/a |
+| site | Public marketing site sola.computer | partial | [marketing PRODUCT](marketing/PRODUCT.md) | live teaser 2026-08-20 | Thoxa container on Wicket aulos (`wl-f2835fc5634e`); Paper Teaser only; ISO notify SQLite. **Gaps:** full Landing artboard not shipped; no ISO URL | no |
 
 ---
 

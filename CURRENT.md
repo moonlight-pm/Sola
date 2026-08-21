@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-19 (mail menubar unread chip; Bitwarden org vaults; passkey create smoked)
+**As of:** 2026-08-20 (sola.computer teaser live; mail menubar unread chip; Bitwarden org vaults; passkey create smoked)
 
 ---
 
@@ -27,12 +27,16 @@ Do not invent product policy.
    inbox unread chip (accent; click raises mail; hidden when mail is
    closed). **Install after every finished round** (standing — `bus`
    `mail` `shell` for the chip).
-2. **Marketing site (sola.computer)** — Paper design in progress
-   ([file](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ));
-   copy authority [`docs/marketing/PRODUCT.md`](docs/marketing/PRODUCT.md)
-   (kit/theme lead, Steam, ISO CTA). **Next:** iterate design, then implement
-   site (stack TBD). Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop**
-   product truth — do not overwrite it with site messaging.
+2. **Marketing site (sola.computer)** — **teaser live** at
+   [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
+   container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
+   `sola`, image `sola-landing`). Paper
+   [file](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ)
+   **Teaser · Desktop / Mobile**; ISO notify form (SQLite `news`). Copy
+   authority [`docs/marketing/PRODUCT.md`](docs/marketing/PRODUCT.md).
+   **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
+   Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
+   do not overwrite it with site messaging.
 3. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
