@@ -5,6 +5,8 @@
 //! animation. Product meaning arrives as [`Event`].
 
 use iced::Subscription;
+use iced::event::{self, Event as IcedEvent};
+use iced::mouse;
 use iced::time::Instant;
 use iced::window;
 
@@ -26,7 +28,7 @@ pub struct State {
 #[derive(Debug, Clone)]
 struct Press {
     from: usize,
-    start_y: f32,
+    start_y: Option<f32>,
     cursor_y: f32,
     dragging: bool,
     snapshot: StripSnapshot,
@@ -139,7 +141,7 @@ impl State {
         self.press
             .as_ref()
             .filter(|p| p.dragging)
-            .map(|p| (p.from, p.start_y))
+            .map(|p| (p.from, p.start_y.unwrap_or(p.cursor_y)))
     }
 
     pub fn cursor_y(&self) -> f32 {
@@ -157,13 +159,30 @@ impl State {
         self.reordering() || self.anim.is_animating(Instant::now())
     }
 
+    /// Pointer samples while a press is live (the dragged row is an iced
+    /// `float` overlay and would steal widget `on_move` / `on_release`).
     /// Frames while a drag is live so sibling glides keep painting.
     pub fn subscription(&self) -> Subscription<Msg> {
-        if self.animating() {
+        let pointer = if self.capturing() {
+            event::listen_with(|ev, _status, _| match ev {
+                IcedEvent::Mouse(mouse::Event::CursorMoved { position }) => Some(Msg::Pointer {
+                    x: position.x,
+                    y: position.y,
+                }),
+                IcedEvent::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::Release)
+                }
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+        let frames = if self.capturing() || self.animating() {
             window::frames().map(|_| Msg::Tick)
         } else {
             Subscription::none()
-        }
+        };
+        Subscription::batch([pointer, frames])
     }
 
     pub fn update(&mut self, msg: Msg) -> Option<Event> {
@@ -176,7 +195,7 @@ impl State {
                 self.anim.clear();
                 self.press = Some(Press {
                     from: index,
-                    start_y: 0.0,
+                    start_y: None,
                     cursor_y: 0.0,
                     dragging: false,
                     snapshot,
@@ -213,11 +232,12 @@ impl State {
         let Some(p) = self.press.as_mut() else {
             return None;
         };
-        if p.start_y == 0.0 {
-            p.start_y = y;
+        if p.start_y.is_none() {
+            p.start_y = Some(y);
         }
         p.cursor_y = y;
-        if (y - p.start_y).abs() >= PANEL_REORDER_THRESHOLD {
+        let start = p.start_y.unwrap_or(y);
+        if (y - start).abs() >= PANEL_REORDER_THRESHOLD {
             p.dragging = true;
         }
         if p.dragging {
@@ -234,14 +254,21 @@ impl State {
             return None;
         };
         self.anim.clear();
-        if !p.dragging || p.start_y == 0.0 {
+        let Some(start_y) = p.start_y else {
+            return match p.snapshot.rows.get(p.from) {
+                Some(Row::Item { id, .. }) => Some(Event::Activate { id: id.clone() }),
+                Some(Row::Header { id }) => Some(Event::ToggleSection { id: id.clone() }),
+                None => None,
+            };
+        };
+        if !p.dragging {
             return match p.snapshot.rows.get(p.from) {
                 Some(Row::Item { id, .. }) => Some(Event::Activate { id: id.clone() }),
                 Some(Row::Header { id }) => Some(Event::ToggleSection { id: id.clone() }),
                 None => None,
             };
         }
-        resolve_drop(&p.snapshot, p.from, p.start_y, p.cursor_y).map(Event::Drop)
+        resolve_drop(&p.snapshot, p.from, start_y, p.cursor_y).map(Event::Drop)
     }
 
     fn sync_preview(&mut self, now: Instant) {
@@ -256,12 +283,13 @@ impl State {
             return;
         }
         let lens = &p.snapshot.lens;
+        let start_y = p.start_y.unwrap_or(p.cursor_y);
         let ys = panel_row_rest_ys(lens, p.snapshot.item_spacing);
-        let to = panel_drop_index_visual(p.from, p.start_y, p.cursor_y, &ys, PANEL_ROW_H);
+        let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, PANEL_ROW_H);
         let from_si = section_index(lens, p.from);
         let to_si = section_index(lens, to);
         let ghost_mid =
-            ys.get(p.from).copied().unwrap_or(0.0) + (p.cursor_y - p.start_y) + PANEL_ROW_H * 0.5;
+            ys.get(p.from).copied().unwrap_or(0.0) + (p.cursor_y - start_y) + PANEL_ROW_H * 0.5;
         let hover_si = panel_section_at_y(lens, p.snapshot.item_spacing, ghost_mid, PANEL_ROW_H);
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
         let over_foreign_well = !dragging_header
@@ -277,7 +305,7 @@ impl State {
         let row_h = p.snapshot.row_h;
         let pitch = row_h + p.snapshot.item_spacing;
         let (extra, extra_si) = if over_foreign_well && !over_title {
-            (row_h, Some(hover_si))
+            (pitch, Some(hover_si))
         } else {
             (0.0, None)
         };

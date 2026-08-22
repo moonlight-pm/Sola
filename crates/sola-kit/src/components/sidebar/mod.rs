@@ -1567,7 +1567,7 @@ impl ReorderAnim {
                     target = 0.0;
                 }
             }
-            if self.rows[i].value() != target {
+            if (self.rows[i].value() - target).abs() > 0.5 {
                 self.rows[i].go_mut(target, at);
             }
         }
@@ -3050,30 +3050,23 @@ where
             None => panel.into(),
         };
 
-        // Full-window overlay while a press is live so move/release keep
-        // landing on the kit (iced has no pointer capture).
+        // Cursor chrome only. Move/release come from [`State::subscription`]
+        // — the dragged row is an iced `float` overlay and would steal
+        // widget-local `on_move` / `on_release`.
         if capturing {
-            if let Some(act) = on_action {
-                let act_move = Rc::clone(&act);
-                let act_up = Rc::clone(&act);
-                let interaction = if resize_dragging {
-                    iced::mouse::Interaction::ResizingColumn
-                } else if reorder_dragging {
-                    iced::mouse::Interaction::Grabbing
-                } else {
-                    iced::mouse::Interaction::Pointer
-                };
-                stack![
-                    body,
-                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                        .interaction(interaction)
-                        .on_move(move |p| act_move(Msg::Pointer { x: p.x, y: p.y }))
-                        .on_release(act_up(Msg::Release)),
-                ]
-                .into()
+            let interaction = if resize_dragging {
+                iced::mouse::Interaction::ResizingColumn
+            } else if reorder_dragging {
+                iced::mouse::Interaction::Grabbing
             } else {
-                body
-            }
+                iced::mouse::Interaction::Pointer
+            };
+            stack![
+                body,
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .interaction(interaction),
+            ]
+            .into()
         } else {
             body
         }
