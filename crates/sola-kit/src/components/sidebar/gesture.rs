@@ -221,6 +221,8 @@ impl State {
     }
 
     fn on_pointer(&mut self, x: f32, y: f32) -> Option<Event> {
+        let x = super::px(x);
+        let y = super::px(y);
         if let Some(d) = &mut self.divider {
             if d.anchor_x.is_nan() {
                 d.anchor_x = x;
@@ -312,7 +314,11 @@ impl State {
             Some((si, _)) if self.anim.has_extra_elsewhere(from_si, now) => Some(si),
             _ => None,
         };
-        let extra = if extra_si.is_some() { pitch } else { 0.0 };
+        let extra = if extra_si.is_some() {
+            super::px(pitch)
+        } else {
+            0.0
+        };
         let dest = if dragging_header {
             None
         } else if extra_si.is_some() {

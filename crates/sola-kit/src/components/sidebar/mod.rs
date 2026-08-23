@@ -553,7 +553,7 @@ pub fn panel_etch_row_height(density: SidebarDensity) -> f32 {
     let m = density.metrics();
     let text_h = m.font as f32 * 1.3;
     let lip = 2.0;
-    m.row_pad_v as f32 * 2.0 + text_h + lip
+    px(m.row_pad_v as f32 * 2.0 + text_h + lip)
 }
 
 /// Full scroll content height for a section body (padding + rows + gaps).
@@ -1119,6 +1119,13 @@ pub const PANEL_W_MIN: f32 = 80.0;
 pub const PANEL_W_MAX: f32 = 250.0;
 /// Default panel width — same as [`SIDEBAR_WIDTH`].
 pub const PANEL_W_DEFAULT: f32 = SIDEBAR_WIDTH;
+/// Snap layout geometry to whole pixels. Fractional `Length::Fixed`
+/// (31.6 vs 32) is a 1px jump of every row below.
+#[inline]
+pub(crate) fn px(v: f32) -> f32 {
+    v.round()
+}
+
 /// Height of each panel row (px). Used by [`panel_drop_index`].
 pub const PANEL_ROW_H: f32 = 32.0;
 /// Height of the toggle-button header row (px). Used as the list-top
@@ -1213,11 +1220,11 @@ pub fn panel_drop_index_visual(
         return 0;
     }
     let from = from.min(n - 1);
-    let ghost_top = row_ys[from] + (cursor_y - start_y);
+    let ghost_top = px(row_ys[from] + (cursor_y - start_y));
     let mut to = from;
     if ghost_top < row_ys[from] {
         for i in (0..from).rev() {
-            if ghost_top <= row_ys[i] + row_h * 0.25 {
+            if ghost_top <= row_ys[i] + px(row_h / 4.0) {
                 to = i;
             } else {
                 break;
@@ -1225,7 +1232,7 @@ pub fn panel_drop_index_visual(
         }
     } else {
         for i in from + 1..n {
-            if ghost_top + row_h >= row_ys[i] + row_h * 0.75 {
+            if ghost_top + row_h >= row_ys[i] + px(row_h * 0.75) {
                 to = i;
             } else {
                 break;
@@ -1236,9 +1243,8 @@ pub fn panel_drop_index_visual(
 }
 
 /// Dragging down out of a grouped well: hop to the next section once the
-/// ghost center is on the last member — don't wait for 75% of the row
-/// below the well (that opens the unlabeled slot after the ghost is
-/// already on U1).
+/// ghost bottom touches the well's bottom edge — not mid-last-member
+/// (early shrink) and not 75% of the following row (slot above the ghost).
 pub fn panel_drop_index_leave_well(
     from: usize,
     start_y: f32,
@@ -1286,13 +1292,13 @@ pub fn panel_drop_index_leave_well(
     let Some(next) = next_start else {
         return to;
     };
-    let ghost_mid = row_ys[from] + (cursor_y - start_y) + row_h * 0.5;
-    let leave_y = if last_in_from == from {
-        row_ys[last_in_from] + row_h * 0.7
+    let ghost_bottom = px(row_ys[from] + (cursor_y - start_y) + row_h);
+    let well_bottom = px(row_ys[last_in_from] + row_h + GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V);
+    if ghost_bottom >= well_bottom {
+        next
     } else {
-        row_ys[last_in_from] + row_h * 0.5
-    };
-    if ghost_mid >= leave_y { next } else { to }
+        to
+    }
 }
 
 /// Rest Y of every visible row, including group-well pad and gaps.
@@ -1386,7 +1392,7 @@ fn section_bounds(spans: &[SectionSpan], item_spacing: f32, row_h: f32) -> Vec<(
             y += span.len as f32 * row_h + (span.len - 1) as f32 * item_spacing;
         }
         y += pad_v;
-        out.push((top, y));
+        out.push((px(top), px(y)));
     }
     out
 }
@@ -1450,13 +1456,15 @@ pub fn panel_drop_bias_visual(
     }
     let from = from.min(n - 1);
     let to = to.min(n - 1);
-    let ghost_mid = row_ys[from] + (cursor_y - start_y) + row_h * 0.5;
+    let ghost_mid = px(row_ys[from] + (cursor_y - start_y) + row_h / 2.0);
+    let dest_top = px(row_ys[to]);
     // Still above dest — entering it from above (leave-well hop), not
     // the floor of the group above dest.
-    if ghost_mid < row_ys[to] {
+    if ghost_mid < dest_top {
         return PanelDropBias::OnSlot;
     }
-    if ghost_mid < row_ys[to] + row_h * 0.18 {
+    let pocket = px(row_h * 0.18).max(1.0);
+    if ghost_mid < dest_top + pocket {
         PanelDropBias::PocketAbove
     } else {
         PanelDropBias::OnSlot
@@ -1550,11 +1558,11 @@ fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32, row_h: f32)
         };
         for local in 0..span.len {
             if span.start + local == from {
-                return y;
+                return px(y);
             }
-            y += row_h;
+            y = px(y + row_h);
             if local + 1 < span.len {
-                y += item_spacing;
+                y = px(y + item_spacing);
             }
         }
         y += if span.grouped {
@@ -1702,7 +1710,8 @@ impl ReorderAnim {
                 }
                 t
             };
-            if (self.rows[i].value() - target).abs() > 0.5 {
+            let target = px(target);
+            if (self.rows[i].value() - target).abs() >= 1.0 {
                 self.rows[i].go_mut(target, at);
             }
         }
@@ -1718,7 +1727,8 @@ impl ReorderAnim {
             } else {
                 0.0
             };
-            if (self.well_extras[si].value() - target).abs() > 0.5 {
+            let target = px(target);
+            if (self.well_extras[si].value() - target).abs() >= 1.0 {
                 self.well_extras[si].go_mut(target, at);
             }
         }
@@ -1728,20 +1738,20 @@ impl ReorderAnim {
     pub fn offset(&self, index: usize, at: Instant) -> f32 {
         self.rows
             .get(index)
-            .map(|a| a.interpolate_with(|v| v, at))
+            .map(|a| px(a.interpolate_with(|v| v, at)))
             .unwrap_or(0.0)
     }
 
     /// True if any well other than `si` still has extra in flight.
     pub fn has_extra_elsewhere(&self, si: usize, at: Instant) -> bool {
-        (0..self.well_extras.len()).any(|i| i != si && self.well_extra_for(i, at) > 0.5)
+        (0..self.well_extras.len()).any(|i| i != si && self.well_extra_for(i, at) >= 1.0)
     }
 
     /// Animated extra height for dest well `si`.
     pub fn well_extra_for(&self, si: usize, at: Instant) -> f32 {
         self.well_extras
             .get(si)
-            .map(|a| a.interpolate_with(|v| v, at))
+            .map(|a| px(a.interpolate_with(|v| v, at)))
             .unwrap_or(0.0)
     }
 
@@ -1760,7 +1770,7 @@ impl ReorderAnim {
         at: Instant,
     ) -> f32 {
         let extra = self.well_extra_for(si, at);
-        if extra < 0.5 {
+        if extra < 1.0 {
             return 0.0;
         }
         let mut m = extra;
@@ -2906,7 +2916,7 @@ where
             let mut sections_col = column![].spacing(0.0).width(Length::Fill);
             let mut row_index = 0usize;
             let mut prev_collapsible = false;
-            let extra_v = anim
+            let extra_v = px(anim
                 .map(|a| {
                     spans
                         .iter()
@@ -2917,11 +2927,9 @@ where
                         })
                         .fold(0.0_f32, f32::max)
                 })
-                .unwrap_or(0.0);
-            // Hole is a column child: spacing is already between children,
-            // so this is the real etch row height (not PANEL_ROW_H / row+gap).
+                .unwrap_or(0.0));
             let hole_h = if anim.map(|a| a.keep_origin_hole()).unwrap_or(true) {
-                (row_h - extra_v).max(0.0)
+                px((row_h - extra_v).max(0.0))
             } else {
                 0.0
             };
@@ -2992,7 +3000,7 @@ where
                     ));
                     row_index += 1;
                     if hide {
-                        if extra > 0.5 {
+                        if extra >= 1.0 {
                             body = body.push(Space::new().height(Length::Fixed(extra)));
                         }
                         sections_col = sections_col
@@ -3013,7 +3021,7 @@ where
                             d
                         };
                         dragged_item = Some(item);
-                        if extra_v < 0.5 {
+                        if extra_v < 1.0 {
                             // Same widget as the row (not drawn) so height
                             // matches — a Space hole is ~1px off and shifts
                             // the well + everything below on drag start.
@@ -3023,7 +3031,7 @@ where
                                 render_item(dummy, reorder_ref, from, false, density, hover_wired)
                             };
                             body = body.push(layout_only(row_el));
-                        } else if hole_h > 0.5 {
+                        } else if hole_h >= 1.0 {
                             body = body.push(Space::new().height(Length::Fixed(hole_h)));
                         }
                     } else {
@@ -3045,8 +3053,8 @@ where
                     }
                     row_index += 1;
                 }
-                if extra > 0.5 {
-                    body = body.push(Space::new().height(Length::Fixed(extra)));
+                if extra >= 1.0 {
+                    body = body.push(Space::new().height(Length::Fixed(px(extra))));
                 }
                 sections_col =
                     sections_col.push(paint_drag_section(body, grouped, true, well_dy, lift_well));
@@ -3897,11 +3905,11 @@ mod tests {
         let lens = [(true, 3), (false, 2)];
         let row_h = 32.0;
         let ys = panel_row_rest_ys_with(&lens, 3.0, row_h);
-        let from = 1; // first member, last member is 2, next section starts at 3
+        let from = 1; // first member; last member is 2; next section starts at 3
         let start = ys[from];
-        // Ghost center on last member (row 2) → hop to first loose (3).
-        let ghost_mid = ys[2] + row_h * 0.55;
-        let cursor = ghost_mid - ys[from] - row_h * 0.5 + start;
+        // Ghost bottom on the well's bottom edge → hop to first loose.
+        let well_bottom = ys[2] + row_h + GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V;
+        let cursor = well_bottom - row_h - ys[from] + start;
         let visual = panel_drop_index_visual(from, start, cursor, &ys, row_h);
         let to = panel_drop_index_leave_well(from, start, cursor, &ys, row_h, &lens, visual);
         assert_eq!(to, 3);
@@ -3995,11 +4003,10 @@ mod tests {
     }
 
     #[test]
-    fn etch_row_height_includes_default_line_height() {
-        // 7+7 pad + 12*1.3 text + 2 lip = 31.6, not PANEL_ROW_H (32).
+    fn etch_row_height_is_whole_pixels() {
         let h = panel_etch_row_height(SidebarDensity::Large);
-        assert!((h - 31.6).abs() < 0.01);
-        assert!(PANEL_ROW_H - h > 0.0 && PANEL_ROW_H - h < 1.0);
+        assert_eq!(h, h.round());
+        assert_eq!(h, PANEL_ROW_H);
     }
 
     #[test]
