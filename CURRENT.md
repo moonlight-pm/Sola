@@ -15,13 +15,9 @@ Do not invent product policy.
 
 ## Now
 
-1. **kit sidebar gesture** — this worktree (`browser-polish`). **Not installed.**
-   `SidebarPanel` owns hover, resize, click-vs-drag, live reorder preview,
-   and well animation. Apps hold `sidebar::State` and apply `Event`
-   (`Activate` / `ToggleSection` / `Drop` / `Resize`). Browser groups
-   consume `Dest` (join / loose / section order); title drop still no-op.
-   Consumers updated: kit storybook, browser, terminal, agent, workspaces,
-   paint. **Install:** wait for the human to pick targets.
+1. **kit sidebar gesture** — this worktree (`browser-polish`). Iterate in
+   **sola-kit storybook** (Sidebar page: Group A/B/C + ungrouped Item U*).
+   Browser is no longer the drag dogfood. Kit **not installed**.
 2. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
    `selection` atom. Workspaces PTYs share the palette. **Installed**
