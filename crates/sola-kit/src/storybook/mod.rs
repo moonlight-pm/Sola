@@ -148,6 +148,10 @@ impl Page {
         }
     }
 
+    fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|p| p.label() == label)
+    }
+
     /// The palette atoms this page's component visibly uses, surfaced as
     /// an inline editor panel below its demo (see `page_view`). Curated,
     /// best-effort — tune freely. Empty for pages that carry their own
@@ -489,6 +493,29 @@ pub struct Storybook {
     window_id: Option<iced::window::Id>,
 }
 
+fn last_page_path() -> std::path::PathBuf {
+    sola_core::config::sola_config_dir()
+        .join("kit")
+        .join("storybook-page")
+}
+
+fn load_last_page() -> Page {
+    let Ok(raw) = std::fs::read_to_string(last_page_path()) else {
+        return Page::Overview;
+    };
+    Page::from_label(raw.trim()).unwrap_or(Page::Overview)
+}
+
+fn save_last_page(page: Page) {
+    let path = last_page_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(err) = std::fs::write(&path, page.label()) {
+        tracing::warn!("failed to persist storybook page: {err}");
+    }
+}
+
 impl Storybook {
     /// Name of the immutable default preset that always occupies slot 0.
     pub const DEFAULT_THEME_NAME: &'static str = "Default";
@@ -514,7 +541,7 @@ impl Storybook {
         // bus replay re-baselines it once a saved preset resolves.
         let checkpoint = default_preset.clone();
         Self {
-            page: Page::Overview,
+            page: load_last_page(),
             toolbar: pages::toolbar::State::default(),
             button: pages::button::State::default(),
             overview: pages::overview::State::default(),
@@ -611,6 +638,7 @@ impl Storybook {
             }
             Msg::Select(page) => {
                 self.page = page;
+                save_last_page(page);
                 // Don't carry a half-open atom/shell picker across pages.
                 self.editing_atom = None;
                 self.editing_shell = None;
