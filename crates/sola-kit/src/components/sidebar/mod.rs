@@ -1355,7 +1355,7 @@ pub enum PanelDropBias {
     PocketAbove,
 }
 
-/// Upper half of slot `to` belongs to the pocket above.
+/// Uniform-grid bias (tests / legacy). Prefer [`panel_drop_bias_visual`].
 pub fn panel_drop_bias(
     from: usize,
     start_y: f32,
@@ -1374,6 +1374,30 @@ pub fn panel_drop_bias(
     }
 }
 
+/// Pocket-above only in the top 18% of dest — first loose / a group title
+/// were a 1–2px OnSlot against the group floor.
+pub fn panel_drop_bias_visual(
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    row_ys: &[f32],
+    row_h: f32,
+    to: usize,
+) -> PanelDropBias {
+    let n = row_ys.len();
+    if n == 0 || row_h <= 0.0 {
+        return PanelDropBias::OnSlot;
+    }
+    let from = from.min(n - 1);
+    let to = to.min(n - 1);
+    let ghost_mid = row_ys[from] + (cursor_y - start_y) + row_h * 0.5;
+    if ghost_mid < row_ys[to] + row_h * 0.18 {
+        PanelDropBias::PocketAbove
+    } else {
+        PanelDropBias::OnSlot
+    }
+}
+
 /// One visible reorder section: `len` rows starting at global `start`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SectionSpan {
@@ -1386,6 +1410,7 @@ struct SectionSpan {
 /// `None` is an invalid title drop (OnSlot on a grouped header).
 fn drop_slot_in_sections(
     spans: &[SectionSpan],
+    from: usize,
     to: usize,
     bias: PanelDropBias,
 ) -> Option<(usize, usize)> {
@@ -1404,7 +1429,12 @@ fn drop_slot_in_sections(
     if bias == PanelDropBias::PocketAbove && local == 0 && s > 0 {
         return Some((s - 1, spans[s - 1].len));
     }
-    if bias == PanelDropBias::OnSlot && local == 0 && spans[s].grouped {
+    if local == 0 && spans[s].grouped {
+        // Dragging down onto a title: append dest (slot grows from the
+        // bottom). Invalid if dragging up onto a title.
+        if from < to {
+            return Some((s, spans[s].len));
+        }
         return None;
     }
     Some((s, local))
@@ -1420,7 +1450,7 @@ pub(crate) fn dest_extra_slot(
 ) -> Option<(usize, usize)> {
     let spans = spans_from_lens(lens);
     let from_si = section_containing(&spans, from);
-    let (si, local) = drop_slot_in_sections(&spans, to, bias)?;
+    let (si, local) = drop_slot_in_sections(&spans, from, to, bias)?;
     if si == from_si {
         None
     } else {
@@ -2722,12 +2752,12 @@ where
             let row_h = panel_etch_row_height(density);
             let ys = panel_row_rest_ys_with(&lens, item_spacing, row_h);
             let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, row_h);
-            let bias = panel_drop_bias(from, start_y, cursor_y, row_h, to);
+            let bias = panel_drop_bias_visual(from, start_y, cursor_y, &ys, row_h, to);
             let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
             let from_si = section_containing(&spans, from);
             let extra_slot = dest_extra_slot(&lens, from, to, bias);
             let dest_si = extra_slot.map(|(si, _)| si).unwrap_or_else(|| {
-                drop_slot_in_sections(&spans, to, bias)
+                drop_slot_in_sections(&spans, from, to, bias)
                     .map(|(si, _)| si)
                     .unwrap_or(from_si)
             });
@@ -3639,6 +3669,25 @@ mod tests {
     }
 
     #[test]
+    fn drop_bias_visual_gives_most_of_dest_row_to_onslot() {
+        let ys = [0.0, 32.0, 64.0];
+        let row_h = 32.0;
+        // ghost_mid = ys[from] + (cursor - start) + row_h/2
+        let mid_of_dest = ys[1] + row_h * 0.5;
+        let cursor_mid = mid_of_dest - ys[0] - row_h * 0.5;
+        assert_eq!(
+            panel_drop_bias_visual(0, 0.0, cursor_mid, &ys, row_h, 1),
+            PanelDropBias::OnSlot
+        );
+        let top_of_dest = ys[1] + row_h * 0.08;
+        let cursor_top = top_of_dest - ys[0] - row_h * 0.5;
+        assert_eq!(
+            panel_drop_bias_visual(0, 0.0, cursor_top, &ys, row_h, 1),
+            PanelDropBias::PocketAbove
+        );
+    }
+
+    #[test]
     fn drop_slot_floor_appends_previous_section() {
         let spans = [
             SectionSpan {
@@ -3659,22 +3708,27 @@ mod tests {
         ];
         // Top half of the next header → end of Work (len 3).
         assert_eq!(
-            drop_slot_in_sections(&spans, 3, PanelDropBias::PocketAbove),
+            drop_slot_in_sections(&spans, 0, 3, PanelDropBias::PocketAbove),
             Some((0, 3))
         );
-        // On the header itself → invalid (title drop).
+        // Dragging down onto a title → append dest (slot at the bottom).
         assert_eq!(
-            drop_slot_in_sections(&spans, 3, PanelDropBias::OnSlot),
+            drop_slot_in_sections(&spans, 0, 3, PanelDropBias::OnSlot),
+            Some((1, 2))
+        );
+        // Dragging up onto a title → no dest extra.
+        assert_eq!(
+            drop_slot_in_sections(&spans, 5, 3, PanelDropBias::OnSlot),
             None
         );
         // Top half of first loose → end of Research.
         assert_eq!(
-            drop_slot_in_sections(&spans, 5, PanelDropBias::PocketAbove),
+            drop_slot_in_sections(&spans, 0, 5, PanelDropBias::PocketAbove),
             Some((1, 2))
         );
         // On first loose → start of loose run.
         assert_eq!(
-            drop_slot_in_sections(&spans, 5, PanelDropBias::OnSlot),
+            drop_slot_in_sections(&spans, 0, 5, PanelDropBias::OnSlot),
             Some((2, 0))
         );
     }

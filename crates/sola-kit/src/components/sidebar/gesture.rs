@@ -12,7 +12,8 @@ use iced::window;
 
 use super::{
     PANEL_REORDER_THRESHOLD, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim, dest_extra_slot,
-    panel_drop_bias, panel_drop_index_visual, panel_row_rest_ys_with, panel_shift_skip_header,
+    panel_drop_bias_visual, panel_drop_index_visual, panel_row_rest_ys_with,
+    panel_shift_skip_header,
 };
 
 /// Opaque gesture / hover / animation state. Hold one per sidebar.
@@ -290,7 +291,7 @@ impl State {
         let to_si = section_index(lens, to);
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
         let pitch = row_h + p.snapshot.item_spacing;
-        let bias = panel_drop_bias(p.from, start_y, p.cursor_y, row_h, to);
+        let bias = panel_drop_bias_visual(p.from, start_y, p.cursor_y, &ys, row_h, to);
         let extra_slot = if dragging_header {
             None
         } else {
@@ -346,7 +347,7 @@ pub fn resolve_drop(
     if from == to {
         return None;
     }
-    let bias = panel_drop_bias(from, start_y, cursor_y, snap.row_h, to);
+    let bias = panel_drop_bias_visual(from, start_y, cursor_y, &ys, snap.row_h, to);
     match snap.rows[from].clone() {
         Row::Header { id } => {
             let order = header_reorder(snap, &id, to)?;
@@ -414,13 +415,14 @@ fn item_dest(snap: &StripSnapshot, from: usize, to: usize, bias: PanelDropBias) 
     } else {
         rest.get(insert_at - 1)
     };
-    dest_for_drop(before_row, after_row, bias)
+    dest_for_drop(before_row, after_row, bias, from < to)
 }
 
 fn dest_for_drop(
     before_row: Option<&Row>,
     after_row: Option<&Row>,
     bias: PanelDropBias,
+    moving_down: bool,
 ) -> Option<Dest> {
     if bias == PanelDropBias::PocketAbove {
         match (before_row, after_row) {
@@ -460,6 +462,14 @@ fn dest_for_drop(
                 }
             }
             _ => {}
+        }
+    }
+    if moving_down {
+        if let Some(Row::Header { id }) = after_row {
+            return Some(Dest::Join {
+                section: id.clone(),
+                before: None,
+            });
         }
     }
     dest_on_slot(after_row, before_row)
@@ -568,13 +578,14 @@ mod tests {
     }
 
     fn pointer_for(snap: &StripSnapshot, from: usize, to: usize, pocket: bool) -> (f32, f32) {
-        let ys = super::super::panel_row_rest_ys(&snap.lens, snap.item_spacing);
+        let ys = super::super::panel_row_rest_ys_with(&snap.lens, snap.item_spacing, snap.row_h);
         let start_y = ys[from];
-        let cursor_y = if pocket {
-            ys[to] + snap.row_h * 0.1
+        let ghost_mid = if pocket {
+            ys[to] + snap.row_h * 0.08
         } else {
             ys[to] + snap.row_h * 0.6
         };
+        let cursor_y = ghost_mid - ys[from] - snap.row_h * 0.5 + start_y;
         (start_y, cursor_y)
     }
 
@@ -630,6 +641,24 @@ mod tests {
     #[test]
     fn dest_on_header_is_noop() {
         assert!(dest_on_slot(Some(&header("research")), Some(&item("2", Some("work")))).is_none());
+    }
+
+    #[test]
+    fn dest_down_onto_title_appends_dest() {
+        let dest = dest_for_drop(
+            Some(&item("2", Some("work"))),
+            Some(&header("research")),
+            PanelDropBias::OnSlot,
+            true,
+        )
+        .expect("dest");
+        assert_eq!(
+            dest,
+            Dest::Join {
+                section: "research".into(),
+                before: None,
+            }
+        );
     }
 
     #[test]
