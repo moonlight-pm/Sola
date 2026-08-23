@@ -1450,6 +1450,9 @@ pub(crate) fn dest_extra_slot(
     to: usize,
     bias: PanelDropBias,
 ) -> Option<(usize, usize)> {
+    if from == to {
+        return None;
+    }
     let spans = spans_from_lens(lens);
     drop_slot_in_sections(&spans, from, to, bias)
 }
@@ -2786,7 +2789,9 @@ where
             // Hole is a column child: spacing is already between children,
             // so this is the real etch row height (not PANEL_ROW_H / row+gap).
             let hole_h = if anim.map(|a| a.keep_origin_hole()).unwrap_or(true) {
-                (row_h - extra_v).max(0.0)
+                // Round to device pixels so a 31.6 etch hole vs 32px row
+                // does not vibrate neighbors on grab.
+                (row_h - extra_v).max(0.0).round()
             } else {
                 0.0
             };
@@ -3735,6 +3740,7 @@ mod tests {
             dest_extra_slot(&lens, 6, 5, PanelDropBias::OnSlot),
             Some((2, 0))
         );
+        assert_eq!(dest_extra_slot(&lens, 6, 6, PanelDropBias::OnSlot), None);
     }
 
     #[test]
