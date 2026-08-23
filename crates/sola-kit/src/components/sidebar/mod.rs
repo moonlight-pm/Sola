@@ -1410,6 +1410,24 @@ fn drop_slot_in_sections(
     Some((s, local))
 }
 
+/// Cross-section dest for live extra: `None` in-section or on a title.
+/// `local` is insert-before inside that section (`len` = append).
+pub(crate) fn dest_extra_slot(
+    lens: &[(bool, usize)],
+    from: usize,
+    to: usize,
+    bias: PanelDropBias,
+) -> Option<(usize, usize)> {
+    let spans = spans_from_lens(lens);
+    let from_si = section_containing(&spans, from);
+    let (si, local) = drop_slot_in_sections(&spans, to, bias)?;
+    if si == from_si {
+        None
+    } else {
+        Some((si, local))
+    }
+}
+
 fn drop_slot_height(item_spacing: f32) -> f32 {
     PANEL_ROW_H + item_spacing
 }
@@ -1576,12 +1594,20 @@ impl ReorderAnim {
             PANEL_ROW_STRIDE
         };
         for i in 0..n {
-            let mut target = sibling_offset(from, to, i, stride);
-            if let Some((a, b)) = dest {
-                if i < a || i >= b {
-                    target = 0.0;
+            let target = if extra_si.is_some() {
+                match dest {
+                    Some((a, b)) if i >= a && i < b => stride,
+                    _ => 0.0,
                 }
-            }
+            } else {
+                let mut t = sibling_offset(from, to, i, stride);
+                if let Some((a, b)) = dest {
+                    if i < a || i >= b {
+                        t = 0.0;
+                    }
+                }
+                t
+            };
             if (self.rows[i].value() - target).abs() > 0.5 {
                 self.rows[i].go_mut(target, at);
             }
@@ -2699,14 +2725,7 @@ where
             let bias = panel_drop_bias(from, start_y, cursor_y, row_h, to);
             let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
             let from_si = section_containing(&spans, from);
-            let extra_slot = drop_slot_in_sections(&spans, to, bias).and_then(|(si, local)| {
-                let span = spans.get(si)?;
-                if !span.grouped || si == from_si {
-                    None
-                } else {
-                    Some((si, local))
-                }
-            });
+            let extra_slot = dest_extra_slot(&lens, from, to, bias);
             let dest_si = extra_slot.map(|(si, _)| si).unwrap_or_else(|| {
                 drop_slot_in_sections(&spans, to, bias)
                     .map(|(si, _)| si)
@@ -2778,7 +2797,6 @@ where
                 } else {
                     0.0
                 };
-                let extra_after = extra_slot.filter(|(s, _)| *s == si).map(|(_, local)| local);
                 let row_from = usize::MAX;
                 let well_dy = if dragging_header {
                     if si == from_si {
@@ -2792,7 +2810,6 @@ where
                     0.0
                 };
                 let lift_well = dragging_header && si == from_si;
-                let mut pushed = 0usize;
 
                 if let Some(collapse) = section.collapse {
                     let item = collapse_header_item(section.label, collapse);
@@ -2812,11 +2829,10 @@ where
                         hover_wired,
                     ));
                     row_index += 1;
-                    pushed += 1;
-                    if extra_after == Some(pushed) && extra > 0.5 {
-                        body = body.push(Space::new().height(Length::Fixed(extra)));
-                    }
                     if hide {
+                        if extra > 0.5 {
+                            body = body.push(Space::new().height(Length::Fixed(extra)));
+                        }
                         sections_col = sections_col
                             .push(paint_drag_section(body, grouped, true, well_dy, lift_well));
                         continue;
@@ -2825,9 +2841,6 @@ where
 
                 let members = section.items;
                 for item in members {
-                    if extra_after == Some(pushed) && extra > 0.5 {
-                        body = body.push(Space::new().height(Length::Fixed(extra)));
-                    }
                     if !dragging_header && row_index == from {
                         dragged_item = Some(item);
                         if hole_h > 0.5 {
@@ -2851,9 +2864,8 @@ where
                         ));
                     }
                     row_index += 1;
-                    pushed += 1;
                 }
-                if extra_after == Some(pushed) && extra > 0.5 {
+                if extra > 0.5 {
                     body = body.push(Space::new().height(Length::Fixed(extra)));
                 }
                 sections_col =

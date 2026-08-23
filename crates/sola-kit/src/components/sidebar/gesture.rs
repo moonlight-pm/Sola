@@ -11,8 +11,8 @@ use iced::time::Instant;
 use iced::window;
 
 use super::{
-    PANEL_REORDER_THRESHOLD, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim, panel_drop_bias,
-    panel_drop_index_visual, panel_row_rest_ys_with, panel_section_at_y, panel_shift_skip_header,
+    PANEL_REORDER_THRESHOLD, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim, dest_extra_slot,
+    panel_drop_bias, panel_drop_index_visual, panel_row_rest_ys_with, panel_shift_skip_header,
 };
 
 /// Opaque gesture / hover / animation state. Hold one per sidebar.
@@ -288,52 +288,34 @@ impl State {
         let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, row_h);
         let from_si = section_index(lens, p.from);
         let to_si = section_index(lens, to);
-        let ghost_mid =
-            ys.get(p.from).copied().unwrap_or(0.0) + (p.cursor_y - start_y) + row_h * 0.5;
-        let hover_si = panel_section_at_y(lens, p.snapshot.item_spacing, ghost_mid, row_h);
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
-        let over_foreign_well = !dragging_header
-            && lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
-            && hover_si != from_si;
-        let header_i = section_start(lens, hover_si);
-        let over_title = lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
-            && ys
-                .get(header_i)
-                .is_some_and(|y| ghost_mid >= *y && ghost_mid < *y + row_h);
         let pitch = row_h + p.snapshot.item_spacing;
         let bias = panel_drop_bias(p.from, start_y, p.cursor_y, row_h, to);
-        // Title OnSlot is invalid — no dest extra. Floor of a group is the
-        // top half of the *next* header (PocketAbove): extra on the group above.
-        let extra_si = if dragging_header {
+        let extra_slot = if dragging_header {
             None
-        } else if over_title && bias == PanelDropBias::OnSlot {
-            None
-        } else if over_foreign_well {
-            Some(hover_si)
-        } else if over_title && bias == PanelDropBias::PocketAbove && hover_si > 0 {
-            let prev = hover_si - 1;
-            lens.get(prev).is_some_and(|(g, _)| *g).then_some(prev)
         } else {
-            None
+            dest_extra_slot(lens, p.from, to, bias)
         };
+        let extra_si = extra_slot.map(|(si, _)| si);
         let extra = if extra_si.is_some() { pitch } else { 0.0 };
+        let dest = if dragging_header {
+            None
+        } else if let Some((si, local)) = extra_slot {
+            let (mem_a, mem_b) = member_range(lens, si);
+            let insert = (section_start(lens, si) + local).clamp(mem_a, mem_b);
+            Some((insert, mem_b))
+        } else if from_si == to_si {
+            Some(member_range(lens, from_si))
+        } else {
+            Some((0, 0))
+        };
         let shift_to = if dragging_header {
             to
-        } else if extra_si.is_some() {
+        } else if extra_slot.is_some() {
             p.from
         } else {
             panel_shift_skip_header(lens, p.from, to)
         };
-        // Foreign extra is an in-flow Space at the insert index — do not
-        // also float members (they escaped the well and overlapped the next row).
-        let dest = if dragging_header {
-            None
-        } else if extra_si.is_some() {
-            Some((0, 0))
-        } else {
-            Some(member_range(lens, to_si))
-        };
-        let origin_hole = true;
         self.anim.sync_well(
             p.from,
             shift_to,
@@ -343,7 +325,7 @@ impl State {
             dest,
             lens.len(),
             pitch,
-            origin_hole,
+            true,
             now,
         );
     }
