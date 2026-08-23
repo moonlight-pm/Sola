@@ -2215,6 +2215,55 @@ impl<'a, Message: 'a> From<HoverClose<'a, Message>> for Element<'a, Message> {
     }
 }
 
+/// Occupies the child's layout size without painting or taking events.
+/// Used as the in-flow reorder hole so height matches the painted row.
+struct LayoutOnly<'a, Message> {
+    content: Element<'a, Message>,
+}
+
+fn layout_only<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    Element::new(LayoutOnly {
+        content: content.into(),
+    })
+}
+
+impl<Message> Widget<Message, Theme, iced::Renderer> for LayoutOnly<'_, Message> {
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        _tree: &Tree,
+        _renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &renderer::Style,
+        _layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+    ) {
+    }
+}
+
 /// Stable id for close-on-hover when the caller omitted [`SidebarItem::id`].
 fn assign_close_id<'a, Message>(
     mut item: SidebarItem<'a, Message>,
@@ -2799,9 +2848,7 @@ where
             // Hole is a column child: spacing is already between children,
             // so this is the real etch row height (not PANEL_ROW_H / row+gap).
             let hole_h = if anim.map(|a| a.keep_origin_hole()).unwrap_or(true) {
-                // Round to device pixels so a 31.6 etch hole vs 32px row
-                // does not vibrate neighbors on grab.
-                (row_h - extra_v).max(0.0).round()
+                (row_h - extra_v).max(0.0)
             } else {
                 0.0
             };
@@ -2884,8 +2931,26 @@ where
                 let members = section.items;
                 for item in members {
                     if !dragging_header && row_index == from {
+                        let dummy = {
+                            let mut d = SidebarItem::new(item.label.clone(), item.message.clone())
+                                .active(item.active);
+                            if let Some(id) = item.id.clone() {
+                                d = d.id(id);
+                            }
+                            d
+                        };
                         dragged_item = Some(item);
-                        if hole_h > 0.5 {
+                        if extra_v < 0.5 {
+                            // Same widget as the row (not drawn) so height
+                            // matches — a Space hole is ~1px off and shifts
+                            // the well + everything below on drag start.
+                            let row_el = if collapsed {
+                                collapsed_row(&dummy, from, reorder_ref)
+                            } else {
+                                render_item(dummy, reorder_ref, from, false, density, hover_wired)
+                            };
+                            body = body.push(layout_only(row_el));
+                        } else if hole_h > 0.5 {
                             body = body.push(Space::new().height(Length::Fixed(hole_h)));
                         }
                     } else {
