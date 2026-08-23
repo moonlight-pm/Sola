@@ -12,8 +12,8 @@ use iced::window;
 
 use super::{
     PANEL_REORDER_THRESHOLD, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim, dest_extra_slot,
-    panel_drop_bias_visual, panel_drop_index_visual, panel_row_rest_ys_with,
-    panel_shift_skip_header,
+    panel_drop_bias_visual, panel_drop_index_leave_well, panel_drop_index_visual,
+    panel_row_rest_ys_with, panel_shift_skip_header,
 };
 
 /// Opaque gesture / hover / animation state. Hold one per sidebar.
@@ -286,7 +286,15 @@ impl State {
         let start_y = p.start_y.unwrap_or(p.cursor_y);
         let row_h = p.snapshot.row_h;
         let ys = panel_row_rest_ys_with(lens, p.snapshot.item_spacing, row_h);
-        let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, row_h);
+        let to = panel_drop_index_leave_well(
+            p.from,
+            start_y,
+            p.cursor_y,
+            &ys,
+            row_h,
+            lens,
+            panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, row_h),
+        );
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
         let pitch = row_h + p.snapshot.item_spacing;
         let bias = panel_drop_bias_visual(p.from, start_y, p.cursor_y, &ys, row_h, to);
@@ -351,7 +359,15 @@ pub fn resolve_drop(
         return None;
     }
     let ys = panel_row_rest_ys_with(&snap.lens, snap.item_spacing, snap.row_h);
-    let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, snap.row_h);
+    let to = panel_drop_index_leave_well(
+        from,
+        start_y,
+        cursor_y,
+        &ys,
+        snap.row_h,
+        &snap.lens,
+        panel_drop_index_visual(from, start_y, cursor_y, &ys, snap.row_h),
+    );
     if from == to {
         return None;
     }
@@ -699,9 +715,9 @@ mod tests {
     #[test]
     fn member_to_loose_ungroups() {
         let snap = setup();
-        let (start, cursor) = pointer_for(&snap, 1, 5, false);
-        let d = resolve_drop(&snap, 1, start, cursor).expect("drop");
-        assert_eq!(d.id, "1");
+        let (start, cursor) = pointer_for(&snap, 4, 5, false);
+        let d = resolve_drop(&snap, 4, start, cursor).expect("drop");
+        assert_eq!(d.id, "3");
         match d.dest {
             Dest::Loose { .. } => {}
             other => panic!("{other:?}"),

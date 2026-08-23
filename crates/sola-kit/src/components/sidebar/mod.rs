@@ -1235,6 +1235,66 @@ pub fn panel_drop_index_visual(
     to
 }
 
+/// Dragging down out of a grouped well: hop to the next section once the
+/// ghost center is on the last member — don't wait for 75% of the row
+/// below the well (that opens the unlabeled slot after the ghost is
+/// already on U1).
+pub fn panel_drop_index_leave_well(
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    row_ys: &[f32],
+    row_h: f32,
+    lens: &[(bool, usize)],
+    to: usize,
+) -> usize {
+    let n = row_ys.len();
+    if n == 0 || row_h <= 0.0 {
+        return to;
+    }
+    let from = from.min(n - 1);
+    let from_si = {
+        let mut start = 0usize;
+        let mut si = 0usize;
+        for (i, (_, len)) in lens.iter().enumerate() {
+            if from < start + *len {
+                si = i;
+                break;
+            }
+            start += *len;
+            si = i;
+        }
+        si
+    };
+    if !lens.get(from_si).is_some_and(|(g, _)| *g) {
+        return to;
+    }
+    let mut start = 0usize;
+    let mut last_in_from = from;
+    let mut next_start = None;
+    for (si, (_, len)) in lens.iter().enumerate() {
+        let end = start + *len;
+        if si == from_si {
+            last_in_from = end.saturating_sub(1).min(n - 1);
+            if end < n {
+                next_start = Some(end);
+            }
+            break;
+        }
+        start = end;
+    }
+    let Some(next) = next_start else {
+        return to;
+    };
+    let ghost_mid = row_ys[from] + (cursor_y - start_y) + row_h * 0.5;
+    let leave_y = if last_in_from == from {
+        row_ys[last_in_from] + row_h * 0.7
+    } else {
+        row_ys[last_in_from] + row_h * 0.5
+    };
+    if ghost_mid >= leave_y { next } else { to }
+}
+
 /// Rest Y of every visible row, including group-well pad and gaps.
 pub fn panel_row_rest_ys(sections: &[(bool, usize)], item_spacing: f32) -> Vec<f32> {
     panel_row_rest_ys_with(sections, item_spacing, PANEL_ROW_H)
@@ -1391,6 +1451,11 @@ pub fn panel_drop_bias_visual(
     let from = from.min(n - 1);
     let to = to.min(n - 1);
     let ghost_mid = row_ys[from] + (cursor_y - start_y) + row_h * 0.5;
+    // Still above dest — entering it from above (leave-well hop), not
+    // the floor of the group above dest.
+    if ghost_mid < row_ys[to] {
+        return PanelDropBias::OnSlot;
+    }
     if ghost_mid < row_ys[to] + row_h * 0.18 {
         PanelDropBias::PocketAbove
     } else {
@@ -2809,7 +2874,15 @@ where
             let lens: Vec<(bool, usize)> = spans.iter().map(|s| (s.grouped, s.len)).collect();
             let row_h = panel_etch_row_height(density);
             let ys = panel_row_rest_ys_with(&lens, item_spacing, row_h);
-            let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, row_h);
+            let to = panel_drop_index_leave_well(
+                from,
+                start_y,
+                cursor_y,
+                &ys,
+                row_h,
+                &lens,
+                panel_drop_index_visual(from, start_y, cursor_y, &ys, row_h),
+            );
             let bias = panel_drop_bias_visual(from, start_y, cursor_y, &ys, row_h, to);
             let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
             let from_si = section_containing(&spans, from);
@@ -3816,6 +3889,26 @@ mod tests {
             Some((2, 0))
         );
         assert_eq!(dest_extra_slot(&lens, 6, 6, PanelDropBias::OnSlot), None);
+    }
+
+    #[test]
+    fn leave_well_hops_to_next_section_on_last_member() {
+        // Header+2 members, then 2 loose.
+        let lens = [(true, 3), (false, 2)];
+        let row_h = 32.0;
+        let ys = panel_row_rest_ys_with(&lens, 3.0, row_h);
+        let from = 1; // first member, last member is 2, next section starts at 3
+        let start = ys[from];
+        // Ghost center on last member (row 2) → hop to first loose (3).
+        let ghost_mid = ys[2] + row_h * 0.55;
+        let cursor = ghost_mid - ys[from] - row_h * 0.5 + start;
+        let visual = panel_drop_index_visual(from, start, cursor, &ys, row_h);
+        let to = panel_drop_index_leave_well(from, start, cursor, &ys, row_h, &lens, visual);
+        assert_eq!(to, 3);
+        assert_eq!(
+            panel_drop_bias_visual(from, start, cursor, &ys, row_h, to),
+            PanelDropBias::OnSlot
+        );
     }
 
     #[test]
