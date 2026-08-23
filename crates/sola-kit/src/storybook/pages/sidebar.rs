@@ -55,22 +55,46 @@ impl Default for State {
                     id: "a".into(),
                     name: "Group A".into(),
                     collapsed: false,
-                    items: items(&[("a1", "Item A1"), ("a2", "Item A2"), ("a3", "Item A3")]),
+                    items: items(&[
+                        ("a1", "Item A1"),
+                        ("a2", "Item A2"),
+                        ("a3", "Item A3"),
+                        ("a4", "Item A4"),
+                        ("a5", "Item A5"),
+                    ]),
                 },
                 DemoGroup {
                     id: "b".into(),
                     name: "Group B".into(),
                     collapsed: false,
-                    items: items(&[("b1", "Item B1"), ("b2", "Item B2")]),
+                    items: items(&[
+                        ("b1", "Item B1"),
+                        ("b2", "Item B2"),
+                        ("b3", "Item B3"),
+                        ("b4", "Item B4"),
+                        ("b5", "Item B5"),
+                    ]),
                 },
                 DemoGroup {
                     id: "c".into(),
                     name: "Group C".into(),
                     collapsed: false,
-                    items: items(&[("c1", "Item C1"), ("c2", "Item C2")]),
+                    items: items(&[
+                        ("c1", "Item C1"),
+                        ("c2", "Item C2"),
+                        ("c3", "Item C3"),
+                        ("c4", "Item C4"),
+                        ("c5", "Item C5"),
+                    ]),
                 },
             ],
-            loose: items(&[("u1", "Item U1"), ("u2", "Item U2"), ("u3", "Item U3")]),
+            loose: items(&[
+                ("u1", "Item U1"),
+                ("u2", "Item U2"),
+                ("u3", "Item U3"),
+                ("u4", "Item U4"),
+                ("u5", "Item U5"),
+            ]),
             selected: "a1".into(),
         }
     }
@@ -218,7 +242,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
             .height(Length::Fill),
     )
     .style(card_style)
-    .height(Length::Fixed(520.0))
+    .height(Length::Fixed(800.0))
     .width(Length::Fill);
 
     column![
