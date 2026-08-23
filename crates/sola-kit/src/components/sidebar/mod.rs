@@ -2813,16 +2813,17 @@ where
                     Padding::from([4.0, 8.0])
                 };
                 let mut body = column![].spacing(item_spacing).padding(body_pad);
-                let extra = if extra_slot.is_some_and(|(s, _)| s == si) {
-                    anim.map(|a| {
+                // Paint every section's easing extra — not only extra_slot.si.
+                // Dest flips (e.g. up onto Group C's title) retarget extras
+                // to 0; dropping them from layout in one frame snaps the
+                // well and everything below while members still ease.
+                let extra = anim
+                    .map(|a| {
                         let mem_start = row_index + usize::from(grouped);
                         let mem_end = mem_start + if hide { 0 } else { section.items.len() };
                         a.well_layout_extra(si, mem_start, mem_end, now)
                     })
-                    .unwrap_or(0.0)
-                } else {
-                    0.0
-                };
+                    .unwrap_or(0.0);
                 let row_from = usize::MAX;
                 let well_dy = if dragging_header {
                     if si == from_si {
