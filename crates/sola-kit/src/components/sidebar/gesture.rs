@@ -287,8 +287,6 @@ impl State {
         let row_h = p.snapshot.row_h;
         let ys = panel_row_rest_ys_with(lens, p.snapshot.item_spacing, row_h);
         let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, row_h);
-        let from_si = section_index(lens, p.from);
-        let to_si = section_index(lens, to);
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
         let pitch = row_h + p.snapshot.item_spacing;
         let bias = panel_drop_bias_visual(p.from, start_y, p.cursor_y, &ys, row_h, to);
@@ -305,8 +303,6 @@ impl State {
             let (mem_a, mem_b) = member_range(lens, si);
             let insert = (section_start(lens, si) + local).clamp(mem_a, mem_b);
             Some((insert, mem_b))
-        } else if from_si == to_si {
-            Some(member_range(lens, from_si))
         } else {
             Some((0, 0))
         };
@@ -511,17 +507,6 @@ fn dest_on_slot(after_row: Option<&Row>, before_row: Option<&Row>) -> Option<Des
             None => Some(Dest::Loose { before: None }),
         },
     }
-}
-
-fn section_index(lens: &[(bool, usize)], row: usize) -> usize {
-    let mut start = 0usize;
-    for (i, (_, len)) in lens.iter().enumerate() {
-        if row < start + *len {
-            return i;
-        }
-        start += *len;
-    }
-    lens.len().saturating_sub(1)
 }
 
 fn section_start(lens: &[(bool, usize)], si: usize) -> usize {

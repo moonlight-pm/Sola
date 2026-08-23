@@ -1440,8 +1440,10 @@ fn drop_slot_in_sections(
     Some((s, local))
 }
 
-/// Cross-section dest for live extra: `None` in-section or on a title.
-/// `local` is insert-before inside that section (`len` = append).
+/// Dest extra for live preview. Includes the source section: pulling a
+/// loose tab back out of a group must open unlabeled extra immediately
+/// so the group extra can ease closed without the loose rows jumping up.
+/// `None` on an invalid title. `local` is insert-before (`len` = append).
 pub(crate) fn dest_extra_slot(
     lens: &[(bool, usize)],
     from: usize,
@@ -1449,13 +1451,7 @@ pub(crate) fn dest_extra_slot(
     bias: PanelDropBias,
 ) -> Option<(usize, usize)> {
     let spans = spans_from_lens(lens);
-    let from_si = section_containing(&spans, from);
-    let (si, local) = drop_slot_in_sections(&spans, from, to, bias)?;
-    if si == from_si {
-        None
-    } else {
-        Some((si, local))
-    }
+    drop_slot_in_sections(&spans, from, to, bias)
 }
 
 fn drop_slot_height(item_spacing: f32) -> f32 {
@@ -3729,6 +3725,13 @@ mod tests {
         // On first loose → start of loose run.
         assert_eq!(
             drop_slot_in_sections(&spans, 0, 5, PanelDropBias::OnSlot),
+            Some((2, 0))
+        );
+        // Pulling a loose tab back to the first loose slot still gets extra
+        // on unlabeled (not None just because source == dest section).
+        let lens: Vec<(bool, usize)> = spans.iter().map(|s| (s.grouped, s.len)).collect();
+        assert_eq!(
+            dest_extra_slot(&lens, 6, 5, PanelDropBias::OnSlot),
             Some((2, 0))
         );
     }
