@@ -242,7 +242,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
             .height(Length::Fill),
     )
     .style(card_style)
-    .height(Length::Fixed(800.0))
+    .height(Length::Fixed(900.0))
     .width(Length::Fill);
 
     column![
