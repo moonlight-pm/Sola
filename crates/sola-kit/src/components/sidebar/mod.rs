@@ -2727,7 +2727,12 @@ where
         // the caller remembering `.fill()`. Multiple sections require an
         // explicit mark so short groups don't steal the Fill slot.
         let auto_fill_single = !any_explicit_fill && n_sections == 1;
-        let dragging = reorder_ref.and_then(|r| r.active);
+        // Hole/extra only after the click/drag threshold. Grab (press)
+        // must not swap the row for a placeholder — etch 31.6 vs a 32px
+        // hole shifts the well and everything below by 1px.
+        let dragging = reorder_ref
+            .filter(|r| r.anim.is_some())
+            .and_then(|r| r.active);
 
         let sections_el: Element<'a, Message, Theme> = if let Some((from, start_y)) = dragging {
             // Tab drag: the grabbed row is always an overlay ghost (same
