@@ -11,9 +11,8 @@ use iced::time::Instant;
 use iced::window;
 
 use super::{
-    PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim,
-    panel_drop_bias, panel_drop_index_visual, panel_row_rest_ys, panel_section_at_y,
-    panel_shift_skip_header,
+    PANEL_REORDER_THRESHOLD, PANEL_W_MAX, PANEL_W_MIN, PanelDropBias, ReorderAnim, panel_drop_bias,
+    panel_drop_index_visual, panel_row_rest_ys_with, panel_section_at_y, panel_shift_skip_header,
 };
 
 /// Opaque gesture / hover / animation state. Hold one per sidebar.
@@ -136,11 +135,11 @@ impl State {
         self.press.is_some() || self.divider.is_some()
     }
 
-    /// Live-reorder preview — `None` until movement crosses the threshold.
+    /// Ghost follows the pointer from the first sample — not after the
+    /// click/drag threshold, or pickup jumps those 5px in one frame.
     pub fn preview_active(&self) -> Option<(usize, f32)> {
         self.press
             .as_ref()
-            .filter(|p| p.dragging)
             .map(|p| (p.from, p.start_y.unwrap_or(p.cursor_y)))
     }
 
@@ -284,47 +283,57 @@ impl State {
         }
         let lens = &p.snapshot.lens;
         let start_y = p.start_y.unwrap_or(p.cursor_y);
-        let ys = panel_row_rest_ys(lens, p.snapshot.item_spacing);
-        let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, PANEL_ROW_H);
+        let row_h = p.snapshot.row_h;
+        let ys = panel_row_rest_ys_with(lens, p.snapshot.item_spacing, row_h);
+        let to = panel_drop_index_visual(p.from, start_y, p.cursor_y, &ys, row_h);
         let from_si = section_index(lens, p.from);
         let to_si = section_index(lens, to);
         let ghost_mid =
-            ys.get(p.from).copied().unwrap_or(0.0) + (p.cursor_y - start_y) + PANEL_ROW_H * 0.5;
-        let hover_si = panel_section_at_y(lens, p.snapshot.item_spacing, ghost_mid, PANEL_ROW_H);
+            ys.get(p.from).copied().unwrap_or(0.0) + (p.cursor_y - start_y) + row_h * 0.5;
+        let hover_si = panel_section_at_y(lens, p.snapshot.item_spacing, ghost_mid, row_h);
         let dragging_header = matches!(p.snapshot.rows.get(p.from), Some(Row::Header { .. }));
         let over_foreign_well = !dragging_header
             && lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
             && hover_si != from_si;
-        let (a, b) = member_range(lens, hover_si);
-        let to_in_hover_members = to >= a && to < b;
         let header_i = section_start(lens, hover_si);
         let over_title = lens.get(hover_si).is_some_and(|(grouped, _)| *grouped)
             && ys
                 .get(header_i)
-                .is_some_and(|y| ghost_mid >= *y && ghost_mid < *y + PANEL_ROW_H);
-        let row_h = p.snapshot.row_h;
+                .is_some_and(|y| ghost_mid >= *y && ghost_mid < *y + row_h);
         let pitch = row_h + p.snapshot.item_spacing;
-        let (extra, extra_si) = if over_foreign_well && !over_title {
-            (pitch, Some(hover_si))
+        let bias = panel_drop_bias(p.from, start_y, p.cursor_y, row_h, to);
+        // Title OnSlot is invalid — no dest extra. Floor of a group is the
+        // top half of the *next* header (PocketAbove): extra on the group above.
+        let extra_si = if dragging_header {
+            None
+        } else if over_title && bias == PanelDropBias::OnSlot {
+            None
+        } else if over_foreign_well {
+            Some(hover_si)
+        } else if over_title && bias == PanelDropBias::PocketAbove && hover_si > 0 {
+            let prev = hover_si - 1;
+            lens.get(prev).is_some_and(|(g, _)| *g).then_some(prev)
         } else {
-            (0.0, None)
+            None
         };
+        let extra = if extra_si.is_some() { pitch } else { 0.0 };
         let shift_to = if dragging_header {
             to
-        } else if over_foreign_well && !to_in_hover_members {
+        } else if extra_si.is_some() {
             p.from
         } else {
             panel_shift_skip_header(lens, p.from, to)
         };
+        // Foreign extra is an in-flow Space at the insert index — do not
+        // also float members (they escaped the well and overlapped the next row).
         let dest = if dragging_header {
             None
-        } else if over_foreign_well && !to_in_hover_members {
+        } else if extra_si.is_some() {
             Some((0, 0))
         } else {
-            let si = if over_foreign_well { hover_si } else { to_si };
-            Some(member_range(lens, si))
+            Some(member_range(lens, to_si))
         };
-        let origin_hole = !over_title && (from_si == to_si || extra_si.is_some());
+        let origin_hole = true;
         self.anim.sync_well(
             p.from,
             shift_to,
@@ -350,12 +359,12 @@ pub fn resolve_drop(
     if from >= n {
         return None;
     }
-    let ys = panel_row_rest_ys(&snap.lens, snap.item_spacing);
-    let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, PANEL_ROW_H);
+    let ys = panel_row_rest_ys_with(&snap.lens, snap.item_spacing, snap.row_h);
+    let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, snap.row_h);
     if from == to {
         return None;
     }
-    let bias = panel_drop_bias(from, start_y, cursor_y, PANEL_ROW_H, to);
+    let bias = panel_drop_bias(from, start_y, cursor_y, snap.row_h, to);
     match snap.rows[from].clone() {
         Row::Header { id } => {
             let order = header_reorder(snap, &id, to)?;

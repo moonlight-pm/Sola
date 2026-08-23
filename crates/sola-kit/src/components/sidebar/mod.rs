@@ -1237,10 +1237,19 @@ pub fn panel_drop_index_visual(
 
 /// Rest Y of every visible row, including group-well pad and gaps.
 pub fn panel_row_rest_ys(sections: &[(bool, usize)], item_spacing: f32) -> Vec<f32> {
+    panel_row_rest_ys_with(sections, item_spacing, PANEL_ROW_H)
+}
+
+/// Like [`panel_row_rest_ys`], with the painted etch row height.
+pub fn panel_row_rest_ys_with(
+    sections: &[(bool, usize)],
+    item_spacing: f32,
+    row_h: f32,
+) -> Vec<f32> {
     let spans = spans_from_lens(sections);
     let n: usize = sections.iter().map(|(_, len)| *len).sum();
     (0..n)
-        .map(|i| row_rest_y(&spans, i, item_spacing))
+        .map(|i| row_rest_y(&spans, i, item_spacing, row_h))
         .collect()
 }
 
@@ -1259,8 +1268,8 @@ pub fn panel_shift_skip_header(sections: &[(bool, usize)], from: usize, to: usiz
 ///
 /// The gap between a group and the **loose** run is that group's floor
 /// (so approaching from ungrouped opens the well). The gap **between two
-/// groups** is neither well (`sections.len()`) so the lower extra can
-/// ease closed before the upper opens.
+/// groups** belongs to the nearer well so a slot does not vanish in the
+/// joint.
 pub fn panel_section_at_y(
     sections: &[(bool, usize)],
     item_spacing: f32,
@@ -1288,7 +1297,8 @@ pub fn panel_section_at_y(
                 return i + 1;
             }
             if lower_g && upper_g {
-                return sections.len();
+                let mid = (w[0].1 + w[1].0) * 0.5;
+                return if y < mid { i } else { i + 1 };
             }
             return i;
         }
@@ -1373,9 +1383,14 @@ struct SectionSpan {
 }
 
 /// `(section, insert_before_local)` for a live drop. `local == len` appends.
-fn drop_slot_in_sections(spans: &[SectionSpan], to: usize, bias: PanelDropBias) -> (usize, usize) {
+/// `None` is an invalid title drop (OnSlot on a grouped header).
+fn drop_slot_in_sections(
+    spans: &[SectionSpan],
+    to: usize,
+    bias: PanelDropBias,
+) -> Option<(usize, usize)> {
     if spans.is_empty() {
-        return (0, 0);
+        return Some((0, 0));
     }
     let mut s = 0usize;
     for (i, span) in spans.iter().enumerate() {
@@ -1387,12 +1402,12 @@ fn drop_slot_in_sections(spans: &[SectionSpan], to: usize, bias: PanelDropBias) 
     }
     let local = to.saturating_sub(spans[s].start);
     if bias == PanelDropBias::PocketAbove && local == 0 && s > 0 {
-        return (s - 1, spans[s - 1].len);
+        return Some((s - 1, spans[s - 1].len));
     }
     if bias == PanelDropBias::OnSlot && local == 0 && spans[s].grouped {
-        return (s, spans[s].len);
+        return None;
     }
-    (s, local)
+    Some((s, local))
 }
 
 fn drop_slot_height(item_spacing: f32) -> f32 {
@@ -1408,7 +1423,7 @@ fn section_containing(spans: &[SectionSpan], row: usize) -> usize {
     spans.len().saturating_sub(1)
 }
 
-fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32) -> f32 {
+fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32, row_h: f32) -> f32 {
     let mut y = 0.0;
     let mut prev_grouped = false;
     for (si, span) in spans.iter().enumerate() {
@@ -1425,7 +1440,7 @@ fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32) -> f32 {
             if span.start + local == from {
                 return y;
             }
-            y += PANEL_ROW_H;
+            y += row_h;
             if local + 1 < span.len {
                 y += item_spacing;
             }
@@ -2678,12 +2693,25 @@ where
                 start += n;
             }
             let lens: Vec<(bool, usize)> = spans.iter().map(|s| (s.grouped, s.len)).collect();
-            let ys = panel_row_rest_ys(&lens, item_spacing);
-            let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, PANEL_ROW_H);
-            let bias = panel_drop_bias(from, start_y, cursor_y, PANEL_ROW_H, to);
+            let row_h = panel_etch_row_height(density);
+            let ys = panel_row_rest_ys_with(&lens, item_spacing, row_h);
+            let to = panel_drop_index_visual(from, start_y, cursor_y, &ys, row_h);
+            let bias = panel_drop_bias(from, start_y, cursor_y, row_h, to);
             let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
             let from_si = section_containing(&spans, from);
-            let (dest_si, _dest_local) = drop_slot_in_sections(&spans, to, bias);
+            let extra_slot = drop_slot_in_sections(&spans, to, bias).and_then(|(si, local)| {
+                let span = spans.get(si)?;
+                if !span.grouped || si == from_si {
+                    None
+                } else {
+                    Some((si, local))
+                }
+            });
+            let dest_si = extra_slot.map(|(si, _)| si).unwrap_or_else(|| {
+                drop_slot_in_sections(&spans, to, bias)
+                    .map(|(si, _)| si)
+                    .unwrap_or(from_si)
+            });
             let dest_g = if spans.get(dest_si).is_some_and(|s| s.grouped) {
                 dest_si
             } else {
@@ -2698,7 +2726,6 @@ where
             let mut sections_col = column![].spacing(0.0).width(Length::Fill);
             let mut row_index = 0usize;
             let mut prev_collapsible = false;
-            let row_h = panel_etch_row_height(density);
             let extra_v = anim
                 .map(|a| {
                     spans
@@ -2741,13 +2768,17 @@ where
                     Padding::from([4.0, 8.0])
                 };
                 let mut body = column![].spacing(item_spacing).padding(body_pad);
-                let extra = anim
-                    .map(|a| {
+                let extra = if extra_slot.is_some_and(|(s, _)| s == si) {
+                    anim.map(|a| {
                         let mem_start = row_index + usize::from(grouped);
                         let mem_end = mem_start + if hide { 0 } else { section.items.len() };
                         a.well_layout_extra(si, mem_start, mem_end, now)
                     })
-                    .unwrap_or(0.0);
+                    .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                let extra_after = extra_slot.filter(|(s, _)| *s == si).map(|(_, local)| local);
                 let row_from = usize::MAX;
                 let well_dy = if dragging_header {
                     if si == from_si {
@@ -2761,6 +2792,7 @@ where
                     0.0
                 };
                 let lift_well = dragging_header && si == from_si;
+                let mut pushed = 0usize;
 
                 if let Some(collapse) = section.collapse {
                     let item = collapse_header_item(section.label, collapse);
@@ -2780,10 +2812,11 @@ where
                         hover_wired,
                     ));
                     row_index += 1;
+                    pushed += 1;
+                    if extra_after == Some(pushed) && extra > 0.5 {
+                        body = body.push(Space::new().height(Length::Fixed(extra)));
+                    }
                     if hide {
-                        if extra > 0.5 {
-                            body = body.push(Space::new().height(Length::Fixed(extra)));
-                        }
                         sections_col = sections_col
                             .push(paint_drag_section(body, grouped, true, well_dy, lift_well));
                         continue;
@@ -2792,6 +2825,9 @@ where
 
                 let members = section.items;
                 for item in members {
+                    if extra_after == Some(pushed) && extra > 0.5 {
+                        body = body.push(Space::new().height(Length::Fixed(extra)));
+                    }
                     if !dragging_header && row_index == from {
                         dragged_item = Some(item);
                         if hole_h > 0.5 {
@@ -2815,8 +2851,9 @@ where
                         ));
                     }
                     row_index += 1;
+                    pushed += 1;
                 }
-                if extra > 0.5 {
+                if extra_after == Some(pushed) && extra > 0.5 {
                     body = body.push(Space::new().height(Length::Fixed(extra)));
                 }
                 sections_col =
@@ -2828,7 +2865,7 @@ where
                 // Ghost origin is the *rest* position (spans are pre-drag).
                 // One translate: pointer delta only. Same horizontal inset
                 // as a list row so width does not pop when crossing a well.
-                let orig_y = row_rest_y(&spans, from, item_spacing);
+                let orig_y = row_rest_y(&spans, from, item_spacing, row_h);
                 let item = assign_close_id(item, from);
                 let show_action = item
                     .id
@@ -3611,22 +3648,22 @@ mod tests {
         // Top half of the next header → end of Work (len 3).
         assert_eq!(
             drop_slot_in_sections(&spans, 3, PanelDropBias::PocketAbove),
-            (0, 3)
+            Some((0, 3))
         );
-        // On the header itself → append Research.
+        // On the header itself → invalid (title drop).
         assert_eq!(
             drop_slot_in_sections(&spans, 3, PanelDropBias::OnSlot),
-            (1, 2)
+            None
         );
         // Top half of first loose → end of Research.
         assert_eq!(
             drop_slot_in_sections(&spans, 5, PanelDropBias::PocketAbove),
-            (1, 2)
+            Some((1, 2))
         );
         // On first loose → start of loose run.
         assert_eq!(
             drop_slot_in_sections(&spans, 5, PanelDropBias::OnSlot),
-            (2, 0)
+            Some((2, 0))
         );
     }
 
@@ -4059,12 +4096,12 @@ mod tests {
     }
 
     #[test]
-    fn section_at_y_between_groups_is_neither_well() {
+    fn section_at_y_between_groups_picks_nearer_well() {
         let lens = [(true, 2), (true, 2)];
         let ys = panel_row_rest_ys(&lens, 3.0);
         let in_gap = (ys[1] + PANEL_ROW_H + ys[2]) * 0.5;
         let si = panel_section_at_y(&lens, 3.0, in_gap, PANEL_ROW_H);
-        assert_eq!(si, lens.len());
+        assert!(si == 0 || si == 1, "gap must stay in a well, got {si}");
     }
 
     #[test]
