@@ -295,20 +295,32 @@ impl State {
         } else {
             dest_extra_slot(lens, p.from, to, bias)
         };
-        let extra_si = extra_slot.map(|(si, _)| si);
+        let from_si = section_index(lens, p.from);
+        // Dest extra is for *foreign* dest (or a handoff back into source
+        // while another well still has extra). In-group, extra would push
+        // C5 down instead of sliding it up into the hole.
+        let extra_si = match extra_slot {
+            Some((si, _)) if si != from_si => Some(si),
+            Some((si, _)) if self.anim.has_extra_elsewhere(from_si, now) => Some(si),
+            _ => None,
+        };
         let extra = if extra_si.is_some() { pitch } else { 0.0 };
         let dest = if dragging_header {
             None
-        } else if let Some((si, local)) = extra_slot {
-            let (mem_a, mem_b) = member_range(lens, si);
-            let insert = (section_start(lens, si) + local).clamp(mem_a, mem_b);
-            Some((insert, mem_b))
+        } else if extra_si.is_some() {
+            extra_slot.map(|(si, local)| {
+                let (mem_a, mem_b) = member_range(lens, si);
+                let insert = (section_start(lens, si) + local).clamp(mem_a, mem_b);
+                (insert, mem_b)
+            })
+        } else if from_si == section_index(lens, to) {
+            Some(member_range(lens, from_si))
         } else {
             Some((0, 0))
         };
         let shift_to = if dragging_header {
             to
-        } else if extra_slot.is_some() {
+        } else if extra_si.is_some() {
             p.from
         } else {
             panel_shift_skip_header(lens, p.from, to)
@@ -507,6 +519,17 @@ fn dest_on_slot(after_row: Option<&Row>, before_row: Option<&Row>) -> Option<Des
             None => Some(Dest::Loose { before: None }),
         },
     }
+}
+
+fn section_index(lens: &[(bool, usize)], row: usize) -> usize {
+    let mut start = 0usize;
+    for (i, (_, len)) in lens.iter().enumerate() {
+        if row < start + *len {
+            return i;
+        }
+        start += *len;
+    }
+    lens.len().saturating_sub(1)
 }
 
 fn section_start(lens: &[(bool, usize)], si: usize) -> usize {

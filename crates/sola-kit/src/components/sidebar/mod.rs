@@ -1667,6 +1667,11 @@ impl ReorderAnim {
             .unwrap_or(0.0)
     }
 
+    /// True if any well other than `si` still has extra in flight.
+    pub fn has_extra_elsewhere(&self, si: usize, at: Instant) -> bool {
+        (0..self.well_extras.len()).any(|i| i != si && self.well_extra_for(i, at) > 0.5)
+    }
+
     /// Animated extra height for dest well `si`.
     pub fn well_extra_for(&self, si: usize, at: Instant) -> f32 {
         self.well_extras
