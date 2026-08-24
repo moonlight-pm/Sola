@@ -1899,8 +1899,11 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         });
     }
     let strip: Element<'a, Message> =
-        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, on_action).into();
-    hidden_scroll(strip, None, None).into()
+        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action))
+            .into();
+    mouse_area(hidden_scroll(strip, None, None))
+        .on_exit(on_action(Msg::Hover(None)))
+        .into()
 }
 
 /// Render one item row, shared by [`sidebar`] and [`SidebarPanel::build`].

@@ -538,8 +538,8 @@ struct StripState {
     settling: bool,
     ids_at_release: Vec<String>,
     hole_origin: usize,
-    drop_y: Option<Animation<f32>>,
-    pending_drop: Option<Drop>,
+    /// Visual Y of each held id at release; FLIP into the committed slot.
+    fly_from: HashMap<String, f32>,
 }
 
 impl Default for StripState {
@@ -561,8 +561,7 @@ impl Default for StripState {
             settling: false,
             ids_at_release: Vec::new(),
             hole_origin: 0,
-            drop_y: None,
-            pending_drop: None,
+            fly_from: HashMap::new(),
         }
     }
 }
@@ -705,8 +704,7 @@ where
         }
         let width = px(limits.max().width);
         let st = tree.state.downcast_mut::<StripState>();
-        let mut skip_flip = false;
-        if st.settling {
+        if st.settling && !st.ids_at_release.is_empty() {
             let ids: Vec<String> = self.meta.iter().map(|m| m.id.clone()).collect();
             if ids != st.ids_at_release {
                 st.held = None;
@@ -714,25 +712,30 @@ where
                 st.hole_at = 0;
                 st.absorb = None;
                 st.pending_visual = None;
-                st.drop_y = None;
-                st.pending_drop = None;
-                st.flip.clear();
-                skip_flip = true;
             }
         }
+        let fly_from = if st.held.is_none() {
+            std::mem::take(&mut st.fly_from)
+        } else {
+            HashMap::new()
+        };
+        if !fly_from.is_empty() {
+            st.flip.clear();
+        }
+        let skip_others = !fly_from.is_empty();
         let view = build_view(&self.meta, st);
         let now = Instant::now();
-        let pending = if skip_flip {
+        let pending = if skip_others {
             None
         } else {
             st.pending_visual.take()
         };
-        let old_y = if skip_flip {
+        let old_y = if skip_others {
             HashMap::new()
         } else {
             rest_y_by_id(st)
         };
-        let old_visual = if skip_flip {
+        let old_visual = if skip_others {
             HashMap::new()
         } else {
             snapshot_visual(st, now)
@@ -770,9 +773,7 @@ where
         y += PAD_BOT;
 
         if let Some(held) = st.held.as_ref() {
-            let ghost_y = if let Some(a) = &st.drop_y {
-                px(a.interpolate_with(|v| v, now)) as i32
-            } else if st.dragging {
+            let ghost_y = if st.dragging {
                 st.pointer - held.grab - if held.as_group { WELL_PAD } else { 0 }
             } else {
                 st.rest
@@ -830,6 +831,19 @@ where
                 } else {
                     st.flip.remove(&row.id);
                 }
+            }
+        }
+        for (id, from_y) in fly_from {
+            let Some(row) = view.iter().find(|r| r.id == id) else {
+                continue;
+            };
+            let Some(i) = row.leaf else { continue };
+            let Some((ny, _, _)) = pos[i] else { continue };
+            let dy = from_y - ny as f32;
+            if dy.abs() >= 0.5 {
+                let mut a = gap_anim(dy);
+                a.go_mut(0.0, now);
+                st.flip.insert(id, a);
             }
         }
 
@@ -972,29 +986,28 @@ where
                     let dest = drop_of(held, &st.view, st.hole_at, st.absorb.clone());
                     let pad = if held.as_group { WELL_PAD } else { 0 };
                     let from_y = st.pointer - held.grab - pad;
-                    let to_y = st.rest.get(st.hole_at).map(|r| r.y).unwrap_or(from_y);
+                    let mut fly = HashMap::new();
+                    let mut y = from_y as f32;
+                    for i in held.start..held.end.min(self.meta.len()) {
+                        fly.insert(self.meta[i].id.clone(), y);
+                        let h = 32.0;
+                        y += h + ROW_GAP as f32;
+                    }
                     st.flip.clear();
+                    st.fly_from = fly;
                     if st.hole_at == st.hole_origin {
                         st.held = None;
                         st.hole_at = 0;
                         st.absorb = None;
-                        if let Some(drop) = dest {
-                            shell.publish((self.on_action)(Msg::Outcome(SidebarEvent::Drop(drop))));
-                        }
-                    } else if (from_y - to_y).abs() < 2 {
+                    } else {
                         st.settling = true;
                         st.ids_at_release =
                             self.meta.iter().map(|m| m.id.clone()).collect();
                         if let Some(drop) = dest {
-                            shell.publish((self.on_action)(Msg::Outcome(SidebarEvent::Drop(drop))));
+                            shell.publish((self.on_action)(Msg::Outcome(
+                                SidebarEvent::Drop(drop),
+                            )));
                         }
-                    } else {
-                        let now = Instant::now();
-                        let mut a = gap_anim(from_y as f32);
-                        a.go_mut(to_y as f32, now);
-                        st.drop_y = Some(a);
-                        st.pending_drop = dest;
-                        st.settling = true;
                     }
                 }
                 shell.invalidate_layout();
@@ -1004,19 +1017,6 @@ where
             Event::Window(window::Event::RedrawRequested(now)) => {
                 if st.dragging && !st.settling && apply_dest(st) {
                     shell.invalidate_layout();
-                }
-                if let Some(a) = &st.drop_y {
-                    if a.is_animating(*now) {
-                        shell.invalidate_layout();
-                        shell.request_redraw();
-                    } else if let Some(drop) = st.pending_drop.take() {
-                        st.drop_y = None;
-                        st.ids_at_release =
-                            self.meta.iter().map(|m| m.id.clone()).collect();
-                        shell.publish((self.on_action)(Msg::Outcome(SidebarEvent::Drop(drop))));
-                        shell.invalidate_layout();
-                        shell.request_redraw();
-                    }
                 }
                 let wells = st.wells.values().any(|w| {
                     w.top.is_animating(*now) || w.h.is_animating(*now)
@@ -1111,12 +1111,9 @@ where
 
         if let Some(held) = held {
             if st.dragging || st.settling {
+                renderer.with_layer(*viewport, |renderer| {
                 let mut plate: Option<Rectangle> = None;
-                let show_plate = st.dragging
-                    || st
-                        .drop_y
-                        .as_ref()
-                        .is_some_and(|a| a.is_animating(now));
+                let show_plate = st.dragging;
                 for i in held.start..held.end {
                     if let Some(child_layout) = children.get(i) {
                         let b = child_layout.bounds();
@@ -1139,47 +1136,63 @@ where
                 }
                 if show_plate {
                 if let Some(b) = plate {
-                    let (bounds, fill) = if held.as_group {
-                        (
-                            Rectangle {
-                                x: layout.bounds().x + 2.0,
-                                y: b.y - WELL_PAD as f32,
-                                width: (layout.bounds().width - 4.0).max(0.0),
-                                height: b.height + WELL_PAD as f32,
-                            },
-                            alpha(CHROME_SURFACE, 0.5),
-                        )
+                    if held.as_group {
+                        let bounds = Rectangle {
+                            x: layout.bounds().x + 2.0,
+                            y: b.y - WELL_PAD as f32,
+                            width: (layout.bounds().width - 4.0).max(0.0),
+                            height: b.height + 2.0 * WELL_PAD as f32,
+                        };
+                        if let Some(bg) = well.background {
+                            let bg = match bg {
+                                Background::Color(c) => {
+                                    Background::Color(alpha(c, 0.8))
+                                }
+                                other => other,
+                            };
+                            let mut border = well.border;
+                            border.color = alpha(border.color, 0.8);
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds,
+                                    border,
+                                    shadow: Shadow {
+                                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                                        offset: Vector::new(0.0, 2.0),
+                                        blur_radius: 8.0,
+                                    },
+                                    snap: well.snap,
+                                },
+                                bg,
+                            );
+                        }
                     } else {
-                        (
-                            Rectangle {
-                                x: layout.bounds().x + 1.0,
-                                y: b.y,
-                                width: (layout.bounds().width - 2.0).max(0.0),
-                                height: b.height,
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: layout.bounds().x + 1.0,
+                                    y: b.y,
+                                    width: (layout.bounds().width - 2.0).max(0.0),
+                                    height: b.height,
+                                },
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    color: Color::TRANSPARENT,
+                                    width: 0.0,
+                                },
+                                shadow: Shadow {
+                                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                                    offset: Vector::new(0.0, 2.0),
+                                    blur_radius: 8.0,
+                                },
+                                snap: true,
                             },
-                            Color {
+                            Background::Color(Color {
                                 a: 0.5,
                                 ..CHROME_SURFACE
-                            },
-                        )
-                    };
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds,
-                            border: iced::Border {
-                                radius: if held.as_group { 5.0.into() } else { 4.0.into() },
-                                color: Color::TRANSPARENT,
-                                width: 0.0,
-                            },
-                            shadow: Shadow {
-                                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                                offset: Vector::new(0.0, 2.0),
-                                blur_radius: 8.0,
-                            },
-                            snap: true,
-                        },
-                        Background::Color(fill),
-                    );
+                            }),
+                        );
+                    }
                 }
                 }
                 for i in held.start..held.end {
@@ -1199,6 +1212,7 @@ where
                         );
                     }
                 }
+                });
             }
         }
         let _ = style;
