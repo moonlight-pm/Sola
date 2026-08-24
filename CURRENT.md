@@ -9,15 +9,14 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-21 (kit-owned SidebarPanel gesture on `browser-polish`; workspaces-polish merged)
+**As of:** 2026-08-24 (Morph2 hole+FLIP reorder on `browser-polish`)
 
 ---
 
 ## Now
 
-1. **kit sidebar gesture** — this worktree (`browser-polish`). Iterate in
-   **sola-kit storybook** (Sidebar page: Group A/B/C + ungrouped Item U*).
-   Browser is no longer the drag dogfood. Kit **not installed**.
+1. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
+   loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
 2. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
    `selection` atom. Workspaces PTYs share the palette. **Installed**

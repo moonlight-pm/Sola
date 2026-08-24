@@ -82,6 +82,8 @@ pub enum Msg {
     Release,
     Tick,
     Hover(Option<String>),
+    /// ReorderStrip already resolved an outcome.
+    Outcome(Event),
 }
 
 /// Semantic outcome after [`State::update`].
@@ -108,9 +110,14 @@ pub enum Dest {
         section: String,
         before: Option<String>,
     },
-    /// Become ungrouped. `before` is the loose item to sit in front of (`None` = append).
+    /// Become a singleton. `before` is the next singleton item (`None` = end).
     Loose { before: Option<String> },
-    /// Header drag: grouped section ids in the new order.
+    /// Park as a singleton immediately before this named group.
+    BeforeGroup { id: String },
+    /// Header drag: place this group block before `before` (group id or
+    /// item id). `None` is the end of the strip. Groups and loose rows mix.
+    BlockBefore { before: Option<String> },
+    /// Header drag: grouped section ids in the new order (legacy / tests).
     Sections(Vec<String>),
 }
 
@@ -136,12 +143,15 @@ impl State {
         self.press.is_some() || self.divider.is_some()
     }
 
-    /// Ghost follows the pointer from the first sample — not after the
-    /// click/drag threshold, or pickup jumps those 5px in one frame.
+    /// Live-reorder preview only after the click/drag threshold.
+    /// Press-without-move is a click; chrome must not shift on mousedown.
     pub fn preview_active(&self) -> Option<(usize, f32)> {
-        self.press
-            .as_ref()
-            .map(|p| (p.from, p.start_y.unwrap_or(p.cursor_y)))
+        self.press.as_ref().filter(|p| p.dragging).map(|p| {
+            (
+                p.from,
+                p.start_y.unwrap_or(p.cursor_y),
+            )
+        })
     }
 
     pub fn cursor_y(&self) -> f32 {
@@ -210,6 +220,7 @@ impl State {
                 None
             }
             Msg::Pointer { x, y } => self.on_pointer(x, y),
+            Msg::Outcome(ev) => Some(ev),
             Msg::Tick => {
                 if self.press.as_ref().is_some_and(|p| p.dragging) {
                     self.sync_preview(Instant::now());
@@ -452,7 +463,7 @@ fn dest_for_drop(
     before_row: Option<&Row>,
     after_row: Option<&Row>,
     bias: PanelDropBias,
-    moving_down: bool,
+    _moving_down: bool,
 ) -> Option<Dest> {
     if bias == PanelDropBias::PocketAbove {
         match (before_row, after_row) {
@@ -492,14 +503,6 @@ fn dest_for_drop(
                 }
             }
             _ => {}
-        }
-    }
-    if moving_down {
-        if let Some(Row::Header { id }) = after_row {
-            return Some(Dest::Join {
-                section: id.clone(),
-                before: None,
-            });
         }
     }
     dest_on_slot(after_row, before_row)
@@ -674,21 +677,14 @@ mod tests {
     }
 
     #[test]
-    fn dest_down_onto_title_appends_dest() {
-        let dest = dest_for_drop(
+    fn dest_down_onto_title_is_noop() {
+        assert!(dest_for_drop(
             Some(&item("2", Some("work"))),
             Some(&header("research")),
             PanelDropBias::OnSlot,
             true,
         )
-        .expect("dest");
-        assert_eq!(
-            dest,
-            Dest::Join {
-                section: "research".into(),
-                before: None,
-            }
-        );
+        .is_none());
     }
 
     #[test]

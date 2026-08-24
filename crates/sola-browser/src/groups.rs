@@ -105,20 +105,19 @@ impl Groups {
 
     pub fn visible_rows(&self, tabs: &[TabInfo]) -> Vec<StripRow> {
         let mut rows = Vec::new();
-        for g in &self.groups {
-            rows.push(StripRow::Header(g.id.clone()));
-            if g.collapsed {
-                continue;
-            }
-            for t in tabs {
-                if self.member.get(&t.id).map(String::as_str) == Some(g.id.as_str()) {
-                    rows.push(StripRow::Tab(t.id));
-                }
-            }
-        }
+        let mut emitted = std::collections::HashSet::new();
         for t in tabs {
-            if !self.member.contains_key(&t.id) {
-                rows.push(StripRow::Tab(t.id));
+            match self.member.get(&t.id) {
+                Some(gid) => {
+                    if emitted.insert(gid.clone()) {
+                        rows.push(StripRow::Header(gid.clone()));
+                    }
+                    let collapsed = self.group(gid).is_some_and(|g| g.collapsed);
+                    if !collapsed {
+                        rows.push(StripRow::Tab(t.id));
+                    }
+                }
+                None => rows.push(StripRow::Tab(t.id)),
             }
         }
         rows
@@ -195,22 +194,30 @@ impl Groups {
         (0, 0)
     }
 
-    /// Groups at the top (in `self.groups` order), then the loose run.
+    /// Cluster each group's members at first encounter. Loose tabs stay
+    /// put — groups and ungrouped rows may intermix.
     pub fn normalize(&self, tabs: &mut Vec<TabInfo>) {
-        let mut out = Vec::with_capacity(tabs.len());
-        for g in &self.groups {
-            for t in tabs.iter() {
-                if self.member.get(&t.id).map(String::as_str) == Some(g.id.as_str()) {
-                    out.push(t.clone());
+        *tabs = expand_tokens(&strip_tokens(self, tabs), tabs, self);
+    }
+
+    fn sync_group_order(&mut self, tabs: &[TabInfo]) {
+        let mut next = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for t in tabs {
+            if let Some(gid) = self.member.get(&t.id) {
+                if seen.insert(gid.clone()) {
+                    if let Some(g) = self.groups.iter().find(|g| g.id == *gid).cloned() {
+                        next.push(g);
+                    }
                 }
             }
         }
-        for t in tabs.iter() {
-            if !self.member.contains_key(&t.id) {
-                out.push(t.clone());
+        for g in &self.groups {
+            if !next.iter().any(|n| n.id == g.id) {
+                next.push(g.clone());
             }
         }
-        *tabs = out;
+        self.groups = next;
     }
 
     pub fn dissolve_empty(&mut self) {
@@ -341,25 +348,29 @@ impl Groups {
         }
         self.dissolve_empty();
         self.normalize(tabs);
+        self.sync_group_order(tabs);
     }
 
     /// Apply a kit [`sola_kit::components::Drop`] (ids, not geometry).
     pub fn apply_kit_drop(&mut self, tabs: &mut Vec<TabInfo>, drop: &sola_kit::components::Drop) {
         use sola_kit::components::Dest;
         match &drop.dest {
+            Dest::BlockBefore { before } => {
+                self.place_group_block(tabs, &drop.id, before.as_deref());
+            }
             Dest::Sections(order) => {
-                let mut next = Vec::with_capacity(order.len());
-                for id in order {
-                    if let Some(g) = self.groups.iter().find(|g| g.id == *id).cloned() {
-                        next.push(g);
+                let mut tok = strip_tokens(self, tabs);
+                let mut gi = 0usize;
+                for t in &mut tok {
+                    if let Token::Group(_) = t {
+                        if gi < order.len() {
+                            *t = Token::Group(order[gi].clone());
+                            gi += 1;
+                        }
                     }
                 }
-                for g in &self.groups {
-                    if !next.iter().any(|n| n.id == g.id) {
-                        next.push(g.clone());
-                    }
-                }
-                self.groups = next;
+                *tabs = expand_tokens(&tok, tabs, self);
+                self.sync_group_order(tabs);
             }
             Dest::Join { section, before } => {
                 let Some(tid) = parse_tab(&drop.id) else {
@@ -373,50 +384,60 @@ impl Groups {
                     return;
                 };
                 self.member.remove(&tid);
-                splice_before(tabs, tid, before.as_deref().and_then(parse_tab), self);
+                match before.as_deref().and_then(parse_tab) {
+                    Some(next) => splice_before(tabs, tid, Some(next), self),
+                    None => {
+                        // End of the strip, not the start of the loose run.
+                        if let Some(pos) = tabs.iter().position(|t| t.id == tid) {
+                            let tab = tabs.remove(pos);
+                            tabs.push(tab);
+                        }
+                    }
+                }
+            }
+            Dest::BeforeGroup { id } => {
+                let Some(tid) = parse_tab(&drop.id) else {
+                    return;
+                };
+                self.member.remove(&tid);
+                let before = tabs
+                    .iter()
+                    .find(|t| self.member.get(&t.id).map(String::as_str) == Some(id.as_str()))
+                    .map(|t| t.id);
+                splice_before(tabs, tid, before, self);
             }
         }
         self.dissolve_empty();
         self.normalize(tabs);
+        self.sync_group_order(tabs);
     }
 
-    fn drop_header(&mut self, _tabs: &[TabInfo], rows: &[StripRow], gid: &str, to: usize) {
-        let Some(from_g) = self.groups.iter().position(|g| g.id == gid) else {
+    fn place_group_block(&mut self, tabs: &mut Vec<TabInfo>, gid: &str, before: Option<&str>) {
+        if !self.groups.iter().any(|g| g.id == gid) {
             return;
+        }
+        let mut tok = strip_tokens(self, tabs);
+        tok.retain(|t| !matches!(t, Token::Group(id) if id == gid));
+        let at = match before {
+            Some(id) => tok
+                .iter()
+                .position(|t| match t {
+                    Token::Group(g) => g == id,
+                    Token::Loose(tid) => tid.0.to_string() == id,
+                })
+                .unwrap_or(tok.len()),
+            None => tok.len(),
         };
-        // Map the visible drop index onto a group index. Loose region
-        // clamps to the last group (header drag never ungroups).
-        let mut dest = 0usize;
-        let last = self.groups.len().saturating_sub(1);
-        for (i, row) in rows.iter().enumerate() {
-            match row {
-                StripRow::Header(id) => {
-                    if let Some(gi) = self.groups.iter().position(|g| g.id == *id) {
-                        dest = gi;
-                    }
-                }
-                StripRow::Tab(tid) => {
-                    if self.member.contains_key(tid) {
-                        if let Some(gid) = self.member.get(tid) {
-                            if let Some(gi) = self.groups.iter().position(|g| g.id == *gid) {
-                                dest = gi;
-                            }
-                        }
-                    } else {
-                        dest = last;
-                    }
-                }
-            }
-            if i >= to {
-                break;
-            }
-        }
-        if dest == from_g {
-            return;
-        }
-        let g = self.groups.remove(from_g);
-        let dest = dest.min(self.groups.len());
-        self.groups.insert(dest, g);
+        tok.insert(at.min(tok.len()), Token::Group(gid.to_string()));
+        *tabs = expand_tokens(&tok, tabs, self);
+    }
+
+    fn drop_header(&mut self, tabs: &mut Vec<TabInfo>, rows: &[StripRow], gid: &str, to: usize) {
+        let before = rows.get(to).map(|row| match row {
+            StripRow::Header(id) => id.clone(),
+            StripRow::Tab(tid) => tid.0.to_string(),
+        });
+        self.place_group_block(tabs, gid, before.as_deref());
     }
 
     fn drop_tab(
@@ -599,6 +620,48 @@ fn dest_on_slot(
             None => Dest::Loose { after: None },
         },
     }
+}
+
+enum Token {
+    Loose(TabId),
+    Group(String),
+}
+
+fn strip_tokens(groups: &Groups, tabs: &[TabInfo]) -> Vec<Token> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for t in tabs {
+        match groups.member.get(&t.id) {
+            None => out.push(Token::Loose(t.id)),
+            Some(gid) => {
+                if seen.insert(gid.clone()) {
+                    out.push(Token::Group(gid.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn expand_tokens(tokens: &[Token], tabs: &[TabInfo], groups: &Groups) -> Vec<TabInfo> {
+    let mut out = Vec::with_capacity(tabs.len());
+    for tok in tokens {
+        match tok {
+            Token::Loose(id) => {
+                if let Some(t) = tabs.iter().find(|t| t.id == *id) {
+                    out.push(t.clone());
+                }
+            }
+            Token::Group(gid) => {
+                for t in tabs {
+                    if groups.member.get(&t.id).map(String::as_str) == Some(gid.as_str()) {
+                        out.push(t.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn parse_tab(id: &str) -> Option<TabId> {
@@ -816,7 +879,33 @@ mod tests {
             g.of_tab(TabId(5)).map(str::to_string),
             Some(g.groups[2].id.clone())
         );
-        assert_eq!(tabs.last().map(|t| t.id.0), Some(4)); // remaining loose
+        assert_eq!(tabs.last().map(|t| t.id.0), Some(5));
+    }
+
+    #[test]
+    fn kit_drop_group_into_loose_stays_mixed() {
+        use sola_kit::components::{Dest, Drop};
+        let (mut g, mut tabs) = setup();
+        g.apply_kit_drop(
+            &mut tabs,
+            &Drop {
+                id: "work".into(),
+                dest: Dest::BlockBefore { before: None },
+            },
+        );
+        assert_eq!(ids(&tabs), vec![3, 4, 5, 1, 2]);
+        assert_eq!(
+            g.visible_rows(&tabs),
+            vec![
+                StripRow::Header("research".into()),
+                StripRow::Tab(TabId(3)),
+                StripRow::Tab(TabId(4)),
+                StripRow::Tab(TabId(5)),
+                StripRow::Header("work".into()),
+                StripRow::Tab(TabId(1)),
+                StripRow::Tab(TabId(2)),
+            ]
+        );
     }
 
     #[test]
@@ -901,6 +990,76 @@ mod tests {
         assert_eq!(g.of_tab(TabId(11)), None);
         assert_eq!(g.of_tab(TabId(12)), Some("work"));
         assert!(g.groups[0].collapsed);
+    }
+
+    #[test]
+    fn kit_drop_join_and_loose() {
+        use sola_kit::components::{Dest, Drop};
+        let (mut g, mut tabs) = setup();
+        g.apply_kit_drop(
+            &mut tabs,
+            &Drop {
+                id: "4".into(),
+                dest: Dest::Join {
+                    section: "work".into(),
+                    before: Some("2".into()),
+                },
+            },
+        );
+        assert_eq!(g.of_tab(TabId(4)), Some("work"));
+        assert_eq!(ids(&tabs), vec![1, 4, 2, 3, 5]);
+
+        g.apply_kit_drop(
+            &mut tabs,
+            &Drop {
+                id: "1".into(),
+                dest: Dest::Loose {
+                    before: Some("5".into()),
+                },
+            },
+        );
+        assert_eq!(g.of_tab(TabId(1)), None);
+        g.normalize(&mut tabs);
+        let loose: Vec<u64> = tabs
+            .iter()
+            .filter(|t| g.of_tab(t.id).is_none())
+            .map(|t| t.id.0)
+            .collect();
+        assert!(loose.contains(&1));
+        assert!(loose.contains(&5));
+    }
+
+    #[test]
+    fn kit_drop_loose_end_appends() {
+        use sola_kit::components::{Dest, Drop};
+        let (mut g, mut tabs) = setup();
+        g.apply_kit_drop(
+            &mut tabs,
+            &Drop {
+                id: "2".into(),
+                dest: Dest::Loose { before: None },
+            },
+        );
+        assert_eq!(g.of_tab(TabId(2)), None);
+        assert_eq!(ids(&tabs).last().copied(), Some(2));
+        assert_eq!(ids(&tabs), vec![1, 3, 4, 5, 2]);
+    }
+
+    #[test]
+    fn kit_drop_sections_reorders_groups() {
+        use sola_kit::components::{Dest, Drop};
+        let (mut g, mut tabs) = setup();
+        g.apply_kit_drop(
+            &mut tabs,
+            &Drop {
+                id: "research".into(),
+                dest: Dest::Sections(vec!["research".into(), "work".into()]),
+            },
+        );
+        assert_eq!(
+            g.groups.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            vec!["research", "work"]
+        );
     }
 
     #[test]

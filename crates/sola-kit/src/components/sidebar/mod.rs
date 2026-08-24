@@ -45,6 +45,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 mod gesture;
+mod strip;
 pub use gesture::{Dest, Drop, Event, Msg, Row, State, StripSnapshot};
 
 use iced::advanced::Renderer as _;
@@ -55,12 +56,11 @@ use iced::advanced::{Clipboard, Shell, Widget};
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
-    text,
+    Container, Space, button, column, container, mouse_area, row, scrollable, sensor, stack, text,
 };
 use iced::{
     Animation, Background, Border, Color, Element, Length, Padding, Rectangle, Shadow, Size, Theme,
-    Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
+    Vector, animation::Easing, mouse, time::Instant,
 };
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
@@ -678,6 +678,7 @@ where
                 false,
                 SidebarDensity::Normal,
                 false,
+                false,
             ));
         }
     }
@@ -736,14 +737,14 @@ fn tab_etch_lip() -> container::Style {
 /// Pockets already carry their own pad — this is only enough that two
 /// wells do not fuse. A large value jumps when reorder flatten drops
 /// the wells.
-const GROUP_WELL_GAP: f32 = SPACE_XS;
+pub(crate) const GROUP_WELL_GAP: f32 = SPACE_XS;
 /// Horizontal inset of the pocket around header + members.
-const GROUP_WELL_PAD_H: f32 = SPACE_SM;
+pub(crate) const GROUP_WELL_PAD_H: f32 = SPACE_SM;
 /// Vertical inset of the pocket. Keep tight so stacked groups do not
 /// open a band of empty chrome.
-const GROUP_WELL_PAD_V: f32 = SPACE_XS;
+pub(crate) const GROUP_WELL_PAD_V: f32 = SPACE_XS;
 /// Body pad inside a group well (`Padding::from([2, 4])`).
-const COLLAPSE_BODY_PAD_V: f32 = 2.0;
+pub(crate) const COLLAPSE_BODY_PAD_V: f32 = 2.0;
 
 /// Rest space between the last row of one pocket and the first row of
 /// the next (body pad + well pad + gap, both sides).
@@ -762,7 +763,7 @@ fn group_boundary_spacer(item_spacing: f32) -> f32 {
 /// Quiet inset pocket for a collapsible section — membership reads as
 /// containment. A 1px etch rim (same hairline as fields) marks the
 /// well so a drop at the floor stays in this group, not the next.
-fn group_well_style() -> container::Style {
+pub(crate) fn group_well_style() -> container::Style {
     let fill = inset_surface(CHROME_SURFACE, 0.12);
     container::Style {
         background: Some(Background::Color(fill)),
@@ -771,7 +772,7 @@ fn group_well_style() -> container::Style {
     }
 }
 
-fn wrap_group_well<'a, Message: 'a>(
+pub(crate) fn wrap_group_well<'a, Message: 'a>(
     body: impl Into<Element<'a, Message>>,
     clip: bool,
 ) -> Element<'a, Message> {
@@ -788,87 +789,8 @@ fn wrap_group_well<'a, Message: 'a>(
         .into()
 }
 
-fn paint_drag_section<'a, Message: 'a>(
-    body: iced::widget::Column<'a, Message, Theme>,
-    grouped: bool,
-    clip: bool,
-    well_dy: f32,
-    lift_well: bool,
-) -> Element<'a, Message> {
-    let el: Element<'a, Message> = if grouped {
-        wrap_group_well(body, clip)
-    } else {
-        body.into()
-    };
-    if well_dy != 0.0 || lift_well {
-        with_reorder_motion(el, well_dy, lift_well)
-    } else {
-        el
-    }
-}
-
-fn reorder_preview_row<'a, Message: Clone + 'a>(
-    item: SidebarItem<'a, Message>,
-    stable_index: usize,
-    from: usize,
-    start_y: f32,
-    cursor_y: f32,
-    _to: usize,
-    anim: Option<&ReorderAnim>,
-    now: Instant,
-    collapsed: bool,
-    reorder_ref: Option<&ReorderCfg<'a, Message>>,
-    hovered_id: &Option<String>,
-    density: SidebarDensity,
-    hover_wired: bool,
-) -> Element<'a, Message> {
-    let is_dragged = stable_index == from;
-    let dy = if is_dragged {
-        cursor_y - start_y
-    } else if let Some(anim) = anim {
-        anim.offset(stable_index, now)
-    } else {
-        // Frozen. Never fall back to instant sibling offsets — that slides
-        // group members out of their well while a dest slot is also open.
-        0.0
-    };
-    let item = assign_close_id(item, stable_index);
-    let show_action = item
-        .id
-        .as_ref()
-        .is_some_and(|id| hovered_id.as_ref() == Some(id));
-    let row_el = if collapsed {
-        collapsed_row(&item, stable_index, reorder_ref)
-    } else {
-        render_item(
-            item,
-            reorder_ref,
-            stable_index,
-            show_action,
-            density,
-            hover_wired,
-        )
-    };
-    with_reorder_motion(row_el, dy, is_dragged)
-}
-
-fn section_block_height(span: &SectionSpan, item_spacing: f32) -> f32 {
-    if span.len == 0 {
-        return if span.grouped {
-            GROUP_WELL_PAD_V * 2.0 + COLLAPSE_BODY_PAD_V * 2.0
-        } else {
-            8.0
-        };
-    }
-    let rows = span.len as f32 * PANEL_ROW_H + (span.len - 1) as f32 * item_spacing;
-    if span.grouped {
-        rows + (GROUP_WELL_PAD_V + COLLAPSE_BODY_PAD_V) * 2.0
-    } else {
-        rows + 8.0
-    }
-}
-
 /// Other groups slide by the dragged block's height (not one row).
+#[cfg(test)]
 fn group_sibling_offset(from_si: usize, dest_si: usize, si: usize, block_h: f32) -> f32 {
     if si == from_si || from_si == dest_si {
         return 0.0;
@@ -1132,8 +1054,8 @@ pub const PANEL_ROW_H: f32 = 32.0;
 /// offset for [`panel_drop_index`].
 pub const PANEL_HEADER_H: f32 = 32.0;
 /// Movement threshold (px) below which a press-then-release is a click,
-/// not a completed reorder drag.
-pub const PANEL_REORDER_THRESHOLD: f32 = 5.0;
+/// not a completed reorder drag. Spec: 2px — 5px made pickup jump.
+pub const PANEL_REORDER_THRESHOLD: f32 = 2.0;
 /// Sibling glide duration while a row is mid-reorder.
 pub const PANEL_REORDER_ANIM_MS: u64 = 180;
 /// No scale on the dragged row — a 1.02 lift made type look bigger than
@@ -1530,17 +1452,9 @@ pub(crate) fn dest_extra_slot(
     drop_slot_in_sections(&spans, from, to, bias)
 }
 
+#[cfg(test)]
 fn drop_slot_height(item_spacing: f32) -> f32 {
     PANEL_ROW_H + item_spacing
-}
-
-fn section_containing(spans: &[SectionSpan], row: usize) -> usize {
-    for (i, span) in spans.iter().enumerate() {
-        if row < span.start + span.len {
-            return i;
-        }
-    }
-    spans.len().saturating_sub(1)
 }
 
 fn row_rest_y(spans: &[SectionSpan], from: usize, item_spacing: f32, row_h: f32) -> f32 {
@@ -1903,6 +1817,92 @@ pub struct ReorderCfg<'a, Message> {
 
 // ──────────────────────────── Shared item render ────────────────────────────
 
+fn build_reorder_strip<'a, Message: Clone + 'a>(
+    sections: Vec<SidebarSection<'a, Message>>,
+    density: SidebarDensity,
+    item_spacing: f32,
+    hovered_id: Option<String>,
+    hover_wired: bool,
+    collapsed: bool,
+    on_action: Rc<dyn Fn(Msg) -> Message + 'a>,
+) -> Element<'a, Message> {
+    let mut leaves = Vec::new();
+    let mut meta = Vec::new();
+    let mut spans = Vec::new();
+    let mut row_index = 0usize;
+    for (si, section) in sections.into_iter().enumerate() {
+        let grouped = section.collapse.is_some();
+        let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
+        let start = leaves.len();
+        let gid = section
+            .id
+            .clone()
+            .or_else(|| grouped.then(|| format!("s{si}")));
+        if let Some(collapse) = section.collapse {
+            let header = assign_close_id(collapse_header_item(section.label, collapse), row_index);
+            let hid = gid.clone().unwrap_or_else(|| format!("s{si}"));
+            let hover_id = header.id.clone();
+            let show = hover_id
+                .as_ref()
+                .is_some_and(|id| hovered_id.as_ref() == Some(id));
+            let mut el = if collapsed {
+                collapsed_row(&header, row_index, None)
+            } else {
+                render_item(header, None, row_index, show, density, hover_wired, true)
+            };
+            if let Some(id) = hover_id {
+                let act = Rc::clone(&on_action);
+                el = mouse_area(el).on_enter(act(Msg::Hover(Some(id)))).into();
+            }
+            leaves.push(el);
+            meta.push(strip::LeafMeta {
+                id: hid.clone(),
+                kind: strip::LeafKind::Header,
+                group: Some(hid),
+            });
+            row_index += 1;
+        }
+        if !hide {
+            for item in section.items {
+                let item = assign_close_id(item, row_index);
+                let id = item
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("i{row_index}"));
+                let show = item
+                    .id
+                    .as_ref()
+                    .is_some_and(|hid| hovered_id.as_ref() == Some(hid));
+                let hover_id = item.id.clone();
+                let mut el = if collapsed {
+                    collapsed_row(&item, row_index, None)
+                } else {
+                    render_item(item, None, row_index, show, density, hover_wired, true)
+                };
+                if let Some(hid) = hover_id {
+                    let act = Rc::clone(&on_action);
+                    el = mouse_area(el).on_enter(act(Msg::Hover(Some(hid)))).into();
+                }
+                leaves.push(el);
+                meta.push(strip::LeafMeta {
+                    id: id.clone(),
+                    kind: strip::LeafKind::Item,
+                    group: if grouped { gid.clone() } else { None },
+                });
+                row_index += 1;
+            }
+        }
+        spans.push(strip::SectionSpan {
+            grouped,
+            start,
+            len: leaves.len() - start,
+        });
+    }
+    let strip: Element<'a, Message> =
+        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, on_action).into();
+    hidden_scroll(strip, None, None).into()
+}
+
 /// Render one item row, shared by [`sidebar`] and [`SidebarPanel::build`].
 ///
 /// When `reorder` is `None` this is the legacy path — a plain
@@ -1928,6 +1928,7 @@ fn render_item<'a, Message>(
     show_hover_action: bool,
     density: SidebarDensity,
     hover_tracked: bool,
+    strip_owned: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -1992,6 +1993,18 @@ where
             section_header,
         )
     };
+
+    // Strip-owned press: non-pressable face so ReorderStrip sees mousedown.
+    // A child `button` / `mouse_area.on_press` would capture the event and
+    // the 2px threshold would never run.
+    if strip_owned {
+        let row_el: Element<'a, Message> = container(body)
+            .width(Length::Fill)
+            .padding(pad)
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered))
+            .into();
+        return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
+    }
 
     // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
@@ -2290,55 +2303,6 @@ impl<'a, Message: 'a> From<HoverClose<'a, Message>> for Element<'a, Message> {
     }
 }
 
-/// Occupies the child's layout size without painting or taking events.
-/// Used as the in-flow reorder hole so height matches the painted row.
-struct LayoutOnly<'a, Message> {
-    content: Element<'a, Message>,
-}
-
-fn layout_only<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Element::new(LayoutOnly {
-        content: content.into(),
-    })
-}
-
-impl<Message> Widget<Message, Theme, iced::Renderer> for LayoutOnly<'_, Message> {
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_ref(&self.content));
-    }
-
-    fn size(&self) -> Size<Length> {
-        self.content.as_widget().size()
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut Tree,
-        renderer: &iced::Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
-        self.content
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn draw(
-        &self,
-        _tree: &Tree,
-        _renderer: &mut iced::Renderer,
-        _theme: &Theme,
-        _style: &renderer::Style,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-    ) {
-    }
-}
-
 /// Stable id for close-on-hover when the caller omitted [`SidebarItem::id`].
 fn assign_close_id<'a, Message>(
     mut item: SidebarItem<'a, Message>,
@@ -2348,32 +2312,6 @@ fn assign_close_id<'a, Message>(
         item.id = Some(format!("__row:{index}"));
     }
     item
-}
-
-/// Apply vertical motion (and optional lift chrome) for a reorder row.
-fn with_reorder_motion<'a, Message>(
-    el: Element<'a, Message>,
-    dy: f32,
-    lifted: bool,
-) -> Element<'a, Message>
-where
-    Message: 'a,
-{
-    if dy == 0.0 && !lifted {
-        return el;
-    }
-    let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
-    if lifted {
-        f = f.style(|_| float_widget::Style {
-            shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                offset: Vector::new(0.0, 2.0),
-                blur_radius: 8.0,
-            },
-            shadow_border_radius: RADIUS_SM.into(),
-        });
-    }
-    f.into()
 }
 
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
@@ -2851,243 +2789,18 @@ where
         // the caller remembering `.fill()`. Multiple sections require an
         // explicit mark so short groups don't steal the Fill slot.
         let auto_fill_single = !any_explicit_fill && n_sections == 1;
-        // Ghost + layout-only hole from the first press sample so the
-        // grabbed row does not jump by the click/drag threshold (5–10px)
-        // when live reorder starts. Dest extra still waits until `to`
-        // leaves the origin (see dest_extra_slot).
-        let dragging = reorder_ref.and_then(|r| r.active);
-
-        let sections_el: Element<'a, Message, Theme> = if let Some((from, start_y)) = dragging {
-            // Tab drag: the grabbed row is always an overlay ghost (same
-            // width from grab to drop). In-flow it is a placeholder so
-            // origins stay put. Dest wells grow by the max sibling offset
-            // in that well (does not reset when `to` hops members); members
-            // ease inside the well. Source hole + dest extra = one pitch.
-            let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
-            let now = Instant::now();
-            let anim = reorder_ref.and_then(|r| r.anim);
-
-            let mut spans: Vec<SectionSpan> = Vec::with_capacity(sections.len());
-            let mut start = 0usize;
-            for section in &sections {
-                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
-                let grouped = section.collapse.is_some();
-                let n = usize::from(grouped) + if hide { 0 } else { section.items.len() };
-                spans.push(SectionSpan {
-                    grouped,
-                    start,
-                    len: n,
-                });
-                start += n;
-            }
-            let lens: Vec<(bool, usize)> = spans.iter().map(|s| (s.grouped, s.len)).collect();
-            let row_h = panel_etch_row_height(density);
-            let ys = panel_row_rest_ys_with(&lens, item_spacing, row_h);
-            let to = panel_drop_index_leave_well(
-                from,
-                start_y,
-                cursor_y,
-                &ys,
-                row_h,
-                &lens,
-                panel_drop_index_visual(from, start_y, cursor_y, &ys, row_h),
-            );
-            let bias = panel_drop_bias_visual(from, start_y, cursor_y, &ys, row_h, to);
-            let dragging_header = spans.iter().any(|s| s.grouped && s.start == from);
-            let from_si = section_containing(&spans, from);
-            let extra_slot = dest_extra_slot(&lens, from, to, bias);
-            let dest_si = extra_slot.map(|(si, _)| si).unwrap_or_else(|| {
-                drop_slot_in_sections(&spans, from, to, bias)
-                    .map(|(si, _)| si)
-                    .unwrap_or(from_si)
-            });
-            let dest_g = if spans.get(dest_si).is_some_and(|s| s.grouped) {
-                dest_si
-            } else {
-                spans.iter().rposition(|s| s.grouped).unwrap_or(dest_si)
-            };
-            let block_h = spans
-                .get(from_si)
-                .map(|s| section_block_height(s, item_spacing))
-                .unwrap_or(PANEL_ROW_H);
-
-            let mut dragged_item: Option<SidebarItem<'a, Message>> = None;
-            let mut sections_col = column![].spacing(0.0).width(Length::Fill);
-            let mut row_index = 0usize;
-            let mut prev_collapsible = false;
-            let extra_v = px(anim
-                .map(|a| {
-                    spans
-                        .iter()
-                        .enumerate()
-                        .map(|(si, span)| {
-                            let mem_start = span.start + usize::from(span.grouped);
-                            a.well_layout_extra(si, mem_start, span.start + span.len, now)
-                        })
-                        .fold(0.0_f32, f32::max)
-                })
-                .unwrap_or(0.0));
-            let hole_h = if anim.map(|a| a.keep_origin_hole()).unwrap_or(true) {
-                px((row_h - extra_v).max(0.0))
-            } else {
-                0.0
-            };
-            let p = if dragging_header {
-                anim.map(|a| (a.offset(to, now).abs() / PANEL_ROW_STRIDE).clamp(0.0, 1.0))
-                    .unwrap_or(1.0)
-            } else if PANEL_ROW_STRIDE > 0.0 {
-                (extra_v / PANEL_ROW_STRIDE).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-
-            for (si, section) in sections.into_iter().enumerate() {
-                let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
-                let grouped = section.collapse.is_some();
-                if si > 0 && (grouped || prev_collapsible) {
-                    sections_col =
-                        sections_col.push(Space::new().height(Length::Fixed(GROUP_WELL_GAP)));
-                }
-                prev_collapsible = grouped;
-                let body_pad = if grouped {
-                    Padding::from([COLLAPSE_BODY_PAD_V, 4.0])
-                } else {
-                    Padding::from([4.0, 8.0])
-                };
-                let mut body = column![].spacing(item_spacing).padding(body_pad);
-                // Paint every section's easing extra — not only extra_slot.si.
-                // Dest flips (e.g. up onto Group C's title) retarget extras
-                // to 0; dropping them from layout in one frame snaps the
-                // well and everything below while members still ease.
-                let extra = anim
-                    .map(|a| {
-                        let mem_start = row_index + usize::from(grouped);
-                        let mem_end = mem_start + if hide { 0 } else { section.items.len() };
-                        a.well_layout_extra(si, mem_start, mem_end, now)
-                    })
-                    .unwrap_or(0.0);
-                let row_from = usize::MAX;
-                let well_dy = if dragging_header {
-                    if si == from_si {
-                        cursor_y - start_y
-                    } else if grouped {
-                        group_sibling_offset(from_si, dest_g, si, block_h) * p
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                };
-                let lift_well = dragging_header && si == from_si;
-
-                if let Some(collapse) = section.collapse {
-                    let item = collapse_header_item(section.label, collapse);
-                    body = body.push(reorder_preview_row(
-                        item,
-                        row_index,
-                        row_from,
-                        start_y,
-                        cursor_y,
-                        to,
-                        None,
-                        now,
-                        collapsed,
-                        reorder_ref,
-                        &hovered_id,
-                        density,
-                        hover_wired,
-                    ));
-                    row_index += 1;
-                    if hide {
-                        if extra >= 1.0 {
-                            body = body.push(Space::new().height(Length::Fixed(extra)));
-                        }
-                        sections_col = sections_col
-                            .push(paint_drag_section(body, grouped, true, well_dy, lift_well));
-                        continue;
-                    }
-                }
-
-                let members = section.items;
-                for item in members {
-                    if !dragging_header && row_index == from {
-                        let dummy = {
-                            let mut d = SidebarItem::new(item.label.clone(), item.message.clone())
-                                .active(item.active);
-                            if let Some(id) = item.id.clone() {
-                                d = d.id(id);
-                            }
-                            d
-                        };
-                        dragged_item = Some(item);
-                        if extra_v < 1.0 {
-                            // Same widget as the row (not drawn) so height
-                            // matches — a Space hole is ~1px off and shifts
-                            // the well + everything below on drag start.
-                            let row_el = if collapsed {
-                                collapsed_row(&dummy, from, reorder_ref)
-                            } else {
-                                render_item(dummy, reorder_ref, from, false, density, hover_wired)
-                            };
-                            body = body.push(layout_only(row_el));
-                        } else if hole_h >= 1.0 {
-                            body = body.push(Space::new().height(Length::Fixed(hole_h)));
-                        }
-                    } else {
-                        body = body.push(reorder_preview_row(
-                            item,
-                            row_index,
-                            row_from,
-                            start_y,
-                            cursor_y,
-                            to,
-                            anim,
-                            now,
-                            collapsed,
-                            reorder_ref,
-                            &hovered_id,
-                            density,
-                            hover_wired,
-                        ));
-                    }
-                    row_index += 1;
-                }
-                if extra >= 1.0 {
-                    body = body.push(Space::new().height(Length::Fixed(px(extra))));
-                }
-                sections_col =
-                    sections_col.push(paint_drag_section(body, grouped, true, well_dy, lift_well));
-            }
-
-            let list: Element<'a, Message> = hidden_scroll(sections_col, None, None).into();
-            if let Some(item) = dragged_item {
-                // Ghost origin is the *rest* position (spans are pre-drag).
-                // One translate: pointer delta only. Same horizontal inset
-                // as a list row so width does not pop when crossing a well.
-                let orig_y = row_rest_y(&spans, from, item_spacing, row_h);
-                let item = assign_close_id(item, from);
-                let show_action = item
-                    .id
-                    .as_ref()
-                    .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                let row_el = if collapsed {
-                    collapsed_row(&item, from, reorder_ref)
-                } else {
-                    render_item(item, reorder_ref, from, show_action, density, hover_wired)
-                };
-                let ghost = container(row_el).width(Length::Fill).padding(Padding {
-                    top: 0.0,
-                    bottom: 0.0,
-                    left: 8.0,
-                    right: 8.0,
-                });
-                stack![
-                    list,
-                    with_reorder_motion(ghost.into(), orig_y + cursor_y - start_y, true)
-                ]
-                .into()
-            } else {
-                list
+        let sections_el: Element<'a, Message, Theme> = if reorder_enabled {
+            match on_action.as_ref() {
+                Some(act) => build_reorder_strip(
+                    sections,
+                    density,
+                    item_spacing,
+                    hovered_id,
+                    hover_wired,
+                    collapsed,
+                    Rc::clone(act),
+                ),
+                None => column![].into(),
             }
         } else {
             // At rest: section labels sticky; item bodies scroll per-fill.
@@ -3157,8 +2870,15 @@ where
                         let show_action = hid
                             .as_ref()
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                        let mut row_el =
-                            render_item(header, reorder_ref, row_index, show_action, density, true);
+                        let mut row_el = render_item(
+                            header,
+                            reorder_ref,
+                            row_index,
+                            show_action,
+                            density,
+                            true,
+                            false,
+                        );
                         if let (Some(id), Some(act)) = (hid, on_action.as_ref()) {
                             let act = Rc::clone(act);
                             row_el = mouse_area(row_el)
@@ -3178,8 +2898,15 @@ where
                         let show_action = item_id
                             .as_ref()
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
-                        let mut row_el =
-                            render_item(item, reorder_ref, row_index, show_action, density, true);
+                        let mut row_el = render_item(
+                            item,
+                            reorder_ref,
+                            row_index,
+                            show_action,
+                            density,
+                            true,
+                            false,
+                        );
                         // Enter only — list-level exit clears hover so A→B
                         // cannot race (exit A after enter B → stuck None).
                         if let (Some(id), Some(act)) = (item_id, on_action.as_ref()) {

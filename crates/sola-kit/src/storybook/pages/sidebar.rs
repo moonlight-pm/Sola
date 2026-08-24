@@ -37,11 +37,17 @@ struct DemoGroup {
     items: Vec<DemoItem>,
 }
 
+/// Kit strip = named groups and singleton items, mixed.
+#[derive(Clone)]
+enum Block {
+    Group(DemoGroup),
+    Item(DemoItem),
+}
+
 pub struct State {
     pub width: f32,
     pub panel: SidebarState,
-    groups: Vec<DemoGroup>,
-    loose: Vec<DemoItem>,
+    blocks: Vec<Block>,
     selected: String,
 }
 
@@ -50,8 +56,8 @@ impl Default for State {
         Self {
             width: 220.0,
             panel: SidebarState::new(),
-            groups: vec![
-                DemoGroup {
+            blocks: vec![
+                Block::Group(DemoGroup {
                     id: "a".into(),
                     name: "Group A".into(),
                     collapsed: false,
@@ -59,11 +65,9 @@ impl Default for State {
                         ("a1", "Item A1"),
                         ("a2", "Item A2"),
                         ("a3", "Item A3"),
-                        ("a4", "Item A4"),
-                        ("a5", "Item A5"),
                     ]),
-                },
-                DemoGroup {
+                }),
+                Block::Group(DemoGroup {
                     id: "b".into(),
                     name: "Group B".into(),
                     collapsed: false,
@@ -74,8 +78,8 @@ impl Default for State {
                         ("b4", "Item B4"),
                         ("b5", "Item B5"),
                     ]),
-                },
-                DemoGroup {
+                }),
+                Block::Group(DemoGroup {
                     id: "c".into(),
                     name: "Group C".into(),
                     collapsed: false,
@@ -84,17 +88,29 @@ impl Default for State {
                         ("c2", "Item C2"),
                         ("c3", "Item C3"),
                         ("c4", "Item C4"),
-                        ("c5", "Item C5"),
                     ]),
-                },
+                }),
+                Block::Item(DemoItem {
+                    id: "u1".into(),
+                    label: "Item U1".into(),
+                }),
+                Block::Item(DemoItem {
+                    id: "u2".into(),
+                    label: "Item U2".into(),
+                }),
+                Block::Item(DemoItem {
+                    id: "u3".into(),
+                    label: "Item U3".into(),
+                }),
+                Block::Item(DemoItem {
+                    id: "u4".into(),
+                    label: "Item U4".into(),
+                }),
+                Block::Item(DemoItem {
+                    id: "u5".into(),
+                    label: "Item U5".into(),
+                }),
             ],
-            loose: items(&[
-                ("u1", "Item U1"),
-                ("u2", "Item U2"),
-                ("u3", "Item U3"),
-                ("u4", "Item U4"),
-                ("u5", "Item U5"),
-            ]),
             selected: "a1".into(),
         }
     }
@@ -128,8 +144,13 @@ impl State {
     }
 
     fn toggle_group(&mut self, id: &str) {
-        if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
-            g.collapsed = !g.collapsed;
+        for block in &mut self.blocks {
+            if let Block::Group(g) = block {
+                if g.id == id {
+                    g.collapsed = !g.collapsed;
+                    return;
+                }
+            }
         }
     }
 
@@ -143,31 +164,77 @@ impl State {
     }
 
     fn take_item(&mut self, id: &str) -> Option<DemoItem> {
-        for g in &mut self.groups {
-            if let Some(i) = g.items.iter().position(|it| it.id == id) {
-                return Some(g.items.remove(i));
+        for i in 0..self.blocks.len() {
+            match &mut self.blocks[i] {
+                Block::Group(g) => {
+                    if let Some(j) = g.items.iter().position(|it| it.id == id) {
+                        return Some(g.items.remove(j));
+                    }
+                }
+                Block::Item(it) if it.id == id => {
+                    if let Block::Item(it) = self.blocks.remove(i) {
+                        return Some(it);
+                    }
+                }
+                _ => {}
             }
         }
-        self.loose
-            .iter()
-            .position(|it| it.id == id)
-            .map(|i| self.loose.remove(i))
+        None
+    }
+
+    fn take_group(&mut self, id: &str) -> Option<DemoGroup> {
+        let i = self.blocks.iter().position(|b| matches!(b, Block::Group(g) if g.id == id))?;
+        match self.blocks.remove(i) {
+            Block::Group(g) => Some(g),
+            other => {
+                self.blocks.insert(i, other);
+                None
+            }
+        }
+    }
+
+    fn insert_singleton(&mut self, at: usize, item: DemoItem) {
+        let at = at.min(self.blocks.len());
+        self.blocks.insert(at, Block::Item(item));
     }
 
     fn apply_drop(&mut self, drop: sidebar::Drop) {
+        if let Dest::BlockBefore { before } = &drop.dest {
+            let Some(g) = self.take_group(&drop.id) else {
+                return;
+            };
+            let at = before
+                .as_deref()
+                .and_then(|id| {
+                    self.blocks.iter().position(|b| match b {
+                        Block::Group(x) if x.id == id => true,
+                        Block::Item(it) if it.id == id => true,
+                        _ => false,
+                    })
+                })
+                .unwrap_or(self.blocks.len());
+            self.blocks.insert(at.min(self.blocks.len()), Block::Group(g));
+            return;
+        }
         if let Dest::Sections(order) = &drop.dest {
-            let mut next = Vec::with_capacity(order.len());
+            let mut groups: Vec<DemoGroup> = Vec::new();
+            let mut rest: Vec<Block> = Vec::new();
+            for block in self.blocks.drain(..) {
+                match block {
+                    Block::Group(g) => groups.push(g),
+                    other => rest.push(other),
+                }
+            }
+            let mut next_groups = Vec::new();
             for id in order {
-                if let Some(g) = self.groups.iter().find(|g| g.id == *id).cloned() {
-                    next.push(g);
+                if let Some(i) = groups.iter().position(|g| g.id == *id) {
+                    next_groups.push(groups.remove(i));
                 }
             }
-            for g in &self.groups {
-                if !next.iter().any(|n| n.id == g.id) {
-                    next.push(g.clone());
-                }
-            }
-            self.groups = next;
+            next_groups.extend(groups);
+            let mut blocks: Vec<Block> = next_groups.into_iter().map(Block::Group).collect();
+            blocks.extend(rest);
+            self.blocks = blocks;
             return;
         }
         let Some(item) = self.take_item(&drop.id) else {
@@ -175,58 +242,75 @@ impl State {
         };
         match drop.dest {
             Dest::Join { section, before } => {
-                if let Some(g) = self.groups.iter_mut().find(|g| g.id == section) {
+                if let Some(Block::Group(g)) = self
+                    .blocks
+                    .iter_mut()
+                    .find(|b| matches!(b, Block::Group(g) if g.id == section))
+                {
                     let at = before
                         .as_deref()
                         .and_then(|b| g.items.iter().position(|it| it.id == b))
                         .unwrap_or(g.items.len());
                     g.items.insert(at.min(g.items.len()), item);
                 } else {
-                    self.loose.push(item);
+                    self.blocks.push(Block::Item(item));
                 }
             }
             Dest::Loose { before } => {
                 let at = before
                     .as_deref()
-                    .and_then(|b| self.loose.iter().position(|it| it.id == b))
-                    .unwrap_or(self.loose.len());
-                self.loose.insert(at.min(self.loose.len()), item);
+                    .and_then(|bid| {
+                        self.blocks.iter().position(|b| match b {
+                            Block::Item(it) => it.id == bid,
+                            _ => false,
+                        })
+                    })
+                    .unwrap_or(self.blocks.len());
+                self.insert_singleton(at, item);
             }
-            Dest::Sections(_) => {}
+            Dest::BeforeGroup { id } => {
+                let at = self
+                    .blocks
+                    .iter()
+                    .position(|b| matches!(b, Block::Group(g) if g.id == id))
+                    .unwrap_or(self.blocks.len());
+                self.insert_singleton(at, item);
+            }
+            Dest::BlockBefore { .. } | Dest::Sections(_) => {}
         }
     }
 }
 
 pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     let mut sections = Vec::new();
-    for g in &state.groups {
-        let n = g.items.len();
-        let rows: Vec<SidebarItem<Msg>> = g
-            .items
-            .iter()
-            .map(|it| {
-                SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
+    for block in &state.blocks {
+        match block {
+            Block::Group(g) => {
+                let n = g.items.len();
+                let rows: Vec<SidebarItem<Msg>> = g
+                    .items
+                    .iter()
+                    .map(|it| {
+                        SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
+                            .id(it.id.clone())
+                            .active(state.selected == it.id)
+                    })
+                    .collect();
+                sections.push(
+                    SidebarSection::new(g.name.clone(), rows)
+                        .id(g.id.clone())
+                        .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
+                        .header_count(n),
+                );
+            }
+            Block::Item(it) => {
+                let row = SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
                     .id(it.id.clone())
-                    .active(state.selected == it.id)
-            })
-            .collect();
-        sections.push(
-            SidebarSection::new(g.name.clone(), rows)
-                .id(g.id.clone())
-                .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
-                .header_count(n),
-        );
+                    .active(state.selected == it.id);
+                sections.push(SidebarSection::unlabeled(vec![row]));
+            }
+        }
     }
-    let loose: Vec<SidebarItem<Msg>> = state
-        .loose
-        .iter()
-        .map(|it| {
-            SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
-                .id(it.id.clone())
-                .active(state.selected == it.id)
-        })
-        .collect();
-    sections.push(SidebarSection::unlabeled(loose).fill());
 
     let divider = DividerColors::raised(theme);
     let panel = SidebarPanel::new(sections)
@@ -248,10 +332,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     column![
         heading("Sidebar"),
         body(
-            "Drag dogfood. Groups A, B, C are collapsible pockets; \
-             ungrouped items sit in the loose run underneath. Names on \
-             the strip are the names to use when reporting a drag. \
-             Gesture and animation live in the kit."
+            "Morphing-hole reorder (Scratch morph2). Click a group title \
+             to fold it; drag it to move the whole group. 2px before the \
+             drag starts."
         )
         .style(muted),
         demo,
@@ -299,16 +382,17 @@ fn marks_demo<'a>() -> Element<'a, Msg> {
 
 fn density_demo<'a>() -> Element<'a, Msg> {
     let mk = |density: SidebarDensity| {
-        let items: Vec<SidebarItem<Msg>> = ["Item A1", "A long tab title that truncates", "Item U1"]
-            .into_iter()
-            .enumerate()
-            .map(|(i, l)| {
-                SidebarItem::new(l, Msg::Noop)
-                    .id(format!("dens-{i}"))
-                    .active(i == 0)
-                    .on_close(Msg::Noop)
-            })
-            .collect();
+        let items: Vec<SidebarItem<Msg>> =
+            ["Item A1", "A long tab title that truncates", "Item U1"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    SidebarItem::new(l, Msg::Noop)
+                        .id(format!("dens-{i}"))
+                        .active(i == 0)
+                        .on_close(Msg::Noop)
+                })
+                .collect();
         SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
             .density(density)
             .fill_width()

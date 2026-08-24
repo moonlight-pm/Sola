@@ -85,7 +85,11 @@ pub fn apply_drop(tabs: &mut Tabs, drop: sidebar::Drop) {
             .iter()
             .position(|id| id == &next)
             .unwrap_or(new_order.len()),
-        Dest::Loose { before: None } | Dest::Join { before: None, .. } | Dest::Sections(_) => {
+        Dest::Loose { before: None }
+        | Dest::Join { before: None, .. }
+        | Dest::BeforeGroup { .. }
+        | Dest::BlockBefore { .. }
+        | Dest::Sections(_) => {
             new_order.len()
         }
     };

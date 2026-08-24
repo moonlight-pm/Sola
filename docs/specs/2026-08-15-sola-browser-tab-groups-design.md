@@ -24,11 +24,11 @@ Profiles stay “identity + workspace.” Groups do not get their own cookies.
 
 | Rule | Choice |
 |------|--------|
-| Shape | In-strip folders. Groups stack at the **top**; every loose tab lives in **one run under them**. |
+| Shape | In-strip folders. Group blocks and loose tabs **intermix** (Morph2). A group is a contiguous header+members atom; it may sit anywhere in the strip. |
 | Spaces | Later. Persist must not assume a single global strip forever. |
 | Membership | Context menu **and** drag across the group / loose boundary. |
 | New group | Context menu only. Dragging one loose tab onto another does **not** create a group. |
-| ⌘T / New Tab | Always loose, appended at the bottom of the loose run. |
+| ⌘T / New Tab | Always loose, appended at the **end of the strip**. |
 | Collapse + active | Stay on that page. Member rows hide. Header uses the selected etch. |
 | Empty group | Dissolves. No parked empty headers. |
 | Nesting | No. |
@@ -40,10 +40,9 @@ Profiles stay “identity + workspace.” Groups do not get their own cookies.
 ```text
 ▾ Work
     tab
-    tab
-▸ Research          ← collapsed; members omitted; etch if that page is showing
 loose tab
-loose tab           ← ⌘T lands here
+▸ Research          ← collapsed; members omitted; etch if that page is showing
+loose tab           ← ⌘T appends at the end of the strip
 ```
 
 **Header (kit collapsible section, Large density):** lucide chevron + name
@@ -51,8 +50,8 @@ loose tab           ← ⌘T lands here
 count. Members sit flush in the inset pocket (the well is the
 containment — no extra indent). Not the uppercase settings section label.
 
-**Click header** → expand / collapse (same 5px click-vs-drag threshold as
-tabs).
+**Click header** → expand / collapse (same **2px** click-vs-drag threshold as
+tabs). Live reorder is kit Morph2 (hole + FLIP).
 
 **Rename** → header field; Enter commits, Esc reverts. Offered from the
 header menu.
@@ -73,7 +72,7 @@ targets are those rows plus the slots between them.
 | Last member dragged out | Group dissolves; tab is loose at the drop |
 | Member among siblings | Reorder only |
 | Loose among loose | Reorder only |
-| Group header among other headers | The whole block moves. Header drag **stays in the groups region** — it does not dump members into the loose run |
+| Group header | The whole block moves. May land anywhere among groups **or** loose tabs. |
 
 Dragging a hidden member is impossible (expand first, or use Ungroup).
 

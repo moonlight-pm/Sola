@@ -2523,46 +2523,60 @@ impl<E: Engine> App<E> {
                 .id(t.id.0.to_string())
         };
         let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
-        for g in &self.groups.groups {
-            let members: Vec<SidebarItem<'_, Msg>> = self
-                .cached_tabs
-                .iter()
-                .filter(|t| self.groups.of_tab(t.id) == Some(g.id.as_str()))
-                .map(mk_tab)
-                .collect();
-            let n = members.len();
-            let header_active =
-                g.collapsed && self.groups.of_tab(active_id).is_some_and(|id| id == g.id);
-            let mut section = SidebarSection::new(g.name.clone(), members)
-                .id(g.id.clone())
-                .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
-                .header_active(header_active)
-                .header_context(Msg::GroupContext(g.id.clone()))
-                .header_count(n);
-            if let Some((rid, draft)) = &self.renaming {
-                if rid == &g.id {
-                    let field = text_input("Group name", draft)
-                        .id(group_rename_id())
-                        .size(12)
-                        .font(sola_kit::fonts::ui_medium())
-                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
-                        .on_input(Msg::RenameInput)
-                        .on_submit(Msg::RenameCommit)
-                        .style(sola_kit::components::text_input::style)
-                        .padding(Padding::from([1, 4]));
-                    section = section.header_content(field);
+        let mut i = 0usize;
+        let tabs = &self.cached_tabs;
+        while i < tabs.len() {
+            if let Some(gid) = self.groups.of_tab(tabs[i].id).map(str::to_string) {
+                let g = match self.groups.group(&gid) {
+                    Some(g) => g,
+                    None => {
+                        i += 1;
+                        continue;
+                    }
+                };
+                let members: Vec<SidebarItem<'_, Msg>> = tabs
+                    .iter()
+                    .filter(|t| self.groups.of_tab(t.id) == Some(gid.as_str()))
+                    .map(&mk_tab)
+                    .collect();
+                let n = members.len();
+                let header_active =
+                    g.collapsed && self.groups.of_tab(active_id).is_some_and(|id| id == gid);
+                let mut section = SidebarSection::new(g.name.clone(), members)
+                    .id(g.id.clone())
+                    .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
+                    .header_active(header_active)
+                    .header_context(Msg::GroupContext(g.id.clone()))
+                    .header_count(n);
+                if let Some((rid, draft)) = &self.renaming {
+                    if rid == &g.id {
+                        let field = text_input("Group name", draft)
+                            .id(group_rename_id())
+                            .size(12)
+                            .font(sola_kit::fonts::ui_medium())
+                            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+                            .on_input(Msg::RenameInput)
+                            .on_submit(Msg::RenameCommit)
+                            .style(sola_kit::components::text_input::style)
+                            .padding(Padding::from([1, 4]));
+                        section = section.header_content(field);
+                    }
                 }
+                sections.push(section);
+                while i < tabs.len() && self.groups.of_tab(tabs[i].id) == Some(gid.as_str()) {
+                    i += 1;
+                }
+            } else {
+                let mut loose = Vec::new();
+                while i < tabs.len() && self.groups.of_tab(tabs[i].id).is_none() {
+                    loose.push(mk_tab(&tabs[i]));
+                    i += 1;
+                }
+                sections.push(SidebarSection::unlabeled(loose));
             }
-            sections.push(section);
         }
-        let loose: Vec<SidebarItem<'_, Msg>> = self
-            .cached_tabs
-            .iter()
-            .filter(|t| self.groups.of_tab(t.id).is_none())
-            .map(mk_tab)
-            .collect();
-        if !loose.is_empty() || sections.is_empty() {
-            sections.push(SidebarSection::unlabeled(loose));
+        if sections.is_empty() {
+            sections.push(SidebarSection::unlabeled(Vec::new()));
         }
         SidebarPanel::new(sections)
             .density(SidebarDensity::Large)
