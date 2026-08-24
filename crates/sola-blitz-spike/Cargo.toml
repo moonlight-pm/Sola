@@ -1,0 +1,39 @@
+# Isolated from the Sola workspace (see root Cargo.toml `exclude`).
+# Own lockfile + target/ so Blitz's wgpu 26 never meets iced's wgpu-hal 27 patch.
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "sola-blitz-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "sola-blitz-spike"
+path = "src/main.rs"
+
+[dependencies]
+# 0.7.10 is Vello-only. Skia (FreeType hinting / LCD) is the text A/B.
+dioxus-native = { version = "0.8.0-alpha.1", default-features = false, features = [
+    "prelude",
+    "skia",
+    "html",
+    "system-fonts",
+    "accessibility",
+    "net",
+    "tracing",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "macros"] }
+cosmic-text = "0.15"
+png = "0.17"
+base64 = "0.22"
+# blitz-dom's `image` crate is default-features = false (no PNG). Unify so
+# <img> can decode the cosmic-text rasters.
+image = { version = "=0.25.6", default-features = false, features = ["png"] }
+
+[patch.crates-io]
+anyrender_skia = { path = "vendor/anyrender_skia" }
