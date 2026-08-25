@@ -481,14 +481,7 @@ pub fn pane_current_path(session: &str) -> Option<String> {
 /// Foreground pane pid, if tmux still has the session.
 pub fn pane_pid(session: &str) -> Option<i32> {
     let output = tmux_cmd()
-        .args([
-            "display-message",
-            "-p",
-            "-t",
-            session,
-            "-F",
-            "#{pane_pid}",
-        ])
+        .args(["display-message", "-p", "-t", session, "-F", "#{pane_pid}"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .output()

@@ -73,17 +73,19 @@ fn event_stream() -> impl Stream<Item = AgentEvent> {
     let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<AgentEvent>();
     match rx_opt {
         Some(std_rx) => {
-            std::thread::spawn(move || loop {
-                if iced_tx.is_closed() {
-                    break;
-                }
-                match std_rx.recv() {
-                    Ok(ev) => {
-                        if iced_tx.unbounded_send(ev).is_err() {
-                            break;
-                        }
+            std::thread::spawn(move || {
+                loop {
+                    if iced_tx.is_closed() {
+                        break;
                     }
-                    Err(_) => break,
+                    match std_rx.recv() {
+                        Ok(ev) => {
+                            if iced_tx.unbounded_send(ev).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
                 }
             });
         }

@@ -7,9 +7,7 @@ use serde_json::{Value, json};
 
 use super::transport::ChildTransport;
 use crate::bridge;
-use crate::protocol::{
-    AgentEvent, EffortOption, PermissionChoice, PlanEntry, ToolTurn, Turn,
-};
+use crate::protocol::{AgentEvent, EffortOption, PermissionChoice, PlanEntry, ToolTurn, Turn};
 use crate::sessions;
 
 pub struct AcpClient {
@@ -202,10 +200,7 @@ impl AcpClient {
         let Some(sid) = self.session_id.clone() else {
             return Ok(());
         };
-        self.notify(
-            "session/cancel",
-            json!({ "sessionId": sid }),
-        )?;
+        self.notify("session/cancel", json!({ "sessionId": sid }))?;
         Ok(())
     }
 
@@ -316,11 +311,11 @@ impl AcpClient {
 
         // Response to our request (no method field)
         if v.get("method").is_none() {
-            if let Some(id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
-                v.get("id")
-                    .and_then(|i| i.as_i64())
-                    .map(|i| i as u64)
-            }) {
+            if let Some(id) = v
+                .get("id")
+                .and_then(|i| i.as_u64())
+                .or_else(|| v.get("id").and_then(|i| i.as_i64()).map(|i| i as u64))
+            {
                 // In-flight prompt completed (async path via poll).
                 if self.prompt_rpc_id == Some(id) {
                     self.prompt_rpc_id = None;
@@ -384,12 +379,15 @@ impl AcpClient {
         // Server request (permission)
         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
             if method == "session/request_permission" {
-                if let Some(rpc_id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
-                    v.get("id")
-                        .and_then(|i| i.as_i64())
-                        .map(|i| i as u64)
-                }) {
-                    self.handle_permission_request(rpc_id, v.get("params").cloned().unwrap_or(Value::Null));
+                if let Some(rpc_id) = v
+                    .get("id")
+                    .and_then(|i| i.as_u64())
+                    .or_else(|| v.get("id").and_then(|i| i.as_i64()).map(|i| i as u64))
+                {
+                    self.handle_permission_request(
+                        rpc_id,
+                        v.get("params").cloned().unwrap_or(Value::Null),
+                    );
                 }
                 return Ok(None);
             }
@@ -398,11 +396,11 @@ impl AcpClient {
                 return Ok(None);
             }
             // Other server methods: fs/*, etc. — reject minimally so agent doesn't hang
-            if let Some(rpc_id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
-                v.get("id")
-                    .and_then(|i| i.as_i64())
-                    .map(|i| i as u64)
-            }) {
+            if let Some(rpc_id) = v
+                .get("id")
+                .and_then(|i| i.as_u64())
+                .or_else(|| v.get("id").and_then(|i| i.as_i64()).map(|i| i as u64))
+            {
                 tracing::debug!(%method, "rejecting unsupported agent→client request");
                 let resp = json!({
                     "jsonrpc": "2.0",
@@ -459,8 +457,7 @@ impl AcpClient {
             .unwrap_or_default();
 
         self.pending_permissions.insert(request_id, rpc_id);
-        self.permission_options
-            .insert(request_id, options.clone());
+        self.permission_options.insert(request_id, options.clone());
         bridge::emit(AgentEvent::PermissionRequired {
             session_id,
             request_id,
@@ -488,7 +485,11 @@ impl AcpClient {
         if let Some(tokens) = params
             .pointer("/_meta/totalTokens")
             .and_then(|t| t.as_u64())
-            .or_else(|| update.pointer("/_meta/totalTokens").and_then(|t| t.as_u64()))
+            .or_else(|| {
+                update
+                    .pointer("/_meta/totalTokens")
+                    .and_then(|t| t.as_u64())
+            })
         {
             bridge::emit(AgentEvent::Usage {
                 session_id: Some(sid.clone()),
@@ -587,7 +588,9 @@ impl AcpClient {
                     .map(|s| s.to_string());
                 // Skip tool content/output — not rendered.
                 // Grok emits both `completed` and `Completed` (and similar).
-                let done = status.as_deref().is_some_and(sessions::is_terminal_tool_status);
+                let done = status
+                    .as_deref()
+                    .is_some_and(sessions::is_terminal_tool_status);
                 if done {
                     bridge::emit(AgentEvent::ToolEnd {
                         session_id: sid,
@@ -803,7 +806,10 @@ fn efforts_from_models(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let mut efforts = Vec::new();
-    if let Some(list) = meta.and_then(|m| m.get("reasoningEfforts")).and_then(|v| v.as_array()) {
+    if let Some(list) = meta
+        .and_then(|m| m.get("reasoningEfforts"))
+        .and_then(|v| v.as_array())
+    {
         for e in list {
             let id = e
                 .get("id")

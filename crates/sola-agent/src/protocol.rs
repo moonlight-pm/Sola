@@ -170,12 +170,7 @@ impl PermissionMode {
     }
 
     pub fn all() -> &'static [PermissionMode] {
-        &[
-            Self::AlwaysApprove,
-            Self::Default,
-            Self::Auto,
-            Self::Plan,
-        ]
+        &[Self::AlwaysApprove, Self::Default, Self::Auto, Self::Plan]
     }
 }
 

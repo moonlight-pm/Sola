@@ -212,9 +212,15 @@ mod tests {
                 MenuItem::Divider => None,
             })
             .collect();
-        assert_eq!(ids, vec!["split_vertical", "split_horizontal", "close_pane"]);
+        assert_eq!(
+            ids,
+            vec!["split_vertical", "split_horizontal", "close_pane"]
+        );
         for item in &pane.items {
-            if let MenuItem::Action { shortcut: Some(sc), .. } = item {
+            if let MenuItem::Action {
+                shortcut: Some(sc), ..
+            } = item
+            {
                 assert!(sc.meta && sc.shift, "pane shortcuts are meta+shift");
             }
         }

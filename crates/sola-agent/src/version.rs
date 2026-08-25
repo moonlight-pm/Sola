@@ -61,10 +61,7 @@ pub fn version_from_cli() -> GrokVersionInfo {
     };
     let s = String::from_utf8_lossy(&out.stdout);
     // "grok 0.2.112 (9bbd559437) [stable]"
-    let current = s
-        .split_whitespace()
-        .nth(1)
-        .map(|v| v.to_string());
+    let current = s.split_whitespace().nth(1).map(|v| v.to_string());
     GrokVersionInfo {
         current,
         latest: None,

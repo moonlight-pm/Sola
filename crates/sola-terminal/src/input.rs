@@ -266,7 +266,7 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
         let lc = c.to_ascii_lowercase();
         if lc.is_ascii_alphabetic() {
             let code = (lc as u8) - b'a' + 1; // a=0x01 … z=0x1a
-                                              // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
+            // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
             return if mods.alt() {
                 Some(vec![0x1b, code])
             } else {
@@ -977,7 +977,7 @@ fn ctrl_char(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::keyboard::{key::Named, Key};
+    use iced::keyboard::{Key, key::Named};
 
     // Helper: normal mode (no special bits set).
     fn normal() -> TermMode {

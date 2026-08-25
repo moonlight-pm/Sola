@@ -257,9 +257,7 @@ fn coalesce_session_cmds(inbox: &mut VecDeque<AgentCmd>) {
 
 fn connect(mode: &ConnectionMode) -> Option<AcpClient> {
     match mode {
-        ConnectionMode::Leader { socket, bridge } => {
-            connect_leader(socket, bridge, mode.label())
-        }
+        ConnectionMode::Leader { socket, bridge } => connect_leader(socket, bridge, mode.label()),
     }
 }
 

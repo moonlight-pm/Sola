@@ -98,10 +98,7 @@ pub fn merge_list(current: &[SessionSummary]) -> Vec<SessionSummary> {
 
 /// Like [`merge_list`], but with a pre-fetched fresh snapshot (e.g. from
 /// the worker's `SessionsListed` event).
-pub fn merge_with(
-    current: &[SessionSummary],
-    fresh: Vec<SessionSummary>,
-) -> Vec<SessionSummary> {
+pub fn merge_with(current: &[SessionSummary], fresh: Vec<SessionSummary>) -> Vec<SessionSummary> {
     use std::collections::HashMap;
 
     let mut fresh: HashMap<String, SessionSummary> =
@@ -234,18 +231,12 @@ fn read_usage_from_updates(session_dir: &Path) -> (Option<u64>, Option<u64>) {
             .get("used")
             .and_then(|x| x.as_u64())
             .or_else(|| update.get("totalTokens").and_then(|x| x.as_u64()))
-            .or_else(|| {
-                v.pointer("/params/update/used")
-                    .and_then(|x| x.as_u64())
-            });
+            .or_else(|| v.pointer("/params/update/used").and_then(|x| x.as_u64()));
         let s = update
             .get("size")
             .and_then(|x| x.as_u64())
             .or_else(|| update.get("contextWindow").and_then(|x| x.as_u64()))
-            .or_else(|| {
-                v.pointer("/params/update/size")
-                    .and_then(|x| x.as_u64())
-            });
+            .or_else(|| v.pointer("/params/update/size").and_then(|x| x.as_u64()));
         if let Some(u) = u {
             used = Some(u);
             size = s.or(size);
@@ -308,10 +299,7 @@ pub fn active_terminal_sessions() -> HashSet<String> {
     };
     let mut out = HashSet::new();
     for e in entries {
-        let id = e
-            .get("session_id")
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
+        let id = e.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
         if id.is_empty() {
             continue;
         }
@@ -687,8 +675,7 @@ pub fn is_terminal_tool_status(status: &str) -> bool {
 
 fn parse_updates_text(raw: &str) -> Vec<Turn> {
     let mut turns: Vec<Turn> = Vec::new();
-    let mut tool_index: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut tool_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for line in raw.lines() {
         let v: Value = match serde_json::from_str(line) {
@@ -699,10 +686,7 @@ fn parse_updates_text(raw: &str) -> Vec<Turn> {
         if method != "session/update" && !method.ends_with("session/update") {
             continue;
         }
-        let update = v
-            .pointer("/params/update")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let update = v.pointer("/params/update").cloned().unwrap_or(Value::Null);
         let kind = update
             .get("sessionUpdate")
             .and_then(|s| s.as_str())
@@ -1063,9 +1047,8 @@ pub fn delete_session(id: &str) -> Result<(), String> {
 
     // Fallback: direct filesystem remove (keeps working if grok is missing).
     if let Some(dir) = find_session_dir(id) {
-        fs::remove_dir_all(&dir).map_err(|e| {
-            format!("delete {id}: grok failed ({last_err}); rm also failed: {e}")
-        })?;
+        fs::remove_dir_all(&dir)
+            .map_err(|e| format!("delete {id}: grok failed ({last_err}); rm also failed: {e}"))?;
         overlay::forget_sessions(&[id.to_string()]);
         return Ok(());
     }
@@ -1235,11 +1218,7 @@ mod tests {
         // No updates.jsonl → activity falls back to summary updated_at.
         let cwd = "/home/u/Workspace/Sola";
         let enc = urlencoding::encode(cwd);
-        let old = tmp
-            .path()
-            .join("sessions")
-            .join(enc.as_ref())
-            .join("old-1");
+        let old = tmp.path().join("sessions").join(enc.as_ref()).join("old-1");
         fs::create_dir_all(&old).unwrap();
         fs::write(
             old.join("summary.json"),
@@ -1292,7 +1271,10 @@ mod tests {
         let ids: HashSet<_> = prev.candidates.iter().map(|c| c.id.as_str()).collect();
         assert!(ids.contains("old-1"), "old session should match: {ids:?}");
         assert!(ids.contains("noise-1"), "old noise should match: {ids:?}");
-        assert!(!ids.contains("fresh-1"), "fresh should be excluded: {ids:?}");
+        assert!(
+            !ids.contains("fresh-1"),
+            "fresh should be excluded: {ids:?}"
+        );
 
         crit.only_noise_paths = true;
         let prev = bulk_delete_preview(&crit);

@@ -33,8 +33,8 @@ use iced::futures::{Stream, StreamExt};
 use iced::widget::canvas::{self, Cache, Canvas, Frame, Geometry, Path, Text};
 use iced::widget::container;
 use iced::{
-    Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Subscription, Theme,
-    keyboard, mouse,
+    Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Subscription, Theme, keyboard,
+    mouse,
 };
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener};
@@ -161,8 +161,7 @@ fn write_fd(fd: i32, data: &[u8]) {
 /// Process-global wakeup receiver, handed to the iced subscription once.
 /// The reader thread owns the sender. `Mutex<Option<…>>` so the
 /// subscription can `take()` it exactly once (one receiver per process).
-static WAKEUP_RX: std::sync::Mutex<Option<UnboundedReceiver<()>>> =
-    std::sync::Mutex::new(None);
+static WAKEUP_RX: std::sync::Mutex<Option<UnboundedReceiver<()>>> = std::sync::Mutex::new(None);
 
 /// Spawn the background reader: blocking `read()` on the PTY master,
 /// `processor.advance(&mut term, bytes)` under the FairMutex, then ping
@@ -175,9 +174,8 @@ fn spawn_reader(read_fd: i32, term: SharedTerm) {
         let mut processor: Processor = Processor::new();
         let mut buf = [0u8; 65536];
         loop {
-            let n = unsafe {
-                libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
+            let n =
+                unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n <= 0 {
                 break;
             }
@@ -395,7 +393,11 @@ impl canvas::Program<Msg> for App {
         // while running the torture commands.
         let dt_ms = start.elapsed().as_secs_f32() * 1000.0;
         let prev = self.frame_ema_ms.get();
-        let ema = if prev == 0.0 { dt_ms } else { prev * 0.9 + dt_ms * 0.1 };
+        let ema = if prev == 0.0 {
+            dt_ms
+        } else {
+            prev * 0.9 + dt_ms * 0.1
+        };
         self.frame_ema_ms.set(ema);
         eprintln!(
             "[spike] frame build {dt_ms:6.2}ms  ema {ema:6.2}ms  (~{:5.1} fps)",
@@ -555,14 +557,21 @@ fn encode_key(
             Named::Delete => Some(b"\x1b[3~".to_vec()),
             // Fall back to the platform text for any other named key
             // (covers e.g. numpad / punctuation that arrive as Named).
-            _ => text.filter(|t| !t.is_empty()).map(|t| t.as_bytes().to_vec()),
+            _ => text
+                .filter(|t| !t.is_empty())
+                .map(|t| t.as_bytes().to_vec()),
         },
         // Prefer the platform-produced text (handles shifted symbols and
         // dead keys); fall back to the raw character.
-        keyboard::Key::Character(s) => {
-            Some(text.filter(|t| !t.is_empty()).unwrap_or(s).as_bytes().to_vec())
-        }
-        _ => text.filter(|t| !t.is_empty()).map(|t| t.as_bytes().to_vec()),
+        keyboard::Key::Character(s) => Some(
+            text.filter(|t| !t.is_empty())
+                .unwrap_or(s)
+                .as_bytes()
+                .to_vec(),
+        ),
+        _ => text
+            .filter(|t| !t.is_empty())
+            .map(|t| t.as_bytes().to_vec()),
     }
 }
 

@@ -128,7 +128,11 @@ impl Tabs {
                     .pane_meta
                     .get(&t.active_pane)
                     .and_then(|m| m.cwd.clone());
-                Some(TabView { id: t.id.clone(), cwd, ordinal: t.ordinal })
+                Some(TabView {
+                    id: t.id.clone(),
+                    cwd,
+                    ordinal: t.ordinal,
+                })
             })
             .collect()
     }
@@ -269,7 +273,13 @@ pub fn close_leaf(node: PaneNode, target: &str) -> Option<PaneNode> {
                 Some(PaneNode::Leaf(id))
             }
         }
-        PaneNode::Split { id, dir, ratio, a, b } => {
+        PaneNode::Split {
+            id,
+            dir,
+            ratio,
+            a,
+            b,
+        } => {
             let new_a = close_leaf(*a, target);
             let new_b = close_leaf(*b, target);
             match (new_a, new_b) {
@@ -310,7 +320,9 @@ pub fn sibling_first_leaf(node: &PaneNode, target: &str) -> Option<String> {
 pub fn set_ratio(node: &mut PaneNode, split_id: &str, value: f32) -> bool {
     match node {
         PaneNode::Leaf(_) => false,
-        PaneNode::Split { id, ratio, a, b, .. } => {
+        PaneNode::Split {
+            id, ratio, a, b, ..
+        } => {
             if id == split_id {
                 *ratio = value;
                 return true;
@@ -328,8 +340,18 @@ fn split_area(area: Rect, dir: SplitDir, ratio: f32) -> (Rect, Rect) {
             let aw = (avail * r).round();
             let bw = (avail - aw).max(0.0);
             (
-                Rect { x: area.x, y: area.y, w: aw, h: area.h },
-                Rect { x: area.x + aw + DIVIDER_PX, y: area.y, w: bw, h: area.h },
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    w: aw,
+                    h: area.h,
+                },
+                Rect {
+                    x: area.x + aw + DIVIDER_PX,
+                    y: area.y,
+                    w: bw,
+                    h: area.h,
+                },
             )
         }
         SplitDir::Horizontal => {
@@ -337,8 +359,18 @@ fn split_area(area: Rect, dir: SplitDir, ratio: f32) -> (Rect, Rect) {
             let ah = (avail * r).round();
             let bh = (avail - ah).max(0.0);
             (
-                Rect { x: area.x, y: area.y, w: area.w, h: ah },
-                Rect { x: area.x, y: area.y + ah + DIVIDER_PX, w: area.w, h: bh },
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    w: area.w,
+                    h: ah,
+                },
+                Rect {
+                    x: area.x,
+                    y: area.y + ah + DIVIDER_PX,
+                    w: area.w,
+                    h: bh,
+                },
             )
         }
     }
@@ -355,7 +387,9 @@ pub fn pane_rects(node: &PaneNode, area: Rect) -> Vec<(String, Rect)> {
 fn collect_pane_rects(node: &PaneNode, area: Rect, out: &mut Vec<(String, Rect)>) {
     match node {
         PaneNode::Leaf(id) => out.push((id.clone(), area)),
-        PaneNode::Split { dir, ratio, a, b, .. } => {
+        PaneNode::Split {
+            dir, ratio, a, b, ..
+        } => {
             let (ra, rb) = split_area(area, *dir, *ratio);
             collect_pane_rects(a, ra, out);
             collect_pane_rects(b, rb, out);
@@ -372,7 +406,14 @@ pub fn split_rects(node: &PaneNode, area: Rect) -> Vec<(String, Rect, SplitDir)>
 }
 
 fn collect_split_rects(node: &PaneNode, area: Rect, out: &mut Vec<(String, Rect, SplitDir)>) {
-    if let PaneNode::Split { id, dir, ratio, a, b } = node {
+    if let PaneNode::Split {
+        id,
+        dir,
+        ratio,
+        a,
+        b,
+    } = node
+    {
         out.push((id.clone(), area, *dir));
         let (ra, rb) = split_area(area, *dir, *ratio);
         collect_split_rects(a, ra, out);
@@ -406,7 +447,9 @@ pub fn to_layout(node: &PaneNode, meta: &HashMap<String, PaneMeta>) -> PaneLayou
                 cwd: m.and_then(|m| m.cwd.clone()),
             }
         }
-        PaneNode::Split { dir, ratio, a, b, .. } => PaneLayout::Split {
+        PaneNode::Split {
+            dir, ratio, a, b, ..
+        } => PaneLayout::Split {
             dir: *dir,
             ratio: *ratio,
             a: Box::new(to_layout(a, meta)),
@@ -505,7 +548,12 @@ mod tests {
     use super::*;
 
     fn area() -> Rect {
-        Rect { x: 0.0, y: 0.0, w: 808.0, h: 600.0 }
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 808.0,
+            h: 600.0,
+        }
     }
 
     #[test]
@@ -513,7 +561,13 @@ mod tests {
         let mut tree = PaneNode::Leaf("a".into());
         assert!(split_leaf(&mut tree, "a", "s1", SplitDir::Vertical, "b"));
         match &tree {
-            PaneNode::Split { id, dir, ratio, a, b } => {
+            PaneNode::Split {
+                id,
+                dir,
+                ratio,
+                a,
+                b,
+            } => {
                 assert_eq!(id, "s1");
                 assert_eq!(*dir, SplitDir::Vertical);
                 assert_eq!(*ratio, 0.5);
@@ -598,7 +652,15 @@ mod tests {
     fn horizontal_split_partitions_height_minus_divider() {
         let mut tree = PaneNode::Leaf("a".into());
         split_leaf(&mut tree, "a", "s1", SplitDir::Horizontal, "b");
-        let rects = pane_rects(&tree, Rect { x: 0.0, y: 0.0, w: 800.0, h: 608.0 });
+        let rects = pane_rects(
+            &tree,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 608.0,
+            },
+        );
         let a = rects.iter().find(|(id, _)| id == "a").unwrap().1;
         let b = rects.iter().find(|(id, _)| id == "b").unwrap().1;
         assert_eq!(a.h, 300.0);
@@ -609,7 +671,12 @@ mod tests {
 
     #[test]
     fn ratio_for_drag_clamps_to_min() {
-        let area = Rect { x: 100.0, y: 0.0, w: 800.0, h: 600.0 };
+        let area = Rect {
+            x: 100.0,
+            y: 0.0,
+            w: 800.0,
+            h: 600.0,
+        };
         // Cursor far left → clamp to min fraction, not 0.
         let r = ratio_for_drag(area, SplitDir::Vertical, 100.0, 0.0, 80.0);
         assert!(r > 0.0 && r < 0.2);
@@ -625,18 +692,30 @@ mod tests {
         let mut meta = HashMap::new();
         meta.insert(
             "a".to_string(),
-            PaneMeta { id: "a".into(), tmux_session: "sola-a".into(), cwd: Some("/tmp".into()) },
+            PaneMeta {
+                id: "a".into(),
+                tmux_session: "sola-a".into(),
+                cwd: Some("/tmp".into()),
+            },
         );
         meta.insert(
             "b".to_string(),
-            PaneMeta { id: "b".into(), tmux_session: "sola-b".into(), cwd: None },
+            PaneMeta {
+                id: "b".into(),
+                tmux_session: "sola-b".into(),
+                cwd: None,
+            },
         );
         let layout = to_layout(&tree, &meta);
         match &layout {
             PaneLayout::Split { dir, a, b, .. } => {
                 assert_eq!(*dir, SplitDir::Vertical);
-                assert!(matches!(&**a, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-a"));
-                assert!(matches!(&**b, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-b"));
+                assert!(
+                    matches!(&**a, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-a")
+                );
+                assert!(
+                    matches!(&**b, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-b")
+                );
             }
             _ => panic!("expected split layout"),
         }
@@ -654,14 +733,22 @@ mod tests {
         let layout = PaneLayout::Split {
             dir: SplitDir::Vertical,
             ratio: 0.5,
-            a: Box::new(PaneLayout::Leaf { tmux_session: "sola-a".into(), cwd: None }),
-            b: Box::new(PaneLayout::Leaf { tmux_session: "sola-b".into(), cwd: None }),
+            a: Box::new(PaneLayout::Leaf {
+                tmux_session: "sola-a".into(),
+                cwd: None,
+            }),
+            b: Box::new(PaneLayout::Leaf {
+                tmux_session: "sola-b".into(),
+                cwd: None,
+            }),
         };
         let mut live = HashSet::new();
         live.insert("sola-a".to_string());
         // Only a is live → b pruned, a promoted.
         let pruned = reconcile_layout(layout.clone(), &Some(live)).unwrap();
-        assert!(matches!(pruned, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-a"));
+        assert!(
+            matches!(pruned, PaneLayout::Leaf { tmux_session, .. } if tmux_session == "sola-a")
+        );
         // None live → whole tab retracted.
         let empty = HashSet::new();
         assert!(reconcile_layout(layout.clone(), &Some(empty)).is_none());

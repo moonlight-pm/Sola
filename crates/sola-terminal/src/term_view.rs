@@ -18,18 +18,18 @@ use std::cell::Cell as StdCell;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use iced::advanced::mouse::click;
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
-use iced::advanced::mouse::click;
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, keyboard, mouse};
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{RenderableContent, Term};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
+use alacritty_terminal::term::{RenderableContent, Term};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::{self, CursorSnap, Listener};
@@ -50,7 +50,6 @@ struct RawCell {
     bg: AnsiColor,
     flags: Flags,
 }
-
 
 /// Padding around the grid, in px. Matches the spike.
 const PAD: f32 = 6.0;
@@ -117,13 +116,7 @@ pub fn cols_rows_for(size: iced::Size, metrics: CellMetrics) -> (u16, u16) {
 /// drag that leaves the pane still resolves to an edge cell (matches how
 /// terminals extend a selection past the grid border). Returns visible-grid
 /// coordinates — [`viewport_cell_to_point`] maps those onto buffer space.
-pub fn pixel_to_cell(
-    x: f32,
-    y: f32,
-    metrics: CellMetrics,
-    cols: u16,
-    rows: u16,
-) -> (usize, usize) {
+pub fn pixel_to_cell(x: f32, y: f32, metrics: CellMetrics, cols: u16, rows: u16) -> (usize, usize) {
     let col = ((x - PAD) / metrics.cell_w).floor();
     let row = ((y - PAD) / metrics.cell_h).floor();
     let col = col.max(0.0) as usize;
@@ -162,7 +155,11 @@ fn wheel_lines(delta: mouse::ScrollDelta, cell_h: f32) -> i32 {
     let raw = match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * WHEEL_LINES_PER_NOTCH,
         mouse::ScrollDelta::Pixels { y, .. } => {
-            if cell_h > 0.0 { y / cell_h } else { 0.0 }
+            if cell_h > 0.0 {
+                y / cell_h
+            } else {
+                0.0
+            }
         }
     };
     raw.round() as i32
@@ -318,22 +315,22 @@ impl Palette {
             // and not a darkened-cyan mix of that neon toward black.
             selection: with_alpha(atoms.accent, SELECTION_WASH_ALPHA),
             ansi: [
-                atoms.bg_hover,        // 0  black
-                atoms.danger,          // 1  red
-                atoms.success,         // 2  green
-                atoms.warning,         // 3  yellow
-                atoms.accent,          // 4  blue
-                magenta,               // 5  magenta
-                cyan,                  // 6  cyan
-                atoms.fg_muted,        // 7  white
+                atoms.bg_hover,                           // 0  black
+                atoms.danger,                             // 1  red
+                atoms.success,                            // 2  green
+                atoms.warning,                            // 3  yellow
+                atoms.accent,                             // 4  blue
+                magenta,                                  // 5  magenta
+                cyan,                                     // 6  cyan
+                atoms.fg_muted,                           // 7  white
                 mix(atoms.bg_hover, atoms.fg_muted, 0.5), // 8  bright black
-                lighten(atoms.danger),  // 9  bright red
-                lighten(atoms.success), // 10 bright green
-                lighten(atoms.warning), // 11 bright yellow
-                lighten(atoms.accent),  // 12 bright blue
-                lighten(magenta),       // 13 bright magenta
-                lighten(cyan),          // 14 bright cyan
-                atoms.fg,               // 15 bright white
+                lighten(atoms.danger),                    // 9  bright red
+                lighten(atoms.success),                   // 10 bright green
+                lighten(atoms.warning),                   // 11 bright yellow
+                lighten(atoms.accent),                    // 12 bright blue
+                lighten(magenta),                         // 13 bright magenta
+                lighten(cyan),                            // 14 bright cyan
+                atoms.fg,                                 // 15 bright white
             ],
         }
     }
@@ -614,9 +611,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // Single-click on a URL: arm open-on-release. Double/triple
                 // still select the word/line so the URL remains copyable.
                 // Shift+click always extends selection (never opens).
-                if matches!(click.kind(), click::Kind::Single)
-                    && !state.modifiers.shift()
-                {
+                if matches!(click.kind(), click::Kind::Single) && !state.modifiers.shift() {
                     let term = self.term.lock();
                     let uri = links::url_at_point(&term, point);
                     drop(term);
@@ -639,19 +634,19 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // Shift+click to continue. Otherwise start a fresh selection
                 // whose granularity is set by the click count: single =
                 // character, double = word, triple = line.
-                let deliberate = if extends_selection(state.modifiers.shift(), term.selection.is_some())
-                {
-                    if let Some(sel) = term.selection.as_mut() {
-                        sel.update(point, side);
-                    }
-                    true
-                } else {
-                    let ty = selection_type_for_click(click.kind());
-                    term.selection = Some(Selection::new(ty, point, side));
-                    // A word/line pick is deliberate — keep it on release. A
-                    // single click that never drags stays a deselect.
-                    !matches!(click.kind(), click::Kind::Single)
-                };
+                let deliberate =
+                    if extends_selection(state.modifiers.shift(), term.selection.is_some()) {
+                        if let Some(sel) = term.selection.as_mut() {
+                            sel.update(point, side);
+                        }
+                        true
+                    } else {
+                        let ty = selection_type_for_click(click.kind());
+                        term.selection = Some(Selection::new(ty, point, side));
+                        // A word/line pick is deliberate — keep it on release. A
+                        // single click that never drags stays a deselect.
+                        !matches!(click.kind(), click::Kind::Single)
+                    };
                 drop(term);
                 state.dragging = true;
                 state.moved = deliberate;
@@ -676,10 +671,8 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     if dx * dx + dy * dy < LINK_DRAG_SLOP_PX * LINK_DRAG_SLOP_PX {
                         return Some(canvas::Action::capture());
                     }
-                    let (origin, origin_side) = state
-                        .pending_origin
-                        .take()
-                        .unwrap_or((point, side));
+                    let (origin, origin_side) =
+                        state.pending_origin.take().unwrap_or((point, side));
                     state.pending_url = None;
                     state.pending_press_pos = None;
                     let mut term = self.term.lock();
@@ -708,9 +701,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 if let Some(uri) = state.pending_url.take() {
                     // Press+release with no drag on a URL → open it.
                     // (A drag already cleared pending_url above.)
-                    return Some(
-                        canvas::Action::publish((self.on_open_url)(uri)).and_capture(),
-                    );
+                    return Some(canvas::Action::publish((self.on_open_url)(uri)).and_capture());
                 }
                 if was_drag {
                     // Real drag → keep the installed selection for copy.
@@ -747,8 +738,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // app takes the wheel as a single report (not one per local
                 // line); otherwise we scroll our own scrollback (also the
                 // Shift-held override).
-                match input::wheel_dispatch(mode, mods, notches, col0 as u16 + 1, row0 as u16 + 1)
-                {
+                match input::wheel_dispatch(mode, mods, notches, col0 as u16 + 1, row0 as u16 + 1) {
                     WheelAction::Report(bytes) => {
                         // A mouse-tracking app (e.g. Grok) owns the wheel:
                         // forward one encoded report to its PTY write queue and
@@ -894,11 +884,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         let x = PAD + start as f32 * metrics.cell_w;
                         let y = PAD + line as f32 * metrics.cell_h;
                         let w = (end - start + 1) as f32 * metrics.cell_w;
-                        frame.fill_rectangle(
-                            Point::new(x, y),
-                            Size::new(w, metrics.cell_h),
-                            bg,
-                        );
+                        frame.fill_rectangle(Point::new(x, y), Size::new(w, metrics.cell_h), bg);
                     }
                 }
             };
@@ -906,9 +892,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             for r in &raw_cells {
                 let bg = resolved_bg(palette, r, &colors);
                 match run.as_mut() {
-                    Some((rl, _rs, re, rbg))
-                        if *rl == r.line && *re + 1 == r.col && *rbg == bg =>
-                    {
+                    Some((rl, _rs, re, rbg)) if *rl == r.line && *re + 1 == r.col && *rbg == bg => {
                         *re = r.col;
                     }
                     _ => {
@@ -984,11 +968,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
         // published by the reader / grid snapshot into `cursor_snap`.
         let mut cursor_frame = Frame::new(renderer, bounds.size());
         {
-            let snap = self
-                .cursor_snap
-                .read()
-                .map(|g| *g)
-                .unwrap_or_default();
+            let snap = self.cursor_snap.read().map(|g| *g).unwrap_or_default();
             let (cx, cy) = cell_xy_metrics(
                 metrics,
                 visible_row(snap.line, snap.display_offset),
@@ -1001,7 +981,13 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         Point::new(cx, cy),
                         Size::new(metrics.cell_w, metrics.cell_h),
                     );
-                    cursor_frame.fill(&block, Color { a: 0.85, ..palette.cursor });
+                    cursor_frame.fill(
+                        &block,
+                        Color {
+                            a: 0.85,
+                            ..palette.cursor
+                        },
+                    );
                 }
             } else {
                 let outline = Path::rectangle(
@@ -1011,7 +997,10 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 cursor_frame.stroke(
                     &outline,
                     Stroke::default()
-                        .with_color(Color { a: 0.6, ..palette.cursor })
+                        .with_color(Color {
+                            a: 0.6,
+                            ..palette.cursor
+                        })
                         .with_width(1.0),
                 );
             }
@@ -1112,10 +1101,7 @@ fn draw_url_underline(
         // Slightly thicker than a normal cell underline so the hint is
         // obvious even on light glyphs.
         let path = Path::line(Point::new(x, y), Point::new(x + w, y));
-        frame.stroke(
-            &path,
-            Stroke::default().with_color(color).with_width(1.5),
-        );
+        frame.stroke(&path, Stroke::default().with_color(color).with_width(1.5));
     }
 }
 
@@ -1138,10 +1124,7 @@ fn glyph_font(flags: Flags) -> Font {
 /// Stroke a 1px horizontal line of `width` at (`x`, `y`).
 fn stroke_h(frame: &mut Frame<Renderer>, x: f32, y: f32, width: f32, color: Color) {
     let path = Path::line(Point::new(x, y), Point::new(x + width, y));
-    frame.stroke(
-        &path,
-        Stroke::default().with_color(color).with_width(1.0),
-    );
+    frame.stroke(&path, Stroke::default().with_color(color).with_width(1.0));
 }
 
 /// Paint the selection highlight over the visible portion of `range`.
@@ -1299,17 +1282,23 @@ mod tests {
     fn extends_selection_only_on_shift_with_existing() {
         // Shift + an existing selection → continue it (the reported bug).
 
-    #[test]
-    fn click_count_sets_selection_granularity() {
-        use super::click::Kind;
-        // Single click → character-precise range (the existing behaviour).
-        assert_eq!(selection_type_for_click(Kind::Single), SelectionType::Simple);
-        // Double click → word (semantic, delimiter-aware) — grabs a token like
-        // a password or URL. This is the reported ask.
-        assert_eq!(selection_type_for_click(Kind::Double), SelectionType::Semantic);
-        // Triple click → whole line.
-        assert_eq!(selection_type_for_click(Kind::Triple), SelectionType::Lines);
-    }
+        #[test]
+        fn click_count_sets_selection_granularity() {
+            use super::click::Kind;
+            // Single click → character-precise range (the existing behaviour).
+            assert_eq!(
+                selection_type_for_click(Kind::Single),
+                SelectionType::Simple
+            );
+            // Double click → word (semantic, delimiter-aware) — grabs a token like
+            // a password or URL. This is the reported ask.
+            assert_eq!(
+                selection_type_for_click(Kind::Double),
+                SelectionType::Semantic
+            );
+            // Triple click → whole line.
+            assert_eq!(selection_type_for_click(Kind::Triple), SelectionType::Lines);
+        }
         assert!(extends_selection(true, true));
         // Shift but nothing selected yet → start fresh (no anchor to extend).
         assert!(!extends_selection(true, false));
@@ -1421,7 +1410,11 @@ mod tests {
         assert_eq!(p.bg, a.bg, "default bg ← bg-primary");
         assert_eq!(p.fg, a.fg, "default fg ← text-primary");
         // Cursor is a fixed deep gold, not theme-derived.
-        assert_eq!(p.cursor, Color::from_rgb8(0xff, 0xb8, 0x00), "cursor ← fixed gold");
+        assert_eq!(
+            p.cursor,
+            Color::from_rgb8(0xff, 0xb8, 0x00),
+            "cursor ← fixed gold"
+        );
         // Selection is the neon accent wash, not the graphite selection atom.
         assert_eq!(p.selection.r, a.accent.r);
         assert_eq!(p.selection.g, a.accent.g);
@@ -1451,7 +1444,14 @@ mod tests {
         // Each bright variant (8..=14, paired with 0..=6) must be at least as
         // light as its normal counterpart in every channel, and strictly
         // brighter overall — `lighten`/`mix` move toward white.
-        for (normal, bright) in [(1usize, 9usize), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14)] {
+        for (normal, bright) in [
+            (1usize, 9usize),
+            (2, 10),
+            (3, 11),
+            (4, 12),
+            (5, 13),
+            (6, 14),
+        ] {
             let n = p.ansi[normal];
             let b = p.ansi[bright];
             let lum = |c: Color| c.r + c.g + c.b;
@@ -1469,11 +1469,20 @@ mod tests {
     fn default_palette_primaries_have_correct_hue() {
         let p = Palette::default();
         let red = p.ansi[1];
-        assert!(red.r > red.g && red.r > red.b, "ansi[1] should be red-dominant");
+        assert!(
+            red.r > red.g && red.r > red.b,
+            "ansi[1] should be red-dominant"
+        );
         let green = p.ansi[2];
-        assert!(green.g > green.r && green.g > green.b, "ansi[2] should be green-dominant");
+        assert!(
+            green.g > green.r && green.g > green.b,
+            "ansi[2] should be green-dominant"
+        );
         let blue = p.ansi[4];
-        assert!(blue.b > blue.r && blue.b > blue.g, "ansi[4] should be blue-dominant");
+        assert!(
+            blue.b > blue.r && blue.b > blue.g,
+            "ansi[4] should be blue-dominant"
+        );
     }
 
     #[test]

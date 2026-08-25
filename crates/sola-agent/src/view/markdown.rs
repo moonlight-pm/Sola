@@ -9,7 +9,7 @@
 
 use iced::font::Weight;
 use iced::widget::text::{LineHeight, Rich, Shaping, Wrapping};
-use iced::widget::{container, rich_text, span, text, Column, Row, Space};
+use iced::widget::{Column, Row, Space, container, rich_text, span, text};
 use iced::{Alignment, Background, Border, Color, Element, Font, Length, Never, Padding, Theme};
 use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
@@ -51,16 +51,12 @@ pub(crate) fn render(md: &str, theme: &Theme) -> Element<'static, Msg> {
         let top = gap_before(prev, kind);
         let bottom = gap_after(kind);
         let view = block_view(b, theme);
-        col = col.push(
-            container(view)
-                .width(Length::Fill)
-                .padding(Padding {
-                    top,
-                    right: 0.0,
-                    bottom,
-                    left: 0.0,
-                }),
-        );
+        col = col.push(container(view).width(Length::Fill).padding(Padding {
+            top,
+            right: 0.0,
+            bottom,
+            left: 0.0,
+        }));
         prev = Some(kind);
     }
     col.into()
@@ -114,9 +110,15 @@ fn gap_after(kind: BlockKind) -> f32 {
 }
 
 enum Block {
-    Heading { level: u8, text: String },
+    Heading {
+        level: u8,
+        text: String,
+    },
     Paragraph(String),
-    ListItem { depth: usize, text: String },
+    ListItem {
+        depth: usize,
+        text: String,
+    },
     Code(String),
     Rule,
     /// GFM pipe table: header row + body rows (cells already trimmed).
@@ -361,11 +363,7 @@ fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
 /// Column **weights** bias layout toward wider content, but cell text is never
 /// truncated — long cells wrap inside their portion (Grok's bordered table
 /// face; raw pipe ASCII is a different path).
-fn table_block(
-    headers: &[String],
-    rows: &[Vec<String>],
-    theme: &Theme,
-) -> Element<'static, Msg> {
+fn table_block(headers: &[String], rows: &[Vec<String>], theme: &Theme) -> Element<'static, Msg> {
     let p = theme.extended_palette();
     let bg = p.background.strong.color;
     let border = Color {
@@ -412,9 +410,7 @@ fn table_block(
             // WordOrGlyph: long tokens (paths, ids) wrap instead of clipping.
             .wrapping(Wrapping::WordOrGlyph)
             .width(Length::Fill)
-            .style(move |_t: &Theme| iced::widget::text::Style {
-                color: Some(color),
-            })
+            .style(move |_t: &Theme| iced::widget::text::Style { color: Some(color) })
             .into()
     };
 
@@ -425,8 +421,7 @@ fn table_block(
     for i in 0..ncols {
         let raw = headers.get(i).map(|s| s.as_str()).unwrap_or("");
         head_row = head_row.push(
-            container(cell(raw, true, muted))
-                .width(Length::FillPortion(weights[i].max(1) as u16)),
+            container(cell(raw, true, muted)).width(Length::FillPortion(weights[i].max(1) as u16)),
         );
     }
     body = body.push(head_row.padding(Padding {
@@ -482,9 +477,7 @@ fn split_table_row(line: &str) -> Vec<String> {
     let t = line.trim();
     let t = t.strip_prefix('|').unwrap_or(t);
     let t = t.strip_suffix('|').unwrap_or(t);
-    t.split('|')
-        .map(|c| c.trim().to_string())
-        .collect()
+    t.split('|').map(|c| c.trim().to_string()).collect()
 }
 
 /// True when a line is a GFM table separator (`|---|:---:|`).
@@ -500,9 +493,7 @@ fn is_table_sep(line: &str) -> bool {
     }
     cells.iter().all(|c| {
         let c = c.trim();
-        !c.is_empty()
-            && c.chars()
-                .all(|ch| ch == '-' || ch == ':' || ch == ' ')
+        !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
     })
 }
 

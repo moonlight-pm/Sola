@@ -73,7 +73,10 @@ fn urls_on_line_at<T>(term: &Term<T>, point: GridPoint) -> Vec<UrlSpan> {
     collect_osc8_spans(term, point.line.0, &col_map, &mut out);
     for m in find_urls_in_text(&text) {
         if let Some(span) = match_to_span(&m, &col_map, point.line.0) {
-            if !out.iter().any(|s| s.start == span.start && s.end == span.end) {
+            if !out
+                .iter()
+                .any(|s| s.start == span.start && s.end == span.end)
+            {
                 out.push(span);
             }
         }
@@ -104,7 +107,10 @@ pub fn visible_urls<T>(term: &Term<T>) -> Vec<UrlSpan> {
             if let Some(span) = match_to_span(&m, &col_map, start_buf_line) {
                 // Skip if an OSC 8 span already covers the same cells with
                 // the same URI (avoid double-drawing underlines).
-                if !out.iter().any(|s| s.start == span.start && s.end == span.end) {
+                if !out
+                    .iter()
+                    .any(|s| s.start == span.start && s.end == span.end)
+                {
                     out.push(span);
                 }
             }
@@ -121,11 +127,7 @@ pub fn visible_urls<T>(term: &Term<T>) -> Vec<UrlSpan> {
 /// start, then **down** collecting characters — same semantics as
 /// [`collect_logical_line`] but keyed by buffer line (for hit-testing) rather
 /// than visible row.
-fn collect_logical_line_at<T>(
-    term: &Term<T>,
-    buf_line: i32,
-    cols: usize,
-) -> (String, Vec<ColMap>) {
+fn collect_logical_line_at<T>(term: &Term<T>, buf_line: i32, cols: usize) -> (String, Vec<ColMap>) {
     let grid = term.grid();
     let last_col = cols.saturating_sub(1);
 
@@ -339,11 +341,7 @@ fn find_urls_in_text(text: &str) -> Vec<TextMatch> {
                 } else {
                     raw
                 };
-                out.push(TextMatch {
-                    start,
-                    end,
-                    uri,
-                });
+                out.push(TextMatch { start, end, uri });
             }
             continue;
         }
@@ -390,15 +388,18 @@ fn is_url_body(c: char) -> bool {
     // Reject whitespace and common delimiters terminals treat as separators.
     // Keep: alnum, and the usual URL punctuation.
     match c {
-        ' ' | '\t' | '\n' | '\r' | '<' | '>' | '"' | '\'' | '`' | '{' | '}' | '|' | '\\'
-        | '^' | '[' | ']' => false,
+        ' ' | '\t' | '\n' | '\r' | '<' | '>' | '"' | '\'' | '`' | '{' | '}' | '|' | '\\' | '^'
+        | '[' | ']' => false,
         _ => !c.is_control(),
     }
 }
 
 /// Trailing characters to strip from a match (sentence punctuation, brackets).
 fn is_trailing_punct(c: char) -> bool {
-    matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"')
+    matches!(
+        c,
+        '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'
+    )
 }
 
 #[cfg(test)]
@@ -502,13 +503,22 @@ mod tests {
         assert_eq!(on_url.as_deref(), Some("https://example.com/path"));
 
         // Column of the final 'h' in path.
-        let on_end = url_at_point(&term, GridPoint::new(Line(0), Column(4 + "https://example.com/path".len() - 1)));
+        let on_end = url_at_point(
+            &term,
+            GridPoint::new(Line(0), Column(4 + "https://example.com/path".len() - 1)),
+        );
         assert_eq!(on_end.as_deref(), Some("https://example.com/path"));
 
         // The space before the URL is not a link.
-        assert_eq!(url_at_point(&term, GridPoint::new(Line(0), Column(3))), None);
+        assert_eq!(
+            url_at_point(&term, GridPoint::new(Line(0), Column(3))),
+            None
+        );
         // "please" is not a link.
-        assert_eq!(url_at_point(&term, GridPoint::new(Line(0), Column(30))), None);
+        assert_eq!(
+            url_at_point(&term, GridPoint::new(Line(0), Column(30))),
+            None
+        );
     }
 
     /// Hit-testing must only look at the line under the pointer — a full

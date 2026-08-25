@@ -84,12 +84,9 @@ impl ChildTransport {
         match self.lines.try_recv() {
             Ok(r) => Some(r),
             Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Some(Err("agent stdout closed".into()))
-            }
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("agent stdout closed".into())),
         }
     }
-
 }
 
 impl Drop for ChildTransport {

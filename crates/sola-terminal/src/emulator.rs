@@ -27,8 +27,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
-use iced::futures::Stream;
 use iced::Subscription;
+use iced::futures::Stream;
 
 /// Cap content wakeups under continuous TUI refresh (Grok streams ~30–60
 /// PtyOutput/s even with no wheel). 33 ms ≈ 30 Hz — enough for smooth scroll
@@ -151,8 +151,7 @@ fn output_stream() -> impl Stream<Item = String> {
                                 if now >= deadline {
                                     break;
                                 }
-                                match std_rx.recv_timeout(deadline.saturating_duration_since(now))
-                                {
+                                match std_rx.recv_timeout(deadline.saturating_duration_since(now)) {
                                     Ok(id) => {
                                         dirty.insert(id);
                                     }
@@ -352,7 +351,12 @@ impl Listener {
         notify: mpsc::Sender<String>,
         title: mpsc::Sender<(String, String)>,
     ) -> Self {
-        Self { tab_id, pty_write, notify, title }
+        Self {
+            tab_id,
+            pty_write,
+            notify,
+            title,
+        }
     }
 }
 
@@ -360,7 +364,9 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::PtyWrite(text) => {
-                let _ = self.pty_write.send((self.tab_id.clone(), text.into_bytes()));
+                let _ = self
+                    .pty_write
+                    .send((self.tab_id.clone(), text.into_bytes()));
             }
             Event::Wakeup => {
                 let _ = self.notify.send(self.tab_id.clone());
@@ -553,9 +559,9 @@ mod tests {
         let cells: Vec<_> = content.display_iter.collect();
 
         // --- (line 0, col 0) should be 'h' ---
-        let cell_h = cells.iter().find(|indexed| {
-            indexed.point == GridPoint::new(Line(0), Column(0))
-        });
+        let cell_h = cells
+            .iter()
+            .find(|indexed| indexed.point == GridPoint::new(Line(0), Column(0)));
         assert!(cell_h.is_some(), "No cell found at line 0 column 0");
         assert_eq!(
             cell_h.unwrap().cell.c,
@@ -565,9 +571,9 @@ mod tests {
         );
 
         // --- (line 0, col 1) should be 'i' ---
-        let cell_i = cells.iter().find(|indexed| {
-            indexed.point == GridPoint::new(Line(0), Column(1))
-        });
+        let cell_i = cells
+            .iter()
+            .find(|indexed| indexed.point == GridPoint::new(Line(0), Column(1)));
         assert!(cell_i.is_some(), "No cell found at line 0 column 1");
         assert_eq!(
             cell_i.unwrap().cell.c,

@@ -9,9 +9,9 @@ use iced::widget::canvas::{self, Cache, Canvas, Event, Frame, Geometry, Path, St
 use iced::widget::image::FilterMethod;
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 
+use crate::Msg;
 use crate::doc::Doc;
 use crate::geom;
-use crate::Msg;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CropGesture {
@@ -176,10 +176,7 @@ fn paint_stage(
     well: Color,
     accent: Color,
 ) {
-    frame.fill(
-        &Path::rectangle(Point::ORIGIN, view),
-        well,
-    );
+    frame.fill(&Path::rectangle(Point::ORIGIN, view), well);
 
     let dest = geom::dest_rect(img, view, zoom, pan);
     let view_rect = Rectangle::new(Point::ORIGIN, view);
@@ -213,10 +210,7 @@ fn paint_stage(
             fill_outside(frame, view, sel, dim);
             frame.fill(
                 &Path::rectangle(sel.position(), sel.size()),
-                Color {
-                    a: 0.08,
-                    ..accent
-                },
+                Color { a: 0.08, ..accent },
             );
             frame.stroke(
                 &Path::rectangle(sel.position(), sel.size()),
@@ -275,10 +269,7 @@ fn fill_outside(frame: &mut Frame, view: Size, inner: Rectangle, color: Color) {
     }
     if inner.x > 0.0 {
         frame.fill(
-            &Path::rectangle(
-                Point::new(0.0, inner.y),
-                Size::new(inner.x, inner.height),
-            ),
+            &Path::rectangle(Point::new(0.0, inner.y), Size::new(inner.x, inner.height)),
             color,
         );
     }

@@ -1,6 +1,6 @@
 //! Status bar — mono pills + effort/permission chips + context meter.
 
-use iced::widget::{button, container, row, text, Space};
+use iced::widget::{Space, button, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::style::{RADIUS_PILL, SPACE_MD, SPACE_SM, SPACE_XL};
 use sola_kit::components::text as kit_text;
@@ -103,26 +103,17 @@ fn permission_row(app: &App) -> Element<'_, Msg> {
             PermissionMode::Auto => "auto",
             PermissionMode::Plan => "plan",
         };
-        r = r.push(chip(
-            label.into(),
-            selected,
-            Msg::SetPermissionMode(*mode),
-        ));
+        r = r.push(chip(label.into(), selected, Msg::SetPermissionMode(*mode)));
     }
     r.into()
 }
 
 fn chip(label: String, selected: bool, on_press: Msg) -> Element<'static, Msg> {
-    let body = container(
-        text(label)
-            .font(fonts::mono())
-            .size(11)
-            .style(if selected {
-                kit_text::accent
-            } else {
-                kit_text::muted
-            }),
-    )
+    let body = container(text(label).font(fonts::mono()).size(11).style(if selected {
+        kit_text::accent
+    } else {
+        kit_text::muted
+    }))
     .padding(Padding::from([2.0, 7.0]))
     .style(move |theme: &Theme| {
         if selected {
@@ -169,10 +160,14 @@ fn context_meter(u: &UsageParts) -> Element<'static, Msg> {
     let bar_w = 72.0;
     let fill_w = (bar_w * u.frac).max(2.0);
     let track = container(
-        container(Space::new().width(Length::Fixed(fill_w)).height(Length::Fixed(4.0)))
-            .width(Length::Fixed(fill_w))
-            .height(Length::Fixed(4.0))
-            .style(ctx_fill_style),
+        container(
+            Space::new()
+                .width(Length::Fixed(fill_w))
+                .height(Length::Fixed(4.0)),
+        )
+        .width(Length::Fixed(fill_w))
+        .height(Length::Fixed(4.0))
+        .style(ctx_fill_style),
     )
     .width(Length::Fixed(bar_w))
     .height(Length::Fixed(4.0))

@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iced::widget::image as iced_image;
-use iced::Vector;
 use ::image::{DynamicImage, ImageFormat, RgbaImage};
+use iced::Vector;
+use iced::widget::image as iced_image;
 
 const UNDO_CAP: usize = 8;
 

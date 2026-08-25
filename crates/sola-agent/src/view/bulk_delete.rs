@@ -1,12 +1,12 @@
 //! Bulk-delete modal — pick age + safety filters, preview, confirm.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, container, row, scrollable, text, Space, Column};
+use iced::widget::{Column, Space, button, checkbox, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::form::checkbox_style;
 use sola_kit::components::style::{
-    hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
+    RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, hairline,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
@@ -133,12 +133,10 @@ fn panel_body(panel: &BulkDeletePanel) -> Element<'_, Msg> {
 
 fn candidate_list(panel: &BulkDeletePanel, n: usize) -> Element<'_, Msg> {
     let inner: Element<'_, Msg> = if panel.preview.candidates.is_empty() {
-        container(
-            kit_text::caption("No sessions match these filters.").style(kit_text::muted),
-        )
-        .width(Length::Fill)
-        .padding(Padding::from([SPACE_LG, SPACE_MD]))
-        .into()
+        container(kit_text::caption("No sessions match these filters.").style(kit_text::muted))
+            .width(Length::Fill)
+            .padding(Padding::from([SPACE_LG, SPACE_MD]))
+            .into()
     } else {
         // Card is CARD_W; list pad + scrollbar steal horizontal room.
         // Budget title/path so ellipsis + trailing size both stay readable.
@@ -170,9 +168,7 @@ fn candidate_list(panel: &BulkDeletePanel, n: usize) -> Element<'_, Msg> {
                     .size(13)
                     .wrapping(Wrapping::None)
                     .width(Length::Fill);
-                let title_box = container(title_text)
-                    .width(Length::Fill)
-                    .clip(true);
+                let title_box = container(title_text).width(Length::Fill).clip(true);
                 let meta_text = text(meta)
                     .size(11)
                     .style(kit_text::muted)

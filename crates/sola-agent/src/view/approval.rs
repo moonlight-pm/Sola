@@ -3,7 +3,7 @@
 //! Compact warning card: kind caption, tool title, mono preview, action row.
 //! Prefer short labels and clear hierarchy over a wall of raw JSON.
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{RADIUS_LG, RADIUS_MD, SPACE_SM, SPACE_XL};
@@ -94,12 +94,10 @@ fn action_row(pending: &PendingApproval) -> Element<'_, Msg> {
     if pending.options.is_empty() {
         actions = actions
             .push(
-                kit_btn::labeled_sm("Allow", kit_btn::primary)
-                    .on_press(Msg::PermissionAllowFirst),
+                kit_btn::labeled_sm("Allow", kit_btn::primary).on_press(Msg::PermissionAllowFirst),
             )
             .push(
-                kit_btn::labeled_sm("Deny", kit_btn::danger_outline)
-                    .on_press(Msg::PermissionDeny),
+                kit_btn::labeled_sm("Deny", kit_btn::danger_outline).on_press(Msg::PermissionDeny),
             );
     } else {
         // Stable order: allows first (once → always), then rejects.
@@ -126,9 +124,7 @@ fn action_row(pending: &PendingApproval) -> Element<'_, Msg> {
         }
     }
 
-    actions
-        .push(Space::new().width(Length::Fill))
-        .into()
+    actions.push(Space::new().width(Length::Fill)).into()
 }
 
 fn option_sort_key(kind: &str) -> u8 {
@@ -151,7 +147,9 @@ fn friendly_option_label(name: &str, kind: &str) -> String {
     if k.contains("allow_always") || n.eq_ignore_ascii_case("allow always") {
         return "Always allow".into();
     }
-    if k.contains("allow_once") || n.eq_ignore_ascii_case("allow once") || n.eq_ignore_ascii_case("allow")
+    if k.contains("allow_once")
+        || n.eq_ignore_ascii_case("allow once")
+        || n.eq_ignore_ascii_case("allow")
     {
         return "Allow".into();
     }
@@ -244,10 +242,7 @@ fn truncate(s: &str, max: usize) -> String {
 fn caption_style(theme: &Theme) -> iced::widget::text::Style {
     let m = theme.extended_palette().secondary.base.color;
     iced::widget::text::Style {
-        color: Some(Color {
-            a: 0.85,
-            ..m
-        }),
+        color: Some(Color { a: 0.85, ..m }),
     }
 }
 

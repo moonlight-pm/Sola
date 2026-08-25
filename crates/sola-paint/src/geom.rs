@@ -30,7 +30,10 @@ pub fn dest_rect(img: Size, view: Size, zoom: f32, pan: Vector) -> Rectangle {
     let w = fit.width * zoom;
     let h = fit.height * zoom;
     Rectangle::new(
-        Point::new((view.width - w) * 0.5 + pan.x, (view.height - h) * 0.5 + pan.y),
+        Point::new(
+            (view.width - w) * 0.5 + pan.x,
+            (view.height - h) * 0.5 + pan.y,
+        ),
         Size::new(w, h),
     )
 }
@@ -102,7 +105,10 @@ pub fn view_to_pixel(pt: Point, dest: Rectangle, img_w: u32, img_h: u32) -> (u32
     let ny = ((pt.y - dest.y) / dest.height).clamp(0.0, 1.0);
     let x = (nx * img_w as f32).floor() as u32;
     let y = (ny * img_h as f32).floor() as u32;
-    (x.min(img_w.saturating_sub(1)), y.min(img_h.saturating_sub(1)))
+    (
+        x.min(img_w.saturating_sub(1)),
+        y.min(img_h.saturating_sub(1)),
+    )
 }
 
 /// Inclusive-origin / exclusive-end pixel crop from a view-space selection.
@@ -200,7 +206,10 @@ mod tests {
     #[test]
     fn view_to_pixel_corners() {
         let dest = Rectangle::new(Point::new(10.0, 20.0), Size::new(100.0, 50.0));
-        assert_eq!(view_to_pixel(Point::new(10.0, 20.0), dest, 200, 100), (0, 0));
+        assert_eq!(
+            view_to_pixel(Point::new(10.0, 20.0), dest, 200, 100),
+            (0, 0)
+        );
         assert_eq!(
             view_to_pixel(Point::new(110.0, 70.0), dest, 200, 100),
             (199, 99)

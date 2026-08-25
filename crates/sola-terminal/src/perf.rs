@@ -12,8 +12,8 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Log path (same dir as other sola app logs).
@@ -89,7 +89,10 @@ fn state() -> std::sync::MutexGuard<'static, Option<State>> {
 }
 
 fn writeln_raw(line: &str) -> std::io::Result<()> {
-    let mut f = OpenOptions::new().create(true).append(true).open(LOG_PATH)?;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(LOG_PATH)?;
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
@@ -105,11 +108,8 @@ fn maybe_flush_summary(st: &mut State) {
     st.window_start = Instant::now();
 
     // Quiet second: skip the line so the log stays readable when idle.
-    let activity = c.draw_n
-        + c.ptyout_n
-        + c.wheel_events_n
-        + c.write_enqueue_n
-        + c.reader_advance_n;
+    let activity =
+        c.draw_n + c.ptyout_n + c.wheel_events_n + c.write_enqueue_n + c.reader_advance_n;
     if activity == 0 {
         return;
     }
@@ -245,9 +245,7 @@ pub fn write_block(blocked: Duration, bytes: usize) {
             st.counters.write_max_block_us = blocked_us;
         }
         if st.verbose || blocked_us >= SLOW_US {
-            let _ = writeln_raw(&format!(
-                "WRITE_BLOCK us={blocked_us} bytes={bytes}"
-            ));
+            let _ = writeln_raw(&format!("WRITE_BLOCK us={blocked_us} bytes={bytes}"));
         }
     });
 }
@@ -263,9 +261,7 @@ pub fn reader_advance(held: Duration, bytes: usize) {
             st.counters.reader_max_lock_us = held_us;
         }
         if st.verbose || held_us >= SLOW_US {
-            let _ = writeln_raw(&format!(
-                "READER_LOCK us={held_us} bytes={bytes}"
-            ));
+            let _ = writeln_raw(&format!("READER_LOCK us={held_us} bytes={bytes}"));
         }
     });
 }

@@ -9,8 +9,8 @@ use std::fs;
 use std::io;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -150,10 +150,7 @@ mod tests {
 
     #[test]
     fn second_bind_fails_while_first_lives() {
-        let dir = std::env::temp_dir().join(format!(
-            "sola-paint-lock-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("sola-paint-lock-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = lock_path_in(&dir);
@@ -167,10 +164,7 @@ mod tests {
 
     #[test]
     fn stale_socket_is_replaced() {
-        let dir = std::env::temp_dir().join(format!(
-            "sola-paint-stale-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("sola-paint-stale-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sola")).unwrap();
         let path = lock_path_in(&dir);

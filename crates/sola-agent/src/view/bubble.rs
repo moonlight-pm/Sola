@@ -17,9 +17,9 @@ use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
+use crate::Msg;
 use crate::protocol::{ThoughtTurn, ToolTurn, Turn};
 use crate::view::markdown;
-use crate::Msg;
 
 const STREAM_MAX: f32 = 960.0;
 /// Match sola-terminal default glyph size (integer px for crisp raster).
@@ -461,10 +461,7 @@ fn classify_tool(title: &str) -> ToolKind {
     {
         return ToolKind::Edit;
     }
-    if lower.starts_with("read ")
-        || lower.contains("read_file")
-        || lower.starts_with("reading ")
-    {
+    if lower.starts_with("read ") || lower.contains("read_file") || lower.starts_with("reading ") {
         return ToolKind::File;
     }
     if lower.starts_with("execute")
@@ -482,10 +479,7 @@ fn classify_tool(title: &str) -> ToolKind {
     {
         return ToolKind::Search;
     }
-    if lower.starts_with("list")
-        || lower.contains("list_dir")
-        || lower.starts_with("listed ")
-    {
+    if lower.starts_with("list") || lower.contains("list_dir") || lower.starts_with("listed ") {
         return ToolKind::Dir;
     }
     if lower.starts_with("web search")
@@ -494,10 +488,7 @@ fn classify_tool(title: &str) -> ToolKind {
     {
         return ToolKind::WebSearch;
     }
-    if lower.starts_with("fetch")
-        || lower.contains("web_fetch")
-        || lower.starts_with("fetched ")
-    {
+    if lower.starts_with("fetch") || lower.contains("web_fetch") || lower.starts_with("fetched ") {
         return ToolKind::WebFetch;
     }
     // Heuristic: looks like a bare path → read
@@ -533,7 +524,11 @@ fn format_tool_label(kind: ToolKind, title: &str, running: bool) -> String {
         }
         ToolKind::Search => {
             let q = strip_verb_prefix(title, &["Search ", "Searched ", "Searching ", "Grep "]);
-            format!("{} {}", ToolKind::Search.verb(running), truncate_chars(q, 56))
+            format!(
+                "{} {}",
+                ToolKind::Search.verb(running),
+                truncate_chars(q, 56)
+            )
         }
         ToolKind::Dir => {
             let p = strip_verb_prefix(title, &["List ", "Listed ", "Listing ", "list_dir "]);
@@ -541,14 +536,22 @@ fn format_tool_label(kind: ToolKind, title: &str, running: bool) -> String {
         }
         ToolKind::WebFetch => {
             let u = strip_verb_prefix(title, &["Fetch ", "Fetched ", "Fetching "]);
-            format!("{} {}", ToolKind::WebFetch.verb(running), truncate_chars(u, 56))
+            format!(
+                "{} {}",
+                ToolKind::WebFetch.verb(running),
+                truncate_chars(u, 56)
+            )
         }
         ToolKind::WebSearch => {
             let q = strip_verb_prefix(
                 title,
                 &["Web search: ", "Web Search: ", "X search: ", "X Search: "],
             );
-            format!("{} {}", ToolKind::WebSearch.verb(running), truncate_chars(q, 56))
+            format!(
+                "{} {}",
+                ToolKind::WebSearch.verb(running),
+                truncate_chars(q, 56)
+            )
         }
         ToolKind::Other => {
             let s = truncate_chars(title, CMD_MAX);
@@ -678,14 +681,16 @@ fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<
         b: (accent.b * 0.72 + 0.98 * 0.28).min(1.0),
         a: 1.0,
     };
-    let mut lines = column![text("Next")
-        .font(mono_medium())
-        .size(TOOL_PX)
-        .line_height(mono_lh(TOOL_PX))
-        .shaping(Shaping::Basic)
-        .style(move |_t: &Theme| iced::widget::text::Style {
-            color: Some(heading),
-        })]
+    let mut lines = column![
+        text("Next")
+            .font(mono_medium())
+            .size(TOOL_PX)
+            .line_height(mono_lh(TOOL_PX))
+            .shaping(Shaping::Basic)
+            .style(move |_t: &Theme| iced::widget::text::Style {
+                color: Some(heading),
+            })
+    ]
     .spacing(6.0);
 
     for e in entries {
@@ -762,10 +767,7 @@ mod tests {
     fn classify_edit_and_read() {
         assert_eq!(classify_tool("Edit src/main.rs"), ToolKind::Edit);
         assert_eq!(classify_tool("Read crates/foo/bar.rs"), ToolKind::File);
-        assert_eq!(
-            classify_tool("Execute `ls`"),
-            ToolKind::Command
-        );
+        assert_eq!(classify_tool("Execute `ls`"), ToolKind::Command);
     }
 
     #[test]

@@ -111,7 +111,11 @@ impl Scanner {
             match self.state {
                 State::Ground => {}
                 State::Esc => {
-                    self.state = if b == b'[' { State::CsiStart } else { State::Ground };
+                    self.state = if b == b'[' {
+                        State::CsiStart
+                    } else {
+                        State::Ground
+                    };
                 }
                 State::CsiStart => {
                     self.state = if b == b'>' {

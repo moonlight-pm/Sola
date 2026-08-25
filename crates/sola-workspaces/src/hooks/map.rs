@@ -226,10 +226,12 @@ mod tests {
                 .clear_turn
         );
         assert!(map(json!({"hookEventName": "SessionStart"})).unwrap().claim);
-        assert!(map(json!({"hookEventName": "SessionStart"}))
-            .unwrap()
-            .status
-            .is_none());
+        assert!(
+            map(json!({"hookEventName": "SessionStart"}))
+                .unwrap()
+                .status
+                .is_none()
+        );
         assert!(
             map(json!({"hookEventName": "UserPromptSubmit"}))
                 .unwrap()
@@ -247,29 +249,35 @@ mod tests {
     fn child_subagent_does_not_map() {
         assert!(map(json!({"hookEventName": "SubagentStop"})).is_none());
         assert!(map(json!({"hookEventName": "subagent_start"})).is_none());
-        assert!(map(json!({
-            "hookEventName": "SessionEnd",
-            "sessionId": "child",
-            "subagentType": "explore"
-        }))
-        .is_none());
-        assert!(map(json!({
-            "hookEventName": "Stop",
-            "sessionId": "child",
-            "subagentType": "explore"
-        }))
-        .is_none());
+        assert!(
+            map(json!({
+                "hookEventName": "SessionEnd",
+                "sessionId": "child",
+                "subagentType": "explore"
+            }))
+            .is_none()
+        );
+        assert!(
+            map(json!({
+                "hookEventName": "Stop",
+                "sessionId": "child",
+                "subagentType": "explore"
+            }))
+            .is_none()
+        );
     }
 
     #[test]
     fn routine_permission_prompt_ignored() {
-        assert!(map(json!({
-            "hookEventName": "Notification",
-            "notificationType": "permission_prompt",
-            "message": "Tool permission requested",
-            "level": "info"
-        }))
-        .is_none());
+        assert!(
+            map(json!({
+                "hookEventName": "Notification",
+                "notificationType": "permission_prompt",
+                "message": "Tool permission requested",
+                "level": "info"
+            }))
+            .is_none()
+        );
     }
 
     #[test]

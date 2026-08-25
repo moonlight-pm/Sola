@@ -30,14 +30,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     .padding(Padding::new(SPACE_XL + SPACE_LG))
     .max_width(440.0);
 
-    container(
-        container(card).style(card_style),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .into()
+    container(container(card).style(card_style))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
 }
 
 fn card_style(theme: &Theme) -> container::Style {
@@ -52,4 +50,3 @@ fn card_style(theme: &Theme) -> container::Style {
         ..container::Style::default()
     }
 }
-
