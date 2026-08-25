@@ -577,6 +577,7 @@ fn handle_from(
             if is_front {
                 *shared.tabs.lock().unwrap() = tabs;
                 shared.active.store(active, Ordering::Relaxed);
+                crate::chrome_wake::wake();
             }
             if !*announced {
                 *announced = true;
@@ -590,11 +591,13 @@ fn handle_from(
             *helper_tabs.lock().unwrap() = tabs.clone();
             if is_front {
                 *shared.tabs.lock().unwrap() = tabs;
+                crate::chrome_wake::wake();
             }
         }
         FromEngine::Active(id) => {
             if is_front {
                 shared.active.store(id, Ordering::Relaxed);
+                crate::chrome_wake::wake();
             }
         }
         FromEngine::Cursor(c) => {
@@ -605,6 +608,7 @@ fn handle_from(
         FromEngine::Clipboard(text) => {
             if is_front {
                 *shared.clipboard.lock().unwrap() = Some(text);
+                crate::chrome_wake::wake();
             }
         }
         FromEngine::ImeCaret { x, y, w, h } => {
@@ -619,18 +623,22 @@ fn handle_from(
                 .lock()
                 .unwrap()
                 .push((profile_id.to_string(), ev));
+            crate::chrome_wake::wake();
         }
         FromEngine::WebAuthn(ev) => {
             shared.passkeys.lock().unwrap().push(ev);
+            crate::chrome_wake::wake();
         }
         FromEngine::PageContext(ctx) => {
             if is_front {
                 shared.page_menus.lock().unwrap().push(ctx);
+                crate::chrome_wake::wake();
             }
         }
         FromEngine::OpenBackgroundTab { url } => {
             if is_front && crate::util::href_is_new_tab_target(&url) {
                 shared.background_tabs.lock().unwrap().push(url);
+                crate::chrome_wake::wake();
             }
         }
     }

@@ -374,7 +374,7 @@ impl Shell {
         self.emit_composition();
 
         // Always re-emit registered chords. At fresh boot, the shell sees
-        // only its own four windows (added/removed are empty after the
+        // only the menubar (added/removed are empty after the
         // app_id filter), so the early-return paths that normally call
         // `emit_registered_chords` never fire — and sola-river never
         // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+Grave /
@@ -967,16 +967,8 @@ impl Shell {
             // Start at index 1 so the second (next) app is pre-selected on
             // first press — mirrors the legacy macOS-style Alt+Tab feel.
             self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
-            // Focus the switcher surface so River exits any client-initiated
-            // exclusive fullscreen (games/steam_app). Fullscreen surfaces paint
-            // "above everything"; without this Meta+Tab only flashes on Meta
-            // release when focus finally moves. See sola-river Focus handler.
-            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                }
-                self.focused_window_id = Some(wid);
-            }
+            // Focus is applied in `CommitOverlayShow` once the iced swapchain
+            // is live — focusing the parked 2×2 can unhide it.
             self.emit_registered_chords();
             self.emit_composition();
             return Task::none();

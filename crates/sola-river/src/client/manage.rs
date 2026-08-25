@@ -89,7 +89,6 @@ pub(crate) fn note_dimensions(
     deferred_size.remove(&window_id)
 }
 
-
 /// Whether a size or position must be forwarded to River.
 ///
 /// `last` is the value we most recently sent for this window (`None` if we
@@ -118,8 +117,7 @@ pub(crate) const GAMESCOPE_SIZE_DEBOUNCE: std::time::Duration =
 /// accepting a different shell Frame size. Gives Steam cold-start + shader
 /// interstitial time a stable nest; zoning still applies after the hold.
 /// Keep short so float/zone after prepare are not delayed for a long time.
-pub(crate) const GAMESCOPE_SIZE_HOLD: std::time::Duration =
-    std::time::Duration::from_secs(12);
+pub(crate) const GAMESCOPE_SIZE_HOLD: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// Decide whether to apply a new gamescope host size now, or keep `last`.
 ///
@@ -389,19 +387,14 @@ pub fn handle_render_start(state: &mut AppData) {
         // re-`place_top` gamescope after the stack walk so the nest couldn't
         // be buried during early paint races — that locked the host on top of
         // every normal app and contributed to z-order thrash / flicker.
-        let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
-        for (&id, proxy) in &state.windows_by_id {
-            if visible.contains(&id) {
-                proxy.show();
-            } else {
-                proxy.hide();
-            }
-        }
-        for &window_id in &order {
-            if let Some(node) = state.nodes_by_window.get(&window_id) {
-                node.place_top();
-            }
-        }
+        state.last_composition = order.clone();
+        apply_composition_visibility(state, &order, true);
+    } else if !state.last_composition.is_empty() {
+        // Parked overlays (and any other window not in the last stack)
+        // stay hidden until Composition includes them — otherwise
+        // `apply_default_placement` flashes them at output-center.
+        let order = state.last_composition.clone();
+        apply_composition_visibility(state, &order, false);
     }
 
     // Drain into an owned Vec first: the body below mutates `state` (registry +
@@ -449,6 +442,26 @@ pub fn handle_render_start(state: &mut AppData) {
     debug!(composition_len, positions_len, "render_finish sent");
 }
 
+fn apply_composition_visibility(state: &AppData, order: &[u32], restack: bool) {
+    let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
+    for (&id, proxy) in &state.windows_by_id {
+        if visible.contains(&id) {
+            if restack {
+                proxy.show();
+            }
+        } else {
+            proxy.hide();
+        }
+    }
+    if restack {
+        for &window_id in order {
+            if let Some(node) = state.nodes_by_window.get(&window_id) {
+                node.place_top();
+            }
+        }
+    }
+}
+
 /// Center any window that's visible in the current composition but has
 /// never had an explicit position set by the shell. River otherwise
 /// places unpositioned nodes at (0, 0), which parks unzoned windows in
@@ -458,11 +471,13 @@ fn apply_default_placement(state: &mut AppData) {
         return;
     };
 
-    // Derive the set of windows currently visible from the same source
-    // `handle_render_start` uses: composition entries are shown, others
-    // hidden. Placement for hidden windows would be wasted since they
-    // aren't on screen.
-    let visible: Vec<u32> = state.windows_by_id.keys().copied().collect();
+    // Only windows the shell has put in Composition. Parked overlays
+    // must not be default-centered for one frame before their Frame.
+    let visible: Vec<u32> = if state.last_composition.is_empty() {
+        state.windows_by_id.keys().copied().collect()
+    } else {
+        state.last_composition.clone()
+    };
 
     for window_id in visible {
         if state.placed.contains(&window_id) {
@@ -590,7 +605,10 @@ mod tests {
         deferred.insert(7u32, (1280, 720));
 
         // First dimensions event: marks initialized, returns the held size.
-        assert_eq!(note_dimensions(&mut first, &mut deferred, 7), Some((1280, 720)));
+        assert_eq!(
+            note_dimensions(&mut first, &mut deferred, 7),
+            Some((1280, 720))
+        );
         assert!(first.contains(&7));
         assert!(deferred.is_empty());
 
@@ -598,7 +616,6 @@ mod tests {
         assert_eq!(note_dimensions(&mut first, &mut deferred, 7), None);
         assert!(first.contains(&7));
     }
-
 
     #[test]
     fn first_value_is_always_sent() {

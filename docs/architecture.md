@@ -77,6 +77,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
+| `crates/iced_winit-patched` | iced 0.14 `iced_winit` + Wayland opaque-region from window-fill alpha (not a workspace member; `[patch.crates-io]`) |
 | `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images |
 | `nix/sola.nix` | Package from GitHub release tarball |
 | `nix/image/` | VM/image profile: quiet boot, Plymouth `sola`, installer kiosk, stage package |
@@ -124,16 +125,51 @@ to the bus and tolerate compositor restarts.
 
 ---
 
+## Iced present / GPU idle (as-built)
+
+Iced 0.14 **GPU-presents every window in the process after any `Message`**.
+A timer or `window::frames()` is therefore a full-window present loop, not
+a cheap poll. On this dogfood box (River 0.4.5, NVIDIA, **5120×2160**) that
+showed up as ~30–40% GPU with several kit apps open. **Do not re-introduce
+always-on vsync pumps** to “fix” a gesture or helper drain.
+
+| Mitigation | Where | Idle rule | Drag / live exception | Regression to watch |
+|------------|--------|-----------|------------------------|---------------------|
+| No 16 ms chrome timer | `sola-browser` `subscription` | Page copy + context menu wake iced via `chrome_wake::wake` from the CEF router | Morph2 tab reorder is **not** this timer | Idle chrome presenting ~60 Hz; copy/right-click delayed >1 frame if wake is dropped |
+| Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | Helper queues (tabs, downloads, handoff, vault, ⌘-click, copy/menu) **wake** `Tick`. 250 ms `time::every` only while copy-URL flash, TOTP panel, or vault fill-wait | Loading titles/progress still wake on `FromEngine::Tabs` | Strip titles / load line frozen; handoff (`solactl open`) ignored until another chrome event; copy-URL check never clears |
+| Working ring `At` ~20 Hz | `sola-kit` `status_mark` | `RedrawRequest::At(50ms)` on `RedrawRequested`, **not** `NextFrame` / `window::frames()` | n/a | Storybook Sidebar or a Working Grok row pins GPU; ring frozen (no `RedrawRequested` after status change) |
+| Workspaces pointer gated | `sola-workspaces` `subscription` | No `window::frames()`; `CursorMoved` only while a split drag is live; ignored mouse is not `Msg::Input` | Split divider drag | Split resize only updates on press; whole window presents on every pixel over empty chrome |
+| Morph2 drag pump | `sola-kit` `sidebar/strip.rs` | Idle: no vsync chain | While `dragging` / FLIP: `invalidate_layout` on pointer (ghost Y is layout) + `request_redraw` on `RedrawRequested` | Tab/group reorder stutters or ghost stuck; idle vsync if `request_redraw` is left on when not dragging |
+| Shell overlays parked 2×2 | `sola-shell` `ensure_overlay_windows` + `zoning::overlay_frame` | Menu / launcher / switcher / selection stay mapped after the menubar’s first Composition. **Dismissed = 2×2 swapchain off-output** (`OVERLAY_PARK_X/Y` −10000; winit Wayland min is 2×1 — 1×1 + `resizable=false` is `xdg_toplevel` invalid_size). **Shown = live Frame while hidden, Composition after iced `Resized` ≥64×64** (next-tick hop so view/present run first) | River hides any window not in last Composition; do not stack a parked buffer | GPU spike if a dismissed overlay is left at full output; overlay visible before iced `Resized`; Super+Space hangs if `Resized` never fires; 1920 placeholder jump if live Frame forgets output size; **shell panic-loop if park size is 1×1** |
+| Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps still create an ARGB swapchain (`window_settings_transparent` for float CSD). **Tiled:** `theme_for(false)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Float / shell overlay:** transparent base → region cleared | n/a | Idle GPU if tiled windows stay without opaque-region; float CSD square black corners if opaque-region left on while overlay theme is active; overlay launcher dimmed wrong if marked opaque |
+
+**Still open (next slices):** River NVIDIA knobs (after clients stop
+presenting). Browser `LeftPressed` / `CursorReleased` still fire on every
+click (one present per click — acceptable).
+
+**Law for new iced work:** if a widget needs motion, subscribe or
+`request_redraw` **only while that motion is live**. Helper threads must
+`chrome_wake::wake()` (or equivalent) instead of a process-wide timer.
+
+---
+
 ## Shell windows (as-built)
 
-`sola-shell` is a single `iced::daemon` with on-demand windows:
+`sola-shell` is a single `iced::daemon`. **Menubar** is always mapped.
+Menu / launcher / switcher / selection are **parked at 2×2 off-output** after
+the menubar maps (River hides them until Composition). Show **Frames to the
+live output while still hidden**, then joins the stack on the tick after iced
+reports a live `Resized` — so a stretched 2×2 buffer is never shown. Iced does
+not present full-output swapchains in the background (see
+[Iced present / GPU idle](#iced-present--gpu-idle-as-built)).
 
 | Kind | Role |
 |------|------|
 | Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), stats, toasts |
-| Menu | Open application menus |
-| Launcher | App launch |
-| Switcher | MRU window/app switch |
+| Menu | Open application menus (parked 2×2 while dismissed) |
+| Launcher | App launch (parked 2×2 while dismissed) |
+| Switcher | MRU window/app switch (parked 2×2 while dismissed) |
+| Selection | Super+Shift+4 marquee (parked 2×2 while dismissed; live Frame is full output) |
 
 Zoning / floating is coordinated with `sola-river` over the bus:
 unassigned windows **default-float** (client size + `Topic::WindowFloating`);
@@ -164,7 +200,7 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 | Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. Paste is `ToEngine::PasteText` (JS insert in the **focused** frame only). ⌘-click hit-test is JS → `FromEngine::OpenBackgroundTab` → chrome `open_tab_beside` (below current tab, same group; click not sent to CEF). ⌘T / `OpenUrl` / `xdg-open` use `open_tab` (loose, end of strip). An outside open (`chrome.sock` / `Topic::OpenUrl` with `activate`) asks the shell to raise the existing window (click-activation: MRU + composition + seat; sock probes are not activate). F12 / Browser → Developer Tools opens windowed CEF DevTools. Super+left/right are not WM pointer bindings (CSD titlebar still moves floats). Page right-click is `ContextMenuHandler::run_context_menu` (native cancelled) → `FromEngine::PageContext` → kit menu. Session history rides the tab snapshot (`TabInfo.history`); hold-nav uses `NavCmd::GoHistory`. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. Downloads: helper `DownloadHandler` → `FromEngine::Download` (any helper, including parked) → chrome list; cancel is `ToEngine::CancelDownload`. Passkey **get** / **create**: helper injects WebAuthn intercept in every frame → `FromEngine::WebAuthn` → chrome vault picker (same-site same-action coalesced; `create()` confirms then `Fido2Client::register` + POST/PUT cipher). One iced chrome (`chrome.sock`); a second process hands off a URL and exits. Helper death respawns CEF and restores tabs. Reap only orphan / pre-`exec_self` helpers. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
 | Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json` (tabs + optional `group_id` + `groups[]`); shared downloads index `shared/downloads.json`; chrome parks tab-strip snapshots + last CPU composites (`FrameSlot.parked_frames`); switch points the router at the target helper (pages stay loaded). Eviction: `tab_cache` (idle 30m, max 4 parks, max 48 tabs total) |
-| Tab / profile paint | `present_tab`: same-size parked frame → GPU this frame; miss → blank immediately (never keep the previous page). Helpers skip same-size `Resize` so the parked compositor stays live. Iced presents paints via the shader `request_redraw` pump (does not rebuild chrome at 60 Hz). |
+| Tab / profile paint | `present_tab`: same-size parked frame → GPU this frame; miss → blank immediately (never keep the previous page). Helpers skip same-size `Resize` so the parked compositor stays live. Iced presents paints via the shader `request_redraw` pump (does not rebuild chrome at 60 Hz). Chrome `Tick` is `chrome_wake` from helper queues (plus a 250 ms timer only for copy-URL flash / TOTP / fill-wait), not an idle 16 ms or 250 ms pump. |
 
 Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE
 content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`

@@ -12,6 +12,96 @@ use tracing::{info, warn};
 
 pub const MENUBAR_HEIGHT: i32 = 28;
 
+/// Iced open size/position for menu, launcher, and switcher: usable area
+/// below the menubar. Matches [`Self::default_app_frame`].
+pub fn overlay_open_rect(output_w: i32, output_h: i32) -> (f32, f32, f32, f32) {
+    let w = output_w.max(1) as f32;
+    let h = (output_h - MENUBAR_HEIGHT).max(1) as f32;
+    (0.0, MENUBAR_HEIGHT as f32, w, h)
+}
+
+/// Swapchain size while a shell overlay is mapped but dismissed.
+///
+/// Iced presents every daemon window after any `Message`. A 2×2 buffer is
+/// cheap; a full-output one is not. River still `hide`s these until
+/// Composition includes them.
+///
+/// Must be ≥ winit's Wayland `MIN_WINDOW_SIZE` (2×1). A 1×1 window with
+/// `resizable = false` sets min 2×1 and max 1×1 → `xdg_toplevel` error 2
+/// (`invalid_size`) and iced panics on create.
+pub const OVERLAY_PARK: i32 = 2;
+
+/// Off-output origin for a parked overlay. If hide() loses a frame, a
+/// 2×2 at (0,0) still flashes; this keeps that leak off the screen.
+pub const OVERLAY_PARK_X: i32 = -10000;
+pub const OVERLAY_PARK_Y: i32 = -10000;
+
+/// Parked overlay `Topic::Frame` (2×2, off-output). River ignores
+/// non-positive frames; 2×2 also satisfies winit's Wayland min size.
+pub fn overlay_park_frame(window_id: u32) -> FrameUpdate {
+    FrameUpdate {
+        window_id,
+        x: OVERLAY_PARK_X,
+        y: OVERLAY_PARK_Y,
+        width: OVERLAY_PARK,
+        height: OVERLAY_PARK,
+        fullscreen: false,
+    }
+}
+
+/// Live overlay rectangle. `cover_menubar` is the selection marquee
+/// (full output at 0,0); other overlays sit in the usable area below
+/// the menubar.
+pub fn overlay_live_frame(
+    window_id: u32,
+    output_w: i32,
+    output_h: i32,
+    cover_menubar: bool,
+) -> FrameUpdate {
+    if cover_menubar {
+        FrameUpdate {
+            window_id,
+            x: 0,
+            y: 0,
+            width: output_w.max(1),
+            height: output_h.max(1),
+            fullscreen: false,
+        }
+    } else {
+        FrameUpdate {
+            window_id,
+            x: 0,
+            y: MENUBAR_HEIGHT,
+            width: output_w.max(1),
+            height: (output_h - MENUBAR_HEIGHT).max(1),
+            fullscreen: false,
+        }
+    }
+}
+
+/// Frame an overlay: parked size while dismissed, live size while shown.
+/// Visible overlays need output geometry; without it this returns `None`
+/// so we do not invent a 1920 placeholder.
+pub fn overlay_frame(
+    window_id: u32,
+    visible: bool,
+    output: Option<(i32, i32)>,
+    cover_menubar: bool,
+) -> Option<FrameUpdate> {
+    if !visible {
+        return Some(overlay_park_frame(window_id));
+    }
+    let (ow, oh) = output?;
+    Some(overlay_live_frame(window_id, ow, oh, cover_menubar))
+}
+
+/// True when reported content size is the live overlay, not the park.
+/// Floor is well above [`OVERLAY_PARK`] so a 2×2 buffer cannot join
+/// Composition (that is the first-show flash).
+pub fn overlay_geometry_is_live(width: i32, height: i32) -> bool {
+    width >= 64 && height >= 64
+}
+
 /// Inset, in pixels per edge, applied to a freshly-floated window. A float
 /// with no remembered geometry centers in the usable area shrunk by this
 /// much on every side — a clear "this window is floating" cue (and, until a
@@ -1211,6 +1301,56 @@ mod tests {
             (frame.x, frame.y, frame.width, frame.height),
             (1432, 78, 438, 952)
         );
+    }
+
+    #[test]
+    fn overlay_open_rect_matches_usable_area() {
+        let (x, y, w, h) = overlay_open_rect(5120, 2160);
+        assert_eq!(x, 0.0);
+        assert_eq!(y, MENUBAR_HEIGHT as f32);
+        assert_eq!(w, 5120.0);
+        assert_eq!(h, (2160 - MENUBAR_HEIGHT) as f32);
+    }
+
+    #[test]
+    fn overlay_park_frame_meets_winit_wayland_min() {
+        let f = overlay_park_frame(42);
+        assert_eq!(
+            (f.window_id, f.x, f.y, f.width, f.height),
+            (42, OVERLAY_PARK_X, OVERLAY_PARK_Y, OVERLAY_PARK, OVERLAY_PARK)
+        );
+        assert!(f.width >= 2 && f.height >= 1, "winit MIN_WINDOW_SIZE is 2×1");
+        assert!(!f.fullscreen);
+    }
+
+    #[test]
+    fn overlay_frame_parks_when_hidden_even_without_output() {
+        let f = overlay_frame(7, false, None, false).unwrap();
+        assert_eq!((f.width, f.height), (OVERLAY_PARK, OVERLAY_PARK));
+    }
+
+    #[test]
+    fn overlay_frame_live_usable_area_or_full_output() {
+        let launcher = overlay_frame(1, true, Some((5120, 2160)), false).unwrap();
+        assert_eq!(
+            (launcher.x, launcher.y, launcher.width, launcher.height),
+            (0, MENUBAR_HEIGHT, 5120, 2160 - MENUBAR_HEIGHT)
+        );
+        let selection = overlay_frame(2, true, Some((5120, 2160)), true).unwrap();
+        assert_eq!(
+            (selection.x, selection.y, selection.width, selection.height),
+            (0, 0, 5120, 2160)
+        );
+        assert!(overlay_frame(3, true, None, false).is_none());
+    }
+
+    #[test]
+    fn overlay_geometry_is_live_rejects_park() {
+        assert!(!overlay_geometry_is_live(OVERLAY_PARK, OVERLAY_PARK));
+        assert!(!overlay_geometry_is_live(2, 1));
+        assert!(!overlay_geometry_is_live(32, 32));
+        assert!(overlay_geometry_is_live(5120, 2132));
+        assert!(overlay_geometry_is_live(64, 64));
     }
 
     #[test]

@@ -94,13 +94,7 @@ pub fn dispatch(state: &AppData, action: &PointerAction) -> Result<(), String> {
     Ok(())
 }
 
-fn move_to(
-    state: &AppData,
-    pointer: &ZwlrVirtualPointerV1,
-    time: u32,
-    x: i32,
-    y: i32,
-) {
+fn move_to(state: &AppData, pointer: &ZwlrVirtualPointerV1, time: u32, x: i32, y: i32) {
     // motion_absolute requires (x, y) in [0, x_extent] / [0, y_extent].
     // We use the primary output's logical size as the extent so callers
     // can pass actual screen coordinates.

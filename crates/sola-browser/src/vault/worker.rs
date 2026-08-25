@@ -210,28 +210,39 @@ impl Drop for VaultHandle {
     }
 }
 
+fn emit(event_tx: &Sender<VaultEvent>, ev: VaultEvent) {
+    let _ = event_tx.send(ev);
+    crate::chrome_wake::wake();
+}
+
 async fn finish_authenticated(
     svc: &mut VaultService,
     event_tx: &Sender<VaultEvent>,
     email: String,
 ) {
-    let _ = event_tx.send(VaultEvent::LoginOk {
-        email: email.clone(),
-    });
+    emit(
+        &event_tx,
+        VaultEvent::LoginOk {
+            email: email.clone(),
+        },
+    );
     // Status before sync so chrome knows unlocked when SyncOk arrives
     // (match picker requests on SyncOk).
-    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+    emit(&event_tx, VaultEvent::Status(svc.status()));
     match svc.sync().await {
         Ok(full) => {
-            let _ = event_tx.send(VaultEvent::SyncOk { full });
+            emit(&event_tx, VaultEvent::SyncOk { full });
         }
         Err(e) => {
-            let _ = event_tx.send(VaultEvent::SyncFailed {
-                message: e.to_string(),
-            });
+            emit(
+                &event_tx,
+                VaultEvent::SyncFailed {
+                    message: e.to_string(),
+                },
+            );
         }
     }
-    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+    emit(&event_tx, VaultEvent::Status(svc.status()));
 }
 
 async fn handle_login_outcome(
@@ -256,21 +267,24 @@ async fn handle_login_outcome(
                 n_kinds = kinds.len(),
                 "vault: login needs second factor"
             );
-            let _ = event_tx.send(VaultEvent::LoginNeedsTwoFactor {
-                email,
-                kinds,
-                preferred,
-                email_hint,
-                email_sent,
-            });
-            let _ = event_tx.send(VaultEvent::Status(svc.status()));
+            emit(
+                &event_tx,
+                VaultEvent::LoginNeedsTwoFactor {
+                    email,
+                    kinds,
+                    preferred,
+                    email_hint,
+                    email_sent,
+                },
+            );
+            emit(&event_tx, VaultEvent::Status(svc.status()));
         }
     }
 }
 
 async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
     let mut svc = VaultService::new();
-    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+    emit(&event_tx, VaultEvent::Status(svc.status()));
 
     loop {
         let cmd = match cmd_rx.try_recv() {
@@ -285,7 +299,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
         match cmd {
             VaultCmd::Quit => break,
             VaultCmd::Status => {
-                let _ = event_tx.send(VaultEvent::Status(svc.status()));
+                emit(&event_tx, VaultEvent::Status(svc.status()));
             }
             VaultCmd::Login {
                 email,
@@ -302,8 +316,8 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         other => other.to_string(),
                     };
                     tracing::warn!(%message, "vault: login failed");
-                    let _ = event_tx.send(VaultEvent::LoginFailed { message });
-                    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+                    emit(&event_tx, VaultEvent::LoginFailed { message });
+                    emit(&event_tx, VaultEvent::Status(svc.status()));
                 }
             },
             VaultCmd::LoginTwoFactor {
@@ -324,10 +338,13 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     Err(e) => {
                         password.zeroize();
                         tracing::warn!(error = %e, "vault: 2FA login failed");
-                        let _ = event_tx.send(VaultEvent::LoginFailed {
-                            message: e.to_string(),
-                        });
-                        let _ = event_tx.send(VaultEvent::Status(svc.status()));
+                        emit(
+                            &event_tx,
+                            VaultEvent::LoginFailed {
+                                message: e.to_string(),
+                            },
+                        );
+                        emit(&event_tx, VaultEvent::Status(svc.status()));
                     }
                 }
             }
@@ -339,35 +356,44 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                 Ok(()) => {
                     password.zeroize();
                     tracing::info!(?kind, "vault: OTP resend ok");
-                    let _ = event_tx.send(VaultEvent::EmailCodeSent);
+                    emit(&event_tx, VaultEvent::EmailCodeSent);
                 }
                 Err(e) => {
                     password.zeroize();
                     tracing::warn!(?kind, error = %e, "vault: OTP resend failed");
-                    let _ = event_tx.send(VaultEvent::EmailCodeFailed {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::EmailCodeFailed {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::Sync => match svc.sync().await {
                 Ok(full) => {
-                    let _ = event_tx.send(VaultEvent::SyncOk { full });
-                    let _ = event_tx.send(VaultEvent::Status(svc.status()));
+                    emit(&event_tx, VaultEvent::SyncOk { full });
+                    emit(&event_tx, VaultEvent::Status(svc.status()));
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::SyncFailed {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::SyncFailed {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::Matches { url } => match svc.matches_for_url(&url).await {
                 Ok(m) => {
-                    let _ = event_tx.send(VaultEvent::Matches(m));
+                    emit(&event_tx, VaultEvent::Matches(m));
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::CreateLogin {
@@ -400,50 +426,65 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         let username = material.username.take();
                         let password = material.password.take();
                         tracing::info!(id = id.as_deref(), "vault: created login");
-                        let _ = event_tx.send(VaultEvent::Created {
-                            id,
-                            username,
-                            password,
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::Created {
+                                id,
+                                username,
+                                password,
+                            },
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "vault: create login failed");
-                        let _ = event_tx.send(VaultEvent::Error {
-                            message: e.to_string(),
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
                     }
                 }
                 password.zeroize();
             }
             VaultCmd::ListTotp { url } => match svc.list_totp(&url).await {
                 Ok(m) => {
-                    let _ = event_tx.send(VaultEvent::Totp(m));
+                    emit(&event_tx, VaultEvent::Totp(m));
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::FillTotp { id } => match svc.fill_totp(&id).await {
                 Ok(code) => {
                     crate::vault::VaultPrefs::touch_cipher(&id);
-                    let _ = event_tx.send(VaultEvent::TotpFillReady { code });
+                    emit(&event_tx, VaultEvent::TotpFillReady { code });
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::ListCards => match svc.list_cards().await {
                 Ok(m) => {
-                    let _ = event_tx.send(VaultEvent::Cards(m));
+                    emit(&event_tx, VaultEvent::Cards(m));
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::FillCard { id } => match svc.fill_card(&id).await {
@@ -455,19 +496,25 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     let exp_year = material.exp_year.take();
                     let code = material.code.take();
                     let brand = material.brand.take();
-                    let _ = event_tx.send(VaultEvent::CardFillReady {
-                        cardholder_name,
-                        number,
-                        exp_month,
-                        exp_year,
-                        code,
-                        brand,
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::CardFillReady {
+                            cardholder_name,
+                            number,
+                            exp_month,
+                            exp_year,
+                            code,
+                            brand,
+                        },
+                    );
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
@@ -478,12 +525,15 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     }
                     let username = material.username.take();
                     let password = material.password.take();
-                    let _ = event_tx.send(VaultEvent::FillReady { username, password });
+                    emit(&event_tx, VaultEvent::FillReady { username, password });
                 }
                 Err(e) => {
-                    let _ = event_tx.send(VaultEvent::Error {
-                        message: e.to_string(),
-                    });
+                    emit(
+                        &event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             },
             VaultCmd::PasskeyList { req_id, rp_id } => {
@@ -495,15 +545,21 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                             n = candidates.len(),
                             "vault: passkey candidates"
                         );
-                        let _ = event_tx.send(VaultEvent::PasskeyCandidates { req_id, candidates });
+                        emit(
+                            &event_tx,
+                            VaultEvent::PasskeyCandidates { req_id, candidates },
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(req_id, error = %e, "vault: passkey list failed");
-                        let _ = event_tx.send(VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: false,
+                                payload: e.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -526,19 +582,25 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         let payload = serde_json::to_string(&assertion)
                             .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
                         tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
-                        let _ = event_tx.send(VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: true,
-                            payload,
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: true,
+                                payload,
+                            },
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
-                        let _ = event_tx.send(VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: false,
+                                payload: e.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -565,11 +627,14 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                                 attached = cipher_id.is_some(),
                                 "vault: passkey register ok"
                             );
-                            let _ = event_tx.send(VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: true,
-                                payload,
-                            });
+                            emit(
+                                &event_tx,
+                                VaultEvent::PasskeyReady {
+                                    req_id,
+                                    ok: true,
+                                    payload,
+                                },
+                            );
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -577,20 +642,28 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                                 error = %e,
                                 "vault: passkey register persist failed"
                             );
-                            let _ = event_tx.send(VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: false,
-                                payload: format!("Could not save the passkey to Bitwarden: {e}"),
-                            });
+                            emit(
+                                &event_tx,
+                                VaultEvent::PasskeyReady {
+                                    req_id,
+                                    ok: false,
+                                    payload: format!(
+                                        "Could not save the passkey to Bitwarden: {e}"
+                                    ),
+                                },
+                            );
                         }
                     },
                     Err(e) => {
                         tracing::warn!(req_id, error = %e, "vault: passkey register failed");
-                        let _ = event_tx.send(VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        });
+                        emit(
+                            &event_tx,
+                            VaultEvent::PasskeyReady {
+                                req_id,
+                                ok: false,
+                                payload: e.to_string(),
+                            },
+                        );
                     }
                 }
             }

@@ -1,9 +1,10 @@
 [workspace]
 members = ["crates/*"]
 # `wgpu-hal-patched` is a vendored wgpu-hal 27.0.4 with
-# `VK_EXT_image_drm_format_modifier` enabled; pulled in workspace-wide
-# via `[patch.crates-io]` below. Excluded as a member so cargo doesn't
-# try to compile it as a standalone target.
+# `VK_EXT_image_drm_format_modifier` enabled; `iced_winit-patched` is
+# iced 0.14 iced_winit plus Wayland opaque-region from window-fill
+# alpha. Both are pulled in via `[patch.crates-io]` below and excluded
+# as members so cargo doesn't compile them as standalone targets.
 #
 # Iced/wgpu/WPE feature unification across the rest of the workspace
 # is OK because `.cargo/config.toml` bakes `/run/current-system/sw/lib`
@@ -14,6 +15,7 @@ members = ["crates/*"]
 # (wpe-webkit-2.0, wpe-platform-2.0, …) resolve system-wide.
 exclude = [
     "crates/wgpu-hal-patched",
+    "crates/iced_winit-patched",
 ]
 resolver = "3"
 
@@ -47,6 +49,8 @@ html2text = "0.14"
 [patch.crates-io]
 download-cef = { path = "crates/download-cef-stub" }
 wgpu-hal = { path = "crates/wgpu-hal-patched" }
+# iced 0.14: Wayland opaque-region from window-fill alpha (tiled scanout).
+iced_winit = { path = "crates/iced_winit-patched" }
 
 # Release builds strip DWARF debug info but keep the symbol table, so
 # stack traces from /opt/sola/log still show meaningful function names

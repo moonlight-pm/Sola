@@ -190,7 +190,11 @@ pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, handle: Opti
         return;
     }
     if !state.floating.contains(&window_id) {
-        tracing::debug!(window_id, ?kind, "interactive op ignored: window not floating");
+        tracing::debug!(
+            window_id,
+            ?kind,
+            "interactive op ignored: window not floating"
+        );
         return; // move/resize is floating-only
     }
     let Some(g) = state.registry.geometry(window_id) else {
@@ -392,7 +396,12 @@ mod tests {
     #[test]
     fn resize_clamps_to_min_and_keeps_pinned_corner() {
         // Drag the top-left far past the minimum: the bottom-right pin holds.
-        let r = resized(rect(100, 100, 400, 300), ResizeHandle::NorthWest, 1000, 1000);
+        let r = resized(
+            rect(100, 100, 400, 300),
+            ResizeHandle::NorthWest,
+            1000,
+            1000,
+        );
         assert_eq!((r.w, r.h), (MIN_DIM, MIN_DIM));
         assert_eq!((r.x + r.w, r.y + r.h), (500, 400));
     }

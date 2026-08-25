@@ -33,6 +33,7 @@ ask the human.
 | File | Purpose | Kind |
 |------|---------|------|
 | [`../CURRENT.md`](../CURRENT.md) | Living priority, dogfood, locks | **Focus** |
+| [`../PERFORMANCE.md`](../PERFORMANCE.md) | GPU / iced idle program: shipped, smoke, next | **As-built** track |
 | [`capabilities.md`](capabilities.md) | Capability status + gaps | **As-built** |
 | [`architecture.md`](architecture.md) | Processes, crates, bus, call plane, install layout | **As-built** map |
 | [`progress-model.md`](progress-model.md) | How is / will-be / focus / manual fit | Meta |
@@ -54,6 +55,7 @@ ask the human.
 |------|------|
 | `AGENTS.md` | Contributor + agent guide |
 | `CURRENT.md` | Only living session handoff |
+| `PERFORMANCE.md` | GPU / idle program log (not a second CURRENT) |
 | `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
 | `nix/` | NixOS module + `nix/image/` ISO/qcow sources |
 | `crates/sola-install` | Installer wizard binary |

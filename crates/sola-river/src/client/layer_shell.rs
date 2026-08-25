@@ -16,8 +16,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use crate::client::AppData;
 use crate::protocol::river_layer_shell_v1::{
     river_layer_shell_output_v1::RiverLayerShellOutputV1,
-    river_layer_shell_seat_v1::RiverLayerShellSeatV1,
-    river_layer_shell_v1::RiverLayerShellV1,
+    river_layer_shell_seat_v1::RiverLayerShellSeatV1, river_layer_shell_v1::RiverLayerShellV1,
 };
 use crate::protocol::river_window_management_v1::{
     river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
@@ -131,7 +130,10 @@ impl Dispatch<RiverLayerShellOutputV1, ()> for AppData {
         // Hint only — Sola's shell still uses full-output geometry for
         // zoning. Logged so we can wire exclusive-zone insets later if
         // a panel ever needs them.
-        debug!(x, y, width, height, "layer-shell non_exclusive_area (ignored)");
+        debug!(
+            x,
+            y, width, height, "layer-shell non_exclusive_area (ignored)"
+        );
     }
 }
 
@@ -198,7 +200,10 @@ pub fn sync_chord_suppression(state: &mut AppData) {
         }
         state.layer_shell.chords_suppressed = false;
         if n > 0 {
-            info!(count = n, "re-enabled shell chords after layer focus release");
+            info!(
+                count = n,
+                "re-enabled shell chords after layer focus release"
+            );
         }
     }
 }

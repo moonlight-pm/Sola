@@ -36,13 +36,15 @@ pub fn push_from_page(req: PasskeyPageRequest) {
     if let Some(tx) = TO_UI.get() {
         if let Err(e) = tx.send(req) {
             tracing::warn!(error = %e, "passkey: page→ui channel closed");
+        } else {
+            crate::chrome_wake::wake();
         }
     } else {
         tracing::debug!("passkey: bridge not installed yet");
     }
 }
 
-/// Drain pending page requests (UI Tick).
+/// Drain pending page requests.
 pub fn try_recv() -> Option<PasskeyPageRequest> {
     let lock = FROM_UI.get()?;
     let rx = lock.lock().ok()?;
@@ -70,6 +72,7 @@ fn fill_channels() -> (&'static Sender<bool>, &'static Mutex<Receiver<bool>>) {
 pub fn push_fill_result(found: bool) {
     let (tx, _) = fill_channels();
     let _ = tx.send(found);
+    crate::chrome_wake::wake();
 }
 
 pub fn try_recv_fill() -> Option<bool> {

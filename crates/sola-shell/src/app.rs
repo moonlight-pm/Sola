@@ -23,7 +23,7 @@ use crate::zoning::ZoningState;
 
 pub mod bus;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Menubar,
     Menu,
@@ -37,6 +37,14 @@ pub enum Msg {
     Bus(Arc<sola_bus::Message>),
     /// Fired by `iced::window::open`'s Task when a window's OS handle is ready.
     WindowOpened(WindowKind, iced::window::Id),
+    /// Overlay iced swapchain size (after Wayland configure). Used to delay
+    /// Composition until the buffer is live, not the parked 2×2.
+    OverlayIcedResized {
+        id: iced::window::Id,
+        size: iced::Size,
+    },
+    /// Next-tick hop after a live overlay resize so view/present run first.
+    CommitOverlayShow,
     /// Open the menu at the given app-menu index (0 = app-name slot).
     /// `is_system` true means the system-menu button was pressed.
     OpenMenu {
@@ -276,15 +284,18 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
+    /// Iced-reported live swapchain for menu / launcher / switcher / selection.
+    /// Composition waits on this so River does not show a stretched 2×2.
+    overlay_iced_live: [bool; 4],
 }
 
 impl Shell {
     /// Wayland app_id / bus app_id for the shell's own surfaces.
     pub const APP_ID: &'static str = "sola-shell";
 
-    /// Boot the daemon: initialise state and immediately open all four windows.
-    /// Returns `(Self, Task<Msg>)` — the Task opens the windows and maps the
-    /// resulting `window::Id` into `Msg::WindowOpened(Kind, id)`.
+    /// Boot the daemon: menubar first. Menu / launcher / switcher / selection
+    /// park at 2×2 after the menubar maps so show is Frame + iced resize,
+    /// not a new map — without keeping 5K swapchains while dismissed.
     pub fn boot() -> (Self, iced::Task<Msg>) {
         let theme = theme::default_theme();
 
@@ -305,28 +316,17 @@ impl Shell {
             }
         }
 
-        // Pre-allocate window ids and produce open tasks for all shell surfaces.
         let (menubar_id, menubar_task) = menubar::open_window();
-        let (menu_id, menu_task) = crate::menu::open_window();
-        let (launcher_id, launcher_task) = crate::launcher::open_window();
-        let (switcher_id, switcher_task) = crate::switcher::open_window();
-        let (selection_id, selection_task) = crate::selection::open_window();
-        let task = iced::Task::batch([
-            menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id)),
-            menu_task.map(|id| Msg::WindowOpened(WindowKind::Menu, id)),
-            launcher_task.map(|id| Msg::WindowOpened(WindowKind::Launcher, id)),
-            switcher_task.map(|id| Msg::WindowOpened(WindowKind::Switcher, id)),
-            selection_task.map(|id| Msg::WindowOpened(WindowKind::Selection, id)),
-        ]);
+        let task = menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id));
 
         let state = Self {
             theme,
             style: theme::ShellStyle::default(),
             menubar_window_id: Some(menubar_id),
-            menu_window_id: Some(menu_id),
-            launcher_window_id: Some(launcher_id),
-            switcher_window_id: Some(switcher_id),
-            selection_window_id: Some(selection_id),
+            menu_window_id: None,
+            launcher_window_id: None,
+            switcher_window_id: None,
+            selection_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -365,6 +365,7 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            overlay_iced_live: [false; 4],
         };
 
         (state, task)
@@ -433,11 +434,7 @@ impl Shell {
     /// Unread to show in the menubar, if any.
     pub fn mail_unread_badge(&self) -> Option<u32> {
         let n = self.inbox_unread.filter(|n| *n > 0)?;
-        if self.mail_is_mapped() {
-            Some(n)
-        } else {
-            None
-        }
+        if self.mail_is_mapped() { Some(n) } else { None }
     }
 
     /// Raise sola-mail (unhide first if it is composition-hidden).
@@ -694,23 +691,25 @@ impl Shell {
             }
         }
 
-        // 4. Shell overlays on top when active.
-        if self.menu_open {
+        // 4. Shell overlays on top when active *and* already live-sized.
+        //    Framing to the output happens while still hidden; joining the
+        //    stack at 2×2 is the first-show flash.
+        if self.overlay_should_compose("menu", self.menu_open) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
-        if self.switcher.active {
+        if self.overlay_should_compose("switcher", self.switcher.active) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
-        if self.launcher.active {
+        if self.overlay_should_compose("launcher", self.launcher.active) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
-        if self.selection.active {
+        if self.overlay_should_compose("selection", self.selection.active) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
                 entries.push(CompositionEntry { window_id: wid });
             }
@@ -888,7 +887,7 @@ impl Shell {
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
-                                          // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
+        // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
         bindings.push(KeyCode::KEY_5.meta_shift());
@@ -906,10 +905,11 @@ impl Shell {
         bindings
     }
 
-    /// Emit Topic::Frame for all shell windows and any explicitly-zoned app windows.
+    /// Emit Topic::Frame for mapped shell windows and zoned app windows.
     ///
-    /// Shell overlays are framed eagerly (even when hidden) so show/hide via
-    /// Topic::Composition is a pure visibility flip with no resize lag.
+    /// Overlays stay mapped: live size while visible, 2×2 while dismissed
+    /// (see [`crate::zoning::overlay_frame`]). Lookup misses until River
+    /// publishes the surface — a later `Windows` / `WindowOpened` fills in.
     pub fn emit_all_frames(&self) {
         let mut frames: Vec<FrameUpdate> = Vec::new();
 
@@ -918,37 +918,7 @@ impl Shell {
                 frames.push(f);
             }
         }
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
-            if let Some(f) = self.zoning.default_app_frame(wid) {
-                frames.push(f);
-            }
-        }
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
-            if let Some(f) = self.zoning.default_app_frame(wid) {
-                frames.push(f);
-            }
-        }
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
-            // Full-screen transparent overlay (same as launcher/menu); the
-            // switcher view centers a grid that grows to fit the open apps.
-            // (Previously a fixed 800x400 frame, which clipped the grid.)
-            if let Some(f) = self.zoning.default_app_frame(wid) {
-                frames.push(f);
-            }
-        }
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
-            // Full output at 0,0 so marquee coords match compositor space.
-            if let Some((w, h)) = self.zoning.output_size {
-                frames.push(FrameUpdate {
-                    window_id: wid,
-                    x: 0,
-                    y: 0,
-                    width: w,
-                    height: h,
-                    fullscreen: false,
-                });
-            }
-        }
+        self.collect_overlay_frames(&mut frames);
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
                 continue;
@@ -965,11 +935,107 @@ impl Shell {
             }
         }
 
-        if !frames.is_empty() {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for f in frames {
-                    let _ = bus.emit(Topic::Frame(f));
+        Self::emit_frames(frames);
+    }
+
+    fn collect_overlay_frames(&self, frames: &mut Vec<FrameUpdate>) {
+        let output = self.zoning.output_size;
+        for (title, visible, cover_menubar) in [
+            ("launcher", self.launcher.active, false),
+            ("menu", self.menu_open, false),
+            ("switcher", self.switcher.active, false),
+            ("selection", self.selection.active, true),
+        ] {
+            let Some(wid) = self.lookup_window_id(Self::APP_ID, title) else {
+                continue;
+            };
+            if let Some(f) = crate::zoning::overlay_frame(wid, visible, output, cover_menubar) {
+                frames.push(f);
+            }
+        }
+    }
+
+    /// Frame only overlays (park ↔ live). Do not re-Frame zoned apps — a
+    /// launcher toggle must not re-propose gamescope / Electron sizes.
+    fn emit_overlay_frames(&self) {
+        let mut frames = Vec::new();
+        self.collect_overlay_frames(&mut frames);
+        Self::emit_frames(frames);
+    }
+
+    fn overlay_live_index(kind: WindowKind) -> Option<usize> {
+        match kind {
+            WindowKind::Menu => Some(0),
+            WindowKind::Launcher => Some(1),
+            WindowKind::Switcher => Some(2),
+            WindowKind::Selection => Some(3),
+            WindowKind::Menubar => None,
+        }
+    }
+
+    fn overlay_kind_of_iced(&self, id: iced::window::Id) -> Option<WindowKind> {
+        [
+            WindowKind::Menu,
+            WindowKind::Launcher,
+            WindowKind::Switcher,
+            WindowKind::Selection,
+        ]
+        .into_iter()
+        .find(|&kind| self.overlay_id(kind) == Some(id))
+    }
+
+    fn overlay_iced_live_for_title(&self, title: &str) -> bool {
+        let idx = match title {
+            "menu" => 0,
+            "launcher" => 1,
+            "switcher" => 2,
+            "selection" => 3,
+            _ => return false,
+        };
+        self.overlay_iced_live[idx]
+    }
+
+    fn overlay_should_compose(&self, title: &str, active: bool) -> bool {
+        active && self.overlay_iced_live_for_title(title)
+    }
+
+    fn note_overlay_iced_size(&mut self, kind: WindowKind, size: iced::Size) -> bool {
+        let Some(idx) = Self::overlay_live_index(kind) else {
+            return false;
+        };
+        let live = crate::zoning::overlay_geometry_is_live(size.width as i32, size.height as i32);
+        self.overlay_iced_live[idx] = live;
+        live
+    }
+
+    fn commit_overlay_show(&mut self) {
+        self.emit_composition();
+        for (title, want) in [
+            ("launcher", self.launcher.active),
+            ("switcher", self.switcher.active),
+            ("selection", self.selection.active),
+        ] {
+            if !self.overlay_should_compose(title, want) {
+                continue;
+            }
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, title) {
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
                 }
+                if title == "switcher" {
+                    self.focused_window_id = Some(wid);
+                }
+            }
+        }
+    }
+
+    fn emit_frames(frames: Vec<FrameUpdate>) {
+        if frames.is_empty() {
+            return;
+        }
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            for f in frames {
+                let _ = bus.emit(Topic::Frame(f));
             }
         }
     }
@@ -1140,15 +1206,133 @@ impl Shell {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
             crate::stats::subscription().map(Msg::StatsTick),
+            iced::window::resize_events().map(|(id, size)| Msg::OverlayIcedResized { id, size }),
             kb,
         ])
     }
 
+    /// Map parked overlay iced windows if they are missing. Called after
+    /// the first Composition (menubar) so River hides them on first map.
+    fn ensure_overlay_windows(&mut self) -> iced::Task<Msg> {
+        iced::Task::batch([
+            self.open_overlay(WindowKind::Menu),
+            self.open_overlay(WindowKind::Launcher),
+            self.open_overlay(WindowKind::Switcher),
+            self.open_overlay(WindowKind::Selection),
+        ])
+    }
+
+    fn overlay_id(&self, kind: WindowKind) -> Option<iced::window::Id> {
+        match kind {
+            WindowKind::Menubar => self.menubar_window_id,
+            WindowKind::Menu => self.menu_window_id,
+            WindowKind::Launcher => self.launcher_window_id,
+            WindowKind::Switcher => self.switcher_window_id,
+            WindowKind::Selection => self.selection_window_id,
+        }
+    }
+
+    fn overlay_id_mut(&mut self, kind: WindowKind) -> &mut Option<iced::window::Id> {
+        match kind {
+            WindowKind::Menubar => &mut self.menubar_window_id,
+            WindowKind::Menu => &mut self.menu_window_id,
+            WindowKind::Launcher => &mut self.launcher_window_id,
+            WindowKind::Switcher => &mut self.switcher_window_id,
+            WindowKind::Selection => &mut self.selection_window_id,
+        }
+    }
+
+    fn overlay_want(&self, kind: WindowKind) -> bool {
+        match kind {
+            WindowKind::Menubar => true,
+            WindowKind::Menu => self.menu_open,
+            WindowKind::Launcher => self.launcher.active,
+            WindowKind::Switcher => self.switcher.active,
+            WindowKind::Selection => self.selection.active,
+        }
+    }
+
+    fn overlay_visibility(&self) -> [bool; 4] {
+        [
+            self.menu_open,
+            self.launcher.active,
+            self.switcher.active,
+            self.selection.active,
+        ]
+    }
+
+    fn open_overlay(&mut self, kind: WindowKind) -> iced::Task<Msg> {
+        if matches!(kind, WindowKind::Menubar) || self.overlay_id(kind).is_some() {
+            return iced::Task::none();
+        }
+        let (id, task) = match kind {
+            WindowKind::Menu => crate::menu::open_window(),
+            WindowKind::Launcher => crate::launcher::open_window(),
+            WindowKind::Switcher => crate::switcher::open_window(),
+            WindowKind::Selection => crate::selection::open_window(),
+            WindowKind::Menubar => return iced::Task::none(),
+        };
+        *self.overlay_id_mut(kind) = Some(id);
+        task.map(move |opened| Msg::WindowOpened(kind, opened))
+    }
+
+    fn on_overlay_mapped(&mut self, kind: WindowKind) -> iced::Task<Msg> {
+        self.emit_all_frames();
+        self.emit_composition();
+        if kind == WindowKind::Menubar {
+            return self.ensure_overlay_windows();
+        }
+        if kind == WindowKind::Launcher && self.launcher.active {
+            return iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                crate::launcher::view::QUERY_INPUT_ID,
+            ));
+        }
+        iced::Task::none()
+    }
+
     pub fn update(&mut self, msg: Msg) -> iced::Task<Msg> {
+        let before = self.overlay_visibility();
+        let task = self.dispatch_msg(msg);
+        let after = self.overlay_visibility();
+        let mut tasks = vec![task];
+        if !self.last_composition.is_empty()
+            && (self.menu_window_id.is_none()
+                || self.launcher_window_id.is_none()
+                || self.switcher_window_id.is_none()
+                || self.selection_window_id.is_none())
+        {
+            tasks.push(self.ensure_overlay_windows());
+        }
+        if before != after {
+            for i in 0..4 {
+                if before[i] && !after[i] {
+                    self.overlay_iced_live[i] = false;
+                }
+            }
+            self.emit_overlay_frames();
+        }
+        iced::Task::batch(tasks)
+    }
+
+    fn dispatch_msg(&mut self, msg: Msg) -> iced::Task<Msg> {
         match msg {
             Msg::Bus(arc) => self.handle_bus(&arc),
-            Msg::WindowOpened(_kind, _id) => {
-                // Window id was pre-allocated in boot(); the OS confirmed it.
+            Msg::WindowOpened(kind, id) => {
+                *self.overlay_id_mut(kind) = Some(id);
+                self.on_overlay_mapped(kind)
+            }
+            Msg::OverlayIcedResized { id, size } => {
+                let Some(kind) = self.overlay_kind_of_iced(id) else {
+                    return iced::Task::none();
+                };
+                let live = self.note_overlay_iced_size(kind, size);
+                if live && self.overlay_want(kind) {
+                    return iced::Task::done(Msg::CommitOverlayShow);
+                }
+                iced::Task::none()
+            }
+            Msg::CommitOverlayShow => {
+                self.commit_overlay_show();
                 iced::Task::none()
             }
             Msg::ClockTick => {
@@ -1343,12 +1527,8 @@ impl Shell {
                 self.launcher.apply_query(&apps, "");
                 self.emit_composition();
                 self.emit_registered_chords();
-                // Emit Topic::Focus to route keyboard to the launcher surface.
-                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
+                // Keyboard routes after iced reports a live swapchain
+                // (`CommitOverlayShow`). Focusing the parked 2×2 can unhide it.
                 // Also focus the query input inside iced.
                 iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
                     crate::launcher::view::QUERY_INPUT_ID,
@@ -1701,6 +1881,7 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            overlay_iced_live: [false; 4],
         };
         shell.menubar.toast_generation = 1;
         shell.menubar.toast = Some("Opening Terminal…".into());

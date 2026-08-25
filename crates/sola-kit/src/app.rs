@@ -234,7 +234,9 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 ///
 /// While floating, pair with [`crate::theme::overlay`] so `background.base`
 /// is clear and only the rounded frame paints. While zoned/tiled, keep the
-/// normal theme — iced fills the rectangular surface opaquely.
+/// normal theme — iced fills the rectangle opaquely and the patched
+/// `iced_winit` sets a full Wayland opaque-region so River can scan out
+/// instead of blending ARGB.
 pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settings {
     let mut settings = window_settings(app_id);
     settings.transparent = true;

@@ -48,11 +48,11 @@ use wayland_client::protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
 use crate::client::AppData;
-use crate::registry::Entry;
 use crate::protocol::wlr_screencopy_unstable_v1::{
     zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1},
     zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
 };
+use crate::registry::Entry;
 
 /// Globals + single-flight capture state owned by `AppData`.
 #[derive(Default)]
@@ -123,11 +123,7 @@ pub fn poll_results(state: &mut AppData) {
 }
 
 /// Handle a sola-call screenshot. Completes `reply` when encode finishes.
-pub fn handle_call(
-    state: &mut AppData,
-    req: CaptureScreenPayload,
-    reply: sola_call::ReplyTx,
-) {
+pub fn handle_call(state: &mut AppData, req: CaptureScreenPayload, reply: sola_call::ReplyTx) {
     if in_progress(state) {
         reply.err("screenshot already in progress");
         return;
@@ -137,7 +133,6 @@ pub fn handle_call(
 }
 
 fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
-
     let Some(manager) = state.screenshot.manager.clone() else {
         emit_err(state, "zwlr_screencopy_manager_v1 not available");
         return;
@@ -169,10 +164,7 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
             manager.capture_output(0, &output, &qh, ())
         }
         CaptureTarget::Window { app_id, title } => {
-            let Some(entry) = state
-                .registry
-                .find_by_app_title(app_id, title.as_deref())
-            else {
+            let Some(entry) = state.registry.find_by_app_title(app_id, title.as_deref()) else {
                 emit_err(
                     state,
                     format!("window not found: app_id={app_id} title={title:?}"),
@@ -215,10 +207,7 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
         } => {
             let (x, y, width, height) = (*x, *y, *width, *height);
             if width <= 0 || height <= 0 {
-                emit_err(
-                    state,
-                    format!("invalid region size: {width}×{height}"),
-                );
+                emit_err(state, format!("invalid region size: {width}×{height}"));
                 return;
             }
             info!(

@@ -5,6 +5,7 @@ Progress docs are first-class. Incomplete meta work is incomplete product work.
 | Kind | Home |
 |------|------|
 | Focus | Root `CURRENT.md` only |
+| GPU / idle | Root `PERFORMANCE.md` |
 | Maturity | `docs/capabilities.md` |
 | Map | `docs/architecture.md` |
 | Freezes | `docs/specs/` |

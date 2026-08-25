@@ -13,11 +13,13 @@
 //! [`is_floating_any`] in `view`.
 //!
 //! Typical single-window kit app wiring:
-//! 1. `window_settings_transparent(APP_ID)`
+//! 1. `window_settings_transparent(APP_ID)` (ARGB swapchain for float CSD)
 //! 2. `FloatState::new(APP_ID)` + `window_id: Option<window::Id>`
 //! 3. Boot: `window::latest().map(Msg::WindowReady)`
 //! 4. Bus: `float.update(&message)`
-//! 5. Theme: [`theme_for`] while floating
+//! 5. Theme: [`theme_for`] while floating — tiled is an opaque fill, which
+//!    the patched `iced_winit` turns into a Wayland opaque-region (River
+//!    GLES scanout). Float uses [`crate::theme::overlay`] and clears it.
 //! 6. View: [`wrap_if_floating`] around content
 //! 7. Handlers: [`drag`] / [`drag_resize`] / [`close_app`]
 //!
@@ -98,7 +100,8 @@ impl FloatState {
 }
 
 /// Theme while floating: clear `background.base` so rounded corners show
-/// the desktop. Zoned: the live theme unchanged.
+/// the desktop (and Wayland opaque-region is cleared). Zoned: the live
+/// theme unchanged (opaque fill → compositor scanout).
 pub fn theme_for(floating: bool, theme: &Theme) -> Theme {
     if floating {
         crate::theme::overlay(theme)
@@ -175,6 +178,31 @@ mod tests {
             title: title.into(),
             pid: None,
         }
+    }
+
+    #[test]
+    fn theme_for_tiled_is_opaque_float_is_transparent() {
+        let base = crate::default_theme();
+        assert!(
+            theme_for(false, &base)
+                .extended_palette()
+                .background
+                .base
+                .color
+                .a
+                >= 0.999,
+            "tiled fill must be opaque so iced_winit can set opaque-region"
+        );
+        assert_eq!(
+            theme_for(true, &base)
+                .extended_palette()
+                .background
+                .base
+                .color
+                .a,
+            0.0,
+            "float overlay must clear the fill so rounded CSD can punch through"
+        );
     }
 
     #[test]

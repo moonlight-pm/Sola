@@ -9,7 +9,7 @@ Wayland compositor, bridged by `sola-river`.
 1. This file.
 2. [`CURRENT.md`](CURRENT.md) — living priority and dogfood/runtime state.
 3. [`docs/capabilities.md`](docs/capabilities.md) — as-built maturity for the
-   slice you will touch.
+   slice you will touch. GPU / iced idle: also [`PERFORMANCE.md`](PERFORMANCE.md).
 4. [`docs/open-questions.md`](docs/open-questions.md) — any **Decision points**
    for the slice? If yes, **ask the human**; do not invent product policy.
 5. Only the freeze or plan needed for the active domain.
@@ -39,6 +39,7 @@ means incomplete product work. Full model:
 | Kind | Home | Role |
 |------|------|------|
 | Focus | Root `CURRENT.md` | Priority, next moves, dogfood facts, locks |
+| GPU / idle | Root `PERFORMANCE.md` | Present/scanout track (not a second CURRENT) |
 | As-built progress | `docs/capabilities.md` | Capability status + gaps |
 | As-built map | `docs/architecture.md` | Processes, crates, paths, IPC |
 | Target design | `docs/specs/*` | Freezes (desired shape) |
@@ -48,7 +49,8 @@ means incomplete product work. Full model:
 **End of every real product slice (same change as code):**
 
 1. Update capability row(s) (status and/or gaps).  
-2. Update `CURRENT.md` if priority or dogfood changed.  
+2. Update `CURRENT.md` if priority or dogfood changed. GPU/idle slices
+   also update root [`PERFORMANCE.md`](PERFORMANCE.md).  
 3. Update `docs/manual/` if operator-visible **shipped** behavior changed.  
 4. Update `architecture.md` if the system map changed.  
 5. Flip `roadmap.md` phase status only when phase-level status changes.  
@@ -342,8 +344,9 @@ apps need shared pieces — no speculative widgets.
 ## sola-shell (the Iced desktop shell)
 
 A single **`iced::daemon`** multi-window application. The daemon opens no
-default window; a boot task opens the menubar, and the other three windows
-(`WindowKind`: `Menubar`, `Menu`, `Launcher`, `Switcher`) open on demand. The
+default window; a boot task opens the menubar, then parks menu / launcher /
+switcher / selection at 2×2 (`WindowKind`). Show is Frame to live output, not
+a new map. The
 `Shell` struct holds the per-window `iced::window::Id`s, focused app/window,
 MRU apps + per-app MRU windows, known windows, the application list, parsed app
 menus, output size, menu open-state, switcher/launcher sub-state, and zoning

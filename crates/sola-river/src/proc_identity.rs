@@ -7,20 +7,18 @@ use std::path::Path;
 /// True when `pid` looks like a gamescope host process (cmdline contains
 /// `gamescope` as an argv token or path component).
 pub fn process_is_gamescope(pid: u32) -> bool {
-    let raw = std::fs::read(Path::new("/proc").join(pid.to_string()).join("cmdline"))
-        .unwrap_or_default();
+    let raw =
+        std::fs::read(Path::new("/proc").join(pid.to_string()).join("cmdline")).unwrap_or_default();
     if raw.is_empty() {
         return false;
     }
     // `/proc/*/cmdline` is NUL-separated argv.
-    raw.split(|&b| b == 0)
-        .filter(|t| !t.is_empty())
-        .any(|tok| {
-            let s = String::from_utf8_lossy(tok);
-            // Match path tail or bare name without catching e.g. "my-gamescope-docs".
-            let base = s.rsplit('/').next().unwrap_or(&s);
-            base == "gamescope" || base.starts_with("gamescope-")
-        })
+    raw.split(|&b| b == 0).filter(|t| !t.is_empty()).any(|tok| {
+        let s = String::from_utf8_lossy(tok);
+        // Match path tail or bare name without catching e.g. "my-gamescope-docs".
+        let base = s.rsplit('/').next().unwrap_or(&s);
+        base == "gamescope" || base.starts_with("gamescope-")
+    })
 }
 
 /// Canonical Wayland app_id we force for gamescope hosts.

@@ -602,7 +602,8 @@ impl Storybook {
 
         if self.page == Page::Sidebar {
             subs.push(self.sidebar.subscription().map(Msg::Sidebar));
-            subs.push(iced::window::frames().map(|_| Msg::Sidebar(pages::sidebar::Msg::MarkTick)));
+            // Working-mark canvas self-pumps at RING_TICK; do not subscribe
+            // to window::frames() (that rebuilds the whole storybook at vsync).
         }
 
         // Split dogfood: live divider drag on the Split page.

@@ -126,11 +126,7 @@ impl WindowRegistry {
         let Some(e) = self.by_id.get_mut(&id) else {
             return false;
         };
-        let empty_app = e
-            .app_id
-            .as_deref()
-            .map(|s| s.is_empty())
-            .unwrap_or(true);
+        let empty_app = e.app_id.as_deref().map(|s| s.is_empty()).unwrap_or(true);
         if !empty_app {
             return false;
         }
@@ -141,11 +137,7 @@ impl WindowRegistry {
             return false;
         }
         e.app_id = Some(GAMESCOPE_APP_ID.into());
-        let title_empty = e
-            .title
-            .as_deref()
-            .map(|s| s.is_empty())
-            .unwrap_or(true);
+        let title_empty = e.title.as_deref().map(|s| s.is_empty()).unwrap_or(true);
         if title_empty {
             e.title = Some(GAMESCOPE_DEFAULT_TITLE.into());
         }

@@ -2,26 +2,22 @@
 //!
 //! `state` holds `SwitcherState` and `SwitcherApp` — pure data.
 //! `view` renders the full-overlay card strip.
-//! `open_window` opens the persistent overlay at boot.
+//! `open_window` parks a 2×2 surface; shown while the switcher is active.
 pub mod state;
 pub mod view;
 
 use iced::window;
 use sola_kit::app::window_settings;
 
-/// Full-overlay height: 1080 − 28px menubar.  Task 10 corrects from
-/// Topic::OutputGeometry.
-const SWITCHER_WINDOW_HEIGHT: f32 = 1052.0;
-
-/// Open the switcher overlay window and return `(id, Task<Id>)`.
-///
-/// Full-screen (1920 × 1052) transparent overlay, positioned immediately
-/// below the menubar at Y=28.  Hidden via composition (Task 10) when
-/// `switcher.active` is false.
+/// Open the switcher parked at 2×2. Show Frames to the live usable area.
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
-    settings.size = iced::Size::new(1920.0, SWITCHER_WINDOW_HEIGHT);
-    settings.position = iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    let p = crate::zoning::OVERLAY_PARK as f32;
+    settings.size = iced::Size::new(p, p);
+    settings.position = iced::window::Position::Specific(iced::Point::new(
+        crate::zoning::OVERLAY_PARK_X as f32,
+        crate::zoning::OVERLAY_PARK_Y as f32,
+    ));
     settings.resizable = false;
     settings.decorations = false;
     settings.transparent = true;

@@ -5,7 +5,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_chi
 
 use sola_bus::topics::{Topic, WindowGeometry};
 
-use crate::client::{op, AppData};
+use crate::client::{AppData, op};
 use crate::protocol::river_window_management_v1::{
     river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
     river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
@@ -61,8 +61,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                     // via river_seat_v1::set_xcursor_theme (since v2).
                     // Without this call the cursor sticks at river's
                     // internal default no matter what the env says.
-                    let theme = std::env::var("XCURSOR_THEME")
-                        .unwrap_or_else(|_| "McMojave".to_string());
+                    let theme =
+                        std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "McMojave".to_string());
                     let size: u32 = std::env::var("XCURSOR_SIZE")
                         .ok()
                         .and_then(|s| s.parse().ok())
@@ -188,13 +188,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 ..
             } => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
-                info!(
-                    window_id,
-                    app_id,
-                    max_width,
-                    max_height,
-                    "dimensions hint"
-                );
+                info!(window_id, app_id, max_width, max_height, "dimensions hint");
                 state
                     .registry
                     .set_max_size(window_id, max_width, max_height);
@@ -221,7 +215,10 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::ExitFullscreenRequested => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
-                info!(window_id, app_id, "exit fullscreen requested (client-initiated)");
+                info!(
+                    window_id,
+                    app_id, "exit fullscreen requested (client-initiated)"
+                );
                 state.pending.queue_exit_fullscreen(window_id);
             }
             Event::Dimensions { width, height } => {
@@ -253,7 +250,13 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                         state.pending.manage_dirty = true;
                     }
                 }
-                tracing::debug!(window_id, width, height, newly_initialized, "window dimensions");
+                tracing::debug!(
+                    window_id,
+                    width,
+                    height,
+                    newly_initialized,
+                    "window dimensions"
+                );
             }
             Event::PointerMoveRequested { .. } => {
                 // Client-side-decoration move (e.g. a kit titlebar drag → xdg_toplevel.move).

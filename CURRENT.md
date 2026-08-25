@@ -9,25 +9,31 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-24 (Morph2 hole+FLIP reorder on `browser-polish`)
+**As of:** 2026-08-25 (GPU idle track → [`PERFORMANCE.md`](PERFORMANCE.md); next River NVIDIA knobs)
 
 ---
 
 ## Now
 
-1. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
+1. **GPU idle** — living track:
+   [`PERFORMANCE.md`](PERFORMANCE.md)
+   (architecture regression table + capabilities row `gpu-idle`).
+   Desk sample 2026-08-25: **mean 17.7%** at P8 / 21 W (was ~30–40%).
+   Opaque-region **not fully smoked** (session apps did not re-exec).
+   **Next:** restart those windows and re-measure, then River NVIDIA knobs.
+2. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
    loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
-2. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
+3. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
    `selection` atom. Workspaces PTYs share the palette. **Installed**
    `terminal` (2026-08-21).
-3. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
+4. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
    `Role::Observer` + `Wire::Trace` (not RPC on the bus). Kit JSON
    highlighter. **Installed** `call` + `monitor` (debug, 2026-08-21).
    Desk smoke pending. GPU menubar ranking (SM % + VRAM) also lands.
-4. **sola-mail** — **partial** (on **master**; `mail-polish` merged).
+5. **sola-mail** — **partial** (on **master**; `mail-polish` merged).
    Letter reading (kit `prose`, HTML preferred); Mail.app list (bold
    unread, one-line subjects); always-on reader toolbar (icons +
    tooltips; message actions muted until a row is selected); scroll
@@ -39,7 +45,7 @@ Do not invent product policy.
    stay visible (Wicket “Sign in” mail). Menubar inbox unread chip
    (accent; click raises mail; hidden when mail is closed).
    **Install:** ask; last slice was `install mail`.
-5. **Marketing site (sola.computer)** — **teaser live** at
+6. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
    `sola`, image `sola-landing`). Paper
@@ -49,7 +55,7 @@ Do not invent product policy.
    **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
-6. **sola-workspaces** — **partial** (on master)  
+7. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -97,20 +103,20 @@ Do not invent product policy.
    written back into `keyboard_mods`). Exiting Grok back to the shell
    idles the rail mark (grey disc; SessionEnd used to leave done).
    Installed (self-restart).  
-7. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+8. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
-8. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+9. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
    kit helper + `Role::Observer`. Workspaces registers owner `workspaces`
    (desk smoke pending). **D3** (confirm gates) is open. Catalog sticky
    on the bus still later (monitor observes the call socket instead).  
-9. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+10. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
-10. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-11. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+11. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+12. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
    preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: Bitwarden
    fill decrypts **org vaults** (desk smoke after `install browser`);

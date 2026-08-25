@@ -8,22 +8,16 @@ pub mod view;
 use iced::window;
 use sola_kit::app::window_settings;
 
-/// Placeholder height: 1080 − 28px menubar.  Task 10 corrects from
-/// Topic::OutputGeometry.
-const LAUNCHER_WINDOW_HEIGHT: f32 = 1052.0;
-
-/// Open the launcher overlay window and return `(id, Task<Id>)`.
-///
-/// Size matches the assumed 1920×1080 output minus the menubar, positioned
-/// immediately below the menubar at Y=28.  Transparency is on so the
-/// backdrop alpha and the card shadow render correctly.
-///
-/// The window is opened at boot and stays open for the shell's lifetime,
-/// hidden via composition (Task 10) when `launcher.active` is false.
+/// Open the launcher parked at 2×2. Show is a Frame + iced resize to the
+/// live output, not a new map.
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
-    settings.size = iced::Size::new(1920.0, LAUNCHER_WINDOW_HEIGHT);
-    settings.position = iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    let p = crate::zoning::OVERLAY_PARK as f32;
+    settings.size = iced::Size::new(p, p);
+    settings.position = iced::window::Position::Specific(iced::Point::new(
+        crate::zoning::OVERLAY_PARK_X as f32,
+        crate::zoning::OVERLAY_PARK_Y as f32,
+    ));
     settings.resizable = false;
     settings.decorations = false;
     settings.transparent = true;

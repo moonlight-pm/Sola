@@ -84,16 +84,16 @@ pub enum Msg {
     UrlSubmit,
     CloseTab(TabId),
     ActivateTab(TabId),
-    /// Timer tick — refresh `cached_tabs`/`cached_active` and
-    /// sync `url_field` if the active tab's URL changed.
+    /// Drain helper queues (tabs, downloads, copy, menus, vault). Fired
+    /// by [`crate::chrome_wake`] or a short-lived 250 ms timer (copy-URL
+    /// flash / TOTP / fill wait) — never as an idle vsync pump.
     Tick,
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
     /// Kit sidebar gesture. Forward into [`SidebarState::update`].
     Sidebar(sidebar::Msg),
-    /// Animation / page-menu pulse.
-    ReorderTick,
+
     /// Global cursor moved (nav-hold / leftover chrome). Sidebar gestures
     /// do not use this.
     CursorMoved(f32, f32),
@@ -1818,6 +1818,7 @@ impl<E: Engine> App<E> {
                 self.persist_session();
             }
             Msg::Tick => {
+                crate::chrome_wake::take_queued();
                 if self
                     .copy_url_flash
                     .is_some_and(|t| t.elapsed() >= COPY_URL_FLASH)
@@ -1994,10 +1995,6 @@ impl<E: Engine> App<E> {
                 }
                 DIVIDER_DRAGGING.store(self.sidebar.resizing(), Ordering::Relaxed);
                 REORDER_TRACKING.store(self.sidebar.capturing(), Ordering::Relaxed);
-            }
-            Msg::ReorderTick => {
-                self.take_page_menu();
-                return self.take_page_clipboard();
             }
             Msg::CursorMoved(_x, _y) => {}
             Msg::CursorReleased => {
@@ -4712,10 +4709,8 @@ impl<E: Engine> App<E> {
         let active = self.active_handle.clone();
         let mut subs = vec![
             crate::run::frame_subscription::<E>(frames, slot, active),
-            iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             sola_kit::app::bus_subscription().map(Msg::Bus),
-            // Always registered; `update` no-ops when not dragging.
-            iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
+            chrome_drain_subscription(),
             self.sidebar.subscription().map(Msg::Sidebar),
             event::listen_with(|event, status, _| {
                 match &event {
@@ -4780,6 +4775,9 @@ impl<E: Engine> App<E> {
                 }
             }),
         ];
+        if self.needs_chrome_poll_timer() {
+            subs.push(iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick));
+        }
         if self
             .nav_hold
             .as_ref()
@@ -4791,8 +4789,36 @@ impl<E: Engine> App<E> {
     }
 }
 
+impl<E: Engine> App<E> {
+    /// 250 ms `Tick` only while a short-lived UI needs a clock (not idle).
+    fn needs_chrome_poll_timer(&self) -> bool {
+        if self.copy_url_flash.is_some() {
+            return true;
+        }
+        #[cfg(feature = "bitwarden")]
+        {
+            if self.totp_panel_open || self.vault_awaiting_fill {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Divider drag: `listen_with` is a fn pointer and cannot close over App.
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
+
+fn chrome_drain_subscription() -> Subscription<Msg> {
+    Subscription::run(chrome_drain_stream)
+}
+
+fn chrome_drain_stream() -> impl iced::futures::Stream<Item = Msg> {
+    use iced::futures::StreamExt;
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+    crate::chrome_wake::install_tx(tx);
+    rx.map(|()| Msg::Tick)
+}
+
 /// Tab-reorder press is live (before and after the movement threshold).
 static REORDER_TRACKING: AtomicBool = AtomicBool::new(false);
 /// Last pointer x (bits) so DividerPress has a current anchor without

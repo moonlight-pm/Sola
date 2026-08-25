@@ -8,11 +8,12 @@
 //! [`SidebarIndicator::Active`] keeps the older filled success disc so
 //! generic apps that already used it do not change.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use iced::theme::palette::Extended;
 use iced::widget::canvas::path::Arc;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
+use iced::window;
 use iced::{Color, Element, Event, Length, Point, Radians, Rectangle, Theme, Vector, mouse};
 
 /// Leading status mark for a sidebar row (activity / health, not selection).
@@ -41,6 +42,9 @@ pub const STATUS_MARK_SLOT: f32 = 12.0;
 const RING_PERIOD_S: f32 = 0.85;
 const RING_SWEEP: f32 = std::f32::consts::TAU * 0.72;
 const STROKE_W: f32 = 1.65;
+/// Working-ring cadence. `request_redraw()` (NextFrame) presents the whole
+/// window at vsync; `At` keeps the spin readable without a 60 Hz loop.
+const RING_TICK: Duration = Duration::from_millis(50);
 
 /// Leading status mark sized to [`STATUS_MARK_SLOT`].
 pub fn status_mark<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
@@ -64,11 +68,14 @@ impl<Message> canvas::Program<Message> for Mark {
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
-        if self.kind == SidebarIndicator::Working {
-            Some(canvas::Action::request_redraw())
-        } else {
-            None
+        if self.kind != SidebarIndicator::Working {
+            return None;
         }
+        // Only reschedule from the redraw itself so pointer motion does
+        // not fight the cadence. First paint after a status change still
+        // delivers `RedrawRequested`.
+        matches!(_event, Event::Window(window::Event::RedrawRequested(_)))
+            .then(|| canvas::Action::request_redraw_at(Instant::now() + RING_TICK))
     }
 
     fn draw(
@@ -224,6 +231,49 @@ mod tests {
         assert!(
             (b - a).abs() > 0.15,
             "200ms should advance the 0.85s ring: {a} → {b}"
+        );
+    }
+
+    #[test]
+    fn working_mark_schedules_at_not_next_frame() {
+        let mark = Mark {
+            kind: SidebarIndicator::Working,
+        };
+        let event = Event::Window(window::Event::RedrawRequested(Instant::now()));
+        let action = canvas::Program::<()>::update(
+            &mark,
+            &mut (),
+            &event,
+            Rectangle::default(),
+            mouse::Cursor::Unavailable,
+        )
+        .expect("working mark must keep spinning");
+        let (msg, redraw, _) = action.into_inner();
+        assert!(
+            msg.is_none(),
+            "spin must not publish a message (that rebuilds the window)"
+        );
+        assert!(
+            matches!(redraw, window::RedrawRequest::At(_)),
+            "expected At cadence, got {redraw:?}"
+        );
+    }
+
+    #[test]
+    fn idle_mark_does_not_request_redraw() {
+        let mark = Mark {
+            kind: SidebarIndicator::Idle,
+        };
+        let event = Event::Window(window::Event::RedrawRequested(Instant::now()));
+        assert!(
+            canvas::Program::<()>::update(
+                &mark,
+                &mut (),
+                &event,
+                Rectangle::default(),
+                mouse::Cursor::Unavailable,
+            )
+            .is_none()
         );
     }
 }

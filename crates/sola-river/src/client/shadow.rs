@@ -130,7 +130,9 @@ pub fn sync_on_render(state: &mut AppData) {
                     shadow.decoration.set_offset(-MARGIN, -MARGIN);
                     shadow.decoration.sync_next_commit();
                     shadow.surface.attach(Some(&shadow.buffer), 0, 0);
-                    shadow.surface.damage_buffer(0, 0, cw + 2 * MARGIN, ch + 2 * MARGIN);
+                    shadow
+                        .surface
+                        .damage_buffer(0, 0, cw + 2 * MARGIN, ch + 2 * MARGIN);
                     shadow.surface.commit();
                     state.shadow.by_window.insert(window_id, shadow);
                     keep.insert(window_id);
@@ -230,19 +232,17 @@ fn create_float_shadow(
 
     {
         let px = unsafe { std::slice::from_raw_parts_mut(map_ptr as *mut u8, map_len) };
-        paint_shadow(px, buf_w as u32, buf_h as u32, content_w as u32, content_h as u32);
+        paint_shadow(
+            px,
+            buf_w as u32,
+            buf_h as u32,
+            content_w as u32,
+            content_h as u32,
+        );
     }
 
     let pool = shm.create_pool(memfd.as_fd(), size_i32, &qh, ());
-    let buffer = pool.create_buffer(
-        0,
-        buf_w,
-        buf_h,
-        stride,
-        wl_shm::Format::Argb8888,
-        &qh,
-        (),
-    );
+    let buffer = pool.create_buffer(0, buf_w, buf_h, stride, wl_shm::Format::Argb8888, &qh, ());
 
     // Surface must have no role and no buffer when get_decoration_below runs.
     let surface = compositor.create_surface(&qh, ());
@@ -416,7 +416,8 @@ mod tests {
         let i = ((y * bw + x) * 4) as usize;
         let peak = (PEAK_ALPHA * 255.0).round() as u8;
         assert_eq!(
-            buf[i + 3], peak,
+            buf[i + 3],
+            peak,
             "expected filled peak alpha in OFFSET_Y gap under window"
         );
     }

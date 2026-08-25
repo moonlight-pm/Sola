@@ -34,8 +34,8 @@ const LIST_INSET: f32 = 6.0;
 
 /// Render the launcher overlay for `shell`.
 ///
-/// When inactive: invisible full-screen placeholder (surface stays mapped so
-/// composition can show it without a window-create round-trip).
+/// When inactive the iced window is parked at 2×2; this placeholder is
+/// the parked view (and a race if a frame lands after dismiss).
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.launcher.active {
         return mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))

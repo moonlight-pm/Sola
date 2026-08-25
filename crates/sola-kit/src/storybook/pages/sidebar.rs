@@ -20,7 +20,6 @@ pub enum Msg {
     Select(String),
     ToggleGroup(String),
     Noop,
-    MarkTick,
 }
 
 #[derive(Clone)]
@@ -61,11 +60,7 @@ impl Default for State {
                     id: "a".into(),
                     name: "Group A".into(),
                     collapsed: false,
-                    items: items(&[
-                        ("a1", "Item A1"),
-                        ("a2", "Item A2"),
-                        ("a3", "Item A3"),
-                    ]),
+                    items: items(&[("a1", "Item A1"), ("a2", "Item A2"), ("a3", "Item A3")]),
                 }),
                 Block::Group(DemoGroup {
                     id: "b".into(),
@@ -139,7 +134,7 @@ impl State {
             }
             Msg::Select(id) => self.selected = id,
             Msg::ToggleGroup(id) => self.toggle_group(&id),
-            Msg::Noop | Msg::MarkTick => {}
+            Msg::Noop => {}
         }
     }
 
@@ -183,7 +178,10 @@ impl State {
     }
 
     fn take_group(&mut self, id: &str) -> Option<DemoGroup> {
-        let i = self.blocks.iter().position(|b| matches!(b, Block::Group(g) if g.id == id))?;
+        let i = self
+            .blocks
+            .iter()
+            .position(|b| matches!(b, Block::Group(g) if g.id == id))?;
         match self.blocks.remove(i) {
             Block::Group(g) => Some(g),
             other => {
@@ -213,7 +211,8 @@ impl State {
                     })
                 })
                 .unwrap_or(self.blocks.len());
-            self.blocks.insert(at.min(self.blocks.len()), Block::Group(g));
+            self.blocks
+                .insert(at.min(self.blocks.len()), Block::Group(g));
             return;
         }
         if let Dest::Sections(order) = &drop.dest {
@@ -340,9 +339,10 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         demo,
         heading("Status marks"),
         body(
-            "Reserved 12px slot. Working is an accent ring that spins (~0.85s); \
-             waiting a warning diamond; done a success check; idle a dim disc. \
-             Who stays off the mark."
+            "Reserved 12px slot. Working is an accent ring that spins (~0.85s \
+             period, ~20 Hz redraw — not a vsync loop); waiting a warning \
+             diamond; done a success check; idle a dim disc. Who stays off \
+             the mark."
         )
         .style(muted),
         marks_demo(),

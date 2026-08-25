@@ -7,7 +7,7 @@ use sola_call::methods::{self, OWNER_COMPOSITOR};
 use sola_call::{Incoming, ReplyTx};
 use sola_core::KeyChord;
 
-use crate::client::{screenshot, virtual_keyboard, virtual_pointer, AppData};
+use crate::client::{AppData, screenshot, virtual_keyboard, virtual_pointer};
 
 pub fn start() -> mpsc::Receiver<Incoming> {
     sola_call::start_provider(

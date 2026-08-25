@@ -44,6 +44,7 @@ Never mix “is” and “will be” in the same paragraph without an explicit l
 | Kind | Canonical home | Update when |
 |------|----------------|-------------|
 | **Focus** | Root [`CURRENT.md`](../CURRENT.md) | Priority, next moves, or dogfood/runtime facts change |
+| **GPU / idle track** | Root [`PERFORMANCE.md`](../PERFORMANCE.md) | A present/scanout mitigation lands, smoke result changes, or the next perf slice is chosen. **Not** a second CURRENT. |
 | **As-built progress** | [`capabilities.md`](capabilities.md) | Capability status or gaps change |
 | **As-built system map** | [`architecture.md`](architecture.md) | Processes, crates, paths, IPC, install layout change |
 | **Target design** | [`specs/`](specs/) freezes | Decisions lock or amend (**not** a changelog) |

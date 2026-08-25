@@ -6,8 +6,8 @@
 //! Menu dropdown window — state, lifecycle, and view entry point.
 //!
 //! The menu window is a full-overlay transparent surface that sits below
-//! the menubar and above all other windows in composition.  It is opened
-//! at startup and hidden by composition until `Shell::menu_open` is true.
+//! the menubar and above all other windows in composition. Kept mapped at
+//! 2×2 while dismissed so show is Frame + stack, not a new map.
 //! Anchor X positioning is computed from `Shell::menu_anchor_x`, which is
 //! populated from `MenubarState::label_positions` (font-metric estimates).
 
@@ -17,17 +17,15 @@ pub mod view;
 use iced::window;
 use sola_kit::app::window_settings;
 
-/// Placeholder height below the menubar (28 px).  Real geometry is wired
-/// in Task 10 when Topic::OutputGeometry fires.
-const MENU_WINDOW_HEIGHT: f32 = 1052.0; // 1080 − 28
-
-/// Open the menu overlay window and return `(id, Task<Id>)`.
-/// Width matches the assumed 1920px output; Task 10 corrects geometry from
-/// Topic::OutputGeometry.  Position is (0, 28) — immediately below the menubar.
+/// Open the menu parked at 2×2. Show Frames to the live usable area.
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
-    settings.size = iced::Size::new(1920.0, MENU_WINDOW_HEIGHT);
-    settings.position = iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    let p = crate::zoning::OVERLAY_PARK as f32;
+    settings.size = iced::Size::new(p, p);
+    settings.position = iced::window::Position::Specific(iced::Point::new(
+        crate::zoning::OVERLAY_PARK_X as f32,
+        crate::zoning::OVERLAY_PARK_Y as f32,
+    ));
     settings.resizable = false;
     settings.decorations = false;
     settings.transparent = true;

@@ -164,7 +164,6 @@ enum Msg {
     PaneFocused(String),
     SplitDividerPress(String),
     Ignore,
-    StatusTick,
     Hook(hooks::Incoming),
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
@@ -275,30 +274,29 @@ impl App {
                 Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
                 Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
                 Event::Keyboard(_) => Some(Msg::Input(ev.clone())),
+                // Mouse is handled by TermView / sidebar / the split-drag
+                // sub below. Mapping ignored motion to Input presented the
+                // whole window on every pixel (`on_input` ignores mouse).
+                Event::Mouse(_) => None,
                 _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(ev.clone())),
                 _ => None,
             }),
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
-            if self
-                .workspaces
-                .iter()
-                .any(|w| w.status == status::AgentStatus::Working)
-            {
-                iced::window::frames().map(|_| Msg::StatusTick)
+            self.sidebar.gestures.subscription().map(Msg::Sidebar),
+            if self.dragging_split.is_some() {
+                event::listen_with(|ev, _, _| match ev {
+                    Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                        Some(Msg::CursorMoved(position.x, position.y))
+                    }
+                    Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                        Some(Msg::CursorReleased)
+                    }
+                    _ => None,
+                })
             } else {
                 Subscription::none()
             },
-            self.sidebar.gestures.subscription().map(Msg::Sidebar),
-            event::listen_with(|ev, _, _| match ev {
-                Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::CursorMoved(position.x, position.y))
-                }
-                Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                    Some(Msg::CursorReleased)
-                }
-                _ => None,
-            }),
         ])
     }
 
@@ -316,7 +314,6 @@ impl App {
                 Task::none()
             }
             Msg::Ignore => Task::none(),
-            Msg::StatusTick => Task::none(),
             Msg::WindowFocus(on) => {
                 self.window_focused = on;
                 if !on {

@@ -2,11 +2,11 @@
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, row, stack, text};
-use iced::{mouse, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
+use iced::{Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse};
 
 use crate::app::{Msg, Shell};
-use crate::stats::cpu::Proc;
 use crate::stats::Metric;
+use crate::stats::cpu::Proc;
 use sola_kit::components::popover;
 
 pub const CARD_WIDTH: f32 = 320.0;
@@ -81,12 +81,14 @@ fn stat_card<'a>(
     let header = row![
         column![
             text(label).size(11).style(dim),
-            row![text(value)
-                .font(sola_kit::fonts::MONO)
-                .size(30)
-                .style(move |_: &Theme| iced::widget::text::Style {
-                    color: Some(value_color)
-                }),],
+            row![
+                text(value)
+                    .font(sola_kit::fonts::MONO)
+                    .size(30)
+                    .style(move |_: &Theme| iced::widget::text::Style {
+                        color: Some(value_color)
+                    }),
+            ],
         ]
         .spacing(3),
         iced::widget::Space::new().width(Length::Fill),

@@ -2,16 +2,16 @@
 //! (no NVIDIA GPU, NVML not loadable) yields None so the indicator hides.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
 use nvml_wrapper::enums::device::UsedGpuMemory;
 use nvml_wrapper::struct_wrappers::device::ProcessInfo;
-use nvml_wrapper::Nvml;
 
-use crate::stats::cpu::Proc;
 use crate::stats::GpuLite;
+use crate::stats::cpu::Proc;
 
 fn nvml() -> Option<&'static Nvml> {
     static NVML: OnceLock<Option<Nvml>> = OnceLock::new();

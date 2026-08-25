@@ -48,7 +48,10 @@ pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
         return;
     };
     let Some(xb) = state.xkb_bindings.clone() else {
-        tracing::warn!(n = new_pairs.len(), "drop RegisteredChords: no xkb_bindings");
+        tracing::warn!(
+            n = new_pairs.len(),
+            "drop RegisteredChords: no xkb_bindings"
+        );
         return;
     };
     let Some(river_seat) = state.seat.clone() else {

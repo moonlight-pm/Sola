@@ -158,6 +158,10 @@ pub struct AppData {
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
+    /// Last composition stack (bottom→top). Re-applied every render so a
+    /// newly mapped window that is not yet in the list stays **hidden**
+    /// (shell overlays used to flash at default-center before Frame).
+    pub last_composition: Vec<u32>,
 }
 
 impl AppData {
@@ -202,6 +206,7 @@ impl AppData {
             call_rx: None,
             shadow: shadow::ShadowState::default(),
             layer_shell: layer_shell::LayerShellState::default(),
+            last_composition: Vec::new(),
         }
     }
 }
@@ -335,9 +340,7 @@ pub fn bus_tick(state: &mut AppData) {
                 // technically changed (music drops, but the game is
                 // still painted on top of the new focus target).
                 if let Some(prev) = state.focused_window {
-                    if prev != t.window_id
-                        && state.currently_fullscreen.contains(&prev)
-                    {
+                    if prev != t.window_id && state.currently_fullscreen.contains(&prev) {
                         tracing::info!(
                             prev_window_id = prev,
                             new_window_id = t.window_id,
@@ -414,7 +417,10 @@ fn republish_after_bus_reconnect(state: &mut AppData) {
     use sola_bus::topics::{OutputGeometry, Topic, WindowFloating};
 
     if let Some((width, height)) = state.output_size {
-        info!(width, height, "re-emitting OutputGeometry after bus reconnect");
+        info!(
+            width,
+            height, "re-emitting OutputGeometry after bus reconnect"
+        );
         state
             .bus
             .emit(Topic::OutputGeometry(OutputGeometry { width, height }));
@@ -427,7 +433,12 @@ fn republish_after_bus_reconnect(state: &mut AppData) {
 
     // Live geometry for every window we already placed/sized — late
     // subscribers (and shell float restore) need the sticky map rebuilt.
-    let ids: Vec<u32> = state.registry.as_windows().iter().map(|w| w.window_id).collect();
+    let ids: Vec<u32> = state
+        .registry
+        .as_windows()
+        .iter()
+        .map(|w| w.window_id)
+        .collect();
     for window_id in ids {
         crate::translator::emit_geometry(state, window_id);
     }

@@ -115,6 +115,7 @@ fn accept_loop(listener: UnixListener) {
                     tracing::info!(?h, "chrome handoff received");
                     if let Some(tx) = HANDOFF_TX.get() {
                         let _ = tx.send(h);
+                        crate::chrome_wake::wake();
                     }
                 }
             }
@@ -169,7 +170,7 @@ pub fn handoff(url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Drain URLs / activate requests from other sola-browser processes (UI Tick).
+/// Drain URLs / activate requests from other sola-browser processes.
 pub fn try_recv_handoff() -> Option<Handoff> {
     let lock = HANDOFF_RX.get()?;
     let rx = lock.lock().ok()?;

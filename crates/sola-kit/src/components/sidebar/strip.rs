@@ -918,8 +918,11 @@ where
                     st.settling = false;
                     st.dragging = true;
                     st.flip.clear();
-                    shell.invalidate_layout();
                 }
+                // Ghost Y is applied in `layout` from `pointer`. Without a
+                // relayout, draw keeps the last ghost and the drag stutters.
+                // (Idle chrome must not vsync-present; this is drag-only.)
+                shell.invalidate_layout();
                 shell.capture_event();
                 shell.request_redraw();
             }
@@ -974,8 +977,13 @@ where
                 if st.dragging && !st.settling && apply_dest(st) {
                     shell.invalidate_layout();
                 }
-                if st.flip.values().any(|a| a.is_animating(*now)) {
+                let flipping = st.flip.values().any(|a| a.is_animating(*now));
+                if flipping {
                     shell.invalidate_layout();
+                }
+                // Morph2: one hole hop per frame. Keep vsync only while the
+                // gesture or FLIP is live — not as an idle chrome pump.
+                if st.dragging || st.settling || flipping {
                     shell.request_redraw();
                 }
             }
