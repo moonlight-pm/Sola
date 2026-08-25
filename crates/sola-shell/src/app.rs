@@ -861,7 +861,7 @@ impl Shell {
 
     /// Build the list of chords the shell wants River to grab.
     pub fn shell_key_chords(&self) -> Vec<KeyChord> {
-        // Shell-own menu bindings (e.g. Exit Sola shortcut).
+        // Shell-own menu bindings (meta-bound items only; Quit Sola has none).
         let mut bindings: Vec<KeyChord> = self
             .menus
             .key_bindings_for(Self::APP_ID)
