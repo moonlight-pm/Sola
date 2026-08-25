@@ -27,7 +27,8 @@ pointer to `CURRENT.md` (auto-load reminder).
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
 - `sola-workspaces-cli` — `solactl workspaces` control plane (review/work
-  ticket, create worktree, tell a pane — fan-out stays off the rail)  
+  ticket, create worktree, tell a pane, merge/cleanup — fan-out stays off
+  the rail)  
 
 ## Progress documentation is first-class (mandatory)
 
@@ -127,16 +128,17 @@ docs/
 - Always use `.worktrees/` for git worktrees.
 - Only make code modifications in worktrees. Never commit code changes directly to master.
 - Only merge worktree branches to master with explicit user permission.
-- **Approval = merge + clean up in the same turn.** When the user signals the
-  work is good — e.g. "nailed it", "looks good", "merge that", "ship it",
-  "LGTM", "perfect", "do it", or similar approval of the current worktree —
-  commit any uncommitted work if needed, merge the branch to master, then
-  clean up immediately. Do **not** leave approved work sitting in a worktree
-  waiting for a second explicit "please merge" (unless they say hold off).
-- **After merging a worktree branch to master, always clean up:** remove the
-  worktree (`git worktree remove .worktrees/<name>`) and delete the local
-  branch (`git branch -d <branch>`). Do this in the same turn as the merge
-  unless the user asks to keep it — no leftover feature worktrees/branches.
+- **Approval = merge in the same turn, not cleanup.** When the user signals
+  the work is good — e.g. "nailed it", "looks good", "merge that", "ship it",
+  "LGTM", "perfect" — commit any uncommitted work if needed and merge the
+  branch to master. Do **not** wait for a second explicit "please merge"
+  (unless they say hold off). Leave the git worktree **and** the Workspaces
+  tab unless they asked to remove them.
+- **Do not remove a worktree or workspace tab unless they asked.** There is
+  no default cleanup after merge. If a git worktree is removed, close the
+  tab unless they said keep it. Phrases and sequence:
+  [`.grok/skills/sola-workspaces-cli/SKILL.md`](.grok/skills/sola-workspaces-cli/SKILL.md)
+  (Merge / cleanup).
 
 ### Installing
 - **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.

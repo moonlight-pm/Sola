@@ -4,8 +4,9 @@ description: >
   Drive sola-workspaces from solactl. Use when the user says review ticket,
   work ticket, implement ticket, fan out, create worktree, spawn sibling,
   new workspace, tell that worktree, tell grok in X, brief a workspace,
-  send to a pane, or solactl workspaces. Default is background — never
-  steal the rail. /sola-workspaces-cli
+  send to a pane, clean up this worktree, merge and clean up, remove this
+  worktree, or solactl workspaces. Default is background — never steal
+  the rail. /sola-workspaces-cli
 ---
 
 # sola-workspaces CLI
@@ -44,7 +45,9 @@ pane. `--name` is the rail slug and `.worktrees/<name>`.
 | when it's done / wait / report back | `pane.wait --status done` (add `--fresh` if it may already be done) |
 | what's on that pane / read *name* | `pane.read` |
 | jump to / switch to / show me / open *name* | `workspace.select`, or spawn with `--select` if they are creating *and* want to land there |
-| drop / close that workspace | `workspace.rm` — unregister + kill tmux, **not** `git worktree remove` |
+| clean up this worktree / merge and clean up this worktree | Merge to master, then remove the git worktree **and** close the tab (below). |
+| remove this worktree, don't merge / toss this worktree | Do **not** merge. Remove the git worktree **and** close the tab. |
+| drop / close that workspace | `workspace.rm` only — leave the git worktree |
 
 ## Fan-out a ticket (stay here)
 
@@ -88,10 +91,64 @@ solactl workspaces workspace.select --workspace SLUG
 solactl workspaces workspace.spawn --project PROJECT --name SLUG --select
 ```
 
+## Merge / cleanup
+
+Never remove a git worktree or a Workspaces tab unless they asked. Merge /
+LGTM / ship it is **not** a request to remove anything. There is no default
+cleanup.
+
+`git worktree remove` does not close the tab by itself; `workspace.rm` does
+not delete the checkout. When they asked to **remove the worktree**, also
+close the tab, unless they said keep it.
+
+| They said | Merge | Git worktree + branch | Close tab |
+|---|---|---|---|
+| merge / merge that / merge to master / ship it / LGTM / nailed it / looks good / perfect | yes | no | no |
+| clean up this worktree / merge and clean up this worktree / ship and cleanup | yes | yes | yes |
+| remove this worktree, don't merge / toss this worktree | no | yes | yes |
+| close the tab / drop the workspace | no | no | yes |
+| keep the worktree / keep the tab / hold off / don't drop it | — | no | no |
+
+If merge is in the request and merge fails, stop — do not remove.
+
+### When removing a worktree
+
+Resolve names (`whoami`, then `project.list` / `ps`):
+
+| Var | From |
+|---|---|
+| `$NAME` | rail slug and `.worktrees/<name>` |
+| `$BRANCH` | git (may differ from `$NAME`) |
+| `$PROJECT` | project's `root` — not `whoami.path` |
+
+`git worktree remove` fails if cwd is that worktree (`git -C` does not fix
+that). `cd` first.
+
+```bash
+cd "$PROJECT"
+# if merge was requested: commit in the worktree if needed, merge $BRANCH
+# into master from here, then:
+git worktree remove ".worktrees/$NAME"   # --force only if they said toss / discard
+git branch -d "$BRANCH"                  # refuses unmerged; do not -D
+solactl workspaces workspace.rm --workspace "$NAME"
+```
+
+Tab-only drop skips the git lines. If **this pane is the tab**, do not
+foreground `workspace.rm` (it kills tmux before the reply). Detach, then
+stop:
+
+```bash
+setsid -f solactl workspaces workspace.rm --workspace "$NAME"
+```
+
+Prefer the parent/root pane to run `workspace.rm`.
+
 ## Do not
 
 - Steal the rail (`--select`, `workspace.select`) on a ticket/fan-out/create
-- `git worktree add` / `git worktree remove` as the product verb
+- Remove a worktree or tab without being asked (merge/LGTM is not asking)
+- Remove a worktree and leave the tab (unless they said keep the tab)
+- `git worktree add` as the spawn verb (`workspace.spawn` instead)
 - `--agent claude` (rejected; presence-only)
 - Build a mailbox / ask-reply / `worker_done`
 - Call `sat` (there is no such binary)
