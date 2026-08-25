@@ -3,7 +3,7 @@
 //! Port of `~/Workspace/Scratch/morph2.js`. Dest uses rest layout
 //! (`offsetTop`), never transformed rects. One hole move per frame.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -447,60 +447,19 @@ fn gap_anim(v: f32) -> Animation<f32> {
         .easing(Easing::EaseOut)
 }
 
-struct WellAnim {
-    top: Animation<f32>,
-    h: Animation<f32>,
-}
-
-fn well_targets(view: &[ViewRow], rest: &[Rest], absorb: Option<&str>) -> Vec<(String, f32, f32)> {
-    let mut out = Vec::new();
-    for (start, end) in group_spans(view, absorb) {
-        if start >= rest.len() || end == 0 || end - 1 >= rest.len() {
-            continue;
-        }
-        let gid = view[start]
-            .group
-            .clone()
-            .unwrap_or_else(|| view[start].id.clone());
-        let first = rest[start];
-        let last = rest[end - 1];
-        let top = (first.y - WELL_PAD) as f32;
-        let bottom = if end < rest.len() {
-            (last.y + last.h).min(rest[end].y - WELL_PAD) as f32
-        } else {
-            (last.y + last.h + WELL_PAD) as f32
-        };
-        out.push((gid, top, (bottom - top).max(0.0)));
+fn row_visual_y(st: &StripState, vi: usize, now: Instant) -> f32 {
+    let y = st.rest.get(vi).map(|r| r.y as f32).unwrap_or(0.0);
+    let Some(row) = st.view.get(vi) else {
+        return y;
+    };
+    if row.hole {
+        return y;
     }
-    out
-}
-
-fn sync_wells(st: &mut StripState, now: Instant) {
-    let targets = well_targets(&st.view, &st.rest, st.absorb.as_deref());
-    let mut used = HashSet::new();
-    for (gid, top, h) in targets {
-        used.insert(gid.clone());
-        match st.wells.get_mut(&gid) {
-            Some(w) => {
-                if (w.top.value() - top).abs() >= 0.5 {
-                    w.top.go_mut(top, now);
-                }
-                if (w.h.value() - h).abs() >= 0.5 {
-                    w.h.go_mut(h, now);
-                }
-            }
-            None => {
-                st.wells.insert(
-                    gid,
-                    WellAnim {
-                        top: gap_anim(top),
-                        h: gap_anim(h),
-                    },
-                );
-            }
-        }
-    }
-    st.wells.retain(|k, _| used.contains(k));
+    y + st
+        .flip
+        .get(&row.id)
+        .map(|a| a.interpolate_with(|v| v, now))
+        .unwrap_or(0.0)
 }
 
 fn rest_y_by_id(st: &StripState) -> HashMap<String, i32> {
@@ -534,7 +493,6 @@ struct StripState {
     absorb: Option<String>,
     flip: HashMap<String, Animation<f32>>,
     pending_visual: Option<HashMap<String, f32>>,
-    wells: HashMap<String, WellAnim>,
     settling: bool,
     ids_at_release: Vec<String>,
     hole_origin: usize,
@@ -557,7 +515,6 @@ impl Default for StripState {
             absorb: None,
             flip: HashMap::new(),
             pending_visual: None,
-            wells: HashMap::new(),
             settling: false,
             ids_at_release: Vec::new(),
             hole_origin: 0,
@@ -856,7 +813,6 @@ where
 
         st.rest = rest;
         st.view = view;
-        sync_wells(st, now);
         layout::Node::with_children(Size::new(width, y.max(0) as f32), nodes)
     }
 
@@ -1018,10 +974,7 @@ where
                 if st.dragging && !st.settling && apply_dest(st) {
                     shell.invalidate_layout();
                 }
-                let wells = st.wells.values().any(|w| {
-                    w.top.is_animating(*now) || w.h.is_animating(*now)
-                });
-                if st.flip.values().any(|a| a.is_animating(*now)) || wells {
+                if st.flip.values().any(|a| a.is_animating(*now)) {
                     shell.invalidate_layout();
                     shell.request_redraw();
                 }
@@ -1045,14 +998,24 @@ where
         let now = Instant::now();
         let children: Vec<Layout<'_>> = layout.children().collect();
         let well = group_well_style();
-        for w in st.wells.values() {
-            let top = w.top.interpolate_with(|v| v, now);
-            let h = w.h.interpolate_with(|v| v, now);
+        for (start, end) in group_spans(&st.view, st.absorb.as_deref()) {
+            if start >= st.rest.len() || end == 0 || end - 1 >= st.rest.len() {
+                continue;
+            }
+            let first_y = row_visual_y(st, start, now);
+            let last = st.rest[end - 1];
+            let last_bottom = row_visual_y(st, end - 1, now) + last.h as f32;
+            let top = first_y - WELL_PAD as f32;
+            let bottom = if end < st.rest.len() {
+                last_bottom.min(row_visual_y(st, end, now) - WELL_PAD as f32)
+            } else {
+                last_bottom + WELL_PAD as f32
+            };
             let bounds = Rectangle {
                 x: layout.bounds().x + 2.0,
                 y: layout.bounds().y + top,
                 width: (layout.bounds().width - 4.0).max(0.0),
-                height: h.max(0.0),
+                height: (bottom - top).max(0.0),
             };
             if let Some(bg) = well.background {
                 renderer.fill_quad(
