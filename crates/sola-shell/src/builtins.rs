@@ -16,18 +16,21 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Settings".into(),
             command: "/opt/sola/bin/sola-settings".into(),
             icon: "lucide/settings".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-monitor".into(),
             label: "Monitor".into(),
             command: "/opt/sola/bin/sola-monitor".into(),
             icon: "lucide/monitor".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-terminal".into(),
             label: "Terminal".into(),
             command: "/opt/sola/bin/sola-terminal".into(),
             icon: "lucide/terminal".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-workspaces".into(),
@@ -36,6 +39,7 @@ pub fn builtin_apps() -> Vec<Application> {
             // `folders` — stacked project groups. Distinct from Terminal
             // (`terminal`) and Agent (`bot`).
             icon: "lucide/folders".into(),
+            ..Default::default()
         },
         Application {
             // Single-crate browser: iced chrome + CEF engine; app_id matches
@@ -44,24 +48,28 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Browser".into(),
             command: "/opt/sola/bin/sola-browser".into(),
             icon: "lucide/globe".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-kit".into(),
             label: "Kit".into(),
             command: "/opt/sola/bin/sola-kit".into(),
             icon: "lucide/palette".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-agent".into(),
             label: "Agent".into(),
             command: "/opt/sola/bin/sola-agent".into(),
             icon: "lucide/bot".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-preview".into(),
             label: "Preview".into(),
             command: "/opt/sola/bin/sola-preview".into(),
             icon: "lucide/image".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-paint".into(),
@@ -71,18 +79,21 @@ pub fn builtin_apps() -> Vec<Application> {
             // (`image`) and Kit (`palette`). The detailed `paintbrush`
             // glyph turns to noise at launcher density.
             icon: "lucide/brush".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-mail".into(),
             label: "Mail".into(),
             command: "/opt/sola/bin/sola-mail".into(),
             icon: "lucide/mail".into(),
+            ..Default::default()
         },
         Application {
             app_id: "sola-arcade".into(),
             label: "Arcade".into(),
             command: "/opt/sola/bin/sola-arcade".into(),
             icon: "lucide/gamepad-2".into(),
+            ..Default::default()
         },
     ]
 }

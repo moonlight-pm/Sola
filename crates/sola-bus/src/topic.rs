@@ -1,16 +1,54 @@
+use std::any::{Any, TypeId};
 use std::io;
 
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use crate::Message;
 
 /// Decode a payload from a `Message` into the expected type.
-pub fn decode_payload<T: for<'de> Deserialize<'de>>(msg: &Message) -> io::Result<T> {
+///
+/// Postcard is positional: adding fields to a payload breaks replay of
+/// stickies still encoded by an older bus. [`Application`] grows
+/// `kind`/`url` — if the current layout misses those trailing fields,
+/// fall back to the pre-wrapper four-string record.
+pub fn decode_payload<T: DeserializeOwned + 'static>(msg: &Message) -> io::Result<T> {
     let bytes = msg
         .payload
         .as_ref()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing payload"))?;
-    postcard::from_bytes(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    match postcard::from_bytes(bytes) {
+        Ok(v) => Ok(v),
+        Err(e) => match decode_legacy_application::<T>(bytes) {
+            Some(v) => Ok(v),
+            None => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+        },
+    }
+}
+
+fn decode_legacy_application<T: 'static>(bytes: &[u8]) -> Option<T> {
+    use sola_core::applications::{AppKind, Application};
+    if TypeId::of::<T>() != TypeId::of::<Application>() {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct ApplicationV1 {
+        app_id: String,
+        label: String,
+        command: String,
+        icon: String,
+    }
+    let v1: ApplicationV1 = postcard::from_bytes(bytes).ok()?;
+    let app = Application {
+        app_id: v1.app_id,
+        label: v1.label,
+        command: v1.command,
+        icon: v1.icon,
+        kind: AppKind::Command,
+        url: None,
+    };
+    let boxed: Box<dyn Any> = Box::new(app);
+    boxed.downcast::<T>().ok().map(|b| *b)
 }
 
 /// Serialize a value to a payload byte vec.

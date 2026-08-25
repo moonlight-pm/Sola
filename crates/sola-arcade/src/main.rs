@@ -939,6 +939,7 @@ fn publish_gamescope_host_label(steam_app_id: u32, name: &str) {
         // for switcher/menubar while the nest is up. Retracted on stop.
         command: String::new(),
         icon,
+        ..Default::default()
     };
     let menu = AppMenuPayload {
         app_id: GAMESCOPE_HOST_APP_ID.into(),
@@ -960,6 +961,7 @@ fn retract_gamescope_host_label() {
         label: String::new(),
         command: String::new(),
         icon: String::new(),
+        ..Default::default()
     };
     let menu = AppMenuPayload {
         app_id: GAMESCOPE_HOST_APP_ID.into(),

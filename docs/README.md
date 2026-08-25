@@ -43,7 +43,7 @@ ask the human.
 | [`specs/`](specs/) | Target freezes (dated) | **Target** |
 | [`plans/`](plans/) | Implementation checklists (active + historical) | Build |
 | [`ideas/`](ideas/) | Parked thoughts | Idea |
-| [`manual/`](manual/) | Operator truth (fonts, kvm, **arcade**, **browser**, **paint**, **monitor**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
+| [`manual/`](manual/) | Operator truth (fonts, kvm, **arcade**, **browser**, **paint**, **monitor**, **wrapper**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
 | [`specs/2026-08-05-distribution-image-design.md`](specs/2026-08-05-distribution-image-design.md) | Dist installer freeze | **Target** |
 | [`vault/`](vault/) | Early Obsidian notes — reference only | History |
 | [`notes/`](notes/) | One-off investigations — not living handoff | History |

@@ -59,18 +59,21 @@ mod tests {
                     label: "Firefox".into(),
                     command: "firefox".into(),
                     icon: "simpleicons/firefox".into(),
+                    ..Default::default()
                 },
                 Application {
                     app_id: "sola-terminal".into(),
                     label: "Terminal".into(),
                     command: "/opt/sola/bin/sola-terminal".into(),
                     icon: "lucide/terminal".into(),
+                    ..Default::default()
                 },
                 Application {
                     app_id: "files".into(),
                     label: "Files".into(),
                     command: "nautilus".into(),
                     icon: "lucide/folder".into(),
+                    ..Default::default()
                 },
             ],
         }

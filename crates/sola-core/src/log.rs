@@ -21,6 +21,7 @@ use std::fmt::Write;
 use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use tracing::{Event, Level, Subscriber};
@@ -50,6 +51,7 @@ const LABEL_WIDTH: usize = 14;
 
 /// Process name set by `init()`, read by the formatter.
 static PROCESS_NAME: OnceLock<String> = OnceLock::new();
+static INITED: AtomicBool = AtomicBool::new(false);
 
 /// Initialize tracing for a Sola binary.
 ///
@@ -61,16 +63,22 @@ static PROCESS_NAME: OnceLock<String> = OnceLock::new();
 /// * Default `RUST_LOG` filter: binary's own crate + shared sola libs at info.
 /// * Installs a panic hook that routes panics through tracing so they
 ///   end up in the log file, not just on stderr.
+/// * Idempotent: a second call (wrapper chrome vs `--engine` helper) is a no-op.
 pub fn init(name: &str) {
     let short = name.strip_prefix("sola-").unwrap_or(name);
     PROCESS_NAME.get_or_init(|| short.to_string());
 
-    // Include the binary's own crate + all shared sola libraries.
-    // Third-party crates (gtk, calloop, etc.) are excluded by default.
-    // Override with RUST_LOG for debug sessions.
+    if INITED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    // Include the binary's own crate + shared sola libraries. Wrapper
+    // chrome inits as `slack` (app_id), not `sola-wrapper`, so CEF/kit
+    // targets must be listed explicitly or router/helper logs vanish.
     let own_crate = name.replace('-', "_");
-    let default_filter =
-        format!("{own_crate}=info,sola_core=info,sola_bus=info,sola_app=info,sola_assets=info");
+    let default_filter = format!(
+        "{own_crate}=info,sola_core=info,sola_bus=info,sola_kit=info,sola_browser=info,sola_call=info,sola_app=info,sola_assets=info"
+    );
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
 

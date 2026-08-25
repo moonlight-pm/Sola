@@ -1,0 +1,22 @@
+[package]
+name = "sola-wrapper"
+version.workspace = true
+edition.workspace = true
+description = "Wrap websites as first-class Sola apps"
+
+[[bin]]
+name = "sola-wrapper"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+# Engine only — no Bitwarden / chrome vault. CefEngine + bind_external.
+sola-browser = { path = "../sola-browser", default-features = false }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+tracing = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
+[dev-dependencies]
+serde_yaml_ng = { workspace = true }

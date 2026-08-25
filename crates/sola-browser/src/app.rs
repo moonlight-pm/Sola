@@ -1330,108 +1330,82 @@ impl<E: Engine> App<E> {
             Msg::TotpRefresh => {
                 self.request_vault_totp();
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultFill(id) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    if self.vault_busy || !self.vault_status.unlocked {
-                        return Task::none();
-                    }
-                    self.vault_busy = true;
-                    self.vault_error = None;
-                    self.vault.send(VaultCmd::Fill { id });
+                if self.vault_busy || !self.vault_status.unlocked {
+                    return Task::none();
                 }
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::Fill { id });
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyPick(cipher_id) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.confirm_passkey_pick(cipher_id);
-                }
+                self.confirm_passkey_pick(cipher_id);
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyCancel => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.cancel_pending_passkey("User cancelled.");
-                }
+                self.cancel_pending_passkey("User cancelled.");
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyCreateNew => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.confirm_passkey_create(None);
-                }
+                self.confirm_passkey_create(None);
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyCreateOn(cipher_id) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.confirm_passkey_create(Some(cipher_id));
-                }
+                self.confirm_passkey_create(Some(cipher_id));
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultRefreshMatches => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.request_vault_matches();
-                }
+                self.request_vault_matches();
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateOpen => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    if !self.vault_status.unlocked {
-                        return Task::none();
-                    }
-                    self.open_create_login();
-                    return Task::batch([
-                        iced::widget::operation::focus(vault_create_username_id()),
-                        iced::advanced::widget::operate(
-                            iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                                vault_create_username_id(),
-                            ),
+                if !self.vault_status.unlocked {
+                    return Task::none();
+                }
+                self.open_create_login();
+                return Task::batch([
+                    iced::widget::operation::focus(vault_create_username_id()),
+                    iced::advanced::widget::operate(
+                        iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                            vault_create_username_id(),
                         ),
-                    ]);
-                }
+                    ),
+                ]);
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateCancel => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.vault_awaiting_fill = false;
-                    self.vault_awaiting_fill_ticks = 0;
-                    self.vault_busy = false;
-                    self.vault_error = None;
-                    self.vault_phase = VaultPanelPhase::Credentials;
-                    self.request_vault_matches();
-                }
+                self.vault_awaiting_fill = false;
+                self.vault_awaiting_fill_ticks = 0;
+                self.vault_busy = false;
+                self.vault_error = None;
+                self.vault_phase = VaultPanelPhase::Credentials;
+                self.request_vault_matches();
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateSubmit => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.submit_create_login();
-                }
+                self.submit_create_login();
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateUsername(s) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.vault_create_username = s;
-                    self.vault_paste_target = VaultPasteTarget::CreateUsername;
-                }
+                self.vault_create_username = s;
+                self.vault_paste_target = VaultPasteTarget::CreateUsername;
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreatePassword(s) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.vault_create_password = s;
-                    self.vault_paste_target = VaultPasteTarget::CreatePassword;
-                }
+                self.vault_create_password = s;
+                self.vault_paste_target = VaultPasteTarget::CreatePassword;
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateUrl(s) => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    self.vault_create_url = s;
-                    self.vault_paste_target = VaultPasteTarget::CreateUrl;
-                }
+                self.vault_create_url = s;
+                self.vault_paste_target = VaultPasteTarget::CreateUrl;
             }
+            #[cfg(feature = "bitwarden")]
             Msg::VaultCreateRegenerate => {
-                #[cfg(feature = "bitwarden")]
-                {
-                    if !self.vault_busy {
-                        self.vault_create_password = generate_password();
-                    }
+                if !self.vault_busy {
+                    self.vault_create_password = generate_password();
                 }
             }
             Msg::VaultEmail(s) => {
