@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-25 (sola-wrapper on master; Slack wrapper paints)
+**As of:** 2026-08-25 (sola-wrapper on master; Slack paints; GPU idle track; arcade Fit follow)
 
 ---
 
@@ -113,6 +113,11 @@ Do not invent product policy.
    (desk smoke pending). **D3** (confirm gates) is open. Catalog sticky
    on the bus still later (monitor observes the call socket instead).  
 10. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+   Per-title nest: **Fit to window** or a locked resolution (default **1080p**).
+   Fit follows the gamescope host frame on zone/float (nested mode-control +
+   focused window at 0,0). Keep the game **fullscreen** for Fit.  
+   **Install:** standing OK to `install arcade` after each finished round.  
+   - Fit rezone dogfooded (Factorio, fullscreen on).  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 11. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
@@ -151,11 +156,12 @@ warning cleanups; worktree hygiene the user asks for.
 | Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack (`illuno.slack.com`) paints. `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
-| Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
-| Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
+| Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
+| Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
-permission for that install. User installs and smokes.
+permission for that install — except standing OK for **arcade** and
+**workspaces** after each finished round of those apps. User smokes.
 
 **Useful:**
 

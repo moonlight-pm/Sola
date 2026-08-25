@@ -2,7 +2,6 @@
 //! (menubar, menu, launcher, switcher, selection marquee).
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
-use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
@@ -55,7 +54,9 @@ fn main() -> iced::Result {
                 MenuItem::Action {
                     id: "quit".into(),
                     label: "Quit Sola".into(),
-                    shortcut: Some(KeyCode::Q.meta()),
+                    // Super+Q closes the focused app (`CloseApp`). Binding it
+                    // here would advertise — and could fire — session shutdown.
+                    shortcut: None,
                     disabled: false,
                     checked: false,
                 },

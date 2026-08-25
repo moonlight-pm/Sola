@@ -216,10 +216,7 @@ pub fn scan_library_games() -> Vec<SteamGame> {
                         }
                     }
                 })
-                .or_insert_with(|| SteamGame {
-                    last_activity,
-                    ..g
-                });
+                .or_insert_with(|| SteamGame { last_activity, ..g });
         }
     }
 
@@ -355,20 +352,11 @@ fn scan_library(library_root: &Path) -> Vec<SteamGame> {
     let dir = if steamapps.is_dir() {
         steamapps
     } else if library_root.join("appmanifest_400.acf").exists()
-        || library_root
-            .read_dir()
-            .ok()
-            .into_iter()
-            .flatten()
-            .any(|e| {
-                e.ok()
-                    .map(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .starts_with("appmanifest_")
-                    })
-                    .unwrap_or(false)
-            })
+        || library_root.read_dir().ok().into_iter().flatten().any(|e| {
+            e.ok()
+                .map(|e| e.file_name().to_string_lossy().starts_with("appmanifest_"))
+                .unwrap_or(false)
+        })
     {
         library_root.to_path_buf()
     } else {
@@ -681,7 +669,10 @@ fn meta_from_appinfo_vdf(vdf: &[u8], strings: &[String]) -> Option<AppMeta> {
     Some(AppMeta { name, is_game })
 }
 
-fn bin_map_get<'a>(map: &'a HashMap<String, BinVal>, key: &str) -> Option<&'a HashMap<String, BinVal>> {
+fn bin_map_get<'a>(
+    map: &'a HashMap<String, BinVal>,
+    key: &str,
+) -> Option<&'a HashMap<String, BinVal>> {
     match map.get(key) {
         Some(BinVal::Map(m)) => Some(m),
         _ => None,

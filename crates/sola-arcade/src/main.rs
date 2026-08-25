@@ -3,47 +3,52 @@
 //! Discovers installed titles from Steam manifests (no Settings catalog).
 //! Launch: `gamescope -W/-H -- steam -applaunch <id>` (never host `-f`).
 mod launch;
+mod nest;
 mod steam;
+mod x11_nest;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{
-    button, column, container, image as iced_image, row, scrollable, stack, text, tooltip, Space,
-};
+use iced::widget::Id as ScrollId;
+use iced::widget::image::Handle as ImageHandle;
 use iced::widget::operation;
 use iced::widget::scrollable::{AbsoluteOffset, Viewport};
 use iced::widget::tooltip::Position as TooltipPosition;
-use iced::widget::Id as ScrollId;
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
-use iced::widget::image::Handle as ImageHandle;
+use iced::widget::{
+    Space, button, column, container, image as iced_image, row, scrollable, stack, text, tooltip,
+};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme,
+};
 
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppMenuPayload, Application, LaunchAppPayload, MenuDefinition, Topic, TopicKind,
+    AppMenuPayload, Application, LaunchAppPayload, MenuDefinition, Topic, TopicKind, Window,
+    WindowGeometry,
 };
 use sola_core::KeyCode;
+use sola_core::config::JsonConfig;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
 };
+use sola_kit::components::button as kit_btn;
+use sola_kit::components::card as kit_card;
 use sola_kit::components::icon;
+use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::style::{
     RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, hairline,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::{self as kit_input, text_input};
-use sola_kit::components::button as kit_btn;
-use sola_kit::components::card as kit_card;
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-use launch::{
-    DEFAULT_HOST_HEIGHT, DEFAULT_HOST_WIDTH, game_session_app_id, launch_command, session_alive,
-    stop_nest_local,
-};
+use launch::{game_session_app_id, launch_command, session_alive, stop_nest_local};
+use nest::{NestChoice, NestFile};
 use steam::{
     SortMode, SteamGame, load_library_cache, save_library_cache, scan_library_games, sort_games,
 };
@@ -54,6 +59,9 @@ const GAMESCOPE_HOST_APP_ID: &str = "gamescope";
 /// Full-width banner row height. Steam `library_hero` is 1920×620; we show a
 /// wide strip (Cover) so the hero fills the row without portrait cropping.
 const ROW_H: f32 = 168.0;
+/// Nest dropdown trigger on the action chip (short labels: Fit / 1080p / 4K).
+const NEST_TRIGGER_W: f32 = 124.0;
+const NEST_MENU_W: f32 = 200.0;
 /// Vertical gap between gallery rows (`column` spacing).
 const ROW_GAP: f32 = SPACE_MD;
 /// Decode height for cached banners (2× row for HiDPI; width from aspect).
@@ -88,23 +96,20 @@ fn restore_gallery_scroll(y: f32) -> Task<Msg> {
 
 fn main() -> iced::Result {
     // Game-runner path used by sola-session (`LaunchApp` whitespace-splits):
-    //   sola-arcade --run <steam_app_id> [width] [height]
+    //   sola-arcade --run <steam_app_id> [width] [height] [fit]
     // gamescope child (desktop Steam, no BPM):
     //   sola-arcade --nested-steam <steam_app_id>
     let mut argv = std::env::args().skip(1).peekable();
     if argv.peek().map(|s| s.as_str()) == Some("--nested-steam") {
         argv.next();
-        let app_id: u32 = argv
-            .next()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| {
-                eprintln!("sola-arcade: --nested-steam requires <steam_app_id>");
-                std::process::exit(2);
-            });
+        let app_id: u32 = argv.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+            eprintln!("sola-arcade: --nested-steam requires <steam_app_id>");
+            std::process::exit(2);
+        });
         launch::run_nested_steam_blocking(app_id);
     }
-    if let Some((app_id, w, h)) = parse_run_args(argv) {
-        launch::run_game_blocking(app_id, w, h);
+    if let Some(run) = launch::parse_run_args(argv) {
+        launch::run_game_blocking(run.steam_app_id, run.width, run.height, run.fit);
     }
 
     startup(APP_ID);
@@ -130,28 +135,6 @@ fn main() -> iced::Result {
     app.run()
 }
 
-/// Parse `--run <appid> [width] [height]`. Returns `None` for UI mode.
-fn parse_run_args<I, S>(mut args: I) -> Option<(u32, u32, u32)>
-where
-    I: Iterator<Item = S>,
-    S: AsRef<str>,
-{
-    let first = args.next()?;
-    if first.as_ref() != "--run" {
-        return None;
-    }
-    let app_id: u32 = args.next()?.as_ref().parse().ok()?;
-    let width = args
-        .next()
-        .and_then(|s| s.as_ref().parse().ok())
-        .unwrap_or(DEFAULT_HOST_WIDTH);
-    let height = args
-        .next()
-        .and_then(|s| s.as_ref().parse().ok())
-        .unwrap_or(DEFAULT_HOST_HEIGHT);
-    Some((app_id, width, height))
-}
-
 /// Active play/load session tracked by the Arcade UI.
 #[derive(Debug, Clone)]
 struct ActiveSession {
@@ -170,8 +153,18 @@ struct App {
     /// When true (default), only fully-installed / ready-to-play titles —
     /// Steam-style “Ready to Play” filter.
     ready_to_play_only: bool,
-    host_width: u32,
-    host_height: u32,
+    /// Per-title Fit vs locked resolution (`arcade-nest.json`).
+    nest: NestFile,
+    /// Open nest dropdown (one row at a time).
+    nest_menu: Option<u32>,
+    /// Last sticky `OutputGeometry` — Fit snapshots this at Play.
+    output_size: Option<(u32, u32)>,
+    /// gamescope host `window_id` while a nest is up (`Topic::Windows`).
+    host_window_id: Option<u32>,
+    /// Latest `WindowGeometry` by window_id (sticky; pruned to live Windows).
+    host_geom: HashMap<u32, (u32, u32)>,
+    /// Last nest size we successfully poked (Fit). Skip identical.
+    last_fit: Option<(u32, u32)>,
     status: Option<String>,
     status_tone: StatusTone,
     gamescope_ok: bool,
@@ -222,8 +215,12 @@ impl Default for App {
             filter: String::new(),
             sort: SortMode::Alphabetical,
             ready_to_play_only: true,
-            host_width: DEFAULT_HOST_WIDTH,
-            host_height: DEFAULT_HOST_HEIGHT,
+            nest: NestFile::load(),
+            nest_menu: None,
+            output_size: None,
+            host_window_id: None,
+            host_geom: HashMap::new(),
+            last_fit: None,
             status: None,
             status_tone: StatusTone::Info,
             gamescope_ok,
@@ -259,6 +256,12 @@ enum Msg {
     Refresh,
     Launch(u32),
     Install(u32),
+    ToggleNestMenu(u32),
+    DismissNestMenu,
+    SetNest {
+        app_id: u32,
+        choice: NestChoice,
+    },
     StopGame,
     OpenStore(u32),
     Uninstall(u32),
@@ -415,8 +418,7 @@ impl App {
         // scan runs so the window never looks frozen/empty without reason.
         if self.library_scanning && !self.has_library_data {
             self.status = Some(
-                "Scanning Steam library for the first time… this can take a little while."
-                    .into(),
+                "Scanning Steam library for the first time… this can take a little while.".into(),
             );
             self.status_tone = StatusTone::Info;
             return;
@@ -486,7 +488,12 @@ impl App {
             return Task::none();
         }
         let name = game.name.clone();
-        let plan = launch_command(steam_app_id, self.host_width, self.host_height);
+        let nest = self.nest.get(steam_app_id);
+        let (width, height) = nest.resolve(self.output_size);
+        let fit = matches!(nest, NestChoice::Fit);
+        let plan = launch_command(steam_app_id, width, height, fit);
+        self.host_window_id = None;
+        self.last_fit = None;
         let session_id = game_session_app_id(steam_app_id);
 
         if let Ok(mut b) = bus().lock() {
@@ -511,12 +518,16 @@ impl App {
         // Steam cold-start under the nest may show prepare UI (shader cache,
         // updates) inside gamescope before the game process starts — that is
         // intentional and automatic (no separate Steam session required).
+        self.nest_menu = None;
         self.status = Some(format!(
             "Starting “{name}”… Steam may prepare shaders/updates in the nest first."
         ));
         self.status_tone = StatusTone::Info;
         tracing::info!(
             %session_id,
+            nest = ?nest,
+            width,
+            height,
             steam_app_id,
             command = %plan.command,
             gamescope = plan.gamescope,
@@ -534,6 +545,7 @@ impl App {
             let _ = b.emit(Topic::CloseApp(active.session_id.clone()));
         }
         stop_nest_local(active.steam_app_id);
+        self.clear_fit_follow();
         retract_gamescope_host_label();
         self.status = None;
         self.set_boot_status();
@@ -543,7 +555,10 @@ impl App {
     fn on_bus_topic(&mut self, topic: Topic) {
         match topic {
             Topic::LaunchResult(r)
-                if self.active.as_ref().is_some_and(|a| a.session_id == r.app_id) =>
+                if self
+                    .active
+                    .as_ref()
+                    .is_some_and(|a| a.session_id == r.app_id) =>
             {
                 if r.ok {
                     if let Some(a) = self.active.as_mut() {
@@ -556,9 +571,15 @@ impl App {
                     self.status = Some(format!("Launch failed: {err}"));
                     self.status_tone = StatusTone::Danger;
                     self.active = None;
+                    self.clear_fit_follow();
                     self.clear_host_label();
                 }
             }
+            Topic::OutputGeometry(g) if g.width > 0 && g.height > 0 => {
+                self.output_size = Some((g.width as u32, g.height as u32));
+            }
+            Topic::Windows(list) => self.on_windows(list),
+            Topic::WindowGeometry(g) => self.on_window_geometry(g),
             Topic::UserAppExited(e)
                 if self
                     .active
@@ -576,11 +597,73 @@ impl App {
                     return;
                 }
                 self.active = None;
+                self.clear_fit_follow();
                 self.clear_host_label();
                 self.status = None;
                 self.set_boot_status();
             }
             _ => {}
+        }
+    }
+
+    fn on_windows(&mut self, list: Vec<Window>) {
+        let live: HashSet<u32> = list.iter().map(|w| w.window_id).collect();
+        self.host_geom.retain(|id, _| live.contains(id));
+        let steam_id = self.active.as_ref().map(|a| a.steam_app_id);
+        self.host_window_id = steam_id.and_then(|id| pick_gamescope_host(&list, id));
+        // Poke from Tick only — first WindowGeometry is often gamescope's
+        // 1920×1080 hint; a live mode-control then aborts the wayland backend.
+    }
+
+    fn on_window_geometry(&mut self, g: WindowGeometry) {
+        if g.width <= 0 || g.height <= 0 {
+            return;
+        }
+        self.host_geom
+            .insert(g.window_id, (g.width as u32, g.height as u32));
+    }
+
+    fn clear_fit_follow(&mut self) {
+        self.host_window_id = None;
+        self.last_fit = None;
+    }
+
+    /// When the active title is Fit, retarget nested mode to the host frame.
+    fn follow_fit_if_needed(&mut self) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        if self.nest.get(active.steam_app_id) != NestChoice::Fit {
+            return;
+        }
+        let Some(wid) = self.host_window_id else {
+            return;
+        };
+        let Some((width, height)) = self.host_geom.get(&wid).copied() else {
+            return;
+        };
+        if !x11_nest::should_apply_fit(width, height, self.last_fit) {
+            return;
+        }
+        match x11_nest::apply_fit(active.steam_app_id, width, height) {
+            Ok(()) => {
+                self.last_fit = Some((width, height));
+                tracing::info!(
+                    steam_app_id = active.steam_app_id,
+                    width,
+                    height,
+                    "arcade fit follows host frame"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    steam_app_id = active.steam_app_id,
+                    width,
+                    height,
+                    %err,
+                    "arcade fit nest poke failed"
+                );
+            }
         }
     }
 
@@ -603,6 +686,7 @@ impl App {
             return;
         }
         self.active = None;
+        self.clear_fit_follow();
         self.clear_host_label();
         self.status = None;
         self.set_boot_status();
@@ -669,6 +753,18 @@ impl App {
                 return self.apply_scanned_library(games);
             }
             Msg::Launch(id) => return self.launch_game(id),
+            Msg::ToggleNestMenu(id) => {
+                self.nest_menu = if self.nest_menu == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+            }
+            Msg::DismissNestMenu => self.nest_menu = None,
+            Msg::SetNest { app_id, choice } => {
+                self.nest.set(app_id, choice);
+                self.nest_menu = None;
+            }
             Msg::Install(id) => {
                 // Hand off to Steam's install UI (never download ourselves).
                 let uri = format!("steam://install/{id}");
@@ -718,14 +814,14 @@ impl App {
             Msg::Uninstall(id) => {
                 // Hand off to Steam's uninstall UI (never delete files ourselves).
                 let uri = format!("steam://uninstall/{id}");
-                let _ = std::process::Command::new("steam")
-                    .arg(&uri)
-                    .spawn();
+                let _ = std::process::Command::new("steam").arg(&uri).spawn();
                 self.status = Some(format!("Opened Steam uninstall for app {id}."));
                 self.status_tone = StatusTone::Info;
             }
             Msg::Tick => {
                 self.reconcile_active();
+                // Nested DISPLAY appears after Steam/game start; retry Fit.
+                self.follow_fit_if_needed();
             }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
@@ -823,7 +919,15 @@ impl App {
                 let active_id = self.active.as_ref().map(|a| a.steam_app_id);
                 let mut list = column![].spacing(ROW_GAP).width(Length::Fill);
                 for g in filtered {
-                    list = list.push(game_row(g, active_id, self.banners.get(&g.app_id)));
+                    list = list.push(game_row(
+                        g,
+                        active_id,
+                        self.banners.get(&g.app_id),
+                        self.nest.get(g.app_id),
+                        self.nest_menu == Some(g.app_id),
+                        self.output_size,
+                        self.gamescope_ok,
+                    ));
                 }
                 container(list)
                     .width(Length::Fill)
@@ -923,6 +1027,26 @@ fn icon_tool_btn<'a>(
         .into()
 }
 
+/// Prefer the gamescope host whose pid is our nest; else first `gamescope` window.
+fn pick_gamescope_host(windows: &[Window], steam_app_id: u32) -> Option<u32> {
+    let needle = format!("--nested-steam {steam_app_id}");
+    let mut first = None;
+    for w in windows {
+        if w.app_id != GAMESCOPE_HOST_APP_ID {
+            continue;
+        }
+        if first.is_none() {
+            first = Some(w.window_id);
+        }
+        if let Some(pid) = w.pid {
+            if launch::pid_cmdline_contains(pid, needle.as_bytes()) {
+                return Some(w.window_id);
+            }
+        }
+    }
+    first
+}
+
 /// Tell shell chrome the gamescope host should display `name` (menubar + switcher).
 ///
 /// The nest surface reports `app_id=gamescope` (sometimes empty until river
@@ -974,6 +1098,36 @@ fn retract_gamescope_host_label() {
     tracing::info!("retracted gamescope host label");
 }
 
+/// Per-title nest size: Fit to window, or a locked resolution. Kit select
+/// so the menu is an iced overlay (escapes the clipped banner row).
+fn nest_size_select<'a>(
+    app_id: u32,
+    choice: NestChoice,
+    open: bool,
+    native: Option<(u32, u32)>,
+) -> Element<'a, Msg> {
+    let options = nest::menu_entries(native).into_iter().map(|(item, label)| {
+        SelectOption::new(
+            label,
+            item == choice,
+            Msg::SetNest {
+                app_id,
+                choice: item,
+            },
+        )
+    });
+    container(select_sized(
+        choice.trigger_label(),
+        options,
+        open,
+        Msg::ToggleNestMenu(app_id),
+        Msg::DismissNestMenu,
+        NEST_MENU_W,
+    ))
+    .width(Length::Fixed(NEST_TRIGGER_W))
+    .into()
+}
+
 /// One full-width row: faded banner background, large title, actions on the right.
 ///
 /// `active_id`: currently launching/playing Steam app. That row shows **Stop**;
@@ -988,6 +1142,10 @@ fn game_row<'a>(
     g: &'a SteamGame,
     active_id: Option<u32>,
     banner: Option<&'a ImageHandle>,
+    nest: NestChoice,
+    nest_open: bool,
+    native: Option<(u32, u32)>,
+    gamescope_ok: bool,
 ) -> Element<'a, Msg> {
     let installed = g.installed;
     let banner: Element<'_, Msg> = if let Some(handle) = banner {
@@ -1005,17 +1163,18 @@ fn game_row<'a>(
             .into()
     };
 
-    let title = text(g.name.as_str())
-        .font(fonts::display())
-        .size(26)
-        .style(move |theme: &Theme| {
-            let p = theme.extended_palette();
-            let mut c = p.background.base.text;
-            if !installed {
-                c.a *= 0.72;
-            }
-            iced::widget::text::Style { color: Some(c) }
-        });
+    let title =
+        text(g.name.as_str())
+            .font(fonts::display())
+            .size(26)
+            .style(move |theme: &Theme| {
+                let p = theme.extended_palette();
+                let mut c = p.background.base.text;
+                if !installed {
+                    c.a *= 0.72;
+                }
+                iced::widget::text::Style { color: Some(c) }
+            });
 
     let primary: Element<'_, Msg> = if !installed {
         kit_btn::labeled("Install", kit_btn::primary)
@@ -1039,8 +1198,7 @@ fn game_row<'a>(
     let secondary_actions: Element<'_, Msg> = if installed {
         row![
             kit_btn::labeled_sm("Store", kit_btn::secondary).on_press(Msg::OpenStore(g.app_id)),
-            kit_btn::labeled_sm("Uninstall", kit_btn::secondary)
-                .on_press(Msg::Uninstall(g.app_id)),
+            kit_btn::labeled_sm("Uninstall", kit_btn::secondary).on_press(Msg::Uninstall(g.app_id)),
         ]
         .spacing(SPACE_SM)
         .align_y(Alignment::Center)
@@ -1051,18 +1209,26 @@ fn game_row<'a>(
             .into()
     };
 
-    let actions = container(
-        row![primary, secondary_actions]
-            .spacing(SPACE_SM)
-            .align_y(Alignment::Center),
-    )
-    .padding(Padding {
-        top: SPACE_SM,
-        right: SPACE_SM,
-        bottom: SPACE_SM,
-        left: SPACE_SM,
-    })
-    .style(action_chip_style);
+    let nest_select: Option<Element<'_, Msg>> = if installed && gamescope_ok {
+        Some(nest_size_select(g.app_id, nest, nest_open, native))
+    } else {
+        None
+    };
+
+    let mut action_row = row![primary].spacing(SPACE_SM).align_y(Alignment::Center);
+    if let Some(select) = nest_select {
+        action_row = action_row.push(select);
+    }
+    action_row = action_row.push(secondary_actions);
+
+    let actions = container(action_row)
+        .padding(Padding {
+            top: SPACE_SM,
+            right: SPACE_SM,
+            bottom: SPACE_SM,
+            left: SPACE_SM,
+        })
+        .style(action_chip_style);
 
     let foreground = container(
         row![
@@ -1262,4 +1428,29 @@ fn decode_banner_handle(path: &std::path::Path) -> Option<ImageHandle> {
     };
     let (w, h) = rgba.dimensions();
     Some(ImageHandle::from_rgba(w, h, rgba.into_raw()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn win(id: u32, app: &str) -> Window {
+        Window {
+            window_id: id,
+            app_id: app.into(),
+            title: String::new(),
+            pid: None,
+        }
+    }
+
+    #[test]
+    fn pick_gamescope_host_first_gamescope() {
+        let list = vec![
+            win(1, "sola-arcade"),
+            win(128, "gamescope"),
+            win(4, "sola-browser"),
+        ];
+        assert_eq!(pick_gamescope_host(&list, 427520), Some(128));
+        assert_eq!(pick_gamescope_host(&[win(1, "sola-arcade")], 400), None);
+    }
 }
