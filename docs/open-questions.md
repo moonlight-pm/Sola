@@ -105,6 +105,32 @@ Claude hook policy.
 
 ---
 
+### D5 — HTML/CSS kit vs iced (P2)
+
+**Context:** Isolated spike in worktree `kit-retarget` (`crates/sola-html-spike`,
+not a workspace member). Proved LLM-shaped chrome (HTML file + CSS, live
+mtime), iced-quality type (cosmic-text), GPU boxes, CSS-sized `wl_subsurface`,
+and another process in that hole via a nested Wayland display. Iced/`sola-kit`
+remains the shipped kit. Idea:
+[`ideas/2026-08-24-html-css-kit.md`](ideas/2026-08-24-html-css-kit.md).
+
+**Ask:**
+
+1. Park the idea, or put a **canary** on CURRENT **Now** (JS façade spike
+   and/or `cargo make` `*-canary` install + distinct Wayland `app_id`)?  
+2. If a canary: first surface is **not** terminal grid and **not** shell —
+   which app?  
+3. Confirm: no merge of the spike to master, no replacing `/opt/sola/bin`
+   unsuffixed apps.
+
+**Until decided:** do not retarget `sola-kit`. Do not install the spike. Do
+not invent canary install plumbing. JS/DOM stays in the idea (custom `Elem`
+façade + QuickJS, event-driven only).
+
+**Related:** idea above; `kit-retarget` worktree.
+
+---
+
 ## Decision log
 
 | Date | ID | Decision | Where recorded |

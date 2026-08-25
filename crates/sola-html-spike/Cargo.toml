@@ -1,0 +1,30 @@
+# Isolated from the Sola workspace. HTML/CSS + Taffy + cosmic-text, no Blitz.
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "sola-html-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "sola-html-spike"
+path = "src/main.rs"
+
+[dependencies]
+cosmic-text = "0.15"
+taffy = { version = "0.7", default-features = false, features = ["std", "flexbox", "taffy_tree"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland"] }
+png = "0.17"
+wgpu = { version = "26", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server"] }
+memmap2 = "0.9"
+rustix = { version = "1", features = ["fs", "process"] }

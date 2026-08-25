@@ -18,6 +18,9 @@ exclude = [
     # 27.0.4 for iced — keep this crate out of the member graph so the
     # two do not unify. Built only via `cargo make build sola-blitz-spike`.
     "crates/sola-blitz-spike",
+    # Same wgpu-26 isolation. HTML/CSS kit probe (idea D5). Built only via
+    # `cargo make build sola-html-spike`. Do not install.
+    "crates/sola-html-spike",
 ]
 resolver = "3"
 
