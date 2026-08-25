@@ -84,11 +84,10 @@ pub use readable::readable;
 pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use sidebar::{
     Dest, Drop, Event as SidebarEvent, Msg as SidebarMsg, PANEL_HEADER_H, PANEL_REORDER_ANIM_MS,
-    PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_ROW_STRIDE,
-    PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, Row as SidebarRow, SIDEBAR_WIDTH, SectionCollapse,
-    SectionScroll, SidebarDensity, SidebarHoverAction, SidebarItem, SidebarItemChrome,
-    SidebarPanel, SidebarSection, State as SidebarState, StripSnapshot, panel_etch_row_height,
-    section_overflow_counts, sidebar, sidebar_with_header,
+    PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, SIDEBAR_WIDTH,
+    SectionCollapse, SectionScroll, SidebarDensity, SidebarHoverAction, SidebarItem,
+    SidebarItemChrome, SidebarPanel, SidebarSection, State as SidebarState,
+    panel_etch_row_height, section_overflow_counts, sidebar, sidebar_with_header,
 };
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
