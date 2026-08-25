@@ -1,8 +1,12 @@
 //! Build / execute the host launch path for a Steam game under **windowed**
 //! gamescope.
 //!
-//! Product rule: host always has fixed size (`-W`/`-H`); never host `-f`.
-//! Nested windowed / borderless / exclusive FS inside gamescope is fine.
+//! Product rule: host never `-f`. Nested `-w/-h` is Arcade's per-title
+//! nest setting (Fit → display pixels at Play, or a locked resolution).
+//! Initial host `-W/-H` matches that size; River zone/float after the
+//! pre-init pin. Fit then retargets nested mode to the live host frame
+//! (Arcade X11 poke on the nested display). Nested windowed /
+//! borderless / exclusive FS inside gamescope is fine.
 //!
 //! ## Steam already running (critical)
 //!
@@ -49,7 +53,10 @@ pub fn steam_running() -> bool {
         return true;
     }
     Command::new("pgrep")
-        .args(["-f", r"ubuntu12_32/steam |[/]steam -srt-logger-opened|[/]steam -silent"])
+        .args([
+            "-f",
+            r"ubuntu12_32/steam |[/]steam -srt-logger-opened|[/]steam -silent",
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -66,6 +73,16 @@ fn read_cmdline_spaced(pid_dir: &std::path::Path) -> Vec<u8> {
         .collect()
 }
 
+/// True when `/proc/<pid>/cmdline` contains `needle` (space-normalized).
+pub fn pid_cmdline_contains(pid: u32, needle: &[u8]) -> bool {
+    cmdline_contains(&std::path::PathBuf::from(format!("/proc/{pid}")), needle)
+}
+
+fn cmdline_contains(pid_dir: &std::path::Path, needle: &[u8]) -> bool {
+    let cmdline = read_cmdline_spaced(pid_dir);
+    cmdline.windows(needle.len()).any(|w| w == needle)
+}
+
 fn process_cmdline_contains(needle: &[u8]) -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return false;
@@ -76,8 +93,7 @@ fn process_cmdline_contains(needle: &[u8]) -> bool {
         if !name.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
-        let cmdline = read_cmdline_spaced(&entry.path());
-        if cmdline.windows(needle.len()).any(|w| w == needle) {
+        if cmdline_contains(&entry.path(), needle) {
             return true;
         }
     }
@@ -110,7 +126,9 @@ pub fn session_alive(steam_app_id: u32) -> bool {
         let has_launch = cmdline
             .windows(launch.len())
             .any(|w| w == launch.as_bytes());
-        let is_gs = cmdline.windows(b"gamescope".len()).any(|w| w == b"gamescope");
+        let is_gs = cmdline
+            .windows(b"gamescope".len())
+            .any(|w| w == b"gamescope");
         if has_launch && is_gs {
             return true;
         }
@@ -169,9 +187,9 @@ fn gamescope_bin() -> Option<std::path::PathBuf> {
 /// LaunchApp argv for sola-session (whitespace-split, no shell):
 ///
 /// ```text
-/// /opt/sola/bin/sola-arcade --run <appid> <width> <height>
+/// /opt/sola/bin/sola-arcade --run <appid> <width> <height> [fit]
 /// ```
-pub fn launch_command(steam_app_id: u32, width: u32, height: u32) -> LaunchPlan {
+pub fn launch_command(steam_app_id: u32, width: u32, height: u32, fit: bool) -> LaunchPlan {
     let arcade = resolve_in_path("sola-arcade")
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/opt/sola/bin/sola-arcade".into());
@@ -179,13 +197,19 @@ pub fn launch_command(steam_app_id: u32, width: u32, height: u32) -> LaunchPlan 
     let have_gs = gamescope_bin().is_some();
     // Nest only when we can and Steam is cold — otherwise bare applaunch.
     let will_nest = have_gs && !steam_open;
+    let command = if fit {
+        format!("{arcade} --run {steam_app_id} {width} {height} fit")
+    } else {
+        format!("{arcade} --run {steam_app_id} {width} {height}")
+    };
 
     LaunchPlan {
-        command: format!("{arcade} --run {steam_app_id} {width} {height}"),
+        command,
         gamescope: will_nest,
         steam_already_running: steam_open,
         host_width: width,
         host_height: height,
+        fit,
     }
 }
 
@@ -197,11 +221,53 @@ pub struct LaunchPlan {
     pub steam_already_running: bool,
     pub host_width: u32,
     pub host_height: u32,
+    pub fit: bool,
 }
 
-/// Entry for `sola-arcade --run <appid> [width] [height]`.
+/// Parsed `sola-arcade --run <appid> [width] [height] [fit]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunArgs {
+    pub steam_app_id: u32,
+    pub width: u32,
+    pub height: u32,
+    pub fit: bool,
+}
+
+/// Parse `--run <appid> [width] [height] [fit]`. Returns `None` unless the
+/// first token is `--run`. Extra `fit` may appear anywhere after the app id.
+pub fn parse_run_args<I, S>(mut args: I) -> Option<RunArgs>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    let first = args.next()?;
+    if first.as_ref() != "--run" {
+        return None;
+    }
+    let app_id: u32 = args.next()?.as_ref().parse().ok()?;
+    let mut fit = false;
+    let mut nums: Vec<u32> = Vec::new();
+    for tok in args {
+        let s = tok.as_ref();
+        if s.eq_ignore_ascii_case("fit") {
+            fit = true;
+            continue;
+        }
+        if let Ok(n) = s.parse() {
+            nums.push(n);
+        }
+    }
+    Some(RunArgs {
+        steam_app_id: app_id,
+        width: nums.first().copied().unwrap_or(DEFAULT_HOST_WIDTH),
+        height: nums.get(1).copied().unwrap_or(DEFAULT_HOST_HEIGHT),
+        fit,
+    })
+}
+
+/// Entry for `sola-arcade --run <appid> [width] [height] [fit]`.
 /// Does not return on success (process exits with child status).
-pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
+pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) -> ! {
     let steam = resolve_in_path("steam")
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "steam".into());
@@ -216,9 +282,7 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
             "sola-arcade: Steam already running — launching bare steam -applaunch \
              (no gamescope nest; quit Steam first for windowed nest)"
         );
-        Command::new(&steam)
-            .args(["-applaunch", &app])
-            .status()
+        Command::new(&steam).args(["-applaunch", &app]).status()
     } else if let Some(gs) = gamescope_bin() {
         // Cold Steam under windowed gamescope host (never host -f).
         //
@@ -236,8 +300,12 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
         //
         // Other flags:
         // - `-b` — borderless host (simpler libdecor map)
-        // - host `-W`/`-H` initial; River zone/float after pre-init pin
-        // - `-S fit` — letterbox nested content into host
+        // - host `-W`/`-H` initial (same as nested); River zone/float after pin
+        // - `-w`/`-h` virtual monitor from Arcade nest dropdown
+        // - `-S fit` — letterbox nested content into host when sizes differ
+        // - Fit does **not** pass `--force-windows-fullscreen` (wayland
+        //   backend aborted). Arcade sets `GAMESCOPE_FORCE_WINDOWS_FULLSCREEN`
+        //   on the nested X root after the nest is up.
         // - Child is **`sola-arcade --nested-steam <id>`**, not bare steam:
         //   gamescope forces `XDG_CURRENT_DESKTOP=gamescope` on children, and
         //   Steam then logs `forcing gamepadui for steamdeck + gamescope` and
@@ -249,7 +317,8 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
             .unwrap_or_else(|| "/opt/sola/bin/sola-arcade".into());
         eprintln!(
             "sola-arcade: nesting --nested-steam {app} under gamescope \
-             {w}x{h} (--backend wayland -b -S fit, no -e)"
+             {w}x{h} (--backend wayland -b -S fit{}, no -e)",
+            if fit { ", fit-follow" } else { "" }
         );
         let mut cmd = Command::new(gs);
         cmd.args([
@@ -277,14 +346,10 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
             "sola-arcade: gamescope not found — bare steam -applaunch \
              (game may take exclusive fullscreen on Sola)"
         );
-        Command::new(&steam)
-            .args(["-applaunch", &app])
-            .status()
+        Command::new(&steam).args(["-applaunch", &app]).status()
     };
 
-    let code = status
-        .map(|s| s.code().unwrap_or(1))
-        .unwrap_or(1);
+    let code = status.map(|s| s.code().unwrap_or(1)).unwrap_or(1);
     std::process::exit(code);
 }
 
@@ -364,9 +429,7 @@ pub fn run_nested_steam_blocking(steam_app_id: u32) -> ! {
             gone_ticks += 1;
             // ~2s gone (4 × 500ms) — avoid flapping during Steam's relaunch path.
             if gone_ticks >= 4 {
-                eprintln!(
-                    "sola-arcade: game AppId={app} exited — stopping nested Steam"
-                );
+                eprintln!("sola-arcade: game AppId={app} exited — stopping nested Steam");
                 // Kill the Steam client we spawned (and its tree). Do **not**
                 // `steam -shutdown` — that uses the shared user Steam socket
                 // and can tear down a Steam the user started outside the nest.
@@ -398,7 +461,7 @@ mod tests {
 
     #[test]
     fn launch_command_uses_run_subcommand_never_host_fullscreen() {
-        let plan = launch_command(400, 1280, 720);
+        let plan = launch_command(400, 1280, 720, false);
         let tokens: Vec<&str> = plan.command.split_whitespace().collect();
         assert!(
             !tokens.iter().any(|t| *t == "-f" || *t == "--fullscreen"),
@@ -407,11 +470,57 @@ mod tests {
         );
         assert!(plan.command.contains("--run"));
         assert!(plan.command.contains("400"));
+        assert!(plan.command.contains("1280"));
+        assert!(plan.command.contains("720"));
+        assert!(
+            !plan.command.contains(" fit"),
+            "locked res has no fit token"
+        );
         assert!(
             !plan.command.contains('"') && !plan.command.contains('\''),
             "must not need shell quoting: {}",
             plan.command
         );
+    }
+
+    #[test]
+    fn launch_command_fit_appends_token() {
+        let plan = launch_command(427520, 5120, 2160, true);
+        assert!(plan.fit);
+        assert!(plan.command.ends_with(" 5120 2160 fit"));
+        assert!(
+            !plan.command.contains('"') && !plan.command.contains('\''),
+            "must not need shell quoting: {}",
+            plan.command
+        );
+    }
+
+    #[test]
+    fn parse_run_defaults_and_fit_token() {
+        assert_eq!(
+            parse_run_args(["--run", "400"].into_iter()),
+            Some(RunArgs {
+                steam_app_id: 400,
+                width: 1920,
+                height: 1080,
+                fit: false,
+            })
+        );
+        assert_eq!(
+            parse_run_args(["--run", "427520", "2253", "2132", "fit"].into_iter()),
+            Some(RunArgs {
+                steam_app_id: 427520,
+                width: 2253,
+                height: 2132,
+                fit: true,
+            })
+        );
+        assert_eq!(
+            parse_run_args(["--run", "400", "fit", "1280", "720"].into_iter())
+                .map(|r| (r.width, r.height, r.fit)),
+            Some((1280, 720, true))
+        );
+        assert!(parse_run_args(["--nested-steam", "400"].into_iter()).is_none());
     }
 
     #[test]
