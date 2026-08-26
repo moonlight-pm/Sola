@@ -7,8 +7,8 @@
 | | |
 |--|--|
 | **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. |
-| **Dogfood** | **On master.** Slack (`https://illuno.slack.com`) paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). |
-| **Gaps** | No Bitwarden / downloads / tab chrome; in-app navigation only (no “open in sola-browser”); no throwaway `--url`; no PWA manifest install; page Super+X/C/V implemented (desk smoke pending); `window.open` policy unsmoked. |
+| **Dogfood** | Slack (`https://illuno.slack.com`) paints. Super+X/C/V **installed** 2026-08-26 (`wrapper-clipboard`). Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). |
+| **Gaps** | No Bitwarden / downloads / tab chrome; in-app navigation only (no “open in sola-browser”); no throwaway `--url`; no PWA manifest install; page Super+X/C/V desk smoke pending; `window.open` policy unsmoked. |
 
 ## Intent
 

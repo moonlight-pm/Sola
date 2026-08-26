@@ -155,7 +155,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
-| Wrapper | **On master.** Slack (`illuno.slack.com`) paints. Super+X/C/V/A page edit **uninstalled** (`install wrapper` to smoke). `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
+| Wrapper | Slack (`illuno.slack.com`) paints. Super+X/C/V/A page edit **installed** 2026-08-26 (`wrapper-clipboard`; desk smoke pending). `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
