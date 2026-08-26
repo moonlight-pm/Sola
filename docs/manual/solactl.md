@@ -64,6 +64,8 @@ Grok. `--prompt` and `--prompt-file` are exclusive. Spawn parent defaults
 to `$SOLA_PANE_ID` when you run from a Workspaces pane. `--agent` is Grok
 only. `pane.wait` holds until status matches (`--fresh` waits for a
 transition). Drop unregisters; it does not `git worktree remove`.
+`workspace.rm` replies, then closes the tab on the next tick, so a
+call from inside that pane can finish instead of hanging.
 
 Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags. Spawn /
 add / wait use a longer call deadline than the default 8s.

@@ -158,8 +158,7 @@ enum Msg {
     AddPath(String),
     AddProject,
     CloseWorkspace(String),
-    ClosePane(String),
-    SelectPane(String, String),
+    DropProject(String),
     RestartShell(String),
     PaneFocused(String),
     SplitDividerPress(String),
@@ -414,7 +413,6 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::SelectPane(ws_id, pane_id) => self.focus_pane(&ws_id, &pane_id),
             Msg::PaneFocused(pane_id) => {
                 // Hover focuses for typing. It must not spawn a shell —
                 // only the Start new shell button (or a sidebar click)
@@ -462,7 +460,7 @@ impl App {
             }
             Msg::AddProject => self.add_project(),
             Msg::CloseWorkspace(id) => self.close_workspace(&id),
-            Msg::ClosePane(id) => self.close_pane(&id),
+            Msg::DropProject(id) => self.drop_project(&id),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
                 if let Some(sola_kit::components::SidebarEvent::Resize { width }) =
@@ -566,7 +564,6 @@ impl App {
                 &self.projects,
                 &self.workspaces,
                 &self.selected,
-                &self.focused,
                 &self.pane_status,
                 &self.theme,
                 self.palette.bg,
@@ -770,15 +767,6 @@ impl App {
         true
     }
 
-    fn focus_pane(&mut self, workspace_id: &str, pane_id: &str) -> Task<Msg> {
-        if !self.set_focus(workspace_id, pane_id) {
-            return Task::none();
-        }
-        // Sidebar click / explicit select: attach every leaf so a
-        // sibling shell is restored, not left as Start new shell.
-        self.attach_workspace(workspace_id)
-    }
-
     fn attach_pane(&mut self, id: &str, exec: &[&str]) -> Task<Msg> {
         if self.runtimes.contains_key(id) {
             self.resize_all_panes();
@@ -882,20 +870,21 @@ impl App {
             .find(|w| w.id == ws_id)
             .map(|w| w.layout().leaves())
             .unwrap_or_default();
-        let statuses: Vec<_> = leaves
-            .iter()
-            .map(|id| {
-                self.pane_status
-                    .get(id)
-                    .map(|s| s.status)
-                    .unwrap_or_default()
-            })
-            .collect();
-        let agent = leaves
-            .iter()
-            .find_map(|id| self.pane_status.get(id).and_then(|s| s.agent.clone()));
+        let (rolled, agent) = {
+            let panes: Vec<_> = leaves
+                .iter()
+                .filter_map(|id| self.pane_status.get(id))
+                .collect();
+            (
+                status::rollup_grok(panes.iter().copied()),
+                panes
+                    .iter()
+                    .find(|s| s.is_grok())
+                    .and_then(|s| s.agent.clone()),
+            )
+        };
         if let Some(ws) = workspace::find_workspace_mut(&mut self.workspaces, &ws_id) {
-            ws.status = status::AgentStatus::rollup(statuses);
+            ws.status = rolled;
             ws.agent = agent;
         }
     }
@@ -1154,7 +1143,13 @@ impl App {
                     return (Err("missing project".into()), Task::none());
                 };
                 match self.cli_rm_project(&q) {
-                    Ok(task) => (Ok(serde_json::json!({ "ok": true })), task),
+                    // Reply first; teardown on the next tick so solactl
+                    // (maybe running in a pane we are about to kill)
+                    // gets {ok:true} instead of a hang / timeout.
+                    Ok(id) => (
+                        Ok(serde_json::json!({ "ok": true })),
+                        Task::done(Msg::DropProject(id)),
+                    ),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1193,7 +1188,10 @@ impl App {
                     return (Err("missing workspace".into()), Task::none());
                 };
                 match self.cli_rm(&ws) {
-                    Ok(task) => (Ok(serde_json::json!({ "ok": true })), task),
+                    Ok(id) => (
+                        Ok(serde_json::json!({ "ok": true })),
+                        Task::done(Msg::CloseWorkspace(id)),
+                    ),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -1372,18 +1370,16 @@ impl App {
         }))
     }
 
-    fn cli_rm(&mut self, q: &str) -> Result<Task<Msg>, String> {
+    fn cli_rm(&self, q: &str) -> Result<String, String> {
         let ws = workspace::resolve_workspace(&self.workspaces, q)?;
         if !workspace::can_close(ws) {
             return Err("cannot close the project root".into());
         }
-        let id = ws.id.clone();
-        Ok(self.close_workspace(&id))
+        Ok(ws.id.clone())
     }
 
-    fn cli_rm_project(&mut self, q: &str) -> Result<Task<Msg>, String> {
-        let id = workspace::resolve_project(&self.projects, q)?.id.clone();
-        Ok(self.drop_project(&id))
+    fn cli_rm_project(&self, q: &str) -> Result<String, String> {
+        Ok(workspace::resolve_project(&self.projects, q)?.id.clone())
     }
 
     fn cli_select(&mut self, q: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
@@ -1814,6 +1810,7 @@ impl App {
         if !closable {
             return Task::none();
         }
+        tracing::info!(workspace = %id, "closing workspace");
         let panes = self
             .workspaces
             .iter()

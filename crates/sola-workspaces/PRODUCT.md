@@ -49,9 +49,10 @@ becoming this product.
 spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
 is background unless `--select`; can pass `--agent grok` + `--prompt` /
 `--prompt-file`), kit pane splits, Grok hooks
-+ OSC 9999 + process-tree presence, quiet `×N` on a Grok leaf, sola-call
-owner `workspaces` (`solactl workspaces …` is first-class — verbs stay in lockstep with the
-app), per-project startup script after spawn (Project → Startup Script…),
++ OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok panes
+in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+first-class — verbs stay in lockstep with the app), per-project startup
+script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws`, done-while-unfocused menubar toast.
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding

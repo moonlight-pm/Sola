@@ -109,6 +109,8 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |
+| 2026-08-25 | workspaces | `workspace.rm` / `project.rm` reply `{ok:true}` then teardown on the next tick so a pane can close itself without hanging `solactl`. SessionStart idles a leftover working ring. Cleanup is one shell (`git worktree remove` && `workspace.rm`); splitting those as two Grok tools leaves the tab (cwd gone). | CURRENT, CLI freeze header, manual/solactl, skill |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |
 | 2026-08-18 | workspaces CLI | Face is `solactl workspaces` (owner renamed from `ws`). First-class. New verbs: `project.add`, `project.startup`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.wait`, `whoami`. Spawn `--branch` / `--base-branch` / `--title`. `--prompt-file`; richer list/spawn payloads; Grok-leaf targeting; parent from `$SOLA_PANE_ID`. Confirm still **D3**. | [CLI freeze](specs/2026-08-18-workspaces-cli-design.md), CURRENT, capabilities, manual/solactl |
 | 2026-08-18 | D4.1 amend | Call owner is `workspaces` (`solactl workspaces …`). Tmux `sola-ws` / `sws-` unchanged. | CURRENT + freeze + PRODUCT |

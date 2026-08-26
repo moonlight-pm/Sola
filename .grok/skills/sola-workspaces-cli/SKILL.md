@@ -124,24 +124,29 @@ Resolve names (`whoami`, then `project.list` / `ps`):
 `git worktree remove` fails if cwd is that worktree (`git -C` does not fix
 that). `cd` first.
 
+**One shell.** Never `git worktree remove` as one Grok tool and
+`workspace.rm` as the next — after the checkout is gone, Grok cannot
+spawn a shell in that cwd, the tab stays, and the rail sticks on
+working. Same for tab-only drop: one command, then stop.
+
 ```bash
 cd "$PROJECT"
 # if merge was requested: commit in the worktree if needed, merge $BRANCH
 # into master from here, then:
-git worktree remove ".worktrees/$NAME"   # --force only if they said toss / discard
-git branch -d "$BRANCH"                  # refuses unmerged; do not -D
-solactl workspaces workspace.rm --workspace "$NAME"
+git worktree remove ".worktrees/$NAME" && \
+  git branch -d "$BRANCH" && \
+  solactl workspaces workspace.rm --workspace "$NAME"
 ```
 
-Tab-only drop skips the git lines. If **this pane is the tab**, do not
-foreground `workspace.rm` (it kills tmux before the reply). Detach, then
-stop:
+`--force` on `git worktree remove` only if they said toss / discard.
+`git branch -d` refuses unmerged; do not `-D`.
 
-```bash
-setsid -f solactl workspaces workspace.rm --workspace "$NAME"
-```
+Tab-only drop is just `solactl workspaces workspace.rm --workspace "$NAME"`.
+`workspace.rm` replies **before** it kills tmux, so a foreground call
+from inside the pane works. After it returns, **stop** — no more tools
+in that tab.
 
-Prefer the parent/root pane to run `workspace.rm`.
+Prefer the parent/root pane when it is already there.
 
 ## Do not
 

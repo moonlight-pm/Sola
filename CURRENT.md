@@ -86,13 +86,13 @@ Do not invent product policy.
    hover close is the kit ×; root has no row close (Drop Project is menu-only).
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
    Shortcuts: ⌘T spawn, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
-   right, ⌘W close pane. Split leaves appear under the workspace
-   (`grok` / `shell`); last pane close keeps the workspace. Dead last
-   pane shows **Start new shell**; a split leaf that exits retracts.
-   Quiet `×N` only on a Grok leaf (session dir segments /
-   checkpoints; `signals.json` can stay 0 after a compact). Split
-   labels follow presence. Switching a split attaches every leaf;
-   hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
+   right, ⌘W close pane. A workspace is one rail row even when split;
+   the mark rolls up every Grok pane (waiting / needs-attention beats
+   working beats done beats idle). Last pane close keeps the workspace.
+   Dead last pane shows **Start new shell**; a split leaf that exits
+   retracts. Quiet `×N` on the workspace row is the loudest Grok
+   session in the tab (segments / checkpoints; `signals.json` can stay
+   0). Switching a split attaches every leaf; hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
    — leftover sessions from a deleted workspace are quarantined, not
    attached to the next tab. Working ring spins (kit mark uses ms
    phase, not `as_secs_f32`). Rail marks reclaim on Grok
@@ -102,7 +102,9 @@ Do not invent product policy.
    every later key until quit (River eats Super-up; the union was
    written back into `keyboard_mods`). Exiting Grok back to the shell
    idles the rail mark (grey disc; SessionEnd used to leave done).
-   Installed (self-restart).  
+   `workspace.rm` replies before it kills tmux (a pane closing itself
+   no longer hangs `solactl` / leaves the working ring). Installed
+   (self-restart).  
 8. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.

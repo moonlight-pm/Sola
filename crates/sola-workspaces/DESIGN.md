@@ -76,16 +76,15 @@ open, otherwise the focused pane (same as sola-terminal). Startup is a per-proje
 worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
 and kills its tmux. Worktrees stay on disk.
-⌘W closes the focused **pane**. A split workspace lists leaf rows
-(`grok` / `shell`) under the workspace; a single pane stays one row.
+⌘W closes the focused **pane**. A workspace is always one rail row —
+splits stay in the grid, not as child tabs. The mark rolls up every
+Grok pane in that tab (waiting beats working beats done beats idle).
 
 ## Layout
 
 ```
 [ PROJECT                    + ]
 [ ●  root                      ]
-[    ●  grok                   ]   ← only when this workspace is split;
-[    ○  shell                  ]     labels follow who is live in the pane
 [ ●  workspace-a               ]
 [ NEXT PROJECT               + ]
               terminal grid →
@@ -124,14 +123,16 @@ modal. Do not restyle mail / settings / terminal.
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches
   every live leaf).
-- Do show a quiet `×N` only on a leaf that is actually Grok, when that
-  session has compacted (session dir: `compaction/segment_*.md`,
+- Do show a quiet `×N` on the workspace row when a Grok pane in that
+  tab has compacted (loudest session: `compaction/segment_*.md`,
   checkpoints, then `signals.json` `compactionCount` — Grok often
-  leaves the signal at 0).
-- Do list pane leaves only after a split; label them from presence
-  (`grok` / `claude` / `shell`) and keep the label current.
-- Do return the mark to idle (grey disc) when the pane is a shell
-  again. `/exit` / process gone is idle, not a stuck done check.
+  leaves the signal at 0). Shell panes do not contribute.
+- Do keep splits off the rail. One row per workspace; the mark watches
+  every Grok pane in the tab. Waiting (needs attention) beats working
+  beats done beats idle. A grok+shell split looks like a single pane.
+- Do return the mark to idle (grey disc) when no Grok pane is live
+  (every leaf is a shell). `/exit` / process gone is idle, not a stuck
+  done check.
 - Do put `+` on the project group, not a form in the rail.
 - Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
 - Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split

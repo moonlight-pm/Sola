@@ -33,19 +33,36 @@ impl AgentStatus {
         }
     }
 
-    /// Workspace row: working beats waiting beats done beats idle.
+    /// Workspace row: waiting (needs attention) beats working beats
+    /// done beats idle. Shell panes are filtered out by [`rollup_grok`].
     pub fn rollup(statuses: impl IntoIterator<Item = Self>) -> Self {
         let mut best = Self::Idle;
         for s in statuses {
             best = match (best, s) {
-                (Self::Working, _) | (_, Self::Working) => Self::Working,
                 (Self::Waiting, _) | (_, Self::Waiting) => Self::Waiting,
+                (Self::Working, _) | (_, Self::Working) => Self::Working,
                 (Self::Done, _) | (_, Self::Done) => Self::Done,
                 _ => Self::Idle,
             };
         }
         best
     }
+}
+
+/// Mark for a workspace tab: Grok panes only. A sibling shell stays off
+/// the disc even if it still holds a leftover status.
+pub fn rollup_grok<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> AgentStatus {
+    AgentStatus::rollup(panes.into_iter().filter(|p| p.is_grok()).map(|p| p.status))
+}
+
+/// Quiet `×N` on the workspace row: loudest Grok session in the tab.
+pub fn grok_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
+    panes
+        .into_iter()
+        .filter(|p| p.is_grok())
+        .map(|p| p.compaction_count)
+        .max()
+        .unwrap_or(0)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -84,6 +101,10 @@ impl PaneStatus {
         if incoming.mapped.clear_turn {
             self.tool = None;
             if incoming.mapped.status.is_none() && !incoming.mapped.compacted {
+                // SessionStart / grok -r: at the prompt, not mid-turn.
+                // Do not keep a leftover Working ring from the old session.
+                self.status = AgentStatus::Idle;
+                self.restored_unconfirmed = false;
                 return;
             }
         }
@@ -155,8 +176,12 @@ impl PaneStatus {
         }
     }
 
-    fn shows_compaction(&self) -> bool {
+    pub fn is_grok(&self) -> bool {
         self.agent.as_deref() == Some("grok")
+    }
+
+    fn shows_compaction(&self) -> bool {
+        self.is_grok()
     }
 
     /// Presence names who is here. It never *raises* working/waiting/done
@@ -527,16 +552,78 @@ mod tests {
     }
 
     #[test]
-    fn rollup_prefers_working() {
+    fn rollup_waiting_beats_working() {
         assert_eq!(
             AgentStatus::rollup([AgentStatus::Idle, AgentStatus::Done, AgentStatus::Working]),
             AgentStatus::Working
         );
         assert_eq!(
+            AgentStatus::rollup([AgentStatus::Working, AgentStatus::Waiting]),
+            AgentStatus::Waiting
+        );
+        assert_eq!(
             AgentStatus::rollup([AgentStatus::Done, AgentStatus::Waiting]),
             AgentStatus::Waiting
         );
+        assert_eq!(
+            AgentStatus::rollup([AgentStatus::Idle, AgentStatus::Done]),
+            AgentStatus::Done
+        );
         assert_eq!(AgentStatus::rollup([]), AgentStatus::Idle);
+    }
+
+    #[test]
+    fn rollup_grok_ignores_shell() {
+        let grok = PaneStatus {
+            status: AgentStatus::Done,
+            agent: Some("grok".into()),
+            ..PaneStatus::default()
+        };
+        let shell = PaneStatus {
+            status: AgentStatus::Working,
+            ..PaneStatus::default()
+        };
+        let other = PaneStatus {
+            status: AgentStatus::Waiting,
+            agent: Some("claude".into()),
+            ..PaneStatus::default()
+        };
+        assert_eq!(rollup_grok([&grok, &shell, &other]), AgentStatus::Done);
+        let working = PaneStatus {
+            status: AgentStatus::Working,
+            agent: Some("grok".into()),
+            ..PaneStatus::default()
+        };
+        let waiting = PaneStatus {
+            status: AgentStatus::Waiting,
+            agent: Some("grok".into()),
+            ..PaneStatus::default()
+        };
+        assert_eq!(
+            rollup_grok([&working, &waiting, &shell]),
+            AgentStatus::Waiting
+        );
+        assert_eq!(rollup_grok([&shell]), AgentStatus::Idle);
+    }
+
+    #[test]
+    fn grok_compaction_takes_max() {
+        let a = PaneStatus {
+            agent: Some("grok".into()),
+            compaction_count: 2,
+            ..PaneStatus::default()
+        };
+        let b = PaneStatus {
+            agent: Some("grok".into()),
+            compaction_count: 5,
+            ..PaneStatus::default()
+        };
+        let shell = PaneStatus {
+            compaction_count: 9,
+            ..PaneStatus::default()
+        };
+        assert_eq!(grok_compaction([&a, &b, &shell]), 5);
+        assert_eq!(grok_compaction([&shell]), 0);
     }
 
     #[test]
@@ -554,8 +641,9 @@ mod tests {
         let mut pane = PaneStatus::default();
         pane.apply_hook(&hook("old", AgentStatus::Working));
         pane.apply_hook(&session_start("new"));
-        pane.apply_hook(&hook("new", AgentStatus::Waiting));
         assert_eq!(pane.owner_session.as_deref(), Some("new"));
+        assert_eq!(pane.status, AgentStatus::Idle);
+        pane.apply_hook(&hook("new", AgentStatus::Waiting));
         assert_eq!(pane.status, AgentStatus::Waiting);
         pane.apply_hook(&hook("old", AgentStatus::Done));
         assert_eq!(pane.status, AgentStatus::Waiting);
