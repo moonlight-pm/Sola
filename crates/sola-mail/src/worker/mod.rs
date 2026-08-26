@@ -2,6 +2,7 @@
 
 mod cmds;
 
+use cmds::compact_cmds;
 pub use cmds::{MailCmd, MailEvent};
 
 use std::sync::{Arc, Mutex};
@@ -11,9 +12,7 @@ use sola_bus::topics::MailConfig;
 use tracing::{debug, warn};
 
 use crate::bridge;
-use crate::protocol::{
-    start_idle, Account, IdleChange, ImapClient, rule_matches, sender, wicket,
-};
+use crate::protocol::{Account, IdleChange, ImapClient, rule_matches, sender, start_idle, wicket};
 
 struct WorkerState {
     account: Option<Account>,
@@ -43,41 +42,52 @@ fn run() {
         idle_move_rules: Arc::new(Mutex::new(Vec::new())),
     };
 
-    while let Ok(cmd) = cmd_rx.recv() {
-        match cmd {
-            MailCmd::Shutdown => {
-                teardown(&mut state);
-                break;
-            }
-            MailCmd::Reconfigure(cfg) => {
-                state.account = Some(Account::from_config(&cfg));
-                // Auto-connect when credentials are present.
-                if state.account.as_ref().is_some_and(|a| a.is_configured()) {
-                    do_connect(&mut state);
-                } else {
+    while let Ok(first) = cmd_rx.recv() {
+        let mut batch = vec![first];
+        while let Ok(more) = cmd_rx.try_recv() {
+            batch.push(more);
+        }
+        let mut stop = false;
+        for cmd in compact_cmds(batch) {
+            match cmd {
+                MailCmd::Shutdown => {
                     teardown(&mut state);
-                    bridge::emit(MailEvent::NotConfigured);
+                    stop = true;
+                    break;
                 }
+                MailCmd::Reconfigure(cfg) => {
+                    state.account = Some(Account::from_config(&cfg));
+                    // Auto-connect when credentials are present.
+                    if state.account.as_ref().is_some_and(|a| a.is_configured()) {
+                        do_connect(&mut state);
+                    } else {
+                        teardown(&mut state);
+                        bridge::emit(MailEvent::NotConfigured);
+                    }
+                }
+                MailCmd::ListFolders => do_list_folders(&state),
+                MailCmd::ListMessages {
+                    folder,
+                    offset,
+                    limit,
+                } => do_list_messages(&state, folder, offset, limit),
+                MailCmd::Search { query } => do_search(&state, query),
+                MailCmd::FetchBody { folder, uid } => do_fetch_body(&state, folder, uid),
+                MailCmd::MarkRead { folder, uid } => do_mark_read(&state, folder, uid),
+                MailCmd::Move { folder, uid, dest } => do_move(&state, folder, uid, dest),
+                MailCmd::EmptyFolder { folder } => do_empty(&state, folder),
+                MailCmd::Send {
+                    from,
+                    to,
+                    cc,
+                    subject,
+                    body,
+                    in_reply_to,
+                } => do_send(&state, from, to, cc, subject, body, in_reply_to),
             }
-            MailCmd::ListFolders => do_list_folders(&state),
-            MailCmd::ListMessages {
-                folder,
-                offset,
-                limit,
-            } => do_list_messages(&state, folder, offset, limit),
-            MailCmd::Search { query } => do_search(&state, query),
-            MailCmd::FetchBody { folder, uid } => do_fetch_body(&state, folder, uid),
-            MailCmd::MarkRead { folder, uid } => do_mark_read(&state, folder, uid),
-            MailCmd::Move { folder, uid, dest } => do_move(&state, folder, uid, dest),
-            MailCmd::EmptyFolder { folder } => do_empty(&state, folder),
-            MailCmd::Send {
-                from,
-                to,
-                cc,
-                subject,
-                body,
-                in_reply_to,
-            } => do_send(&state, from, to, cc, subject, body, in_reply_to),
+        }
+        if stop {
+            break;
         }
     }
     debug!("mail worker stopped");
@@ -159,11 +169,8 @@ fn do_connect(state: &mut WorkerState) {
     }
 
     let from_addresses = {
-        let addrs = wicket::fetch_from_addresses(
-            &account.imap_host,
-            &account.username,
-            &account.password,
-        );
+        let addrs =
+            wicket::fetch_from_addresses(&account.imap_host, &account.username, &account.password);
         if addrs.is_empty() {
             vec![account.email.clone()]
         } else {
@@ -177,7 +184,10 @@ fn do_connect(state: &mut WorkerState) {
         .filter(|r| r.action == "move")
         .cloned()
         .collect();
-    *state.idle_move_rules.lock().unwrap_or_else(|e| e.into_inner()) = move_rules;
+    *state
+        .idle_move_rules
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = move_rules;
 
     let shared_rules = Arc::clone(&state.idle_move_rules);
     let idle = start_idle(account.clone(), move |change, idle_client| {
@@ -403,9 +413,9 @@ fn do_move(state: &WorkerState, folder: String, uid: u32, dest: String) {
     };
     let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
     match c.move_message(&folder, uid, &dest) {
-        Ok(()) => bridge::emit(MailEvent::Moved),
-        Err(e) => bridge::emit(MailEvent::Error {
-            context: "move".into(),
+        Ok(()) => bridge::emit(MailEvent::Moved { uid }),
+        Err(e) => bridge::emit(MailEvent::MoveFailed {
+            uid,
             message: e.to_string(),
         }),
     }
