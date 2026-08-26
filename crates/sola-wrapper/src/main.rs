@@ -6,6 +6,7 @@
 mod app;
 mod argv;
 mod catalog;
+mod edit;
 mod instance;
 mod profile;
 

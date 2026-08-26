@@ -23,6 +23,10 @@ Launcher → the wrapper’s label, or:
 
 A second launch raises the existing window. Cookies live under `~/.config/sola/wrapper/<id>/` (not sola-browser’s profile).
 
+## Copy and paste
+
+Super+X / Super+C / Super+V / Super+A (Cut / Copy / Paste / Select All) are the same chords as sola-browser. The shell routes them through the wrapper’s **Edit** menu; copy writes the system clipboard from the page selection, and paste inserts once into the focused field without emptying the clipboard.
+
 ## Not in this pass
 
 Bitwarden fill, downloads, tab chrome, opening other origins in sola-browser, throwaway `--url` windows, PWA install.

@@ -10,21 +10,22 @@ use iced::keyboard;
 use iced::widget::{Shader, column, container};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 
-use sola_bus::topics::{Application, FocusTarget, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{Application, FocusTarget, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent, BusSetup,
+    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use sola_browser::app::{VIEW_H, VIEW_W};
 use sola_browser::cef::page_ime::page_ime;
-use sola_browser::engine::{Cmd, Engine, FrameSlot, TabId};
+use sola_browser::engine::{Cmd, EditCmd, Engine, FrameSlot, TabId};
 use sola_browser::run::frame_subscription;
 use sola_browser::{CefEngine, Msg as BrowserMsg};
 
+use crate::edit;
 use crate::instance;
 
 #[derive(Debug, Clone)]
@@ -37,6 +38,8 @@ pub enum Msg {
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
+    /// Result of `iced::clipboard::read` for paste into page content.
+    PagePasted(Option<String>),
     Ignore,
 }
 
@@ -44,6 +47,7 @@ pub fn run(app_id: &'static str, spec: Application) -> iced::Result {
     BusSetup::new(app_id)
         .subscribe(TopicKind::ALL)
         .app_menu(&spec.label, [("quit", "Quit", KeyCode::Q.meta())])
+        .app_menu_more("Edit", edit::MENU_ITEMS)
         .install();
 
     let url = spec.url.clone().unwrap_or_default();
@@ -143,6 +147,7 @@ impl App {
             .map(map_browser_msg),
             bus_subscription().map(Msg::Bus),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
+            chrome_drain_subscription(),
             event::listen_with(|event, _status, _| {
                 if let Event::Keyboard(keyboard::Event::ModifiersChanged(m)) = event {
                     sola_browser::input::store_modifiers(m);
@@ -160,6 +165,11 @@ impl App {
                 if is_self_quit(&message, self.app_id) {
                     return iced::exit();
                 }
+                if let Some(Topic::MenuAction(m)) = Topic::parse(&message) {
+                    if m.app_id == self.app_id {
+                        return self.on_edit_action(&m.action_id);
+                    }
+                }
             }
             Msg::NewFrame => {
                 self.slot.redraw_queued.store(false, Ordering::Release);
@@ -169,9 +179,19 @@ impl App {
                 let _ = self.slot.cmd_tx.send(Cmd::Focus(true));
             }
             Msg::Tick => {
+                sola_browser::chrome_wake::take_queued();
+                let clip = self.take_page_clipboard();
                 if instance::try_recv_activate() {
-                    return self.raise();
+                    return Task::batch([clip, self.raise()]);
                 }
+                return clip;
+            }
+            Msg::PagePasted(text) => {
+                let Some(s) = sola_browser::util::usable_clipboard_text(text) else {
+                    return Task::none();
+                };
+                let _ = self.slot.cmd_tx.send(Cmd::PasteText(s.clone()));
+                return iced::clipboard::write(s);
             }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
@@ -182,6 +202,45 @@ impl App {
             Msg::Ignore => {}
         }
         Task::none()
+    }
+
+    fn on_edit_action(&self, action_id: &str) -> Task<Msg> {
+        let Some(cmd) = edit::edit_cmd_for_action(action_id) else {
+            return Task::none();
+        };
+        tracing::debug!(?cmd, "edit → page");
+        match cmd {
+            EditCmd::Paste => iced::clipboard::read().map(Msg::PagePasted),
+            EditCmd::Copy | EditCmd::Cut => {
+                let _ = self.slot.cmd_tx.send(Cmd::EvaluateJs(
+                    sola_browser::paste_js::copy_selection_script(),
+                ));
+                if cmd == EditCmd::Cut {
+                    let _ = self.slot.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
+                }
+                Task::none()
+            }
+            EditCmd::SelectAll => {
+                let _ = self.slot.cmd_tx.send(Cmd::Edit(cmd));
+                Task::none()
+            }
+            EditCmd::Undo | EditCmd::Redo => Task::none(),
+        }
+    }
+
+    fn take_page_clipboard(&self) -> Task<Msg> {
+        let Some(text) = self
+            .engine
+            .clipboard_handle()
+            .lock()
+            .unwrap()
+            .take()
+            .and_then(|t| sola_browser::util::usable_clipboard_text(Some(t)))
+        else {
+            return Task::none();
+        };
+        tracing::debug!(len = text.len(), "page copy → system clipboard");
+        iced::clipboard::write(text)
     }
 
     fn raise(&self) -> Task<Msg> {
@@ -231,6 +290,17 @@ impl Drop for App {
     fn drop(&mut self) {
         self.engine.shutdown();
     }
+}
+
+fn chrome_drain_subscription() -> Subscription<Msg> {
+    Subscription::run(chrome_drain_stream)
+}
+
+fn chrome_drain_stream() -> impl iced::futures::Stream<Item = Msg> {
+    use iced::futures::StreamExt;
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+    sola_browser::chrome_wake::install_tx(tx);
+    rx.map(|()| Msg::Tick)
 }
 
 fn map_browser_msg(m: BrowserMsg) -> Msg {

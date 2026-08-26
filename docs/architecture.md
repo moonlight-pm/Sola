@@ -215,7 +215,7 @@ content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
 
 | Piece | Role |
 |-------|------|
-| `crates/sola-wrapper` | Kit iced chrome (CSD while floating) + one CEF page. Not sola-browser (no tabs/omnibox/vault). |
+| `crates/sola-wrapper` | Kit iced chrome (CSD while floating) + one CEF page. Not sola-browser (no tabs/omnibox/vault). Edit menu Super+X/C/V/A: iced clipboard ↔ CEF (`PasteText` / JS selection extract), same as sola-browser. |
 | Binary / argv | `sola-wrapper <id>`; helper `sola-wrapper --engine --profile=<id>` (same binary, `current_exe`). |
 | App id | The configured id (`slack`), set on kit `startup` / `window_settings_transparent`. |
 | Catalog | `Topic::Application` fields `kind: wrapper` + `url`. Command synthesized `/opt/sola/bin/sola-wrapper <id>`. Launch lookup: `state.yaml` (bus persistence). |
