@@ -19,6 +19,13 @@ pub enum Command {
         #[arg(short, long, default_value_t = 10)]
         timeout: u64,
     },
+    /// RGBA patch around the current pointer (for sola-scope).
+    Sample {
+        #[arg(short, long, default_value_t = 15)]
+        size: i32,
+        #[arg(short, long, default_value_t = 2)]
+        timeout: u64,
+    },
     /// List windows grouped by app id.
     Windows,
     /// Synthesize pointer or key events.
@@ -85,12 +92,13 @@ pub fn run(cmd: Command) -> i32 {
                 timeout,
             )
         }
-        Command::Windows => call::run(
+        Command::Sample { size, timeout } => call::run(
             OWNER_COMPOSITOR,
-            "windows",
-            serde_json::json!({}),
-            5,
+            "sample",
+            serde_json::json!({ "size": size }),
+            timeout,
         ),
+        Command::Windows => call::run(OWNER_COMPOSITOR, "windows", serde_json::json!({}), 5),
         Command::Input(input) => run_input(input),
     }
 }
@@ -141,9 +149,8 @@ fn parse_chord(s: &str) -> Result<KeyChord, String> {
         return Err("empty chord".into());
     }
     let key_str = parts[parts.len() - 1];
-    let keycode = parse_keycode(key_str).ok_or_else(|| {
-        format!("unknown key '{key_str}'. Try Tab, Esc, Enter, A-Z, 0-9.")
-    })?;
+    let keycode = parse_keycode(key_str)
+        .ok_or_else(|| format!("unknown key '{key_str}'. Try Tab, Esc, Enter, A-Z, 0-9."))?;
     let mut chord = KeyChord::new(keycode);
     for m in &parts[..parts.len() - 1] {
         match m.to_ascii_lowercase().as_str() {

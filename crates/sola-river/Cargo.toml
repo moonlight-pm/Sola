@@ -26,3 +26,4 @@ bitflags = "2"
 rustix = { version = "1", features = ["fs", "mm"] }
 png = "0.18"
 serde_json = "1"
+base64 = { workspace = true }

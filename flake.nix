@@ -14,9 +14,20 @@
       # river 0.4.x (the zig rewrite) which the pinned unstable has.
       # Computing it here lets the module reference the right version
       # regardless of the host system's nixpkgs channel.
-      river-patched = pkgs.river.overrideAttrs (old: {
+      wlroots-patched = pkgs.wlroots_0_20.overrideAttrs (old: {
         patches = (old.patches or [ ])
-          ++ [ ./nix/patches/river-xwayland-destroy-state.patch ];
+          ++ [ ./nix/patches/wlroots-screencopy-omit-sw-cursor.patch ];
+      });
+
+      river-patched = (pkgs.river.override {
+        wlroots_0_20 = wlroots-patched;
+      }).overrideAttrs (old: {
+        patches = (old.patches or [ ])
+          ++ [
+            ./nix/patches/river-xwayland-destroy-state.patch
+            ./nix/patches/river-live-pointer-position.patch
+            ./nix/patches/river-hide-cursor.patch
+          ];
       });
 
       # Package used inside image builds. When SOLA_VM_STAGE is set

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use tracing::info;
+use tracing::{info, warn};
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     backend::ObjectId,
@@ -68,6 +68,9 @@ pub struct AppData {
     /// Last-known dimensions of the primary output, used to center
     /// unzoned windows.
     pub output_size: Option<(i32, i32)>,
+    /// Layout origin of the first logical output (`river_output_v1.position`).
+    /// Screencopy regions are output-local; `pointer_position` is global.
+    pub output_origin: Option<(i32, i32)>,
     /// Windows we have already positioned at least once, either via an
     /// explicit shell Frame or our own centered default. Prevents the
     /// default from re-firing across subsequent render passes.
@@ -164,6 +167,26 @@ pub struct AppData {
     pub last_composition: Vec<u32>,
 }
 
+/// Operator hook (`compositor.cursor`). River honors the magic xcursor
+/// names `sola-cursor-hidden` / `sola-cursor-visible` when patched.
+pub fn set_pointer_visible(state: &AppData, visible: bool) {
+    let Some(seat) = state.seat.as_ref() else {
+        return;
+    };
+    let name = if visible {
+        "sola-cursor-visible"
+    } else {
+        "sola-cursor-hidden"
+    };
+    seat.set_xcursor_theme(name.to_string(), 24);
+    if let Some(conn) = state.conn.as_ref() {
+        if let Err(e) = conn.flush() {
+            warn!(%e, "wayland flush after cursor visibility failed");
+        }
+    }
+    info!(visible, "compositor pointer visibility");
+}
+
 impl AppData {
     pub fn new(bus: BusClient) -> Self {
         Self {
@@ -180,6 +203,7 @@ impl AppData {
             nodes_by_window: HashMap::new(),
             outputs: Vec::new(),
             output_size: None,
+            output_origin: None,
             placed: std::collections::HashSet::new(),
             first_dimensions: std::collections::HashSet::new(),
             deferred_size: HashMap::new(),
@@ -608,12 +632,19 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
         // River emits dimensions each time the logical output changes.
         // Forward the first one we see — the shell's zoning code keys on
         // a single output for v1.
-        if let Event::Dimensions { width, height, .. } = event {
-            info!(width, height, "river_output dimensions");
-            state.output_size = Some((width, height));
-            state
-                .bus
-                .emit(Topic::OutputGeometry(OutputGeometry { width, height }));
+        match event {
+            Event::Dimensions { width, height, .. } => {
+                info!(width, height, "river_output dimensions");
+                state.output_size = Some((width, height));
+                state
+                    .bus
+                    .emit(Topic::OutputGeometry(OutputGeometry { width, height }));
+            }
+            Event::Position { x, y } => {
+                info!(x, y, "river_output position");
+                state.output_origin = Some((x, y));
+            }
+            _ => {}
         }
     }
 }

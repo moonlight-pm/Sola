@@ -24,7 +24,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Compositor (sola-river): screenshot, windows, input.
+    /// Compositor (sola-river): screenshot, sample, windows, input.
     Compositor {
         #[command(subcommand)]
         cmd: compositor::Command,

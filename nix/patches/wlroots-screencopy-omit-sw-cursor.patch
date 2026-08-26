@@ -1,0 +1,139 @@
+wlroots: copy overlay_cursor=0 before SW cursor blit; damage under cursor so leftover blit is redrawn
+
+diff --git a/include/types/wlr_output.h b/include/types/wlr_output.h
+index fdbffaf..0899d11 100644
+--- a/include/types/wlr_output.h
++++ b/include/types/wlr_output.h
+@@ -30,6 +30,7 @@ void output_defer_present(struct wlr_output *output, struct wlr_output_event_pre
+ bool output_prepare_commit(struct wlr_output *output, const struct wlr_output_state *state);
+ void output_apply_commit(struct wlr_output *output, const struct wlr_output_state *state);
+ void output_send_commit_event(struct wlr_output *output, const struct wlr_output_state *state);
++bool output_blit_software_cursors(struct wlr_output *output, struct wlr_buffer *buffer);
+ 
+ void output_state_get_buffer_src_box(const struct wlr_output_state *state,
+ 	struct wlr_fbox *out);
+diff --git a/types/output/cursor.c b/types/output/cursor.c
+index 5e93b0b..26fd485 100644
+--- a/types/output/cursor.c
++++ b/types/output/cursor.c
+@@ -134,6 +134,32 @@ void wlr_output_add_software_cursors_to_render_pass(struct wlr_output *output,
+ 	}
+ }
+ 
++/* Paint software cursors onto an already-rendered buffer (after precommit). */
++bool output_blit_software_cursors(struct wlr_output *output, struct wlr_buffer *buffer) {
++	if (output->renderer == NULL || buffer == NULL) {
++		return true;
++	}
++	bool any = false;
++	struct wlr_output_cursor *cursor;
++	wl_list_for_each(cursor, &output->cursors, link) {
++		if (cursor->enabled && cursor->visible &&
++				output->hardware_cursor != cursor && cursor->texture != NULL) {
++			any = true;
++			break;
++		}
++	}
++	if (!any) {
++		return true;
++	}
++	struct wlr_render_pass *pass =
++		wlr_renderer_begin_buffer_pass(output->renderer, buffer, NULL);
++	if (pass == NULL) {
++		return false;
++	}
++	wlr_output_add_software_cursors_to_render_pass(output, pass, NULL);
++	return wlr_render_pass_submit(pass);
++}
++
+ static void output_cursor_damage_whole(struct wlr_output_cursor *cursor) {
+ 	struct wlr_box box;
+ 	output_cursor_get_box(cursor, &box);
+diff --git a/types/output/output.c b/types/output/output.c
+index 3715950..0d74cd6 100644
+--- a/types/output/output.c
++++ b/types/output/output.c
+@@ -813,6 +813,12 @@ bool wlr_output_commit_state(struct wlr_output *output,
+ 		return false;
+ 	}
+ 
++	/* Screencopy overlay_cursor=0 copies on precommit (no software
++	 * cursor). Blit the pointer now so scanout still shows it. */
++	if ((pending.committed & WLR_OUTPUT_STATE_BUFFER) && pending.buffer != NULL) {
++		output_blit_software_cursors(output, pending.buffer);
++	}
++
+ 	if (!output->impl->commit(output, &pending)) {
+ 		if (new_back_buffer) {
+ 			wlr_buffer_unlock(pending.buffer);
+diff --git a/types/scene/wlr_scene.c b/types/scene/wlr_scene.c
+index 54c09bb..8daecaf 100644
+--- a/types/scene/wlr_scene.c
++++ b/types/scene/wlr_scene.c
+@@ -2523,6 +2523,36 @@ bool wlr_scene_output_build_state(struct wlr_scene_output *scene_output,
+ 
+ 	render_data.render_pass = render_pass;
+ 
++	/* Damage under software cursors so this pass redraws the scene
++	 * there. Cursors are blitted after precommit; a reused swapchain
++	 * image otherwise still contains the previous blit and
++	 * overlay_cursor=0 screencopy would see the pointer. */
++	{
++		int width, height;
++		wlr_output_transformed_resolution(output, &width, &height);
++		struct wlr_output_cursor *cursor;
++		wl_list_for_each(cursor, &output->cursors, link) {
++			if (!cursor->enabled || !cursor->visible ||
++					output->hardware_cursor == cursor) {
++				continue;
++			}
++			struct wlr_box box = {
++				.x = cursor->x - cursor->hotspot_x,
++				.y = cursor->y - cursor->hotspot_y,
++				.width = cursor->width,
++				.height = cursor->height,
++			};
++			wlr_box_transform(&box, &box,
++				wlr_output_transform_invert(output->transform),
++				width, height);
++			pixman_region32_t cdamage;
++			pixman_region32_init_rect(&cdamage,
++				box.x, box.y, box.width, box.height);
++			scene_output_damage(scene_output, &cdamage);
++			pixman_region32_fini(&cdamage);
++		}
++	}
++
+ 	pixman_region32_init(&render_data.damage);
+ 	wlr_damage_ring_rotate_buffer(&scene_output->damage_ring, buffer,
+ 		&render_data.damage);
+@@ -2608,7 +2638,9 @@ bool wlr_scene_output_build_state(struct wlr_scene_output *scene_output,
+ 		}
+ 	}
+ 
+-	wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
++	/* Software cursors are blitted in wlr_output_commit_state after
++	 * precommit so screencopy overlay_cursor=0 can copy a cursor-free
++	 * buffer while the scanout still shows the pointer. */
+ 	pixman_region32_fini(&render_data.damage);
+ 
+ 	if (!wlr_render_pass_submit(render_pass)) {
+diff --git a/types/wlr_screencopy_v1.c b/types/wlr_screencopy_v1.c
+index 9916a60..eedd48a 100644
+--- a/types/wlr_screencopy_v1.c
++++ b/types/wlr_screencopy_v1.c
+@@ -431,7 +431,13 @@ static void frame_handle_copy(struct wl_client *wl_client,
+ 	frame->buffer = buffer;
+ 	frame->buffer_cap = cap;
+ 
+-	wl_signal_add(&output->events.commit, &frame->output_commit);
++	/* overlay_cursor=0 copies on precommit, before software cursors
++	 * are blitted for scanout. overlay_cursor=1 copies after commit. */
++	if (frame->overlay_cursor) {
++		wl_signal_add(&output->events.commit, &frame->output_commit);
++	} else {
++		wl_signal_add(&output->events.precommit, &frame->output_commit);
++	}
+ 	frame->output_commit.notify = frame_handle_output_commit;
+ 
+ 	// Request a frame because we can't assume that the current front buffer is still usable. It may

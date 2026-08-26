@@ -40,7 +40,7 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  workspaces · browser        │
-         │              │  wrapper · agent · mail · …  │
+         │              │  wrapper · agent · mail · scope │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -73,12 +73,14 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Screenshot + standalone argv image viewer |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
+| `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
 | `crates/iced_winit-patched` | iced 0.14 `iced_winit` + Wayland opaque-region from window-fill alpha (not a workspace member; `[patch.crates-io]`) |
+| `nix/patches/` | River + wlroots patches (Xwayland destroy heal; live `pointer_position`; screencopy omits software cursor) |
 | `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images |
 | `nix/sola.nix` | Package from GitHub release tarball |
 | `nix/image/` | VM/image profile: quiet boot, Plymouth `sola`, installer kiosk, stage package |
@@ -144,6 +146,7 @@ always-on vsync pumps** to “fix” a gesture or helper drain.
 | Morph2 drag pump | `sola-kit` `sidebar/strip.rs` | Idle: no vsync chain | While `dragging` / FLIP: `invalidate_layout` on pointer (ghost Y is layout) + `request_redraw` on `RedrawRequested` | Tab/group reorder stutters or ghost stuck; idle vsync if `request_redraw` is left on when not dragging |
 | Shell overlays parked 2×2 | `sola-shell` `ensure_overlay_windows` + `zoning::overlay_frame` | Menu / launcher / switcher / selection stay mapped after the menubar’s first Composition. **Dismissed = 2×2 swapchain off-output** (`OVERLAY_PARK_X/Y` −10000; winit Wayland min is 2×1 — 1×1 + `resizable=false` is `xdg_toplevel` invalid_size). **Shown = live Frame while hidden, Composition after iced `Resized` ≥64×64** (next-tick hop so view/present run first) | River hides any window not in last Composition; do not stack a parked buffer | GPU spike if a dismissed overlay is left at full output; overlay visible before iced `Resized`; Super+Space hangs if `Resized` never fires; 1920 placeholder jump if live Frame forgets output size; **shell panic-loop if park size is 1×1** |
 | Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps still create an ARGB swapchain (`window_settings_transparent` for float CSD). **Tiled:** `theme_for(false)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Float / shell overlay:** transparent base → region cleared | n/a | Idle GPU if tiled windows stay without opaque-region; float CSD square black corners if opaque-region left on while overlay theme is active; overlay launcher dimmed wrong if marked opaque |
+| Scope live sample | `sola-scope` `Msg::Tick` | 100 ms `time::every` **only while the loupe process is running** (the job is live pixels). No `window::frames()` | n/a | Scope closed: no extra presents. Open: ~10 Hz is expected |
 
 **Still open (next slices):** River NVIDIA knobs (after clients stop
 presenting). Browser `LeftPressed` / `CursorReleased` still fire on every

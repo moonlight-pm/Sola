@@ -57,6 +57,32 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
             timeout_ms: None,
         },
         MethodSpec {
+            name: "sample".into(),
+            summary: "RGBA patch around the current pointer (no PNG)".into(),
+            args: vec![arg(
+                "size",
+                Some("size"),
+                Some('s'),
+                ArgType::Int,
+                false,
+                "odd side length in pixels (default 15, max 65)",
+            )],
+            timeout_ms: Some(2_000),
+        },
+        MethodSpec {
+            name: "cursor".into(),
+            summary: "Show or hide the compositor pointer (sola-scope capture)".into(),
+            args: vec![arg(
+                "visible",
+                Some("visible"),
+                None,
+                ArgType::Bool,
+                false,
+                "true to show, false to hide",
+            )],
+            timeout_ms: Some(2_000),
+        },
+        MethodSpec {
             name: "windows".into(),
             summary: "List known windows grouped by app id".into(),
             args: vec![],

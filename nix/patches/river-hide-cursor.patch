@@ -1,0 +1,71 @@
+River: hide compositor cursor for sola-scope capture
+
+NVIDIA cannot omit a software cursor from wlr-screencopy.
+Theme names sola-cursor-hidden / sola-cursor-visible toggle drawing
+while keeping pointer motion (via existing set_xcursor_theme).
+
+diff --git a/river/Cursor.zig b/river/Cursor.zig
+--- a/river/Cursor.zig
++++ b/river/Cursor.zig
+@@ -93,6 +93,8 @@
+ xcursor_manager: *wlr.XcursorManager,
+ /// The currently rendered cursor image
+ image: Image = .none,
++/// When true, the pointer is tracked but not drawn (sola-scope capture).
++hidden: bool = false,
+ image_surface_destroy: wl.Listener(*wlr.Surface) = .init(handleImageSurfaceDestroy),
+ /// The most recent cursor image set by the window manager client
+ wm_image: Image = .{ .xcursor = "default" },
+@@ -258,7 +260,25 @@
+     }
+ }
+ 
++pub fn setHidden(cursor: *Cursor, hidden: bool) void {
++    if (cursor.hidden == hidden) return;
++    cursor.hidden = hidden;
++    if (hidden) {
++        cursor.setImage(.none);
++    } else {
++        // Force re-enter so the focused client sends set_cursor again.
++        cursor.seat.wlr_seat.pointerNotifyClearFocus();
++        cursor.updateState();
++    }
++}
++
+ pub fn setImage(cursor: *Cursor, image: Image) void {
++    if (cursor.hidden) {
++        switch (image) {
++            .none => {},
++            else => return,
++        }
++    }
+     if (cursor.image == .client) {
+         cursor.image_surface_destroy.link.remove();
+     }
+@@ -305,6 +323,7 @@
+     event: *wlr.Seat.event.RequestSetCursor,
+ ) void {
+     const cursor: *Cursor = @fieldParentPtr("request_set_cursor", listener);
++    if (cursor.hidden) return;
+     const focused_client = cursor.seat.wlr_seat.pointer_state.focused_client;
+ 
+     // Only the client with pointer focus is allowed to set the cursor
+diff --git a/river/Seat.zig b/river/Seat.zig
+--- a/river/Seat.zig
++++ b/river/Seat.zig
+@@ -638,6 +638,15 @@
+             };
+         },
+         .set_xcursor_theme => |args| {
++            const name = std.mem.span(args.name);
++            if (std.mem.eql(u8, name, "sola-cursor-hidden")) {
++                seat.cursor.setHidden(true);
++                return;
++            }
++            if (std.mem.eql(u8, name, "sola-cursor-visible")) {
++                seat.cursor.setHidden(false);
++                return;
++            }
+             seat.cursor.setTheme(args.name, args.size) catch |err| switch (err) {
+                 error.OutOfMemory => {
+                     seat_v1.getClient().postNoMemory();

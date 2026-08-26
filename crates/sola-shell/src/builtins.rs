@@ -95,5 +95,12 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/gamepad-2".into(),
             ..Default::default()
         },
+        Application {
+            app_id: "sola-scope".into(),
+            label: "Scope".into(),
+            command: "/opt/sola/bin/sola-scope".into(),
+            icon: "lucide/scan".into(),
+            ..Default::default()
+        },
     ]
 }

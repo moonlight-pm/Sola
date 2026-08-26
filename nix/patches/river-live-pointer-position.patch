@@ -1,0 +1,50 @@
+River: emit pointer_position on motion without a manage sequence
+
+river_seat_v1.pointer_position is otherwise only sent during manage
+(hover change, key, map, …). A pixel loupe needs layout coordinates on
+every cursor move. The protocol forbids starting manage for motion
+alone; sending the event outside manage is allowed.
+
+diff --git a/river/Cursor.zig b/river/Cursor.zig
+--- a/river/Cursor.zig
++++ b/river/Cursor.zig
+@@ -390,6 +390,7 @@
+     switch (cursor.mode) {
+         .passthrough, .drag, .ignore, .down => {
+             cursor.move(&event.mapping, dx, dy);
++            cursor.seat.sendLivePointerPosition();
+ 
+             switch (cursor.mode) {
+                 .passthrough, .drag => {
+@@ -420,6 +421,7 @@
+             data.delta_y = dy - @trunc(dy);
+ 
+             cursor.move(&event.mapping, dx, dy);
++            cursor.seat.sendLivePointerPosition();
+             cursor.seat.opUpdate(@intFromFloat(cursor.wlr_cursor.x), @intFromFloat(cursor.wlr_cursor.y));
+         },
+     }
+diff --git a/river/Seat.zig b/river/Seat.zig
+--- a/river/Seat.zig
++++ b/river/Seat.zig
+@@ -394,6 +394,20 @@
+     assert(server.wm.state == .idle);
+ }
+ 
++/// Send pointer_position without starting a manage sequence.
++/// Motion alone must not dirty windowing (protocol); tools like sola-scope
++/// still need live layout coordinates.
++pub fn sendLivePointerPosition(seat: *Seat) void {
++    const seat_v1 = seat.object orelse return;
++    if (seat_v1.getVersion() < 2) return;
++    const x = math.lossyCast(i32, seat.cursor.wlr_cursor.x);
++    const y = math.lossyCast(i32, seat.cursor.wlr_cursor.y);
++    if (x == seat.wm_sent.x and y == seat.wm_sent.y) return;
++    seat_v1.sendPointerPosition(x, y);
++    seat.wm_sent.x = x;
++    seat.wm_sent.y = y;
++}
++
+ pub fn manageStart(seat: *Seat) void {
+     if (seat.destroying) {
+         seat.destroy();

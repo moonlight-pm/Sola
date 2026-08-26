@@ -29,6 +29,7 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-workspaces",
     "sola-arcade",
     "sola-wrapper",
+    "sola-scope",
 ];
 
 pub fn is_system_app(app_id: &str) -> bool {
@@ -101,22 +102,13 @@ fn resolve_binary_for_pid(pid: u32) -> Option<String> {
 fn is_multi_arg_launcher(name: &str) -> bool {
     matches!(
         name,
-        "bwrap"
-            | "flatpak-spawn"
-            | "flatpak"
-            | "AppRun"
-            | "snap"
-            | "snap-confine"
-            | "electron"
+        "bwrap" | "flatpak-spawn" | "flatpak" | "AppRun" | "snap" | "snap-confine" | "electron"
     )
 }
 
 fn cmdline_positional(pid: u32) -> Option<String> {
     let data = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let parts: Vec<&[u8]> = data
-        .split(|&b| b == 0)
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parts: Vec<&[u8]> = data.split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
     if parts.is_empty() {
         return None;
     }
@@ -133,4 +125,3 @@ fn cmdline_positional(pid: u32) -> Option<String> {
         .collect();
     Some(joined.join(" "))
 }
-

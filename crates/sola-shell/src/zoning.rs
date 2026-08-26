@@ -38,6 +38,12 @@ pub const OVERLAY_PARK_Y: i32 = -10000;
 
 /// Parked overlay `Topic::Frame` (2×2, off-output). River ignores
 /// non-positive frames; 2×2 also satisfies winit's Wayland min size.
+/// Apps that persist float geometry without the user hitting the float key.
+/// Default-float otherwise forgets the rectangle on relaunch.
+fn remembers_float_geometry(app_id: &str) -> bool {
+    app_id == "sola-scope"
+}
+
 pub fn overlay_park_frame(window_id: u32) -> FrameUpdate {
     FrameUpdate {
         window_id,
@@ -364,6 +370,20 @@ impl ZoningState {
             return None;
         }
         if self.app_zone_config.contains_key(app_id) {
+            return None;
+        }
+        // Utility floats that should restore their last rectangle. Promoting
+        // to an assigned Float writes Zones + FloatGeometry like the float key.
+        if remembers_float_geometry(app_id) {
+            self.app_zone_config.insert(app_id.to_string(), Zone::Float);
+            self.zones_dirty = true;
+            if let Some(frame) = self.apply_config_zone(app_id, window_id) {
+                return Some(frame);
+            }
+            // No saved rect yet — still mark floating so later moves persist.
+            self.config_applied.insert(window_id);
+            self.window_zones.insert(window_id, Zone::Float);
+            info!(app_id = %app_id, window_id, "remembered-float (no saved rect yet)");
             return None;
         }
         self.config_applied.insert(window_id);
@@ -1076,6 +1096,33 @@ mod tests {
     }
 
     #[test]
+    fn scope_default_float_is_promoted_and_geometry_persists() {
+        let mut z = ZoningState::new();
+        assert!(z.ensure_default_float("sola-scope", 7).is_none());
+        assert_eq!(z.window_zones.get(&7).copied(), Some(Zone::Float));
+        assert_eq!(
+            z.app_zone_config.get("sola-scope").copied(),
+            Some(Zone::Float)
+        );
+        assert!(z.take_zones_update().is_some());
+        assert!(z.note_window_geometry("sola-scope", 7, 40, 60, 420, 520));
+        assert_eq!(
+            z.float_geometry
+                .get("sola-scope")
+                .map(|g| (g.x, g.y, g.width, g.height)),
+            Some((40, 60, 420, 520))
+        );
+        // Relaunch: apply_config_zone restores the rect.
+        z.config_applied.clear();
+        z.window_zones.clear();
+        let frame = z.apply_config_zone("sola-scope", 8).expect("restore");
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (40, 60, 420, 520)
+        );
+    }
+
+    #[test]
     fn default_float_geometry_is_not_persisted() {
         let mut z = ZoningState::new();
         // Runtime default float (no app_zone_config entry).
@@ -1317,9 +1364,18 @@ mod tests {
         let f = overlay_park_frame(42);
         assert_eq!(
             (f.window_id, f.x, f.y, f.width, f.height),
-            (42, OVERLAY_PARK_X, OVERLAY_PARK_Y, OVERLAY_PARK, OVERLAY_PARK)
+            (
+                42,
+                OVERLAY_PARK_X,
+                OVERLAY_PARK_Y,
+                OVERLAY_PARK,
+                OVERLAY_PARK
+            )
         );
-        assert!(f.width >= 2 && f.height >= 1, "winit MIN_WINDOW_SIZE is 2×1");
+        assert!(
+            f.width >= 2 && f.height >= 1,
+            "winit MIN_WINDOW_SIZE is 2×1"
+        );
         assert!(!f.fullscreen);
     }
 

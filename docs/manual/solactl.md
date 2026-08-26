@@ -7,6 +7,7 @@ the **bus** only for `emit`.
 
 ```text
 solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE]
+solactl compositor sample [--size N]
 solactl compositor windows
 solactl compositor input click|move|scroll|key …
 solactl session launch <app_id> [--command CMD]

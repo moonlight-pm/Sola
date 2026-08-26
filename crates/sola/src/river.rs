@@ -152,6 +152,10 @@ impl RiverSupervisor {
         cmd.args(["-log-level", "info", "-c", ":"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
+        // Do **not** set WLR_NO_HARDWARE_CURSORS. That paints the pointer
+        // into the output framebuffer, so wlr-screencopy (overlay_cursor=0)
+        // still copies it into sola-scope. A hardware cursor lives on its
+        // own plane and is omitted from the capture.
         // wlroots picks its backend by env: WAYLAND_DISPLAY → nested wayland,
         // DISPLAY → X11 (both failed on canto from a bare TTY), otherwise
         // drm + libinput (what we actually want). Strip both so River falls

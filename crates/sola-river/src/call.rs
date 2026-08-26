@@ -52,6 +52,24 @@ fn dispatch(state: &mut AppData, inc: Incoming) {
             };
             screenshot::handle_call(state, req, inc.reply);
         }
+        "sample" => {
+            let size = screenshot::clamp_sample_size(
+                inc.params
+                    .get("size")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(15) as i32,
+            );
+            screenshot::handle_sample(state, size, inc.reply);
+        }
+        "cursor" => {
+            let visible = inc
+                .params
+                .get("visible")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            crate::client::set_pointer_visible(state, visible);
+            inc.reply.ok(serde_json::json!({ "visible": visible }));
+        }
         "windows" => inc.reply.ok(windows_json(state)),
         "input.click" => input_reply(inc.reply, click(state, &inc.params)),
         "input.move" => input_reply(inc.reply, move_ptr(state, &inc.params)),

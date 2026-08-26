@@ -89,7 +89,7 @@ missing).
 
 | CLI owner | Process | Methods |
 |-----------|---------|---------|
-| `compositor` | `sola-river` | `screenshot`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
+| `compositor` | `sola-river` | `screenshot`, `sample`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | `launch`, `close` |
 
 Kit apps do **not** grow commands here. Agent-terminal will advertise when that worktree resumes.
@@ -117,6 +117,6 @@ These are real follow-ups. Not v1 blockers.
 
 ## Implementation
 
-**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; `Role::Observer` + `Wire::Trace` + kit `install_observer` / `observe_subscription`; sola-monitor Bus/Call inspector; shell screenshot via call. `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
+**Code:** `crates/sola-call`; supervisor + install order; river/session providers; `solactl` tree; kit [`CallSetup`] / `BusSetup::calls` / `call_subscription`; `Role::Observer` + `Wire::Trace` + kit `install_observer` / `observe_subscription`; sola-monitor Bus/Call inspector; shell screenshot via call; `compositor.sample` (RGBA patch around the pointer, for sola-scope). `MethodSpec.timeout_ms` is an optional advertised deadline (`solactl` live owners use it).  
 **Dogfood:** `cargo make install call monitor` ran 2026-08-21 (debug); desk smoke pending.  
 **Gaps:** see Later; D3; monitor desk smoke pending; catalog sticky still not on the bus.

@@ -47,7 +47,7 @@ rows for feature-level progress.
 **Status: partial**
 
 - Terminal iced, browser CEF, agent ACP, mail kit, preview, kvm,
-  paint (first pass)  
+  paint (first pass), scope (first pass)  
 - `sola-call` + `sola-workspaces` persist/spawn/call methods on master
 
 **Remaining:** Workspaces dogfood + rename/recolor/reorder; agent UI

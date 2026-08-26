@@ -8417,6 +8417,7 @@ dependencies = [
 name = "sola-river"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bitflags 2.13.1",
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
@@ -8432,6 +8433,21 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-scanner",
+]
+
+[[package]]
+name = "sola-scope"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "iced",
+ "serde_json",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "sola-kit",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
