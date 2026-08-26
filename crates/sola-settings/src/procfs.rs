@@ -26,6 +26,9 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-mail",
     "sola-preview",
     "sola-paint",
+    "sola-workspaces",
+    "sola-arcade",
+    "sola-wrapper",
 ];
 
 pub fn is_system_app(app_id: &str) -> bool {

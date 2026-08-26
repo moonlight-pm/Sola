@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-pub use sola_core::applications::{Application, ApplicationsConfig};
+pub use sola_core::applications::{AppKind, Application, ApplicationsConfig};
 pub use sola_core::theme::{NamedTheme, Theme};
 use sola_core::Encrypted;
 pub use sola_core::KeyChord;
@@ -1052,6 +1052,7 @@ mod tests {
             label: "Steam".into(),
             command: "/run/current-system/sw/bin/steam".into(),
             icon: "simpleicons/steam".into(),
+            ..Default::default()
         };
         let topic = Topic::Application(app);
         let value = topic
@@ -1075,9 +1076,40 @@ mod tests {
             label: "Bitwarden".into(),
             command: "/run/current-system/sw/bin/bitwarden".into(),
             icon: "simpleicons/bitwarden".into(),
+            ..Default::default()
         };
         let msg = Topic::Application(app).to_message();
         assert_eq!(msg.keys, vec!["Bitwarden".to_string()]);
+    }
+
+    #[test]
+    fn application_parse_accepts_pre_wrapper_postcard() {
+        #[derive(serde::Serialize)]
+        struct ApplicationV1 {
+            app_id: String,
+            label: String,
+            command: String,
+            icon: String,
+        }
+        let old = ApplicationV1 {
+            app_id: "steam".into(),
+            label: "Steam".into(),
+            command: "/run/current-system/sw/bin/steam".into(),
+            icon: "simpleicons/steam".into(),
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("Application", bytes);
+        msg.keys = vec!["steam".into()];
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::Application(a)) => {
+                assert_eq!(a.app_id, "steam");
+                assert_eq!(a.label, "Steam");
+                assert_eq!(a.kind, AppKind::Command);
+                assert_eq!(a.url, None);
+            }
+            other => panic!("expected Application, got {other:?}"),
+        }
     }
 
     #[test]

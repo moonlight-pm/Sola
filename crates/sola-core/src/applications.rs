@@ -11,12 +11,29 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Installed wrapper binary. Settings synthesizes
+/// `"{WRAPPER_BIN} {app_id}"` for `kind = wrapper` entries so the
+/// launcher/session path stays “spawn this command”.
+pub const WRAPPER_BIN: &str = "/opt/sola/bin/sola-wrapper";
+
+/// How the shell launches this catalog entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AppKind {
+    /// `command` is a real argv (today's default).
+    #[default]
+    Command,
+    /// Website wrapped by `sola-wrapper <app_id>`. `url` is required;
+    /// `command` is synthesized as [`wrapper_command`].
+    Wrapper,
+}
+
 /// A launchable application known to the shell.
 ///
 /// Used by the launcher for search+spawn, by the switcher for icon lookup,
 /// and intended as the single source of truth for "applications this
 /// desktop knows about."
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Application {
     /// Stable identifier. Matches the `app_id` the program reports on the
     /// bus when it connects; used for icon lookups by the switcher.
@@ -24,6 +41,7 @@ pub struct Application {
     /// Human-readable name shown in UI; used as the search target.
     pub label: String,
     /// Command to spawn. Whitespace-split into argv; no shell interpretation.
+    /// For [`AppKind::Wrapper`], Settings writes [`wrapper_command`].
     pub command: String,
     /// Icon reference. Either a pack name (`"lucide/terminal"`,
     /// `"simpleicons/firefox"`) resolved under `/opt/sola/share/icons/`,
@@ -31,6 +49,28 @@ pub struct Application {
     /// (`"/home/…/orca-ide.png"`, `"~/.local/share/sola/icons/…"`).
     /// Pack SVGs are theme-tinted; path / pack PNGs render full-color.
     pub icon: String,
+    /// Launch kind. Missing in old `state.yaml` records → [`AppKind::Command`].
+    /// Live bus postcard from a pre-wrapper host is four strings; sola-bus
+    /// `decode_payload` falls back so Settings still lists those apps.
+    #[serde(default)]
+    pub kind: AppKind,
+    /// Start URL when [`Self::kind`] is [`AppKind::Wrapper`].
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Synthesized launcher argv for a wrapper id.
+pub fn wrapper_command(app_id: &str) -> String {
+    format!("{WRAPPER_BIN} {app_id}")
+}
+
+/// True when `url` is a non-empty `http://` or `https://` start URL.
+pub fn is_wrapper_url(url: &str) -> bool {
+    let url = url.trim();
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    rest.is_some_and(|r| !r.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -120,6 +160,18 @@ impl Application {
         } else {
             false
         }
+    }
+
+    pub fn is_wrapper(&self) -> bool {
+        self.kind == AppKind::Wrapper
+    }
+
+    /// For wrappers, rewrite `command` to [`wrapper_command`]; then PATH-normalize.
+    pub fn finalize(&mut self) {
+        if self.is_wrapper() {
+            self.command = wrapper_command(&self.app_id);
+        }
+        let _ = self.normalize();
     }
 }
 
@@ -216,6 +268,7 @@ mod tests {
             label: "Firefox".into(),
             command: "firefox".into(),
             icon: "simpleicons/firefox".into(),
+            ..Default::default()
         }
     }
 
@@ -244,6 +297,7 @@ mod tests {
                 label: "Orca".into(),
                 command: "orca".into(),
                 icon: "/tmp/orca.png".into(),
+                ..Default::default()
             }],
         };
         assert!(cfg.get("orca").is_none(), "exact get stays case-sensitive");
@@ -292,6 +346,7 @@ mod tests {
             label: "Firefox ESR".into(),
             command: "firefox-esr".into(),
             icon: "simpleicons/firefox".into(),
+            ..Default::default()
         };
         cfg.update("firefox", new).unwrap();
         assert_eq!(cfg.apps[0].label, "Firefox ESR");
@@ -308,6 +363,7 @@ mod tests {
             label: "Firefox Nightly".into(),
             command: "firefox-nightly".into(),
             icon: "simpleicons/firefox".into(),
+            ..Default::default()
         };
         cfg.update("firefox", new).unwrap();
         assert!(cfg.get("firefox").is_none());
@@ -321,6 +377,7 @@ mod tests {
             label: "Brave".into(),
             command: "brave".into(),
             icon: "simpleicons/brave".into(),
+            ..Default::default()
         };
         let mut cfg = ApplicationsConfig {
             apps: vec![sample(), other],
@@ -330,6 +387,7 @@ mod tests {
             label: "Firefox".into(),
             command: "firefox".into(),
             icon: "simpleicons/firefox".into(),
+            ..Default::default()
         };
         let err = cfg.update("firefox", renamed).unwrap_err();
         assert_eq!(err, UpdateError::Duplicate(DuplicateAppId("brave".into())));
@@ -370,6 +428,7 @@ mod tests {
                 label: "Foo".into(),
                 command: "/opt/sola/bin/sola-settings".into(),
                 icon: "".into(),
+                ..Default::default()
             }],
         };
         assert!(!cfg.normalize());
@@ -384,6 +443,7 @@ mod tests {
                 label: "Foo".into(),
                 command: "definitely-not-a-real-binary-xyz-123".into(),
                 icon: "".into(),
+                ..Default::default()
             }],
         };
         assert!(!cfg.normalize());
@@ -404,6 +464,7 @@ mod tests {
                 label: "Shell".into(),
                 command: format!("{name} -c echo"),
                 icon: "".into(),
+                ..Default::default()
             }],
         };
         assert!(cfg.normalize());
@@ -418,5 +479,94 @@ mod tests {
     #[test]
     fn command_exists_flags_missing_in_path() {
         assert!(!command_exists("definitely-not-a-real-binary-xyz-123"));
+    }
+
+    #[test]
+    fn postcard_roundtrips_command_and_wrapper() {
+        let cmd = sample();
+        let bytes = postcard::to_allocvec(&cmd).unwrap();
+        let back: Application = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, cmd);
+
+        let wrap = Application {
+            app_id: "slack".into(),
+            label: "Slack".into(),
+            command: wrapper_command("slack"),
+            icon: "simpleicons/slack".into(),
+            kind: AppKind::Wrapper,
+            url: Some("https://app.slack.com".into()),
+        };
+        let bytes = postcard::to_allocvec(&wrap).unwrap();
+        let back: Application = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, wrap);
+    }
+
+    #[test]
+    fn old_json_records_default_kind_and_url() {
+        let json = r#"{"app_id":"firefox","label":"Firefox","command":"firefox","icon":"simpleicons/firefox"}"#;
+        let a: Application = serde_json::from_str(json).unwrap();
+        assert_eq!(a.kind, AppKind::Command);
+        assert_eq!(a.url, None);
+        assert!(!a.is_wrapper());
+    }
+
+    #[test]
+    fn old_yaml_records_still_load() {
+        let yaml = "app_id: firefox\nlabel: Firefox\ncommand: firefox\nicon: simpleicons/firefox\n";
+        let a: Application = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(a.app_id, "firefox");
+        assert_eq!(a.kind, AppKind::Command);
+        assert_eq!(a.url, None);
+    }
+
+    #[test]
+    fn wrapper_fields_round_trip() {
+        let a = Application {
+            app_id: "slack".into(),
+            label: "Slack".into(),
+            command: wrapper_command("slack"),
+            icon: "simpleicons/slack".into(),
+            kind: AppKind::Wrapper,
+            url: Some("https://app.slack.com".into()),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let back: Application = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, AppKind::Wrapper);
+        assert_eq!(back.url.as_deref(), Some("https://app.slack.com"));
+        assert_eq!(back.command, "/opt/sola/bin/sola-wrapper slack");
+        assert!(json.contains("\"kind\":\"wrapper\""));
+    }
+
+    #[test]
+    fn command_kind_serializes_with_null_url() {
+        let json = serde_json::to_string(&sample()).unwrap();
+        assert!(json.contains("\"kind\":\"command\""), "{json}");
+        let back: Application = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, AppKind::Command);
+        assert_eq!(back.url, None);
+    }
+
+    #[test]
+    fn finalize_synthesizes_wrapper_command() {
+        let mut a = Application {
+            app_id: "discord".into(),
+            label: "Discord".into(),
+            command: "whatever".into(),
+            icon: String::new(),
+            kind: AppKind::Wrapper,
+            url: Some("https://discord.com/app".into()),
+        };
+        a.finalize();
+        assert_eq!(a.command, wrapper_command("discord"));
+    }
+
+    #[test]
+    fn is_wrapper_url_requires_http_scheme() {
+        assert!(is_wrapper_url("https://app.slack.com"));
+        assert!(is_wrapper_url("http://localhost:3000/"));
+        assert!(!is_wrapper_url(""));
+        assert!(!is_wrapper_url("app.slack.com"));
+        assert!(!is_wrapper_url("https://"));
+        assert!(!is_wrapper_url("ftp://example.com"));
     }
 }

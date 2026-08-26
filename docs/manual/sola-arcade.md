@@ -40,6 +40,12 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    scroll viewport (plus a small overscan), so first paint is not blocked by
    the whole library. Large typeface title on the left, actions on the right:
    - **Play** — nest launch (installed only)  
+   - **Nest size** (installed, when gamescope is available) — **Fit to window**
+     or a locked resolution. Mutually exclusive; default **1080p**. Fit
+     starts from the display at Play, then tracks the gamescope host frame
+     when you zone or float. A resolution locks that size. The game may
+     still pick a lower internal res. Keep **fullscreen on** for Fit
+     (Factorio has no resolution list — fullscreen means “use the nest”).  
    - **Install** — Steam’s install UI (`steam://install/<id>`) for uninstalled  
    - **Store** — Steam store page in the browser  
    - **Uninstall** — Steam’s uninstall UI (`steam://uninstall/<id>`) when installed
@@ -58,8 +64,14 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
 Play emits `LaunchApp`:
 
 ```text
-/opt/sola/bin/sola-arcade --run <appid> 1920 1080
+/opt/sola/bin/sola-arcade --run <appid> <width> <height> [fit]
 ```
+
+`<width> <height>` is the nested virtual monitor (Fit → output pixels at
+Play, otherwise the locked resolution; default 1920×1080). A trailing
+`fit` token tells Arcade to retarget the nest when the host window size
+changes (nested X mode-control; not gamescope `--force-windows-fullscreen`,
+which aborted the Wayland backend).
 
 Nest rules:
 
@@ -90,13 +102,14 @@ When the game process exits (in-game quit), the nested-steam helper detects the
 gone `AppId=<id>` reaper and kills the nested Steam client so the host window
 closes. **Stop** in Arcade does the same path via `CloseApp` + local pkill.
 
-### Host window vs game resolution
+### Host window vs nest size
 
 | Layer | Behavior |
 |-------|----------|
-| **Host window** | Normal Sola window — zones and floats like any app. Initial size 1920×1080; shell Frames set size after map. |
-| **Game resolution** | Whatever the title uses in its settings (not forced by Arcade). |
-| **Fit** | gamescope `-S fit` letterbox-scales nested content into the host (aspect preserved, black bars). |
+| **Host window** | Normal Sola window — zones and floats like any app. Initial size matches the nest setting; shell Frames set size after map. |
+| **Nest size** | Per title, next to Play: **Fit to window** or a resolution (720p / 1080p / 1440p / 4K / native, dropping sizes above the display). Default **1080p**. Persisted in `~/.config/sola/arcade-nest.json`. Fit uses the display size **at Play**, then follows the host frame (zone/float): Arcade writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` on the nested X root and moves the focused game to `0,0`. Locked resolutions stay put. Arcade must stay running for live follow. |
+| **In-game resolution** | Titles with a picker can still choose a lower internal res than the nest. Titles without one (Factorio) use the nest as their display — keep **fullscreen on** for Fit. Windowed-in-game ignores the nest resize and can leave clicks dead. |
+| **Scaler** | gamescope `-S fit` letterbox-scales nested content into the host when the two sizes differ (aspect preserved, black bars). Fit aims for 1:1 so the letterbox goes away after the host settles. |
 
 While a nest is up, Arcade publishes a catalog/menu label so the **menubar and
 app switcher show the game title**. River rewrites empty gamescope `app_id` →
@@ -114,6 +127,8 @@ in-Arcade “Hide Steam” toggle.
   no Steam Web API.
 - Multi-store (GOG, Epic, …) not in this app.
 - Host resize + letterbox can still stress mouse mapping on some titles.
+  **Fit to window** retargets nested size after Play; titles that ignore
+  RandR still letterbox. Keep the game fullscreen for Fit.
 
 ## Related
 

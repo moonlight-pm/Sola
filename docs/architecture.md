@@ -40,7 +40,7 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  workspaces · browser        │
-         │              │  agent · mail · paint · …    │
+         │              │  wrapper · agent · mail · …  │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -66,6 +66,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` on the workspace row is the loudest Grok pane; reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). The rail mark rolls up Grok panes in a split (waiting > working > done > idle). |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
+| `crates/sola-wrapper` | Website wrappers as first-class apps (`sola-wrapper <id>`; CEF via sola-browser lib; catalog `kind`/`url` on `Topic::Application`) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
 | `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
@@ -103,6 +104,7 @@ to the bus and tolerate compositor restarts.
 | Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
+| Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
 | Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
 | Workspaces calls | sola-call owner `workspaces` (`solactl workspaces …`). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) |
@@ -182,7 +184,8 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 | `sola-arcade` | Kit app: Steam library gallery (search; A–Z / Recent; Ready-to-play filter default on; Install on uninstalled; Stop-on-row) |
 | Library data | Offline: ACF manifests + `localconfig` activity + `appinfo.vdf` names; cache `~/.config/sola/arcade-library.json`; UI opens from cache, full scan always in background |
 | Banners | Lazy viewport decode (+ overscan); paths resolved when row visible |
-| Launch | `Topic::LaunchApp` → `sola-arcade --run <id>` → `gamescope … -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits) |
+| Launch | `Topic::LaunchApp` → `sola-arcade --run <id> <w> <h> [fit]` → `gamescope … -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits). `<w> <h>` from per-title nest (Fit or locked res). |
+| Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`). Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |
 | AppHidden | Bus sticky still exists (shell hide chip path); Arcade UI does not expose hide-Steam |
@@ -205,6 +208,19 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE
 content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
 (CPU `on_paint` path only).
+
+---
+
+## Wrapper (as-built)
+
+| Piece | Role |
+|-------|------|
+| `crates/sola-wrapper` | Kit iced chrome (CSD while floating) + one CEF page. Not sola-browser (no tabs/omnibox/vault). |
+| Binary / argv | `sola-wrapper <id>`; helper `sola-wrapper --engine --profile=<id>` (same binary, `current_exe`). |
+| App id | The configured id (`slack`), set on kit `startup` / `window_settings_transparent`. |
+| Catalog | `Topic::Application` fields `kind: wrapper` + `url`. Command synthesized `/opt/sola/bin/sola-wrapper <id>`. Launch lookup: `state.yaml` (bus persistence). |
+| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
+| Singleton | `$XDG_RUNTIME_DIR/sola/wrapper/<id>.sock` — second spawn raises the live window. |
 
 ---
 

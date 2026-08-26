@@ -1002,7 +1002,7 @@ impl Shell {
             return Task::none();
         }
 
-        // Shell system shortcuts (e.g. Exit Sola from the shell's own menu).
+        // Shell system menu shortcuts (Quit Sola has none — Super+Q is CloseApp).
         if let Some(action) = self.menus.lookup_shortcut(&chord, Self::APP_ID) {
             tracing::info!(action_id = %action.action_id, "shell shortcut");
             let flash = self.flash_menu_action(&action.app_id, &action.action_id);

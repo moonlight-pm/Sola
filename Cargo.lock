@@ -8204,6 +8204,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "x11rb",
 ]
 
 [[package]]
@@ -8508,6 +8509,20 @@ dependencies = [
  "sola-core",
  "sola-kit",
  "sola-terminal",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sola-wrapper"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "serde_yaml_ng",
+ "sola-browser",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
  "tokio",
  "tracing",
 ]

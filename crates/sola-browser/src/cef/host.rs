@@ -50,12 +50,17 @@ pub fn try_run(app_id: &'static str) -> Option<ExitCode> {
 }
 
 fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
-    sola_core::log::init("sola-browser");
+    sola_core::log::init(app_id);
     sola_core::env::activate_gpu_env();
 
-    if let Err(e) = profiles::bind_process_only(profile_id) {
-        tracing::error!(error = %e, %profile_id, "engine helper: bind profile failed");
-        return ExitCode::FAILURE;
+    // Wrappers call [`profiles::bind_external`] before `try_run` so this
+    // helper does not look up sola-browser's `profiles.json`.
+    let already = profiles::active_if_bound().is_some_and(|p| p.id == profile_id);
+    if !already {
+        if let Err(e) = profiles::bind_process_only(profile_id) {
+            tracing::error!(error = %e, %profile_id, "engine helper: bind profile failed");
+            return ExitCode::FAILURE;
+        }
     }
 
     let sock = profiles::engine_sock_path(profile_id);

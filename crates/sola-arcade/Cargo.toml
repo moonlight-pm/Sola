@@ -23,6 +23,8 @@ tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Nested X11 poke for live Fit (`GAMESCOPE_XWAYLAND_MODE_CONTROL`).
+x11rb = "0.13"
 
 [dev-dependencies]
 tempfile = "3"

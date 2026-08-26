@@ -6,6 +6,7 @@
 //! without tearing down the window.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,9 @@ const DEFAULT_NAME: &str = "Primary";
 
 static ACTIVE: OnceLock<RwLock<ActiveProfile>> = OnceLock::new();
 static REGISTRY: OnceLock<RwLock<Option<ProfilesRegistry>>> = OnceLock::new();
+/// Set by [`bind_external`] (wrappers). Isolates `list()` / engine sockets
+/// from the browser profile registry and `browser_data_root()`.
+static EXTERNAL: AtomicBool = AtomicBool::new(false);
 
 fn registry_cache() -> &'static RwLock<Option<ProfilesRegistry>> {
     REGISTRY.get_or_init(|| RwLock::new(None))
@@ -37,11 +41,44 @@ impl ActiveProfile {
     }
 
     /// CEF request-context cache path (cookies/storage) for this profile.
-    /// Must stay under [`browser_data_root`] so it is a child of the process
-    /// `root_cache_path`.
+    /// Browser profiles keep this under [`browser_data_root`]; wrapper
+    /// binds via [`bind_external`] use `~/.config/sola/wrapper/<id>/cef`.
     pub fn cef_user_data_dir(&self) -> PathBuf {
         self.data_dir.join("cef")
     }
+}
+
+/// Bind this process to an externally-owned CEF profile (sola-wrapper).
+///
+/// Does **not** read or write `profiles.json` / [`browser_data_root`].
+/// After this, [`list`] returns only `id`, and engine sockets live under
+/// `data_dir` so Slack and the product browser cannot share a CEF lock.
+pub fn bind_external(id: &str, data_dir: PathBuf, cache_dir: PathBuf) -> Result<ActiveProfile, String> {
+    if id.is_empty() {
+        return Err("empty profile id".into());
+    }
+    let cef = data_dir.join("cef");
+    std::fs::create_dir_all(&cef).map_err(|e| format!("create {}: {e}", cef.display()))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
+    EXTERNAL.store(true, Ordering::SeqCst);
+    let profile = ActiveProfile {
+        id: id.to_string(),
+        name: id.to_string(),
+        data_dir,
+        cache_dir,
+    };
+    set_process_active(profile)
+}
+
+/// Active profile if this process has already bound one.
+pub fn active_if_bound() -> Option<ActiveProfile> {
+    Some(ACTIVE.get()?.read().ok()?.clone())
+}
+
+/// True after [`bind_external`].
+pub fn is_external() -> bool {
+    EXTERNAL.load(Ordering::Relaxed)
 }
 
 /// One row in the registry (public for menus / manage UI).
@@ -119,7 +156,18 @@ pub fn active() -> ActiveProfile {
 }
 
 /// All registered profiles in registry order (re-read from disk).
+///
+/// After [`bind_external`], only the bound id — wrappers must not
+/// prewarm browser profiles.
 pub fn list() -> Vec<ProfileEntry> {
+    if is_external() {
+        if let Some(p) = active_if_bound() {
+            return vec![ProfileEntry {
+                id: p.id,
+                name: p.name,
+            }];
+        }
+    }
     read_registry(&registry_path())
         .map(|r| r.profiles)
         .unwrap_or_default()
@@ -493,19 +541,28 @@ pub fn session_path_for(id: &str) -> PathBuf {
     profile_data_dir(id).join("session.json")
 }
 
+fn data_dir_for(id: &str) -> PathBuf {
+    if let Some(p) = active_if_bound() {
+        if p.id == id {
+            return p.data_dir;
+        }
+    }
+    profile_data_dir(id)
+}
+
 /// Unix socket the chrome process uses to talk to a headless CEF helper.
 pub fn engine_sock_path(id: &str) -> PathBuf {
-    profile_data_dir(id).join("engine.sock")
+    data_dir_for(id).join("engine.sock")
 }
 
 /// Dedicated pixel-frame socket (kept off the control channel).
 pub fn engine_frame_sock_path(id: &str) -> PathBuf {
-    profile_data_dir(id).join("engine.frame.sock")
+    data_dir_for(id).join("engine.frame.sock")
 }
 
 /// Pid file for the headless CEF helper of this profile.
 pub fn engine_pid_path(id: &str) -> PathBuf {
-    profile_data_dir(id).join("engine.pid")
+    data_dir_for(id).join("engine.pid")
 }
 
 fn profile_cache_dir(id: &str) -> PathBuf {
