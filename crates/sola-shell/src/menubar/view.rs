@@ -259,6 +259,14 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         let accent = shell.theme.extended_palette().primary.base.color;
         cluster.push(mail_unread_chip(unread, accent));
     }
+    if shell.notify.pile_count() > 0 {
+        let accent = shell.theme.extended_palette().primary.base.color;
+        cluster.push(notify_pile_chip(
+            shell.notify.pile_count(),
+            accent,
+            shell.open_panel == Some(crate::app::Panel::NotifyPile),
+        ));
+    }
     cluster.push(cpu_btn);
     if let Some(g) = shell.stats.gpu {
         let gpu_btn: Element<'_, Msg> = bar_button(
@@ -483,6 +491,30 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
         .align_y(Alignment::Center),
         false,
         Msg::RaiseMail,
+    )
+    .into()
+}
+
+fn notify_pile_chip(count: u32, accent: Color, active: bool) -> Element<'static, Msg> {
+    let label = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    bar_button(
+        row![
+            icon_colored("lucide/bell", ICON_SIZE, accent),
+            text(label)
+                .font(fonts::chrome())
+                .size(CHROME_SIZE)
+                .style(move |_: &Theme| iced::widget::text::Style {
+                    color: Some(accent)
+                }),
+        ]
+        .spacing(STAT_INNER_SPACING)
+        .align_y(Alignment::Center),
+        active,
+        Msg::ToggleNotifyPile,
     )
     .into()
 }

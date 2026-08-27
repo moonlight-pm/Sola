@@ -9,13 +9,28 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-26 (`sola-scope` on master; wrapper on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-26 (notifications HUD in this worktree; `sola-scope` + wrapper on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
 ## Now
 
-1. **GPU idle** — living track:
+1. **Notifications** — freeze
+   [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
+   Desk cards drop from the menubar; missed pile is a bell in the right
+   cluster. `AppToast` stays a whisper (`Opening…`, screenshot). Workspaces
+   done-while-unfocused and browser `Notification` emit `Topic::AppNotification`.
+   First install (`shell`+`browser`+`workspaces`, no `bus`) left the
+   shell deaf: Subscribe included new `TopicKind`s, the running bus
+   dropped the whole vec, no `OutputGeometry` / `Windows`, no frames.
+   Recovered with master `shell`. Subscribe now sends a pre-MailStatus
+   prefix then the full set. **Browser:** notify inject called
+   `profiles::active()` from the CEF **renderer** (no profile bind) →
+   renderer panic → no page content. Inject now uses `active_if_bound()`.
+   **Installed** `bus`+`shell`+`browser`+`workspaces` (release, 2026-08-26,
+   bus first). Desk smoke: menubar frames, pages paint, then a
+   Workspaces-done card / site `Notification`.
+2. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
    Desk sample 2026-08-25: **mean 17.7%** at P8 / 21 W (was ~30–40%).

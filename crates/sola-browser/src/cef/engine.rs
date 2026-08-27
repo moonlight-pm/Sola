@@ -17,8 +17,8 @@ use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
-    FrameSlot, HistoryEntry, NavCmd, PageContext, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
-    TabsHandle, TaggedFrame,
+    FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext, PageMenusHandle,
+    PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -139,6 +139,7 @@ pub struct CefEngine {
     passkeys: PasskeysHandle,
     page_menus: PageMenusHandle,
     background_tabs: crate::engine::BackgroundTabsHandle,
+    notifications: NotificationsHandle,
 }
 
 impl Engine for CefEngine {
@@ -207,6 +208,7 @@ impl Engine for CefEngine {
             passkeys: handles.passkeys,
             page_menus: handles.page_menus,
             background_tabs: handles.background_tabs,
+            notifications: handles.notifications,
         }
     }
 
@@ -255,6 +257,10 @@ impl Engine for CefEngine {
 
     fn background_tabs_handle(&self) -> crate::engine::BackgroundTabsHandle {
         self.background_tabs.clone()
+    }
+
+    fn notifications_handle(&self) -> NotificationsHandle {
+        self.notifications.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -332,6 +338,8 @@ struct CefThreadState {
     shutting_down: Cell<bool>,
     /// Live CEF download cancel callbacks, keyed by download id.
     download_cbs: RefCell<std::collections::HashMap<u32, cef::DownloadItemCallback>>,
+    /// In-flight `OnShowPermissionPrompt` callbacks, keyed by prompt id.
+    pending_permission: RefCell<std::collections::HashMap<u64, cef::PermissionPromptCallback>>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
     download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
     /// ⌘/Ctrl+left-press: JS href fallback. If Chromium already opened a
@@ -463,6 +471,7 @@ pub(super) fn run_worker(
         drain_posted: Arc::new(AtomicBool::new(false)),
         shutting_down: Cell::new(false),
         download_cbs: RefCell::new(std::collections::HashMap::new()),
+        pending_permission: RefCell::new(std::collections::HashMap::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
         pending_new_tab_click: Cell::new(None),
         new_tab_click_armed: Cell::new(false),
@@ -1020,13 +1029,21 @@ cef::wrap_display_handler! {
 
         fn on_console_message(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _level: cef::LogSeverity,
             message: Option<&cef::CefString>,
             _source: Option<&cef::CefString>,
             _line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             let msg = message.map(|m| m.to_string()).unwrap_or_default();
+            if let Some(rest) = msg.strip_prefix(crate::notify::SHOW_PREFIX) {
+                handle_notify_show(browser.as_deref(), rest);
+                return 1;
+            }
+            if let Some(rest) = msg.strip_prefix(crate::notify::PERM_PREFIX) {
+                handle_notify_perm(browser.as_deref(), rest);
+                return 1;
+            }
             if let Some(rest) = msg.strip_prefix(crate::paste_js::COPY_PREFIX) {
                 let text = crate::paste_js::parse_js_json_string(rest);
                 tracing::info!(len = text.len(), "page copy selection extracted");
@@ -1142,6 +1159,16 @@ fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
     let clip_src = crate::paste_js::clipboard_bridge_script();
     let clip: cef::CefString = clip_src.as_str().into();
     frame.execute_java_script(Some(&clip), None, 0);
+    // Renderer subprocesses never bind a profile — `active()` panics there
+    // and kills every document (blank pages). Empty map is fine at
+    // document-start; the helper's on_load_end refreshes the real grants.
+    let json = crate::profiles::active_if_bound()
+        .map(|p| crate::notify::load_map(&p.id))
+        .map(|m| serde_json::to_string(&m).unwrap_or_else(|_| "{}".into()))
+        .unwrap_or_else(|| "{}".into());
+    let notify_src = crate::notify::inject_script(&json);
+    let notify: cef::CefString = notify_src.as_str().into();
+    frame.execute_java_script(Some(&notify), None, 0);
     #[cfg(feature = "bitwarden")]
     {
         // Every frame — Google sign-in (accounts.google.com iframe) and
@@ -1150,6 +1177,47 @@ fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
         tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
         let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
         frame.execute_java_script(Some(&code), None, 0);
+    }
+}
+
+fn notify_tab_id(browser: Option<&cef::Browser>) -> u64 {
+    let Some(browser) = browser else {
+        return 0;
+    };
+    tab_by_browser_id(&cef_state(), browser.identifier())
+        .map(|t| t.0)
+        .unwrap_or(0)
+}
+
+fn handle_notify_show(browser: Option<&cef::Browser>, raw: &str) {
+    let Some(p) = crate::notify::parse_show(raw) else {
+        tracing::warn!(payload = %raw, "notify: show payload not json");
+        return;
+    };
+    let ev = crate::notify::Ipc::Show(crate::notify::IpcShow {
+        tab_id: notify_tab_id(browser),
+        origin: p.origin,
+        title: p.title,
+        body: p.body,
+        tag: p.tag,
+    });
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Notify(ev));
+    }
+}
+
+fn handle_notify_perm(browser: Option<&cef::Browser>, raw: &str) {
+    let Some(p) = crate::notify::parse_perm(raw) else {
+        tracing::warn!(payload = %raw, "notify: perm payload not json");
+        return;
+    };
+    let ev = crate::notify::Ipc::Perm(crate::notify::IpcPerm {
+        req_id: p.id,
+        origin: p.origin,
+        tab_id: notify_tab_id(browser),
+    });
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Notify(ev));
     }
 }
 
@@ -1548,6 +1616,62 @@ fn collect_history(browser: &cef::Browser) -> (Vec<HistoryEntry>, i32) {
     (entries.replace(Vec::new()), current.get())
 }
 
+cef::wrap_permission_handler! {
+    pub struct BrowserPermissionHandler {}
+
+    impl PermissionHandler {
+        fn on_show_permission_prompt(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            prompt_id: u64,
+            requesting_origin: Option<&cef::CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut cef::PermissionPromptCallback>,
+        ) -> ::std::os::raw::c_int {
+            let notif = cef::PermissionRequestTypes::NOTIFICATIONS.get_raw();
+            if requested_permissions & notif == 0 {
+                return 0;
+            }
+            let origin = requesting_origin
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            tracing::info!(%origin, prompt_id, perms = requested_permissions, "permission prompt (notifications)");
+            let known = crate::profiles::active_if_bound()
+                .map(|p| crate::notify::permission_for(&p.id, &origin))
+                .unwrap_or_else(|| "default".into());
+            if known == "granted" {
+                if let Some(cb) = callback {
+                    cb.cont(cef::PermissionRequestResult::ACCEPT);
+                }
+                return 1;
+            }
+            if known == "denied" {
+                if let Some(cb) = callback {
+                    cb.cont(cef::PermissionRequestResult::DENY);
+                }
+                return 1;
+            }
+            if let Some(cb) = callback {
+                cef_state()
+                    .pending_permission
+                    .borrow_mut()
+                    .insert(prompt_id, cb.clone());
+            }
+            let tab_id = notify_tab_id(browser.as_deref());
+            if let Some(tx) = &cef_state().ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Notify(
+                    crate::notify::Ipc::Perm(crate::notify::IpcPerm {
+                        req_id: prompt_id,
+                        origin,
+                        tab_id,
+                    }),
+                ));
+            }
+            1
+        }
+    }
+}
+
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
@@ -1557,6 +1681,7 @@ cef::wrap_client! {
         pub download_handler: cef::DownloadHandler,
         pub request_handler: cef::RequestHandler,
         pub context_menu_handler: cef::ContextMenuHandler,
+        pub permission_handler: cef::PermissionHandler,
     }
 
     impl Client {
@@ -1586,6 +1711,10 @@ cef::wrap_client! {
 
         fn context_menu_handler(&self) -> Option<cef::ContextMenuHandler> {
             Some(self.context_menu_handler.clone())
+        }
+
+        fn permission_handler(&self) -> Option<cef::PermissionHandler> {
+            Some(self.permission_handler.clone())
         }
     }
 }
@@ -1910,6 +2039,18 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             if let Some(tab) = active_tab(state) {
                 let script = crate::paste_js::paste_into_focused_script(&text);
                 eval_js_focused(&tab.browser, &script);
+            }
+        }
+        Cmd::NotifyPermission {
+            prompt_id,
+            granted,
+        } => {
+            if let Some(cb) = state.pending_permission.borrow_mut().remove(&prompt_id) {
+                cb.cont(if granted {
+                    cef::PermissionRequestResult::ACCEPT
+                } else {
+                    cef::PermissionRequestResult::DENY
+                });
             }
         }
         Cmd::EvaluateJs(script) => {
@@ -2690,6 +2831,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let download_handler = BrowserDownloadHandler::new();
     let request_handler = BrowserRequestHandler::new();
     let context_menu_handler = BrowserContextMenuHandler::new();
+    let permission_handler = BrowserPermissionHandler::new();
     let mut client = BrowserClient::new(
         render_handler,
         life_span_handler,
@@ -2698,6 +2840,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         download_handler,
         request_handler,
         context_menu_handler,
+        permission_handler,
     );
 
     let url_c = cef::CefString::from(initial_url.as_str());

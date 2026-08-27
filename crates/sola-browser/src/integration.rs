@@ -68,6 +68,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::OpenUrl,
     TopicKind::Chord,
     TopicKind::ChordReleased,
+    TopicKind::NotificationActivate,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -326,6 +327,15 @@ pub fn handle_bus<E: Engine>(
         Some(Topic::ChordReleased(c)) => {
             if crate::input::apply_super_chord(false, c.keysym) {
                 tracing::info!(keysym = c.keysym, "super up (bus chord)");
+            }
+            Task::none()
+        }
+        Some(Topic::NotificationActivate(a)) if a.app_id == app_id => {
+            if let Some(id) = a.tab_id {
+                let tid = crate::engine::TabId(id);
+                if app.cached_tabs.iter().any(|t| t.id == tid) {
+                    app.switch_active_tab(tid);
+                }
             }
             Task::none()
         }

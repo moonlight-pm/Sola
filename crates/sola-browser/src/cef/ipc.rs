@@ -48,6 +48,11 @@ pub enum ToEngine {
         inspect_y: Option<i32>,
     },
     Shutdown,
+    /// Chrome answered a notification permission prompt.
+    NotifyPermission {
+        prompt_id: u64,
+        granted: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +80,8 @@ pub enum FromEngine {
     OpenBackgroundTab {
         url: String,
     },
+    /// Page Notification API (show or permission prompt).
+    Notify(crate::notify::Ipc),
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
@@ -336,6 +343,30 @@ mod tests {
                 assert_eq!(ctx.link_url.as_deref(), Some("https://ex/a"));
                 assert!(ctx.editable);
                 assert!(ctx.can_go_back);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_notify() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::Notify(crate::notify::Ipc::Show(crate::notify::IpcShow {
+                tab_id: 2,
+                origin: "https://ex.com".into(),
+                title: "Hi".into(),
+                body: String::new(),
+                tag: None,
+            })),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::Notify(crate::notify::Ipc::Show(s)) => {
+                assert_eq!(s.tab_id, 2);
+                assert_eq!(s.title, "Hi");
             }
             other => panic!("{other:?}"),
         }

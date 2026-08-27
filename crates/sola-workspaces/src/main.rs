@@ -12,7 +12,7 @@ use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
 
 use sola_bus::Message;
-use sola_bus::topics::{AppToast, SplitDir, Topic, TopicKind};
+use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
@@ -40,6 +40,13 @@ mod workspace;
 
 const APP_ID: &str = "sola-workspaces";
 const WINDOW_TITLE: &str = "Workspaces";
+
+fn now_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
 
 const TMUX_SOCKET: &str = "sola-ws";
 const TMUX_UNIT: &str = "sola-ws-tmux.service";
@@ -1063,7 +1070,16 @@ impl App {
             return;
         };
         if let Ok(mut client) = bus().lock() {
-            let _ = client.emit(Topic::AppToast(AppToast { text: e }));
+            let _ = client.emit(Topic::AppNotification(AppNotification {
+                id: format!("ws-startup-{}", now_millis()),
+                app_id: APP_ID.into(),
+                source: "Workspaces".into(),
+                title: "Startup script failed".into(),
+                body: e,
+                tag: Some("startup".into()),
+                tab_id: None,
+                url: None,
+            }));
         }
     }
 
@@ -1088,8 +1104,15 @@ impl App {
             .and_then(|s| s.agent.as_deref())
             .unwrap_or("agent");
         if let Ok(mut client) = bus().lock() {
-            let _ = client.emit(Topic::AppToast(AppToast {
-                text: format!("{name} · {agent} is done"),
+            let _ = client.emit(Topic::AppNotification(AppNotification {
+                id: format!("ws-done-{id}-{}", now_millis()),
+                app_id: APP_ID.into(),
+                source: "Workspaces".into(),
+                title: format!("{name} is done"),
+                body: agent.to_string(),
+                tag: Some(format!("done-{id}")),
+                tab_id: None,
+                url: None,
             }));
         }
     }

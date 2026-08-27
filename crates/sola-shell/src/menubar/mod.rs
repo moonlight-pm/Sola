@@ -3,7 +3,7 @@
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
 //! - Right cluster: hidden-app chips, mail unread (when mail is open),
-//!   status indicators (CPU/GPU/MEM/RX/TX) + clock.
+//!   missed-notification bell, status indicators (CPU/GPU/MEM/RX/TX) + clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
 //! Density and type live in the view (compact chrome sizes, font roles);

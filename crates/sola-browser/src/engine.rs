@@ -183,6 +183,11 @@ pub enum Cmd<E: Engine> {
         profile_id: String,
         id: u32,
     },
+    /// Complete a CEF `OnShowPermissionPrompt` (notifications Allow / Block).
+    NotifyPermission {
+        prompt_id: u64,
+        granted: bool,
+    },
     /// Open Chromium DevTools for the active tab as a chrome tab.
     /// `panel` is `console` or `elements`. `inspect_*` selects the node
     /// under that view point (Inspect element).
@@ -416,6 +421,8 @@ pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
 /// Helper → chrome: open these URLs as background tabs (⌘-click / popup).
 /// Chrome mints ids so they do not collide with the session strip.
 pub type BackgroundTabsHandle = Arc<Mutex<Vec<String>>>;
+/// Helper → chrome: Web Notification show / permission.
+pub type NotificationsHandle = Arc<Mutex<Vec<crate::notify::Ipc>>>;
 
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
@@ -453,6 +460,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn passkeys_handle(&self) -> PasskeysHandle;
     fn page_menus_handle(&self) -> PageMenusHandle;
     fn background_tabs_handle(&self) -> BackgroundTabsHandle;
+    fn notifications_handle(&self) -> NotificationsHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Orderly engine teardown: send Quit, join the worker. Called from

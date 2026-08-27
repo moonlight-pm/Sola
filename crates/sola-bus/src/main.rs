@@ -150,11 +150,13 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                         }
                     }
                     sola_bus::CONTROL_SUBSCRIBE => {
-                        if let Ok(kinds) = sola_bus::topic::decode_payload::<
-                            Vec<sola_bus::topics::TopicKind>,
-                        >(&event)
-                        {
-                            handle_subscribe(id, kinds, state);
+                        match sola_bus::topics::decode_subscribe_kinds(&event) {
+                            Ok(kinds) => handle_subscribe(id, kinds, state),
+                            Err(e) => tracing::warn!(
+                                client = id,
+                                %e,
+                                "subscribe decode failed — client stays on previous set"
+                            ),
                         }
                     }
                     _ => {

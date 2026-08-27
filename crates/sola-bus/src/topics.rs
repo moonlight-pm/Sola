@@ -534,10 +534,46 @@ pub enum PointerButton {
     Middle,
 }
 
-/// Ephemeral menubar toast. Shell chrome only — no sound, no extra UI.
+/// Ephemeral menubar **whisper**. Shell chrome only — 13pt bar text, no
+/// click, no pile. Not a notification. See [`AppNotification`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppToast {
     pub text: String,
+}
+
+/// System notification. Shell shows a desk card (not the menubar toast)
+/// and may keep a missed copy in the pile.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppNotification {
+    /// Emitter-minted id. Empty → shell assigns one.
+    #[serde(default)]
+    pub id: String,
+    pub app_id: String,
+    /// Quiet source line — app label or site host.
+    pub source: String,
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    /// HTML5 `Notification.tag` / replace key. Same (`app_id`, `tag`)
+    /// replaces an in-flight banner.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Browser tab to focus on click.
+    #[serde(default)]
+    pub tab_id: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Shell → source app after the user clicks a notification (or pile row).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationActivate {
+    pub id: String,
+    pub app_id: String,
+    #[serde(default)]
+    pub tab_id: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// Live inbox unread count. `sola-mail` emits this; `sola-shell` paints
@@ -549,10 +585,17 @@ pub struct MailStatus {
 }
 
 define_topics! {
-    // TopicKind is postcard-encoded in Subscribe. Inserting a variant *above*
-    // existing ones shifts discriminants; a new client vs an old bus then
-    // silently subscribes to the wrong topics (this broke Super+Tab).
-    // Append new kinds at the **end**, or reuse an existing topic.
+    // TopicKind is postcard-encoded in Subscribe as a Vec. Inserting a
+    // variant *above* existing ones shifts discriminants (this broke
+    // Super+Tab). Append at the **end**.
+    //
+    // Appending is not enough against an *older bus host*: one unknown
+    // discriminant fails the whole Vec, the bus keeps the previous
+    // (empty) subscription, and the client is deaf (no OutputGeometry /
+    // Windows — shell never frames). `BusClient::subscribe` sends a
+    // prefix the prior generation can decode, then the full set. The
+    // host also skips unknown discriminants (`decode_subscribe_kinds`).
+    // Install `bus` in the same replace as any TopicKind growth.
     //
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -711,19 +754,71 @@ define_topics! {
     // set `app_id` to sola-preview. Cold-start uses LaunchApp + path.
     OpenImage(OpenImageRequest),
 
-    // Menubar toast. Ephemeral; shell shows `text` and expires it.
-    // Operator-plain copy — the sender owns the words.
+    // Menubar whisper. Ephemeral; shell shows `text` in the 28px bar.
+    // Operator-plain copy — the sender owns the words. Not a notification.
     AppToast(AppToast),
 
     // Lifecycle
     Shutdown,
 
-    // Inbox unread for the menubar. Appended last so TopicKind postcard
-    // discriminants stay stable. Sticky (not persistent): replay to late
+    // Inbox unread for the menubar. Sticky (not persistent): replay to late
     // subscribers; mail retracts on exit. Shell also hides the chip when
     // no sola-mail window is mapped.
     #[sticky]
     MailStatus(MailStatus),
+
+    // Desk notification. Ephemeral; shell shows a card under the menubar
+    // and may keep a missed copy. Appended last so TopicKind postcard
+    // discriminants stay stable.
+    AppNotification(AppNotification),
+
+    // Click on a notification / pile row. Shell raises the app, then emits
+    // this so the source can select a tab (browser) or similar.
+    NotificationActivate(NotificationActivate),
+}
+
+/// TopicKinds added after `MailStatus`. An older bus host cannot
+/// postcard-decode a Subscribe vec that includes these.
+pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
+    matches!(
+        kind,
+        TopicKind::AppNotification | TopicKind::NotificationActivate
+    )
+}
+
+/// Decode a Subscribe payload. Unknown trailing discriminants (a newer
+/// client talking to this bus) are skipped so the rest of the set still
+/// applies. Empty / totally foreign payloads error.
+pub fn decode_subscribe_kinds(msg: &crate::Message) -> std::io::Result<Vec<TopicKind>> {
+    match crate::topic::decode_payload::<Vec<TopicKind>>(msg) {
+        Ok(kinds) => Ok(kinds),
+        Err(_) => {
+            let raw: Vec<u32> = crate::topic::decode_payload(msg)?;
+            let mut kinds = Vec::new();
+            let mut unknown = 0u32;
+            for d in raw {
+                if let Some(k) = TopicKind::ALL.get(d as usize).copied() {
+                    kinds.push(k);
+                } else {
+                    unknown += 1;
+                }
+            }
+            if unknown > 0 {
+                tracing::warn!(
+                    unknown,
+                    kept = kinds.len(),
+                    "subscribe: skipped unknown TopicKind discriminants"
+                );
+            }
+            if kinds.is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "subscribe: no known TopicKind",
+                ));
+            }
+            Ok(kinds)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -842,6 +937,65 @@ mod tests {
         assert_eq!(TopicKind::Frame.behavior(), Behavior::Ephemeral);
         assert_eq!(TopicKind::Shutdown.behavior(), Behavior::Ephemeral);
         assert_eq!(TopicKind::MouseLeft.behavior(), Behavior::Ephemeral);
+        assert_eq!(
+            TopicKind::AppNotification.behavior(),
+            Behavior::Ephemeral
+        );
+        assert_eq!(
+            TopicKind::NotificationActivate.behavior(),
+            Behavior::Ephemeral
+        );
+    }
+
+    #[test]
+    fn app_notification_json_roundtrip() {
+        let n = AppNotification {
+            id: "n1".into(),
+            app_id: "sola-browser".into(),
+            source: "example.com".into(),
+            title: "Hello".into(),
+            body: "world".into(),
+            tag: Some("t".into()),
+            tab_id: Some(7),
+            url: Some("https://example.com/".into()),
+        };
+        let topic = Topic::AppNotification(n.clone());
+        assert_eq!(topic.kind(), TopicKind::AppNotification);
+        let value = serde_json::to_value(&n).unwrap();
+        let back = Topic::from_json_kind(TopicKind::AppNotification, value)
+            .expect("AppNotification json");
+        match back {
+            Topic::AppNotification(got) => assert_eq!(got, n),
+            other => panic!("expected AppNotification, got {other:?}"),
+        }
+        assert_eq!(TopicKind::AppNotification.as_str(), "AppNotification");
+        assert_eq!(
+            TopicKind::NotificationActivate.as_str(),
+            "NotificationActivate"
+        );
+        assert!(topic_kind_is_after_mail_status(
+            TopicKind::AppNotification
+        ));
+        assert!(!topic_kind_is_after_mail_status(TopicKind::MailStatus));
+        assert!(!topic_kind_is_after_mail_status(TopicKind::Windows));
+    }
+
+    #[test]
+    fn decode_subscribe_skips_unknown_discriminants() {
+        let mut raw: Vec<u32> = TopicKind::ALL
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(i, _)| i as u32)
+            .collect();
+        raw.push(u32::MAX);
+        let msg = crate::Message::with_payload(
+            crate::CONTROL_SUBSCRIBE,
+            crate::topic::encode_payload(&raw),
+        );
+        let kinds = decode_subscribe_kinds(&msg).expect("kept known kinds");
+        assert_eq!(kinds.len(), 3);
+        assert_eq!(kinds[0], TopicKind::ALL[0]);
     }
 
     #[test]

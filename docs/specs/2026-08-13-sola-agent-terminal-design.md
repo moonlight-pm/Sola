@@ -176,7 +176,7 @@ look changes; do not treat it as a second freeze.
 3. **Grok hooks + process-tree + OSC 9999** — done  
 4. **Projects + workspaces + spawn sibling** — done (catalog.json; `.worktrees/`; name modal)  
 5. **`sat` private UDS** — retired; methods on sola-call (`ws`)  
-6. **Toasts on done** — done (shell `AppToast`; skip focused + hydrate)  
+6. **Toasts on done** — done (shell `AppNotification` desk card; skip focused + hydrate)  
 7. **Rename to sola-workspaces** — done (D4.1)
 
 ---

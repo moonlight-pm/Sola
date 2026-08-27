@@ -30,6 +30,7 @@ pub enum WindowKind {
     Launcher,
     Switcher,
     Selection,
+    Notify,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +107,18 @@ pub enum Msg {
     UnhideApp(String),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
+    /// Expire a live notification banner (`NotifyState` generation).
+    NotifyExpire(u64),
+    /// Animation tick while a banner is entering or leaving.
+    NotifyTick,
+    /// Click a card / pile row: raise source, drop from live+pile.
+    NotifyActivate(String),
+    /// × without raising.
+    NotifyDismiss(String),
+    /// Open / close the missed-pile panel.
+    ToggleNotifyPile,
+    /// Empty the missed pile.
+    NotifyClearPile,
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
@@ -156,6 +169,7 @@ pub enum Msg {
 pub enum Panel {
     Calendar,
     Stat(crate::stats::Metric),
+    NotifyPile,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -192,6 +206,7 @@ pub struct Shell {
     pub launcher_window_id: Option<iced::window::Id>,
     pub switcher_window_id: Option<iced::window::Id>,
     pub selection_window_id: Option<iced::window::Id>,
+    pub notify_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -254,6 +269,7 @@ pub struct Shell {
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub selection: SelectionState,
+    pub notify: crate::notify::NotifyState,
     /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
     /// sola-preview. Set only by shell hotkey / selection paths.
     pub open_preview_on_next: bool,
@@ -284,9 +300,10 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
-    /// Iced-reported live swapchain for menu / launcher / switcher / selection.
-    /// Composition waits on this so River does not show a stretched 2×2.
-    overlay_iced_live: [bool; 4],
+    /// Iced-reported live swapchain for menu / launcher / switcher /
+    /// selection / notify. Composition waits on this so River does not
+    /// show a stretched 2×2.
+    overlay_iced_live: [bool; 5],
 }
 
 impl Shell {
@@ -327,6 +344,7 @@ impl Shell {
             launcher_window_id: None,
             switcher_window_id: None,
             selection_window_id: None,
+            notify_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -352,6 +370,7 @@ impl Shell {
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             selection: SelectionState::default(),
+            notify: crate::notify::NotifyState::default(),
             open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
@@ -365,7 +384,7 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 4],
+            overlay_iced_live: [false; 5],
         };
 
         (state, task)
@@ -443,6 +462,55 @@ impl Shell {
             self.unhide_app("sola-mail");
         }
         self.raise_app("sola-mail");
+    }
+
+    fn activate_notification(&mut self, id: &str) -> iced::Task<Msg> {
+        let Some(n) = self.notify.take(id) else {
+            return iced::Task::none();
+        };
+        if self.is_app_hidden(&n.app_id) {
+            self.unhide_app(&n.app_id);
+        }
+        self.raise_app(&n.app_id);
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::NotificationActivate(
+                sola_bus::topics::NotificationActivate {
+                    id: n.id.clone(),
+                    app_id: n.app_id.clone(),
+                    tab_id: n.tab_id,
+                    url: n.url.clone(),
+                },
+            ));
+        }
+        if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
+            self.menu_open = false;
+            self.open_panel = None;
+        }
+        self.emit_overlay_frames();
+        self.emit_composition();
+        iced::Task::none()
+    }
+
+    fn notify_followup(&mut self, now: std::time::Instant) -> iced::Task<Msg> {
+        self.emit_overlay_frames();
+        self.emit_composition();
+        if self.notify.needs_tick(now) {
+            iced::Task::perform(tokio::time::sleep(crate::notify::TICK), |_| Msg::NotifyTick)
+        } else {
+            iced::Task::none()
+        }
+    }
+
+    fn push_notification(
+        &mut self,
+        n: sola_bus::topics::AppNotification,
+    ) -> iced::Task<Msg> {
+        let now = std::time::Instant::now();
+        let generation = self.notify.push(n, now);
+        let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
+            Msg::NotifyExpire(generation)
+        });
+        iced::Task::batch([expire, self.notify_followup(now)])
     }
 
     /// Dismiss transient shell overlays so a capture doesn't leave the
@@ -694,6 +762,12 @@ impl Shell {
         // 4. Shell overlays on top when active *and* already live-sized.
         //    Framing to the output happens while still hidden; joining the
         //    stack at 2×2 is the first-show flash.
+        //    Notify sits above apps but below menu/launcher/switcher/selection.
+        if self.overlay_should_compose("notify", self.notify.visible()) {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "notify") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
         if self.overlay_should_compose("menu", self.menu_open) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
                 entries.push(CompositionEntry { window_id: wid });
@@ -953,6 +1027,18 @@ impl Shell {
                 frames.push(f);
             }
         }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "notify") {
+            let enter = self.notify.enter_t(std::time::Instant::now());
+            if let Some(f) = crate::zoning::notify_overlay_frame(
+                wid,
+                self.notify.visible(),
+                output,
+                self.notify.stack_height(),
+                enter,
+            ) {
+                frames.push(f);
+            }
+        }
     }
 
     /// Frame only overlays (park ↔ live). Do not re-Frame zoned apps — a
@@ -969,6 +1055,7 @@ impl Shell {
             WindowKind::Launcher => Some(1),
             WindowKind::Switcher => Some(2),
             WindowKind::Selection => Some(3),
+            WindowKind::Notify => Some(4),
             WindowKind::Menubar => None,
         }
     }
@@ -979,6 +1066,7 @@ impl Shell {
             WindowKind::Launcher,
             WindowKind::Switcher,
             WindowKind::Selection,
+            WindowKind::Notify,
         ]
         .into_iter()
         .find(|&kind| self.overlay_id(kind) == Some(id))
@@ -990,6 +1078,7 @@ impl Shell {
             "launcher" => 1,
             "switcher" => 2,
             "selection" => 3,
+            "notify" => 4,
             _ => return false,
         };
         self.overlay_iced_live[idx]
@@ -1059,6 +1148,9 @@ impl Shell {
         }
         if Some(window) == self.selection_window_id {
             return "selection".to_string();
+        }
+        if Some(window) == self.notify_window_id {
+            return "notify".to_string();
         }
         Self::APP_ID.to_string()
     }
@@ -1219,6 +1311,7 @@ impl Shell {
             self.open_overlay(WindowKind::Launcher),
             self.open_overlay(WindowKind::Switcher),
             self.open_overlay(WindowKind::Selection),
+            self.open_overlay(WindowKind::Notify),
         ])
     }
 
@@ -1229,6 +1322,7 @@ impl Shell {
             WindowKind::Launcher => self.launcher_window_id,
             WindowKind::Switcher => self.switcher_window_id,
             WindowKind::Selection => self.selection_window_id,
+            WindowKind::Notify => self.notify_window_id,
         }
     }
 
@@ -1239,6 +1333,7 @@ impl Shell {
             WindowKind::Launcher => &mut self.launcher_window_id,
             WindowKind::Switcher => &mut self.switcher_window_id,
             WindowKind::Selection => &mut self.selection_window_id,
+            WindowKind::Notify => &mut self.notify_window_id,
         }
     }
 
@@ -1249,15 +1344,17 @@ impl Shell {
             WindowKind::Launcher => self.launcher.active,
             WindowKind::Switcher => self.switcher.active,
             WindowKind::Selection => self.selection.active,
+            WindowKind::Notify => self.notify.visible(),
         }
     }
 
-    fn overlay_visibility(&self) -> [bool; 4] {
+    fn overlay_visibility(&self) -> [bool; 5] {
         [
             self.menu_open,
             self.launcher.active,
             self.switcher.active,
             self.selection.active,
+            self.notify.visible(),
         ]
     }
 
@@ -1270,6 +1367,7 @@ impl Shell {
             WindowKind::Launcher => crate::launcher::open_window(),
             WindowKind::Switcher => crate::switcher::open_window(),
             WindowKind::Selection => crate::selection::open_window(),
+            WindowKind::Notify => crate::notify::open_window(),
             WindowKind::Menubar => return iced::Task::none(),
         };
         *self.overlay_id_mut(kind) = Some(id);
@@ -1299,12 +1397,13 @@ impl Shell {
             && (self.menu_window_id.is_none()
                 || self.launcher_window_id.is_none()
                 || self.switcher_window_id.is_none()
-                || self.selection_window_id.is_none())
+                || self.selection_window_id.is_none()
+                || self.notify_window_id.is_none())
         {
             tasks.push(self.ensure_overlay_windows());
         }
         if before != after {
-            for i in 0..4 {
+            for i in 0..5 {
                 if before[i] && !after[i] {
                     self.overlay_iced_live[i] = false;
                 }
@@ -1605,6 +1704,54 @@ impl Shell {
                 self.activate_mail();
                 iced::Task::none()
             }
+            Msg::NotifyExpire(generation) => {
+                let now = std::time::Instant::now();
+                if self.notify.begin_leave(generation, now) {
+                    return self.notify_followup(now);
+                }
+                iced::Task::none()
+            }
+            Msg::NotifyTick => {
+                let now = std::time::Instant::now();
+                self.notify.finish_leave(now);
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.notify_followup(now)
+            }
+            Msg::NotifyActivate(id) => self.activate_notification(&id),
+            Msg::NotifyDismiss(id) => {
+                self.notify.dismiss(&id);
+                if self.notify.pile.is_empty()
+                    && self.open_panel == Some(Panel::NotifyPile)
+                {
+                    self.menu_open = false;
+                    self.open_panel = None;
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::ToggleNotifyPile => {
+                if self.menu_open && self.open_panel == Some(Panel::NotifyPile) {
+                    self.menu_open = false;
+                    self.open_panel = None;
+                } else {
+                    self.menu_open = true;
+                    self.open_panel = Some(Panel::NotifyPile);
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    crate::stats::set_active_metric(None);
+                }
+                self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::NotifyClearPile => {
+                self.notify.clear_pile();
+                self.menu_open = false;
+                self.open_panel = None;
+                self.emit_composition();
+                iced::Task::none()
+            }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {
                 if next {
@@ -1798,6 +1945,9 @@ impl Shell {
         if Some(window) == self.selection_window_id {
             return crate::selection::view::view(self);
         }
+        if Some(window) == self.notify_window_id {
+            return crate::notify::view::view(self);
+        }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
             .width(iced::Length::Fill)
@@ -1834,6 +1984,7 @@ mod pending_launch_tests {
             launcher_window_id: None,
             switcher_window_id: None,
             selection_window_id: None,
+            notify_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -1864,6 +2015,7 @@ mod pending_launch_tests {
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             selection: SelectionState::default(),
+            notify: crate::notify::NotifyState::default(),
             open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
@@ -1881,7 +2033,7 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 4],
+            overlay_iced_live: [false; 5],
         };
         shell.menubar.toast_generation = 1;
         shell.menubar.toast = Some("Opening Terminal…".into());

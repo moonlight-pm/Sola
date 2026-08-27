@@ -6,7 +6,8 @@ and **create**.
 Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
 work on form fields and body text. ⌘-click a link to open it in a
 background tab. Right-click the page for a small kit menu. Hold back or
-forward to jump in that tab’s session history.
+forward to jump in that tab’s session history. Site **notifications**
+leave the page and show as Sola desk cards (permission prompt first).
 
 ## What it is
 
@@ -51,6 +52,7 @@ A **profile** is a separate web identity + tab workspace (D8).
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
 | Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
+| Notification permission | `~/.local/share/sola/browser/profiles/<uuid>/notifications.json` |
 
 Site logins (cookies) live under that profile CEF dir. The engine uses
 Chromium’s **basic** password store so cookie encryption works without a
@@ -160,6 +162,18 @@ Toolbar **download** icon (right of vault / cards) is always there.
   helper dies with the window).
 
 No “show in folder” (Sola has no file manager yet). No delete-from-disk.
+
+## Notifications
+
+A page that calls `Notification.requestPermission()` gets a chrome dialog
+(**Allow** / **Block**). The choice is stored per profile in
+`notifications.json`. After **Allow**, `new Notification(title, { body })`
+shows a Sola desk card under the menubar (same as Workspaces done), not
+an in-page toast. Click the card to raise Browser and that tab. Missed
+cards collect behind the menubar bell.
+
+Sites you have not allowed cannot notify. There is no sound and no
+action buttons yet.
 
 ## Bitwarden vault
 

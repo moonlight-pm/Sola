@@ -18,7 +18,8 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver,
-    ImeCaret, ImeHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle,
+    ImeCaret, ImeHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
+    TabsHandle,
 };
 use crate::profiles;
 
@@ -46,6 +47,7 @@ struct Shared {
     passkeys: PasskeysHandle,
     page_menus: PageMenusHandle,
     background_tabs: BackgroundTabsHandle,
+    notifications: NotificationsHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -66,6 +68,7 @@ pub struct RouterHandles {
     pub passkeys: PasskeysHandle,
     pub page_menus: PageMenusHandle,
     pub background_tabs: BackgroundTabsHandle,
+    pub notifications: NotificationsHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -81,6 +84,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let passkeys: PasskeysHandle = Arc::new(Mutex::new(Vec::new()));
     let page_menus: PageMenusHandle = Arc::new(Mutex::new(Vec::new()));
     let background_tabs: BackgroundTabsHandle = Arc::new(Mutex::new(Vec::new()));
+    let notifications: NotificationsHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -94,6 +98,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         passkeys: passkeys.clone(),
         page_menus: page_menus.clone(),
         background_tabs: background_tabs.clone(),
+        notifications: notifications.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -119,6 +124,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         passkeys,
         page_menus,
         background_tabs,
+        notifications,
     }
 }
 
@@ -641,6 +647,10 @@ fn handle_from(
                 crate::chrome_wake::wake();
             }
         }
+        FromEngine::Notify(ev) => {
+            shared.notifications.lock().unwrap().push(ev);
+            crate::chrome_wake::wake();
+        }
     }
 }
 
@@ -709,6 +719,13 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         }),
         Cmd::CloseTab(id) => Some(ToEngine::CloseTab(id.0)),
         Cmd::SetActiveTab(id) => Some(ToEngine::SetActiveTab(id.0)),
+        Cmd::NotifyPermission {
+            prompt_id,
+            granted,
+        } => Some(ToEngine::NotifyPermission {
+            prompt_id,
+            granted,
+        }),
         Cmd::ShowDevTools {
             panel,
             inspect_x,

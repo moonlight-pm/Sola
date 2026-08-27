@@ -296,6 +296,13 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             inspect_x,
             inspect_y,
         },
+        ToEngine::NotifyPermission {
+            prompt_id,
+            granted,
+        } => Cmd::NotifyPermission {
+            prompt_id,
+            granted,
+        },
         ToEngine::Shutdown => return None,
     })
 }

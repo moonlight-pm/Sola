@@ -193,7 +193,8 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. |
 | Stat indicators | Menu bar extras | Separate items (CPU, GPU, MEM, RX, TX) like other status items — not stacked dual-line widgets. |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
-| Toasts | Brief UI notifications | Transient, low emphasis. |
+| Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
+| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile in the right cluster. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 
 ---
 

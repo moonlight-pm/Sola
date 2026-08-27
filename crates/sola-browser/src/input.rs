@@ -103,6 +103,25 @@ pub fn is_chrome_edit_shortcut(key: &Key, mods: Modifiers) -> bool {
     )
 }
 
+/// Browser-menu chords that chrome should handle even if the bus
+/// `MenuAction` path is down: Super+R reload, Super+T/W/L.
+pub fn chrome_nav_shortcut(key: &Key, mods: Modifiers) -> Option<char> {
+    if !mods.logo() || mods.alt() || mods.shift() || mods.control() {
+        return None;
+    }
+    let Key::Character(s) = key else {
+        return None;
+    };
+    match s.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some(c @ ('r' | 't' | 'w' | 'l')) => Some(c),
+        _ => None,
+    }
+}
+
+pub fn is_chrome_nav_shortcut(key: &Key, mods: Modifiers) -> bool {
+    chrome_nav_shortcut(key, mods).is_some()
+}
+
 /// Cursor shape carried across the worker→iced boundary as a plain `u32`
 /// (via `AtomicU32`). Discriminants are stable; new variants append.
 #[repr(u32)]
@@ -207,6 +226,18 @@ mod tests {
         assert!(!is_chrome_edit_shortcut(
             &Key::Character("t".into()),
             Modifiers::LOGO
+        ));
+        assert_eq!(
+            chrome_nav_shortcut(&Key::Character("r".into()), Modifiers::LOGO),
+            Some('r')
+        );
+        assert!(is_chrome_nav_shortcut(
+            &Key::Character("R".into()),
+            Modifiers::LOGO
+        ));
+        assert!(!is_chrome_nav_shortcut(
+            &Key::Character("r".into()),
+            Modifiers::empty()
         ));
     }
 

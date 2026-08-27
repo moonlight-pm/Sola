@@ -108,6 +108,56 @@ pub fn overlay_geometry_is_live(width: i32, height: i32) -> bool {
     width >= 64 && height >= 64
 }
 
+/// Notification overlay: tight card stack at the top-right, not the full
+/// usable area (empty space must click through to apps).
+pub const NOTIFY_CARD_W: i32 = 340;
+pub const NOTIFY_MARGIN_RIGHT: i32 = 12;
+pub const NOTIFY_MARGIN_TOP: i32 = 6;
+/// How far the stack starts above its rest y (drop-from-bar).
+pub const NOTIFY_DROP: i32 = 14;
+
+/// Live Frame for the notification overlay. `enter_t` is 0 at the start of
+/// the drop (up, overlapping the bar's bottom edge) and 1 at rest.
+pub fn notify_live_frame(
+    window_id: u32,
+    output_w: i32,
+    output_h: i32,
+    stack_h: i32,
+    enter_t: f32,
+) -> FrameUpdate {
+    let max_h = (output_h - MENUBAR_HEIGHT).max(64);
+    let w = NOTIFY_CARD_W.min(output_w.max(64));
+    let h = stack_h.max(64).min(max_h);
+    let rest_y = MENUBAR_HEIGHT + NOTIFY_MARGIN_TOP;
+    let start_y = rest_y - NOTIFY_DROP;
+    let t = enter_t.clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - t).powi(3);
+    let y = start_y + ((rest_y - start_y) as f32 * e).round() as i32;
+    let x = (output_w - w - NOTIFY_MARGIN_RIGHT).max(0);
+    FrameUpdate {
+        window_id,
+        x,
+        y,
+        width: w,
+        height: h,
+        fullscreen: false,
+    }
+}
+
+pub fn notify_overlay_frame(
+    window_id: u32,
+    visible: bool,
+    output: Option<(i32, i32)>,
+    stack_h: i32,
+    enter_t: f32,
+) -> Option<FrameUpdate> {
+    if !visible {
+        return Some(overlay_park_frame(window_id));
+    }
+    let (ow, oh) = output?;
+    Some(notify_live_frame(window_id, ow, oh, stack_h, enter_t))
+}
+
 /// Inset, in pixels per edge, applied to a freshly-floated window. A float
 /// with no remembered geometry centers in the usable area shrunk by this
 /// much on every side — a clear "this window is floating" cue (and, until a
@@ -1407,6 +1457,27 @@ mod tests {
         assert!(!overlay_geometry_is_live(32, 32));
         assert!(overlay_geometry_is_live(5120, 2132));
         assert!(overlay_geometry_is_live(64, 64));
+        assert!(overlay_geometry_is_live(NOTIFY_CARD_W, 76));
+    }
+
+    #[test]
+    fn notify_live_frame_top_right_drops_into_rest() {
+        let start = notify_live_frame(9, 1920, 1080, 76, 0.0);
+        assert_eq!(start.window_id, 9);
+        assert_eq!(start.width, NOTIFY_CARD_W);
+        assert_eq!(start.height, 76.max(64));
+        assert_eq!(
+            start.x,
+            1920 - NOTIFY_CARD_W - NOTIFY_MARGIN_RIGHT
+        );
+        assert_eq!(start.y, MENUBAR_HEIGHT + NOTIFY_MARGIN_TOP - NOTIFY_DROP);
+
+        let rest = notify_live_frame(9, 1920, 1080, 76, 1.0);
+        assert_eq!(rest.y, MENUBAR_HEIGHT + NOTIFY_MARGIN_TOP);
+        assert_eq!(rest.x, start.x);
+
+        assert!(notify_overlay_frame(9, false, None, 76, 1.0).is_some());
+        assert!(notify_overlay_frame(9, true, None, 76, 1.0).is_none());
     }
 
     #[test]

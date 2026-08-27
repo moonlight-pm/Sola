@@ -227,6 +227,10 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                         ));
                     }
                     if crate::input::is_chrome_edit_shortcut(key, crate::input::stored_modifiers())
+                        || crate::input::is_chrome_nav_shortcut(
+                            key,
+                            crate::input::stored_modifiers(),
+                        )
                     {
                         return Some(iced::widget::shader::Action::capture());
                     }

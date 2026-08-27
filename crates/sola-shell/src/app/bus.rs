@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppHidden, AppMenuPayload, AppToast, Application, ChordEvent, FloatGeometry, FocusTarget,
+    AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
+    FocusTarget,
     LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
     OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating,
     WindowGeometry,
@@ -94,6 +95,7 @@ impl Shell {
                 Task::none()
             }
             Topic::AppToast(t) => self.on_app_toast(t),
+            Topic::AppNotification(n) => self.on_app_notification(n),
             Topic::MailStatus(s) => {
                 self.on_mail_status(s, message.sticky);
                 Task::none()
@@ -107,7 +109,7 @@ impl Shell {
     // Real handlers
     // -------------------------------------------------------------------------
 
-    /// Menubar toast from another app (e.g. Workspaces done-while-unfocused).
+    /// Menubar whisper (Opening… / screenshot). Not a notification.
     fn on_app_toast(&mut self, t: AppToast) -> Task<Msg> {
         let text = t.text.trim();
         if text.is_empty() {
@@ -118,6 +120,13 @@ impl Shell {
         Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
             Msg::ToastExpire(toast_gen)
         })
+    }
+
+    fn on_app_notification(&mut self, n: AppNotification) -> Task<Msg> {
+        if n.title.trim().is_empty() && n.body.trim().is_empty() {
+            return Task::none();
+        }
+        self.push_notification(n)
     }
 
     /// Apply an updated bus theme to the iced renderer.

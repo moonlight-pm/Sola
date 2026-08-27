@@ -222,6 +222,9 @@ pub enum Msg {
     DownloadOpen(String),
     /// Drop a row from the list (file stays on disk).
     DownloadRemove(String),
+    /// Site Notification.requestPermission — Allow / Block.
+    NotifyAllow,
+    NotifyBlock,
     /// Page context-menu action (after CEF cancelled the native OSR menu).
     PageMenu(PageMenuAction),
 }
@@ -501,6 +504,8 @@ pub struct App<E: Engine> {
     downloads: crate::downloads::DownloadList,
     downloads_panel_open: bool,
     download_icon: iced::widget::svg::Handle,
+    /// In-chrome Notification.requestPermission prompt.
+    pending_notify: Option<crate::notify::IpcPerm>,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
 }
@@ -629,6 +634,7 @@ impl<E: Engine> App<E> {
             downloads: crate::downloads::DownloadList::load(),
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
+            pending_notify: None,
             copy_url_flash: None,
         };
         #[cfg(feature = "bitwarden")]
@@ -1600,6 +1606,8 @@ impl<E: Engine> App<E> {
                     }
                 }
             }
+            Msg::NotifyAllow => self.resolve_notify_permission("granted"),
+            Msg::NotifyBlock => self.resolve_notify_permission("denied"),
             Msg::DownloadRemove(id) => {
                 self.downloads.remove(&id);
             }
@@ -1929,6 +1937,7 @@ impl<E: Engine> App<E> {
                     .unwrap()
                     .drain(..)
                     .collect();
+                self.drain_notify_ipc();
                 for url in bg {
                     if url.contains("/devtools/inspector.html") {
                         tracing::info!(%url, "DevTools frontend tab");
@@ -2401,6 +2410,8 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
+        } else if self.pending_notify.is_some() {
+            stack![content, self.view_notify_permission()].into()
         } else {
             content
         };
@@ -3425,6 +3436,127 @@ impl<E: Engine> App<E> {
             self.set_vault_panel_open(false);
         }
         self.vault_busy = false;
+    }
+
+    fn drain_notify_ipc(&mut self) {
+        let evs: Vec<crate::notify::Ipc> = self
+            .engine
+            .notifications_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ev in evs {
+            match ev {
+                crate::notify::Ipc::Show(show) => {
+                    if crate::notify::permission_for(
+                        &crate::profiles::active().id,
+                        &show.origin,
+                    ) != "granted"
+                    {
+                        continue;
+                    }
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(sola_bus::topics::Topic::AppNotification(
+                            crate::notify::to_bus(&show),
+                        ));
+                    }
+                }
+                crate::notify::Ipc::Perm(perm) => {
+                    tracing::info!(
+                        origin = %perm.origin,
+                        prompt_id = perm.req_id,
+                        "notification permission request"
+                    );
+                    let known = crate::notify::permission_for(
+                        &crate::profiles::active().id,
+                        &perm.origin,
+                    );
+                    if known != "default" {
+                        let _ = self
+                            .cmd_tx
+                            .send(Cmd::EvaluateJs(crate::notify::resolve_script(
+                                perm.req_id, &known,
+                            )));
+                        continue;
+                    }
+                    if self.pending_notify.is_none() {
+                        self.pending_notify = Some(perm);
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_notify_permission(&mut self, result: &str) {
+        let Some(perm) = self.pending_notify.take() else {
+            return;
+        };
+        let profile = crate::profiles::active().id;
+        if let Err(e) = crate::notify::set_permission(&profile, &perm.origin, result) {
+            tracing::warn!(error = %e, "notify: persist permission failed");
+        }
+        let granted = result == "granted";
+        let _ = self.cmd_tx.send(Cmd::NotifyPermission {
+            prompt_id: perm.req_id,
+            granted,
+        });
+        let _ = self
+            .cmd_tx
+            .send(Cmd::EvaluateJs(crate::notify::resolve_script(
+                perm.req_id, result,
+            )));
+    }
+
+    fn view_notify_permission(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let Some(perm) = self.pending_notify.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        let host = crate::notify::host_of(&perm.origin);
+        let title = text("Notifications")
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+        let hint = text(format!("{host} wants to show notifications."))
+            .size(12)
+            .style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.72, ..t }),
+                }
+            });
+        let actions = row![
+            kit_button::labeled("Allow", kit_button::primary).on_press(Msg::NotifyAllow),
+            kit_button::labeled("Block", kit_button::ghost).on_press(Msg::NotifyBlock),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center);
+        let body = column![title, hint, actions]
+            .spacing(SPACE_SM)
+            .width(Length::Fixed(300.0));
+        let panel =
+            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(340.0));
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.22,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::NotifyBlock);
+        let centered = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        stack![backdrop, centered].into()
     }
 
     /// Centered modal for Profiles menubar manage actions.
@@ -4731,6 +4863,12 @@ impl<E: Engine> App<E> {
                     // Escape stops loading (browser-standard). Only when iced did
                     // not already capture the key (e.g. a focused text field that
                     // wants Escape for its own cancel).
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers)
+                            == Some('r') =>
+                    {
+                        Some(Msg::NavReloadOrStop)
+                    }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..

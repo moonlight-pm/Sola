@@ -87,9 +87,21 @@ impl BusClient {
     /// Subscribe to the given topic kinds. Until this is called, the bus
     /// delivers nothing to this client. May be called repeatedly; the set
     /// replaces any previous subscription.
+    ///
+    /// When `kinds` includes variants newer than `MailStatus`, we first
+    /// send the older prefix. An older bus host fails the second postcard
+    /// decode and keeps the prefix (so the shell still gets OutputGeometry).
+    /// A current bus applies both; the second replaces with the full set.
     pub fn subscribe(&mut self, kinds: &[crate::topics::TopicKind]) -> io::Result<()> {
-        let msg = encode_subscribe(kinds);
-        self.send(&msg)
+        let prior: Vec<TopicKind> = kinds
+            .iter()
+            .copied()
+            .filter(|k| !crate::topics::topic_kind_is_after_mail_status(*k))
+            .collect();
+        if prior.len() != kinds.len() && !prior.is_empty() {
+            self.send(&encode_subscribe(&prior))?;
+        }
+        self.send(&encode_subscribe(kinds))
     }
 
     /// Send an explicit Identify to the bus. Normally not called directly —
@@ -449,6 +461,23 @@ mod control_encoding_tests {
         assert_eq!(m.topic, crate::CONTROL_SUBSCRIBE);
         let kinds: Vec<TopicKind> = decode_payload(&m).unwrap();
         assert_eq!(kinds, vec![TopicKind::Shutdown, TopicKind::LaunchApp]);
+    }
+
+    #[test]
+    fn subscribe_prefix_omits_kinds_after_mail_status() {
+        let kinds = TopicKind::ALL;
+        let prior: Vec<TopicKind> = kinds
+            .iter()
+            .copied()
+            .filter(|k| !crate::topics::topic_kind_is_after_mail_status(*k))
+            .collect();
+        assert!(prior.len() < kinds.len());
+        assert!(!prior.iter().any(|k| {
+            crate::topics::topic_kind_is_after_mail_status(*k)
+        }));
+        let m = encode_subscribe(&prior);
+        let decoded: Vec<TopicKind> = decode_payload(&m).unwrap();
+        assert_eq!(decoded, prior);
     }
 
     #[test]
