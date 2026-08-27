@@ -3449,13 +3449,23 @@ impl<E: Engine> App<E> {
         for ev in evs {
             match ev {
                 crate::notify::Ipc::Show(show) => {
-                    if crate::notify::permission_for(
+                    let perm = crate::notify::permission_for(
                         &crate::profiles::active().id,
                         &show.origin,
-                    ) != "granted"
-                    {
+                    );
+                    if perm != "granted" {
+                        tracing::info!(
+                            origin = %show.origin,
+                            %perm,
+                            "notify: drop show (origin not granted)"
+                        );
                         continue;
                     }
+                    tracing::info!(
+                        origin = %show.origin,
+                        title = %show.title,
+                        "notify: emit AppNotification"
+                    );
                     if let Ok(mut bus) = sola_kit::app::bus().lock() {
                         let _ = bus.emit(sola_bus::topics::Topic::AppNotification(
                             crate::notify::to_bus(&show),

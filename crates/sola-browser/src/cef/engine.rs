@@ -1194,6 +1194,11 @@ fn handle_notify_show(browser: Option<&cef::Browser>, raw: &str) {
         tracing::warn!(payload = %raw, "notify: show payload not json");
         return;
     };
+    tracing::info!(
+        title = %p.title,
+        origin = %p.origin,
+        "notify: page show → desk card"
+    );
     let ev = crate::notify::Ipc::Show(crate::notify::IpcShow {
         tab_id: notify_tab_id(browser),
         origin: p.origin,

@@ -76,7 +76,13 @@ Sola is the DE — Chromium’s Linux libnotify path has no daemon here.
   `profiles/<uuid>/notifications.json`.
 - `new Notification(title, { body, tag })` with `permission === "granted"`
   → helper IPC → chrome emits `AppNotification` (`app_id=sola-browser`,
-  `source` = host, `tab_id` set).
+  `source` = host, `tab_id` set). The wrap must **not** construct
+  Chromium’s native `Notification` (or `ServiceWorkerRegistration.showNotification`):
+  that paints an in-page banner over the web view. The dummy must **not**
+  use `Notification.prototype` (`title`/`body` accessors throw). Persist
+  and look up grants with a canonical origin (`https://host`, not
+  `https://host/`). The only surface is the shell desk card (tight overlay,
+  screen top-right under the menubar).
 - `NotificationActivate` with `tab_id` → `SetActiveTab`.
 
 Denied / default: constructor is a no-op. Permission `"default"` until
@@ -95,9 +101,9 @@ promoting remaining `AppToast` senders (launch fail / exit).
 | Freeze | **this document** |
 | Bus topics | **done** (`AppNotification`, `NotificationActivate`) |
 | Shell HUD + pile | **done** |
-| Browser intercept + permission | **done** |
+| Browser intercept + permission | **done** (no Native ctor; dummy must not inherit `Notification.prototype`; origin keys canonicalized). KenHerbert pending/no-card: **`install browser` 2026-08-27 (second)** — confirm desk card |
 | Workspaces done → notification | **done** |
-| Dogfood | **reinstalled** 2026-08-26 `bus`+`shell`+`browser`+`workspaces` (release, bus first) after Subscribe/renderer breaks; desk smoke pending |
+| Dogfood | **reinstalled** 2026-08-26 `bus`+`shell`+`browser`+`workspaces` (release, bus first). Permission prompt OK; Native ctor drew an in-page banner. Wrap is SHOW-only; **`install browser` 2026-08-27** — confirm the top-right desk card |
 
 ## Decision log
 

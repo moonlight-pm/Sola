@@ -68,16 +68,32 @@ pub fn load_map(profile_id: &str) -> HashMap<String, String> {
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
+/// CEF `requesting_origin` is often `https://host/`; `location.origin` is
+/// `https://host`. One key so grant and show agree.
+pub fn canon_origin(origin: &str) -> String {
+    let t = origin.trim();
+    if t == "http://" || t == "https://" {
+        return t.to_string();
+    }
+    t.trim_end_matches('/').to_string()
+}
+
 pub fn permission_for(profile_id: &str, origin: &str) -> String {
-    load_map(profile_id)
-        .get(origin)
+    let map = load_map(profile_id);
+    let key = canon_origin(origin);
+    map.get(&key)
+        .or_else(|| map.get(origin))
+        .or_else(|| map.get(&format!("{key}/")))
         .cloned()
         .unwrap_or_else(|| "default".into())
 }
 
 pub fn set_permission(profile_id: &str, origin: &str, value: &str) -> Result<(), String> {
+    let key = canon_origin(origin);
     let mut map = load_map(profile_id);
-    map.insert(origin.to_string(), value.to_string());
+    map.remove(origin);
+    map.remove(&format!("{key}/"));
+    map.insert(key, value.to_string());
     let path = permissions_path(profile_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -89,8 +105,18 @@ pub fn set_permission(profile_id: &str, origin: &str, value: &str) -> Result<(),
 /// Injected in every frame. `map_json` is a JSON object of origin → permission.
 ///
 /// Does **not** replace `requestPermission` — Chromium's native call is what
-/// fires CEF `OnShowPermissionPrompt`. We only wrap the constructor so a
-/// granted `new Notification(...)` also exits to Sola's desk cards.
+/// fires CEF `OnShowPermissionPrompt`. The constructor reports to Sola and
+/// must **not** call `new Native(...)`: that paints Chromium's in-page
+/// banner over the web view instead of the desk card (top-right, under
+/// the menubar). Service worker `showNotification` is the same trap.
+///
+/// Always reports the show; chrome drops it unless the origin is granted
+/// (so a stale `Notification.permission` right after Allow still lands).
+///
+/// Do **not** put `Native.prototype` on the instance chain: `title` / `body`
+/// there are accessors that throw `Illegal invocation` on a plain object,
+/// so `new Notification()` dies before `report` and testers stick on
+/// "pending".
 ///
 /// Safe in the CEF **renderer** (no profile bind): pass `"{}"`.
 pub fn inject_script(map_json: &str) -> String {
@@ -102,25 +128,40 @@ pub fn inject_script(map_json: &str) -> String {
   if (!Native) return;
   if (window.__sola_notify_hook) return;
   window.__sola_notify_hook = 1;
-  function SolaNotification(title, opts) {{
+  function report(title, opts) {{
     opts = opts || {{}};
     try {{
-      var p = Native.permission || (map && map[location.origin]) || 'default';
-      if (p === 'granted') {{
-        console.info('{show}' + JSON.stringify({{
-          title: String(title || ''),
-          body: String(opts.body || ''),
-          tag: opts.tag ? String(opts.tag) : null,
-          origin: location.origin
-        }}));
-      }}
+      console.info('{show}' + JSON.stringify({{
+        title: String(title || ''),
+        body: String(opts.body || ''),
+        tag: opts.tag ? String(opts.tag) : null,
+        origin: location.origin
+      }}));
     }} catch (e) {{}}
-    try {{ return new Native(title, opts); }} catch (e) {{}}
   }}
-  try {{
-    SolaNotification.prototype = Native.prototype;
-    Object.setPrototypeOf(SolaNotification, Native);
-  }} catch (e) {{}}
+  function SolaNotification(title, opts) {{
+    opts = opts || {{}};
+    this.title = String(title || '');
+    this.body = String(opts.body || '');
+    this.tag = opts.tag ? String(opts.tag) : '';
+    this.onclick = null;
+    this.onshow = null;
+    this.onclose = null;
+    this.onerror = null;
+    this.close = function(){{}};
+    this.addEventListener = function(type, fn) {{
+      if (type === 'show' && typeof fn === 'function') this.onshow = fn;
+      if (type === 'error' && typeof fn === 'function') this.onerror = fn;
+      if (type === 'close' && typeof fn === 'function') this.onclose = fn;
+      if (type === 'click' && typeof fn === 'function') this.onclick = fn;
+    }};
+    this.removeEventListener = function(){{}};
+    report(title, opts);
+    var self = this;
+    setTimeout(function(){{
+      try {{ if (typeof self.onshow === 'function') self.onshow(); }} catch (e) {{}}
+    }}, 0);
+  }}
   try {{
     Object.defineProperty(SolaNotification, 'permission', {{
       get: function() {{ return Native.permission; }}
@@ -132,6 +173,15 @@ pub fn inject_script(map_json: &str) -> String {
     return Native.requestPermission.apply(Native, arguments);
   }};
   window.Notification = SolaNotification;
+  try {{
+    var proto = window.ServiceWorkerRegistration && ServiceWorkerRegistration.prototype;
+    if (proto && proto.showNotification) {{
+      proto.showNotification = function(title, opts) {{
+        report(title, opts);
+        return Promise.resolve();
+      }};
+    }}
+  }} catch (e) {{}}
 }})();"#,
         map = map_json,
         show = SHOW_PREFIX,
@@ -206,8 +256,37 @@ mod tests {
         assert!(s.contains("requestPermission"));
         assert!(s.contains("https://ex.com"));
         assert!(s.contains("window.__sola_notify_hook"));
+        assert!(
+            !s.contains("new Native("),
+            "native constructor paints Chromium's in-page banner"
+        );
+        assert!(
+            s.contains("showNotification"),
+            "service worker showNotification also paints a Chromium banner"
+        );
+        assert!(
+            !s.contains("origShow") && !s.contains(".apply(this"),
+            "must not forward showNotification to Chromium"
+        );
+        assert!(
+            !s.contains("Native.prototype"),
+            "Native.prototype accessors throw Illegal invocation on a dummy"
+        );
         let empty = inject_script("{}");
         assert!(empty.contains("var map = {}"));
+    }
+
+    #[test]
+    fn canon_origin_strips_trailing_slash() {
+        assert_eq!(
+            canon_origin("https://www.kenherbert.dev/"),
+            "https://www.kenherbert.dev"
+        );
+        assert_eq!(
+            canon_origin("https://www.kenherbert.dev"),
+            "https://www.kenherbert.dev"
+        );
+        assert_eq!(canon_origin("  https://ex.com/  "), "https://ex.com");
     }
 
     #[test]
