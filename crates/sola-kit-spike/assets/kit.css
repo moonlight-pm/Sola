@@ -1,0 +1,1077 @@
+/* Constrained CSS subset. Tokens match sola-kit graphite. */
+
+:root {
+  --bg: #0c0e12;
+  --chrome: #121722;
+  --raised: #151922;
+  --well: #10141e;
+  --hairline: #21252e;
+  --hover: #1e2533;
+  --fg: #e9ecf2;
+  --idle: #a1adc7;
+  --header: #9aa3b8;
+  --muted: #8b94a8;
+  --accent: #3dd6f5;
+  --danger: #f07178;
+  --close: #ff5f57;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.titlebar {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 38px;
+  flex-shrink: 0;
+  background: var(--raised);
+  border-bottom: 1px solid var(--hairline);
+  align-items: center;
+}
+
+.traffic {
+  display: flex;
+  width: 52px;
+  height: 38px;
+  flex-shrink: 0;
+  padding-left: 16px;
+  align-items: center;
+}
+
+.traffic-spacer {
+  display: flex;
+  width: 52px;
+  height: 38px;
+  flex-shrink: 0;
+}
+
+.close {
+  display: flex;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  background: var(--close);
+  border: 1px solid #c73833;
+  border-radius: 999px;
+}
+
+.title {
+  display: flex;
+  flex-grow: 1;
+  height: 38px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  text-align: center;
+}
+
+.body {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 220px;
+  height: 100%;
+  flex-shrink: 0;
+  background: var(--chrome);
+  border-right: 1px solid var(--hairline);
+  overflow: hidden;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-grow: 1;
+  min-height: 0;
+  padding-top: 10px;
+  padding-bottom: 16px;
+  overflow: scroll;
+}
+
+.row {
+  display: flex;
+  height: 32px;
+  margin-left: 8px;
+  margin-right: 8px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+}
+
+.row.is-header {
+  height: 24px;
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+
+.etch {
+  display: flex;
+  flex-grow: 1;
+  height: 30px;
+  margin: 1px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-radius: 5px;
+  align-items: center;
+}
+
+.row.is-active .etch {
+  background: var(--well);
+}
+
+.row:hover .etch {
+  background: var(--hover);
+}
+
+.row.is-header .etch {
+  height: 22px;
+}
+
+.row.is-header:hover .etch {
+  background: #00000000;
+}
+
+.label {
+  display: flex;
+  flex-grow: 1;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.row.is-active .label {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.row.is-header .label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 24px;
+  padding-right: 32px;
+  padding-bottom: 32px;
+  padding-left: 32px;
+  overflow: scroll;
+  background: var(--bg);
+  gap: 16px;
+}
+
+.heading {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--fg);
+  font-size: 22px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  margin-bottom: 4px;
+}
+
+.sb-header {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 48px;
+  flex-shrink: 0;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--hairline);
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 24px;
+  padding-right: 24px;
+  align-items: center;
+  gap: 8px;
+}
+
+.lede {
+  display: flex;
+  flex-shrink: 0;
+  max-width: 560px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+  margin-bottom: 12px;
+}
+
+.demo {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.demo-stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  gap: 14px;
+}
+
+.desk-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 20px;
+}
+
+.desk {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.desk-id {
+  flex-grow: 3;
+  width: auto;
+}
+
+.desk-key {
+  flex-grow: 2;
+  width: auto;
+}
+
+.stage-key {
+  display: flex;
+  width: 92px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.style-row {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 44px;
+  padding-left: 10px;
+  padding-right: 10px;
+  background: #11151c;
+  border: 1px solid #1c222c;
+  border-radius: 7px;
+  align-items: center;
+  gap: 12px;
+}
+
+.style-lab {
+  display: flex;
+  width: 88px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.seeds {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+}
+
+.seed-row {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.seed {
+  display: flex;
+  flex-direction: column;
+  width: 56px;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.swatch-sm {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: linear-gradient(180deg, #1c2029, #151922);
+  border: 1px solid #21252e;
+  border-radius: 14px;
+  padding-top: 18px;
+  padding-right: 18px;
+  padding-bottom: 18px;
+  padding-left: 18px;
+  gap: 12px;
+}
+
+.desk .card {
+  width: auto;
+}
+
+.card-title {
+  display: flex;
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.card-body {
+  display: flex;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.hairline {
+  display: flex;
+  width: 100%;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.stack-field {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 4px;
+}
+
+.stack-label {
+  display: flex;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.help {
+  display: flex;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.help-danger {
+  display: flex;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.input {
+  display: flex;
+  flex-grow: 1;
+  height: 32px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.btn-row {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  display: flex;
+  flex-grow: 1;
+  height: 8px;
+}
+
+.btn {
+  display: flex;
+  height: 28px;
+  padding-left: 14px;
+  padding-right: 14px;
+  border-radius: 7px;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.btn-sm {
+  height: 26px;
+  padding-left: 11px;
+  padding-right: 11px;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #4cd9f5, #3dd6f5);
+  color: #041018;
+}
+
+.btn-danger {
+  background: linear-gradient(180deg, #f17c82, #f07178);
+  color: #1a0608;
+}
+
+.btn-danger-outline {
+  background: #2b222b;
+  color: #f28288;
+  border: 1px solid #713e46;
+}
+
+.btn-secondary {
+  background: var(--hover);
+}
+
+.btn-ghost {
+  background: #00000000;
+  color: var(--idle);
+}
+
+.scene {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: "SF Pro Text";
+  margin-top: 8px;
+}
+
+.row-inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.t-heading {
+  display: flex;
+  color: var(--fg);
+  font-size: 22px;
+  font-weight: 600;
+  font-family: "SF Pro Text";
+}
+
+.t-sub {
+  display: flex;
+  color: var(--fg);
+  font-size: 15px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.t-prose {
+  display: flex;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+  white-space: normal;
+  max-width: 520px;
+}
+
+.t-body {
+  display: flex;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.t-caption {
+  display: flex;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.t-code {
+  display: flex;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.t-muted {
+  color: var(--muted);
+}
+
+.t-accent {
+  color: var(--accent);
+}
+
+.t-success {
+  color: #3ecf8e;
+}
+
+.t-warning {
+  color: #e8b84a;
+}
+
+.t-danger {
+  color: var(--danger);
+}
+
+.badge {
+  display: flex;
+  height: 16px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Kit badge.rs: opaque mix onto raised, not a translucent slab. */
+.badge-neutral {
+  background: #23262f;
+  color: var(--muted);
+  border: 1px solid #262a33;
+}
+
+.badge-accent {
+  background: #23262f;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.badge-success {
+  background: #1b3231;
+  color: #3ecf8e;
+  border: 1px solid #204c40;
+}
+
+.badge-warning {
+  background: #322e1c;
+  color: #e8b84a;
+  border: 1px solid #4a4428;
+}
+
+.badge-danger {
+  background: #322024;
+  color: var(--danger);
+  border: 1px solid #4a3034;
+}
+
+.enamel {
+  display: flex;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: #5a8a92;
+  border: 1px solid #7aa0a6;
+  flex-shrink: 0;
+}
+
+.select-label {
+  display: flex;
+  flex-grow: 1;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.pop-anchor {
+  display: flex;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.swatch {
+  display: flex;
+  width: 40px;
+  height: 40px;
+  border-radius: 7px;
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.swatch-lg {
+  display: flex;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.atom {
+  display: flex;
+  flex-direction: column;
+  width: 88px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.atom-name {
+  display: flex;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+}
+
+.atom-hex {
+  display: flex;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.form-row {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+}
+
+.form-key {
+  display: flex;
+  width: 160px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.form-val {
+  display: flex;
+  flex-grow: 1;
+  height: 32px;
+  align-items: center;
+}
+
+.toggle {
+  display: flex;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--hover);
+  padding-left: 3px;
+  align-items: center;
+}
+
+.toggle-on {
+  background: var(--accent);
+  padding-left: 17px;
+}
+
+.knob {
+  display: flex;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--fg);
+  flex-shrink: 0;
+}
+
+.check {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  background: var(--well);
+  flex-shrink: 0;
+}
+
+.check-on {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: row;
+  height: 36px;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool {
+  display: flex;
+  height: 28px;
+  padding-left: 11px;
+  padding-right: 11px;
+  border-radius: 7px;
+  background: var(--hover);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  text-align: center;
+}
+
+.split {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 160px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.split-pane {
+  display: flex;
+  flex-grow: 1;
+  height: 160px;
+  padding-top: 16px;
+  padding-left: 16px;
+  background: var(--raised);
+}
+
+.split-rule {
+  display: flex;
+  width: 6px;
+  height: 160px;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.menu-item {
+  display: flex;
+  height: 28px;
+  padding-left: 12px;
+  padding-right: 12px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.menu-item:hover {
+  background: var(--hover);
+}
+
+.select-lg {
+  width: 220px;
+}
+
+.select {
+  display: flex;
+  position: relative;
+  width: 200px;
+  height: 30px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding-left: 8px;
+  padding-right: 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.menu-hang {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: 100%;
+  left: 0px;
+  width: 100%;
+  z-index: 20;
+  margin-top: 4px;
+}
+
+.menu-item.is-active {
+  background: var(--well);
+  color: var(--fg);
+}
+
+.quote {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--well);
+  border-radius: 7px;
+  padding-top: 10px;
+  padding-right: 12px;
+  padding-bottom: 10px;
+  padding-left: 12px;
+}
+
+.file-row {
+  display: flex;
+  height: 32px;
+  width: 100%;
+  padding-left: 10px;
+  align-items: center;
+  border-radius: 5px;
+  color: var(--idle);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: "SF Pro Text";
+}
+
+.file-row.is-active {
+  background: var(--well);
+  color: var(--fg);
+}
+
+.crumb {
+  display: flex;
+  height: 24px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  text-align: center;
+}
+
+.stepper {
+  display: flex;
+  flex-direction: row;
+  height: 28px;
+  align-items: center;
+  gap: 0px;
+}
+
+.step {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  background: var(--hover);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  text-align: center;
+}
+
+.step-val {
+  display: flex;
+  width: 48px;
+  height: 28px;
+  background: var(--well);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: "Iosevka Term Slab";
+  text-align: center;
+}
+
+.icon-slot {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--idle);
+  flex-shrink: 0;
+}
+
+.icon {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.mark {
+  display: flex;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.sv-square {
+  display: flex;
+  width: 224px;
+  height: 168px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  background: #000000;
+}
+
+.hue-rail {
+  display: flex;
+  width: 224px;
+  height: 16px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: #000000;
+}
+
+.alpha-rail {
+  display: flex;
+  width: 224px;
+  height: 16px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: #3dd6f5;
+}
+
+.picker-preview {
+  display: flex;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.input.is-focused {
+  border: 1px solid var(--accent);
+}
+
+.plain {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--raised);
+  border-radius: 10px;
+  padding-top: 12px;
+  padding-right: 14px;
+  padding-bottom: 12px;
+  padding-left: 14px;
+}
+
+.modal-card {
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding-top: 18px;
+  padding-right: 18px;
+  padding-bottom: 18px;
+  padding-left: 18px;
+  gap: 12px;
+}
+
+.wide {
+  max-width: 640px;
+}
+
+.json-line {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.json-pad {
+  padding-left: 16px;
+}
+
+.jk {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.js {
+  display: flex;
+  flex-shrink: 0;
+  color: #3ecf8e;
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.jn {
+  display: flex;
+  flex-shrink: 0;
+  color: #e8b84a;
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.jl {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}
+
+.jp {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  font-family: "Iosevka Term Slab";
+}

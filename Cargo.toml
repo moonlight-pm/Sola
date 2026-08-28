@@ -21,6 +21,8 @@ exclude = [
     # Same wgpu-26 isolation. HTML/CSS kit probe (idea D5). Built only via
     # `cargo make build sola-html-spike`. Do not install.
     "crates/sola-html-spike",
+    # HTML/CSS kit storybook (sctk, not iced). Distinct identity. Do not install.
+    "crates/sola-kit-spike",
 ]
 resolver = "3"
 

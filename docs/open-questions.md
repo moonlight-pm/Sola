@@ -107,25 +107,25 @@ Claude hook policy.
 
 ### D5 — HTML/CSS kit vs iced (P2)
 
-**Context:** Isolated spike in worktree `kit-retarget` (`crates/sola-html-spike`,
-not a workspace member). Proved LLM-shaped chrome (HTML file + CSS, live
-mtime), iced-quality type (cosmic-text), GPU boxes, CSS-sized `wl_subsurface`,
-and another process in that hole via a nested Wayland display. Iced/`sola-kit`
+**Context:** Isolated experiment in worktree `kit-retarget`. Probe
+`crates/sola-html-spike` proved HTML/CSS + cosmic-text + hole. Examples
+now start at `crates/sola-kit-spike` (lib + storybook). Iced/`sola-kit`
 remains the shipped kit. Idea:
 [`ideas/2026-08-24-html-css-kit.md`](ideas/2026-08-24-html-css-kit.md).
 
-**Ask:**
+**Answered 2026-08-25:**
 
-1. Park the idea, or put a **canary** on CURRENT **Now** (JS façade spike
-   and/or `cargo make` `*-canary` install + distinct Wayland `app_id`)?  
-2. If a canary: first surface is **not** terminal grid and **not** shell —
-   which app?  
-3. Confirm: no merge of the spike to master, no replacing `/opt/sola/bin`
-   unsuffixed apps.
+1. Continue in this worktree as **spike** examples (not a canary install
+   channel).  
+2. First surface: **`sola-kit-spike`**. Later spike apps use
+   `sola-<app>-spike`.  
+3. No merge; no `/opt/sola/bin` copy; `*-spike` is skipped by install.
+   Distinct Wayland `app_id` / title / bus id. Run from crate `target/`.  
+4. Window host is **sctk + calloop**, not winit.  
+5. JS/DOM **punted**.
 
-**Until decided:** do not retarget `sola-kit`. Do not install the spike. Do
-not invent canary install plumbing. JS/DOM stays in the idea (custom `Elem`
-façade + QuickJS, event-driven only).
+**Still open:** whether a spike ever graduates (freeze / retarget iced).
+Do not retarget `sola-kit` until that is an explicit decision.
 
 **Related:** idea above; `kit-retarget` worktree.
 
@@ -135,6 +135,7 @@ façade + QuickJS, event-driven only).
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-25 | D5 | Spike examples (not canary install). First crate `sola-kit-spike`. Distinct `app_id` `sola-kit-spike` / title `Kit (spike)`. No install, no merge. sctk not winit. JS punted. | CURRENT, idea, capabilities, architecture |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |
 | 2026-08-18 | workspaces CLI | Face is `solactl workspaces` (owner renamed from `ws`). First-class. New verbs: `project.add`, `project.startup`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.wait`, `whoami`. Spawn `--branch` / `--base-branch` / `--title`. `--prompt-file`; richer list/spawn payloads; Grok-leaf targeting; parent from `$SOLA_PANE_ID`. Confirm still **D3**. | [CLI freeze](specs/2026-08-18-workspaces-cli-design.md), CURRENT, capabilities, manual/solactl |
 | 2026-08-18 | D4.1 amend | Call owner is `workspaces` (`solactl workspaces …`). Tmux `sola-ws` / `sws-` unchanged. | CURRENT + freeze + PRODUCT |

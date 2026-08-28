@@ -8,4 +8,4 @@ Do not implement from this folder without promotion.
 | Idea | Notes |
 |------|--------|
 | [sola-agent-terminal](2026-08-12-sola-agent-terminal.md) | Promoted → [freeze](../specs/2026-08-13-sola-agent-terminal-design.md). Product is now `sola-workspaces`. |
-| [HTML/CSS kit](2026-08-24-html-css-kit.md) | Isolated `kit-retarget` spike. Not a freeze. D5: whether to canary. |
+| [HTML/CSS kit](2026-08-24-html-css-kit.md) | `kit-retarget` spike examples (`sola-kit-spike`, sctk). Not a freeze. D5: not a canary install; JS punted. |

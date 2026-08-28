@@ -567,7 +567,7 @@ pub fn install(apps: &[String], release: bool) {
     // app installs skip this loop entirely.
     if apps.is_empty() {
         for c in super::isolated::discover() {
-            if !super::isolated::has_binary(&c) {
+            if !super::isolated::has_binary(&c) || super::isolated::skip_install(&c) {
                 continue;
             }
             let src = super::isolated::binary_path(&c, false);

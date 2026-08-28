@@ -168,6 +168,13 @@ pub fn binary_path(c: &IsolatedCrate, release: bool) -> PathBuf {
     c.path.join("target").join(profile).join(&c.name)
 }
 
+/// Experimental `*-spike` binaries are user-run from the crate `target/`
+/// directory. Never copy them to `/opt/sola/bin` — they must not collide
+/// with shipped apps, even under a distinct name.
+pub fn skip_install(c: &IsolatedCrate) -> bool {
+    c.name.ends_with("-spike")
+}
+
 /// Whether the discovered crate has a buildable binary target. Used by
 /// install to skip pure-library isolated crates (none today, but the
 /// glob is generic).

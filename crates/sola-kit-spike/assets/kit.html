@@ -1,0 +1,44 @@
+<!--
+  Kit spike storybook chrome. Edit this file; the process reloads on mtime.
+  data-template="row" is cloned into data-slot="nav".
+  data-bind fills title / heading / lede / theme.
+-->
+<div class="app">
+  <div class="titlebar" data-action="drag">
+    <div class="traffic">
+      <div class="close" data-action="close"></div>
+    </div>
+    <div class="title" data-bind="title"></div>
+    <div class="traffic-spacer"></div>
+  </div>
+  <div class="sb-header">
+    <div class="select select-lg" data-action="theme-toggle">
+      <div class="enamel"></div>
+      <div class="select-label" data-bind="theme"></div>
+      <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
+      <div class="menu menu-hang" data-slot="theme-menu">
+        <div class="menu-item" data-action="theme-pick" data-id="Default">Default</div>
+        <div class="menu-item" data-action="theme-pick" data-id="Graphite">Graphite</div>
+        <div class="menu-item" data-action="theme-pick" data-id="Night">Night</div>
+      </div>
+    </div>
+    <div class="btn btn-sm btn-secondary">New Theme</div>
+    <div class="btn btn-sm btn-danger-outline">Delete</div>
+  </div>
+  <div class="body">
+    <aside class="sidebar">
+      <div class="nav" data-slot="nav">
+        <div class="row" data-template="row" data-id="" data-kind="item">
+          <div class="etch">
+            <div class="label" data-bind="label"></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <main class="stage">
+      <div class="heading" data-bind="heading"></div>
+      <div class="lede" data-bind="lede"></div>
+      <div class="demo" data-slot="demo"></div>
+    </main>
+  </div>
+</div>

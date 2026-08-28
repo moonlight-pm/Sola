@@ -1,12 +1,16 @@
 # HTML/CSS kit (LLM chrome) — research from `kit-retarget`
 
-**Status:** idea. Isolated spike only; **not** a freeze, **not** a switch from iced.  
-**Worktree:** `.worktrees/kit-retarget` (branch `kit-retarget`). Crate
-`crates/sola-html-spike/` is **workspace-excluded**. Do not merge, do not
-`cargo make install` the spike.  
+**Status:** idea + isolated **spike** examples. **Not** a freeze, **not** a
+switch from iced.  
+**Worktree:** `.worktrees/kit-retarget` (branch `kit-retarget`).  
+**Crates (workspace-excluded, do not install):**
+- `crates/sola-html-spike/` — winit probe that locked HTML/CSS/type/hole.
+- `crates/sola-kit-spike/` — kit library + storybook. **sctk + calloop**
+  (no winit). `app_id` `sola-kit-spike`, title `Kit (spike)`. Run
+  `crates/sola-kit-spike/target/release/sola-kit-spike`.
 **Out of scope:** replacing `sola-kit` / iced on master; putting the terminal
-grid in HTML; bus `Topic::Theme` (live CSS proved without it); IME (English
-only on this desk).
+grid in HTML; JS/DOM (punted); bus `Topic::Theme`; IME (English only on
+this desk). `cargo make install` skips `*-spike`.
 
 Do not implement from this folder without promotion.
 
@@ -22,7 +26,7 @@ Two forces, not “HTML is nicer”:
    behavior — not a full crate rebuild.
 
 Iced stays the **shipped** app kit. This note is whether a second kit is worth
-a canary, and what it must not become.
+spike examples, and what it must not become.
 
 ---
 
@@ -49,7 +53,7 @@ for live logic (compile gate + ABI, fights LLM-in-the-same-files).
 
 **Still optional, not blocking a judgment:** GPU glyph atlas (pack cosmic-text
 bitmaps, instance quads). Quality is already iced-class; atlas is frame-time
-and memory. **Implementable later** on this route — skip until a canary cares
+and memory. **Implementable later** on this route — skip until a spike cares
 about the full-window glyph upload.
 
 ---
@@ -110,30 +114,27 @@ subsurface.
 
 ---
 
-## Canary channel (if anything is ever ported)
+## Spike apps (not a canary install)
 
-Do **not** replace `/opt/sola/bin/sola-terminal` (or any shipped app) with a
-kit experiment.
+Do **not** replace `/opt/sola/bin/sola-kit` (or any shipped app) with a
+kit experiment. Do **not** install spikes.
 
-Per-app **parallel install**:
+Per-app **parallel identity**, run from the crate `target/` directory:
 
-| | Shipped | Canary |
+| | Shipped | Spike |
 |---|---|---|
-| Binary | `/opt/sola/bin/sola-terminal` | `/opt/sola/bin/sola-terminal-canary` |
-| Wayland `app_id` | `sola-terminal` | `sola-terminal-canary` |
-| Bus app id | same as `app_id` | same as canary `app_id` |
-| Title | unchanged | suffix ` (canary)` so switcher/MRU copy is obvious |
+| Binary | `/opt/sola/bin/sola-kit` | `crates/sola-kit-spike/target/release/sola-kit-spike` |
+| Wayland `app_id` | `sola-kit` | `sola-kit-spike` |
+| Bus app id | same as `app_id` | same as spike `app_id` (or no bus) |
+| Title | `sola-kit · …` | `Kit (spike)` |
 
 Shell groups, floats, app menus, and `CloseApp` key off `app_id`. A different
-id is mandatory or the canary and the real app collide.
+id is mandatory or the spike and the real app collide.
 
-Install: a sola-make target that copies `*-canary` only (never the
-unsuffixed name). Ask before every install, same as today. Self-watch the
-canary binary path.
+`cargo make install` skips `*-spike`. Later spike apps: `sola-<app>-spike`.
 
-Do **not** canary `sola-shell` or `sola-river` first. First candidate, if any:
-a small chrome surface (spike-as-storybook, or a throwaway panel) — **not**
-the PTY grid.
+Do **not** spike `sola-shell` or `sola-river` first. First surface is the kit
+storybook (`sola-kit-spike`) — **not** the PTY grid.
 
 ---
 
@@ -153,10 +154,10 @@ that can replace:
 - GPU text atlas under load
 - JS host policy and sandbox
 
-Switching now would freeze the LLM thesis before a single shipped app
-survives a week of canary.
+Switching now would freeze the LLM thesis before a single spike app
+survives a week of dogfood.
 
-**When a switch is even discussable:** one canary binary, distinct `app_id`,
+**When a switch is even discussable:** one spike binary, distinct `app_id`,
 live HTML/CSS/(optional) JS, hole for native content, no regressions vs the
 iced twin on the tasks that app actually does — then promote a freeze.
 
@@ -166,18 +167,13 @@ Until then: iced is the kit; this is an idea plus an unmerged spike.
 
 ## Recommended next steps
 
-1. **Leave the spike in this worktree.** Tag or leave the branch; no merge to
-   master, no install.
-2. **This idea file is the handoff** for the HTML-kit discussion. Do not
-   start a freeze until a canary is an explicit Now item.
-3. **If we keep proving in the spike:** event-driven QuickJS + 10-method
-   `Elem` façade + mtime on `<script>` — the live-logic analogue of CSS
-   reload. Still isolated; still no install.
-4. **If we port anything:** land **canary install + distinct `app_id` /
-   title** in sola-make *before* the app. First port is not terminal, not
-   shell.
-5. **Do not** start glyph atlas, `.so` reload, or a spec DOM.
+1. Keep closing iced storybook fidelity (remaining page mismatches).
+2. JS façade stays punted (QuickJS + `Elem` — later).
+3. Native hole / nested compositor stays in the html-spike probe until a
+   spike app needs it.
+4. **Do not** start glyph atlas, `.so` reload, a spec DOM, or iced retarget.
+5. No merge, no install.
 
-**Decision (human):** whether HTML-kit work is parked here, or CURRENT **Now**
-grows a canary spike (JS façade and/or install plumbing). Record in
+**D5 (2026-08-25):** spike examples, `sola-kit-spike` first, sctk not winit,
+JS punted, no install. Graduation to a freeze is still open. See
 [`open-questions.md`](../open-questions.md) **D5**.
