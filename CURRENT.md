@@ -145,7 +145,9 @@ Do not invent product policy.
 11. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    Per-title nest: **Fit to window** or a locked resolution (default **1080p**).
    Fit follows the gamescope host frame on zone/float (nested mode-control +
-   focused window at 0,0). Keep the game **fullscreen** for Fit.  
+   focused window at 0,0). Keep the game **fullscreen** for Fit. Nest passes
+   `--cursor-scale-height` (desktop-sized host pointer; Factorio was huge).
+   A–Z / Recent sort persists (`arcade-prefs.json`).  
    **Install:** standing OK to `install arcade` after each finished round.  
    - Fit rezone dogfooded (Factorio, fullscreen on).  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;

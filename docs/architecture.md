@@ -186,8 +186,9 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 |-------|------|
 | `sola-arcade` | Kit app: Steam library gallery (search; A–Z / Recent; Ready-to-play filter default on; Install on uninstalled; Stop-on-row) |
 | Library data | Offline: ACF manifests + `localconfig` activity + `appinfo.vdf` names; cache `~/.config/sola/arcade-library.json`; UI opens from cache, full scan always in background |
+| Gallery prefs | `~/.config/sola/arcade-prefs.json` — A–Z / Recent sort (default A–Z) |
 | Banners | Lazy viewport decode (+ overscan); paths resolved when row visible |
-| Launch | `Topic::LaunchApp` → `sola-arcade --run <id> <w> <h> [fit]` → `gamescope … -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits). `<w> <h>` from per-title nest (Fit or locked res). |
+| Launch | `Topic::LaunchApp` → `sola-arcade --run <id> <w> <h> [fit]` → `gamescope … --cursor-scale-height <H> -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits). `<w> <h>` from per-title nest (Fit or locked res). Host cursor is downsampled to desktop size (nested X cursors otherwise present 1:1 to River). |
 | Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`). Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |

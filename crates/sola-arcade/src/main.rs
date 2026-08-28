@@ -4,6 +4,7 @@
 //! Launch: `gamescope -W/-H -- steam -applaunch <id>` (never host `-f`).
 mod launch;
 mod nest;
+mod prefs;
 mod steam;
 mod x11_nest;
 
@@ -48,6 +49,7 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use launch::{game_session_app_id, launch_command, session_alive, stop_nest_local};
+use prefs::ArcadePrefs;
 use nest::{NestChoice, NestFile};
 use steam::{
     SortMode, SteamGame, load_library_cache, save_library_cache, scan_library_games, sort_games,
@@ -149,7 +151,8 @@ struct ActiveSession {
 struct App {
     games: Vec<SteamGame>,
     filter: String,
-    sort: SortMode,
+    /// Gallery chrome (`arcade-prefs.json`) — sort survives restart.
+    prefs: ArcadePrefs,
     /// When true (default), only fully-installed / ready-to-play titles —
     /// Steam-style “Ready to Play” filter.
     ready_to_play_only: bool,
@@ -209,11 +212,13 @@ impl Default for App {
         // Cache (if any) paints immediately; a background scan always runs.
         let cached = load_library_cache();
         let has_library_data = cached.is_some();
-        let games = cached.unwrap_or_default();
+        let prefs = ArcadePrefs::load();
+        let mut games = cached.unwrap_or_default();
+        sort_games(&mut games, prefs.sort);
         Self {
             games,
             filter: String::new(),
-            sort: SortMode::Alphabetical,
+            prefs,
             ready_to_play_only: true,
             nest: NestFile::load(),
             nest_menu: None,
@@ -460,7 +465,7 @@ impl App {
     }
 
     fn apply_sort(&mut self) {
-        sort_games(&mut self.games, self.sort);
+        sort_games(&mut self.games, self.prefs.sort);
     }
 
     fn launch_game(&mut self, steam_app_id: u32) -> Task<Msg> {
@@ -721,7 +726,7 @@ impl App {
                 return self.ensure_visible_banners();
             }
             Msg::SetSort(mode) => {
-                self.sort = mode;
+                self.prefs.set_sort(mode);
                 self.apply_sort();
                 return self.ensure_visible_banners();
             }
@@ -848,13 +853,13 @@ impl App {
         let sort_alpha = icon_tool_btn(
             "lucide/arrow-down-a-z",
             "Sort A–Z",
-            self.sort == SortMode::Alphabetical,
+            self.prefs.sort == SortMode::Alphabetical,
             Msg::SetSort(SortMode::Alphabetical),
         );
         let sort_recent = icon_tool_btn(
             "lucide/history",
             "Sort by recent activity",
-            self.sort == SortMode::Recency,
+            self.prefs.sort == SortMode::Recency,
             Msg::SetSort(SortMode::Recency),
         );
         let ready_only = icon_tool_btn(
