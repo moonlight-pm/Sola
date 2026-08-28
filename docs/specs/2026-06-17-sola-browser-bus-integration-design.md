@@ -144,6 +144,7 @@ the menubar), all items meta-bound so non-meta keys still reach the page:
 | ------------ | ----- | ----------------- | -------------------------------- |
 | New Tab      | ⌘T    | `NewTab(blank)`   | `OpenTab`                        |
 | Close Tab    | ⌘W    | `CloseActiveTab`  | `CloseTab(cached_active)`        |
+| Reopen Closed Tab | ⌘⇧T | `ReopenClosedTab` | pop `session.json` closed stack |
 | Reload       | ⌘R    | `Reload`          | `NavReload`                      |
 | Focus URL    | ⌘L    | `FocusUrl`        | `text_input::focus(url_field)`   |
 | Back         | ⌘←    | `Back`            | `NavBack`                        |

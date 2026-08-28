@@ -2806,6 +2806,7 @@ fn cef_evict_parks(state: &CefThreadState) {
                     sidebar_w: 0.0,
                     last_used: p.last_used,
                     groups: crate::groups::Groups::default(),
+                    recently_closed: Vec::new(),
                 },
             );
         }

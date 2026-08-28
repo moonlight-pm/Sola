@@ -221,6 +221,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
 
     let boot_session = crate::session::BrowserSession::load();
     let boot_groups = boot_session.groups.clone();
+    let boot_closed = boot_session.closed.clone();
     let (boot_tabs, boot_active, sidebar_w) = boot_session.bootstrap(argv, DEFAULT_URL);
     tracing::info!(
         tabs = boot_tabs.len(),
@@ -265,6 +266,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     let engine_cell = std::cell::Cell::new(Some(engine));
     let boot_tabs = std::cell::RefCell::new(Some(boot_tabs));
     let boot_groups = std::cell::RefCell::new(Some(boot_groups));
+    let boot_closed = std::cell::RefCell::new(Some(boot_closed));
 
     let result = iced::application(
         move || {
@@ -279,6 +281,10 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 .borrow_mut()
                 .take()
                 .expect("browser App init called more than once");
+            let closed = boot_closed
+                .borrow_mut()
+                .take()
+                .expect("browser App init called more than once");
             let app = App::<E>::new(
                 engine,
                 slot.clone(),
@@ -290,6 +296,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 boot_active,
                 sidebar_w,
                 groups,
+                closed,
             );
             (
                 app,

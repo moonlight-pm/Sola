@@ -83,6 +83,8 @@ pub enum Msg {
     UrlInput(String),
     UrlSubmit,
     CloseTab(TabId),
+    /// ⌘⇧T — pop the recently-closed stack.
+    ReopenClosedTab,
     ActivateTab(TabId),
     /// Drain helper queues (tabs, downloads, copy, menus, vault). Fired
     /// by [`crate::chrome_wake`] or a short-lived 250 ms timer (copy-URL
@@ -374,6 +376,8 @@ pub struct App<E: Engine> {
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
     closed_tabs: HashSet<TabId>,
+    /// LIFO recently-closed tabs (⌘⇧T). Persisted in `session.json`.
+    recently_closed: Vec<crate::session::ClosedTab>,
     /// Editable contents of the URL bar.
     pub url_field: String,
     /// The URL we last copied from the engine into `url_field`,
@@ -527,6 +531,7 @@ impl<E: Engine> App<E> {
         active_index: usize,
         sidebar_w: f32,
         session_groups: Vec<SessionGroup>,
+        recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
         let mut app = Self {
@@ -538,6 +543,7 @@ impl<E: Engine> App<E> {
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
             closed_tabs: HashSet::new(),
+            recently_closed,
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
@@ -964,6 +970,7 @@ impl<E: Engine> App<E> {
                     sidebar_w: self.sidebar_w,
                     last_used: Instant::now(),
                     groups: self.groups.clone(),
+                    recently_closed: self.recently_closed.clone(),
                 },
             );
         }
@@ -979,6 +986,7 @@ impl<E: Engine> App<E> {
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
                 self.groups = snap.groups;
+                self.recently_closed = snap.recently_closed;
                 self.apply_workspace_chrome_focus();
                 // Helper already has these browsers. Pass the parked list
                 // only as a fallback if the helper was evicted/died.
@@ -1026,6 +1034,7 @@ impl<E: Engine> App<E> {
     fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
         let session = crate::session::BrowserSession::load();
         let session_groups = session.groups.clone();
+        self.recently_closed = session.closed.clone();
         let (tabs, active_index, sidebar_w) = session.bootstrap(None, BLANK_URL);
         self.sidebar_w = sidebar_w;
 
@@ -1189,7 +1198,13 @@ impl<E: Engine> App<E> {
         } else {
             tabs[0].id
         };
-        let session = session::session_from_tabs(&tabs, active, self.sidebar_w, &self.groups);
+        let session = session::session_from_tabs(
+            &tabs,
+            active,
+            self.sidebar_w,
+            &self.groups,
+            &self.recently_closed,
+        );
         let fp = session::fingerprint(&session);
         if fp == self.session_fp {
             return;
@@ -1775,6 +1790,7 @@ impl<E: Engine> App<E> {
                 if self.cached_tabs.len() <= 1 {
                     self.open_tab(BLANK_URL.to_string(), true);
                 }
+                self.remember_closed(id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -1794,6 +1810,9 @@ impl<E: Engine> App<E> {
                 self.cached_tabs.retain(|t| t.id != id);
                 self.groups.on_tab_closed(id);
                 self.persist_session();
+            }
+            Msg::ReopenClosedTab => {
+                self.reopen_closed_tab();
             }
             Msg::ActivateTab(id) => {
                 self.switch_active_tab(id);
@@ -2232,6 +2251,76 @@ impl<E: Engine> App<E> {
             }
         }
         Task::none()
+    }
+
+    fn remember_closed(&mut self, id: TabId) {
+        let Some(index) = self.cached_tabs.iter().position(|t| t.id == id) else {
+            return;
+        };
+        let tab = &self.cached_tabs[index];
+        let entry = crate::session::ClosedTab {
+            url: if tab.url.is_empty() {
+                BLANK_URL.to_string()
+            } else {
+                tab.url.clone()
+            },
+            title: tab.title.clone(),
+            group_id: self.groups.of_tab(id).map(str::to_string),
+            index,
+            history: tab
+                .history
+                .iter()
+                .map(|e| crate::session::SessionHistory {
+                    url: e.url.clone(),
+                    title: e.title.clone(),
+                })
+                .collect(),
+            history_index: tab.history_index,
+        };
+        crate::session::push_closed(&mut self.recently_closed, entry);
+    }
+
+    fn reopen_closed_tab(&mut self) {
+        let Some(closed) = self.recently_closed.pop() else {
+            tracing::debug!("reopen closed tab: stack empty");
+            return;
+        };
+        let url = crate::util::normalize_url(&closed.url);
+        let url = if url.is_empty() {
+            BLANK_URL.to_string()
+        } else {
+            url
+        };
+        let id = self.engine.alloc_tab_id();
+        let title = if url == BLANK_URL && closed.title.is_empty() {
+            "New Tab".to_string()
+        } else {
+            closed.title.clone()
+        };
+        let session_tab = crate::session::SessionTab {
+            url: url.clone(),
+            title: title.clone(),
+            group_id: closed.group_id.clone(),
+            history: closed.history,
+            history_index: closed.history_index,
+        };
+        let (history, history_index) = session::history_from_session(&session_tab);
+        let info = TabInfo {
+            is_loading: url != BLANK_URL && !url.is_empty(),
+            history,
+            history_index,
+            ..TabInfo::chrome(id, url.clone(), title.clone())
+        };
+        let idx = closed.index.min(self.cached_tabs.len());
+        self.cached_tabs.insert(idx, info);
+        if let Some(gid) = closed.group_id.as_deref() {
+            self.groups.add_to(id, gid);
+        }
+        self.groups.normalize(&mut self.cached_tabs);
+        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
+        self.switch_active_tab(id);
+        self.persist_session();
+        tracing::info!(id = id.0, "reopened closed tab");
     }
 
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
@@ -4873,6 +4962,11 @@ impl<E: Engine> App<E> {
                     // Escape stops loading (browser-standard). Only when iced did
                     // not already capture the key (e.g. a focused text field that
                     // wants Escape for its own cancel).
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::is_reopen_closed_shortcut(&key, modifiers) =>
+                    {
+                        Some(Msg::ReopenClosedTab)
+                    }
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                         if crate::input::chrome_nav_shortcut(&key, modifiers)
                             == Some('r') =>

@@ -35,6 +35,7 @@ use crate::profiles;
 // two never drift.
 pub const ACTION_NEW_TAB: &str = "new-tab";
 pub const ACTION_CLOSE_TAB: &str = "close-tab";
+pub const ACTION_REOPEN_TAB: &str = "reopen-tab";
 pub const ACTION_RELOAD: &str = "reload";
 pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
@@ -74,9 +75,10 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 8] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 9] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
+    (ACTION_REOPEN_TAB, "Reopen Closed Tab", KeyCode::T.meta_shift()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
@@ -208,6 +210,7 @@ pub enum BrowserIntent {
     /// URL bar ready for typing (⌘T).
     NewBlankTab,
     CloseActiveTab,
+    ReopenClosedTab,
     Reload,
     Back,
     Forward,
@@ -265,6 +268,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
     match action_id {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
+        ACTION_REOPEN_TAB => BrowserIntent::ReopenClosedTab,
         ACTION_RELOAD => BrowserIntent::Reload,
         ACTION_FOCUS_URL => BrowserIntent::FocusUrl,
         ACTION_BACK => BrowserIntent::Back,
@@ -366,6 +370,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             let id = app.cached_active;
             app.update(Msg::CloseTab(id))
         }
+        BrowserIntent::ReopenClosedTab => app.update(Msg::ReopenClosedTab),
         BrowserIntent::Reload => app.update(Msg::NavReloadOrStop),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
@@ -471,6 +476,10 @@ mod tests {
             intent_for_menu_action(ACTION_CLOSE_TAB),
             BrowserIntent::CloseActiveTab
         );
+        assert_eq!(
+            intent_for_menu_action(ACTION_REOPEN_TAB),
+            BrowserIntent::ReopenClosedTab
+        );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
         assert_eq!(
             intent_for_menu_action(ACTION_FORWARD),
@@ -493,6 +502,13 @@ mod tests {
             intent_for_menu_action(ACTION_NEW_TAB),
             BrowserIntent::NewBlankTab
         );
+    }
+
+    #[test]
+    fn reopen_closed_is_on_the_browser_menu() {
+        let ids: Vec<&str> = MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
+        assert!(ids.contains(&ACTION_REOPEN_TAB));
+        assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
     }
 
     #[test]

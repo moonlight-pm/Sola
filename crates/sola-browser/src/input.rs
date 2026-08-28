@@ -118,8 +118,19 @@ pub fn chrome_nav_shortcut(key: &Key, mods: Modifiers) -> Option<char> {
     }
 }
 
+/// Super+Shift+T — reopen the most recently closed tab (LIFO stack).
+pub fn is_reopen_closed_shortcut(key: &Key, mods: Modifiers) -> bool {
+    if !mods.logo() || !mods.shift() || mods.alt() || mods.control() {
+        return false;
+    }
+    let Key::Character(s) = key else {
+        return false;
+    };
+    s.eq_ignore_ascii_case("t")
+}
+
 pub fn is_chrome_nav_shortcut(key: &Key, mods: Modifiers) -> bool {
-    chrome_nav_shortcut(key, mods).is_some()
+    chrome_nav_shortcut(key, mods).is_some() || is_reopen_closed_shortcut(key, mods)
 }
 
 /// Cursor shape carried across the worker→iced boundary as a plain `u32`
@@ -238,6 +249,22 @@ mod tests {
         assert!(!is_chrome_nav_shortcut(
             &Key::Character("r".into()),
             Modifiers::empty()
+        ));
+        assert!(is_reopen_closed_shortcut(
+            &Key::Character("t".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
+        assert!(is_reopen_closed_shortcut(
+            &Key::Character("T".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
+        assert!(!is_reopen_closed_shortcut(
+            &Key::Character("t".into()),
+            Modifiers::LOGO
+        ));
+        assert!(is_chrome_nav_shortcut(
+            &Key::Character("t".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
         ));
     }
 

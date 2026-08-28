@@ -96,8 +96,10 @@ reorder; a click (no drag) still selects. Titles fill the column and
 ellipsize at the edge (they grow if you widen the strip). Close removes
 the row immediately — no flash back. Closing the tab you are looking at
 selects the neighbor to the right (or the left if it was last). The last
-tab is replaced by a blank rather than closing the window. Order is
-saved in that profile’s `session.json`.
+tab is replaced by a blank rather than closing the window. `⌘⇧T` (Browser
+→ **Reopen Closed Tab**) restores the most recently closed tab; hit it
+again for the one before that. The stack is per profile, up to 25, and
+is saved in `session.json`. Order of open tabs is saved there too.
 
 **Groups** are named folders at the **top** of the strip. Each group is a
 quiet pocket with a hairline rim; members sit flush under the header.
