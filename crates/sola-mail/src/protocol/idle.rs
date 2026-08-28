@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use imap::extensions::idle::SetReadTimeout;
+use imap::extensions::idle::{SetReadTimeout, WaitOutcome};
 use tracing::{debug, error, warn};
 
 use super::account::Account;
@@ -72,9 +72,11 @@ pub enum IdleChange {
 
 /// Start a background IDLE watcher on INBOX.
 ///
-/// Opens a separate IMAP connection and enters IDLE mode. On any wake, re-SELECTs
-/// INBOX and reports [`IdleChange`] so the UI can refresh when *other* clients
-/// delete/expunge mail — not only when new mail arrives.
+/// Opens a separate IMAP connection and enters IDLE mode. On any wake *or* a
+/// 30s wait timeout, re-SELECTs INBOX and reports [`IdleChange`] so the UI can
+/// refresh when *other* clients delete/expunge mail — not only when new mail
+/// arrives. Timeout matters: some servers never push EXPUNGE for another
+/// session's MOVE, and `wait_keepalive` would hide that by recycling IDLE.
 ///
 /// Reconnects automatically on errors.
 pub fn start_idle<F>(config: Account, on_change: F) -> IdleHandle
@@ -159,13 +161,16 @@ where
     }
 
     while !stop_flag.load(Ordering::Relaxed) {
-        // Enter IDLE mode with a timeout (29 minutes per RFC, we use 5 minutes)
-        let mut idle = session.idle()?;
-        idle.set_keepalive(Duration::from_secs(300));
-
-        match idle.wait_keepalive() {
-            Ok(reason) => {
-                debug!("IDLE woke: {reason:?}");
+        // Block on IDLE, but return on timeout so we re-SELECT even when the
+        // server never pushes EXPUNGE for another client's MOVE (wait_keepalive
+        // would recycle IDLE internally and never tell us).
+        let idle = session.idle()?;
+        match idle.wait_with_timeout(Duration::from_secs(30)) {
+            Ok(WaitOutcome::TimedOut) => {
+                debug!("IDLE wait timed out — re-SELECT to catch quiet expunge");
+            }
+            Ok(WaitOutcome::MailboxChanged) => {
+                debug!("IDLE woke: mailbox changed");
             }
             Err(e) => {
                 error!("IDLE wait error: {e}");
@@ -189,8 +194,7 @@ where
             on_change(IdleChange::Removed { gone }, &mut ops_client);
             last_exists = exists;
         } else {
-            // Same EXISTS: still notify so flag-only changes can refresh if needed.
-            // UI may no-op for Touched; worker always emits InboxChanged for remove/arrive.
+            // Same EXISTS: flag-only or a quiet timeout. Worker no-ops Touched.
             debug!("IDLE: INBOX unchanged at {exists}");
             on_change(IdleChange::Touched, &mut ops_client);
             last_exists = exists;

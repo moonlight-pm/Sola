@@ -205,8 +205,9 @@ fn do_connect(state: &mut WorkerState) {
                 bridge::emit(MailEvent::NewMail);
             }
             IdleChange::Touched => {
-                // Flag-only / keepalive: no EXISTS change. Periodic PollRefresh
-                // covers stragglers without thrashing on every IDLE nudge.
+                // Flag-only or 30s IDLE re-SELECT with the same EXISTS.
+                // Do not refresh here — our own mark-read would thrash the list.
+                // PollRefresh (45s) still picks up \Deleted-without-EXPUNGE.
             }
         }
     });
