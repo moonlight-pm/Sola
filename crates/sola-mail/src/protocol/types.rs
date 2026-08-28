@@ -113,7 +113,9 @@ mod tests {
         let names: Vec<_> = folders.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["INBOX", "Sent", "Drafts", "Archive", "Junk", "Trash", "Zebra"]
+            vec![
+                "INBOX", "Sent", "Drafts", "Archive", "Junk", "Trash", "Zebra"
+            ]
         );
     }
 

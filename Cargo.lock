@@ -8361,6 +8361,7 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "sola-kit",
+ "tokio",
  "tracing",
  "ureq",
 ]

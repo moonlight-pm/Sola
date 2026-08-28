@@ -1,0 +1,176 @@
+//! Keep the on-screen message list stable across IMAP page refreshes.
+
+use std::collections::HashSet;
+
+use crate::protocol::MessageSummary;
+
+/// Apply a server page onto the visible list without dropping already-loaded
+/// later rows, and without resurrecting UIDs the UI has already removed.
+pub fn apply_message_page(
+    current: &[MessageSummary],
+    incoming: Vec<MessageSummary>,
+    offset: u32,
+    pending_gone: &HashSet<(String, u32)>,
+    folder: &str,
+) -> Vec<MessageSummary> {
+    let incoming: Vec<MessageSummary> = incoming
+        .into_iter()
+        .filter(|m| !pending_gone.contains(&(folder.to_string(), m.uid)))
+        .collect();
+
+    if offset > 0 {
+        let mut out = current.to_vec();
+        for m in incoming {
+            if !out.iter().any(|e| e.uid == m.uid) {
+                out.push(m);
+            }
+        }
+        return out;
+    }
+
+    if current.len() > incoming.len() {
+        let incoming_uids: HashSet<u32> = incoming.iter().map(|m| m.uid).collect();
+        let tail: Vec<MessageSummary> = current
+            .iter()
+            .filter(|m| {
+                !incoming_uids.contains(&m.uid)
+                    && !pending_gone.contains(&(folder.to_string(), m.uid))
+            })
+            .cloned()
+            .collect();
+        let mut out = incoming;
+        out.extend(tail);
+        out.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
+        out
+    } else {
+        incoming
+    }
+}
+
+/// UIDs the server first page no longer contains can leave the tombstone set.
+pub fn prune_pending_gone(
+    pending_gone: &mut HashSet<(String, u32)>,
+    folder: &str,
+    incoming_unfiltered: &[MessageSummary],
+    offset: u32,
+) {
+    if offset != 0 {
+        return;
+    }
+    let present: HashSet<u32> = incoming_unfiltered.iter().map(|m| m.uid).collect();
+    pending_gone.retain(|(f, uid)| f != folder || present.contains(uid));
+}
+
+pub fn insert_summary_desc(messages: &mut Vec<MessageSummary>, msg: MessageSummary) {
+    if messages.iter().any(|m| m.uid == msg.uid) {
+        return;
+    }
+    match messages.iter().position(|m| m.uid < msg.uid) {
+        Some(i) => messages.insert(i, msg),
+        None => messages.push(msg),
+    }
+}
+
+pub fn hidden_on_server(
+    incoming: &[MessageSummary],
+    pending_gone: &HashSet<(String, u32)>,
+    folder: &str,
+) -> u32 {
+    incoming
+        .iter()
+        .filter(|m| pending_gone.contains(&(folder.to_string(), m.uid)))
+        .count() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sum(uid: u32) -> MessageSummary {
+        MessageSummary {
+            uid,
+            from: String::new(),
+            to: String::new(),
+            subject: format!("{uid}"),
+            date: String::new(),
+            seen: true,
+            forwarded_for: None,
+        }
+    }
+
+    fn page(from: u32, to: u32) -> Vec<MessageSummary> {
+        (to..=from).rev().map(sum).collect()
+    }
+
+    fn uids(rows: &[MessageSummary]) -> Vec<u32> {
+        rows.iter().map(|m| m.uid).collect()
+    }
+
+    #[test]
+    fn first_page_refresh_keeps_scrolled_tail() {
+        let current = page(150, 1);
+        let incoming = page(150, 101);
+        let out = apply_message_page(&current, incoming, 0, &HashSet::new(), "INBOX");
+        assert_eq!(out.len(), 150);
+        assert_eq!(uids(&out)[..3], [150, 149, 148]);
+        assert_eq!(*uids(&out).last().unwrap(), 1);
+    }
+
+    #[test]
+    fn tombstone_stays_hidden_when_server_has_not_caught_up() {
+        let mut current = page(50, 1);
+        current.retain(|m| m.uid != 40);
+        let incoming = page(50, 1);
+        let mut gone = HashSet::new();
+        gone.insert(("INBOX".into(), 40));
+        let out = apply_message_page(&current, incoming, 0, &gone, "INBOX");
+        assert!(!uids(&out).contains(&40));
+        assert_eq!(out.len(), 49);
+    }
+
+    #[test]
+    fn merge_after_delete_does_not_duplicate_or_drop_tail() {
+        let mut current = page(100, 1);
+        current.retain(|m| m.uid != 90);
+        let incoming = page(100, 51);
+        let mut gone = HashSet::new();
+        gone.insert(("INBOX".into(), 90));
+        let out = apply_message_page(&current, incoming, 0, &gone, "INBOX");
+        let ids = uids(&out);
+        assert!(!ids.contains(&90));
+        assert_eq!(ids.len(), 99);
+        assert!(ids.windows(2).all(|w| w[0] > w[1]));
+        assert_eq!(ids[0], 100);
+        assert_eq!(*ids.last().unwrap(), 1);
+    }
+
+    #[test]
+    fn load_more_skips_duplicates_and_tombstones() {
+        let current = page(50, 1);
+        let incoming = page(20, 1);
+        let mut gone = HashSet::new();
+        gone.insert(("INBOX".into(), 10));
+        let out = apply_message_page(&current, incoming, 50, &gone, "INBOX");
+        assert_eq!(out.len(), 50);
+    }
+
+    #[test]
+    fn prune_only_on_first_page() {
+        let incoming = page(50, 1);
+        let mut gone = HashSet::new();
+        gone.insert(("INBOX".into(), 90));
+        gone.insert(("INBOX".into(), 40));
+        prune_pending_gone(&mut gone, "INBOX", &incoming, 0);
+        assert!(!gone.contains(&("INBOX".into(), 90)));
+        assert!(gone.contains(&("INBOX".into(), 40)));
+    }
+
+    #[test]
+    fn insert_keeps_uid_desc() {
+        let mut rows = page(5, 3);
+        insert_summary_desc(&mut rows, sum(4));
+        insert_summary_desc(&mut rows, sum(9));
+        insert_summary_desc(&mut rows, sum(1));
+        assert_eq!(uids(&rows), vec![9, 5, 4, 3, 1]);
+    }
+}
