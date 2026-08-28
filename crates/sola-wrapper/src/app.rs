@@ -10,11 +10,11 @@ use iced::keyboard;
 use iced::widget::{Shader, column, container};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 
-use sola_bus::topics::{Application, FocusTarget, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{Application, FocusTarget, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent, BusSetup,
+    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
