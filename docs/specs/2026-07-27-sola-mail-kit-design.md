@@ -2,10 +2,10 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (mail-polish merged)  
-**Status:** implemented (partial) — dogfood installed locally 2026-08-21; optimistic delete + keyed list on master (`install mail` 2026-08-26)  
+**Status:** implemented (partial) — dogfood installed locally 2026-08-21; optimistic delete + keyed list on master (`install mail` 2026-08-26); other-client inbox expunge on this worktree (needs `install mail`)  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter); no attachments; no offline store
+**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only
 
 ## Goal
 

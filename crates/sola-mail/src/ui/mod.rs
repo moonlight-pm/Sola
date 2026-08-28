@@ -683,6 +683,7 @@ impl App {
                         &self.messages,
                         messages,
                         offset,
+                        total,
                         &self.pending_gone,
                         &folder,
                     );
