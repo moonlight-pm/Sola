@@ -22,7 +22,6 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-terminal",
     "sola-browser",
     "sola-kit",
-    "sola-agent",
     "sola-mail",
     "sola-preview",
     "sola-paint",

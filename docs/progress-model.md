@@ -76,6 +76,7 @@ Never mix “is” and “will be” in the same paragraph without an explicit l
 | **spec’d** | Freeze exists; little or no code | **No** |
 | **planned** | On roadmap; no freeze yet | **No** |
 | **idea** | [`ideas/`](ideas/) only | **No** |
+| **retired** | Removed from the tree; row kept so the removal is not a silent gap | **No** |
 
 **Partial without listed gaps is invalid.**
 

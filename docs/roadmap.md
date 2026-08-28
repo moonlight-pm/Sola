@@ -46,13 +46,14 @@ rows for feature-level progress.
 
 **Status: partial**
 
-- Terminal iced, browser CEF, agent ACP, mail kit, preview, kvm,
+- Terminal iced, browser CEF, mail kit, preview, kvm,
   paint (first pass), scope (first pass)  
 - `sola-call` + `sola-workspaces` persist/spawn/call methods on master
+- `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the agent product)
 
-**Remaining:** Workspaces dogfood + rename/recolor/reorder; agent UI
-backlog; browser chrome completeness; mail polish; kvm input ACL
-permanence; preview zoom/clipboard; paint clipboard.
+**Remaining:** Workspaces dogfood + rename/recolor/reorder; browser chrome
+completeness; mail polish; kvm input ACL permanence; preview
+zoom/clipboard; paint clipboard.
 
 ---
 

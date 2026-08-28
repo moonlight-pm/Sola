@@ -20,14 +20,14 @@ and ships by using the desktop, not by browsing a mock.
 tarball path. Not a public consumer audience yet.
 
 Job at the kit surface: see whether sola-kit chrome is fit to put in a real
-app (settings, mail, browser, agent, shell), and edit theme seeds without
+app (settings, mail, browser, workspaces, shell), and edit theme seeds without
 leaving the storybook.
 
 ## Product Purpose
 
 Sola is a full Wayland desktop environment: process supervisor, bus, call
 plane, River compositor bridge, Iced shell, and first-party apps (browser,
-terminal, mail, agent, arcade, settings, …).
+terminal, mail, workspaces, arcade, settings, …).
 
 **sola-kit** is the shared Iced app kit and the storybook that dogfoods it.
 Every kit visual change is meant to show up in the storybook first.

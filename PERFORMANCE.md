@@ -78,7 +78,8 @@ windows are actually restarted.
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 `browser` `install` `kit` `mail` `monitor` `paint` `preview` `settings`
-`terminal` `workspaces`.
+`terminal` `workspaces`. (`agent` was in that bulk install; crate retired
+2026-08-28.)
 
 ---
 

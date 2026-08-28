@@ -1,6 +1,7 @@
 # Sola Agent — UI backlog (post-v1)
 
 **Date:** 2026-07-23  
+**Status:** Retired 2026-08-28 with `crates/sola-agent`. History only.  
 **Branch:** `agent-acp-runner`  
 **Parent design:** `2026-07-23-sola-agent-acp-runner-design.md`  
 **Tracker:** `.grok/rules/active-work.md` (Current)

@@ -15,22 +15,13 @@ Progress model: [`progress-model.md`](progress-model.md).
 
 ## Decision points (ask human)
 
-### D1 — Permission fan-out when multiple agents attach (P1)
+### D1 — Permission fan-out when multiple agents attach — **closed (2026-08-28)**
 
-**Context:** Grok leader / sola-agent and TUI (or multiple sola-agent windows)
-can both request permission. Ask-mode UX and which client owns the prompt is
-unclear.
+**Answered:** `crates/sola-agent` is retired (unused iced ACP/Grok-leader GUI).
+Daily agent work is Workspaces (`grok` CLI in PTYs). No multi-client ACP GUI;
+do not rebuild one. Permission fan-out for ACP clients is moot.
 
-**Ask:**
-
-1. Single global permission UI vs per-client strips?  
-2. Who wins if both attach in ask mode?  
-3. Should sola-agent suppress auto-approve when an external TUI is attached?
-
-**Until decided:** do not invent multi-client permission policy; keep existing
-single-client auto-approve modes; surface conflicts as errors if observed.
-
-**Related:** `agent` capability; agent ACP freezes.
+**Related:** `agent` capability (retired); historical ACP freezes.
 
 ---
 
@@ -54,13 +45,12 @@ install from agent sessions.
 
 ### D3 — Which call-plane methods need a human confirm (P1)
 
-**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). General agent control will want a confirm gate for some methods (close app, input, later Workspaces spawn). Cousin of **D1**.
+**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Workspaces spawn).
 
 **Ask:**
 
 1. Which owners/methods require a prompt in v1+?  
-2. Who owns the prompt (shell, a dedicated surface, the calling agent)?  
-3. How does this interact with D1 multi-agent attach?
+2. Who owns the prompt (shell, a dedicated surface, the calling agent)?
 
 **Until decided:** do not invent confirm policy. Every live method is as privileged as the socket.
 
@@ -70,14 +60,9 @@ install from agent sessions.
 
 ## Open technical questions
 
-### T1 — Agent pin UI surface
+### T1 — Agent pin UI surface — **closed (2026-08-28)**
 
-Pin data exists in overlay (`pinned`); bulk-delete respects pins; toggle UI was
-removed. Is double-click rename + future context menu enough, or should pin
-return to the sidebar row?
-
-**Default until decided:** leave pins data-compatible; no new chrome without
-product ask. See agent UI backlog.
+Moot: `crates/sola-agent` deleted. Overlay/pin chrome went with the crate.
 
 ### T2 — CEF default vs WPE — **closed (2026-08-11)**
 
@@ -109,6 +94,7 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-28 | D1 / T1 | `crates/sola-agent` retired. No ACP/Grok-leader GUI; Workspaces is the agent product. Multi-client ACP permission fan-out and pin UI are moot. Do not rebuild. | CURRENT, capabilities, architecture, this log |
 | 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |
 | 2026-08-25 | workspaces | `workspace.rm` / `project.rm` reply `{ok:true}` then teardown on the next tick so a pane can close itself without hanging `solactl`. SessionStart idles a leftover working ring. Cleanup is one shell (`git worktree remove` && `workspace.rm`); splitting those as two Grok tools leaves the tab (cwd gone). | CURRENT, CLI freeze header, manual/solactl, skill |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |

@@ -40,7 +40,7 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  workspaces · browser        │
-         │              │  wrapper · agent · mail · scope │
+         │              │  wrapper · mail · scope         │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -67,7 +67,6 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` on the workspace row is the loudest Grok pane; reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). The rail mark rolls up Grok panes in a split (waiting > working > done > idle). |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate). Web `Notification` → `Topic::AppNotification`. |
 | `crates/sola-wrapper` | Website wrappers as first-class apps (`sola-wrapper <id>`; CEF via sola-browser lib; catalog `kind`/`url` on `Topic::Application`) |
-| `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
 | `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
@@ -107,10 +106,9 @@ to the bus and tolerate compositor restarts.
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
 | Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
-| Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
 | Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
 | Workspaces calls | sola-call owner `workspaces` (`solactl workspaces …`). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) |
-| Grok sessions | `~/.grok/sessions/` + leader socket `~/.grok/leader.sock` |
+| Grok sessions | `~/.grok/sessions/` (Workspaces compaction `×N`; not an ACP leader socket) |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
 
 ### Communication layers

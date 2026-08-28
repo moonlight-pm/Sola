@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Retired WebView agent prototype (apocrypha — not a workspace member)"
 
-# Package renamed from `sola-agent` so it cannot clash with crates/sola-agent.
-# Reference only. See apocrypha/README.md. Live app: crates/sola-agent.
+# Package renamed from `sola-agent` historically so it could not clash
+# with the later kit crate. Reference only. That kit crate is also gone
+# (2026-08-28). See apocrypha/README.md.
 
 [dependencies]
 sola-app = { path = "../../sola-app" }

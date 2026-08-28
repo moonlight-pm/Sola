@@ -96,8 +96,7 @@ crates/
   sola-settings/       # Settings panel (incl. mail config)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
-  sola-workspaces/     # Project / workspace rail + agent-aware PTYs (this branch)
-  sola-agent/          # Coding agent (iced + ACP / Grok leader) — not Workspaces
+  sola-workspaces/     # Project / workspace rail + agent-aware PTYs
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Simple image viewer (argv)
