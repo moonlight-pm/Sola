@@ -184,6 +184,37 @@ fn gamescope_bin() -> Option<std::path::PathBuf> {
     })
 }
 
+/// gamescope flags before `--` and the nested helper.
+///
+/// Nested X cursors (Factorio menus, SDL titles, …) are often sized for the
+/// fake monitor. The Wayland backend then hands that bitmap to River 1:1 via
+/// `wl_pointer.set_cursor` — a 64–256px glyph over a zoned host looks huge
+/// next to Sola’s 24px McMojave. `--cursor-scale-height` is gamescope’s
+/// downsample: host cursor ≈ 36px × floor(output_h / this), clamped [36, 256].
+/// Matching initial `-H` keeps the pointer desktop-sized. SteamOS uses 720 so
+/// the cursor *grows* on a 4K panel — the opposite of a windowed nest.
+pub fn gamescope_nest_args(width: u32, height: u32) -> Vec<String> {
+    let w = width.to_string();
+    let h = height.to_string();
+    vec![
+        "--backend".into(),
+        "wayland".into(),
+        "-b".into(),
+        "-S".into(),
+        "fit".into(),
+        "-W".into(),
+        w.clone(),
+        "-H".into(),
+        h.clone(),
+        "-w".into(),
+        w,
+        "-h".into(),
+        h.clone(),
+        "--cursor-scale-height".into(),
+        h,
+    ]
+}
+
 /// LaunchApp argv for sola-session (whitespace-split, no shell):
 ///
 /// ```text
@@ -303,6 +334,8 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) 
         // - host `-W`/`-H` initial (same as nested); River zone/float after pin
         // - `-w`/`-h` virtual monitor from Arcade nest dropdown
         // - `-S fit` — letterbox nested content into host when sizes differ
+        // - `--cursor-scale-height` = `-H` — keep the host pointer ~36px
+        //   (nested X cursors otherwise present 1:1 to River)
         // - Fit does **not** pass `--force-windows-fullscreen` (wayland
         //   backend aborted). Arcade sets `GAMESCOPE_FORCE_WINDOWS_FULLSCREEN`
         //   on the nested X root after the nest is up.
@@ -317,30 +350,14 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) 
             .unwrap_or_else(|| "/opt/sola/bin/sola-arcade".into());
         eprintln!(
             "sola-arcade: nesting --nested-steam {app} under gamescope \
-             {w}x{h} (--backend wayland -b -S fit{}, no -e)",
+             {w}x{h} (--backend wayland -b -S fit --cursor-scale-height {h}{}, no -e)",
             if fit { ", fit-follow" } else { "" }
         );
+        let nest = gamescope_nest_args(width, height);
         let mut cmd = Command::new(gs);
-        cmd.args([
-            "--backend",
-            "wayland",
-            "-b",
-            "-S",
-            "fit",
-            "-W",
-            &w,
-            "-H",
-            &h,
-            "-w",
-            &w,
-            "-h",
-            &h,
-            "--",
-            &arcade,
-            "--nested-steam",
-            &app,
-        ])
-        .status()
+        cmd.args(&nest)
+            .args(["--", &arcade, "--nested-steam", &app])
+            .status()
     } else {
         eprintln!(
             "sola-arcade: gamescope not found — bare steam -applaunch \
@@ -533,5 +550,28 @@ mod tests {
         // launch_command only builds the session argv; the actual gamescope
         // child is assembled in run_game_blocking. Smoke the helper id path.
         assert_eq!(game_session_app_id(3527290), "steam-game-3527290");
+    }
+
+    #[test]
+    fn gamescope_nest_args_scale_host_cursor_to_desktop() {
+        let args = gamescope_nest_args(5120, 2160);
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--cursor-scale-height", "2160"]),
+            "host cursor downsample must match -H: {args:?}"
+        );
+        assert!(args.windows(2).any(|w| w == ["-H", "2160"]));
+        assert!(args.windows(2).any(|w| w == ["-h", "2160"]));
+        assert!(
+            !args.iter().any(|t| t == "-f" || t == "--fullscreen" || t == "-e"),
+            "must not pass host fullscreen or -e: {args:?}"
+        );
+        let locked = gamescope_nest_args(1920, 1080);
+        assert!(
+            locked
+                .windows(2)
+                .any(|w| w == ["--cursor-scale-height", "1080"]),
+            "{locked:?}"
+        );
     }
 }
