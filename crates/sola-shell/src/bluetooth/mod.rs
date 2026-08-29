@@ -48,17 +48,18 @@ pub struct Device {
     pub battery_pct: Option<u8>,
 }
 
-/// True for `AA:BB:CC:DD:EE:FF` (BlueZ's fallback "name").
+/// Hex digits of `s`, uppercased, separators stripped.
+fn addr_digits(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+/// True when `s` is a Bluetooth address in any common spelling
+/// (`AA:BB:…`, `AA-BB-…`, `AABBCCDDEEFF`, object-path underscores).
 pub fn looks_like_address(s: &str) -> bool {
-    let b = s.trim().as_bytes();
-    b.len() == 17
-        && b.iter().enumerate().all(|(i, c)| {
-            if i % 3 == 2 {
-                *c == b':'
-            } else {
-                c.is_ascii_hexdigit()
-            }
-        })
+    addr_digits(s).len() == 12
 }
 
 impl Device {
@@ -69,12 +70,17 @@ impl Device {
 
     /// A name a person can recognize — not a MAC address.
     pub fn human_name(&self) -> Option<&str> {
+        let addr = addr_digits(&self.address);
         for candidate in [self.name.as_deref(), Some(self.alias.as_str())] {
             if let Some(s) = candidate {
                 let t = s.trim();
-                if !t.is_empty() && !looks_like_address(t) {
-                    return Some(t);
+                if t.is_empty() || looks_like_address(t) {
+                    continue;
                 }
+                if addr.len() == 12 && addr_digits(t) == addr {
+                    continue;
+                }
+                return Some(t);
             }
         }
         None
@@ -171,9 +177,9 @@ impl Device {
             .unwrap_or_else(|| self.alias.clone())
     }
 
-    /// Inquiry list: named devices, or unnamed ones BlueZ can still type.
+    /// Inquiry list: a real name only. Anonymous BLE addresses stay off.
     pub fn show_nearby(&self) -> bool {
-        !self.paired && (self.human_name().is_some() || self.kind_label().is_some())
+        !self.paired && self.human_name().is_some()
     }
 }
 
@@ -591,19 +597,39 @@ mod tests {
             rssi: Some(-40),
             ..Device::default()
         };
-        let snap = snapshot_from_parts(Some(adapter(true)), vec![mac, named, typed]);
-        let names: Vec<String> = snap.nearby().iter().map(|d| d.display_name()).collect();
-        assert_eq!(
-            names,
-            vec!["WH-1000XM5".to_string(), "Headphones".to_string()]
+        let no_colons = Device {
+            path: "/org/bluez/hci0/dev_nc".into(),
+            address: "AA:BB:CC:DD:EE:02".into(),
+            alias: "AABBCCDDEE02".into(),
+            paired: false,
+            rssi: Some(-20),
+            ..Device::default()
+        };
+        let dashed = Device {
+            path: "/org/bluez/hci0/dev_dash".into(),
+            address: "AA:BB:CC:DD:EE:03".into(),
+            alias: "AA-BB-CC-DD-EE-03".into(),
+            paired: false,
+            rssi: Some(-25),
+            ..Device::default()
+        };
+        let snap = snapshot_from_parts(
+            Some(adapter(true)),
+            vec![mac, named, typed, no_colons, dashed],
         );
+        let names: Vec<String> = snap.nearby().iter().map(|d| d.display_name()).collect();
+        assert_eq!(names, vec!["WH-1000XM5".to_string()]);
     }
 
     #[test]
     fn looks_like_bluetooth_address() {
         assert!(looks_like_address("AA:BB:CC:DD:EE:FF"));
         assert!(looks_like_address("80:45:dd:73:de:0c"));
+        assert!(looks_like_address("AABBCCDDEEFF"));
+        assert!(looks_like_address("AA-BB-CC-DD-EE-FF"));
+        assert!(looks_like_address("AA_BB_CC_DD_EE_FF"));
         assert!(!looks_like_address("WH-1000XM5"));
+        assert!(!looks_like_address("WH-CH520"));
         assert!(!looks_like_address("AirPods"));
     }
 

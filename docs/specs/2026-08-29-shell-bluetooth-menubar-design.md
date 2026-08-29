@@ -22,7 +22,7 @@ A Bluetooth control in the **Mac-shaped** sola-shell menubar. The bar stays a me
 | Power | Adapter **toggler** in the popover (kit `form_row` + `toggle_style`). A widget that cannot turn Bluetooth on is a dead icon. |
 | Connected | Name, plus **battery % only when BlueZ `Battery1.Percentage` (or equivalent) is present**. Never fake 100%. **Disconnect** does not unpair. |
 | Paired, idle | Listed under the connected set so reconnect works without inquiry. **Connect**. |
-| Add | **Add device** starts discovery; nearby unpaired appear below. **Pair** then **Connect**. **Done** (or panel close) stops inquiry. Do not leave an inquiry scan running. Nearby lists **named** devices (or ones BlueZ can type as headphones/keyboard/…). Anonymous BLE MAC addresses stay off the list. |
+| Add | **Add device** starts discovery; nearby unpaired appear below. **Pair** then **Connect**. **Done** (or panel close) stops inquiry. Do not leave an inquiry scan running. Nearby lists **named** devices only — a label that is just the address (any punctuation) is omitted. |
 | Forget | **Not v1.** No mystery “remove”. |
 | Pairing UI | BlueZ **Agent1** inline in this popover (PIN / passkey / confirm / incoming allow). Desk-local shell, **not** sola-call **D3**. |
 | Sampling | In-process `zbus` on the **system** bus (`org.bluez`). Background thread + channel into iced. Slow poll + ObjectManager signals. Opening the panel refreshes immediately. **No 16ms timer.** No new bus topic, no new daemon. |
