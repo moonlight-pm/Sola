@@ -24,6 +24,8 @@ trait Adapter1 {
     fn powered(&self) -> zbus::Result<bool>;
     #[zbus(property)]
     fn set_powered(&self, value: bool) -> zbus::Result<()>;
+    #[zbus(property)]
+    fn set_pairable(&self, value: bool) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(interface = "org.bluez.Device1", default_service = "org.bluez")]
@@ -500,6 +502,7 @@ async fn start_discovery(
     filter.insert("DuplicateData", Value::Bool(false));
     filter.insert("Transport", Value::from("auto"));
     let _ = a.set_discovery_filter(filter).await;
+    let _ = a.set_pairable(true).await;
     match a.start_discovery().await {
         Ok(()) => Ok(()),
         Err(e) if already_discovering(&e) => Ok(()),
@@ -514,6 +517,7 @@ async fn stop_discovery(
     let Some(a) = adapter_proxy(conn, om).await? else {
         return Ok(());
     };
+    let _ = a.set_pairable(false).await;
     match a.stop_discovery().await {
         Ok(()) => Ok(()),
         Err(e) if not_discovering(&e) => Ok(()),

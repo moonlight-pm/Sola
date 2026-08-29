@@ -21,8 +21,10 @@ Do not invent product policy.
    overlay (kit popover). Hide if no adapter; off/on/connected on the icon;
    power, connected list + battery when BlueZ has it, add/pair, disconnect.
    In-process `zbus` / `org.bluez` (no `bluetoothctl`, no new bus topic).
-   **Installed** `shell` (debug, 2026-08-29). Self-restarts. **Next:** desk-smoke
-   (adapter off/on, pair, disconnect, battery).
+   **Installed** `shell` (debug, 2026-08-29). Host BlueZ enabled
+   (`hardware.bluetooth` on novus + `nix/module.nix`); `hci0` Intel AX210
+   powered, `org.bluez` on the system bus. **Next:** desk-smoke (icon, power,
+   pair, disconnect, battery). Add-device sets Pairable only while searching.
 2. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
    Desk cards drop from the menubar; missed pile is a bell in the right

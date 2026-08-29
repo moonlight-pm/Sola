@@ -4,7 +4,7 @@
 **Status:** Frozen — implemented in `sola-shell`; installed 2026-08-29 (desk smoke pending)  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (calendar / audio / bluetooth as shell popovers, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/bluetooth/` + menubar right-cluster icon + `Panel::Bluetooth` on the existing Menu overlay  
-**Dogfood:** `shell` installed debug 2026-08-29; desk smoke pending (adapter off/on, pair, disconnect, battery)  
+**Dogfood:** `shell` installed debug 2026-08-29. Host BlueZ on (novus `nixos-rebuild` 2026-08-29; Intel AX210 `hci0` powered). Desk smoke of the popover pending.  
 **Gaps:** no Forget / unpair; no audio-profile picker; no adapter chooser when several exist; pairing agent is KeyboardDisplay on the shell connection (not a call-plane D3 confirm)
 
 ## Intent

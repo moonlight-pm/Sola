@@ -134,6 +134,10 @@ similar.
 - Adds `xdg-utils` and `desktop-file-utils` for default-browser
   routing.
 - Enables `hardware.graphics`.
+- Enables **BlueZ** (`hardware.bluetooth`, power-on-boot, experimental
+  for battery). The menubar Bluetooth chip talks to `org.bluez`; it
+  hides when no adapter is present. Do **not** add Blueman — Sola owns
+  that popover.
 - Sets up `/opt/sola/` via activation script: symlinks
   `/opt/sola/bin` and `/opt/sola/share` (icons, cursors, fonts) at
   the Nix store package, and creates `/opt/sola/log` as a writable

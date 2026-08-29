@@ -317,6 +317,9 @@ in
   };
 
   hardware.graphics.enable = true;
+  hardware.bluetooth.enable = true;
+  hardware.bluetooth.powerOnBoot = true;
+  hardware.bluetooth.settings.General.Experimental = true;
   services.seatd.enable = true;
 
   services.getty.autologinUser = lib.mkForce null;

@@ -106,6 +106,14 @@ in
     # GPU subprocess for the kit. Both want a working GBM / EGL stack.
     hardware.graphics.enable = true;
 
+    # Menubar Bluetooth popover talks to org.bluez on the system bus
+    # (sola-shell, in-process). Without bluetoothd the kernel can still
+    # expose hci0 while the chip stays hidden. No blueman — Sola owns
+    # the UI. Experimental unlocks Battery1 on more HID / LE devices.
+    hardware.bluetooth.enable = true;
+    hardware.bluetooth.powerOnBoot = true;
+    hardware.bluetooth.settings.General.Experimental = true;
+
     # sola-kvm (evdev backend) needs RW on /dev/input/event* for EVIOCGRAB
     # while remote. Re-plug creates *new* nodes that do not inherit old ACLs,
     # so a one-shot setfacl always rots. TAG+="uaccess" lets logind grant the
