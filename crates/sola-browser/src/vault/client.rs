@@ -17,6 +17,9 @@ use thiserror::Error;
 use zeroize::Zeroize;
 
 use super::identity::{IdentityLogin, TokenCell, build_pm_client};
+use super::item::{
+    IdentityFillMaterial, ItemRecord, ItemSummary, record_from_view, summary_from_view,
+};
 use super::match_uri::uri_matches;
 
 /// Non-secret vault status for chrome.
@@ -517,6 +520,82 @@ impl VaultService {
             code: card.code,
             brand: card.brand,
         })
+    }
+
+    /// Every non-deleted, non-archived cipher as a list row (no secrets).
+    pub async fn list_items(&self, page_url: &str) -> Result<Vec<ItemSummary>, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let listed = self
+            .client
+            .vault()
+            .ciphers()
+            .get_all()
+            .await
+            .map_err(|e| VaultError::Other(e.to_string()))?;
+
+        let n_fail = listed.failures.len();
+        let mru = super::prefs::VaultPrefs::last_used_map();
+        let mut out: Vec<ItemSummary> = listed
+            .successes
+            .iter()
+            .filter_map(|view| summary_from_view(view, page_url, &mru))
+            .collect();
+        out.sort_by(|a, b| {
+            b.uri_match
+                .cmp(&a.uri_match)
+                .then(b.last_used.cmp(&a.last_used))
+                .then(a.name.cmp(&b.name))
+        });
+        if n_fail > 0 {
+            tracing::warn!(n = n_fail, "vault: some ciphers failed to decrypt");
+        }
+        tracing::info!(n = out.len(), %page_url, "vault: item list");
+        Ok(out)
+    }
+
+    /// Full decrypted record for the item view.
+    pub async fn get_item(&self, cipher_id: &str) -> Result<ItemRecord, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+        let view = self
+            .client
+            .vault()
+            .ciphers()
+            .get(cipher_id)
+            .await
+            .map_err(|_| VaultError::NotFound)?;
+        record_from_view(view).ok_or(VaultError::NotFound)
+    }
+
+    pub async fn fill_identity(&self, cipher_id: &str) -> Result<IdentityFillMaterial, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+        let view = self
+            .client
+            .vault()
+            .ciphers()
+            .get(cipher_id)
+            .await
+            .map_err(|_| VaultError::NotFound)?;
+        if view.r#type != CipherType::Identity {
+            return Err(VaultError::NotFound);
+        }
+        let identity = view.identity.ok_or(VaultError::NotFound)?;
+        Ok(IdentityFillMaterial::from(&identity))
     }
 
     /// Encrypt + POST a personal login, then sync so match lists see it.

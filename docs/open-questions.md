@@ -109,6 +109,7 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-28 | Browser vault | One toolbar Bitwarden control (not login / authenticator / card widgets). Search + type chips + full item record (notes, identities, cards, TOTP). Click opens the record; Autofill **Fill** injects. Icon may change (lock / key / shield / fingerprint). | [unified panel freeze](specs/2026-08-28-sola-browser-vault-panel-design.md), CURRENT, capabilities, manual/sola-browser |
 | 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |
 | 2026-08-25 | workspaces | `workspace.rm` / `project.rm` reply `{ok:true}` then teardown on the next tick so a pane can close itself without hanging `solactl`. SessionStart idles a leftover working ring. Cleanup is one shell (`git worktree remove` && `workspace.rm`); splitting those as two Grok tools leaves the tab (cwd gone). | CURRENT, CLI freeze header, manual/solactl, skill |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |

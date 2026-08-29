@@ -149,7 +149,7 @@ There is no F12 binding (media-key keyboards).
 
 ## Downloads
 
-Toolbar **download** icon (right of vault / cards) is always there.
+Toolbar **download** icon (right of vault) is always there.
 
 - A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists
   the next file is `report (1).pdf`. There is no Save dialog.
@@ -180,37 +180,34 @@ action buttons yet.
 
 ## Bitwarden vault
 
-Toolbar **key** opens logins. Toolbar **shield** opens authenticator
-codes. Toolbar **card** opens cards. They are separate panels (only
-one at a time). Unlock is shared. While locked the icons sit muted
-(key is a lock). After unlock they come up to full chrome color; the
-open panel’s icon is the accent wash.
+Toolbar **vault** is one control (not separate login / authenticator /
+card buttons). Locked it is a lock; unlocked a key. It becomes a
+shield when this page has a TOTP login, and a fingerprint during a
+passkey ceremony. The open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
-  The key button then opens the **fill login** list for the active page
-  (unless a passkey ceremony is already waiting). The shield and card
-  buttons unlock the same way, then open **authenticator** / **fill card**.
-- **Fill login** lists URI-matching items from **all vaults** you can
-  decrypt (personal plus every organization after unlock/sync). Tall
-  list; items with a passkey show a **passkey** badge. Click to fill
-  username / password into the page.
-- **Authenticator** lists URI-matching logins (all vaults) that have a TOTP secret
-  (same site rule as fill-login; last-used first). Opening the panel
-  fills the top code into an OTP field on the page. The list shows the
-  current code and seconds remaining; click a row to copy that code
-  (and try to fill). The panel stays open so you can see the timeout.
-- **Fill card** lists every card in every vault (cards rarely have URIs). Each
-  row shows the item name, brand, last digits, and expiry. Click fills
-  number, name, expiry, and CVC on the page (standard `cc-*` autocomplete
-  plus common checkout names). The panel does not show the full number.
-- **Create login** is always on the unlocked card (primary when this site has
-  no matches). Username is the last one you used, selected so typing replaces
-  it. Password is a fresh 16-character generated value (visible; **Regenerate**
-  if you want another). URL is the page’s apex domain (`google.com`, no
-  `https://`). **Create** or Enter writes the item to your **personal**
-  Bitwarden vault **first**, then
-  fills every username and password field on the page (including confirm).
-  If the page has no fields yet, the item is still saved.
+  The same panel then shows the vault (unless a passkey ceremony is
+  already waiting).
+- **Browse** searches every item you can decrypt (personal plus every
+  organization after unlock/sync): logins, cards, identities, notes,
+  SSH keys, and the rest. Type chips filter. Autofill suggestions are
+  URI-matching **logins** for the current page; **Fill** on that row
+  injects username / password and closes. Click a row to open the
+  **record**.
+- **Record** shows the whole item: usernames, passwords (reveal + copy),
+  websites, card number / CVC, identity fields, private notes, custom
+  fields, SSH keys, live authenticator code with countdown. **Fill**
+  on a login, card, or identity injects the page. Authenticator **Fill**
+  copies the code and tries to fill an OTP field. Copy does not close
+  the panel.
+- **Create login** is the **+** on the unlocked card. Username is the last
+  one you used, selected so typing replaces it. Password is a fresh
+  16-character generated value (visible; **Regenerate** if you want
+  another). URL is the page’s apex domain (`google.com`, no `https://`).
+  **Create** or Enter writes the item to your **personal** Bitwarden
+  vault **first**, then fills every username and password field on the
+  page (including confirm). If the page has no fields yet, the item is
+  still saved.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
   passkeys** — pick one to complete sign-in. The intercept is injected in

@@ -67,7 +67,7 @@ windows are actually restarted.
 | Mitigation | Where | Status |
 |------------|--------|--------|
 | No 16 ms chrome timer | `sola-browser` `subscription` | **Dogfooded.** Copy / context menu wake via `chrome_wake::wake`. |
-| Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, TOTP, vault fill-wait. Helpers wake Tick. |
+| Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, vault TOTP on the open item, vault fill-wait. Helpers wake Tick. |
 | Working ring `At` ~20 Hz | `sola-kit` `status_mark` | **In code.** `RedrawRequest::At(50ms)`, not `NextFrame`. |
 | Workspaces pointer gated | `sola-workspaces` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
 | Morph2 drag-only vsync | `sola-kit` `sidebar/strip.rs` | **Dogfooded** for tab reorder (stutter fixed by re-enabling vsync *during* drag). Idle must not leave `request_redraw` on. |

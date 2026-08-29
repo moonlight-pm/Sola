@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13  
 **Status:** **Frozen** — implemented and dogfooded (landed on master 2026-08-13)  
-**Related:** vault module (`crates/sola-browser/src/vault/`); [profiles](2026-08-10-sola-browser-profiles-design.md); [manual](../manual/sola-browser.md)
+**Related:** vault module (`crates/sola-browser/src/vault/`); [unified panel](2026-08-28-sola-browser-vault-panel-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [manual](../manual/sola-browser.md)
 
 ## Intent
 
@@ -14,18 +14,15 @@ A generated password never exists only in the page. **Create** (or Enter) persis
 
 ## Surface
 
-Same 360px kit modal, top-right under the vault icon. Unlock, 2FA, and passkey pick are unchanged (no Create on those).
+Same hanging kit modal, top-right under the vault icon. Unlock, 2FA, and passkey pick are unchanged (no Create on those). The unlocked default is the [unified vault panel](2026-08-28-sola-browser-vault-panel-design.md) (search + records). **+** opens this create-login form.
 
-### Fill list (unlocked default)
+### Unlocked vault (browse)
 
-- Title **Fill login** + host subtitle when there are matches.
-- Empty: compact card (no reserved 420px scroller). Copy: **No saved login for this site.** Primary action: **Create login**.
-- Matches: existing rows (name, username, passkey badge). Click fills and closes. **Create login** stays visible (ghost/secondary) with **Close**. **Refresh** stays a quiet control.
-- Size follows content. Tall scroller only when there are matches.
+Create is the **+** on the unified panel (primary empty state is still this form via **+**). Autofill **Fill** on a URI match injects and closes; a row click opens the item record.
 
 ### Create login (replaces the list)
 
-Cancel returns to the list. Nothing is written until Create or Enter.
+Cancel returns to vault browse. Nothing is written until Create or Enter.
 
 | Field | Default | Focus |
 |---|---|---|
@@ -57,8 +54,8 @@ Save error → stay on the form with the message. Do not fill.
 ## Out of scope
 
 Edit/delete, lock, folders, orgs, notes, generator options, passkey **create**,
-per-profile vault, **create-card**. Cards **fill** is a sibling chrome surface
-(separate toolbar button + panel), not this freeze.
+per-profile vault, **create-card**. Card/identity fill and notes live on the
+[unified vault panel](2026-08-28-sola-browser-vault-panel-design.md).
 
 ## Implementation status
 

@@ -292,6 +292,230 @@ fn js_str(s: Option<&str>) -> String {
     serde_json::to_string(s.unwrap_or("")).unwrap_or_else(|_| "\"\"".into())
 }
 
+/// IIFE that fills typical identity / address form fields.
+pub fn fill_identity_script(
+    title: Option<&str>,
+    first_name: Option<&str>,
+    middle_name: Option<&str>,
+    last_name: Option<&str>,
+    address1: Option<&str>,
+    address2: Option<&str>,
+    address3: Option<&str>,
+    city: Option<&str>,
+    state: Option<&str>,
+    postal_code: Option<&str>,
+    country: Option<&str>,
+    company: Option<&str>,
+    email: Option<&str>,
+    phone: Option<&str>,
+    ssn: Option<&str>,
+    username: Option<&str>,
+    passport_number: Option<&str>,
+    license_number: Option<&str>,
+) -> String {
+    let full = {
+        let parts: Vec<&str> = [first_name, middle_name, last_name]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    };
+    let title = js_str(title);
+    let first = js_str(first_name);
+    let middle = js_str(middle_name);
+    let last = js_str(last_name);
+    let full = js_str(full.as_deref());
+    let address1 = js_str(address1);
+    let address2 = js_str(address2);
+    let address3 = js_str(address3);
+    let city = js_str(city);
+    let state = js_str(state);
+    let postal = js_str(postal_code);
+    let country = js_str(country);
+    let company = js_str(company);
+    let email = js_str(email);
+    let phone = js_str(phone);
+    let ssn = js_str(ssn);
+    let username = js_str(username);
+    let passport = js_str(passport_number);
+    let license = js_str(license_number);
+
+    format!(
+        r#"(function(){{
+  var vals={{
+    title:{title}, first:{first}, middle:{middle}, last:{last}, full:{full},
+    address1:{address1}, address2:{address2}, address3:{address3},
+    city:{city}, state:{state}, postal:{postal}, country:{country},
+    company:{company}, email:{email}, phone:{phone}, ssn:{ssn},
+    username:{username}, passport:{passport}, license:{license}
+  }};
+  function visible(el){{
+    if(!el) return false;
+    var s=window.getComputedStyle(el);
+    if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0') return false;
+    var r=el.getBoundingClientRect();
+    return r.width>0 && r.height>0;
+  }}
+  function blob(el){{
+    return ((el.getAttribute('autocomplete')||'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.type||'')).toLowerCase();
+  }}
+  function setVal(el,v){{
+    if(!el||v===null||v===undefined||v==='') return false;
+    try{{ el.focus(); }}catch(e){{}}
+    if(el.tagName==='SELECT'){{
+      var want=String(v);
+      var opts=el.options||[];
+      for(var i=0;i<opts.length;i++){{
+        var ov=String(opts[i].value||'');
+        var ot=String(opts[i].text||'');
+        if(ov===want||ot===want||ov.toLowerCase()===want.toLowerCase()||ot.toLowerCase()===want.toLowerCase()){{
+          el.selectedIndex=i;
+          el.dispatchEvent(new Event('input',{{bubbles:true}}));
+          el.dispatchEvent(new Event('change',{{bubbles:true}}));
+          return true;
+        }}
+      }}
+      return false;
+    }}
+    var proto=(el.tagName==='TEXTAREA'?window.HTMLTextAreaElement:window.HTMLInputElement);
+    proto=proto&&proto.prototype;
+    var desc=proto&&Object.getOwnPropertyDescriptor(proto,'value');
+    if(desc&&desc.set){{ desc.set.call(el,v); }}
+    else {{ el.value=v; }}
+    el.dispatchEvent(new Event('input',{{bubbles:true}}));
+    el.dispatchEvent(new Event('change',{{bubbles:true}}));
+    try{{ el.dispatchEvent(new InputEvent('input',{{bubbles:true,data:v,inputType:'insertText'}})); }}catch(e){{}}
+    return true;
+  }}
+  function score(el, kind){{
+    var a=blob(el);
+    var ac=(el.getAttribute('autocomplete')||'').toLowerCase();
+    if(kind==='title'){{
+      if(ac==='honorific-prefix') return 12;
+      if(/honorific-prefix|nameprefix|name-prefix|\btitle\b/.test(a) && !/job|page|post/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='first'){{
+      if(ac==='given-name') return 12;
+      if(/given-name|firstname|first-name|first_name|\bfname\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='middle'){{
+      if(ac==='additional-name') return 12;
+      if(/additional-name|middlename|middle-name|middle_name|\bmname\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='last'){{
+      if(ac==='family-name') return 12;
+      if(/family-name|lastname|last-name|last_name|surname|\blname\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='full'){{
+      if(ac==='name') return 10;
+      if(/^(name|full.?name|fullname)$/.test(ac)) return 10;
+      if(/\bfull.?name\b|\byour.?name\b/.test(a) && !/user|first|last|card|company|org/.test(a)) return 6;
+      return 0;
+    }}
+    if(kind==='address1'){{
+      if(ac==='address-line1'||ac==='street-address') return 12;
+      if(/address-line1|street-address|address1|addr1|address_1/.test(a)) return 10;
+      if(/\bstreet\b|\baddress\b/.test(a) && !/email|2|3|city|state|zip|postal|country/.test(a)) return 5;
+      return 0;
+    }}
+    if(kind==='address2'){{
+      if(ac==='address-line2') return 12;
+      if(/address-line2|address2|addr2|address_2|apt|suite|unit/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='address3'){{
+      if(ac==='address-line3') return 12;
+      if(/address-line3|address3|addr3/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='city'){{
+      if(ac==='address-level2') return 12;
+      if(/address-level2|city|town|locality/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='state'){{
+      if(ac==='address-level1') return 12;
+      if(/address-level1|\bstate\b|province|region/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='postal'){{
+      if(ac==='postal-code') return 12;
+      if(/postal-code|zipcode|zip-code|zip_code|\bzip\b|\bpostcode\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='country'){{
+      if(ac==='country'||ac==='country-name') return 12;
+      if(/\bcountry\b/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='company'){{
+      if(ac==='organization') return 12;
+      if(/organization|\bcompany\b|\borg\b/.test(a) && !/email/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='email'){{
+      if(ac==='email'||el.type==='email') return 12;
+      if(/\bemail\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='phone'){{
+      if(ac==='tel'||el.type==='tel') return 12;
+      if(/\bphone\b|\btel\b|\bmobile\b/.test(a)) return 10;
+      return 0;
+    }}
+    if(kind==='ssn'){{
+      if(/ssn|social.?security/.test(a)) return 12;
+      return 0;
+    }}
+    if(kind==='username'){{
+      if(ac==='username') return 12;
+      if(/username|user-name|user_name/.test(a) && !/email/.test(a)) return 8;
+      return 0;
+    }}
+    if(kind==='passport'){{
+      if(/passport/.test(a)) return 12;
+      return 0;
+    }}
+    if(kind==='license'){{
+      if(/license|licence|driver.?lic/.test(a)) return 12;
+      return 0;
+    }}
+    return 0;
+  }}
+  var nodes=Array.prototype.slice.call(document.querySelectorAll('input,select,textarea')).filter(function(el){{
+    if(el.disabled||el.readOnly) return false;
+    var t=(el.type||'').toLowerCase();
+    if(t==='hidden'||t==='submit'||t==='button'||t==='checkbox'||t==='radio'||t==='file'||t==='image'||t==='password') return false;
+    return visible(el);
+  }});
+  function best(kind){{
+    var hit=null, bestS=0;
+    for(var i=0;i<nodes.length;i++){{
+      var s=score(nodes[i], kind);
+      if(s>bestS){{ bestS=s; hit=nodes[i]; }}
+    }}
+    return hit;
+  }}
+  var ok=false;
+  var keys=['title','first','middle','last','full','address1','address2','address3','city','state','postal','country','company','email','phone','ssn','username','passport','license'];
+  for(var k=0;k<keys.length;k++){{
+    ok=setVal(best(keys[k]), vals[keys[k]])||ok;
+  }}
+  return ok;
+}})();"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +543,34 @@ mod tests {
         assert!(s.contains("__sola_vault_fill__"));
         let quiet = fill_credentials_script(Some("u"), Some("p"));
         assert!(!quiet.contains("__sola_vault_fill__"));
+    }
+
+    #[test]
+    fn identity_script_maps_autocomplete() {
+        let s = fill_identity_script(
+            None,
+            Some("Jane"),
+            None,
+            Some("Doe"),
+            Some("1 Main"),
+            None,
+            None,
+            Some("Portland"),
+            Some("OR"),
+            Some("97201"),
+            Some("US"),
+            None,
+            Some("jane@example.com"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(s.contains("Jane"));
+        assert!(s.contains("given-name"));
+        assert!(s.contains("postal-code"));
+        assert!(s.contains("jane@example.com"));
     }
 
     #[test]

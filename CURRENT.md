@@ -9,19 +9,20 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-28 (notifications HUD on master; ⌘⇧T reopen-closed in this worktree; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-29 (unified Bitwarden panel in this worktree, **installed** `--release`; notifications HUD on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
 ## Now
 
-1. **Notifications** — freeze
-   [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
-   Desk cards + missed pile. KenHerbert: Allow → **displayed**, graphite
-   card at screen top-right (wrap does not construct Native; origin keys
-   canonicalized). **⌘⇧T** reopens closed tabs (LIFO, 25, per-profile
-   `session.json`) — **installed** `browser` 2026-08-28. Gaps: no sound /
-   actions / D-Bus.
+1. **Browser (this worktree)** — unified Bitwarden panel (one toolbar
+   icon; search + type chips + full records including notes / identities /
+   cards). Freeze
+   [`docs/specs/2026-08-28-sola-browser-vault-panel-design.md`](docs/specs/2026-08-28-sola-browser-vault-panel-design.md).
+   **Installed** `browser --release` 2026-08-28. **Next:** desk smoke
+   (search, record, identity/card/TOTP fill). **⌘⇧T** reopens closed tabs
+   (LIFO, 25). Notifications HUD on master (KenHerbert Allow → desk card).
+   Gaps: vault desk smoke; no item edit; notify no sound / actions / D-Bus.
 2. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
@@ -130,17 +131,16 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 12. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-13. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
-   preview, kvm clipboard, switcher FFM holdoff
-   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: Bitwarden
-   fill decrypts **org vaults** (desk smoke after `install browser`);
-   hover × follows the pointer after close; scheme-less localhost /
-   loopback is `http://`. Passkey **create** smoked. Page menu
-   DevTools / Inspect Element; HTML5 drag/drop. Tab-group pockets
-   **installed**: flush members, hairline rim, header drag moves the
-   pocket, title drop is invalid, hole matches etch row height. Loose
-   is a real section (no box). Extra opens only on the well under the
-   ghost.
+13. **Follow-ups (unordered backlog):** create-card; vault item edit;
+   float chrome, D1/D2, preview, kvm clipboard, switcher FFM holdoff
+   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser already in
+   this tree: org-vault fill **desk smoke**; hover × follows the pointer
+   after close; scheme-less localhost / loopback is `http://`. Passkey
+   **create** smoked. Page menu DevTools / Inspect Element; HTML5
+   drag/drop. Tab-group pockets **installed**: flush members, hairline
+   rim, header drag moves the pocket, title drop is invalid, hole
+   matches etch row height. Loose is a real section (no box). Extra
+   opens only on the well under the ghost.
 
 **Explicit holds:** none.
 
@@ -161,7 +161,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **master** (workspaces + wrapper + **scope**). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
 | Scope | **On master.** Pixel loupe: live follow, zoom 65×65…3×3, hex copy, remembered float. Desktop pointer visible; grid omits the sprite (patched wlroots + River). Installed `scope`+`river`+`shell`; compositor `/opt/sola/bin/river`. | — |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden **unified vault** (one toolbar icon — lock / key / shield when this page has TOTP / fingerprint on passkey; search + type chips + item records; **Create login** via **+**; fill/cards/identities/TOTP/passkeys decrypt **org vaults** too — **installed** `browser` --release 2026-08-28, desk smoke next; create still personal); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts the vault icon, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |

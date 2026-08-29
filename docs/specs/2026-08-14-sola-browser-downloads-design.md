@@ -15,7 +15,7 @@ and be visible in chrome: what is in flight, and what already finished.
 |------|--------|
 | Start | Auto-save. No Save dialog in this slice. |
 | Folder | `~/Downloads` (create if missing). Name collision → `file (1).ext`. |
-| Indicator | Toolbar download icon always visible (right of vault / cards). |
+| Indicator | Toolbar download icon always visible (right of vault). |
 | While in progress | Accent on the icon + a thin progress hairline on the button. Panel does **not** auto-open. |
 | After finish (unseen) | Quiet accent on the icon until the panel is opened. |
 | Panel | Click the icon. Same top-right card as vault / cards (mutually exclusive). |
