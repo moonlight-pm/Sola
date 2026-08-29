@@ -361,7 +361,7 @@ impl App {
                 let unconfirmed = st.restored_unconfirmed;
                 status::persist_all(&self.pane_status);
                 self.sync_row(&id);
-                self.maybe_toast_done(&id, prev, now, unconfirmed);
+                self.maybe_toast_status(&id, prev, now, unconfirmed);
                 self.flush_waits();
                 Task::none()
             }
@@ -378,7 +378,7 @@ impl App {
                     let unconfirmed = st.restored_unconfirmed;
                     status::persist_all(&self.pane_status);
                     self.sync_row(&id);
-                    self.maybe_toast_done(&id, prev, now, unconfirmed);
+                    self.maybe_toast_status(&id, prev, now, unconfirmed);
                     self.flush_waits();
                 }
                 Task::none()
@@ -989,7 +989,7 @@ impl App {
         match self.spawn_workspace(&project_id, &name, None, None, None, None, None, true) {
             Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
-                self.maybe_toast_startup(startup_err);
+                self.maybe_toast_startup(startup_err, &id);
                 self.attach_pane(&id, &[])
             }
             Err(e) => {
@@ -1065,56 +1065,70 @@ impl App {
         Ok((id, startup_err))
     }
 
-    fn maybe_toast_startup(&self, err: Option<String>) {
-        let Some(e) = err else {
-            return;
+    fn toast_place(&self, pane_id: &str) -> (Option<String>, String) {
+        let Some(ws) = self.workspace_for_pane(pane_id) else {
+            return (None, pane_id.to_string());
         };
+        let project =
+            workspace::find_project(&self.projects, &ws.project_id).map(|p| p.name.clone());
+        (project, cli::rail_label(ws))
+    }
+
+    fn emit_notice(&self, title: String, body: String, tag: String) {
         if let Ok(mut client) = bus().lock() {
             let _ = client.emit(Topic::AppNotification(AppNotification {
-                id: format!("ws-startup-{}", now_millis()),
+                id: format!("ws-{tag}-{}", now_millis()),
                 app_id: APP_ID.into(),
                 source: "Workspaces".into(),
-                title: "Startup script failed".into(),
-                body: e,
-                tag: Some("startup".into()),
+                title,
+                body,
+                tag: Some(tag),
                 tab_id: None,
                 url: None,
             }));
         }
     }
 
-    fn maybe_toast_done(
+    fn maybe_toast_startup(&self, err: Option<String>, ws_id: &str) {
+        let Some(e) = err else {
+            return;
+        };
+        let (project, tab) = self.toast_place(ws_id);
+        self.emit_notice(
+            cli::place_label(project.as_deref(), &tab),
+            e,
+            format!("startup-{ws_id}"),
+        );
+    }
+
+    fn maybe_toast_status(
         &self,
         id: &str,
         prev: status::AgentStatus,
         now: status::AgentStatus,
         unconfirmed: bool,
     ) {
-        if now != status::AgentStatus::Done || prev == status::AgentStatus::Done {
+        if now == prev {
             return;
         }
         if unconfirmed || self.window_focused {
             return;
         }
-        let ws = self.workspace_for_pane(id);
-        let name = ws.map(|w| w.name.as_str()).unwrap_or(id);
+        let (project, tab) = self.toast_place(id);
         let agent = self
             .pane_status
             .get(id)
             .and_then(|s| s.agent.as_deref())
             .unwrap_or("agent");
-        if let Ok(mut client) = bus().lock() {
-            let _ = client.emit(Topic::AppNotification(AppNotification {
-                id: format!("ws-done-{id}-{}", now_millis()),
-                app_id: APP_ID.into(),
-                source: "Workspaces".into(),
-                title: format!("{name} is done"),
-                body: agent.to_string(),
-                tag: Some(format!("done-{id}")),
-                tab_id: None,
-                url: None,
-            }));
-        }
+        let Some(notice) = cli::status_notice(project.as_deref(), &tab, agent, now) else {
+            return;
+        };
+        let kind = match now {
+            status::AgentStatus::Done => "done",
+            status::AgentStatus::Waiting => "waiting",
+            _ => return,
+        };
+        self.emit_notice(notice.title, notice.body, format!("{kind}-{id}"));
     }
 
     fn on_call(&mut self, inc: sola_call::Incoming) -> Task<Msg> {
@@ -1584,18 +1598,8 @@ impl App {
 
     fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
         let session = tmux::session_name(id);
-        if let Some(rt) = self.runtimes.get(id) {
-            rt.backend.write(text.as_bytes());
-            if enter {
-                rt.backend.write(b"\r");
-            }
-            return Ok(());
-        }
-        if !tmux::send_literal(&session, text) {
+        if !tmux::send_prompt(&session, text, enter) {
             return Err("send failed".into());
-        }
-        if enter && !tmux::send_enter(&session) {
-            return Err("enter failed".into());
         }
         Ok(())
     }

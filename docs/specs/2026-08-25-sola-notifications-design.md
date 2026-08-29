@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented on `sola-browser`; installed 2026-08-26 (desk smoke pending)  
+**Status:** **Frozen** — implemented (shell HUD + browser wrap + Workspaces cards). KenHerbert desk card confirmed 2026-08-27.  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -101,9 +101,9 @@ promoting remaining `AppToast` senders (launch fail / exit).
 | Freeze | **this document** |
 | Bus topics | **done** (`AppNotification`, `NotificationActivate`) |
 | Shell HUD + pile | **done** |
-| Browser intercept + permission | **done** (no Native ctor; dummy must not inherit `Notification.prototype`; origin keys canonicalized). KenHerbert pending/no-card: **`install browser` 2026-08-27 (second)** — confirm desk card |
-| Workspaces done → notification | **done** |
-| Dogfood | **reinstalled** 2026-08-26 `bus`+`shell`+`browser`+`workspaces` (release, bus first). Permission prompt OK; Native ctor drew an in-page banner. Wrap is SHOW-only; **`install browser` 2026-08-27** — confirm the top-right desk card |
+| Browser intercept + permission | **done** (no Native ctor / no `Notification.prototype`; origin keys canonical) |
+| Workspaces done → notification | **done** (title `{project} · {tab}`, body `grok is done`; waiting is `needs attention`) |
+| Dogfood | KenHerbert: pending → displayed, graphite card top-right (browser install 2026-08-27 second). Workspaces cards installed on this branch. |
 
 ## Decision log
 

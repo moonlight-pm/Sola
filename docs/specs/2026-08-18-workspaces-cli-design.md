@@ -6,7 +6,7 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang)
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
 **Dogfood:** `solactl workspaces` still needs a desk smoke after install  
 **Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4)
 
@@ -72,7 +72,7 @@ an agent needs to orchestrate is on the call plane.
 | `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
 | `workspace.rm` | `--workspace` | `{ok:true}` |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent}]}` |
-| `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` |
+| `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` — bracketed paste into the tmux session, then optional Enter |
 | `pane.read` | `[--pane] [--lines]` | `{text, pane}` |
 
 `--prompt` and `--prompt-file` are mutually exclusive. `--prompt-file` is
@@ -102,7 +102,7 @@ dedicated interrupt. Reply includes `selected: true|false`.
 `workspace.exec`:
 
 1. Prefer the Grok leaf in that workspace.
-2. If that leaf is already Grok: send the prompt (if any) + Enter. `started=false`, `sent=…`.
+2. If that leaf is already Grok: **bracketed-paste** the prompt (if any) into the tmux session, settle, then Enter. `started=false`, `sent=…`. Do not dump raw keys into the client PTY (`send-keys -l` truncates; coalesced CR often never submits).
 3. Else if no tmux session: attach a **new** session with `grok` [prompt] as argv. `started=true`.
 4. Else attach if needed and type a quoted `grok …` line into the shell. `started=true`.
 
@@ -142,5 +142,6 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - `resolve_workspace` by id, name, pane id, path
 - Shell-quoting for `grok '…'`
 - `solactl` bool-flag parse (`--enter --text` order; `--select --name` order)
+- Empty paste skips tmux; `pane.send` / exec `--prompt` use `paste-buffer -p` then Enter
 - CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout

@@ -117,11 +117,11 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "pane.send",
-            "Type into a pane",
+            "Paste into a pane (bracketed; Enter optional)",
             &[
                 opt_s("pane", None, "Workspace / pane id"),
-                req_s("text", Some('t'), "Text to type"),
-                flag("enter", 'e', "Send Enter after the text"),
+                req_s("text", Some('t'), "Text to paste"),
+                flag("enter", 'e', "Submit after the paste"),
             ],
         ),
         method(

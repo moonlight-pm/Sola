@@ -81,6 +81,10 @@ solactl workspaces pane.read --pane SLUG --lines 80
 solactl workspaces pane.wait --pane SLUG --status done --timeout 300
 ```
 
+Long or multiline briefs: `--prompt-file`, not a giant `--prompt`. Send is
+a paste into Grok (then Enter). Always pass `--enter` on `pane.send` when
+you mean submit — without it the text sits in the composer.
+
 A workspace name prefers the **Grok** leaf. Pass a pane id from `pane.list`
 to pin a split.
 

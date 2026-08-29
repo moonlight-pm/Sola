@@ -1,5 +1,8 @@
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 /// Which tmux server this process talks to.
 ///
@@ -309,11 +312,52 @@ pub fn capture_scrollback(session: &str) -> Result<String, String> {
 }
 
 /// Type `text` literally into the session (`send-keys -l`).
+///
+/// Fine for short shell lines. Long or multiline text should use
+/// [`paste_bracketed`] — `send-keys -l` is an argv and will truncate.
 pub fn send_literal(session: &str, text: &str) -> bool {
     tmux_cmd()
         .args(["send-keys", "-t", session, "-l", "--", text])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Paste `text` into the session with tmux bracketed-paste (`paste-buffer
+/// -p`). Newlines stay in the TUI composer instead of submitting; length
+/// is not capped by `send-keys` argv.
+pub fn paste_bracketed(session: &str, text: &str) -> bool {
+    if text.is_empty() {
+        return true;
+    }
+    let buf = format!("sws-paste-{session}");
+    let mut child = match tmux_cmd()
+        .args(["load-buffer", "-b", &buf, "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    {
+        let Some(mut stdin) = child.stdin.take() else {
+            return false;
+        };
+        if stdin.write_all(text.as_bytes()).is_err() {
+            return false;
+        }
+    }
+    if !child.wait().map(|s| s.success()).unwrap_or(false) {
+        return false;
+    }
+    tmux_cmd()
+        .args(["paste-buffer", "-dp", "-b", &buf, "-t", session])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -322,11 +366,34 @@ pub fn send_literal(session: &str, text: &str) -> bool {
 pub fn send_enter(session: &str) -> bool {
     tmux_cmd()
         .args(["send-keys", "-t", session, "Enter"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Brief Grok (or any TUI composer): bracketed paste, settle, optional Enter.
+///
+/// Dumping raw bytes + CR into the tmux *client* PTY lets the writer thread
+/// coalesce paste and Enter, skips bracketed-paste, and truncates on
+/// `send-keys -l`. The inner app then shows a clipped composer and never
+/// submits until a later input (wheel / focus) flushes it.
+pub const PASTE_SETTLE: Duration = Duration::from_millis(80);
+
+pub fn send_prompt(session: &str, text: &str, enter: bool) -> bool {
+    if !text.is_empty() && !paste_bracketed(session, text) {
+        return false;
+    }
+    if enter {
+        if !text.is_empty() {
+            std::thread::sleep(PASTE_SETTLE);
+        }
+        if !send_enter(session) {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn kill_session(session: &str) {
@@ -541,6 +608,12 @@ mod tests {
     fn tmux_conf_disables_status() {
         assert!(TMUX_CONF.contains("status off"));
         assert!(TMUX_CONF.contains("prefix None"));
+    }
+
+    #[test]
+    fn paste_bracketed_empty_skips_tmux() {
+        assert!(paste_bracketed("no-such-session", ""));
+        assert!(send_prompt("no-such-session", "", false));
     }
 
     #[test]

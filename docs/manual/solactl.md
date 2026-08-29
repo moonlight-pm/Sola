@@ -60,7 +60,10 @@ per-project script that runs in a new worktree after spawn (also
 **Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).
 A workspace name prefers the
-Grok leaf when sending, reading, waiting, or exec-ing. `--prompt` implies
+Grok leaf when sending, reading, waiting, or exec-ing. `pane.send` and
+`workspace.exec --prompt` **paste** into the live Grok (tmux
+bracketed-paste, then Enter) so a multiline brief does not submit on
+the first newline and a long prompt is not truncated. `--prompt` implies
 Grok. `--prompt` and `--prompt-file` are exclusive. Spawn parent defaults
 to `$SOLA_PANE_ID` when you run from a Workspaces pane. `--agent` is Grok
 only. `pane.wait` holds until status matches (`--fresh` waits for a

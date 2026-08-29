@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-28 (`crates/sola-agent` retired in this worktree; mail optimistic delete on master; notifications HUD in worktree; `sola-scope` + wrapper on master)
+**As of:** 2026-08-29 (workspaces paste-send + desk-card copy on this branch; `crates/sola-agent` retired; notifications HUD; mail optimistic delete; `sola-scope` + wrapper on master)
 
 ---
 
@@ -17,28 +17,14 @@ Do not invent product policy.
 
 1. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
-   Desk cards drop from the menubar; missed pile is a bell in the right
-   cluster. `AppToast` stays a whisper (`Opening…`, screenshot). Workspaces
-   done-while-unfocused and browser `Notification` emit `Topic::AppNotification`.
-   First install (`shell`+`browser`+`workspaces`, no `bus`) left the
-   shell deaf: Subscribe included new `TopicKind`s, the running bus
-   dropped the whole vec, no `OutputGeometry` / `Windows`, no frames.
-   Recovered with master `shell`. Subscribe now sends a pre-MailStatus
-   prefix then the full set. **Browser:** notify inject called
-   `profiles::active()` from the CEF **renderer** (no profile bind) →
-   renderer panic → no page content. Inject now uses `active_if_bound()`.
-   **Installed** `bus`+`shell`+`browser`+`workspaces` (release, 2026-08-26,
-   bus first). Desk smoke: menubar frames, pages paint. Permission
-   prompt is correct; `new Notification()` still drew Chromium’s
-   in-page banner over the web view (wrap called `new Native(...)`).
-   Wrap reports SHOW only (no Native ctor). **Installed** `browser`
-   (release, 2026-08-27). KenHerbert tester: permission **granted**,
-   status stuck **pending**, no desk card. Two bugs: wrap put
-   `Native.prototype` on the dummy (title/body accessors throw, so
-   `new Notification()` never reports); CEF grant key was
-   `https://host/` vs page `https://host`. **Installed** `browser`
-   (release, 2026-08-27, second). Retest KenHerbert: pending → displayed,
-   graphite card at screen top-right.
+   Desk cards drop from the menubar; missed pile is a bell. `AppToast`
+   stays a whisper (`Opening…`, screenshot). Workspaces done/waiting
+   (unfocused) emit `Topic::AppNotification`: title `{project} · {tab}`,
+   body `grok is done` / `needs attention`. Browser `Notification` is
+   the same card (SHOW-only wrap; no Chromium banner). KenHerbert:
+   pending → displayed, top-right. Subscribe sends a pre-MailStatus
+   prefix so an older bus does not drop the whole vec. **Installed**
+   `bus`+`shell`+`browser` (release); this branch also `workspaces`.
 2. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
@@ -93,7 +79,7 @@ Do not invent product policy.
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
    **Install:** standing OK to `install workspaces` after each finished
    round. Ask for any other target.  
-   **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
+   **Now:** persist + spawn + unfocused desk cards (title `{project} · {tab}`, body `grok is done` / `needs attention`). Crate/app id `sola-workspaces`.
    Methods on sola-call owner `workspaces` (`solactl workspaces ps` / `workspace.spawn` /
    `workspace.exec` / `pane.wait` / `whoami` / …). Control plane is
    first-class: verb changes update `calls.rs` + dispatch + tests +
@@ -131,8 +117,12 @@ Do not invent product policy.
    written back into `keyboard_mods`). Exiting Grok back to the shell
    idles the rail mark (grey disc; SessionEnd used to leave done).
    `workspace.rm` replies before it kills tmux (a pane closing itself
-   no longer hangs `solactl` / leaves the working ring). Installed
-   (self-restart).  
+   no longer hangs `solactl` / leaves the working ring). `pane.send` /
+   `workspace.exec --prompt` bracketed-paste into the tmux session then
+   Enter (raw PTY dump was clipping the composer and not submitting
+   until a later wheel/focus). Desk cards (unfocused): title is
+   `{project} · {tab}`, body is `grok is done` / `needs attention`.
+   Installed (self-restart).  
 9. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
