@@ -30,21 +30,150 @@ pub struct Adapter {
     pub discovering: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Device {
     pub path: DevicePath,
     pub address: String,
     pub alias: String,
+    /// Remote `Name` when BlueZ has resolved one (not a MAC).
+    pub name: Option<String>,
+    pub address_type: Option<String>,
+    pub icon: Option<String>,
+    pub appearance: Option<u16>,
+    pub class: Option<u32>,
+    pub uuids: Vec<String>,
     pub paired: bool,
     pub connected: bool,
     pub rssi: Option<i16>,
     pub battery_pct: Option<u8>,
 }
 
+/// True for `AA:BB:CC:DD:EE:FF` (BlueZ's fallback "name").
+pub fn looks_like_address(s: &str) -> bool {
+    let b = s.trim().as_bytes();
+    b.len() == 17
+        && b.iter().enumerate().all(|(i, c)| {
+            if i % 3 == 2 {
+                *c == b':'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+}
+
 impl Device {
     /// Battery readout for the panel. `None` when BlueZ did not expose it.
     pub fn battery_label(&self) -> Option<String> {
         self.battery_pct.map(|n| format!("{n}%"))
+    }
+
+    /// A name a person can recognize — not a MAC address.
+    pub fn human_name(&self) -> Option<&str> {
+        for candidate in [self.name.as_deref(), Some(self.alias.as_str())] {
+            if let Some(s) = candidate {
+                let t = s.trim();
+                if !t.is_empty() && !looks_like_address(t) {
+                    return Some(t);
+                }
+            }
+        }
+        None
+    }
+
+    /// Headphones / Keyboard / … from BlueZ Icon, Appearance, Class, or UUIDs.
+    pub fn kind_label(&self) -> Option<&'static str> {
+        if let Some(icon) = &self.icon {
+            let i = icon.to_ascii_lowercase();
+            if i.contains("headset") || i.contains("headphone") {
+                return Some("Headphones");
+            }
+            if i.contains("audio-card") || i.contains("speaker") {
+                return Some("Speaker");
+            }
+            if i.contains("keyboard") {
+                return Some("Keyboard");
+            }
+            if i.contains("mouse") {
+                return Some("Mouse");
+            }
+            if i.contains("phone") {
+                return Some("Phone");
+            }
+            if i.contains("computer") {
+                return Some("Computer");
+            }
+        }
+        if let Some(app) = self.appearance {
+            match app {
+                0x0941 | 0x0942 => return Some("Headphones"),
+                0x0943 => return Some("Speaker"),
+                0x0940 | 0x0944 => return Some("Audio"),
+                0x03C1 => return Some("Keyboard"),
+                0x03C2 => return Some("Mouse"),
+                0x00C0..=0x00C6 => return Some("Phone"),
+                _ => {}
+            }
+        }
+        if let Some(class) = self.class {
+            let major = (class >> 8) & 0x1f;
+            let minor = (class >> 2) & 0x3f;
+            match major {
+                1 => return Some("Computer"),
+                2 => return Some("Phone"),
+                4 => {
+                    return Some(match minor {
+                        1 | 2 | 6 => "Headphones",
+                        7 | 8 | 10 => "Speaker",
+                        _ => "Audio",
+                    });
+                }
+                5 => {
+                    if minor & 0x10 != 0 {
+                        return Some("Keyboard");
+                    }
+                    if minor & 0x20 != 0 {
+                        return Some("Mouse");
+                    }
+                }
+                _ => {}
+            }
+        }
+        for u in &self.uuids {
+            let u = u.to_ascii_lowercase();
+            if u.contains("0000110b")
+                || u.contains("00001108")
+                || u.contains("0000111e")
+                || u.contains("0000110a")
+            {
+                return Some("Headphones");
+            }
+        }
+        None
+    }
+
+    pub fn kind_icon(&self) -> Option<&'static str> {
+        match self.kind_label()? {
+            "Headphones" | "Headset" | "Audio" => Some("lucide/headphones"),
+            "Speaker" => Some("lucide/speaker"),
+            "Keyboard" => Some("lucide/keyboard"),
+            "Mouse" => Some("lucide/mouse"),
+            "Phone" => Some("lucide/smartphone"),
+            "Computer" => Some("lucide/monitor"),
+            _ => None,
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        self.human_name()
+            .map(str::to_string)
+            .or_else(|| self.kind_label().map(str::to_string))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.alias.clone())
+    }
+
+    /// Inquiry list: named devices, or unnamed ones BlueZ can still type.
+    pub fn show_nearby(&self) -> bool {
+        !self.paired && (self.human_name().is_some() || self.kind_label().is_some())
     }
 }
 
@@ -65,14 +194,21 @@ impl Snapshot {
         v
     }
 
-    /// Unpaired devices (inquiry). Shown only while adding.
+    /// Unpaired devices (inquiry). Named or typed only — anonymous BLE MACs stay off the list.
     pub fn nearby(&self) -> Vec<&Device> {
-        let mut v: Vec<&Device> = self.devices.iter().filter(|d| !d.paired).collect();
-        v.sort_by(|a, b| match (b.rssi, a.rssi) {
-            (Some(br), Some(ar)) => br.cmp(&ar).then_with(|| a.alias.cmp(&b.alias)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.alias.to_lowercase().cmp(&b.alias.to_lowercase()),
+        let mut v: Vec<&Device> = self.devices.iter().filter(|d| d.show_nearby()).collect();
+        v.sort_by(|a, b| {
+            let an = a.human_name().is_some();
+            let bn = b.human_name().is_some();
+            bn.cmp(&an).then_with(|| match (b.rssi, a.rssi) {
+                (Some(br), Some(ar)) => br.cmp(&ar),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a
+                    .display_name()
+                    .to_lowercase()
+                    .cmp(&b.display_name().to_lowercase()),
+            })
         });
         v
     }
@@ -328,10 +464,12 @@ mod tests {
             path: format!("/org/bluez/hci0/dev_{alias}"),
             address: "AA:BB:CC:DD:EE:FF".into(),
             alias: alias.into(),
+            name: Some(alias.into()),
             paired,
             connected,
             rssi: None,
             battery_pct: battery,
+            ..Device::default()
         }
     }
 
@@ -392,10 +530,12 @@ mod tests {
                     path: "/org/bluez/hci0/dev_near".into(),
                     address: "11:22:33:44:55:66".into(),
                     alias: "Speaker".into(),
+                    name: Some("Speaker".into()),
                     paired: false,
                     connected: false,
                     rssi: Some(-40),
                     battery_pct: None,
+                    ..Device::default()
                 },
             ],
         );
@@ -416,10 +556,55 @@ mod tests {
         assert_eq!(
             snap.nearby()
                 .iter()
-                .map(|d| d.alias.as_str())
+                .map(|d| d.display_name())
                 .collect::<Vec<_>>(),
             ["Speaker"]
         );
+    }
+
+    #[test]
+    fn nearby_hides_anonymous_macs() {
+        let mac = Device {
+            path: "/org/bluez/hci0/dev_aa".into(),
+            address: "AA:BB:CC:DD:EE:01".into(),
+            alias: "AA:BB:CC:DD:EE:01".into(),
+            address_type: Some("random".into()),
+            paired: false,
+            rssi: Some(-30),
+            ..Device::default()
+        };
+        let named = Device {
+            path: "/org/bluez/hci0/dev_buds".into(),
+            address: "11:22:33:44:55:66".into(),
+            alias: "WH-1000XM5".into(),
+            name: Some("WH-1000XM5".into()),
+            paired: false,
+            rssi: Some(-50),
+            ..Device::default()
+        };
+        let typed = Device {
+            path: "/org/bluez/hci0/dev_hs".into(),
+            address: "DE:AD:BE:EF:00:01".into(),
+            alias: "DE:AD:BE:EF:00:01".into(),
+            icon: Some("audio-headset".into()),
+            paired: false,
+            rssi: Some(-40),
+            ..Device::default()
+        };
+        let snap = snapshot_from_parts(Some(adapter(true)), vec![mac, named, typed]);
+        let names: Vec<String> = snap.nearby().iter().map(|d| d.display_name()).collect();
+        assert_eq!(
+            names,
+            vec!["WH-1000XM5".to_string(), "Headphones".to_string()]
+        );
+    }
+
+    #[test]
+    fn looks_like_bluetooth_address() {
+        assert!(looks_like_address("AA:BB:CC:DD:EE:FF"));
+        assert!(looks_like_address("80:45:dd:73:de:0c"));
+        assert!(!looks_like_address("WH-1000XM5"));
+        assert!(!looks_like_address("AirPods"));
     }
 
     #[test]

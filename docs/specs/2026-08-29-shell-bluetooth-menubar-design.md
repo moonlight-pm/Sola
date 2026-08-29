@@ -22,7 +22,7 @@ A Bluetooth control in the **Mac-shaped** sola-shell menubar. The bar stays a me
 | Power | Adapter **toggler** in the popover (kit `form_row` + `toggle_style`). A widget that cannot turn Bluetooth on is a dead icon. |
 | Connected | Name, plus **battery % only when BlueZ `Battery1.Percentage` (or equivalent) is present**. Never fake 100%. **Disconnect** does not unpair. |
 | Paired, idle | Listed under the connected set so reconnect works without inquiry. **Connect**. |
-| Add | **Add device** starts discovery; nearby unpaired appear below. **Pair** then **Connect**. **Done** (or panel close) stops inquiry. Do not leave an inquiry scan running. |
+| Add | **Add device** starts discovery; nearby unpaired appear below. **Pair** then **Connect**. **Done** (or panel close) stops inquiry. Do not leave an inquiry scan running. Nearby lists **named** devices (or ones BlueZ can type as headphones/keyboard/…). Anonymous BLE MAC addresses stay off the list. |
 | Forget | **Not v1.** No mystery “remove”. |
 | Pairing UI | BlueZ **Agent1** inline in this popover (PIN / passkey / confirm / incoming allow). Desk-local shell, **not** sola-call **D3**. |
 | Sampling | In-process `zbus` on the **system** bus (`org.bluez`). Background thread + channel into iced. Slow poll + ObjectManager signals. Opening the panel refreshes immediately. **No 16ms timer.** No new bus topic, no new daemon. |
@@ -49,7 +49,7 @@ Keychron K2                            Connect
 [ Add device ]
 ```
 
-While adding, a **Nearby** list (unpaired, typically with RSSI) and **Pair**. Agent prompts replace the footer until resolved. Empty powered-on: “No connected devices.” Powered-off: “Bluetooth is off.”
+While adding, a **Nearby** list of named/typed unpaired devices and **Pair**. Anonymous HEX addresses are omitted. Copy while searching: “Put the device in pairing mode.” Agent prompts replace the footer until resolved. Empty powered-on: “No connected devices.” Powered-off: “Bluetooth is off.”
 
 ## Architecture
 

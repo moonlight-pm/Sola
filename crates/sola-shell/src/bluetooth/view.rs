@@ -1,10 +1,11 @@
 //! Bluetooth popover — hosted in the Menu overlay.
 
 use iced::widget::{column, container, mouse_area, row, stack, text, toggler};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Color, Element, Length, Padding};
 
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::form::{form_row, toggle_style};
+use sola_kit::components::icon_colored;
 use sola_kit::components::popover;
 use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XS};
 use sola_kit::components::text as kit_text;
@@ -79,6 +80,11 @@ fn card_body(shell: &Shell) -> Element<'_, Msg> {
     )
     .into();
 
+    let muted_c = Color {
+        a: 0.55,
+        ..shell.theme.palette().text
+    };
+
     let mut col = column![power].spacing(SPACE_MD).width(Length::Fill);
 
     if let Some(n) = ui.notice.as_deref() {
@@ -115,13 +121,13 @@ fn card_body(shell: &Shell) -> Element<'_, Msg> {
         );
     } else {
         for d in connected {
-            col = col.push(device_row(ui, d, RowKind::Disconnect));
+            col = col.push(device_row(ui, d, RowKind::Disconnect, muted_c));
         }
         let idle = ui.snapshot.paired_idle();
         if !idle.is_empty() {
             col = col.push(section_label("Not connected"));
             for d in idle {
-                col = col.push(device_row(ui, d, RowKind::Connect));
+                col = col.push(device_row(ui, d, RowKind::Connect, muted_c));
             }
         }
     }
@@ -129,22 +135,22 @@ fn card_body(shell: &Shell) -> Element<'_, Msg> {
     if ui.adding {
         let nearby = ui.snapshot.nearby();
         col = col.push(section_label("Nearby"));
+        let searching = ui
+            .snapshot
+            .adapter
+            .as_ref()
+            .map(|a| a.discovering)
+            .unwrap_or(false);
         if nearby.is_empty() {
-            let searching = ui
-                .snapshot
-                .adapter
-                .as_ref()
-                .map(|a| a.discovering)
-                .unwrap_or(false);
             let copy = if searching {
-                "Searching…"
+                "Searching… Put the device in pairing mode."
             } else {
-                "No devices found"
+                "No named devices found. Put it in pairing mode and try again."
             };
             col = col.push(text(copy).font(fonts::ui()).size(12.0).style(dim));
         } else {
             for d in nearby {
-                col = col.push(device_row(ui, d, RowKind::Pair));
+                col = col.push(device_row(ui, d, RowKind::Pair, muted_c));
             }
         }
         col = col.push(
@@ -175,15 +181,21 @@ enum RowKind {
     Pair,
 }
 
-fn device_row<'a>(ui: &'a Ui, d: &'a Device, kind: RowKind) -> Element<'a, Msg> {
+fn device_row<'a>(ui: &'a Ui, d: &'a Device, kind: RowKind, muted: Color) -> Element<'a, Msg> {
     let busy = ui.busy_path.as_deref() == Some(d.path.as_str());
-    let name: Element<'a, Msg> = text(d.alias.clone())
+    let name: Element<'a, Msg> = text(d.display_name())
         .font(fonts::ui())
         .size(13.0)
         .width(Length::Fill)
         .into();
 
-    let mut info = row![name].spacing(SPACE_SM).align_y(Alignment::Center);
+    let mut info = if let Some(icon) = d.kind_icon() {
+        row![icon_colored(icon, 14, muted), name]
+    } else {
+        row![name]
+    }
+    .spacing(SPACE_SM)
+    .align_y(Alignment::Center);
 
     if let Some(bat) = d.battery_label() {
         info = info.push(text(bat).font(fonts::chrome()).size(12.0).style(dim));

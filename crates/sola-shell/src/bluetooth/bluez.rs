@@ -9,7 +9,7 @@ use zbus::fdo::ManagedObjects;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use super::agent::{AGENT_PATH, Agent, AgentInner};
-use super::{Adapter, Command, Device, Event, Snapshot};
+use super::{Adapter, Command, Device, Event, Snapshot, looks_like_address};
 
 const POLL: Duration = Duration::from_secs(4);
 const RETRY: Duration = Duration::from_secs(5);
@@ -75,9 +75,11 @@ pub fn parse_managed_objects(objects: &ManagedObjects) -> Snapshot {
                 }
                 "org.bluez.Device1" => {
                     let address = prop_str(props, "Address").unwrap_or_default();
+                    let name =
+                        prop_str(props, "Name").filter(|s| !s.is_empty() && !looks_like_address(s));
                     let alias = prop_str(props, "Alias")
-                        .or_else(|| prop_str(props, "Name"))
                         .filter(|s| !s.is_empty())
+                        .or_else(|| name.clone())
                         .unwrap_or_else(|| address.clone());
                     devices.insert(
                         path_s.clone(),
@@ -85,6 +87,12 @@ pub fn parse_managed_objects(objects: &ManagedObjects) -> Snapshot {
                             path: path_s.clone(),
                             address,
                             alias,
+                            name,
+                            address_type: prop_str(props, "AddressType"),
+                            icon: prop_str(props, "Icon"),
+                            appearance: prop_u16(props, "Appearance"),
+                            class: prop_u32(props, "Class"),
+                            uuids: prop_str_list(props, "UUIDs"),
                             paired: prop_bool(props, "Paired").unwrap_or(false),
                             connected: prop_bool(props, "Connected").unwrap_or(false),
                             rssi: prop_i16(props, "RSSI"),
@@ -132,6 +140,18 @@ fn prop_i16(props: &HashMap<String, OwnedValue>, key: &str) -> Option<i16> {
     props.get(key).and_then(as_i16)
 }
 
+fn prop_u16(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u16> {
+    props.get(key).and_then(as_u16)
+}
+
+fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
+    props.get(key).and_then(as_u32)
+}
+
+fn prop_str_list(props: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+    props.get(key).map(as_str_list).unwrap_or_default()
+}
+
 fn as_bool(v: &OwnedValue) -> Option<bool> {
     match &**v {
         Value::Bool(b) => Some(*b),
@@ -161,6 +181,39 @@ fn as_i16(v: &OwnedValue) -> Option<i16> {
         Value::I32(n) => i16::try_from(*n).ok(),
         Value::I64(n) => i16::try_from(*n).ok(),
         _ => None,
+    }
+}
+
+fn as_u16(v: &OwnedValue) -> Option<u16> {
+    match &**v {
+        Value::U16(n) => Some(*n),
+        Value::U32(n) => u16::try_from(*n).ok(),
+        Value::U8(n) => Some(u16::from(*n)),
+        _ => None,
+    }
+}
+
+fn as_u32(v: &OwnedValue) -> Option<u32> {
+    match &**v {
+        Value::U32(n) => Some(*n),
+        Value::U16(n) => Some(u32::from(*n)),
+        Value::U8(n) => Some(u32::from(*n)),
+        _ => None,
+    }
+}
+
+fn as_str_list(v: &OwnedValue) -> Vec<String> {
+    match &**v {
+        Value::Array(arr) => arr
+            .inner()
+            .iter()
+            .filter_map(|item| match item {
+                Value::Str(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
+        Value::Str(s) => vec![s.to_string()],
+        _ => Vec::new(),
     }
 }
 
@@ -249,7 +302,11 @@ async fn session(
                     CmdResult::Gone => return SessionEnd::Disconnected,
                 }
             }
-            _ = tokio::time::sleep(POLL) => {
+            _ = tokio::time::sleep(if discovering {
+                Duration::from_secs(1)
+            } else {
+                POLL
+            }) => {
                 push_snapshot(&om, event_tx, &inner).await;
             }
             added_ev = async {
@@ -501,6 +558,8 @@ async fn start_discovery(
     let mut filter: HashMap<&str, Value<'_>> = HashMap::new();
     filter.insert("DuplicateData", Value::Bool(false));
     filter.insert("Transport", Value::from("auto"));
+    // Drop distant BLE beacons; a pairing device on the desk is louder.
+    filter.insert("RSSI", Value::I16(-80));
     let _ = a.set_discovery_filter(filter).await;
     let _ = a.set_pairable(true).await;
     match a.start_discovery().await {
