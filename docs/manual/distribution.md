@@ -36,16 +36,19 @@ the picker shows (fontconfig's family name).
 
 ### NixOS
 
+`services.sola.enable = true` already installs **Inter** and
+**JetBrains Mono** via the Sola NixOS module. Add extras yourself if
+you want them in the picker:
+
 ```nix
 fonts.packages = with pkgs; [
-  inter
-  jetbrains-mono
   # optional extras the picker can offer:
   nerd-fonts.iosevka-term-slab
 ];
 ```
 
-Rebuild (`nixos-rebuild switch`) so fontconfig picks them up.
+Rebuild (`nixos-rebuild switch`) so fontconfig picks them up. Confirm
+with `fc-list : family | grep -E 'Inter|JetBrains Mono'`.
 
 ### Other distributions
 

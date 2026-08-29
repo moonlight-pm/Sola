@@ -3,6 +3,16 @@
 This installs **prebuilt Sola binaries** plus all required runtime
 configuration via a NixOS module. You will not compile anything.
 
+**From source** (clone + `cargo make install`): [`CONTRIBUTING.md`](CONTRIBUTING.md).
+That path sets `services.sola.installRelease = false` so the module does
+not fetch this tarball.
+
+**Current gap:** the published tarball URL for **v0.1.1** 404s
+(`nix/release.nix`). `nixos-rebuild` with `services.sola.enable = true`
+and the default `installRelease = true` will fail at fetch until a
+maintainer recuts the release (`cargo make publish`). Until then, use
+the CONTRIBUTING path.
+
 ## Requirements
 
 - NixOS (the flake is built against `nixos-unstable`; `nixos-25.05`+
@@ -120,25 +130,29 @@ similar.
 
 `services.sola.enable = true` does the following:
 
-- Installs the Sola binaries (`sola`, `solactl`, `sola-shell`,
+- When `installRelease = true` (default): installs the Sola binaries
+  from the GitHub tarball (`sola`, `solactl`, `sola-shell`,
   `sola-river`, `sola-kit`, `sola-settings`, `sola-monitor`,
   `sola-browser`, `sola-terminal`, `sola-mail`, …) under the Nix
-  store and links them onto `PATH`.
-- Installs a **patched River** (River 0.4.5 with our carried Xwayland
-  destroy-state fix — see `nix/patches/`).
-- Configures `programs.nix-ld` with the 26 native libraries
-  Chromium's `libcef.so` loads at runtime.
+  store and links them onto `PATH`; activation symlinks
+  `/opt/sola/{bin,share}` at that package (leaves a real directory
+  alone). When `installRelease = false`, skip the tarball and create
+  real `/opt/sola/{bin,share}` directories for `cargo make install`
+  — see CONTRIBUTING.md.
+- Installs a **patched River** (River 0.4.5 with carried patches —
+  see `nix/patches/`).
+- Configures `programs.nix-ld` with the native libraries Chromium's
+  `libcef.so` loads at runtime.
 - Adds GStreamer plugins + `glib-networking` + their session env
-  vars so the legacy WebKit-based apps (browser, terminal, shell,
-  mail) can play media and use HTTPS.
+  vars (historical WebKitGTK helpers; iced apps do not need WebKitGTK).
 - Adds `xdg-utils` and `desktop-file-utils` for default-browser
-  routing.
+  routing; **wayland** and **xwayland** so iced binaries can dlopen
+  `libwayland-client` and River can find Xwayland.
 - Enables `hardware.graphics`.
-- Sets up `/opt/sola/` via activation script: symlinks
-  `/opt/sola/bin` and `/opt/sola/share` (icons, cursors, fonts) at
-  the Nix store package, and creates `/opt/sola/log` as a writable
-  directory. Several places in the sola binaries hardcode these
-  paths.
+- Installs **Inter** and **JetBrains Mono** (`fonts.packages`) so
+  UI/mono roles resolve (see `docs/manual/distribution.md`).
+- Creates `/opt/sola/log` as a writable directory. Binaries hardcode
+  `/opt/sola/{bin,share,log}`.
 
 The full configuration is in `nix/module.nix`.
 
@@ -166,6 +180,9 @@ above.
 - **`error: hash mismatch in fixed-output derivation`** — your local
   flake input is pinned to a release whose tarball changed on the
   server. Run `nix flake update sola` to refresh.
+- **GitHub release tarball 404** (v0.1.1 as of 2026-08) — Shape 1
+  prebuilt install is blocked until `cargo make publish`. Compile from
+  source instead: CONTRIBUTING.md (`installRelease = false`).
 - **`sola` exits immediately with a Wayland-related error** — you
   are probably in another desktop session. Sola needs a bare TTY.
 - **A `sola-kit` app shows a blank window** — GPU initialization

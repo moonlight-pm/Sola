@@ -57,6 +57,7 @@ ask the human.
 | `CURRENT.md` | Only living session handoff |
 | `PERFORMANCE.md` | GPU / idle program log (not a second CURRENT) |
 | `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
+| `CONTRIBUTING.md` | From-source NixOS setup (`services.sola.installRelease = false`) |
 | `nix/` | NixOS module + `nix/image/` ISO/qcow sources |
 | `crates/sola-install` | Installer wizard binary |
 | `var/images/` | Local ISO/qcow products (gitignored) |

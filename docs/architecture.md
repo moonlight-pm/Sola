@@ -247,7 +247,7 @@ Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`
 
 | Path | What |
 |------|------|
-| Shape 1 | Flake `packages.sola` + `nixosModules.default`; colleague ops in root [`INSTALL.md`](../INSTALL.md) |
+| Shape 1 | Flake `packages.sola` + `nixosModules.default`; `services.sola.installRelease` (default true) installs the tarball; colleague ops in root [`INSTALL.md`](../INSTALL.md). From-source: [`CONTRIBUTING.md`](../CONTRIBUTING.md) (`installRelease = false`) |
 | Shape 2 (harness) | `nixosConfigurations.sola-vm` + `packages.sola-vm-qcow2`; `SOLA_VM_STAGE` + impure stage |
 | Shape 3 (product) | `nixosConfigurations.sola-iso` + `packages.sola-iso` → `var/images/sola.iso` |
 | Stage source | Always **`target/release`** (this tree); never `/opt/sola/bin`; guest ELFs patchelf’d |
