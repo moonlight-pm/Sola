@@ -109,6 +109,7 @@ nix/                   # NixOS module (Shape 1) + image/ISO profiles
 apocrypha/             # Reference-only: legacy WebView stack (not built)
 CURRENT.md             # Living session focus (only handoff)
 INSTALL.md             # Shape 1 colleague install (NixOS module + tarball)
+CONTRIBUTING.md        # From-source NixOS setup (`installRelease = false`)
 docs/
   README.md            # Docs map + session boot
   progress-model.md    # How progress docs work

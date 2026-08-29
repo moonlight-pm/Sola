@@ -6,7 +6,7 @@
 - QEMU ISO path e2e (boot ISO → erase → reboot target → Sola) not signed off  
 - Timezone auto-detect not done (interim fixed US/Mountain / `America/Denver`)  
 - Installer/desktop polish  
-- Shape 1 release tarball URL 404 (v0.1.1)  
+- Shape 1 release tarball URL 404 (v0.1.1); from-source host uses `services.sola.installRelease = false` ([CONTRIBUTING.md](../../CONTRIBUTING.md))  
 - Operator product manual for ISO install (hold until ISO dogfoodable)  
 **As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
 
