@@ -227,8 +227,11 @@ impl Groups {
         }
     }
 
-    /// New group at the end of the groups region. Tab leaves any old group.
-    pub fn new_group(&mut self, tab: TabId) {
+    /// Wrap `tab` in a new expanded group (default name `Group`, then
+    /// `Group 2`, …). Membership is in place; [`Self::normalize`] clusters
+    /// the header with its member. Tab leaves any old group first.
+    /// Returns the new group id.
+    pub fn new_group(&mut self, tab: TabId) -> String {
         self.leave(tab);
         let id = new_group_id(&self.groups);
         self.groups.push(TabGroup {
@@ -236,8 +239,9 @@ impl Groups {
             name: self.next_name(),
             collapsed: false,
         });
-        self.member.insert(tab, id);
+        self.member.insert(tab, id.clone());
         self.dissolve_empty();
+        id
     }
 
     pub fn add_to(&mut self, tab: TabId, group_id: &str) {
@@ -270,17 +274,6 @@ impl Groups {
                 g.collapsed = false;
             }
         }
-    }
-
-    pub fn ungroup_tab(&mut self, tab: TabId) {
-        self.leave(tab);
-        self.dissolve_empty();
-    }
-
-    /// Dissolve the group; members become loose (order kept by normalize).
-    pub fn ungroup_all(&mut self, group_id: &str) {
-        self.member.retain(|_, gid| gid != group_id);
-        self.groups.retain(|g| g.id != group_id);
     }
 
     pub fn toggle(&mut self, group_id: &str) {
@@ -551,14 +544,12 @@ mod tests {
     #[test]
     fn new_group_lifts_tab() {
         let (mut g, mut tabs) = setup();
-        g.new_group(TabId(5));
+        let id = g.new_group(TabId(5));
         g.normalize(&mut tabs);
         assert_eq!(g.groups.len(), 3);
         assert_eq!(g.groups[2].name, "Group");
-        assert_eq!(
-            g.of_tab(TabId(5)).map(str::to_string),
-            Some(g.groups[2].id.clone())
-        );
+        assert_eq!(g.groups[2].id, id);
+        assert_eq!(g.of_tab(TabId(5)), Some(id.as_str()));
         assert_eq!(tabs.last().map(|t| t.id.0), Some(5));
     }
 

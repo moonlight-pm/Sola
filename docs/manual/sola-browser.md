@@ -101,17 +101,20 @@ tab is replaced by a blank rather than closing the window. `⌘⇧T` (Browser
 again for the one before that. The stack is per profile, up to 25, and
 is saved in `session.json`. Order of open tabs is saved there too.
 
-**Groups** are named folders at the **top** of the strip. Each group is a
+**Groups** are named folders in the strip (they sit among loose tabs). Each group is a
 quiet pocket with a hairline rim; members sit flush under the header.
 A hair of air between pockets stays put while you drag. Hovering members
 or the floor of a pocket grows that well by one row. Dropping on a
 group **title** is ignored (the tab returns). Dragging the **header**
 moves the whole pocket. Taking a tab out shrinks the well. Loose tabs
-stay in one run underneath. Right-click a tab for **New group**, **Add to…**,
-or **Ungroup**. Right-click a group header to **Rename** or **Ungroup**
-(members go loose). Click the header to collapse — the page stays if you
-were on a tab inside. Drag a loose tab into a group to join it; drag a
-member into the loose run to leave. `⌘T` and links from other apps
+stay in one run underneath. `⌘G` (Browser → **New Group**) wraps the
+**selected loose tab** in a new group, focuses the name, and selects
+`Group` (then `Group 2`, …) so the next keystroke replaces it. Enter
+keeps it; Esc reverts. The chord does nothing when the current tab is
+already in a group. Hover a group header for a **pencil** to rename
+later. The strip has no right-click menu. Click the header to collapse
+— the page stays if you were on a tab inside. Drag a loose tab into a
+group to join it; drag a member into the loose run to leave. `⌘T` and links from other apps
 (`xdg-open`, `solactl open`) always make a **loose** tab at the **bottom**
 of the strip. Only ⌘-click inserts under the current tab.
 Empty groups disappear. There are no colors, nested groups, or spaces

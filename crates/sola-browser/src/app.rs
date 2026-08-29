@@ -104,20 +104,15 @@ pub enum Msg {
     /// Global left-button released — ends a nav-hold, not a sidebar drag.
     CursorReleased,
     ToggleGroup(String),
-    TabContext(TabId),
-    GroupContext(String),
     MenuDismiss,
-    NewGroup(TabId),
-    AddToGroup {
-        tab: TabId,
-        group: String,
-    },
-    UngroupTab(TabId),
-    UngroupGroup(String),
-    RenameStart(String),
+    /// ⌘G: wrap the selected loose tab in a group and start renaming.
+    NewGroup,
+    /// Hover pencil on a group header.
+    RenameGroup(String),
+    /// Second tick after the rename field is mounted: select the name.
+    RenameSelectAll,
     RenameInput(String),
     RenameCommit,
-    RenameCancel,
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
@@ -265,8 +260,6 @@ pub enum PageMenuAction {
 
 #[derive(Debug, Clone)]
 enum CtxTarget {
-    Tab(TabId),
-    Group(String),
     Page(PageContext),
     History { forward: bool },
 }
@@ -1717,8 +1710,8 @@ impl<E: Engine> App<E> {
             }
             Msg::NavStop => {
                 if self.renaming.is_some() {
-                    self.renaming = None;
-                    return Task::none();
+                    self.clear_group_rename();
+                    return crate::integration::unfocus_chrome();
                 }
                 if self.context_menu.is_some() {
                     self.context_menu = None;
@@ -2006,56 +1999,27 @@ impl<E: Engine> App<E> {
                 self.groups.toggle(&id);
                 self.persist_session();
             }
-            Msg::TabContext(id) => {
-                self.context_menu = Some((last_cursor_point(), CtxTarget::Tab(id)));
-            }
-            Msg::GroupContext(id) => {
-                self.context_menu = Some((last_cursor_point(), CtxTarget::Group(id)));
-            }
             Msg::MenuDismiss => {
                 self.context_menu = None;
                 self.nav_hold = None;
             }
-            Msg::NewGroup(id) => {
+            Msg::NewGroup => {
                 self.context_menu = None;
-                self.groups.new_group(id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
+                return self.new_group_from_active();
             }
-            Msg::AddToGroup { tab, group } => {
+            Msg::RenameGroup(id) => {
                 self.context_menu = None;
-                self.groups.add_to(tab, &group);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
+                return self.begin_group_rename(id);
             }
-            Msg::UngroupTab(id) => {
-                self.context_menu = None;
-                self.groups.ungroup_tab(id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
-            }
-            Msg::UngroupGroup(id) => {
-                self.context_menu = None;
-                self.groups.ungroup_all(&id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
-            }
-            Msg::RenameStart(id) => {
-                self.context_menu = None;
-                let name = self
-                    .groups
-                    .group(&id)
-                    .map(|g| g.name.clone())
-                    .unwrap_or_default();
-                self.renaming = Some((id, name));
-                return Task::batch([
-                    iced::widget::operation::focus(group_rename_id()),
-                    iced::advanced::widget::operate(
-                        iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                            group_rename_id(),
-                        ),
+            Msg::RenameSelectAll => {
+                if self.renaming.is_none() {
+                    return Task::none();
+                }
+                return iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        group_rename_id(),
                     ),
-                ]);
+                );
             }
             Msg::RenameInput(s) => {
                 if let Some((_, draft)) = &mut self.renaming {
@@ -2063,12 +2027,12 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::RenameCommit => {
-                if let Some((id, name)) = self.renaming.take() {
+                if let Some((id, name)) = self.take_group_rename() {
                     self.groups.rename(&id, name);
                     self.persist_session();
+                    return crate::integration::unfocus_chrome();
                 }
             }
-            Msg::RenameCancel => self.renaming = None,
             Msg::WebViewFocused => {
                 // Page took the click: drop iced chrome focus so keys go to
                 // the shader → CEF, and tell the host it is the focused OSR
@@ -2324,6 +2288,52 @@ impl<E: Engine> App<E> {
         tracing::info!(id = id.0, "reopened closed tab");
     }
 
+    /// ⌘G: wrap the selected tab if it is loose. No-op when the current
+    /// tab is already in a group (or the strip is empty).
+    fn new_group_from_active(&mut self) -> Task<Msg> {
+        let id = self.cached_active;
+        if self.groups.of_tab(id).is_some() {
+            return Task::none();
+        }
+        if !self.cached_tabs.iter().any(|t| t.id == id) {
+            return Task::none();
+        }
+        let gid = self.groups.new_group(id);
+        self.groups.normalize(&mut self.cached_tabs);
+        self.persist_session();
+        self.begin_group_rename(gid)
+    }
+
+    fn begin_group_rename(&mut self, id: String) -> Task<Msg> {
+        let name = self
+            .groups
+            .group(&id)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        self.renaming = Some((id, name));
+        GROUP_RENAMING.store(true, Ordering::Relaxed);
+        self.url_bar_focused = false;
+        // Drop CEF host focus so keys land in iced, not the page.
+        let _ = self.cmd_tx.send(Cmd::Focus(false));
+        // `State::focus` parks the caret at the end; select-all on the
+        // next tick (after the field is mounted and focused).
+        Task::batch([
+            iced::widget::operation::focus(group_rename_id()),
+            Task::done(Msg::RenameSelectAll),
+        ])
+    }
+
+    fn clear_group_rename(&mut self) {
+        self.renaming = None;
+        GROUP_RENAMING.store(false, Ordering::Relaxed);
+    }
+
+    fn take_group_rename(&mut self) -> Option<(String, String)> {
+        let value = self.renaming.take();
+        GROUP_RENAMING.store(false, Ordering::Relaxed);
+        value
+    }
+
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
     /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
     /// `integration::run_intent`. Always loose, at the bottom of the strip.
@@ -2524,30 +2534,6 @@ impl<E: Engine> App<E> {
 
     fn menu_items(&self, target: &CtxTarget) -> Vec<MenuItem<Msg>> {
         match target {
-            CtxTarget::Tab(id) => {
-                let mut items = vec![MenuItem::action("New group", Msg::NewGroup(*id))];
-                let current = self.groups.of_tab(*id);
-                for g in &self.groups.groups {
-                    if current == Some(g.id.as_str()) {
-                        continue;
-                    }
-                    items.push(MenuItem::action(
-                        format!("Add to {}", g.name),
-                        Msg::AddToGroup {
-                            tab: *id,
-                            group: g.id.clone(),
-                        },
-                    ));
-                }
-                if current.is_some() {
-                    items.push(MenuItem::action("Ungroup", Msg::UngroupTab(*id)));
-                }
-                items
-            }
-            CtxTarget::Group(gid) => vec![
-                MenuItem::action("Rename", Msg::RenameStart(gid.clone())),
-                MenuItem::action("Ungroup", Msg::UngroupGroup(gid.clone())),
-            ],
             CtxTarget::Page(ctx) => page_menu_items(ctx),
             CtxTarget::History { forward } => {
                 let (entries, current) = self
@@ -2587,7 +2573,6 @@ impl<E: Engine> App<E> {
             SidebarItem::new(label, Msg::ActivateTab(t.id))
                 .active(t.id == active_id)
                 .on_close(Msg::CloseTab(t.id))
-                .on_context(Msg::TabContext(t.id))
                 .id(t.id.0.to_string())
         };
         let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
@@ -2614,21 +2599,27 @@ impl<E: Engine> App<E> {
                     .id(g.id.clone())
                     .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
                     .header_active(header_active)
-                    .header_context(Msg::GroupContext(g.id.clone()))
                     .header_count(n);
-                if let Some((rid, draft)) = &self.renaming {
-                    if rid == &g.id {
-                        let field = text_input("Group name", draft)
-                            .id(group_rename_id())
-                            .size(12)
-                            .font(sola_kit::fonts::ui_medium())
-                            .line_height(iced::widget::text::LineHeight::Relative(1.2))
-                            .on_input(Msg::RenameInput)
-                            .on_submit(Msg::RenameCommit)
-                            .style(sola_kit::components::text_input::style)
-                            .padding(Padding::from([1, 4]));
-                        section = section.header_content(field);
-                    }
+                let renaming_this = self.renaming.as_ref().is_some_and(|(rid, _)| rid == &g.id);
+                if renaming_this {
+                    let draft = self
+                        .renaming
+                        .as_ref()
+                        .map(|(_, d)| d.as_str())
+                        .unwrap_or("");
+                    let field = text_input("Group name", draft)
+                        .id(group_rename_id())
+                        .size(12)
+                        .font(sola_kit::fonts::ui_medium())
+                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
+                        .on_input(Msg::RenameInput)
+                        .on_submit(Msg::RenameCommit)
+                        .style(sola_kit::components::text_input::style)
+                        .padding(Padding::from([1, 4]))
+                        .width(Length::Fill);
+                    section = section.header_content(field);
+                } else {
+                    section = section.header_edit(Msg::RenameGroup(g.id.clone()));
                 }
                 sections.push(section);
                 while i < tabs.len() && self.groups.of_tab(tabs[i].id) == Some(gid.as_str()) {
@@ -4986,10 +4977,19 @@ impl<E: Engine> App<E> {
                     {
                         Some(Msg::NavReloadOrStop)
                     }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('g') =>
+                    {
+                        Some(Msg::NewGroup)
+                    }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if status == event::Status::Ignored => Some(Msg::NavStop),
+                    }) if GROUP_RENAMING.load(Ordering::Relaxed)
+                        || status == event::Status::Ignored =>
+                    {
+                        Some(Msg::NavStop)
+                    }
                     // Tab between vault form fields while the panel is open.
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Tab),
@@ -5047,6 +5047,8 @@ impl<E: Engine> App<E> {
 
 /// Divider drag: `listen_with` is a fn pointer and cannot close over App.
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
+/// Group-name field is up — Escape must cancel even when the input captured it.
+static GROUP_RENAMING: AtomicBool = AtomicBool::new(false);
 
 fn chrome_drain_subscription() -> Subscription<Msg> {
     Subscription::run(chrome_drain_stream)

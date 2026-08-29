@@ -299,7 +299,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
                     SidebarSection::new(g.name.clone(), rows)
                         .id(g.id.clone())
                         .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
-                        .header_count(n),
+                        .header_count(n)
+                        .header_edit(Msg::Noop),
                 );
             }
             Block::Item(it) => {
@@ -333,7 +334,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         body(
             "Morphing-hole reorder (Scratch morph2). Click a group title \
              to fold it; drag it to move the whole group. 2px before the \
-             drag starts."
+             drag starts. Hover a group header for a pencil (rename)."
         )
         .style(muted),
         demo,

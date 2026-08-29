@@ -141,6 +141,10 @@ pub struct SidebarItem<'a, Message> {
     /// next row under a stationary cursor still shows the chip). `id` is
     /// auto-assigned from the row index when missing.
     pub on_close: Option<Message>,
+    /// Hover-only stacked pencil (same overlay as [`Self::on_close`]).
+    /// Used for inline rename on a collapsible header. Hidden while
+    /// [`SidebarSection::header_content`] is set.
+    pub on_edit: Option<Message>,
     /// Dim trailing label (e.g. relative time `19m`, unread count).
     /// Laid out in a fixed trailing column so it cannot crush the title.
     pub secondary: Option<String>,
@@ -182,6 +186,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             message,
             shortcut: None,
             on_close: None,
+            on_edit: None,
             secondary: None,
             subtitle: None,
             on_double_click: None,
@@ -213,6 +218,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
     /// a row slides away (no mouse-out needed).
     pub fn on_close(mut self, msg: Message) -> Self {
         self.on_close = Some(msg);
+        self
+    }
+
+    /// Hover-only pencil overlay; same hit rules as [`Self::on_close`].
+    pub fn on_edit(mut self, msg: Message) -> Self {
+        self.on_edit = Some(msg);
         self
     }
 
@@ -332,6 +343,8 @@ pub struct SectionCollapse<'a, Message> {
     pub on_toggle: Message,
     pub header_active: bool,
     pub on_context: Option<Message>,
+    /// Hover pencil on the header (inline rename).
+    pub on_edit: Option<Message>,
     /// Trailing count (shown when collapsed).
     pub count: Option<String>,
     /// Replace the default chevron+name body (e.g. an inline rename field).
@@ -398,6 +411,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             on_toggle,
             header_active: false,
             on_context: None,
+            on_edit: None,
             count: None,
             header_content: None,
         });
@@ -428,6 +442,15 @@ impl<'a, Message> SidebarSection<'a, Message> {
     pub fn header_content(mut self, el: impl Into<Element<'a, Message, Theme>>) -> Self {
         if let Some(c) = &mut self.collapse {
             c.header_content = Some(el.into());
+        }
+        self
+    }
+
+    /// Hover pencil on the group header (rename). Hidden while a
+    /// [`Self::header_content`] field is showing.
+    pub fn header_edit(mut self, msg: Message) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.on_edit = Some(msg);
         }
         self
     }
@@ -795,6 +818,11 @@ fn tab_close_icon() -> iced::widget::svg::Handle {
     H.get_or_init(|| icon_handle("lucide/x")).clone()
 }
 
+fn tab_edit_icon() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/pencil")).clone()
+}
+
 /// Quiet title stack: idle is muted type on nothing; active is a
 /// darker well (etched into the column), not a gradient card.
 fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
@@ -897,6 +925,11 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
     }
     if let Some(ctx) = collapse.on_context {
         item = item.on_context(ctx);
+    }
+    if collapse.header_content.is_none() {
+        if let Some(edit) = collapse.on_edit {
+            item = item.on_edit(edit);
+        }
     }
     if let Some(content) = collapse.header_content {
         // Keep the folder chevron; only the name is the field.
@@ -1220,6 +1253,7 @@ where
         message,
         shortcut,
         on_close,
+        on_edit,
         secondary,
         subtitle,
         on_double_click,
@@ -1284,7 +1318,15 @@ where
             .padding(pad)
             .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered))
             .into();
-        return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
+        return finish_list_row(
+            row_el,
+            chrome,
+            active,
+            on_close,
+            on_edit,
+            hover_tracked,
+            density,
+        );
     }
 
     // ── Plain path (no reorder). ──
@@ -1353,7 +1395,15 @@ where
                     .on_press(message)
                     .into()
             };
-        return finish_list_row(row_el, chrome, active, on_close, hover_tracked, density);
+        return finish_list_row(
+            row_el,
+            chrome,
+            active,
+            on_close,
+            on_edit,
+            hover_tracked,
+            density,
+        );
     };
 
     // ── Reorder-enabled path. ──
@@ -1392,22 +1442,24 @@ where
         chrome,
         active,
         on_close,
+        on_edit,
         hover_tracked,
         density,
     )
 }
 
-/// Etch lip (list rows) + hover-only stacked close. The 1px pad is
+/// Etch lip (list rows) + hover-only stacked close/edit. The 1px pad is
 /// reserved on every list row so selecting does not shift the title;
 /// the lip colour paints only when active. Card chrome skips the lip
-/// so agent session rows stay pixel-stable. Close sits *on top* of the
+/// so agent session rows stay pixel-stable. The chip sits *on top* of the
 /// row via `stack` (never a trailing sibling) so the title width is stable
-/// and the × does not steal the reorder press target.
+/// and the control does not steal the reorder press target.
 fn finish_list_row<'a, Message: Clone + 'a>(
     row_el: Element<'a, Message>,
     chrome: SidebarItemChrome,
     active: bool,
     on_close: Option<Message>,
+    on_edit: Option<Message>,
     hover_tracked: bool,
     density: SidebarDensity,
 ) -> Element<'a, Message> {
@@ -1427,36 +1479,51 @@ fn finish_list_row<'a, Message: Clone + 'a>(
         row_el
     };
 
-    let Some(close_msg) = on_close else {
+    let chip = if let Some(msg) = on_close {
+        Some(hover_chip(HoverChip::Close, msg, active, chrome, density))
+    } else {
+        on_edit.map(|msg| hover_chip(HoverChip::Edit, msg, active, chrome, density))
+    };
+    let Some(chip) = chip else {
         return etched;
     };
-    let chip = close_chip(close_msg, active, chrome, density);
     if hover_tracked {
         // Always mount: paint/hit from live cursor-over-row, not enter
         // tracking. After a close the next row slides under a stationary
         // pointer; `on_enter` never fires, but the next draw still sees
-        // the cursor and the × stays available.
+        // the cursor and the chip stays available.
         return stack![etched, HoverClose { chip }].into();
     }
-    // No hover tracking: × stays visible (`sidebar()` helper, or a
+    // No hover tracking: chip stays visible (`sidebar()` helper, or a
     // panel that never called `item_hover`).
     stack![etched, chip].into()
 }
 
-/// Right-aligned stacked ×. Shared by the always-visible fallback and
+#[derive(Clone, Copy)]
+enum HoverChip {
+    Close,
+    Edit,
+}
+
+/// Right-aligned stacked chip. Shared by the always-visible fallback and
 /// the cursor-gated [`HoverClose`] overlay.
-fn close_chip<'a, Message: Clone + 'a>(
-    close_msg: Message,
+fn hover_chip<'a, Message: Clone + 'a>(
+    kind: HoverChip,
+    msg: Message,
     active: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
 ) -> Element<'a, Message> {
     let m = density.metrics();
-    let close = button(icon_svg(tab_close_icon(), m.close as u16))
+    let handle = match kind {
+        HoverChip::Close => tab_close_icon(),
+        HoverChip::Edit => tab_edit_icon(),
+    };
+    let chip = button(icon_svg(handle, m.close as u16))
         .style(move |theme, status| tab_close_style(theme, status, active, chrome))
         .padding(Padding::from([3, 6]))
-        .on_press(close_msg);
-    container(close)
+        .on_press(msg);
+    container(chip)
         .align_x(iced::alignment::Horizontal::Right)
         .align_y(iced::alignment::Vertical::Center)
         .width(Length::Fill)
@@ -2886,6 +2953,7 @@ mod tests {
                 on_toggle: (),
                 header_active: false,
                 on_context: None,
+                on_edit: None,
                 count: Some("3".into()),
                 header_content: None,
             },
@@ -2893,6 +2961,36 @@ mod tests {
         assert_eq!(item.label, "Work");
         assert_eq!(item.section_header, Some(true));
         assert_eq!(item.secondary.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn header_edit_is_pencil_until_rename_field() {
+        let idle = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                on_edit: Some(()),
+                count: None,
+                header_content: None,
+            },
+        );
+        assert!(idle.on_edit.is_some());
+        let renaming = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                on_edit: Some(()),
+                count: None,
+                header_content: Some(iced::widget::text("Work").into()),
+            },
+        );
+        assert!(renaming.on_edit.is_none());
     }
 
     #[test]
@@ -2904,6 +3002,7 @@ mod tests {
                 on_toggle: (),
                 header_active: false,
                 on_context: None,
+                on_edit: None,
                 count: None,
                 header_content: None,
             },
@@ -2915,6 +3014,7 @@ mod tests {
                 on_toggle: (),
                 header_active: false,
                 on_context: None,
+                on_edit: None,
                 count: None,
                 header_content: Some(iced::widget::text("Work").into()),
             },

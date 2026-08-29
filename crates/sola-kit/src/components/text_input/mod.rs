@@ -646,8 +646,10 @@ where
     ) {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
 
-        operation.text_input(self.id.as_ref(), layout.bounds(), state);
+        // Focusable first: `State::focus` parks the caret at the end, so
+        // a same-pass `focus` + `select_all` still ends as a selection.
         operation.focusable(self.id.as_ref(), layout.bounds(), state);
+        operation.text_input(self.id.as_ref(), layout.bounds(), state);
     }
 
     fn update(

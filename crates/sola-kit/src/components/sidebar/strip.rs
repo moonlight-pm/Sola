@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
-use iced::advanced::widget::{tree, Tree};
+use iced::advanced::widget::{tree, Operation, Tree};
 use iced::advanced::{Clipboard, Shell, Widget};
 use iced::mouse;
 use iced::time::Instant;
@@ -1189,20 +1189,57 @@ where
         let _ = style;
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        // Without this, focus / select-all never reach an inline header
+        // field (the default Widget::operate is a no-op).
+        if tree.children.len() != self.leaves.len() {
+            tree.diff_children(&self.leaves);
+        }
+        for ((child, child_tree), child_layout) in self
+            .leaves
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(layout.children())
+        {
+            child
+                .as_widget_mut()
+                .operate(child_tree, child_layout, renderer, operation);
+        }
+    }
+
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-        _renderer: &iced::Renderer,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
     ) -> mouse::Interaction {
         let st = tree.state.downcast_ref::<StripState>();
         if st.dragging {
-            mouse::Interaction::Grabbing
-        } else {
-            mouse::Interaction::None
+            return mouse::Interaction::Grabbing;
         }
+        self.leaves
+            .iter()
+            .zip(tree.children.iter())
+            .zip(layout.children())
+            .map(|((child, child_tree), child_layout)| {
+                child.as_widget().mouse_interaction(
+                    child_tree,
+                    child_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            })
+            .max()
+            .unwrap_or(mouse::Interaction::None)
     }
 }
 

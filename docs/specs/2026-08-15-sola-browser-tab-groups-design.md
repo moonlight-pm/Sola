@@ -1,14 +1,14 @@
 # sola-browser tab groups
 
 **Date:** 2026-08-15  
-**Status:** **Frozen** — implemented on `browser-polish`; pocket + insert rules installed  
-**Branch / worktree:** `browser-polish`  
+**Status:** **Frozen** — implemented; pocket + insert rules + **⌘G** / hover rename installed  
+**Branch / worktree:** `sola-browser`  
 **Related:** [unified sidebar](2026-08-13-unified-sidebar-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [session persist](2026-06-15-session-persistence-design.md)
 
 | | |
 |--|--|
-| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip |
-| **Dogfood** | **installed** this worktree. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside |
+| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip; **⌘G** new group |
+| **Dogfood** | **installed** `browser --release` 2026-08-29. ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside; **⌘G** focuses and selects the name; hover pencil to rename |
 | **Gaps** | spaces; color; drag-to-create |
 
 ## Intent
@@ -26,8 +26,8 @@ Profiles stay “identity + workspace.” Groups do not get their own cookies.
 |------|--------|
 | Shape | In-strip folders. Group blocks and loose tabs **intermix** (Morph2). A group is a contiguous header+members atom; it may sit anywhere in the strip. |
 | Spaces | Later. Persist must not assume a single global strip forever. |
-| Membership | Context menu **and** drag across the group / loose boundary. |
-| New group | Context menu only. Dragging one loose tab onto another does **not** create a group. |
+| Membership | Drag across the group / loose boundary. |
+| New group | **⌘G** (Browser → New Group) on the **selected loose tab**. No-op if that tab is already in a group. Dragging one loose tab onto another does **not** create a group. |
 | ⌘T / New Tab | Always loose, appended at the **end of the strip**. |
 | Collapse + active | Stay on that page. Member rows hide. Header uses the selected etch. |
 | Empty group | Dissolves. No parked empty headers. |
@@ -53,8 +53,9 @@ containment — no extra indent). Not the uppercase settings section label.
 **Click header** → expand / collapse (same **2px** click-vs-drag threshold as
 tabs). Live reorder is kit Morph2 (hole + FLIP).
 
-**Rename** → header field; Enter commits, Esc reverts. Offered from the
-header menu.
+**Rename** → header field with the default name selected, as soon as ⌘G
+creates the group. Enter commits, Esc reverts. Hover the header for a
+pencil to rename later. There is no strip right-click.
 
 ## Drag
 
@@ -74,52 +75,29 @@ targets are those rows plus the slots between them.
 | Loose among loose | Reorder only |
 | Group header | The whole block moves. May land anywhere among groups **or** loose tabs. |
 
-Dragging a hidden member is impossible (expand first, or use Ungroup).
+Dragging a hidden member is impossible (expand first).
 
 Live preview must match the commit: a loose tab crossing into a group block
 reads as joining, not as “order only.”
 
-## Context menu
+## New group (⌘G)
 
-Kit has no right-click menu today (`popover` / `popover_anchored` only).
-This slice adds a kit primitive. Browser is the first consumer — not a
-private chrome menu.
+Default name `Group`, then `Group 2`, …. The **selected loose tab**
+becomes the first member; the header wraps it **in place** (groups and
+loose tabs intermix). Starts expanded. The name field is focused with
+the default selected so the next keystroke replaces it.
 
-**Kit**
+No-op when the selected tab is already in a group. Chrome owns ⌘G (the
+page does not see it).
 
-- Flat actions, separators, disabled rows. **No submenu** in v1
-- Opens at the **pointer**
-- Outside click / Escape dismisses
-- App owns `Option<MenuState>` (one menu per window)
+Hover the header for a **pencil** to rename later (same overlay as
+the tab ×). Enter commits; Esc reverts.
 
-**Sidebar hook (opt-in):** `SidebarItem::on_context` and the same on a
-collapsible header. Right-click does **not** start reorder.
+Join / leave / dissolve stay **drag**. The tab strip has **no**
+right-click menu.
 
-**Tab row**
-
-| Item | When |
-|------|------|
-| New group | always |
-| Add to *Name* | one row per **other** group |
-| Ungroup | tab is in a group |
-
-No Close in the menu (hover `×` stays).
-
-**Group header**
-
-| Item | When |
-|------|------|
-| Rename | always |
-| Ungroup | always — dissolve; members go to the **end** of the loose run, keeping relative order |
-
-**New group:** default name `Group`, then `Group 2`, …. The clicked tab
-becomes the first member; the new block is inserted at the **end of the
-groups region**. If that tab was already in a group it leaves first (and
-dissolves the old group when it was the last member). Starts expanded.
-
-**Add to *Name*:** tab moves to the **end** of that block.
-
-**Ungroup (tab):** tab goes to the **end** of the loose run.
+The kit `context_menu` primitive remains for **page** right-click and
+hold-back/forward history — not for tabs or group headers.
 
 ## Model and persist
 
@@ -188,9 +166,10 @@ learn membership.
 | Item | Status |
 |------|--------|
 | Freeze | **this document** |
-| Kit collapsible section + context menu | **done** |
+| Kit collapsible section + context menu | **done** (page + history; strip no longer uses it) |
 | Chrome groups + persist + strip | **done** |
-| Dogfood | installed (pocket; ⌘T / OpenUrl append loose; ⌘-click beside) |
+| ⌘G new group + inline rename | **done** (focus + select-all; hover pencil to rename later) |
+| Dogfood | pocket + insert rules installed; **⌘G** installed `browser --release` 2026-08-29 |
 
 ## Decision log
 
@@ -202,6 +181,8 @@ learn membership.
 | 2026-08-15 | Collapse keeps the page; header selected |
 | 2026-08-15 | Empty group dissolves |
 | 2026-08-15 | Menu **and** drag for join / leave; New group is menu-only |
+| 2026-08-29 | New group is **⌘G** on a selected loose tab (name selected). Strip right-click removed; join / leave stay drag |
+| 2026-08-29 | Hover pencil on the group header to rename later |
 | 2026-08-15 | Drag header reorders blocks only; does not ungroup |
 | 2026-08-15 | Kit-native context menu + opt-in collapsible sections |
 | 2026-08-15 | No color, no nesting, no close-all |
