@@ -267,6 +267,14 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             shell.open_panel == Some(crate::app::Panel::NotifyPile),
         ));
     }
+    if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
+        cluster.push(bluetooth_chip(
+            icon,
+            fg,
+            muted,
+            shell.open_panel == Some(crate::app::Panel::Bluetooth),
+        ));
+    }
     cluster.push(cpu_btn);
     if let Some(g) = shell.stats.gpu {
         let gpu_btn: Element<'_, Msg> = bar_button(
@@ -491,6 +499,21 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
         .align_y(Alignment::Center),
         false,
         Msg::RaiseMail,
+    )
+    .into()
+}
+
+fn bluetooth_chip(
+    icon: crate::bluetooth::BarIcon,
+    fg: Color,
+    muted: Color,
+    active: bool,
+) -> Element<'static, Msg> {
+    let tint = if icon.muted { muted } else { fg };
+    bar_button(
+        icon_colored(icon.name, ICON_SIZE, tint),
+        active,
+        Msg::ToggleBluetooth,
     )
     .into()
 }

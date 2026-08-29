@@ -6,6 +6,7 @@ use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
 mod app;
+pub mod bluetooth;
 mod builtins;
 pub mod calendar;
 pub mod components;
