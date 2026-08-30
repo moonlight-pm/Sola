@@ -150,7 +150,9 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 13. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-14. **Follow-ups (unordered backlog):** create-card; vault item edit;
+14. **Follow-ups (unordered backlog):** IPC contract handshake
+   ([idea](docs/ideas/2026-08-30-ipc-contract-compat.md) — mixed worktree
+   installs; not Now); create-card; vault item edit;
    float chrome, D2, preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: org-vault fill
    **desk smoke**; hover × follows the pointer after close; scheme-less
