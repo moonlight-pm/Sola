@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-29 (shell Bluetooth menubar in this worktree; `crates/sola-agent` retired; mail inbox other-client refresh on master; notifications HUD in worktree; `sola-scope` + wrapper on master)
+**As of:** 2026-08-29 (shell Bluetooth + volume menubar in this worktree; `crates/sola-agent` retired; mail inbox other-client refresh on master; notifications HUD in worktree; `sola-scope` + wrapper on master)
 
 ---
 
@@ -23,8 +23,9 @@ Do not invent product policy.
    Nearby inquiry omits 6-pair hex addresses (`AA-BB-…`). Volume chip left of
    Bluetooth (`Panel::Audio`): default-sink level on the icon, popover slider
    + mute + output/input device pick (`pw-dump` / `wpctl`). Media keys still
-   `solactl media`. **Installed** `shell` (debug, 2026-08-29). **Next:** desk-smoke
-   volume keys vs chip, sink/source switch, dashed-MAC nearby filter.
+   `solactl media`. **Installed** `shell` (debug, 2026-08-29). WH-CH520 paired
+   on the desk. **Next:** desk-smoke volume keys vs chip, sink/source switch,
+   dashed-MAC nearby filter.
 2. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
    Desk cards drop from the menubar; missed pile is a bell in the right

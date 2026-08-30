@@ -4,7 +4,7 @@
 **Status:** Frozen — implemented in `sola-shell`; installed 2026-08-29 (desk smoke pending)  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (calendar / audio / bluetooth as shell popovers, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/bluetooth/` + menubar right-cluster icon + `Panel::Bluetooth` on the existing Menu overlay  
-**Dogfood:** `shell` installed debug 2026-08-29. Host BlueZ on (novus `nixos-rebuild` 2026-08-29; Intel AX210 `hci0` powered). Desk smoke of the popover pending.  
+**Dogfood:** `shell` installed debug 2026-08-29. Host BlueZ on (novus; Intel AX210 `hci0`). WH-CH520 paired from the popover. Nearby 6-pair hex filter in the same install as volume; not re-smoked.  
 **Gaps:** no Forget / unpair; no audio-profile picker; no adapter chooser when several exist; pairing agent is KeyboardDisplay on the shell connection (not a call-plane D3 confirm)
 
 ## Intent
@@ -15,7 +15,7 @@ A Bluetooth control in the **Mac-shaped** sola-shell menubar. The bar stays a me
 
 | Rule | Choice |
 |------|--------|
-| Icon | Right cluster, **left of the stats** (system-control, not a metric). Full-height hit (`bar_button`). `lucide/bluetooth` / `bluetooth-off` / `bluetooth-connected`. Theme `text` / muted — **no accent**, no view-local hex. |
+| Icon | Right cluster, **left of the stats**, immediately **right of volume** when that chip is shown. Full-height hit (`bar_button`). `lucide/bluetooth` / `bluetooth-off` / `bluetooth-connected`. Theme `text` / muted — **no accent**, no view-local hex. |
 | Off vs on | Readable on the icon. Adapter powered-off → `bluetooth-off` + muted. Powered, nothing connected → `bluetooth`. Powered + ≥1 connected → `bluetooth-connected`, still quiet (same fg as on). |
 | No adapter | **Hide** the icon (same honesty as GPU hiding without NVML). Powered-off adapter still shows. |
 | Click | Existing **Menu** overlay, `Panel::Bluetooth`. Kit `popover`, card width 320 (stats / notify pile family). |

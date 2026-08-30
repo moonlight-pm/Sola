@@ -138,6 +138,9 @@ similar.
   for battery). The menubar Bluetooth chip talks to `org.bluez`; it
   hides when no adapter is present. Do **not** add Blueman — Sola owns
   that popover.
+- The menubar **volume** chip talks to PipeWire (`pw-dump` / `wpctl`).
+  The module does **not** enable PipeWire; the host already must (same
+  as media keys). The chip hides if WirePlumber is missing.
 - Sets up `/opt/sola/` via activation script: symlinks
   `/opt/sola/bin` and `/opt/sola/share` (icons, cursors, fonts) at
   the Nix store package, and creates `/opt/sola/log` as a writable
