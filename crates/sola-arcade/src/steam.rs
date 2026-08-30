@@ -106,8 +106,9 @@ impl SteamGame {
     }
 }
 
-/// How the gallery orders rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// How the gallery orders rows. Persisted in [`crate::prefs::ArcadePrefs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SortMode {
     #[default]
     Alphabetical,

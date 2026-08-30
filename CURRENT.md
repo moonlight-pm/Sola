@@ -9,45 +9,49 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-30 (this worktree: codecs CEF + autoplay; vault panel + **⌘G**; notifications HUD on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-30 (two-way sync: codecs CEF + autoplay + vault/⌘G onto master; shell Bluetooth + volume already on master; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
 ## Now
 
-1. **Browser (this worktree)** — unified Bitwarden panel (one toolbar
-   icon; search + type chips + full records including notes / identities /
-   cards). Freeze
+1. **Browser** — codecs CEF (H.264/AAC `canPlayType` `probably`) +
+   `--autoplay-policy=no-user-gesture-required`; unified Bitwarden panel;
+   **⌘G** new group (name focused+selected; hover pencil). Freeze
    [`docs/specs/2026-08-28-sola-browser-vault-panel-design.md`](docs/specs/2026-08-28-sola-browser-vault-panel-design.md).
-   **Installed** `browser --release` 2026-08-29 (**⌘G** focus+select name;
-   hover pencil to rename).
-   **⌘G** wraps a **loose** selected tab in a group, focuses the name,
-   and selects it so typing overwrites (Enter saves). Hover pencil on the
-   header to rename later. Strip right-click removed; join/leave stay
-   drag. **Next:** Steam store trailer desk smoke (codecs CEF live:
-   AAC/H.264 `canPlayType` `probably`; `--autoplay-policy=no-user-gesture-required`).
-   **⌘⇧T** reopens closed tabs (LIFO, 25). Notifications HUD on master
-   (KenHerbert Allow → desk card). Gaps: vault desk smoke; Steam autoplay
-   desk smoke; no item edit; notify no sound / actions / D-Bus.
-2. **GPU idle** — living track:
+   **Installed** `browser --release` 2026-08-30. **Next:** Steam store
+   trailer desk smoke. Gaps: vault desk smoke; no item edit; notify no
+   sound / actions / D-Bus.
+2. **Shell Bluetooth + volume** (on master) —
+   Bluetooth freeze
+   [`docs/specs/2026-08-29-shell-bluetooth-menubar-design.md`](docs/specs/2026-08-29-shell-bluetooth-menubar-design.md);
+   volume freeze
+   [`docs/specs/2026-08-29-shell-audio-menubar-design.md`](docs/specs/2026-08-29-shell-audio-menubar-design.md).
+   Nearby inquiry omits 6-pair hex addresses (`AA-BB-…`). Volume chip left of
+   Bluetooth (`Panel::Audio`): default-sink level on the icon, popover slider
+   + mute + output/input device pick (`pw-dump` / `wpctl`). Media keys still
+   `solactl media`. **Installed** `shell` (debug, 2026-08-29). WH-CH520 paired
+   on the desk. **Next:** desk-smoke volume keys vs chip, sink/source switch,
+   dashed-MAC nearby filter.
+3. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
    Desk sample 2026-08-25: **mean 17.7%** at P8 / 21 W (was ~30–40%).
    Opaque-region **not fully smoked** (session apps did not re-exec).
    **Next:** restart those windows and re-measure, then River NVIDIA knobs.
-3. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
+4. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
    loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
-4. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
+5. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
    `selection` atom. Workspaces PTYs share the palette. **Installed**
    `terminal` (2026-08-21).
-5. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
+6. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
    `Role::Observer` + `Wire::Trace` (not RPC on the bus). Kit JSON
    highlighter. **Installed** `call` + `monitor` (debug, 2026-08-21).
    Desk smoke pending. GPU menubar ranking (SM % + VRAM) also lands.
-6. **sola-mail** — **partial** (on **master**; `mail-polish` merged).
+7. **sola-mail** — **partial** (on **master**).
    Letter reading (kit `prose`, HTML preferred); Mail.app list (bold
    unread, one-line subjects); always-on reader toolbar (icons +
    tooltips; message actions muted until a row is selected); scroll
@@ -58,8 +62,15 @@ Do not invent product policy.
    Copy Message still flattens URLs). Magic-link / long first-party URLs
    stay visible (Wicket “Sign in” mail). Menubar inbox unread chip
    (accent; click raises mail; hidden when mail is closed).
-   **Install:** ask; last slice was `install mail`.
-7. **Marketing site (sola.computer)** — **teaser live** at
+   Optimistic delete (row leaves immediately; rapid `d`/Trash does not
+   wait on IMAP). A long scrolled list keeps its place (keyed rows +
+   silent refresh of the loaded window).
+   **This slice:** inbox tracks other clients. Persistent IDLE on INBOX
+   (re-SELECT at least every 30s) plus a 45s poll; silent refresh no
+   longer keeps rows the server has already MOVE/EXPUNGEd (that merge
+   treated a shorter page as a scrolled tail).
+   **Install:** `mail` (debug, 2026-08-28). Self-restarts.
+8. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
    `sola`, image `sola-landing`). Paper
@@ -69,7 +80,7 @@ Do not invent product policy.
    **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
-8. **sola-workspaces** — **partial** (on master)  
+9. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -119,35 +130,36 @@ Do not invent product policy.
    `workspace.rm` replies before it kills tmux (a pane closing itself
    no longer hangs `solactl` / leaves the working ring). Installed
    (self-restart).  
-9. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+10. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
-10. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+11. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
    kit helper + `Role::Observer`. Workspaces registers owner `workspaces`
    (desk smoke pending). **D3** (confirm gates) is open. Catalog sticky
    on the bus still later (monitor observes the call socket instead).  
-11. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+12. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    Per-title nest: **Fit to window** or a locked resolution (default **1080p**).
    Fit follows the gamescope host frame on zone/float (nested mode-control +
-   focused window at 0,0). Keep the game **fullscreen** for Fit.  
+   focused window at 0,0). Keep the game **fullscreen** for Fit. Nest passes
+   `--cursor-scale-height` (desktop-sized host pointer; Factorio was huge).
+   A–Z / Recent sort persists (`arcade-prefs.json`).  
    **Install:** standing OK to `install arcade` after each finished round.  
    - Fit rezone dogfooded (Factorio, fullscreen on).  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
-12. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-13. **Follow-ups (unordered backlog):** create-card; vault item edit;
-   float chrome, D1/D2, preview, kvm clipboard, switcher FFM holdoff
-   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser already in
-   this tree: org-vault fill **desk smoke**; hover × follows the pointer
-   after close; scheme-less localhost / loopback is `http://`. Passkey
-   **create** smoked. Page menu DevTools / Inspect Element; HTML5
-   drag/drop. Tab-group pockets **installed**: flush members, hairline
-   rim, header drag moves the pocket, title drop is invalid, hole
-   matches etch row height. Loose is a real section (no box). Extra
-   opens only on the well under the ghost. **⌘G** new group **installed**
-   2026-08-29 (`browser --release`; name focused+selected; hover pencil).
+13. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+14. **Follow-ups (unordered backlog):** create-card; vault item edit;
+   float chrome, D2, preview, kvm clipboard, switcher FFM holdoff
+   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: org-vault fill
+   **desk smoke**; hover × follows the pointer after close; scheme-less
+   localhost / loopback is `http://`. Passkey **create** smoked. Page
+   menu DevTools / Inspect Element; HTML5 drag/drop. Tab-group pockets
+   **installed**: flush members, hairline rim, header drag moves the
+   pocket, title drop is invalid, hole matches etch row height. Loose
+   is a real section (no box). Extra opens only on the well under the
+   ghost. **⌘G** new group **installed** 2026-08-29.
 
 **Explicit holds:** none.
 
@@ -164,16 +176,17 @@ warning cleanups; worktree hygiene the user asks for.
 | Launch | Physical TTY → `/opt/sola/bin/sola` | `cargo make vm run` / `iso run` |
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
-| Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
+| Dist path | Shape 1 colleague module (`INSTALL.md`); tarball v0.1.1 **404**. From-source: `CONTRIBUTING.md` (`installRelease = false`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **master** (workspaces + wrapper + **scope**). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
 | Scope | **On master.** Pixel loupe: live follow, zoom 65×65…3×3, hex copy, remembered float. Desktop pointer visible; grid omits the sprite (patched wlroots + River). Installed `scope`+`river`+`shell`; compositor `/opt/sola/bin/river`. | — |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **⌘G** new group on a loose tab, name focused+selected; hover pencil to rename; strip has no right-click); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden **unified vault** (one toolbar icon — lock / key / shield when this page has TOTP / fingerprint on passkey; search + type chips + item records; **Create login** via **+**; fill/cards/identities/TOTP/passkeys decrypt **org vaults** too — **installed** `browser` --release 2026-08-28, desk smoke next; create still personal); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts the vault icon, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). Steam store autoplay: codecs CEF + `--autoplay-policy` **installed** 2026-08-30 (`canPlayType` AAC/H.264 `probably`; reload trailer). | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
-| Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
+| Mail | **On master, installed** `mail` (debug, 2026-08-28): other-client inbox MOVE/EXPUNGE no longer stick on the list. No HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack (`illuno.slack.com`) paints. `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
+| Agent | **Retired** (this worktree). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
@@ -201,7 +214,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
 | Wrapper | **`sola-wrapper <id>`**; `app_id` is the configured id; per-id CEF profile under `~/.config/sola/wrapper/<id>/`; Applications catalog (`kind` + `url`); not sola-browser chrome |
-| Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents. **`sola-agent` is not the start of Workspaces.** |
+| Agent product | **Workspaces** (`grok` CLI in PTYs). The iced ACP/Grok-leader GUI (`crates/sola-agent`) is **retired** — do not rebuild it or a multi-client ACP chat. |
 | Workspaces | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
 | Workspaces CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |

@@ -55,9 +55,9 @@ where
         id = Some(a.to_string());
     }
     if engine {
-        let id = profile.or(id).ok_or_else(|| {
-            ParseError("sola-wrapper --engine requires --profile=<id>".into())
-        })?;
+        let id = profile
+            .or(id)
+            .ok_or_else(|| ParseError("sola-wrapper --engine requires --profile=<id>".into()))?;
         validate_id(&id)?;
         return Ok(Args::Engine { id });
     }

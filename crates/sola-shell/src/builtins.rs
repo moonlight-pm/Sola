@@ -37,7 +37,7 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Workspaces".into(),
             command: "/opt/sola/bin/sola-workspaces".into(),
             // `folders` — stacked project groups. Distinct from Terminal
-            // (`terminal`) and Agent (`bot`).
+            // (`terminal`).
             icon: "lucide/folders".into(),
             ..Default::default()
         },
@@ -55,13 +55,6 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Kit".into(),
             command: "/opt/sola/bin/sola-kit".into(),
             icon: "lucide/palette".into(),
-            ..Default::default()
-        },
-        Application {
-            app_id: "sola-agent".into(),
-            label: "Agent".into(),
-            command: "/opt/sola/bin/sola-agent".into(),
-            icon: "lucide/bot".into(),
             ..Default::default()
         },
         Application {

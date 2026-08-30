@@ -11,7 +11,7 @@ history and as a rewrite aid — not as a second stack to extend.
 | Path | What it was | Status |
 |------|-------------|--------|
 | `sola-app/` | GTK4 + WebKit6 WebView app framework | Frozen host. Superseded by `crates/sola-kit` (iced). |
-| `apps/agent/` | WebView coding-agent prototype (`claude` CLI) | Retired. Live app is `crates/sola-agent` (iced + Fugu). |
+| `apps/agent/` | WebView coding-agent prototype (`claude` CLI) | Retired. Kit ACP GUI (`crates/sola-agent`) also retired 2026-08-28; daily agent work is Workspaces. |
 | `apps/mail/` | Full IMAP/SMTP/IDLE mail client (WebView UI) | **Reference for a future `crates/sola-mail`.** Settings already has iced mail *config* (`Topic::MailConfig`); the client UI/engine has not been ported. |
 
 ## Do not

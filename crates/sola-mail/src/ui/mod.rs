@@ -1,33 +1,40 @@
 //! Kit UI: three-pane mail client (graphite list + reading composition).
 
+mod list_sync;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
+use iced::widget::{
+    Space, button, column, container, keyed_column, row, scrollable, text, text_editor,
+};
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
-use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_bus::Message;
+use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::prose::prose_selectable;
 use sola_kit::components::style::{
-    mix_white, HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+    HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::components::{
-    button as kit_btn, field, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
+    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, field, readable, sidebar,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
-use crate::protocol::{folder_count_badge, folder_label, Folder, MessageBody, MessageSummary};
+use crate::protocol::{Folder, MessageBody, MessageSummary, folder_count_badge, folder_label};
 use crate::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
@@ -38,6 +45,12 @@ const SIDEBAR_W: f32 = 200.0;
 const CHROME_H: f32 = 40.0;
 /// Comfortable reading measure (~65ch at 14px prose).
 const READ_MAX_W: f32 = 640.0;
+/// Wait for rapid deletes to settle before fetching the next body.
+const SETTLE_SELECT: Duration = Duration::from_millis(120);
+
+fn list_scroll_id() -> ScrollId {
+    ScrollId::new("mail-message-list")
+}
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -75,6 +88,11 @@ pub enum Msg {
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
+    /// After rapid delete/advance, load the body of the row we landed on.
+    SettleSelect {
+        uid: u32,
+        generation: u64,
+    },
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -86,6 +104,15 @@ struct LastMove {
     uid: u32,
     from_folder: String,
     to_folder: String,
+    list_id: String,
+    summary: Option<MessageSummary>,
+}
+
+struct RemovedMail {
+    summary: MessageSummary,
+    from_folder: String,
+    to_folder: String,
+    selected_folder: String,
 }
 
 struct ComposeDraft {
@@ -129,6 +156,11 @@ pub struct App {
     composing: bool,
     draft: ComposeDraft,
     last_move: Option<LastMove>,
+    /// UIDs removed from the list before IMAP MOVE finishes.
+    pending_gone: HashSet<(String, u32)>,
+    pending_removed: HashMap<u32, RemovedMail>,
+    /// Bumped on every selection change so delayed body fetches can cancel.
+    select_gen: u64,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
     /// Last inbox unread we published on `Topic::MailStatus`.
@@ -165,6 +197,9 @@ impl Default for App {
             composing: false,
             draft: empty_draft(""),
             last_move: None,
+            pending_gone: HashSet::new(),
+            pending_removed: HashMap::new(),
+            select_gen: 0,
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
             published_inbox_unread: None,
@@ -261,10 +296,20 @@ impl App {
                 self.composing = false;
                 self.search_active = false;
                 self.search_query.clear();
+                self.select_gen = self.select_gen.saturating_add(1);
+                self.pending_gone.clear();
                 self.load_folder(name);
                 Task::none()
             }
             Msg::SelectMessage(uid) => {
+                self.select_gen = self.select_gen.saturating_add(1);
+                self.select_message(uid);
+                Task::none()
+            }
+            Msg::SettleSelect { uid, generation } => {
+                if generation != self.select_gen || self.selected_uid != Some(uid) {
+                    return Task::none();
+                }
                 self.select_message(uid);
                 Task::none()
             }
@@ -424,22 +469,9 @@ impl App {
                 let Some(uid) = self.selected_uid else {
                     return Task::none();
                 };
-                self.move_and_advance(uid, dest);
-                Task::none()
+                self.move_and_advance(uid, dest)
             }
-            Msg::Undo => {
-                if let Some(lm) = self.last_move.take() {
-                    mail_send(MailCmd::Move {
-                        folder: lm.to_folder,
-                        uid: lm.uid,
-                        dest: lm.from_folder,
-                    });
-                    self.toast = Some("Move undone".into());
-                    self.toast_undo = false;
-                    self.load_folder(self.selected_folder.clone());
-                }
-                Task::none()
-            }
+            Msg::Undo => self.undo_last_move(),
             Msg::EmptyFolder => {
                 let folder = self.selected_folder.clone();
                 self.begin_empty(&folder);
@@ -466,7 +498,7 @@ impl App {
             }
             Msg::KeyPressed(key, mods) => self.on_key(key, mods),
             Msg::PollRefresh => {
-                if self.connected && !self.composing && !self.loading {
+                if self.connected && !self.composing && !self.loading && !self.folder_loading {
                     // Silent refresh — do not toast on transient failures.
                     self.refresh_all();
                 }
@@ -632,25 +664,46 @@ impl App {
                 if folder != self.selected_folder && !self.search_active {
                     return Task::none();
                 }
+                let replace = self.folder_loading;
                 self.folder_loading = false;
                 self.is_loading_more = false;
-                self.total_messages = total;
+                let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
+                list_sync::prune_pending_gone(&mut self.pending_gone, &folder, &messages, offset);
+                self.total_messages = total.saturating_sub(hidden);
                 if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
-                    f.total = total;
+                    f.total = self.total_messages;
                 }
-                if offset == 0 {
-                    self.messages = messages;
+                if replace {
+                    self.messages = messages
+                        .into_iter()
+                        .filter(|m| !self.pending_gone.contains(&(folder.clone(), m.uid)))
+                        .collect();
                 } else {
-                    self.messages.extend(messages);
+                    self.messages = list_sync::apply_message_page(
+                        &self.messages,
+                        messages,
+                        offset,
+                        total,
+                        &self.pending_gone,
+                        &folder,
+                    );
                 }
             }
             MailEvent::SearchResults { messages, total } => {
                 self.folder_loading = false;
-                self.messages = messages;
-                self.search_total = total;
-                self.total_messages = total;
+                let folder = self.selected_folder.clone();
+                let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
+                self.messages = messages
+                    .into_iter()
+                    .filter(|m| !self.pending_gone.contains(&(folder.clone(), m.uid)))
+                    .collect();
+                self.search_total = total.saturating_sub(hidden);
+                self.total_messages = self.search_total;
             }
             MailEvent::Body(body) => {
+                if self.selected_uid != Some(body.uid) {
+                    return Task::none();
+                }
                 let blocks = body.reading_blocks();
                 let plain = sola_kit::components::prose::flatten(&blocks);
                 tracing::debug!(
@@ -670,7 +723,14 @@ impl App {
                 self.toast_undo = false;
                 mail_send(MailCmd::ListFolders);
             }
-            MailEvent::Moved => {}
+            MailEvent::Moved { uid } => {
+                self.pending_removed.remove(&uid);
+            }
+            MailEvent::MoveFailed { uid, message } => {
+                self.toast = Some(format!("move: {message}"));
+                self.toast_undo = false;
+                self.restore_removed(uid);
+            }
             MailEvent::Emptied { folder } => {
                 self.folder_loading = false;
                 self.toast = Some(format!("{} erased", folder_label(&folder)));
@@ -749,22 +809,11 @@ impl App {
             _ => return Task::none(),
         };
         match ch {
-            "j" => self.move_and_advance(uid, "Junk".into()),
-            "i" => self.move_and_advance(uid, "INBOX".into()),
-            "a" => self.move_and_advance(uid, "Archive".into()),
-            "d" => self.move_and_advance(uid, "Trash".into()),
-            "u" => {
-                if let Some(lm) = self.last_move.take() {
-                    mail_send(MailCmd::Move {
-                        folder: lm.to_folder,
-                        uid: lm.uid,
-                        dest: lm.from_folder,
-                    });
-                    self.toast = Some("Move undone".into());
-                    self.toast_undo = false;
-                    self.load_folder(self.selected_folder.clone());
-                }
-            }
+            "j" => return self.move_and_advance(uid, "Junk".into()),
+            "i" => return self.move_and_advance(uid, "INBOX".into()),
+            "a" => return self.move_and_advance(uid, "Archive".into()),
+            "d" => return self.move_and_advance(uid, "Trash".into()),
+            "u" => return self.undo_last_move(),
             "w" => self.select_prev(),
             "s" => self.select_next(),
             _ => {}
@@ -799,9 +848,12 @@ impl App {
     fn begin_empty(&mut self, folder: &str) {
         self.toast = Some(format!("Erasing {}…", folder_label(folder)));
         self.toast_undo = false;
+        self.select_gen = self.select_gen.saturating_add(1);
         if self.selected_folder.eq_ignore_ascii_case(folder) {
             self.folder_loading = true;
             self.messages.clear();
+            self.pending_gone.clear();
+            self.pending_removed.clear();
             self.selected_uid = None;
             self.message_body = None;
             self.body_selection = None;
@@ -829,12 +881,26 @@ impl App {
         });
     }
 
+    fn refresh_list_silent(&mut self) {
+        if self.search_active {
+            return;
+        }
+        let limit = (self.messages.len() as u32)
+            .saturating_add(self.pending_gone.len() as u32)
+            .max(PAGE);
+        mail_send(MailCmd::ListMessages {
+            folder: self.selected_folder.clone(),
+            offset: 0,
+            limit,
+        });
+    }
+
     fn refresh_all(&mut self) {
         if self.search_active {
             return;
         }
         mail_send(MailCmd::ListFolders);
-        self.load_folder(self.selected_folder.clone());
+        self.refresh_list_silent();
     }
 
     fn select_message(&mut self, uid: u32) {
@@ -861,28 +927,127 @@ impl App {
         }
     }
 
-    fn move_and_advance(&mut self, uid: u32, dest: String) {
+    fn move_and_advance(&mut self, uid: u32, dest: String) -> Task<Msg> {
         let folder = self.real_folder();
         let idx = self.messages.iter().position(|m| m.uid == uid);
+        let summary = idx.and_then(|i| self.messages.get(i).cloned());
         self.last_move = Some(LastMove {
             uid,
             from_folder: folder.clone(),
             to_folder: dest.clone(),
+            list_id: self.selected_folder.clone(),
+            summary: summary.clone(),
         });
         self.toast = Some(format!("Moved to {dest}"));
         self.toast_undo = true;
+        self.pending_gone
+            .insert((self.selected_folder.clone(), uid));
+        if let Some(summary) = summary.clone() {
+            self.adjust_counts_for_move(&summary, &folder, &dest, true);
+            self.pending_removed.insert(
+                uid,
+                RemovedMail {
+                    summary,
+                    from_folder: folder.clone(),
+                    to_folder: dest.clone(),
+                    selected_folder: self.selected_folder.clone(),
+                },
+            );
+        }
+        self.total_messages = self.total_messages.saturating_sub(1);
         mail_send(MailCmd::Move { folder, uid, dest });
         self.messages.retain(|m| m.uid != uid);
+        self.select_gen = self.select_gen.saturating_add(1);
         if self.messages.is_empty() {
             self.selected_uid = None;
             self.message_body = None;
             self.body_selection = None;
             self.reading_blocks.clear();
-        } else if let Some(i) = idx {
-            let next = if i > 0 { i - 1 } else { 0 };
-            let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
-            self.select_message(next_uid);
+            return Task::none();
         }
+        let Some(i) = idx else {
+            return Task::none();
+        };
+        let next = if i > 0 { i - 1 } else { 0 };
+        let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
+        self.selected_uid = Some(next_uid);
+        let generation = self.select_gen;
+        Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
+            Msg::SettleSelect {
+                uid: next_uid,
+                generation,
+            }
+        })
+    }
+
+    fn undo_last_move(&mut self) -> Task<Msg> {
+        let Some(lm) = self.last_move.take() else {
+            return Task::none();
+        };
+        mail_send(MailCmd::Move {
+            folder: lm.to_folder.clone(),
+            uid: lm.uid,
+            dest: lm.from_folder.clone(),
+        });
+        self.toast = Some("Move undone".into());
+        self.toast_undo = false;
+        self.pending_gone.remove(&(lm.list_id.clone(), lm.uid));
+        let summary = self
+            .pending_removed
+            .remove(&lm.uid)
+            .map(|r| r.summary)
+            .or(lm.summary);
+        if let Some(summary) = summary {
+            if self.selected_folder == lm.list_id {
+                self.adjust_counts_for_move(&summary, &lm.from_folder, &lm.to_folder, false);
+                self.total_messages = self.total_messages.saturating_add(1);
+                list_sync::insert_summary_desc(&mut self.messages, summary);
+            }
+        }
+        Task::none()
+    }
+
+    fn restore_removed(&mut self, uid: u32) {
+        self.pending_gone.retain(|(_, gone)| *gone != uid);
+        let Some(removed) = self.pending_removed.remove(&uid) else {
+            return;
+        };
+        if removed.selected_folder != self.selected_folder {
+            return;
+        }
+        self.adjust_counts_for_move(
+            &removed.summary,
+            &removed.from_folder,
+            &removed.to_folder,
+            false,
+        );
+        self.total_messages = self.total_messages.saturating_add(1);
+        list_sync::insert_summary_desc(&mut self.messages, removed.summary);
+        if let Some(lm) = &self.last_move {
+            if lm.uid == uid {
+                self.last_move = None;
+                self.toast_undo = false;
+            }
+        }
+    }
+
+    fn adjust_counts_for_move(
+        &mut self,
+        summary: &MessageSummary,
+        from: &str,
+        dest: &str,
+        leaving: bool,
+    ) {
+        let unread = if summary.seen { 0 } else { 1 };
+        let (from_d, dest_d) = if leaving { (-1, 1) } else { (1, -1) };
+        bump_folder(&mut self.folders, from, from_d, from_d * unread as i32);
+        if !dest.is_empty() {
+            bump_folder(&mut self.folders, dest, dest_d, dest_d * unread as i32);
+        }
+        if let Some(name) = self.selected_folder.strip_prefix("smart:") {
+            bump_folder(&mut self.smart_counts, name, from_d, from_d * unread as i32);
+        }
+        self.publish_inbox_unread();
     }
 
     fn select_prev(&mut self) {
@@ -895,6 +1060,7 @@ impl App {
         if idx == 0 {
             return;
         }
+        self.select_gen = self.select_gen.saturating_add(1);
         self.select_message(self.messages[idx - 1].uid);
     }
 
@@ -908,12 +1074,14 @@ impl App {
         if idx + 1 >= self.messages.len() {
             return;
         }
+        self.select_gen = self.select_gen.saturating_add(1);
         self.select_message(self.messages[idx + 1].uid);
     }
 
     fn select_next_or_first(&mut self) {
         if self.selected_uid.is_none() {
             if let Some(first) = self.messages.first() {
+                self.select_gen = self.select_gen.saturating_add(1);
                 self.select_message(first.uid);
             }
             return;
@@ -924,6 +1092,7 @@ impl App {
     fn select_prev_or_last(&mut self) {
         if self.selected_uid.is_none() {
             if let Some(last) = self.messages.last() {
+                self.select_gen = self.select_gen.saturating_add(1);
                 self.select_message(last.uid);
             }
             return;
@@ -1137,30 +1306,38 @@ impl App {
             .align_y(iced::Alignment::Center)
             .style(toolbar_style);
 
-        let mut list = column![].spacing(0).width(Length::Fill);
-        if self.messages.is_empty() && !self.folder_loading {
-            list = list.push(
-                container(
-                    kit_text::caption(if self.search_active {
-                        "No matching messages"
-                    } else {
-                        "No messages"
-                    })
-                    .style(kit_text::muted),
-                )
-                .padding(Padding::from([SPACE_XL, SPACE_MD]))
-                .width(Length::Fill),
-            );
-        }
-        for m in &self.messages {
-            let selected = self.selected_uid == Some(m.uid);
-            list = list.push(message_row(m, selected));
-        }
+        let empty_caption = container(
+            kit_text::caption(if self.search_active {
+                "No matching messages"
+            } else {
+                "No messages"
+            })
+            .style(kit_text::muted),
+        )
+        .padding(Padding::from([SPACE_XL, SPACE_MD]))
+        .width(Length::Fill);
+
+        let list: Element<'_, Msg> = if self.messages.is_empty() && !self.folder_loading {
+            keyed_column([(0u32, empty_caption.into())])
+                .spacing(0)
+                .width(Length::Fill)
+                .into()
+        } else {
+            keyed_column(
+                self.messages
+                    .iter()
+                    .map(|m| (m.uid, message_row(m, self.selected_uid == Some(m.uid)))),
+            )
+            .spacing(0)
+            .width(Length::Fill)
+            .into()
+        };
 
         container(
             column![
                 header,
                 scrollable(default_cursor(list))
+                    .id(list_scroll_id())
                     .height(Length::Fill)
                     .width(Length::Fill)
                     .on_scroll(Msg::ListScrolled),
@@ -1435,6 +1612,25 @@ fn cached_icon(name: &'static str) -> iced::widget::svg::Handle {
         .get(name)
         .cloned()
         .unwrap_or_else(|| icon_handle(name))
+}
+
+fn bump_folder(folders: &mut [Folder], name: &str, d_total: i32, d_unread: i32) {
+    let Some(f) = folders
+        .iter_mut()
+        .find(|f| f.name.eq_ignore_ascii_case(name))
+    else {
+        return;
+    };
+    f.total = if d_total < 0 {
+        f.total.saturating_sub(d_total.unsigned_abs())
+    } else {
+        f.total.saturating_add(d_total as u32)
+    };
+    f.unread = if d_unread < 0 {
+        f.unread.saturating_sub(d_unread.unsigned_abs())
+    } else {
+        f.unread.saturating_add(d_unread as u32)
+    };
 }
 
 fn format_count(n: u32) -> String {

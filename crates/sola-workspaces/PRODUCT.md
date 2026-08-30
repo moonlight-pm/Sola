@@ -31,7 +31,7 @@ sibling, restart the app and nothing is gone.
 ## Positioning
 
 A native Sola tool whose sidebar *is* the orchestrator. Not an IDE. Not an ACP
-chat (`sola-agent`). Not Orca-the-Electron-suite. Neighbors cannot copy “the
+chat GUI (retired `sola-agent`). Not Orca-the-Electron-suite. Neighbors cannot copy “the
 PTY is the agent, the mark is the truth, spawn is the only fan-out verb” without
 becoming this product.
 

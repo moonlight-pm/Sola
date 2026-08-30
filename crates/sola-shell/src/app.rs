@@ -119,6 +119,18 @@ pub enum Msg {
     ToggleNotifyPile,
     /// Empty the missed pile.
     NotifyClearPile,
+    /// Open / close the volume popover.
+    ToggleAudio,
+    /// Snapshot from the PipeWire worker.
+    Audio(crate::audio::Event),
+    /// Volume / mute / default-device controls.
+    AudioUi(crate::audio::UiMsg),
+    /// Open / close the Bluetooth popover.
+    ToggleBluetooth,
+    /// Snapshot / agent events from the BlueZ worker.
+    Bluetooth(crate::bluetooth::Event),
+    /// Panel controls (power, add, pair, disconnect, agent reply).
+    BluetoothUi(crate::bluetooth::UiMsg),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
@@ -170,6 +182,8 @@ pub enum Panel {
     Calendar,
     Stat(crate::stats::Metric),
     NotifyPile,
+    Bluetooth,
+    Audio,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -270,6 +284,10 @@ pub struct Shell {
     pub launcher: LauncherState,
     pub selection: SelectionState,
     pub notify: crate::notify::NotifyState,
+    /// Menubar Bluetooth chip + popover (in-process BlueZ).
+    pub bluetooth: crate::bluetooth::Ui,
+    /// Menubar volume chip + popover (PipeWire / wpctl).
+    pub audio: crate::audio::Ui,
     /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
     /// sola-preview. Set only by shell hotkey / selection paths.
     pub open_preview_on_next: bool,
@@ -371,6 +389,8 @@ impl Shell {
             launcher: LauncherState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
             open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
@@ -484,7 +504,7 @@ impl Shell {
         }
         if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
             self.menu_open = false;
-            self.open_panel = None;
+            self.set_open_panel(None);
         }
         self.emit_overlay_frames();
         self.emit_composition();
@@ -501,10 +521,7 @@ impl Shell {
         }
     }
 
-    fn push_notification(
-        &mut self,
-        n: sola_bus::topics::AppNotification,
-    ) -> iced::Task<Msg> {
+    fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
         let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
@@ -527,7 +544,7 @@ impl Shell {
         }
         if self.menu_open {
             self.menu_open = false;
-            self.open_panel = None;
+            self.set_open_panel(None);
             self.current_open_index = None;
             changed = true;
         }
@@ -1261,6 +1278,52 @@ impl Shell {
         }
     }
 
+    /// Left edge of the Bluetooth chip (immediately left of CPU in the
+    /// right-aligned cluster). Hide-if-no-adapter does not affect this
+    /// estimate while the chip is shown.
+    pub fn estimate_bluetooth_x(&self) -> f32 {
+        const BT_W: f32 = 32.0;
+        const GAP: f32 = 4.0;
+        self.estimate_stat_x(crate::stats::Metric::Cpu) - GAP - BT_W
+    }
+
+    /// Left edge of the volume chip (left of Bluetooth when that chip is
+    /// shown, otherwise immediately left of CPU).
+    pub fn estimate_audio_x(&self) -> f32 {
+        const CHIP_W: f32 = 32.0;
+        const GAP: f32 = 4.0;
+        let right = if crate::bluetooth::bar_icon(&self.bluetooth.snapshot).is_some() {
+            self.estimate_bluetooth_x()
+        } else {
+            self.estimate_stat_x(crate::stats::Metric::Cpu)
+        };
+        right - GAP - CHIP_W
+    }
+
+    /// Change `open_panel`, stopping Bluetooth discovery and clearing the
+    /// stats sampler when leaving those surfaces.
+    pub(crate) fn set_open_panel(&mut self, panel: Option<Panel>) {
+        let was_bt = self.open_panel == Some(Panel::Bluetooth);
+        let now_bt = panel == Some(Panel::Bluetooth);
+        let was_audio = self.open_panel == Some(Panel::Audio);
+        let now_audio = panel == Some(Panel::Audio);
+        if was_bt && !now_bt {
+            self.bluetooth.on_close();
+            crate::bluetooth::send(crate::bluetooth::Command::SetDiscovering(false));
+        }
+        match panel {
+            Some(Panel::Stat(m)) => crate::stats::set_active_metric(Some(m)),
+            _ => crate::stats::set_active_metric(None),
+        }
+        self.open_panel = panel;
+        if now_bt && !was_bt {
+            crate::bluetooth::send(crate::bluetooth::Command::Refresh);
+        }
+        if now_audio && !was_audio {
+            crate::audio::send(crate::audio::Command::Refresh);
+        }
+    }
+
     pub fn subscription(&self) -> iced::Subscription<Msg> {
         use iced::time;
 
@@ -1298,6 +1361,8 @@ impl Shell {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
             crate::stats::subscription().map(Msg::StatsTick),
+            crate::bluetooth::subscription().map(Msg::Bluetooth),
+            crate::audio::subscription().map(Msg::Audio),
             iced::window::resize_events().map(|(id, size)| Msg::OverlayIcedResized { id, size }),
             kb,
         ])
@@ -1453,15 +1518,14 @@ impl Shell {
                 if self.menu_open && self.open_panel == Some(Panel::Calendar) {
                     // Already showing the calendar — dismiss it.
                     self.menu_open = false;
-                    self.open_panel = None;
+                    self.set_open_panel(None);
                 } else {
                     // Open (or switch an app menu over to) the calendar,
                     // always starting on the current month.
                     self.menu_open = true;
-                    self.open_panel = Some(Panel::Calendar);
+                    self.set_open_panel(Some(Panel::Calendar));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(None);
                     self.calendar_month =
                         crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
                 }
@@ -1472,14 +1536,12 @@ impl Shell {
             Msg::ToggleStatPanel(m) => {
                 if self.menu_open && self.open_panel == Some(crate::app::Panel::Stat(m)) {
                     self.menu_open = false;
-                    self.open_panel = None;
-                    crate::stats::set_active_metric(None);
+                    self.set_open_panel(None);
                 } else {
                     self.menu_open = true;
-                    self.open_panel = Some(crate::app::Panel::Stat(m));
+                    self.set_open_panel(Some(crate::app::Panel::Stat(m)));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(Some(m));
                 }
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -1538,8 +1600,7 @@ impl Shell {
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
-                self.open_panel = None;
-                crate::stats::set_active_metric(None);
+                self.set_open_panel(None);
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1560,8 +1621,7 @@ impl Shell {
                         .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
-                    self.open_panel = None;
-                    crate::stats::set_active_metric(None);
+                    self.set_open_panel(None);
                 }
                 iced::Task::none()
             }
@@ -1569,8 +1629,7 @@ impl Shell {
                 self.menu_open = false;
                 self.current_open_index = None;
                 self.current_open_is_system = false;
-                self.open_panel = None;
-                crate::stats::set_active_metric(None);
+                self.set_open_panel(None);
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1721,11 +1780,9 @@ impl Shell {
             Msg::NotifyActivate(id) => self.activate_notification(&id),
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
-                if self.notify.pile.is_empty()
-                    && self.open_panel == Some(Panel::NotifyPile)
-                {
+                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
                     self.menu_open = false;
-                    self.open_panel = None;
+                    self.set_open_panel(None);
                 }
                 self.emit_overlay_frames();
                 self.emit_composition();
@@ -1734,13 +1791,12 @@ impl Shell {
             Msg::ToggleNotifyPile => {
                 if self.menu_open && self.open_panel == Some(Panel::NotifyPile) {
                     self.menu_open = false;
-                    self.open_panel = None;
+                    self.set_open_panel(None);
                 } else {
                     self.menu_open = true;
-                    self.open_panel = Some(Panel::NotifyPile);
+                    self.set_open_panel(Some(Panel::NotifyPile));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(None);
                 }
                 self.emit_composition();
                 iced::Task::none()
@@ -1748,8 +1804,76 @@ impl Shell {
             Msg::NotifyClearPile => {
                 self.notify.clear_pile();
                 self.menu_open = false;
-                self.open_panel = None;
+                self.set_open_panel(None);
                 self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::ToggleAudio => {
+                if !self.audio.snapshot.available {
+                    return iced::Task::none();
+                }
+                if self.menu_open && self.open_panel == Some(Panel::Audio) {
+                    self.menu_open = false;
+                    self.set_open_panel(None);
+                } else {
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Audio));
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                }
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::Audio(ev) => {
+                self.audio.on_event(ev);
+                if !self.audio.snapshot.available && self.open_panel == Some(Panel::Audio) {
+                    self.menu_open = false;
+                    self.set_open_panel(None);
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                }
+                iced::Task::none()
+            }
+            Msg::AudioUi(m) => {
+                if let Some(cmd) = self.audio.update(m) {
+                    crate::audio::send(cmd);
+                }
+                iced::Task::none()
+            }
+            Msg::ToggleBluetooth => {
+                if self.bluetooth.snapshot.adapter.is_none() {
+                    return iced::Task::none();
+                }
+                if self.menu_open && self.open_panel == Some(Panel::Bluetooth) {
+                    self.menu_open = false;
+                    self.set_open_panel(None);
+                } else {
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Bluetooth));
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                }
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::Bluetooth(ev) => {
+                self.bluetooth.on_event(ev);
+                if self.bluetooth.snapshot.adapter.is_none()
+                    && self.open_panel == Some(Panel::Bluetooth)
+                {
+                    self.menu_open = false;
+                    self.set_open_panel(None);
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                }
+                iced::Task::none()
+            }
+            Msg::BluetoothUi(m) => {
+                if let Some(cmd) = self.bluetooth.update(m) {
+                    crate::bluetooth::send(cmd);
+                }
                 iced::Task::none()
             }
             // --- Switcher ---
@@ -2016,6 +2140,8 @@ mod pending_launch_tests {
             launcher: LauncherState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
             open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,

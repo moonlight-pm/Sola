@@ -1,7 +1,7 @@
 # Sola Agent — ACP Runner Design
 
 **Date:** 2026-07-23  
-**Status:** Approved  
+**Status:** Retired 2026-08-28 — `crates/sola-agent` deleted. Workspaces is the agent product. Freeze kept as history.  
 **Branch:** `agent-acp-runner`
 
 ## Goal

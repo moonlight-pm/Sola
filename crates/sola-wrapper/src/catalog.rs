@@ -49,10 +49,7 @@ pub fn lookup_in(state_path: &Path, id: &str) -> Result<Application, LookupError
         None => Err(LookupError::NotFound(id.to_string())),
         Some(app) if !app.is_wrapper() => Err(LookupError::NotWrapper { id: id.to_string() }),
         Some(app) => {
-            let ok = app
-                .url
-                .as_deref()
-                .is_some_and(is_wrapper_url);
+            let ok = app.url.as_deref().is_some_and(is_wrapper_url);
             if ok {
                 Ok(app)
             } else {
