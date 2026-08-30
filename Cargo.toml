@@ -14,15 +14,6 @@ members = ["crates/*"]
 # (wpe-webkit-2.0, wpe-platform-2.0, …) resolve system-wide.
 exclude = [
     "crates/wgpu-hal-patched",
-    # Blitz/dioxus-native pulls wgpu 26. The workspace patches wgpu-hal to
-    # 27.0.4 for iced — keep this crate out of the member graph so the
-    # two do not unify. Built only via `cargo make build sola-blitz-spike`.
-    "crates/sola-blitz-spike",
-    # Same wgpu-26 isolation. HTML/CSS kit probe (idea D5). Built only via
-    # `cargo make build sola-html-spike`. Do not install.
-    "crates/sola-html-spike",
-    # HTML/CSS kit storybook (sctk, not iced). Distinct identity. Do not install.
-    "crates/sola-kit-spike",
 ]
 resolver = "3"
 

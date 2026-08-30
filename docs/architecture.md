@@ -62,8 +62,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
 | `crates/sola-shell` | Menubar, launcher, switcher, zoning (iced daemon) |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`) |
-| `crates/sola-kit-spike` | Isolated HTML/CSS kit + storybook (**sctk**, not iced). Workspace-excluded. Identity `sola-kit-spike` / `Kit (spike)`. Do not install; run from crate `target/`. |
-| `crates/sola-html-spike` | Earlier HTML/CSS probe (winit). Workspace-excluded. Do not install. |
+| `crates/sola-kit-spike` | HTML/CSS kit (**sctk**, wgpu 27, workspace member) + storybook `sola-kit-spike` and settings twin `sola-settings-lab` (`Settings (lab)`; same bus topics as iced settings). Identities distinct from iced. Do not install; run from `target/release/`. |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). |

@@ -1,0 +1,45 @@
+<div class="demo-stack wide">
+  <div class="card">
+    <div class="card-title">Account</div>
+    <div class="card-body">IMAP receive + SMTP send credentials.</div>
+    <div class="stack-field" data-action="focus" data-id="email">
+      <div class="stack-label">Email</div>
+      <div class="input" data-action="focus" data-id="email" data-bind="email"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="imap_host">
+      <div class="stack-label">IMAP host</div>
+      <div class="input" data-action="focus" data-id="imap_host" data-bind="imap_host"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="imap_port">
+      <div class="stack-label">IMAP port</div>
+      <div class="input" data-action="focus" data-id="imap_port" data-bind="imap_port"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="smtp_host">
+      <div class="stack-label">SMTP host</div>
+      <div class="input" data-action="focus" data-id="smtp_host" data-bind="smtp_host"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="smtp_port">
+      <div class="stack-label">SMTP port</div>
+      <div class="input" data-action="focus" data-id="smtp_port" data-bind="smtp_port"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="username">
+      <div class="stack-label">Username</div>
+      <div class="input" data-action="focus" data-id="username" data-bind="username"></div>
+    </div>
+    <div class="stack-field" data-action="focus" data-id="password">
+      <div class="stack-label">Password</div>
+      <div class="input" data-action="focus" data-id="password" data-bind="password"></div>
+    </div>
+    <div class="help-danger" data-bind="mail-error"></div>
+    <div class="btn-row">
+      <div class="btn btn-sm btn-primary" data-action="mail-save">Save account</div>
+      <div class="btn btn-sm btn-ghost" data-action="mail-discard">Revert</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Rules</div>
+    <div class="card-body">Each condition row must match for the rule to fire.</div>
+    <div class="list-stack" data-slot="rule-rows"></div>
+    <div class="btn btn-sm btn-ghost" data-action="rule-add">+ Add rule</div>
+  </div>
+</div>

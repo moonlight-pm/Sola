@@ -5,17 +5,35 @@
       <div class="card-body">One primary in the footer. Everything else is secondary or destructive.</div>
       <div class="form-row">
         <div class="stage-key">Username</div>
-        <div class="input">naturalethic</div>
+        <div class="input" data-action="focus" data-id="user" data-bind="user"></div>
       </div>
       <div class="form-row">
         <div class="stage-key">Display</div>
-        <div class="input">Joshua</div>
+        <div class="input" data-action="focus" data-id="display" data-bind="display"></div>
       </div>
       <div class="form-row">
         <div class="stage-key">Theme</div>
-        <div class="select">
-          <div class="enamel"></div>
-          <div class="select-label">Default</div>
+        <div class="select" data-action="select-toggle" data-id="overview">
+          <div class="enamel" data-id="overview-enamel"></div>
+          <div class="select-label" data-bind="overview-label"></div>
+          <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
+          <div class="menu menu-hang" data-slot="select-overview">
+            <div class="menu-item" data-action="select-pick" data-id="overview:0">
+              <div class="enamel" data-id="seed-primary"></div>
+              <div class="select-label">Primary</div>
+              <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+            </div>
+            <div class="menu-item" data-action="select-pick" data-id="overview:1">
+              <div class="enamel" data-id="seed-alternate"></div>
+              <div class="select-label">Alternate</div>
+              <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+            </div>
+            <div class="menu-item" data-action="select-pick" data-id="overview:2">
+              <div class="enamel" data-id="seed-work"></div>
+              <div class="select-label">Work</div>
+              <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="form-row">
@@ -28,12 +46,13 @@
       </div>
       <div class="hairline"></div>
       <div class="btn-row">
-        <div class="btn btn-sm btn-danger-outline">Reset</div>
+        <div class="btn btn-sm btn-danger-outline" data-action="arm-delete">Reset</div>
         <div class="spacer"></div>
-        <div class="btn btn-sm btn-ghost">Revert</div>
-        <div class="btn btn-sm btn-secondary">Cancel</div>
-        <div class="btn btn-sm btn-primary">Save</div>
+        <div class="btn btn-sm btn-ghost" data-action="note" data-id="Revert">Revert</div>
+        <div class="btn btn-sm btn-secondary" data-action="note" data-id="Cancel">Cancel</div>
+        <div class="btn btn-sm btn-primary" data-action="note" data-id="Save">Save</div>
       </div>
+      <div class="t-caption" data-bind="status"></div>
     </div>
     <div class="card desk-key">
       <div class="form-row">
@@ -43,19 +62,19 @@
       </div>
       <div class="style-row">
         <div class="style-lab">PRIMARY</div>
-        <div class="btn btn-primary">Save theme</div>
+        <div class="btn btn-primary" data-action="note" data-id="Save theme">Save theme</div>
       </div>
       <div class="style-row">
         <div class="style-lab">SECONDARY</div>
-        <div class="btn btn-secondary">Cancel</div>
+        <div class="btn btn-secondary" data-action="note" data-id="Cancel">Cancel</div>
       </div>
       <div class="style-row">
         <div class="style-lab">GHOST</div>
-        <div class="btn btn-ghost">Revert</div>
+        <div class="btn btn-ghost" data-action="note" data-id="Revert">Revert</div>
       </div>
       <div class="style-row">
         <div class="style-lab">DANGER</div>
-        <div class="btn btn-danger">Delete</div>
+        <div class="btn btn-danger" data-action="note" data-id="Delete">Delete</div>
       </div>
       <div class="t-caption">Primary carries soft gradient + glow. Secondary is a quiet fill, not a bare outline. Ghost stays muted until hover. Danger outline never competes with the primary.</div>
     </div>
@@ -65,39 +84,32 @@
     <div class="t-caption">Live atoms. Full editor and type roles live on Theme.</div>
     <div class="seed-row">
       <div class="seed">
-        <div class="swatch-sm" style="background: #0c0e12"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="bg"></div>
         <div class="atom-name">BG</div>
-        <div class="atom-hex">#0c0e12</div>
       </div>
       <div class="seed">
-        <div class="swatch-sm" style="background: #151922"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="raised"></div>
         <div class="atom-name">RAISED</div>
-        <div class="atom-hex">#151922</div>
       </div>
       <div class="seed">
-        <div class="swatch-sm" style="background: #e9ecf2"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="fg"></div>
         <div class="atom-name">FG</div>
-        <div class="atom-hex">#e9ecf2</div>
       </div>
       <div class="seed">
-        <div class="swatch-sm" style="background: #3dd6f5"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="accent"></div>
         <div class="atom-name">ACCENT</div>
-        <div class="atom-hex">#3dd6f5</div>
       </div>
       <div class="seed">
         <div class="swatch-sm" style="background: #2c333e"></div>
         <div class="atom-name">SELECT</div>
-        <div class="atom-hex">#2c333e</div>
       </div>
       <div class="seed">
-        <div class="swatch-sm" style="background: #3ecf8e"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="success"></div>
         <div class="atom-name">OK</div>
-        <div class="atom-hex">#3ecf8e</div>
       </div>
       <div class="seed">
-        <div class="swatch-sm" style="background: #f07178"></div>
+        <div class="swatch-sm" data-action="edit-atom" data-id="danger"></div>
         <div class="atom-name">DANGER</div>
-        <div class="atom-hex">#f07178</div>
       </div>
     </div>
   </div>

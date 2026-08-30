@@ -1,10 +1,59 @@
-<div class="demo-stack">
+<div class="demo-stack wide">
+  <div class="t-sub">Chrome bar</div>
+  <div class="t-caption">Same grammar as the browser profile switcher.</div>
+  <div class="chrome-bar">
+    <div class="select" data-action="select-toggle" data-id="chrome">
+      <div class="enamel" data-id="chrome-enamel"></div>
+      <div class="select-label" data-bind="chrome-label"></div>
+      <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
+      <div class="menu menu-hang" data-slot="select-chrome">
+        <div class="menu-item" data-action="select-pick" data-id="chrome:0">
+          <div class="enamel" data-id="seed-primary"></div>
+          <div class="select-label">Primary</div>
+          <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+        </div>
+        <div class="menu-item" data-action="select-pick" data-id="chrome:1">
+          <div class="enamel" data-id="seed-alternate"></div>
+          <div class="select-label">Alternate</div>
+          <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+        </div>
+        <div class="menu-item" data-action="select-pick" data-id="chrome:2">
+          <div class="enamel" data-id="seed-work"></div>
+          <div class="select-label">Work</div>
+          <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+        </div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="t-caption">https://sola.computer</div>
+  </div>
   <div class="card">
-    <div class="card-title">Identity</div>
-    <div class="card-body">The menu hangs under the trigger at the trigger's width — a raised popover, not a darker inset card. Use the header Default control; this page is the same grammar.</div>
-    <div class="select">
-      <div class="enamel"></div>
-      <div class="select-label" data-bind="theme"></div>
+    <div class="card-title">Theme</div>
+    <div class="card-body">In a form the menu matches the field, start-aligned.</div>
+    <div class="form-row">
+      <div class="form-key">Preset</div>
+      <div class="select" data-action="select-toggle" data-id="form">
+        <div class="enamel" data-id="form-enamel"></div>
+        <div class="select-label" data-bind="form-label"></div>
+        <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
+        <div class="menu menu-hang" data-slot="select-form">
+          <div class="menu-item" data-action="select-pick" data-id="form:0">
+            <div class="enamel" data-id="seed-primary"></div>
+            <div class="select-label">Primary</div>
+            <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+          </div>
+          <div class="menu-item" data-action="select-pick" data-id="form:1">
+            <div class="enamel" data-id="seed-alternate"></div>
+            <div class="select-label">Alternate</div>
+            <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+          </div>
+          <div class="menu-item" data-action="select-pick" data-id="form:2">
+            <div class="enamel" data-id="seed-work"></div>
+            <div class="select-label">Work</div>
+            <div class="icon" data-kind="icon" data-id="lucide/check"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

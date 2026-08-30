@@ -1,21 +1,32 @@
 <div class="demo-stack">
+  <div class="scene">Note</div>
   <div class="card">
     <div class="t-body">Note</div>
     <div class="card-body">Default card — raised face, hairline, quiet shadow. Use for a single grouped thought.</div>
   </div>
+  <div class="scene">Stacked</div>
   <div class="plain">
-    <div class="t-muted">Plain — raised, no border. Quieter when cards stack.</div>
+    <div class="t-muted wrap">Plain — raised, no border. Quieter when cards stack.</div>
   </div>
   <div class="plain">
-    <div class="t-muted">Another plain row. Hairlines would chatter here.</div>
+    <div class="t-muted wrap">Another plain row. Hairlines would chatter here.</div>
   </div>
+  <div class="scene">Dialog</div>
   <div class="modal-card">
     <div class="t-body">Discard unsaved theme?</div>
     <div class="t-caption">This cannot be undone.</div>
     <div class="btn-row">
       <div class="spacer"></div>
-      <div class="btn btn-sm btn-secondary">Cancel</div>
-      <div class="btn btn-sm btn-danger-outline">Discard</div>
+      <div class="btn btn-sm btn-secondary" data-action="note" data-id="Cancel">Cancel</div>
+      <div class="btn btn-sm btn-danger-outline" data-action="note" data-id="Discard">Discard</div>
+    </div>
+  </div>
+  <div class="scene">Switcher tile</div>
+  <div class="card">
+    <div class="card-body">Soft plate under a large icon — graphite selection, not teal.</div>
+    <div class="row-inline">
+      <div class="tile tile-on"><div class="t-caption">Selected</div></div>
+      <div class="tile"><div class="t-caption">Idle</div></div>
     </div>
   </div>
 </div>

@@ -1,16 +1,17 @@
 # HTML/CSS kit (LLM chrome) — research from `kit-retarget`
 
-**Status:** idea + isolated **spike** examples. **Not** a freeze, **not** a
+**Status:** idea + HTML kit in this worktree. **Not** a freeze, **not** a
 switch from iced.  
 **Worktree:** `.worktrees/kit-retarget` (branch `kit-retarget`).  
-**Crates (workspace-excluded, do not install):**
-- `crates/sola-html-spike/` — winit probe that locked HTML/CSS/type/hole.
-- `crates/sola-kit-spike/` — kit library + storybook. **sctk + calloop**
-  (no winit). `app_id` `sola-kit-spike`, title `Kit (spike)`. Run
-  `crates/sola-kit-spike/target/release/sola-kit-spike`.
+**Crate:** `crates/sola-kit-spike/` — workspace member (wgpu 27). **sctk +
+calloop**. Binaries (do not install):
+- `sola-kit-spike` — storybook. `app_id` `sola-kit-spike`, title `Kit (spike)`.
+- `sola-settings-lab` — Applications + Mail twin. `app_id` `sola-settings-lab`,
+  title `Settings (lab)`. Same bus topics as iced settings.
+**Removed:** `sola-blitz-spike`, `sola-html-spike` (probes; hole notes below).
 **Out of scope:** replacing `sola-kit` / iced on master; putting the terminal
-grid in HTML; JS/DOM (punted); bus `Topic::Theme`; IME (English only on
-this desk). `cargo make install` skips `*-spike`.
+grid in HTML; JS/DOM (punted); IME. `cargo make install` skips `*-spike` /
+`*-lab`.
 
 Do not implement from this folder without promotion.
 
@@ -167,10 +168,12 @@ Until then: iced is the kit; this is an idea plus an unmerged spike.
 
 ## Recommended next steps
 
-1. Keep closing iced storybook fidelity (remaining page mismatches).
+1. Settings-lab is the dogfood twin (Applications + Mail). Remaining vs
+   iced: storybook still always draws CSD; 0.5px rims; mail rules are
+   add/remove not the full condition editor. Next twin or freeze talk —
+   not a merge.
 2. JS façade stays punted (QuickJS + `Elem` — later).
-3. Native hole / nested compositor stays in the html-spike probe until a
-   spike app needs it.
+3. Native hole / nested compositor stays parked until a spike app needs it.
 4. **Do not** start glyph atlas, `.so` reload, a spec DOM, or iced retarget.
 5. No merge, no install.
 

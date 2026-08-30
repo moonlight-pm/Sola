@@ -37,6 +37,7 @@ pub struct Computed {
     pub max_width: Option<Len>,
     pub flex_grow: f32,
     pub flex_shrink: f32,
+    pub flex_basis: Option<Len>,
     pub overflow_hidden: bool,
     pub overflow_scroll: bool,
     pub align_center: bool,
@@ -87,6 +88,54 @@ struct Rule {
 pub struct Sheet {
     rules: Vec<Rule>,
     pub vars: std::collections::HashMap<String, String>,
+}
+
+impl Sheet {
+    pub fn set_var(&mut self, key: &str, val: impl Into<String>) {
+        self.vars.insert(key.to_string(), val.into());
+    }
+
+    /// Bind a bus `Topic::Theme` onto CSS vars. Token names stay the
+    /// seed catalog (`bg-primary`, `accent`, …). Kit chrome aliases
+    /// (`--bg`, `--raised`, …) follow so existing sheets restyle.
+    pub fn apply_bus_theme(&mut self, theme: &sola_core::theme::Theme) {
+        for (name, token) in &theme.palette.tokens {
+            self.set_var(&format!("--{name}"), token.value.clone());
+        }
+        let tok = |k: &str| theme.palette.tokens.get(k).map(|t| t.value.clone());
+        if let Some(v) = tok("bg-primary") {
+            self.set_var("--bg", v);
+        }
+        if let Some(v) = tok("bg-secondary") {
+            self.set_var("--raised", v);
+        }
+        // Kit sidebar is CHROME_SURFACE `#121722` (blue graphite), not
+        // bg-secondary. Iced `sidebar::style` hardcodes that atom.
+        self.set_var("--chrome", "#121722");
+        if let Some(v) = tok("bg-tertiary") {
+            self.set_var("--hover", v.clone());
+            self.set_var("--well", v);
+        }
+        if let Some(v) = tok("text-primary") {
+            self.set_var("--fg", v);
+        }
+        if let Some(v) = tok("text-secondary") {
+            self.set_var("--muted", v.clone());
+            self.set_var("--idle", v);
+        }
+        if let Some(v) = tok("accent") {
+            self.set_var("--accent", v);
+        }
+        if let Some(v) = tok("danger") {
+            self.set_var("--danger", v);
+        }
+        if let Some(v) = tok("success") {
+            self.set_var("--success", v);
+        }
+        if let Some(v) = tok("warning") {
+            self.set_var("--warning", v);
+        }
+    }
 }
 
 pub fn parse_sheet(css: &str) -> Sheet {
@@ -274,14 +323,13 @@ fn is_hovered(el: &Elem, hover_uid: Option<u32>) -> bool {
     el.uid == h || el.children.iter().any(|c| is_hovered(c, hover_uid))
 }
 
-fn rule_matches(rule: &Rule, el: &Elem, parent: Option<&Elem>, hover_uid: Option<u32>) -> bool {
+fn rule_matches(rule: &Rule, el: &Elem, ancestors: &[&Elem], hover_uid: Option<u32>) -> bool {
     let self_hover = is_hovered(el, hover_uid);
-    let parent_hover = parent.is_some_and(|p| is_hovered(p, hover_uid));
     if let Some(anc) = &rule.selector.ancestor {
-        let Some(p) = parent else {
-            return false;
-        };
-        if !compound_matches(anc, p, parent_hover) {
+        let hit = ancestors
+            .iter()
+            .any(|p| compound_matches(anc, p, is_hovered(p, hover_uid)));
+        if !hit {
             return false;
         }
         compound_matches(&rule.selector.subject, el, self_hover)
@@ -354,7 +402,8 @@ fn parse_border(val: &str) -> Option<(f32, Rgba)> {
             col = Some(c);
         }
     }
-    Some((w, col.unwrap_or(Rgba::rgb(0, 0, 0))))
+    // Unresolved `var(--x)` must not become #000 — that is the black ring.
+    Some((w, col?))
 }
 
 fn parse_px(v: &str) -> Option<f32> {
@@ -391,13 +440,14 @@ fn apply_decl(c: &mut Computed, key: &str, val: &str) {
         "white-space" => c.wrap = val.trim() == "normal",
         "flex-grow" => c.flex_grow = val.trim().parse().unwrap_or(0.0),
         "flex-shrink" => c.flex_shrink = val.trim().parse().unwrap_or(1.0),
+        "flex-basis" => c.flex_basis = parse_len(val),
         "align-items" => c.align_center = val.trim() == "center",
         "text-align" => c.text_align_center = val.trim() == "center",
         "justify-content" => {
             let v = val.trim();
             c.justify_center = v == "center";
             c.justify_between = v == "space-between";
-        },
+        }
         "min-height" => c.min_height = parse_len(val),
         "overflow" => {
             let v = val.trim();
@@ -475,19 +525,14 @@ fn apply_inline(
     }
 }
 
-pub fn compute(
-    el: &Elem,
-    parent: Option<&Elem>,
-    sheet: &Sheet,
-    hover_uid: Option<u32>,
-) -> Computed {
+pub fn compute(el: &Elem, ancestors: &[&Elem], sheet: &Sheet, hover_uid: Option<u32>) -> Computed {
     let mut c = Computed {
         display_flex: true,
         flex_shrink: 1.0,
         ..Computed::default()
     };
     for rule in &sheet.rules {
-        if rule_matches(rule, el, parent, hover_uid) {
+        if rule_matches(rule, el, ancestors, hover_uid) {
             for (k, v) in &rule.decls {
                 apply_decl(&mut c, k, &resolve(v, &sheet.vars));
             }

@@ -1,8 +1,8 @@
-//! Experimental HTML/CSS kit (not iced).
+//! HTML/CSS kit (not iced).
 //!
-//! Library + storybook binary. **Do not install. Do not merge.**
-//! Wayland / bus identity is always [`APP_ID`] / [`WINDOW_TITLE`] — never
-//! `sola-kit` / `Kit`.
+//! Storybook binary [`APP_ID`] / [`WINDOW_TITLE`]. Settings twin is
+//! `sola-settings-lab` / `Settings (lab)`. **Do not install. Do not
+//! overwrite iced apps.**
 
 pub const APP_ID: &str = "sola-kit-spike";
 pub const WINDOW_TITLE: &str = "Kit (spike)";
@@ -16,3 +16,5 @@ pub mod icons;
 pub mod layout;
 pub mod markup;
 pub mod paint;
+pub mod palette;
+pub mod settings;

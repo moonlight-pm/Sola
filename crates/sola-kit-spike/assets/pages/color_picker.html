@@ -1,9 +1,34 @@
 <div class="demo-stack">
   <div class="card">
-    <div class="card-body">SV field, hue rail, alpha rail. Drag. HSV is source of truth so hue survives black.</div>
-    <div class="sv-square" data-action="sv"></div>
-    <div class="hue-rail" data-action="hue"></div>
-    <div class="alpha-rail"></div>
+    <div class="card-body">SV field, hue rail, alpha rail. Drag. HSV is source of truth so hue survives black. Tab between fields.</div>
+    <div class="row-inline">
+      <div class="picker-preview"></div>
+      <div class="picker-cols">
+        <div class="sv-square" data-action="sv"></div>
+        <div class="hue-rail" data-action="hue"></div>
+        <div class="alpha-rail" data-action="alpha"></div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-key">Hex</div>
+      <div class="input" data-action="focus" data-id="hex" data-bind="hex"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-key">RGB</div>
+      <div class="chan-row">
+        <div class="input chan" data-action="focus" data-id="rgb_r" data-bind="rgb_r"></div>
+        <div class="input chan" data-action="focus" data-id="rgb_g" data-bind="rgb_g"></div>
+        <div class="input chan" data-action="focus" data-id="rgb_b" data-bind="rgb_b"></div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-key">HSL</div>
+      <div class="chan-row">
+        <div class="input chan" data-action="focus" data-id="hsl_h" data-bind="hsl_h"></div>
+        <div class="input chan" data-action="focus" data-id="hsl_s" data-bind="hsl_s"></div>
+        <div class="input chan" data-action="focus" data-id="hsl_l" data-bind="hsl_l"></div>
+      </div>
+    </div>
     <div class="t-caption">Thumb is the pointer. Spectrum is GPU, not a texture.</div>
   </div>
 </div>

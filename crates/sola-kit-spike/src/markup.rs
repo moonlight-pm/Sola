@@ -20,30 +20,32 @@ pub fn expand(
     theme_open: bool,
 ) -> Elem {
     let mut root = parse_html(html);
-    let tpl = take_template(&mut root, "row");
-    if let Some(tpl) = tpl {
-        let mut next = max_uid(&root) + 1;
-        if let Some(slot) = find_slot_mut(&mut root, "nav") {
-            for spec in rows {
-                let mut row = clone_fresh(&tpl, &mut next);
-                row.data_template = None;
-                if spec.kind == "item" {
-                    row.data_id = Some(spec.id.clone());
-                } else {
-                    row.data_id = None;
+    if !rows.is_empty() {
+        let tpl = take_template(&mut root, "row");
+        if let Some(tpl) = tpl {
+            let mut next = max_uid(&root) + 1;
+            if let Some(slot) = find_slot_mut(&mut root, "nav") {
+                for spec in rows {
+                    let mut row = clone_fresh(&tpl, &mut next);
+                    row.data_template = None;
+                    if spec.kind == "item" {
+                        row.data_id = Some(spec.id.clone());
+                    } else {
+                        row.data_id = None;
+                    }
+                    row.data_kind = Some(spec.kind.clone());
+                    for c in &spec.classes {
+                        add_class(&mut row, c);
+                    }
+                    apply_bind(&mut row, "label", &spec.label);
+                    slot.children.push(row);
                 }
-                row.data_kind = Some(spec.kind.clone());
-                for c in &spec.classes {
-                    add_class(&mut row, c);
-                }
-                apply_bind(&mut row, "label", &spec.label);
-                slot.children.push(row);
+            } else {
+                tracing::warn!("HTML missing data-slot=nav");
             }
         } else {
-            tracing::warn!("HTML missing data-slot=nav");
+            tracing::warn!("HTML missing data-template=row");
         }
-    } else {
-        tracing::warn!("HTML missing data-template=row");
     }
     apply_bind(&mut root, "title", title);
     apply_bind(&mut root, "heading", heading);
@@ -63,8 +65,10 @@ pub fn expand(
     if !demo.is_empty() {
         let fragment = parse_html(demo);
         let mut next = max_uid(&root) + 1;
-        if let Some(slot) = find_slot_mut(&mut root, "demo") {
+        if let Some(slot) = find_slot_any_mut(&mut root, &["demo", "panel"]) {
             slot.children.push(renumber(fragment, &mut next));
+        } else {
+            tracing::warn!("HTML missing data-slot=demo");
         }
     }
     root
@@ -74,6 +78,13 @@ pub fn apply_split(root: &mut Elem, frac: f32) {
     if let Some(slot) = find_slot_mut(root, "split-left") {
         let pct = (frac.clamp(0.2, 0.8) * 100.0).round();
         slot.style_attr = Some(format!("width:{pct}%;flex-grow:0"));
+    }
+}
+
+pub fn apply_split_h(root: &mut Elem, frac: f32) {
+    if let Some(slot) = find_slot_mut(root, "split-top") {
+        let pct = (frac.clamp(0.2, 0.8) * 100.0).round();
+        slot.style_attr = Some(format!("height:{pct}%;flex-grow:0"));
     }
 }
 
@@ -89,12 +100,20 @@ pub fn apply_toggles(root: &mut Elem, toggles: &std::collections::HashMap<String
 
 fn walk_toggles(el: &mut Elem, toggles: &std::collections::HashMap<String, bool>) {
     if el.data_action.as_deref() == Some("toggle") {
-        if let Some(id) = el.data_id.as_deref() {
-            if toggles.get(id).copied().unwrap_or(false) {
+        let id = el.data_id.clone();
+        if let Some(id) = id {
+            let on = toggles.get(&id).copied().unwrap_or(false);
+            if on {
                 if el.classes.iter().any(|c| c == "toggle") {
                     add_class(el, "toggle-on");
                 } else {
                     add_class(el, "check-on");
+                }
+            } else {
+                for c in &mut el.children {
+                    if c.data_kind.as_deref() == Some("icon") {
+                        add_class(c, "is-hidden");
+                    }
                 }
             }
         }
@@ -116,9 +135,11 @@ pub fn apply_focus(root: &mut Elem, id: Option<&str>) {
     let Some(id) = id else {
         return;
     };
-    if let Some(el) = find_id_mut(root, id) {
-        add_class(el, "is-focused");
-    }
+    walk_mut(root, &mut |el| {
+        if el.data_id.as_deref() == Some(id) {
+            add_class(el, "is-focused");
+        }
+    });
 }
 
 fn find_id_mut<'a>(el: &'a mut Elem, id: &str) -> Option<&'a mut Elem> {
@@ -150,11 +171,15 @@ fn take_template(el: &mut Elem, name: &str) -> Option<Elem> {
 }
 
 fn find_slot_mut<'a>(el: &'a mut Elem, name: &str) -> Option<&'a mut Elem> {
-    if el.data_slot.as_deref() == Some(name) {
+    find_slot_any_mut(el, &[name])
+}
+
+fn find_slot_any_mut<'a>(el: &'a mut Elem, names: &[&str]) -> Option<&'a mut Elem> {
+    if el.data_slot.as_deref().is_some_and(|s| names.contains(&s)) {
         return Some(el);
     }
     for c in &mut el.children {
-        if let Some(hit) = find_slot_mut(c, name) {
+        if let Some(hit) = find_slot_any_mut(c, names) {
             return Some(hit);
         }
     }
@@ -170,9 +195,93 @@ fn apply_bind(el: &mut Elem, key: &str, value: &str) {
     }
 }
 
-fn add_class(el: &mut Elem, class: &str) {
+pub fn add_class(el: &mut Elem, class: &str) {
     if !el.classes.iter().any(|c| c == class) {
         el.classes.push(class.to_string());
+    }
+}
+
+pub fn remove_class(el: &mut Elem, class: &str) {
+    el.classes.retain(|c| c != class);
+}
+
+pub fn node(
+    next: &mut u32,
+    classes: &[&str],
+    action: Option<&str>,
+    id: Option<&str>,
+    text: &str,
+) -> Elem {
+    let uid = *next;
+    *next += 1;
+    Elem {
+        uid,
+        tag: "div".into(),
+        classes: classes.iter().map(|s| (*s).to_string()).collect(),
+        data_id: id.map(|s| s.to_string()),
+        data_kind: None,
+        data_surface: None,
+        data_input: None,
+        data_template: None,
+        data_slot: None,
+        data_bind: None,
+        data_action: action.map(|s| s.to_string()),
+        style_attr: None,
+        text: text.to_string(),
+        children: Vec::new(),
+    }
+}
+
+pub fn fill_slot(root: &mut Elem, name: &str, kids: Vec<Elem>) {
+    if let Some(slot) = find_slot_mut(root, name) {
+        slot.children = kids;
+    }
+}
+
+pub fn set_style(root: &mut Elem, id: &str, style: &str) {
+    if let Some(el) = find_id_mut(root, id) {
+        el.style_attr = Some(style.to_string());
+    }
+}
+
+pub fn walk_mut(el: &mut Elem, f: &mut impl FnMut(&mut Elem)) {
+    f(el);
+    for c in &mut el.children {
+        walk_mut(c, f);
+    }
+}
+
+pub fn apply_active_id(root: &mut Elem, id: &str) {
+    walk_mut(root, &mut |el| {
+        if el.data_id.as_deref() == Some(id) {
+            add_class(el, "is-active");
+        }
+    });
+}
+
+pub fn apply_enamel(root: &mut Elem) {
+    walk_mut(root, &mut |el| {
+        if el.classes.iter().any(|c| c == "enamel") {
+            let seed = el.data_id.clone().unwrap_or_else(|| "seed-default".into());
+            el.style_attr = Some(crate::palette::enamel_style(&seed));
+        }
+    });
+}
+
+pub fn hide_if(root: &mut Elem, pred: impl Fn(&Elem) -> bool) {
+    walk_mut(root, &mut |el| {
+        if pred(el) {
+            add_class(el, "is-hidden");
+        }
+    });
+}
+
+pub fn apply_placeholder(root: &mut Elem, id: &str, empty: bool, placeholder: &str) {
+    if let Some(el) = find_id_mut(root, id) {
+        if empty {
+            el.text = placeholder.to_string();
+            add_class(el, "is-placeholder");
+        }
     }
 }
 
@@ -183,12 +292,47 @@ fn clone_fresh(el: &Elem, next: &mut u32) -> Elem {
 fn renumber(mut el: Elem, next: &mut u32) -> Elem {
     el.uid = *next;
     *next += 1;
-    el.children = el
-        .children
-        .into_iter()
-        .map(|c| renumber(c, next))
-        .collect();
+    el.children = el.children.into_iter().map(|c| renumber(c, next)).collect();
     el
+}
+
+pub fn fill_atoms(root: &mut Elem, tiles: &[(String, String, String)]) {
+    if tiles.is_empty() {
+        hide_slot(root, "atoms", true);
+        return;
+    }
+    let mut next = max_uid(root) + 1;
+    let mut kids = Vec::new();
+    kids.push(node(&mut next, &["t-sub"], None, None, "This page's atoms"));
+    kids.push(node(
+        &mut next,
+        &["t-caption", "wrap"],
+        None,
+        None,
+        "Click a swatch after New Theme. Save lives in the header.",
+    ));
+    let mut row = node(&mut next, &["seed-row"], None, None, "");
+    for (i, (id, name, hex)) in tiles.iter().enumerate() {
+        if i > 0 && i % 5 == 0 {
+            kids.push(std::mem::replace(
+                &mut row,
+                node(&mut next, &["seed-row"], None, None, ""),
+            ));
+        }
+        let mut atom = node(&mut next, &["atom"], None, None, "");
+        let mut sw = node(&mut next, &["swatch-lg"], Some("edit-atom"), Some(id), "");
+        sw.style_attr = Some(format!("background:{hex}"));
+        atom.children.push(sw);
+        atom.children
+            .push(node(&mut next, &["atom-name"], None, None, name));
+        atom.children
+            .push(node(&mut next, &["atom-hex"], None, None, hex));
+        row.children.push(atom);
+    }
+    if !row.children.is_empty() {
+        kids.push(row);
+    }
+    fill_slot(root, "atoms", kids);
 }
 
 fn max_uid(el: &Elem) -> u32 {

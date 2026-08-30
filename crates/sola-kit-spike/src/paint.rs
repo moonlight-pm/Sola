@@ -1,8 +1,8 @@
 //! Software paint: filled boxes + cosmic-text glyph runs (no bitmaps).
 
 use cosmic_text::{
-    Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
-    Wrap,
+    Align, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache,
+    Weight, Wrap,
 };
 
 use crate::css::Rgba;
@@ -59,10 +59,17 @@ pub fn draw_label(
 ) {
     draw_text(
         buf, w, h, fonts, text, x, y, box_w, box_h, color, size, weight, family, clip, None, false,
+        false,
     );
 }
 
-pub fn paint(items: &[PaintItem], fonts: &mut Fonts, css_w: f32, css_h: f32, scale: f32) -> Vec<u32> {
+pub fn paint(
+    items: &[PaintItem],
+    fonts: &mut Fonts,
+    css_w: f32,
+    css_h: f32,
+    scale: f32,
+) -> Vec<u32> {
     let s = scale.max(0.01);
     let w = (css_w * s).round().max(1.0) as u32;
     let h = (css_h * s).round().max(1.0) as u32;
@@ -71,7 +78,9 @@ pub fn paint(items: &[PaintItem], fonts: &mut Fonts, css_w: f32, css_h: f32, sca
         if item.hidden {
             continue;
         }
-        let clip = item.clip.map(|(x, y, cw, ch)| (x * s, y * s, cw * s, ch * s));
+        let clip = item
+            .clip
+            .map(|(x, y, cw, ch)| (x * s, y * s, cw * s, ch * s));
         if let Some(bg) = item.bg {
             fill_round(
                 &mut buf,
@@ -93,7 +102,19 @@ pub fn paint(items: &[PaintItem], fonts: &mut Fonts, css_w: f32, css_h: f32, sca
             let bw = item.w * s;
             let bh = item.h * s;
             if let Some((t, col)) = item.border[0] {
-                fill_round(&mut buf, w, h, x, y, bw, (t * s).max(1.0), 0.0, col, 255, clip);
+                fill_round(
+                    &mut buf,
+                    w,
+                    h,
+                    x,
+                    y,
+                    bw,
+                    (t * s).max(1.0),
+                    0.0,
+                    col,
+                    255,
+                    clip,
+                );
             }
             if let Some((t, col)) = item.border[1] {
                 let t = (t * s).max(1.0);
@@ -126,6 +147,7 @@ pub fn paint(items: &[PaintItem], fonts: &mut Fonts, css_w: f32, css_h: f32, sca
                 clip,
                 None,
                 item.wrap,
+                item.text_align_center,
             );
         }
     }
@@ -136,6 +158,8 @@ pub struct PaintPass<'a> {
     pub time: f32,
     pub sel: Option<(u32, f32, f32)>,
     pub caret: Option<(u32, f32)>,
+    pub field_scroll: f32,
+    pub focus_uid: Option<u32>,
     pub icons: &'a mut crate::icons::Icons,
 }
 
@@ -156,21 +180,58 @@ pub fn paint_glyphs(
         if item.hidden {
             continue;
         }
-        let clip = item.clip.map(|(x, y, cw, ch)| (x * s, y * s, cw * s, ch * s));
+        let mut clip = item
+            .clip
+            .map(|(x, y, cw, ch)| (x * s, y * s, cw * s, ch * s));
+        let is_input = item.classes.iter().any(|c| c == "input");
+        if is_input {
+            let ix = (item.x + item.pad[3]) * s;
+            let iy = (item.y + item.pad[0]) * s;
+            let iw = (item.w - item.pad[1] - item.pad[3]).max(1.0) * s;
+            let ih = (item.h - item.pad[0] - item.pad[2]).max(1.0) * s;
+            clip = crate::layout::intersect_clip(clip, ix, iy, iw, ih);
+        }
+        let scroll = if is_input && pass.focus_uid == Some(item.uid) {
+            pass.field_scroll
+        } else {
+            0.0
+        };
+        // Overlay chrome (z > 0) must be opaque in this texture or
+        // lower-z glyphs (sidebar labels, etc.) punch through the GPU
+        // menu fill when the overlay is composited on top.
+        if item.z > 0 {
+            if let Some(bg) = item.bg {
+                fill_round(
+                    &mut buf,
+                    w,
+                    h,
+                    item.x * s,
+                    item.y * s,
+                    item.w * s,
+                    item.h * s,
+                    item.radius * s,
+                    bg,
+                    255,
+                    clip,
+                );
+            }
+        }
+        let size = item.text.as_ref().map(|r| r.size).unwrap_or(13.0);
+        let line = size * 1.2;
+        let box_h = (item.h - item.pad[0] - item.pad[2]).max(line);
+        let type_y = item.y + item.pad[0] + ((box_h - line) * 0.5).max(0.0);
         if let Some((uid, x0, x1)) = pass.sel {
             if uid == item.uid {
-                let a = item.x.min(item.x + item.w);
                 let left = (x0.min(x1) * s).max(item.x * s);
                 let right = (x0.max(x1) * s).min((item.x + item.w) * s);
-                let _ = a;
                 fill_round(
                     &mut buf,
                     w,
                     h,
                     left,
-                    item.y * s,
+                    type_y * s,
                     (right - left).max(1.0),
-                    item.h * s,
+                    line * s,
                     0.0,
                     Rgba::rgb(0x3d, 0xd6, 0xf5),
                     70,
@@ -182,18 +243,13 @@ pub fn paint_glyphs(
             let bg = covering_bg(items, i);
             let box_w = (item.w - item.pad[1] - item.pad[3]).max(1.0) * s;
             let box_h = (item.h - item.pad[0] - item.pad[2]).max(1.0) * s;
-            let mut tx = (item.x + item.pad[3]) * s;
-            if item.text_align_center {
-                let mw = fonts.measure_width(&run.text, run.size * s, run.weight, &run.family);
-                tx += ((box_w - mw) / 2.0).max(0.0);
-            }
             draw_text(
                 &mut buf,
                 w,
                 h,
                 fonts,
                 run.text.as_str(),
-                tx,
+                (item.x + item.pad[3] - scroll) * s,
                 (item.y + item.pad[0]) * s,
                 box_w,
                 box_h,
@@ -204,12 +260,13 @@ pub fn paint_glyphs(
                 clip,
                 Some(bg),
                 item.wrap,
+                item.text_align_center,
             );
         }
         if item.data_kind.as_deref() == Some("icon") {
             if let Some(name) = item.data_id.as_deref() {
                 let size = item.h.min(item.w).max(8.0) * s;
-                let tint = Rgba::rgb(0xa1, 0xad, 0xc7);
+                let tint = item.color.unwrap_or(Rgba::rgb(0xa1, 0xad, 0xc7));
                 if let Some(px) = pass.icons.rgba(name, size.round() as u32, tint) {
                     blit_icon(
                         &mut buf,
@@ -244,9 +301,9 @@ pub fn paint_glyphs(
                     w,
                     h,
                     cx * s,
-                    (item.y + 4.0) * s,
+                    type_y * s,
                     1.0 * s,
-                    (item.h - 8.0).max(8.0) * s,
+                    line * s,
                     0.0,
                     Rgba::rgb(0xe9, 0xec, 0xf2),
                     255,
@@ -440,6 +497,7 @@ fn draw_text(
     clip: Option<(f32, f32, f32, f32)>,
     dest_bg: Option<Rgba>,
     wrap: bool,
+    center: bool,
 ) {
     let metrics = Metrics::new(size, size * 1.3);
     let mut buffer = Buffer::new(&mut fonts.system, metrics);
@@ -455,7 +513,13 @@ fn draw_text(
     let attrs = Attrs::new()
         .family(Family::Name(family))
         .weight(Weight(weight));
-    buffer.set_text(&mut fonts.system, text, &attrs, Shaping::Advanced, None);
+    buffer.set_text(
+        &mut fonts.system,
+        text,
+        &attrs,
+        Shaping::Advanced,
+        if center { Some(Align::Center) } else { None },
+    );
     buffer.shape_until_scroll(&mut fonts.system, false);
     let y0 = if wrap {
         0.0
@@ -555,15 +619,51 @@ fn draw_mark(
         }
         "waiting" => {
             let col = Rgba::rgb(0xe8, 0xb8, 0x4a);
-            fill_round(buf, w, h, cx - r * 0.7, cy - r * 0.7, r * 1.4, r * 1.4, 1.0, col, 255, clip);
+            fill_round(
+                buf,
+                w,
+                h,
+                cx - r * 0.7,
+                cy - r * 0.7,
+                r * 1.4,
+                r * 1.4,
+                1.0,
+                col,
+                255,
+                clip,
+            );
         }
         "done" => {
             let col = Rgba::rgb(0x3e, 0xcf, 0x8e);
-            fill_round(buf, w, h, cx - r, cy - r, r * 2.0, r * 2.0, r, col, 255, clip);
+            fill_round(
+                buf,
+                w,
+                h,
+                cx - r,
+                cy - r,
+                r * 2.0,
+                r * 2.0,
+                r,
+                col,
+                255,
+                clip,
+            );
         }
         _ => {
             let col = Rgba::rgb(0x4a, 0x52, 0x62);
-            fill_round(buf, w, h, cx - r, cy - r, r * 2.0, r * 2.0, r, col, 90, clip);
+            fill_round(
+                buf,
+                w,
+                h,
+                cx - r,
+                cy - r,
+                r * 2.0,
+                r * 2.0,
+                r,
+                col,
+                90,
+                clip,
+            );
         }
     }
 }

@@ -1,10 +1,14 @@
 <div class="demo-stack">
   <div class="card">
-    <div class="t-muted">Right-click the well — static composition in this spike.</div>
-    <div class="menu">
-      <div class="menu-item">Copy</div>
-      <div class="menu-item">Paste</div>
-      <div class="menu-item">Select all</div>
+    <div class="card-body">Right-click the well. Escape or click outside dismisses. No submenu in v1.</div>
+    <div class="context-well" data-action="context-well">
+      <div class="t-body" data-bind="status">Right-click the well.</div>
+      <div class="menu" data-slot="context-menu">
+        <div class="menu-item" data-action="context-pick" data-id="New group">New group</div>
+        <div class="menu-item" data-action="context-pick" data-id="Add to Work">Add to Work</div>
+        <div class="menu-sep"></div>
+        <div class="menu-item is-disabled">Ungroup</div>
+      </div>
     </div>
   </div>
 </div>

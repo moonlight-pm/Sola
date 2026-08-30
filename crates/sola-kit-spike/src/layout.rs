@@ -26,6 +26,8 @@ pub struct PaintItem {
     pub classes: Vec<String>,
     pub clip: Option<(f32, f32, f32, f32)>,
     pub overflow_scroll: bool,
+    pub content_h: f32,
+    pub color: Option<Rgba>,
     pub hidden: bool,
     pub pad: [f32; 4],
     pub text_align_center: bool,
@@ -64,8 +66,55 @@ fn lpa(v: f32) -> LengthPercentageAuto {
     LengthPercentageAuto::Length(v)
 }
 
+struct TextCtx {
+    text: String,
+    size: f32,
+    weight: u16,
+    family: String,
+    pad: [f32; 4],
+    wrap: bool,
+}
+
 fn line_height(c: &Computed) -> f32 {
     c.font_size.unwrap_or(12.0) * 1.3
+}
+
+fn measure_text(
+    known: Size<Option<f32>>,
+    avail: Size<AvailableSpace>,
+    ctx: Option<&mut TextCtx>,
+    fonts: &mut Fonts,
+) -> Size<f32> {
+    let Some(ctx) = ctx else {
+        return Size::ZERO;
+    };
+    let pad_x = ctx.pad[1] + ctx.pad[3];
+    let pad_y = ctx.pad[0] + ctx.pad[2];
+    let lh = ctx.size * 1.3;
+    let inner = |w: f32| (w - pad_x).max(1.0);
+    let avail_w = match known.width {
+        Some(w) => inner(w),
+        None => match avail.width {
+            AvailableSpace::Definite(w) => inner(w),
+            AvailableSpace::MaxContent | AvailableSpace::MinContent => 2000.0,
+        },
+    };
+    let tw = fonts.measure_width(&ctx.text, ctx.size, ctx.weight, &ctx.family);
+    if ctx.wrap {
+        let lines = (tw / avail_w).ceil().max(1.0);
+        Size {
+            width: known.width.unwrap_or_else(|| match avail.width {
+                AvailableSpace::Definite(w) => w,
+                _ => (tw + pad_x).min(avail_w + pad_x),
+            }),
+            height: known.height.unwrap_or(lines * lh + pad_y),
+        }
+    } else {
+        Size {
+            width: known.width.unwrap_or(tw + pad_x),
+            height: known.height.unwrap_or(lh + pad_y),
+        }
+    }
 }
 
 fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
@@ -74,20 +123,10 @@ fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
     let weight = c.font_weight.unwrap_or(400);
     let family = c.font_family.as_deref().unwrap_or("SF Pro Text");
     let mut height = dim(c.height);
-    if c.height.is_none() && leaf_text {
-        let lh = line_height(c);
-        if c.wrap {
-            let max_w = match c.max_width {
-                Some(Len::Px(v)) => v,
-                Some(Len::Percent(_)) => 520.0,
-                _ => 520.0,
-            };
-            let tw = fonts.measure_width(&el.text, fs, weight, family);
-            let lines = (tw / max_w.max(1.0)).ceil().max(1.0);
-            height = length(lh * lines + c.padding[0] + c.padding[2]);
-        } else {
-            height = length(lh + c.padding[0] + c.padding[2]);
-        }
+    // Wrapping leaves leave height Auto so Taffy can measure against the
+    // stretched width. Non-wrapping labels get a one-line box.
+    if c.height.is_none() && leaf_text && !c.wrap {
+        height = length(line_height(c) + c.padding[0] + c.padding[2]);
     }
     // Taffy BorderBox: width includes padding + border. Text is not a
     // flex child, so intrinsic size must be measured or the box is 0.
@@ -107,13 +146,14 @@ fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
         } else {
             FlexDirection::Row
         },
-        size: Size {
-            width,
-            height,
-        },
+        size: Size { width, height },
         min_size: Size {
             width: min_width,
-            height: dim(c.min_height),
+            height: if c.overflow_scroll && c.min_height.is_none() {
+                length(0.0)
+            } else {
+                dim(c.min_height)
+            },
         },
         max_size: Size {
             width: dim(c.max_width),
@@ -121,6 +161,11 @@ fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
         },
         flex_grow: c.flex_grow,
         flex_shrink: c.flex_shrink,
+        flex_basis: match c.flex_basis {
+            Some(Len::Px(v)) => length(v),
+            Some(Len::Percent(p)) => percent(p),
+            Some(Len::Auto) | None => Dimension::Auto,
+        },
         gap: Size {
             width: lp(c.gap),
             height: lp(c.gap),
@@ -172,24 +217,46 @@ fn inset(len: Option<Len>) -> LengthPercentageAuto {
     }
 }
 
-fn build(
-    tree: &mut TaffyTree<()>,
-    el: &Elem,
-    parent: Option<&Elem>,
+fn build<'a>(
+    tree: &mut TaffyTree<TextCtx>,
+    el: &'a Elem,
+    ancestors: &mut Vec<&'a Elem>,
     sheet: &Sheet,
     hover: Option<u32>,
     fonts: &mut Fonts,
 ) -> Built {
-    let computed = compute(el, parent, sheet, hover);
+    let computed = compute(el, ancestors, sheet, hover);
+    ancestors.push(el);
     let kids: Vec<Built> = el
         .children
         .iter()
-        .map(|c| build(tree, c, Some(el), sheet, hover, fonts))
+        .filter(|c| !c.has_class("is-hidden"))
+        .map(|c| build(tree, c, ancestors, sheet, hover, fonts))
         .collect();
+    ancestors.pop();
     let child_ids: Vec<NodeId> = kids.iter().map(|k| k.id).collect();
     let style = to_style(&computed, el, fonts);
+    let leaf_text = !el.text.is_empty() && el.children.is_empty();
     let id = if child_ids.is_empty() {
-        tree.new_leaf(style).unwrap()
+        if leaf_text && computed.wrap {
+            tree.new_leaf_with_context(
+                style,
+                TextCtx {
+                    text: el.text.clone(),
+                    size: computed.font_size.unwrap_or(12.0),
+                    weight: computed.font_weight.unwrap_or(400),
+                    family: computed
+                        .font_family
+                        .clone()
+                        .unwrap_or_else(|| "SF Pro Text".into()),
+                    pad: computed.padding,
+                    wrap: true,
+                },
+            )
+            .unwrap()
+        } else {
+            tree.new_leaf(style).unwrap()
+        }
     } else {
         tree.new_with_children(style, &child_ids).unwrap()
     };
@@ -199,6 +266,16 @@ fn build(
         el: el.clone(),
         kids,
     }
+}
+
+pub fn intersect_clip(
+    a: Option<(f32, f32, f32, f32)>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) -> Option<(f32, f32, f32, f32)> {
+    intersect(a, x, y, w, h)
 }
 
 fn intersect(
@@ -223,11 +300,13 @@ fn intersect(
 }
 
 fn collect(
-    tree: &TaffyTree<()>,
+    tree: &TaffyTree<TextCtx>,
     built: &Built,
     ox: f32,
     oy: f32,
     clip: Option<(f32, f32, f32, f32)>,
+    parent_z: i32,
+    scrolls: &std::collections::HashMap<String, f32>,
     out: &mut Vec<PaintItem>,
 ) {
     if built.el.has_class("is-hidden") {
@@ -238,12 +317,29 @@ fn collect(
     let y = oy + layout.location.y + built.computed.translate_y;
     let w = layout.size.width;
     let h = layout.size.height;
-    let clip = if built.computed.z > 0 {
+    let z = built.computed.z.max(parent_z);
+    let clip = if z > 0 {
         None
     } else if built.computed.overflow_hidden {
         intersect(clip, x, y, w, h)
     } else {
         clip
+    };
+    let mut content_h = h;
+    for kid in &built.kids {
+        let kl = tree.layout(kid.id).unwrap();
+        content_h = content_h.max(kl.location.y + kl.size.height + layout.padding.bottom);
+    }
+    let scroll = built
+        .el
+        .data_id
+        .as_deref()
+        .and_then(|id| scrolls.get(id).copied())
+        .unwrap_or(0.0);
+    let child_oy = if built.computed.overflow_scroll {
+        y - scroll
+    } else {
+        y
     };
     let text = if !built.el.text.is_empty() {
         Some(TextRun {
@@ -280,9 +376,11 @@ fn collect(
         classes: built.el.classes.clone(),
         clip,
         overflow_scroll: built.computed.overflow_scroll,
+        content_h,
+        color: built.computed.color,
         hidden: built.el.has_class("is-origin"),
         text_align_center: built.computed.text_align_center,
-        z: built.computed.z,
+        z,
         wrap: built.computed.wrap,
         pad: [
             layout.padding.top,
@@ -292,7 +390,7 @@ fn collect(
         ],
     });
     for kid in &built.kids {
-        collect(tree, kid, x, y, clip, out);
+        collect(tree, kid, x, child_oy, clip, z, scrolls, out);
     }
 }
 
@@ -303,29 +401,32 @@ pub fn layout_tree(
     vw: f32,
     vh: f32,
     fonts: &mut Fonts,
+    scrolls: &std::collections::HashMap<String, f32>,
 ) -> Vec<PaintItem> {
-    let mut tree: TaffyTree<()> = TaffyTree::new();
-    let built = build(&mut tree, root, None, sheet, hover, fonts);
+    let mut tree: TaffyTree<TextCtx> = TaffyTree::new();
+    let mut ancestors = Vec::new();
+    let built = build(&mut tree, root, &mut ancestors, sheet, hover, fonts);
     let mut root_style = tree.style(built.id).unwrap().clone();
     root_style.size = Size {
         width: length(vw),
         height: length(vh),
     };
     let _ = tree.set_style(built.id, root_style);
-    let _ = tree.compute_layout(
+    let _ = tree.compute_layout_with_measure(
         built.id,
         Size {
             width: AvailableSpace::Definite(vw),
             height: AvailableSpace::Definite(vh),
         },
+        |known, avail, _, ctx, _style| measure_text(known, avail, ctx, fonts),
     );
     let mut items = Vec::new();
-    collect(&tree, &built, 0.0, 0.0, None, &mut items);
+    collect(&tree, &built, 0.0, 0.0, None, 0, scrolls, &mut items);
     items.sort_by_key(|i| i.z);
     items
 }
 
-fn point_in_item(i: &PaintItem, x: f32, y: f32) -> bool {
+pub fn point_in_item(i: &PaintItem, x: f32, y: f32) -> bool {
     if x < i.x || x >= i.x + i.w || y < i.y || y >= i.y + i.h {
         return false;
     }
@@ -338,19 +439,24 @@ fn point_in_item(i: &PaintItem, x: f32, y: f32) -> bool {
 }
 
 pub fn hit_test(items: &[PaintItem], x: f32, y: f32) -> Option<&PaintItem> {
-    items.iter().rev().find(|i| {
-        point_in_item(i, x, y) && (i.data_id.is_some() || i.data_action.is_some())
-    })
-}
-
-pub fn hover_at(items: &[PaintItem], x: f32, y: f32) -> Option<u32> {
-    hit_test(items, x, y)
-        .map(|i| i.uid)
+    items
+        .iter()
+        .rev()
+        .find(|i| point_in_item(i, x, y) && i.data_action.is_some())
         .or_else(|| {
             items
                 .iter()
                 .rev()
-                .find(|i| point_in_item(i, x, y))
-                .map(|i| i.uid)
+                .find(|i| point_in_item(i, x, y) && i.data_id.is_some())
         })
+}
+
+pub fn hover_at(items: &[PaintItem], x: f32, y: f32) -> Option<u32> {
+    hit_test(items, x, y).map(|i| i.uid).or_else(|| {
+        items
+            .iter()
+            .rev()
+            .find(|i| point_in_item(i, x, y))
+            .map(|i| i.uid)
+    })
 }

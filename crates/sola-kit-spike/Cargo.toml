@@ -1,9 +1,6 @@
-# Isolated from the Sola workspace (wgpu 26 vs iced wgpu 27).
-# HTML/CSS kit spike — sctk window, no winit, no install, no merge.
-[workspace]
-members = ["."]
-resolver = "3"
-
+# HTML/CSS kit — sctk window, no winit.
+# Storybook: sola-kit-spike. Settings twin: sola-settings-lab.
+# Do not install; run from crate / workspace target/.
 [package]
 name = "sola-kit-spike"
 version = "0.1.0"
@@ -17,13 +14,17 @@ path = "src/lib.rs"
 name = "sola-kit-spike"
 path = "src/main.rs"
 
+[[bin]]
+name = "sola-settings-lab"
+path = "src/bin/settings.rs"
+
 [dependencies]
 cosmic-text = "0.15"
 taffy = { version = "0.7", default-features = false, features = ["std", "flexbox", "taffy_tree"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 raw-window-handle = "0.6"
-wgpu = { version = "26", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
+wgpu = { version = "27", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 smithay-client-toolkit = "0.19"
@@ -31,3 +32,6 @@ wayland-client = { version = "0.31", features = ["system"] }
 resvg = "0.45"
 usvg = "0.45"
 tiny-skia = "0.11"
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+serde = { version = "1", features = ["derive"] }

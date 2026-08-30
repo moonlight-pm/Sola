@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-28 (`kit-retarget`: `sola-kit-spike` storybook on sctk; iced still the shipped kit)
+**As of:** 2026-08-30 (`kit-retarget`: HTML kit + dogfood `sola-settings-lab`; iced still the shipped kit)
 
 ---
 
@@ -115,22 +115,25 @@ Do not invent product policy.
    hover × follows the pointer after close; scheme-less localhost /
    loopback is `http://`. Passkey **create** smoked. Page menu
    DevTools / Inspect Element; HTML5 drag/drop.
-11. **HTML kit spike (this worktree)** — `crates/sola-kit-spike` (lib +
-    storybook). **sctk + calloop**, not winit, not iced. Wayland
-    `app_id` `sola-kit-spike`, title `Kit (spike)`. No bus. **Do not
-    install**; run `crates/sola-kit-spike/target/release/sola-kit-spike`.
-    Catalog IA matches iced sola-kit; live HTML/CSS under
-    `assets/`. Cosmic-text sizes shrink-to-fit labels; per-side
-    borders; hanging theme/popover; form toggles; steppers; lucide
-    SVGs; GPU SV/hue rails. **Next:** continue iced storybook
-    fidelity. JS punted. Iced `sola-kit` is still the shipped kit.
+11. **HTML kit (this worktree)** — workspace member `crates/sola-kit-spike`
+    (wgpu 27, sctk). Storybook `sola-kit-spike` / `Kit (spike)`. First
+    app twin **`sola-settings-lab`** / `Settings (lab)` dogfooded:
+    Applications + Mail on iced bus topics (`Theme`, `Application`,
+    `MailConfig`, `Windows`, `WindowFloating`). Save/remove emit the
+    same stickies iced settings already consumes. Zoned chrome-less;
+    float = CSD + 14px rounded frame. List-etch nav; fill-height apps
+    catalog + 380px detail. Fields: I-beam, caret-follow scroll,
+    word/all select, Emacs motions, key-repeat. Host self-watches
+    `current_exe()`. **Do not install**; run
+    `target/release/sola-settings-lab`. Iced `sola-settings` unchanged.
+    `sola-blitz-spike` / `sola-html-spike` **removed**. JS punted. Do
+    not retarget iced `sola-kit`. **Next:** another lab twin or freeze
+    talk — not a merge.
 
-**Explicit holds:** HTML/CSS kit vs iced (**D5**, partially answered
-2026-08-25) — examples in this worktree under the **spike** name (not
-canary, not install). Idea
+**Explicit holds:** HTML/CSS kit vs iced (**D5**, amended 2026-08-29) —
+lab twins with distinct `app_id`, no overwrite of iced binaries. Idea
 [`docs/ideas/2026-08-24-html-css-kit.md`](docs/ideas/2026-08-24-html-css-kit.md).
-Do not merge. Do not copy to `/opt/sola/bin`. Do not retarget iced
-`sola-kit`. JS/DOM still later.
+Do not merge a kit switch. JS/DOM still later.
 
 **Always allowed:** pure safety/doc fixes; tests; progress-doc maintenance;
 warning cleanups; worktree hygiene the user asks for.
@@ -146,7 +149,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** (workspaces + browser + paint + mail + monitor + **terminal**). Worktree `kit-retarget` = HTML-kit **spike** examples (`sola-kit-spike`, sctk; D5). Not on master | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (workspaces + browser + paint + mail + monitor + **terminal**). Worktree `kit-retarget` = HTML kit + `sola-settings-lab` (D5 lab twin). Not on master | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket + nested members; selected title no longer shifts — **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |

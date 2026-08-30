@@ -1,0 +1,28 @@
+<!-- Settings (lab). data-slot=demo filled from the store.
+     CSD titlebar is hidden unless Topic::WindowFloating (iced wrap_if_floating). -->
+<div class="app">
+  <div class="titlebar" data-action="drag" data-id="csd">
+    <div class="traffic">
+      <div class="close" data-action="close"></div>
+    </div>
+    <div class="title">Settings (lab)</div>
+    <div class="traffic-spacer"></div>
+  </div>
+  <div class="body">
+    <aside class="sidebar sidebar-settings">
+      <div class="nav settings-nav">
+        <div class="row is-header"><div class="etch"><div class="label">SETTINGS</div></div></div>
+        <div class="row" data-action="panel" data-id="apps">
+          <div class="etch"><div class="label">Applications</div></div>
+        </div>
+        <div class="row" data-action="panel" data-id="mail">
+          <div class="etch"><div class="label">Mail</div></div>
+        </div>
+      </div>
+    </aside>
+    <main class="stage stage-settings" data-id="stage-scroll">
+      <div class="heading" data-bind="heading"></div>
+      <div class="demo" data-slot="demo"></div>
+    </main>
+  </div>
+</div>

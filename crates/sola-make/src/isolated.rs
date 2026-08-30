@@ -172,7 +172,7 @@ pub fn binary_path(c: &IsolatedCrate, release: bool) -> PathBuf {
 /// directory. Never copy them to `/opt/sola/bin` — they must not collide
 /// with shipped apps, even under a distinct name.
 pub fn skip_install(c: &IsolatedCrate) -> bool {
-    c.name.ends_with("-spike")
+    c.name.ends_with("-spike") || c.name.ends_with("-lab")
 }
 
 /// Whether the discovered crate has a buildable binary target. Used by

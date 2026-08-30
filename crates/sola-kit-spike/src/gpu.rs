@@ -131,7 +131,7 @@ impl Gpu {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device.poll(wgpu::PollType::Wait).ok()?;
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
         rx.recv().ok()?.ok()?;
         let data = slice.get_mapped_range();
         let mut out = vec![0u32; (width * height) as usize];
@@ -246,8 +246,16 @@ impl Present {
         } else {
             caps.present_modes.first().copied()?
         };
-        let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
-            wgpu::CompositeAlphaMode::Opaque
+        let alpha_mode = if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        {
+            wgpu::CompositeAlphaMode::PreMultiplied
+        } else if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+        {
+            wgpu::CompositeAlphaMode::PostMultiplied
         } else {
             caps.alpha_modes.first().copied()?
         };
@@ -301,7 +309,7 @@ impl Present {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -378,7 +386,7 @@ impl Present {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -446,6 +454,7 @@ impl Present {
         height: u32,
         hole: Option<(u32, u32, u32, u32)>,
         time: f32,
+        window_radius: f32,
     ) {
         self.resize(width, height);
         let frame = match self.surface.get_current_texture() {
@@ -459,10 +468,10 @@ impl Present {
         self.queue.write_buffer(
             &self.screen,
             0,
-            bytemuck::bytes_of(&[width as f32, height as f32, 0.0f32, 0.0]),
+            bytemuck::bytes_of(&[width as f32, height as f32, window_radius, 0.0f32]),
         );
         self.upload_instances(quads);
-        self.upload_chrome(glyphs, width, height);
+        self.upload_chrome(glyphs, width, height, window_radius);
         let Some(chrome_tex) = self.chrome.as_ref() else {
             return;
         };
@@ -486,7 +495,16 @@ impl Present {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(if window_radius > 0.5 {
+                            wgpu::Color::TRANSPARENT
+                        } else {
+                            wgpu::Color {
+                                r: 0.047,
+                                g: 0.055,
+                                b: 0.071,
+                                a: 1.0,
+                            }
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -536,7 +554,7 @@ impl Present {
         }
     }
 
-    fn upload_chrome(&mut self, chrome: &[u32], width: u32, height: u32) {
+    fn upload_chrome(&mut self, chrome: &[u32], width: u32, height: u32, radius: f32) {
         let width = width.max(1);
         let height = height.max(1);
         let n = (width as usize) * (height as usize);
@@ -582,6 +600,9 @@ impl Present {
                 bind,
             });
         }
+        if radius > 0.5 {
+            round_mask_rgba(&mut self.rgba, width, height, radius);
+        }
         let tex = &self.chrome.as_ref().unwrap().texture;
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -602,6 +623,39 @@ impl Present {
                 depth_or_array_layers: 1,
             },
         );
+    }
+}
+
+fn round_mask_rgba(rgba: &mut [u8], width: u32, height: u32, radius: f32) {
+    let w = width as f32;
+    let h = height as f32;
+    let hx = w * 0.5;
+    let hy = h * 0.5;
+    let r = radius.min(hx.min(hy));
+    for y in 0..height {
+        for x in 0..width {
+            let px = x as f32 + 0.5 - hx;
+            let py = y as f32 + 0.5 - hy;
+            let qx = px.abs() - hx + r;
+            let qy = py.abs() - hy + r;
+            let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+            let cover = (0.5 - d).clamp(0.0, 1.0);
+            if cover >= 0.999 {
+                continue;
+            }
+            let i = ((y * width + x) * 4) as usize;
+            if cover < 0.004 {
+                rgba[i] = 0;
+                rgba[i + 1] = 0;
+                rgba[i + 2] = 0;
+                rgba[i + 3] = 0;
+                continue;
+            }
+            rgba[i] = (rgba[i] as f32 * cover).round() as u8;
+            rgba[i + 1] = (rgba[i + 1] as f32 * cover).round() as u8;
+            rgba[i + 2] = (rgba[i + 2] as f32 * cover).round() as u8;
+            rgba[i + 3] = (rgba[i + 3] as f32 * cover).round() as u8;
+        }
     }
 }
 
@@ -790,9 +844,10 @@ fn request_device(adapter: &wgpu::Adapter) -> Option<(wgpu::Device, wgpu::Queue)
         required_limits: adapter.limits(),
         memory_hints: Default::default(),
         trace: Default::default(),
+        experimental_features: Default::default(),
     })) {
         Ok((device, queue)) => {
-            device.on_uncaptured_error(Box::new(|e| {
+            device.on_uncaptured_error(std::sync::Arc::new(|e| {
                 tracing::error!(?e, "wgpu uncaptured");
             }));
             Some((device, queue))
@@ -916,7 +971,7 @@ fn activate_gpu_env() {
 }
 
 const QUAD_WGSL: &str = r#"
-struct Screen { size: vec2<f32>, _p: vec2<f32> }
+struct Screen { size: vec2<f32>, radius: f32, _p: f32 }
 @group(0) @binding(0) var<uniform> screen: Screen;
 
 struct VOut {
@@ -984,6 +1039,37 @@ fn sd_round(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
   return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+fn srgb_to_lin(c: vec3<f32>) -> vec3<f32> {
+  let lo = c / 12.92;
+  let hi = pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4));
+  return select(hi, lo, c <= vec3(0.04045));
+}
+
+fn lin_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let lo = c * 12.92;
+  let hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+  return select(hi, lo, c <= vec3(0.0031308));
+}
+
+// 4×4 Bayer, −0.5..0.5 ulp — 8-bit UNORM fills have ~7 mix steps
+// between close graphite stops; iced's sRGB surface hides that.
+fn bayer(p: vec2<f32>) -> f32 {
+  let x = u32(p.x) & 3u;
+  let y = u32(p.y) & 3u;
+  let m = array<f32, 16>(
+    0.0, 8.0, 2.0, 10.0,
+    12.0, 4.0, 14.0, 6.0,
+    3.0, 11.0, 1.0, 9.0,
+    15.0, 7.0, 13.0, 5.0,
+  );
+  return (m[y * 4u + x] + 0.5) / 16.0 - 0.5;
+}
+
+fn grad_mix(a: vec3<f32>, b: vec3<f32>, t: f32, px: vec2<f32>) -> vec3<f32> {
+  let mixed = mix(srgb_to_lin(a), srgb_to_lin(b), clamp(t, 0.0, 1.0));
+  return clamp(lin_to_srgb(mixed) + vec3(bayer(px) / 255.0), vec3(0.0), vec3(1.0));
+}
+
 @fragment
 fn fs(v: VOut) -> @location(0) vec4<f32> {
   if (v.px.x < v.clip.x || v.px.y < v.clip.y || v.px.x >= v.clip.x + v.clip.z || v.px.y >= v.clip.y + v.clip.w) {
@@ -993,21 +1079,23 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
   let p = v.local - half;
   let r = min(v.radius, min(half.x, half.y));
   let d = sd_round(p, half, r);
-  var a = 1.0 - smoothstep(-0.6, 0.6, d);
-  if (v.border > 0.4) {
-    let inner = 1.0 - smoothstep(-0.6, 0.6, d + v.border);
-    a = clamp(a - inner, 0.0, 1.0);
+  var a = clamp(0.5 - d, 0.0, 1.0);
+  if (screen.radius > 0.5) {
+    let wh = screen.size * 0.5;
+    let wr = min(screen.radius, min(wh.x, wh.y));
+    let wd = sd_round(v.px - wh, wh, wr);
+    a *= clamp(0.5 - wd, 0.0, 1.0);
   }
-  if (a < 0.01) {
+  if (a < 0.004) {
     discard;
   }
   var rgb = v.color.rgb;
   if (v.mode > 0.5 && v.mode < 1.5) {
     let t = clamp(v.local.y / max(v.size.y, 1.0), 0.0, 1.0);
-    rgb = mix(v.color.rgb, v.color2.rgb, t);
+    rgb = grad_mix(v.color.rgb, v.color2.rgb, t, v.px);
   } else if (v.mode > 1.5 && v.mode < 2.5) {
     let t = clamp((v.local.x / max(v.size.x, 1.0) + v.local.y / max(v.size.y, 1.0)) * 0.5, 0.0, 1.0);
-    rgb = mix(v.color.rgb, v.color2.rgb, t);
+    rgb = grad_mix(v.color.rgb, v.color2.rgb, t, v.px);
   } else if (v.mode > 2.5 && v.mode < 3.5) {
     let sat = clamp(v.local.x / max(v.size.x, 1.0), 0.0, 1.0);
     let val = 1.0 - clamp(v.local.y / max(v.size.y, 1.0), 0.0, 1.0);
@@ -1022,7 +1110,14 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
     let g = select(0.22, 0.32, ((cx + cy) & 1) == 0);
     rgb = mix(vec3(g), v.color.rgb, t);
   }
-  return vec4(rgb, v.color.a * a);
+  // Hairline rim on large surfaces (cards). Small radii (buttons) skip —
+  // the mix reads as a 45° bevel on a 26px control.
+  if (v.border > 0.4 && v.radius > 10.0) {
+    let t = smoothstep(-v.border - 0.5, 0.5, d);
+    rgb = mix(rgb, rgb * 0.82 + vec3(0.18), t);
+  }
+  let cov = v.color.a * a;
+  return vec4(rgb * cov, cov);
 }
 "#;
 
@@ -1104,6 +1199,7 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   let p = vec2<i32>(pos.xy);
-  return textureLoad(tex, p, 0);
+  let c = textureLoad(tex, p, 0);
+  return vec4(c.rgb * c.a, c.a);
 }
 "#;

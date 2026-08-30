@@ -1,13 +1,15 @@
 <div class="demo-stack">
   <div class="card">
     <div class="card-title">Tokens</div>
+    <div class="card-body">Unit-aware steppers. Click the value and type, or use arrows. Radius 0–32 · Opacity 0–100.</div>
     <div class="form-row">
-      <div class="form-key">Radius</div>
+      <div class="form-key">Corner radius</div>
       <div class="form-val">
         <div class="stepper">
           <div class="step" data-action="step-down" data-id="radius">-</div>
-          <div class="step-val" data-bind="radius">8</div>
+          <div class="step-val" data-action="focus" data-id="radius" data-bind="radius"></div>
           <div class="step" data-action="step-up" data-id="radius">+</div>
+          <div class="t-caption">px</div>
         </div>
       </div>
     </div>
@@ -16,8 +18,9 @@
       <div class="form-val">
         <div class="stepper">
           <div class="step" data-action="step-down" data-id="opacity">-</div>
-          <div class="step-val" data-bind="opacity">80</div>
+          <div class="step-val" data-action="focus" data-id="opacity" data-bind="opacity"></div>
           <div class="step" data-action="step-up" data-id="opacity">+</div>
+          <div class="t-caption">%</div>
         </div>
       </div>
     </div>

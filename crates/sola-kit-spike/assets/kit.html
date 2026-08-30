@@ -13,7 +13,7 @@
   </div>
   <div class="sb-header">
     <div class="select select-lg" data-action="theme-toggle">
-      <div class="enamel"></div>
+      <div class="enamel" data-id="header-enamel"></div>
       <div class="select-label" data-bind="theme"></div>
       <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
       <div class="menu menu-hang" data-slot="theme-menu">
@@ -22,12 +22,12 @@
         <div class="menu-item" data-action="theme-pick" data-id="Night">Night</div>
       </div>
     </div>
-    <div class="btn btn-sm btn-secondary">New Theme</div>
-    <div class="btn btn-sm btn-danger-outline">Delete</div>
+    <div class="btn btn-sm btn-secondary" data-action="theme-new">New Theme</div>
+    <div class="btn btn-sm btn-danger-outline" data-action="theme-delete">Delete</div>
   </div>
   <div class="body">
     <aside class="sidebar">
-      <div class="nav" data-slot="nav">
+      <div class="nav" data-slot="nav" data-id="nav-scroll">
         <div class="row" data-template="row" data-id="" data-kind="item">
           <div class="etch">
             <div class="label" data-bind="label"></div>
@@ -35,10 +35,11 @@
         </div>
       </div>
     </aside>
-    <main class="stage">
+    <main class="stage" data-id="stage-scroll">
       <div class="heading" data-bind="heading"></div>
       <div class="lede" data-bind="lede"></div>
       <div class="demo" data-slot="demo"></div>
+      <div class="atom-panel" data-slot="atoms"></div>
     </main>
   </div>
 </div>

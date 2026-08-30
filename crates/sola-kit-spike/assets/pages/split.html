@@ -1,12 +1,26 @@
 <div class="demo-stack wide">
-  <div class="t-caption">Drag the hairline. Left pane is a percent; right takes the rest.</div>
+  <div class="t-caption wrap" data-bind="split-v">Columns · 50% / 50%</div>
   <div class="split">
     <div class="split-pane" data-slot="split-left">
-      <div class="t-muted">Left</div>
+      <div class="t-muted">Pane A</div>
     </div>
-    <div class="split-rule" data-action="split-drag"></div>
+    <div class="split-rule" data-action="split-drag">
+      <div class="split-line"></div>
+    </div>
     <div class="split-pane">
-      <div class="t-muted">Right</div>
+      <div class="t-muted">Pane B</div>
+    </div>
+  </div>
+  <div class="t-caption wrap" data-bind="split-h">Rows · 45% / 55%</div>
+  <div class="split split-col">
+    <div class="split-pane" data-slot="split-top">
+      <div class="t-muted">Pane A</div>
+    </div>
+    <div class="split-rule-h" data-action="split-drag-h">
+      <div class="split-line-h"></div>
+    </div>
+    <div class="split-pane">
+      <div class="t-muted">Pane B</div>
     </div>
   </div>
 </div>

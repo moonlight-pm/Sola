@@ -345,6 +345,9 @@ fn build_exec(target: Option<String>, release: bool) -> ! {
 /// (e.g. "sola-shell") by reading `crates/<name>/Cargo.toml`.
 /// Falls back to "sola-<name>" if not found.
 pub(crate) fn resolve_crate_name(name: &str) -> String {
+    if name == "settings-lab" || name == "sola-settings-lab" {
+        return "sola-kit-spike".into();
+    }
     let toml_path = format!("crates/{name}/Cargo.toml");
     if let Ok(contents) = std::fs::read_to_string(&toml_path) {
         for line in contents.lines() {
@@ -432,7 +435,11 @@ pub(crate) fn discover_binaries() -> Vec<String> {
                 Err(_) => continue,
             };
             for name in bin_names_from_toml(&contents) {
-                if name != "sola-make" && !EXCLUDED_TARGETS.contains(&name.as_str()) {
+                if name != "sola-make"
+                    && !EXCLUDED_TARGETS.contains(&name.as_str())
+                    && !name.ends_with("-spike")
+                    && !name.ends_with("-lab")
+                {
                     binaries.push(name);
                 }
             }

@@ -1,18 +1,31 @@
-<div class="demo-stack">
-  <div class="card">
+<div class="demo-stack wide">
+  <div class="t-caption" data-bind="status">Pick a file — nothing chosen yet.</div>
+  <div class="picker-panel">
     <div class="card-title">Open image</div>
-    <div class="row-inline">
-      <div class="crumb">Home</div>
-      <div class="crumb">Pictures</div>
+    <div class="crumb-row" data-slot="open-crumbs"></div>
+    <div class="picker-body">
+      <div class="places" data-slot="open-places" data-id="open-places"></div>
+      <div class="file-well" data-id="open-files" data-slot="open-files"></div>
     </div>
-    <div class="file-row is-active">hero.png</div>
-    <div class="file-row">shot-01.jpg</div>
-    <div class="file-row">wallpaper.webp</div>
-    <div class="hairline"></div>
     <div class="btn-row">
-      <div class="spacer"></div>
-      <div class="btn btn-secondary">Cancel</div>
-      <div class="btn btn-primary">Open</div>
+      <div class="input" data-action="focus" data-id="open-name" data-bind="open-name"></div>
+      <div class="btn btn-secondary" data-action="file-cancel" data-id="open">Cancel</div>
+      <div class="btn btn-primary" data-action="file-confirm" data-id="open">Open</div>
+    </div>
+    <div class="t-caption">Showing Images</div>
+  </div>
+  <div class="scene">Save</div>
+  <div class="picker-panel">
+    <div class="card-title">Save image</div>
+    <div class="crumb-row" data-slot="save-crumbs"></div>
+    <div class="picker-body">
+      <div class="places" data-slot="save-places" data-id="save-places"></div>
+      <div class="file-well" data-id="save-files" data-slot="save-files"></div>
+    </div>
+    <div class="btn-row">
+      <div class="input" data-action="focus" data-id="save-name" data-bind="save-name"></div>
+      <div class="btn btn-secondary" data-action="file-cancel" data-id="save">Cancel</div>
+      <div class="btn btn-primary" data-action="file-confirm" data-id="save">Save</div>
     </div>
   </div>
 </div>

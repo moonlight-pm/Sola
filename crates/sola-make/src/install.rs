@@ -475,6 +475,11 @@ pub fn install(apps: &[String], release: bool) {
         out.dedup();
         out
     };
+    binaries.retain(|n| !n.ends_with("-spike") && !n.ends_with("-lab"));
+    if binaries.is_empty() {
+        println!("  skip: spike/lab binaries are not installed (run from target/)");
+        return;
+    }
     // Build packages in CLI/discovery order (cargo doesn't care); sort only
     // for the copy loop so on-disk replaces — and thus sola's restart
     // watcher — fire bus → river → shell → … with a settle gap between.
