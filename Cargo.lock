@@ -8476,6 +8476,7 @@ dependencies = [
  "sola-kit",
  "tokio",
  "tracing",
+ "zbus",
 ]
 
 [[package]]

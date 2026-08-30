@@ -9,10 +9,9 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget,
-    LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
-    OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating,
-    WindowGeometry,
+    FocusTarget, LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload,
+    MouseEnteredPayload, OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window,
+    WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -1147,7 +1146,7 @@ impl Shell {
         if dismissed_menu {
             self.menu_open = false;
             self.current_open_index = None;
-            self.open_panel = None;
+            self.set_open_panel(None);
         }
 
         self.raise_window_from_click(e.window_id);

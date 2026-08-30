@@ -25,6 +25,7 @@ pub fn trigger(action: &str) {
             std::thread::spawn(move || {
                 let mut child = child;
                 let _ = child.wait();
+                crate::audio::send(crate::audio::Command::Refresh);
             });
         }
         Err(e) => {

@@ -9,13 +9,24 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-29 (`crates/sola-agent` retired; mail inbox other-client refresh on master; notifications HUD in worktree; `sola-scope` + wrapper on master; CONTRIBUTING from-source path)
+**As of:** 2026-08-29 (shell Bluetooth + volume menubar on master; `crates/sola-agent` retired; mail inbox other-client refresh on master; notifications HUD in worktree; `sola-scope` + wrapper on master; CONTRIBUTING from-source path)
 
 ---
 
 ## Now
 
-1. **Notifications** — freeze
+1. **Shell Bluetooth + volume** (on master) —
+   Bluetooth freeze
+   [`docs/specs/2026-08-29-shell-bluetooth-menubar-design.md`](docs/specs/2026-08-29-shell-bluetooth-menubar-design.md);
+   volume freeze
+   [`docs/specs/2026-08-29-shell-audio-menubar-design.md`](docs/specs/2026-08-29-shell-audio-menubar-design.md).
+   Nearby inquiry omits 6-pair hex addresses (`AA-BB-…`). Volume chip left of
+   Bluetooth (`Panel::Audio`): default-sink level on the icon, popover slider
+   + mute + output/input device pick (`pw-dump` / `wpctl`). Media keys still
+   `solactl media`. **Installed** `shell` (debug, 2026-08-29). WH-CH520 paired
+   on the desk. **Next:** desk-smoke volume keys vs chip, sink/source switch,
+   dashed-MAC nearby filter.
+2. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
    Desk cards drop from the menubar; missed pile is a bell in the right
    cluster. `AppToast` stays a whisper (`Opening…`, screenshot). Workspaces
@@ -39,25 +50,25 @@ Do not invent product policy.
    `https://host/` vs page `https://host`. **Installed** `browser`
    (release, 2026-08-27, second). Retest KenHerbert: pending → displayed,
    graphite card at screen top-right.
-2. **GPU idle** — living track:
+3. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
    Desk sample 2026-08-25: **mean 17.7%** at P8 / 21 W (was ~30–40%).
    Opaque-region **not fully smoked** (session apps did not re-exec).
    **Next:** restart those windows and re-measure, then River NVIDIA knobs.
-3. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
+4. **kit Morph2 sidebar** — frozen. sola-browser tab strip: groups and
    loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
-4. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
+5. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
    `selection` atom. Workspaces PTYs share the palette. **Installed**
    `terminal` (2026-08-21).
-5. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
+6. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
    `Role::Observer` + `Wire::Trace` (not RPC on the bus). Kit JSON
    highlighter. **Installed** `call` + `monitor` (debug, 2026-08-21).
    Desk smoke pending. GPU menubar ranking (SM % + VRAM) also lands.
-6. **sola-mail** — **partial** (on **master**).
+7. **sola-mail** — **partial** (on **master**).
    Letter reading (kit `prose`, HTML preferred); Mail.app list (bold
    unread, one-line subjects); always-on reader toolbar (icons +
    tooltips; message actions muted until a row is selected); scroll
@@ -76,7 +87,7 @@ Do not invent product policy.
    longer keeps rows the server has already MOVE/EXPUNGEd (that merge
    treated a shorter page as a scrolled tail).
    **Install:** `mail` (debug, 2026-08-28). Self-restarts.
-7. **Marketing site (sola.computer)** — **teaser live** at
+8. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
    `sola`, image `sola-landing`). Paper
@@ -86,7 +97,7 @@ Do not invent product policy.
    **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
-8. **sola-workspaces** — **partial** (on master)  
+9. **sola-workspaces** — **partial** (on master)  
    **Freeze:** [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](docs/specs/2026-08-13-sola-agent-terminal-design.md)  
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
@@ -136,16 +147,16 @@ Do not invent product policy.
    `workspace.rm` replies before it kills tmux (a pane closing itself
    no longer hangs `solactl` / leaves the working ring). Installed
    (self-restart).  
-9. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
+10. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
    Stage cache + off-thread decode; tabs persist via `PaintSession`.
    Reinstall `paint` to dogfood. Gaps: no clipboard image.
-10. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
+11. **Call plane** — on **master**. Host + `solactl compositor` / `session` +
    kit helper + `Role::Observer`. Workspaces registers owner `workspaces`
    (desk smoke pending). **D3** (confirm gates) is open. Catalog sticky
    on the bus still later (monitor observes the call socket instead).  
-11. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+12. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    Per-title nest: **Fit to window** or a locked resolution (default **1080p**).
    Fit follows the gamescope host frame on zone/float (nested mode-control +
    focused window at 0,0). Keep the game **fullscreen** for Fit. Nest passes
@@ -155,8 +166,8 @@ Do not invent product policy.
    - Fit rezone dogfooded (Factorio, fullscreen on).  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
-12. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-13. **Follow-ups (unordered backlog):** create-card; float chrome, D2,
+13. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
+14. **Follow-ups (unordered backlog):** create-card; float chrome, D2,
    preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: Bitwarden
    fill decrypts **org vaults** (desk smoke after `install browser`);

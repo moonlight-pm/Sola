@@ -51,6 +51,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         Some(crate::app::Panel::Calendar) => return calendar_panel(shell),
         Some(crate::app::Panel::Stat(m)) => return crate::stats::view::panel(shell, m),
         Some(crate::app::Panel::NotifyPile) => return crate::notify::view::pile_panel(shell),
+        Some(crate::app::Panel::Bluetooth) => return crate::bluetooth::view::panel(shell),
+        Some(crate::app::Panel::Audio) => return crate::audio::view::panel(shell),
         None => {}
     }
 

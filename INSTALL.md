@@ -149,6 +149,13 @@ similar.
   routing; **wayland** and **xwayland** so iced binaries can dlopen
   `libwayland-client` and River can find Xwayland.
 - Enables `hardware.graphics`.
+- Enables **BlueZ** (`hardware.bluetooth`, power-on-boot, experimental
+  for battery). The menubar Bluetooth chip talks to `org.bluez`; it
+  hides when no adapter is present. Do **not** add Blueman — Sola owns
+  that popover.
+- The menubar **volume** chip talks to PipeWire (`pw-dump` / `wpctl`).
+  The module does **not** enable PipeWire; the host already must (same
+  as media keys). The chip hides if WirePlumber is missing.
 - Installs **Inter** and **JetBrains Mono** (`fonts.packages`) so
   UI/mono roles resolve (see `docs/manual/distribution.md`).
 - Creates `/opt/sola/log` as a writable directory. Binaries hardcode
