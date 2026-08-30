@@ -607,6 +607,14 @@ cef::wrap_app! {
                 let origin_key = CefString::from("remote-allow-origins");
                 let origin_val = CefString::from("*");
                 cmd.append_switch_with_value(Some(&origin_key), Some(&origin_val));
+
+                // Chromium default autoplay needs a user gesture (or mute).
+                // Steam store trailers are clear DASH and call play() with
+                // audio on load; the WebKit host had
+                // media_playback_requires_user_gesture=false. Match that.
+                let autoplay_key = CefString::from("autoplay-policy");
+                let autoplay_val = CefString::from("no-user-gesture-required");
+                cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
             }
         }
     }

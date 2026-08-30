@@ -109,8 +109,11 @@ cargo make install        # copies binaries to /opt/sola/bin (sudo)
 
 `cargo make install-cef` populates `~/.cache/sola/cef-<version>/Release/`
 with the patched libcef.so (the `patchelf` step that points its
-`DT_RUNPATH` at the nix-ld dispatch dir runs automatically). The CEF
-tarball is ~500MB compressed; this is the slow step on a fresh box.
+`DT_RUNPATH` at the nix-ld dispatch dir runs automatically). The public
+tarball is ~500MB compressed and has **no H.264/AAC** (AV1/VP9/Opus/MP3
+only). Steam store DASH and typical MP4 need a codecs rebuild of the same
+pin (`scripts/cef-codecs/build.sh`, hours, then
+`install-into-cache.sh`). MPEG-LA if that `libcef.so` is redistributed.
 
 `cargo make build` defaults to debug. For release-mode builds (much
 smaller, more optimized, slower to compile), pass `--release`:

@@ -8,6 +8,10 @@ work on form fields and body text. ⌘-click a link to open it in a
 background tab. Right-click the page for a small kit menu. Hold back or
 forward to jump in that tab’s session history. Site **notifications**
 leave the page and show as Sola desk cards (permission prompt first).
+Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
+including Steam store trailers, plays on the codecs-enabled CEF used on
+this desk (`scripts/cef-codecs/`); the public `install-cef` tarball does
+not include those codecs.
 
 ## What it is
 
