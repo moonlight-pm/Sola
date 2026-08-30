@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-27 (notifications HUD in this worktree; `sola-scope` + wrapper on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-29 (wrapper Edit / links / notify / huddle smoked on this worktree; notifications HUD in sola-browser; `sola-scope` + wrapper on master; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -17,28 +17,11 @@ Do not invent product policy.
 
 1. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
-   Desk cards drop from the menubar; missed pile is a bell in the right
-   cluster. `AppToast` stays a whisper (`Opening…`, screenshot). Workspaces
-   done-while-unfocused and browser `Notification` emit `Topic::AppNotification`.
-   First install (`shell`+`browser`+`workspaces`, no `bus`) left the
-   shell deaf: Subscribe included new `TopicKind`s, the running bus
-   dropped the whole vec, no `OutputGeometry` / `Windows`, no frames.
-   Recovered with master `shell`. Subscribe now sends a pre-MailStatus
-   prefix then the full set. **Browser:** notify inject called
-   `profiles::active()` from the CEF **renderer** (no profile bind) →
-   renderer panic → no page content. Inject now uses `active_if_bound()`.
-   **Installed** `bus`+`shell`+`browser`+`workspaces` (release, 2026-08-26,
-   bus first). Desk smoke: menubar frames, pages paint. Permission
-   prompt is correct; `new Notification()` still drew Chromium’s
-   in-page banner over the web view (wrap called `new Native(...)`).
-   Wrap reports SHOW only (no Native ctor). **Installed** `browser`
-   (release, 2026-08-27). KenHerbert tester: permission **granted**,
-   status stuck **pending**, no desk card. Two bugs: wrap put
-   `Native.prototype` on the dummy (title/body accessors throw, so
-   `new Notification()` never reports); CEF grant key was
-   `https://host/` vs page `https://host`. **Installed** `browser`
-   (release, 2026-08-27, second). Retest KenHerbert: pending → displayed,
-   graphite card at screen top-right.
+   Desk cards + missed pile shipped (KenHerbert, 2026-08-27).
+   **Wrapper (this worktree, smoked 2026-08-29):** Edit ⌘X/C/V/A;
+   off-site links → sola-browser; site `Notification` → desk card
+   (`app_id` = wrapper); huddle is an in-window OSR popup + mic
+   Allow/Block (`media.json`). **Installed** `wrapper` debug 2026-08-29.
 2. **GPU idle** — living track:
    [`PERFORMANCE.md`](PERFORMANCE.md)
    (architecture regression table + capabilities row `gpu-idle`).
@@ -178,11 +161,11 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **master** (workspaces + wrapper + **scope**). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
 | Scope | **On master.** Pixel loupe: live follow, zoom 65×65…3×3, hex copy, remembered float. Desktop pointer visible; grid omits the sprite (patched wlroots + River). Installed `scope`+`river`+`shell`; compositor `/opt/sola/bin/river`. | — |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **Notifications:** Allow prompt dogfooded; KenHerbert **pending** / no desk card (Native.prototype throw + origin slash). Fix **installed** `browser` 2026-08-27 (second) — retest pending → displayed + top-right card. | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **Notifications:** KenHerbert **smoked** 2026-08-27 (pending → displayed; graphite card top-right). | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master:** letter pane; HTML preferred; unread **bold**; always-on icon toolbar; scroll-to-load; graphite `list_item`; SEARCH-free folder lists; empty batches; in-body drag-select + copy (list rows stay the default pointer, not copyable); magic-link / long first-party URLs stay clickable; menubar unread chip (`Topic::MailStatus`). Still no HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
-| Wrapper | **On master.** Slack (`illuno.slack.com`) paints. `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
+| Wrapper | **On master** + this worktree. Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 

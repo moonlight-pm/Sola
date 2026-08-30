@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented on `sola-browser`; installed 2026-08-26 (desk smoke pending)  
+**Status:** **Frozen** — implemented on `sola-browser` (installed 2026-08-27) and `sola-wrapper` (smoked 2026-08-29)  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -85,6 +85,8 @@ Sola is the DE — Chromium’s Linux libnotify path has no daemon here.
   screen top-right under the menubar).
 - `NotificationActivate` with `tab_id` → `SetActiveTab`.
 
+**Wrapper** (`sola-wrapper <id>`): same CEF inject and helper IPC. Chrome drains the queue, shows the Allow / Block overlay, and emits `AppNotification` with `app_id` = the wrapper id (so click raises Slack, not Browser). Grants live in `~/.config/sola/wrapper/<id>/notifications.json`.
+
 Denied / default: constructor is a no-op. Permission `"default"` until
 the user chooses.
 
@@ -102,6 +104,7 @@ promoting remaining `AppToast` senders (launch fail / exit).
 | Bus topics | **done** (`AppNotification`, `NotificationActivate`) |
 | Shell HUD + pile | **done** |
 | Browser intercept + permission | **done** (no Native ctor; dummy must not inherit `Notification.prototype`; origin keys canonicalized). KenHerbert pending/no-card: **`install browser` 2026-08-27 (second)** — confirm desk card |
+| Wrapper intercept + permission | **smoked** 2026-08-29 (same inject; emit with wrapper `app_id`; grants under wrapper data dir) |
 | Workspaces done → notification | **done** |
 | Dogfood | **reinstalled** 2026-08-26 `bus`+`shell`+`browser`+`workspaces` (release, bus first). Permission prompt OK; Native ctor drew an in-page banner. Wrap is SHOW-only; **`install browser` 2026-08-27** — confirm the top-right desk card |
 

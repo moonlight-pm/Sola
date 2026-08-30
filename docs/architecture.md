@@ -224,7 +224,8 @@ content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
 | Binary / argv | `sola-wrapper <id>`; helper `sola-wrapper --engine --profile=<id>` (same binary, `current_exe`). |
 | App id | The configured id (`slack`), set on kit `startup` / `window_settings_transparent`. |
 | Catalog | `Topic::Application` fields `kind: wrapper` + `url`. Command synthesized `/opt/sola/bin/sola-wrapper <id>`. Launch lookup: `state.yaml` (bus persistence). |
-| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
+| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. Notification grants `…/notifications.json`; mic/camera `…/media.json`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
+| Chrome | Kit CSD while floating + one CEF page. **Edit** menubar (⌘X/C/V/A) via shell `MenuAction`; paste is iced clipboard → `PasteText`. Web `Notification` → desk card (`app_id` = wrapper id). Off-site `target=_blank` / ⌘-click / `window.open` → `sola_core::open_url` (sola-browser). Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (huddle). `getUserMedia` → kit Allow / Block. |
 | Singleton | `$XDG_RUNTIME_DIR/sola/wrapper/<id>.sock` — second spawn raises the live window. |
 
 ---

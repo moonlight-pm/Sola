@@ -1,14 +1,14 @@
 # sola-wrapper — websites as first-class Sola apps
 
 **Date:** 2026-08-21  
-**Status:** landed on master (2026-08-25); Slack wrapper paints 
-**Related:** [CEF port](2026-05-04-cef-port-design.md); [browser profiles](2026-08-10-sola-browser-profiles-design.md); [Applications list-detail](2026-08-05-sola-settings-applications-list-detail-design.md)
+**Status:** landed on master (2026-08-25); Slack wrapper paints; Edit / links / notify / huddle smoked 2026-08-29  
+**Related:** [CEF port](2026-05-04-cef-port-design.md); [browser profiles](2026-08-10-sola-browser-profiles-design.md); [Applications list-detail](2026-08-05-sola-settings-applications-list-detail-design.md); [notifications](2026-08-25-sola-notifications-design.md)
 
 | | |
 |--|--|
-| **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. |
-| **Dogfood** | **On master.** Slack (`https://illuno.slack.com`) paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). |
-| **Gaps** | No Bitwarden / downloads / tab chrome; in-app navigation only (no “open in sola-browser”); no throwaway `--url`; no PWA manifest install; page copy/paste and `window.open` policy unsmoked. |
+| **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. Edit menu (⌘X/C/V/A) via shell `MenuAction` + iced clipboard. Web `Notification` → `Topic::AppNotification` with the wrapper `app_id`. Off-site popups → `sola_core::open_url`. Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (Slack huddle). `getUserMedia` → kit Allow / Block (`media.json`). |
+| **Dogfood** | **On master** + this worktree. Slack paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). |
+| **Gaps** | No Bitwarden / downloads / tab chrome; no throwaway `--url`; no PWA manifest install. |
 
 ## Intent
 
@@ -87,9 +87,19 @@ Depend on `sola-browser` as a **library** with `default-features = false` (no Bi
 
 Extraction of a `sola-cef` crate is **not** this slice. If bind_external + lib dep fights later (process globals, helper reap), extract then — do not fork a second CEF crate.
 
-## Navigation (v1)
+## Navigation
 
-Load the configured URL. Further navigation stays in the same window (in-app). No policy yet for opening a different origin in sola-browser (`window.open`, OAuth popups, mailto). Revisit as a product fork; do not invent it here.
+Load the configured URL. Same-window navigation stays in the wrapper (SPA, SSO redirects in the main frame).
+
+**Outbound links (locked 2026-08-28):** `target=_blank`, `window.open`, and ⌘-click are CEF popups (native window cancelled). The wrapper has no tabs. http(s) to a **different registrable domain** than the start URL opens in **sola-browser** via [`sola_core::open_url`](../../crates/sola-core/src/open_url.rs) (same path as terminal / mail / `solactl open`). Same-site popups stay in-app (cookie / SPA). `javascript:`, `mailto:`, `about:`, `data:` are ignored.
+
+Main-frame navigations are **not** cancelled (Google SSO in the Slack window must keep working).
+
+## Media (huddles)
+
+Slack huddles are `window.open('about:blank')` + `document.write` (NEW_POPUP). Cancelling that popup makes `window.open` return null and the huddle button does nothing. Same-site / `about:blank` / NEW_POPUP is allowed as a **windowless CEF browser**; the wrapper paints that tab until it closes. Off-site http(s) still go to sola-browser.
+
+CEF OSR has no Chromium permission bubble; Alloy default-denies `getUserMedia`. The wrapper (and sola-browser) intercept `OnRequestMediaAccessPermission` and mic/camera `OnShowPermissionPrompt`, show the kit Allow / Block overlay, and persist at `…/wrapper/<id>/media.json` (browser: `profiles/<uuid>/media.json`). Allow grants the requested capture bits (mic and/or camera and/or screen). Playback does not prompt.
 
 ## Settings UX
 
@@ -104,4 +114,4 @@ Icon picking stays pack name or filesystem path.
 
 ## Non-goals (v1)
 
-Bitwarden fill, tab groups, sharing cookies with sola-browser, PWA manifest install, multiple windows per id, vendor Slack `.deb`, throwaway URL windows, opening outbound links in sola-browser.
+Bitwarden fill, tab groups, sharing cookies with sola-browser, PWA manifest install, multiple windows per id, vendor Slack `.deb`, throwaway URL windows.

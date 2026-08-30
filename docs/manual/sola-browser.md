@@ -53,6 +53,7 @@ A **profile** is a separate web identity + tab workspace (D8).
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
 | Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
 | Notification permission | `~/.local/share/sola/browser/profiles/<uuid>/notifications.json` |
+| Microphone / camera | `~/.local/share/sola/browser/profiles/<uuid>/media.json` |
 
 Site logins (cookies) live under that profile CEF dir. The engine uses
 Chromium’s **basic** password store so cookie encryption works without a
@@ -175,6 +176,14 @@ bell.
 
 Sites you have not allowed cannot notify. There is no sound and no
 action buttons yet.
+
+## Microphone / camera
+
+A page that calls `getUserMedia` (WebRTC, huddles, camera) gets the same
+Allow / Block overlay as notifications. Grants live in
+`profiles/<uuid>/media.json`. Chromium has no permission bubble in this
+OSR path — without Allow, the request is denied. Screen share is the
+same dialog when the page asks for desktop capture.
 
 ## Bitwarden vault
 

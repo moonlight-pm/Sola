@@ -47,4 +47,26 @@ mod tests {
         assert!(s.contains("sola/wrapper/discord"), "{s}");
         assert!(!s.contains("sola/browser"), "{s}");
     }
+
+    #[test]
+    fn notify_permissions_live_in_wrapper_data_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "sola-wrapper-notify-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("data");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        sola_browser::profiles::bind_external("slack-notify", data.clone(), cache).unwrap();
+        let path = sola_browser::notify::permissions_path("slack-notify");
+        assert_eq!(path, data.join("notifications.json"));
+        let media = sola_browser::media::permissions_path("slack-notify");
+        assert_eq!(media, data.join("media.json"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

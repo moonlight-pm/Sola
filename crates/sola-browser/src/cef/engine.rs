@@ -340,6 +340,14 @@ struct CefThreadState {
     download_cbs: RefCell<std::collections::HashMap<u32, cef::DownloadItemCallback>>,
     /// In-flight `OnShowPermissionPrompt` callbacks, keyed by prompt id.
     pending_permission: RefCell<std::collections::HashMap<u64, cef::PermissionPromptCallback>>,
+    /// In-flight `OnRequestMediaAccessPermission` callbacks (getUserMedia).
+    pending_media: RefCell<std::collections::HashMap<u64, (cef::MediaAccessCallback, u32)>>,
+    next_media_id: Cell<u64>,
+    /// `open_tab` sets this so `on_after_created` can adopt the browser
+    /// with the chrome-chosen id. `None` means a `window.open` popup.
+    pending_created_id: Cell<Option<TabId>>,
+    pending_created_url: RefCell<String>,
+    pending_created_title: RefCell<String>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
     download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
     /// ⌘/Ctrl+left-press: JS href fallback. If Chromium already opened a
@@ -472,6 +480,11 @@ pub(super) fn run_worker(
         shutting_down: Cell::new(false),
         download_cbs: RefCell::new(std::collections::HashMap::new()),
         pending_permission: RefCell::new(std::collections::HashMap::new()),
+        pending_media: RefCell::new(std::collections::HashMap::new()),
+        next_media_id: Cell::new(1),
+        pending_created_id: Cell::new(None),
+        pending_created_url: RefCell::new(String::new()),
+        pending_created_title: RefCell::new(String::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
         pending_new_tab_click: Cell::new(None),
         new_tab_click_armed: Cell::new(false),
@@ -881,6 +894,11 @@ cef::wrap_life_span_handler! {
     pub struct BrowserLifeSpanHandler {}
 
     impl LifeSpanHandler {
+        fn on_after_created(&self, browser: Option<&mut cef::Browser>) {
+            let Some(browser) = browser else { return };
+            adopt_created_browser(browser);
+        }
+
         fn on_before_close(&self, browser: Option<&mut cef::Browser>) {
             // CEF tells us this browser is going away. Drop it
             // from our tab list (idempotent — the cmd-side
@@ -899,6 +917,13 @@ cef::wrap_life_span_handler! {
                         None
                     }
                 };
+                let was_active = removed.as_ref().is_some_and(|t| t.id == state.active.get());
+                if was_active {
+                    let next = state.tabs.borrow().last().map(|t| t.id);
+                    if let Some(id) = next {
+                        activate_tab(&state, id);
+                    }
+                }
                 if removed.is_some() {
                     rebuild_snapshot(&state);
                 }
@@ -914,32 +939,48 @@ cef::wrap_life_span_handler! {
         #[allow(clippy::too_many_arguments)]
         fn on_before_popup(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _frame: Option<&mut cef::Frame>,
             _popup_id: ::std::os::raw::c_int,
             target_url: Option<&cef::CefString>,
             _target_frame_name: Option<&cef::CefString>,
-            _target_disposition: cef::WindowOpenDisposition,
+            target_disposition: cef::WindowOpenDisposition,
             _user_gesture: ::std::os::raw::c_int,
             _popup_features: Option<&cef::PopupFeatures>,
-            _window_info: Option<&mut cef::WindowInfo>,
-            _client: Option<&mut Option<cef::Client>>,
-            _settings: Option<&mut cef::BrowserSettings>,
+            window_info: Option<&mut cef::WindowInfo>,
+            client: Option<&mut Option<cef::Client>>,
+            settings: Option<&mut cef::BrowserSettings>,
             _extra_info: Option<&mut Option<cef::DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
-            // ctrl/⌘-click and target=_blank arrive here (Chromium's Linux
-            // new-tab disposition keys off CONTROL; ⌘ is mapped to CONTROL for
-            // mouse events in `input::modifiers_to_cef_mouse`). Cancel the
-            // native popup (return 1) and open the target as a background tab
-            // on this same (CEF UI) thread.
+            // Slack huddles: `window.open('about:blank')` then
+            // `popup.document.write(...)`. Cancelling the popup makes
+            // `window.open` return null and the huddle button does nothing.
+            // Off-site http(s) still become a chrome tab / sola-browser.
             let url = target_url.map(|u| u.to_string()).unwrap_or_default();
             tracing::info!(
                 url = %url,
-                disposition = ?_target_disposition,
+                disposition = ?target_disposition,
                 user_gesture = _user_gesture,
                 "on_before_popup fired"
             );
+            let opener = browser
+                .as_ref()
+                .and_then(|b| b.main_frame())
+                .map(|f| cef_string_userfree_display(&f.url()))
+                .unwrap_or_default();
+            if is_offsite_http(&opener, &url) {
+                let state = cef_state();
+                state.cmd_click_opened.set(true);
+                state.pending_new_tab_click.take();
+                request_background_tab(&state, url);
+                return 1;
+            }
+            if is_osr_popup(&url, target_disposition) {
+                tracing::info!(url = %url, "allowing OSR popup (window.open / huddle)");
+                configure_osr_popup(window_info, client, settings);
+                return 0;
+            }
             if url.is_empty() {
                 return 1;
             }
@@ -947,8 +988,158 @@ cef::wrap_life_span_handler! {
             state.cmd_click_opened.set(true);
             state.pending_new_tab_click.take();
             request_background_tab(&state, url);
-            1 // cancel the native popup — chrome opens the tab.
+            1
         }
+    }
+}
+
+fn is_blank_popup_url(url: &str) -> bool {
+    let t = url.trim();
+    t.is_empty() || t.eq_ignore_ascii_case("about:blank") || {
+        let lower = t.to_ascii_lowercase();
+        lower.starts_with("about:blank?") || lower.starts_with("about:blank#")
+    }
+}
+
+fn is_osr_popup(url: &str, disposition: cef::WindowOpenDisposition) -> bool {
+    is_blank_popup_url(url) || disposition == cef::WindowOpenDisposition::NEW_POPUP
+}
+
+fn is_offsite_http(opener: &str, target: &str) -> bool {
+    let t = target.trim();
+    let lower = t.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return false;
+    }
+    offsite_hosts(opener, t)
+}
+
+fn offsite_hosts(a: &str, b: &str) -> bool {
+    match (popup_host(a), popup_host(b)) {
+        (Some(ha), Some(hb)) => !ha.eq_ignore_ascii_case(&hb) && popup_apex(&ha) != popup_apex(&hb),
+        _ => true,
+    }
+}
+
+fn popup_host(url: &str) -> Option<String> {
+    let t = url.trim();
+    let rest = if t.len() >= 8 && t[..8].eq_ignore_ascii_case("https://") {
+        &t[8..]
+    } else if t.len() >= 7 && t[..7].eq_ignore_ascii_case("http://") {
+        &t[7..]
+    } else {
+        return None;
+    };
+    let hostport = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|s| !s.is_empty())?;
+    let hostport = hostport.rsplit('@').next()?;
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        rest.split(']').next()?
+    } else {
+        hostport.split(':').next()?
+    };
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+fn popup_apex(host: &str) -> &str {
+    if host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return host;
+    }
+    let mut iter = host.rsplitn(3, '.');
+    let Some(tld) = iter.next() else {
+        return host;
+    };
+    match iter.next() {
+        Some(sld) => {
+            let start = host.len() - sld.len() - 1 - tld.len();
+            &host[start..]
+        }
+        None => host,
+    }
+}
+
+fn configure_osr_popup(
+    window_info: Option<&mut cef::WindowInfo>,
+    client: Option<&mut Option<cef::Client>>,
+    settings: Option<&mut cef::BrowserSettings>,
+) {
+    let state = cef_state();
+    if let Some(wi) = window_info {
+        wi.windowless_rendering_enabled = 1;
+        wi.shared_texture_enabled = 0;
+        wi.external_begin_frame_enabled = 0;
+        let (w, h) = *state.size.lock().unwrap();
+        wi.bounds = cef::Rect {
+            x: 0,
+            y: 0,
+            width: w.max(1) as i32,
+            height: h.max(1) as i32,
+        };
+    }
+    if let Some(slot) = client {
+        *slot = Some(make_osr_client());
+    }
+    if let Some(s) = settings {
+        s.background_color = 0xFFFF_FFFF;
+        s.windowless_frame_rate = 60;
+    }
+}
+
+fn make_osr_client() -> cef::Client {
+    let render_handler = BrowserRenderHandler::new();
+    let life_span_handler = BrowserLifeSpanHandler::new();
+    let display_handler = BrowserDisplayHandler::new();
+    let load_handler = BrowserLoadHandler::new();
+    let download_handler = BrowserDownloadHandler::new();
+    let request_handler = BrowserRequestHandler::new();
+    let context_menu_handler = BrowserContextMenuHandler::new();
+    let permission_handler = BrowserPermissionHandler::new();
+    BrowserClient::new(
+        render_handler,
+        life_span_handler,
+        display_handler,
+        load_handler,
+        download_handler,
+        request_handler,
+        context_menu_handler,
+        permission_handler,
+    )
+}
+
+fn adopt_created_browser(browser: &cef::Browser) {
+    let state = cef_state();
+    let bid = browser.identifier();
+    if state.tabs.borrow().iter().any(|t| t.browser_id == bid) {
+        return;
+    }
+    let (id, url, title, activate) = if let Some(id) = state.pending_created_id.get() {
+        state.pending_created_id.set(None);
+        let url = std::mem::take(&mut *state.pending_created_url.borrow_mut());
+        let title = std::mem::take(&mut *state.pending_created_title.borrow_mut());
+        (id, url, title, false)
+    } else {
+        let id = TabId(
+            state
+                .next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        );
+        let url = browser
+            .main_frame()
+            .map(|f| cef_string_userfree_display(&f.url()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "about:blank".into());
+        (id, url, String::new(), true)
+    };
+    tracing::info!(?id, browser_id = bid, %url, activate, "CEF browser created");
+    push_tab(&state, id, bid, browser.clone(), url, title);
+    if activate {
+        activate_tab(&state, id);
     }
 }
 
@@ -1634,47 +1825,180 @@ cef::wrap_permission_handler! {
             callback: Option<&mut cef::PermissionPromptCallback>,
         ) -> ::std::os::raw::c_int {
             let notif = cef::PermissionRequestTypes::NOTIFICATIONS.get_raw();
-            if requested_permissions & notif == 0 {
-                return 0;
+            if requested_permissions & notif != 0 {
+                return handle_notify_prompt(
+                    browser,
+                    prompt_id,
+                    requesting_origin,
+                    requested_permissions,
+                    callback,
+                );
             }
-            let origin = requesting_origin
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            tracing::info!(%origin, prompt_id, perms = requested_permissions, "permission prompt (notifications)");
-            let known = crate::profiles::active_if_bound()
-                .map(|p| crate::notify::permission_for(&p.id, &origin))
-                .unwrap_or_else(|| "default".into());
-            if known == "granted" {
-                if let Some(cb) = callback {
-                    cb.cont(cef::PermissionRequestResult::ACCEPT);
-                }
-                return 1;
+            if crate::media::is_media_prompt(requested_permissions) {
+                return handle_media_prompt(
+                    browser,
+                    prompt_id,
+                    requesting_origin,
+                    requested_permissions,
+                    callback,
+                );
             }
-            if known == "denied" {
-                if let Some(cb) = callback {
-                    cb.cont(cef::PermissionRequestResult::DENY);
-                }
-                return 1;
-            }
-            if let Some(cb) = callback {
-                cef_state()
-                    .pending_permission
-                    .borrow_mut()
-                    .insert(prompt_id, cb.clone());
-            }
-            let tab_id = notify_tab_id(browser.as_deref());
-            if let Some(tx) = &cef_state().ipc_events {
-                let _ = tx.send(crate::cef::ipc::FromEngine::Notify(
-                    crate::notify::Ipc::Perm(crate::notify::IpcPerm {
-                        req_id: prompt_id,
-                        origin,
-                        tab_id,
-                    }),
-                ));
-            }
-            1
+            0
+        }
+
+        fn on_request_media_access_permission(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            requesting_origin: Option<&cef::CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut cef::MediaAccessCallback>,
+        ) -> ::std::os::raw::c_int {
+            handle_media_access(
+                browser,
+                requesting_origin,
+                requested_permissions,
+                callback,
+            )
         }
     }
+}
+
+fn handle_notify_prompt(
+    browser: Option<&mut cef::Browser>,
+    prompt_id: u64,
+    requesting_origin: Option<&cef::CefString>,
+    requested_permissions: u32,
+    callback: Option<&mut cef::PermissionPromptCallback>,
+) -> ::std::os::raw::c_int {
+    let origin = requesting_origin.map(|s| s.to_string()).unwrap_or_default();
+    tracing::info!(%origin, prompt_id, perms = requested_permissions, "permission prompt (notifications)");
+    let known = crate::profiles::active_if_bound()
+        .map(|p| crate::notify::permission_for(&p.id, &origin))
+        .unwrap_or_else(|| "default".into());
+    if known == "granted" {
+        if let Some(cb) = callback {
+            cb.cont(cef::PermissionRequestResult::ACCEPT);
+        }
+        return 1;
+    }
+    if known == "denied" {
+        if let Some(cb) = callback {
+            cb.cont(cef::PermissionRequestResult::DENY);
+        }
+        return 1;
+    }
+    if let Some(cb) = callback {
+        cef_state()
+            .pending_permission
+            .borrow_mut()
+            .insert(prompt_id, cb.clone());
+    }
+    let tab_id = notify_tab_id(browser.as_deref());
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Notify(
+            crate::notify::Ipc::Perm(crate::notify::IpcPerm {
+                req_id: prompt_id,
+                origin,
+                tab_id,
+            }),
+        ));
+    }
+    1
+}
+
+fn finish_media_prompt(cb: Option<&mut cef::PermissionPromptCallback>, granted: bool) {
+    if let Some(cb) = cb {
+        cb.cont(if granted {
+            cef::PermissionRequestResult::ACCEPT
+        } else {
+            cef::PermissionRequestResult::DENY
+        });
+    }
+}
+
+fn finish_media_access(cb: Option<&mut cef::MediaAccessCallback>, bits: u32, granted: bool) {
+    if let Some(cb) = cb {
+        if granted {
+            cb.cont(bits);
+        } else {
+            cb.cancel();
+        }
+    }
+}
+
+fn handle_media_prompt(
+    browser: Option<&mut cef::Browser>,
+    prompt_id: u64,
+    requesting_origin: Option<&cef::CefString>,
+    requested_permissions: u32,
+    callback: Option<&mut cef::PermissionPromptCallback>,
+) -> ::std::os::raw::c_int {
+    let origin = requesting_origin.map(|s| s.to_string()).unwrap_or_default();
+    tracing::info!(%origin, prompt_id, perms = requested_permissions, "permission prompt (media)");
+    let known = crate::profiles::active_if_bound()
+        .map(|p| crate::media::permission_for(&p.id, &origin))
+        .unwrap_or_else(|| "default".into());
+    if known == "granted" {
+        finish_media_prompt(callback, true);
+        return 1;
+    }
+    if known == "denied" {
+        finish_media_prompt(callback, false);
+        return 1;
+    }
+    if let Some(cb) = callback {
+        cef_state()
+            .pending_permission
+            .borrow_mut()
+            .insert(prompt_id, cb.clone());
+    }
+    let tab_id = notify_tab_id(browser.as_deref());
+    let ev = crate::media::from_prompt_bits(origin, tab_id, requested_permissions, prompt_id);
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Notify(
+            crate::notify::Ipc::Media(ev),
+        ));
+    }
+    1
+}
+
+fn handle_media_access(
+    browser: Option<&mut cef::Browser>,
+    requesting_origin: Option<&cef::CefString>,
+    requested_permissions: u32,
+    callback: Option<&mut cef::MediaAccessCallback>,
+) -> ::std::os::raw::c_int {
+    let origin = requesting_origin.map(|s| s.to_string()).unwrap_or_default();
+    tracing::info!(%origin, bits = requested_permissions, "media access (getUserMedia)");
+    let known = crate::profiles::active_if_bound()
+        .map(|p| crate::media::permission_for(&p.id, &origin))
+        .unwrap_or_else(|| "default".into());
+    if known == "granted" {
+        finish_media_access(callback, requested_permissions, true);
+        return 1;
+    }
+    if known == "denied" {
+        finish_media_access(callback, requested_permissions, false);
+        return 1;
+    }
+    let state = cef_state();
+    let access_id = state.next_media_id.get();
+    state.next_media_id.set(access_id.saturating_add(1));
+    if let Some(cb) = callback {
+        state
+            .pending_media
+            .borrow_mut()
+            .insert(access_id, (cb.clone(), requested_permissions));
+    }
+    let tab_id = notify_tab_id(browser.as_deref());
+    let ev = crate::media::from_access_bits(origin, tab_id, requested_permissions, access_id);
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Notify(
+            crate::notify::Ipc::Media(ev),
+        ));
+    }
+    1
 }
 
 cef::wrap_client! {
@@ -2046,16 +2370,22 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 eval_js_focused(&tab.browser, &script);
             }
         }
-        Cmd::NotifyPermission {
-            prompt_id,
-            granted,
-        } => {
+        Cmd::NotifyPermission { prompt_id, granted } => {
             if let Some(cb) = state.pending_permission.borrow_mut().remove(&prompt_id) {
                 cb.cont(if granted {
                     cef::PermissionRequestResult::ACCEPT
                 } else {
                     cef::PermissionRequestResult::DENY
                 });
+            }
+        }
+        Cmd::MediaPermission { req_id, granted } => {
+            if let Some((cb, bits)) = state.pending_media.borrow_mut().remove(&req_id) {
+                if granted {
+                    cb.cont(bits);
+                } else {
+                    cb.cancel();
+                }
             }
         }
         Cmd::EvaluateJs(script) => {
@@ -2827,26 +3157,10 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     browser_settings.background_color = 0xFFFF_FFFF;
     browser_settings.windowless_frame_rate = 60;
 
-    // One handler set per tab. Cheap — they're cef::Rc handles
-    // wrapping our tiny Boxes; copying does refcount work only.
-    let render_handler = BrowserRenderHandler::new();
-    let life_span_handler = BrowserLifeSpanHandler::new();
-    let display_handler = BrowserDisplayHandler::new();
-    let load_handler = BrowserLoadHandler::new();
-    let download_handler = BrowserDownloadHandler::new();
-    let request_handler = BrowserRequestHandler::new();
-    let context_menu_handler = BrowserContextMenuHandler::new();
-    let permission_handler = BrowserPermissionHandler::new();
-    let mut client = BrowserClient::new(
-        render_handler,
-        life_span_handler,
-        display_handler,
-        load_handler,
-        download_handler,
-        request_handler,
-        context_menu_handler,
-        permission_handler,
-    );
+    let mut client = make_osr_client();
+    state.pending_created_id.set(Some(id));
+    *state.pending_created_url.borrow_mut() = initial_url.clone();
+    *state.pending_created_title.borrow_mut() = initial_title.clone();
 
     let url_c = cef::CefString::from(initial_url.as_str());
     // Global context: Settings.cache_path is the active profile cef dir.
@@ -2860,10 +3174,12 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     ) {
         Some(b) => b,
         None => {
+            state.pending_created_id.set(None);
             tracing::warn!(?id, "browser_host_create_browser_sync returned None");
             return;
         }
     };
+    state.pending_created_id.set(None);
     if let Some(host) = browser.host() {
         use cef::ImplBrowserHost;
         if let Some(ctx) = host.request_context() {
@@ -2871,7 +3187,24 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         }
     }
     let browser_id = browser.identifier();
+    if !state
+        .tabs
+        .borrow()
+        .iter()
+        .any(|t| t.browser_id == browser_id)
+    {
+        push_tab(state, id, browser_id, browser, initial_url, initial_title);
+    }
+}
 
+fn push_tab(
+    state: &CefThreadState,
+    id: TabId,
+    browser_id: i32,
+    browser: cef::Browser,
+    initial_url: String,
+    initial_title: String,
+) {
     let url = Arc::new(Mutex::new(initial_url.clone()));
     let title = Arc::new(Mutex::new(initial_title));
 
