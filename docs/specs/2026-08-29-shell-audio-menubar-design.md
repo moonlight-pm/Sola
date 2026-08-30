@@ -1,10 +1,10 @@
 # Shell menubar volume and devices
 
 **Date:** 2026-08-29  
-**Status:** Frozen — implemented in `sola-shell` (desk smoke pending; do not install from this slice until Joshua asks)  
+**Status:** Frozen — implemented in `sola-shell`; installed 2026-08-29 (desk smoke pending)  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [Bluetooth menubar](2026-08-29-shell-bluetooth-menubar-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (audio mixer as a shell popover, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/audio/` + menubar right-cluster icon + `Panel::Audio` on the existing Menu overlay  
-**Dogfood:** not installed this slice  
+**Dogfood:** `shell` installed debug 2026-08-29; desk smoke pending (volume keys vs chip, sink/source switch)  
 **Gaps:** no per-app streams; no Bluetooth profile/codec; no VU meter; host PipeWire + WirePlumber (`pw-dump`, `wpctl`)
 
 ## Intent
