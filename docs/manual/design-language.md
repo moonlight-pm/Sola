@@ -194,6 +194,7 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Stat indicators | Menu bar extras | Separate items (CPU, GPU, MEM, RX, TX) like other status items — not stacked dual-line widgets. |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
 | Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph left of stats; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
+| Volume | Menu bar extras (Control Center-ish) | Lucide volume glyph left of Bluetooth; popover is `Panel::Audio` (slider, mute, output/input pick). Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
 | Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
 | Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile in the right cluster. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 

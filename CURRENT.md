@@ -15,16 +15,17 @@ Do not invent product policy.
 
 ## Now
 
-1. **Shell Bluetooth** (this worktree `shell-bluetooth`) — freeze
-   [`docs/specs/2026-08-29-shell-bluetooth-menubar-design.md`](docs/specs/2026-08-29-shell-bluetooth-menubar-design.md).
-   Menubar lucide chip left of stats; `Panel::Bluetooth` on the existing Menu
-   overlay (kit popover). Hide if no adapter; off/on/connected on the icon;
-   power, connected list + battery when BlueZ has it, add/pair, disconnect.
-   In-process `zbus` / `org.bluez` (no `bluetoothctl`, no new bus topic).
-   **Installed** `shell` (debug, 2026-08-29). Host BlueZ enabled
-   (`hardware.bluetooth` on novus + `nix/module.nix`); `hci0` Intel AX210
-   powered, `org.bluez` on the system bus. **Next:** desk-smoke (icon, power,
-   pair, disconnect, battery). Add-device sets Pairable only while searching.
+1. **Shell Bluetooth + volume** (this worktree `shell-bluetooth`) —
+   Bluetooth freeze
+   [`docs/specs/2026-08-29-shell-bluetooth-menubar-design.md`](docs/specs/2026-08-29-shell-bluetooth-menubar-design.md);
+   volume freeze
+   [`docs/specs/2026-08-29-shell-audio-menubar-design.md`](docs/specs/2026-08-29-shell-audio-menubar-design.md).
+   Nearby inquiry omits 6-pair hex addresses (`AA-BB-…`). Volume chip left of
+   Bluetooth (`Panel::Audio`): default-sink level on the icon, popover slider
+   + mute + output/input device pick (`pw-dump` / `wpctl`). Media keys still
+   `solactl media`. **Bluetooth installed** (debug, 2026-08-29). Volume **not
+   installed**. **Next:** `install shell`; smoke volume keys vs chip, sink/source
+   switch, dashed-MAC nearby filter.
 2. **Notifications** — freeze
    [`docs/specs/2026-08-25-sola-notifications-design.md`](docs/specs/2026-08-25-sola-notifications-design.md).
    Desk cards drop from the menubar; missed pile is a bell in the right

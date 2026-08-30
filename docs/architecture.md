@@ -60,7 +60,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
-| `crates/sola-shell` | Menubar, launcher, switcher, zoning, notification HUD, Bluetooth popover (iced daemon; BlueZ over system D-Bus in-process) |
+| `crates/sola-shell` | Menubar, launcher, switcher, zoning, notification HUD, Bluetooth popover, volume popover (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`) |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
@@ -169,8 +169,8 @@ area. Iced does not present full-output swapchains in the background (see
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), stats, whispers (`AppToast`) |
-| Menu | Open application menus + calendar / stat / notification-pile / Bluetooth panels (parked 2×2 while dismissed) |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, volume (hidden if no PipeWire), Bluetooth (hidden if no adapter), stats, whispers (`AppToast`) |
+| Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |
 | Selection | Super+Shift+4 marquee (parked 2×2 while dismissed; live Frame is full output) |

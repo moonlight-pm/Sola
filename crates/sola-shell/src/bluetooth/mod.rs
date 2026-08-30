@@ -177,7 +177,7 @@ impl Device {
             .unwrap_or_else(|| self.alias.clone())
     }
 
-    /// Inquiry list: a real name only. Anonymous BLE addresses stay off.
+    /// Inquiry list: unpaired, minus 6-pair hex addresses (`AA-BB-…` / colons).
     pub fn show_nearby(&self) -> bool {
         !self.paired && self.human_name().is_some()
     }
@@ -200,7 +200,7 @@ impl Snapshot {
         v
     }
 
-    /// Unpaired devices (inquiry). Named or typed only — anonymous BLE MACs stay off the list.
+    /// Unpaired devices (inquiry). Drops 6-pair hex address labels only.
     pub fn nearby(&self) -> Vec<&Device> {
         let mut v: Vec<&Device> = self.devices.iter().filter(|d| d.show_nearby()).collect();
         v.sort_by(|a, b| {

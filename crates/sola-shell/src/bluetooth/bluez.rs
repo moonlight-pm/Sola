@@ -558,8 +558,6 @@ async fn start_discovery(
     let mut filter: HashMap<&str, Value<'_>> = HashMap::new();
     filter.insert("DuplicateData", Value::Bool(false));
     filter.insert("Transport", Value::from("auto"));
-    // Drop distant BLE beacons; a pairing device on the desk is louder.
-    filter.insert("RSSI", Value::I16(-80));
     let _ = a.set_discovery_filter(filter).await;
     let _ = a.set_pairable(true).await;
     match a.start_discovery().await {
