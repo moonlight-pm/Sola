@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-26 (`sola-scope` on master; sola-wrapper on master)
+**As of:** 2026-08-30 (`ipc-compat` idea parked; sola-scope on master)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -22,7 +22,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | ID | Capability | Status | Spec / plan | Dogfood | Gaps | Manual |
 |----|------------|--------|-------------|---------|------|--------|
 | supervisor | Process manager launches/restarts components | shipped | architecture | local TTY | Policy for crash loops / backoff polish | partial |
-| bus | Unix-socket event bus + stickies | shipped | [persistent bus](specs/2026-04-24-persistent-bus-design.md) | local | Sticky surface still expanding; see bus freezes | partial |
+| bus | Unix-socket event bus + stickies | shipped | [persistent bus](specs/2026-04-24-persistent-bus-design.md) | local | Sticky surface still expanding; see bus freezes. Mixed worktree installs can silently remap `TopicKind` (postcard `$subscribe`) — parked as [ipc-compat](ideas/2026-08-30-ipc-contract-compat.md) | partial |
+| ipc-compat | Runtime bus/call contract handshake; mixed binaries fail with exit 76 | idea | [idea](ideas/2026-08-30-ipc-contract-compat.md) | — | Not implemented. No preamble; subscribe decode failures are swallowed; PM restarts every non-zero exit | no |
 | call | Request/reply host + `solactl compositor`/`session` + kit helper | partial | [call plane](specs/2026-08-13-sola-call-plane-design.md); [workspaces CLI](specs/2026-08-18-workspaces-cli-design.md) | code; `call` installed 2026-08-21 with monitor | **Gaps:** no MCP; confirm is **D3**; no catalog sticky on the bus (monitor uses `Role::Observer` + `Wire::Trace` / `Catalog` instead); Workspaces `workspaces` methods implemented (desk smoke pending); `MethodSpec.timeout_ms` advertised; `LaunchResult` still a bus reply | partial |
 | bus-reconnect | Apps survive bus restart | shipped | seamless restart freezes | local (menubar framed after restart) | Broader app-menu re-publish edge cases | no |
 | river-bridge | sola-river ↔ River Wayland | shipped | [river design](specs/2026-04-16-sola-river-design.md) | local | Layer-shell / exclusive focus quirks; skip re-`focus_window` when already focused (FFM flash mitigation) | partial |

@@ -123,7 +123,9 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 12. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.
-13. **Follow-ups (unordered backlog):** create-card; float chrome, D1/D2,
+13. **Follow-ups (unordered backlog):** IPC contract handshake
+   ([idea](docs/ideas/2026-08-30-ipc-contract-compat.md) — mixed worktree
+   installs; not Now); create-card; float chrome, D1/D2,
    preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: Bitwarden
    fill decrypts **org vaults** (desk smoke after `install browser`);
