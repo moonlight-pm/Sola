@@ -53,6 +53,11 @@ pub enum ToEngine {
         prompt_id: u64,
         granted: bool,
     },
+    /// Chrome answered a getUserMedia / huddle permission prompt.
+    MediaPermission {
+        req_id: u64,
+        granted: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,6 +372,32 @@ mod tests {
             FromEngine::Notify(crate::notify::Ipc::Show(s)) => {
                 assert_eq!(s.tab_id, 2);
                 assert_eq!(s.title, "Hi");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_media() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::Notify(crate::notify::Ipc::Media(crate::media::IpcMedia {
+                origin: "https://app.slack.com".into(),
+                tab_id: 1,
+                audio: true,
+                video: false,
+                screen: false,
+                prompt_id: None,
+                access_id: Some(7),
+            })),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::Notify(crate::notify::Ipc::Media(m)) => {
+                assert_eq!(m.access_id, Some(7));
+                assert!(m.audio);
             }
             other => panic!("{other:?}"),
         }

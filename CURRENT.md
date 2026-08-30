@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-30 (two-way sync: codecs CEF + autoplay + vault/⌘G onto master; shell Bluetooth + volume already on master; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-30 (wrapper Edit/links/notify/huddle on master; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -184,7 +184,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master, installed** `mail` (debug, 2026-08-28): other-client inbox MOVE/EXPUNGE no longer stick on the list. No HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
-| Wrapper | **On master.** Slack (`illuno.slack.com`) paints. `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
+| Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Agent | **Retired** (this worktree). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |

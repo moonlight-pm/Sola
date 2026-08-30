@@ -54,10 +54,11 @@ pub struct IpcPerm {
 pub enum Ipc {
     Show(IpcShow),
     Perm(IpcPerm),
+    Media(crate::media::IpcMedia),
 }
 
 pub fn permissions_path(profile_id: &str) -> PathBuf {
-    profiles::profile_data_dir(profile_id).join("notifications.json")
+    profiles::data_dir_for(profile_id).join("notifications.json")
 }
 
 pub fn load_map(profile_id: &str) -> HashMap<String, String> {
@@ -189,7 +190,11 @@ pub fn inject_script(map_json: &str) -> String {
 }
 
 pub fn resolve_script(req_id: u64, result: &str) -> String {
-    let result = if result == "granted" { "granted" } else { "denied" };
+    let result = if result == "granted" {
+        "granted"
+    } else {
+        "denied"
+    };
     format!(
         r#"(function(){{
   if (window.Notification) window.Notification.permission = '{result}';
@@ -213,9 +218,15 @@ pub fn host_of(origin: &str) -> String {
 }
 
 pub fn to_bus(show: &IpcShow) -> AppNotification {
+    to_bus_for(APP_ID, show)
+}
+
+/// Same as [`to_bus`], but `app_id` is the emitting app (wrapper id, not
+/// always `sola-browser`) so a card click raises the right window.
+pub fn to_bus_for(app_id: &str, show: &IpcShow) -> AppNotification {
     AppNotification {
         id: format!("web-{}-{}", show.tab_id, now_millis()),
-        app_id: APP_ID.into(),
+        app_id: app_id.into(),
         source: host_of(&show.origin),
         title: show.title.clone(),
         body: show.body.clone(),
@@ -291,7 +302,10 @@ mod tests {
 
     #[test]
     fn host_strips_origin() {
-        assert_eq!(host_of("https://news.ycombinator.com"), "news.ycombinator.com");
+        assert_eq!(
+            host_of("https://news.ycombinator.com"),
+            "news.ycombinator.com"
+        );
         assert_eq!(host_of("not-a-url"), "not-a-url");
     }
 
@@ -308,5 +322,22 @@ mod tests {
         assert_eq!(n.source, "ex.com");
         assert_eq!(n.tab_id, Some(3));
         assert_eq!(n.tag.as_deref(), Some("t"));
+    }
+
+    #[test]
+    fn to_bus_for_uses_caller_app_id() {
+        let n = to_bus_for(
+            "slack",
+            &IpcShow {
+                tab_id: 1,
+                origin: "https://illuno.slack.com".into(),
+                title: "Hi".into(),
+                body: String::new(),
+                tag: None,
+            },
+        );
+        assert_eq!(n.app_id, "slack");
+        assert_eq!(n.source, "illuno.slack.com");
+        assert_eq!(n.tab_id, Some(1));
     }
 }

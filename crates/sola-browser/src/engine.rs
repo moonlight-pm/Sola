@@ -188,6 +188,11 @@ pub enum Cmd<E: Engine> {
         prompt_id: u64,
         granted: bool,
     },
+    /// Complete `OnRequestMediaAccessPermission` (getUserMedia Allow / Block).
+    MediaPermission {
+        req_id: u64,
+        granted: bool,
+    },
     /// Open Chromium DevTools for the active tab as a chrome tab.
     /// `panel` is `console` or `elements`. `inspect_*` selects the node
     /// under that view point (Inspect element).

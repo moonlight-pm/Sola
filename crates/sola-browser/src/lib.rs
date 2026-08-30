@@ -12,6 +12,7 @@ pub mod groups;
 pub mod input;
 pub mod instance;
 pub mod integration;
+pub mod media;
 pub mod notify;
 pub mod page_menu;
 pub mod paste_js;
