@@ -71,7 +71,6 @@ use crate::components::style::{
     CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
     inset_surface, linear_bg, mix, mix_white, on_color, src_over,
 };
-use crate::components::swatch::swatch_sized;
 use crate::fonts;
 
 /// Card chrome: roomier face pad (Overview rule-card density).
@@ -852,7 +851,8 @@ const WELL_HOVER_MIX: f32 = 0.07;
 /// 1px selected rim (same job as the ungrouped etch lip). Stronger
 /// than the fill so it reads as a border.
 const WELL_SELECT_LIP: f32 = 0.24;
-/// Idle title on a pocket (same ink, quieter).
+/// Idle title on a **dark** pocket (white ink, quieter). Dark ink on a
+/// light fill stays opaque — fading it to 70% is muddy grey on pink.
 const WELL_MUTED_A: f32 = 0.70;
 
 pub(crate) fn pocket_fill(color: Option<Color>) -> Color {
@@ -875,6 +875,31 @@ pub(crate) fn well_face(c: Color) -> Color {
 
 pub(crate) fn well_ink(c: Color) -> Color {
     on_color(well_face(c))
+}
+
+fn title_font_for(active: bool, is_header: bool, dark_ink: bool) -> iced::Font {
+    if dark_ink {
+        iced::Font {
+            weight: iced::font::Weight::Semibold,
+            ..fonts::ui()
+        }
+    } else if active || is_header {
+        fonts::ui_medium()
+    } else {
+        fonts::ui()
+    }
+}
+
+/// Fade only light ink. Dark ink on a pale pocket stays full black.
+fn well_muted(ink: Color) -> Color {
+    if ink == Color::WHITE {
+        Color {
+            a: WELL_MUTED_A,
+            ..ink
+        }
+    } else {
+        ink
+    }
 }
 
 /// Slight lighten or darken of `face`, staying in its hue.
@@ -900,13 +925,7 @@ fn well_row_colors(well: Color, active: bool, hovered: bool) -> (Color, Color) {
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
     } else {
-        (
-            Color::TRANSPARENT,
-            Color {
-                a: WELL_MUTED_A,
-                ..ink
-            },
-        )
+        (Color::TRANSPARENT, well_muted(ink))
     }
 }
 
@@ -1076,46 +1095,59 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         }
     }
     if let Some(content) = collapse.header_content {
-        // Chevron + name field + color swatch + commit check.
+        // Chevron + name field + swatch + check. Anchor the picker to
+        // the whole trailing cluster so End placement sits past the
+        // check instead of covering it.
         let ink = well_ink(fill);
-        let swatch = header_color_swatch(
-            fill,
-            collapse.on_color,
-            collapse.color_picker,
-            collapse.on_color_dismiss,
-        );
-        let mut body = row![section_chevron(collapse.collapsed, ink), content, swatch]
+        let swatch = header_color_swatch(fill, collapse.on_color);
+        let mut trailing = row![swatch]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center);
+        if let Some(msg) = collapse.on_commit {
+            trailing = trailing.push(header_commit_button(msg, ink));
+        }
+        let trailing: Element<'a, Message, Theme> =
+            match (collapse.color_picker, collapse.on_color_dismiss) {
+                (Some(view), Some(dismiss)) => {
+                    popover_anchored(trailing, popover(view), dismiss).into()
+                }
+                _ => trailing.into(),
+            };
+        let body = row![section_chevron(collapse.collapsed, ink), content, trailing]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
             .width(Length::Fill);
-        if let Some(msg) = collapse.on_commit {
-            body = body.push(header_commit_button(msg, ink));
-        }
         item = item.content(body);
     }
     item
 }
 
-/// Compact well-color chip on a renaming header. 14px stays inside the
-/// Large-density etch row; click opens the kit color picker popover.
+/// Compact well-color chip on a renaming header. Same fill as the
+/// pocket, so it needs an ink ring or it vanishes into the well.
 fn header_color_swatch<'a, Message: Clone + 'a>(
     color: Color,
     on_press: Option<Message>,
-    picker: Option<Element<'a, Message, Theme>>,
-    on_dismiss: Option<Message>,
 ) -> Element<'a, Message, Theme> {
-    const SIZE: f32 = 14.0;
-    let tile = swatch_sized::<Message>(color, SIZE);
-    let trigger: Element<'a, Message, Theme> = match on_press {
+    const SIZE: f32 = 16.0;
+    let ink = well_ink(color);
+    let tile = container(Space::new())
+        .width(Length::Fixed(SIZE))
+        .height(Length::Fixed(SIZE))
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                color: Color { a: 0.55, ..ink },
+                width: 1.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..container::Style::default()
+        });
+    match on_press {
         Some(msg) => mouse_area(tile)
             .interaction(mouse::Interaction::Pointer)
             .on_press(msg)
             .into(),
-        None => tile,
-    };
-    match (picker, on_dismiss) {
-        (Some(view), Some(dismiss)) => popover_anchored(trigger, popover(view), dismiss).into(),
-        _ => trigger,
+        None => tile.into(),
     }
 }
 
@@ -1905,26 +1937,22 @@ fn item_text_block<'a, Message: 'a>(
     well: Option<Color>,
 ) -> Element<'a, Message> {
     let is_header = section_header.is_some();
+    let ink = well.map(well_ink);
+    // Black-on-light looks thinner than white-on-dark at the same
+    // weight (irradiation). Semibold evens the optical mass.
+    let dark_ink = ink.is_some_and(|c| c != Color::WHITE);
     let (title_font, title_size) = match chrome {
-        SidebarItemChrome::Row => {
-            let font = if active || is_header {
-                fonts::ui_medium()
-            } else {
-                fonts::ui()
-            };
-            (font, density.metrics().font)
-        }
+        SidebarItemChrome::Row => (
+            title_font_for(active, is_header, dark_ink),
+            density.metrics().font,
+        ),
         SidebarItemChrome::Card => (fonts::ui(), 14),
     };
-    let ink = well.map(well_ink);
     let title_color = ink.map(|c| {
         if active || is_header {
             c
         } else {
-            Color {
-                a: WELL_MUTED_A,
-                ..c
-            }
+            well_muted(c)
         }
     });
     let mut title = text(label.to_string())
@@ -2140,8 +2168,9 @@ fn dim_label<'a, Message: 'a>(s: &str, well: Option<Color>) -> Element<'a, Messa
             let c = well
                 .map(well_ink)
                 .unwrap_or(theme.extended_palette().background.base.text);
+            let a = if c == Color::WHITE { 0.45 } else { 0.72 };
             iced::widget::text::Style {
-                color: Some(iced::Color { a: 0.45, ..c }),
+                color: Some(iced::Color { a, ..c }),
             }
         })
         .into()
@@ -3306,12 +3335,19 @@ mod tests {
 
     #[test]
     fn well_ink_tracks_pocket_luminance() {
-        assert_eq!(
-            well_ink(Color::WHITE),
-            crate::components::style::ON_FILL_DARK
-        );
+        assert_eq!(well_ink(Color::WHITE), Color::BLACK);
         assert_eq!(well_ink(Color::BLACK), Color::WHITE);
         assert_eq!(well_ink(group_well_fill()), Color::WHITE);
+        assert_eq!(well_muted(Color::BLACK), Color::BLACK);
+        assert!(well_muted(Color::WHITE).a < 1.0);
+    }
+
+    #[test]
+    fn dark_ink_titles_use_semibold() {
+        let dark = title_font_for(false, false, true);
+        assert_eq!(dark.weight, iced::font::Weight::Semibold);
+        let idle_light = title_font_for(false, false, false);
+        assert_eq!(idle_light.weight, fonts::ui().weight);
     }
 
     #[test]
@@ -3339,7 +3375,7 @@ mod tests {
             }
             other => panic!("expected solid lift, got {other:?}"),
         }
-        assert_eq!(s.text_color, Some(crate::components::style::ON_FILL_DARK));
+        assert_eq!(s.text_color, Some(Color::BLACK));
     }
 
     #[test]

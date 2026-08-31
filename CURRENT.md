@@ -18,11 +18,11 @@ Do not invent product policy.
 1. **Browser** — codecs CEF (H.264/AAC `canPlayType` `probably`) +
    `--autoplay-policy=no-user-gesture-required`; unified Bitwarden panel;
    **⌘G** new group (name focused+selected; hover pencil); **pocket
-   color** (edit-mode swatch + check, luminance ink, quiet pocket lift). Freeze
+   color** (edit-mode chip + compact picker, black/semibold on light fills). Freeze
    [`docs/specs/2026-08-28-sola-browser-vault-panel-design.md`](docs/specs/2026-08-28-sola-browser-vault-panel-design.md)
    and tab groups
    [`docs/specs/2026-08-15-sola-browser-tab-groups-design.md`](docs/specs/2026-08-15-sola-browser-tab-groups-design.md).
-   **Installed** `kit` + `browser --release` 2026-08-31 (loose + group selected lift).
+   **Installed** `kit` + `browser --release` 2026-08-31 (picker polish + contrast chip).
    **Next:** desk-smoke group recolor + Steam store trailer.
    Gaps: vault desk smoke; no item edit; notify no sound / actions /
    D-Bus.

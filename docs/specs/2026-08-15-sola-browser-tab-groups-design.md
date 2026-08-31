@@ -7,8 +7,8 @@
 
 | | |
 |--|--|
-| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip; **⌘G** new group; edit-mode color swatch + check; luminance ink; hue-preserving selected lift + 1px lip (loose column and pockets) |
-| **Dogfood** | **installed** `kit` + `browser --release` 2026-08-31 (loose + group selected lift). ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside; **⌘G** focuses and selects the name; hover pencil to rename; edit mode shows a well-color swatch and a check to save |
+| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip; **⌘G** new group; edit-mode color chip (ink ring) + check; compact kit picker (swatch toggles; anchored past the check); black/semibold titles on light fills; hue-preserving selected lift + 1px lip |
+| **Dogfood** | **installed** `kit` + `browser --release` 2026-08-31 (picker polish + contrast chip). ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside; **⌘G** focuses and selects the name; hover pencil to rename; edit mode shows a color chip and a check to save |
 | **Gaps** | spaces; drag-to-create |
 
 ## Intent
@@ -32,7 +32,7 @@ Profiles stay “identity + workspace.” Groups do not get their own cookies.
 | Collapse + active | Stay on that page. Member rows hide. Header uses the selected etch. |
 | Empty group | Dissolves. No parked empty headers. |
 | Nesting | No. |
-| Color | Pocket fill. Default is the kit inset well. Edit mode (pencil / ⌘G) shows a swatch that opens the kit color picker, plus a check to commit. Title ink is black or white from pocket luminance; selected / drag ghost is a quiet lighten or darken of the fill. Persist hex on the group; omit when default. |
+| Color | Pocket fill. Default is the kit inset well. Edit mode shows a contrast-ring chip (toggles a compact kit picker, anchored past the check) plus a check to commit. Light fills use black semibold titles; dark fills stay white. Selected / drag ghost is a quiet lift of the fill plus a 1px lip. Persist hex; omit when default. |
 | Close-all | No. No `×` on the header. |
 
 ## Strip
@@ -181,7 +181,7 @@ learn membership.
 | Kit collapsible section + context menu | **done** (page + history; strip no longer uses it) |
 | Chrome groups + persist + strip | **done** |
 | ⌘G new group + inline rename | **done** (focus + select-all; hover pencil to rename later) |
-| Pocket color | **done** (swatch + check; luminance ink; hue-preserving lift + 1px lip on grouped **and** loose selected; persist hex) |
+| Pocket color | **done** (chip + check; compact picker; black/semibold on light; lift + lip; persist hex) |
 | Dogfood | pocket + insert rules installed; **⌘G** installed `browser --release` 2026-08-29; pocket color + selected lift **installed** `kit`+`browser --release` 2026-08-31 |
 
 ## Decision log

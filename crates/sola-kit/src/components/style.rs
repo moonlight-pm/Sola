@@ -284,9 +284,11 @@ pub fn relative_luminance(c: Color) -> f32 {
 
 /// Black or white ink for text sitting on `bg`. Threshold `0.179` is the
 /// WCAG 4.5:1 crossover between white-on-dark and dark-on-light.
+/// Light fills get true black (not [`ON_FILL_DARK`]) so titles stay
+/// sharp on pale pocket colours.
 pub fn on_color(bg: Color) -> Color {
     if relative_luminance(bg) > 0.179 {
-        ON_FILL_DARK
+        Color::BLACK
     } else {
         Color::WHITE
     }
@@ -532,8 +534,8 @@ mod tests {
 
     #[test]
     fn on_color_picks_dark_ink_on_white() {
-        assert_eq!(on_color(Color::WHITE), ON_FILL_DARK);
-        assert_eq!(on_color(Color::from_rgb(1.0, 0.95, 0.2)), ON_FILL_DARK);
+        assert_eq!(on_color(Color::WHITE), Color::BLACK);
+        assert_eq!(on_color(Color::from_rgb(1.0, 0.95, 0.2)), Color::BLACK);
     }
 
     #[test]

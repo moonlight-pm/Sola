@@ -77,6 +77,12 @@ pub enum Placement {
 }
 
 /// Choose the panel's top-left so it sits next to `anchor`.
+/// Outside-click dismiss: not over the panel, and not over the trigger
+/// (the trigger owns toggle-close).
+fn dismiss_on_press(pos: Point, panel: Rectangle, anchor: Rectangle) -> bool {
+    !panel.contains(pos) && !anchor.contains(pos)
+}
+
 fn anchor_offset(anchor: Rectangle, panel: Size, viewport: Size, placement: Placement) -> Point {
     match placement {
         Placement::End => {
@@ -388,13 +394,14 @@ where
         if shell.is_event_captured() {
             return;
         }
-        // A left-press that lands outside the panel dismisses it. We do
-        // NOT capture it, so the same click can also retarget another
-        // swatch underneath — its trigger publishes its own EditAtom and
-        // the messages apply in order (close, then open the new one).
+        // A left-press that lands outside the panel dismisses it, except
+        // on the trigger itself — that click is the toggle. We do NOT
+        // capture, so a press on a *different* swatch can still open it.
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            if cursor.position_over(bounds).is_none() {
-                shell.publish(self.on_dismiss.clone());
+            if let Some(pos) = cursor.position() {
+                if dismiss_on_press(pos, bounds, self.anchor) {
+                    shell.publish(self.on_dismiss.clone());
+                }
             }
         }
     }
@@ -431,7 +438,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::{Rectangle, Size};
+    use iced::{Point, Rectangle, Size};
 
     fn anchor(x: f32, y: f32) -> Rectangle {
         Rectangle {
@@ -503,6 +510,25 @@ mod tests {
         // Start-aligned with the trigger (select grammar).
         assert_eq!(offset.x, 40.0);
         assert_eq!(offset.y, 100.0 + 56.0 + 6.0);
+    }
+
+    #[test]
+    fn dismiss_skips_the_trigger() {
+        let panel = Rectangle {
+            x: 100.0,
+            y: 40.0,
+            width: 200.0,
+            height: 160.0,
+        };
+        let trigger = Rectangle {
+            x: 20.0,
+            y: 40.0,
+            width: 20.0,
+            height: 20.0,
+        };
+        assert!(!dismiss_on_press(Point::new(110.0, 50.0), panel, trigger));
+        assert!(!dismiss_on_press(Point::new(25.0, 45.0), panel, trigger));
+        assert!(dismiss_on_press(Point::new(10.0, 10.0), panel, trigger));
     }
 
     #[test]
