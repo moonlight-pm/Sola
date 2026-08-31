@@ -70,6 +70,8 @@ pub enum MailEvent {
     Sent,
     Moved {
         uid: u32,
+        /// UID in the destination mailbox (IMAP UIDs are per-folder).
+        dest_uid: Option<u32>,
     },
     MoveFailed {
         uid: u32,

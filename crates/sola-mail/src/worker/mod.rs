@@ -414,7 +414,12 @@ fn do_move(state: &WorkerState, folder: String, uid: u32, dest: String) {
     };
     let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
     match c.move_message(&folder, uid, &dest) {
-        Ok(()) => bridge::emit(MailEvent::Moved { uid }),
+        Ok(dest_uid) => {
+            if dest_uid.is_none() {
+                warn!("move uid {uid} {folder}→{dest}: no destination UID");
+            }
+            bridge::emit(MailEvent::Moved { uid, dest_uid });
+        }
         Err(e) => bridge::emit(MailEvent::MoveFailed {
             uid,
             message: e.to_string(),

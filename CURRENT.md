@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-30 (wrapper Edit/links/notify/huddle on master; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-31 (mail dest-UID undo + compose table on `sola-mail` worktree; wrapper Edit/links/notify/huddle on master; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -51,7 +51,8 @@ Do not invent product policy.
    `Role::Observer` + `Wire::Trace` (not RPC on the bus). Kit JSON
    highlighter. **Installed** `call` + `monitor` (debug, 2026-08-21).
    Desk smoke pending. GPU menubar ranking (SM % + VRAM) also lands.
-7. **sola-mail** — **partial** (on **master**).
+7. **sola-mail** — **partial** (base on **master**; this slice on
+   **sola-mail** worktree, not merged).
    Letter reading (kit `prose`, HTML preferred); Mail.app list (bold
    unread, one-line subjects); always-on reader toolbar (icons +
    tooltips; message actions muted until a row is selected); scroll
@@ -65,11 +66,11 @@ Do not invent product policy.
    Optimistic delete (row leaves immediately; rapid `d`/Trash does not
    wait on IMAP). A long scrolled list keeps its place (keyed rows +
    silent refresh of the loaded window).
-   **This slice:** inbox tracks other clients. Persistent IDLE on INBOX
-   (re-SELECT at least every 30s) plus a 45s poll; silent refresh no
-   longer keeps rows the server has already MOVE/EXPUNGEd (that merge
-   treated a shorter page as a scrolled tail).
-   **Install:** `mail` (debug, 2026-08-28). Self-restarts.
+   **This slice:** undo reverse-moves the **destination** IMAP UID
+   (Trash UIDs are per-mailbox — `u` no longer restores a different
+   trash row). Action toast auto-hides after 5s. Compose From/To/Cc/Subject
+   is a caption-size table at full reader-pane width (body 13px).
+   **Install:** `mail` (debug, 2026-08-31). Self-restarts.
 8. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
