@@ -1,13 +1,7 @@
 <!-- Settings (lab). data-slot=demo filled from the store.
      CSD titlebar is hidden unless Topic::WindowFloating (iced wrap_if_floating). -->
 <div class="app">
-  <div class="titlebar" data-action="drag" data-id="csd">
-    <div class="traffic">
-      <div class="close" data-action="close"></div>
-    </div>
-    <div class="title">Settings (lab)</div>
-    <div class="traffic-spacer"></div>
-  </div>
+  <div data-slot="titlebar"></div>
   <div class="body">
     <div data-slot="sidebar"></div>
     <main class="stage stage-settings" data-id="stage-scroll">

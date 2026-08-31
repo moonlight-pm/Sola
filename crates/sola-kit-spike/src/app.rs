@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::components::titlebar::titlebar_bound;
 use crate::components::{Sidebar, SidebarItem};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
@@ -940,6 +941,7 @@ impl App {
             self.theme_open,
         );
         let mut next = markup::next_uid(&root);
+        markup::replace_slot(&mut root, "titlebar", titlebar_bound(&mut next));
         let sb = Sidebar::new(nav_items(self.selected))
             .nav_id("nav-scroll")
             .build(&mut next);

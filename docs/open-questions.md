@@ -136,6 +136,7 @@ that is an explicit decision.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-31 | D5 apply | Kit builders (`button`, `field`, `text`, `badge`, `select`, `card`, `titlebar`, `split`, `toolbar`, `icon`, `pane`). Monitor-lab: Filter toolbar + Pause/Clear over the log; last-known rail to the window top. | CURRENT, idea, capabilities, architecture |
 | 2026-08-30 | D5 apply | Second lab twin `sola-monitor-lab`. Kit `components` (`sidebar`, `json`). Host sctk 0.20. | CURRENT, idea, capabilities, architecture |
 | 2026-08-29 | D5 amend | Drop blitz/html-spike. Dual-kit: workspace HTML kit + `sola-settings-lab`. Same `Topic::Theme`. Install skips `*-lab`. | CURRENT, idea, capabilities, architecture |
 | 2026-08-25 | D5 | Spike examples (not canary install). First crate `sola-kit-spike`. Distinct `app_id` `sola-kit-spike` / title `Kit (spike)`. No install, no merge. sctk not winit. JS punted. | CURRENT, idea, capabilities, architecture |

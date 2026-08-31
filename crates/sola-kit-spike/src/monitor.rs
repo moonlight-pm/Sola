@@ -17,7 +17,11 @@ use sola_call::{ObserveEvent, OwnerCatalog, TraceEvent, TraceKind};
 use sola_core::KeyCode;
 
 use crate::app::Click;
-use crate::components::{Sidebar, SidebarItem, json_pretty, json_preview};
+use crate::components::button::Kind as Btn;
+use crate::components::{
+    Sidebar, SidebarItem, badge, button, field, json_pretty, json_preview, pane, select, split,
+    text, titlebar, toolbar,
+};
 use crate::css::{Sheet, parse_sheet};
 use crate::dom::{Elem, parse_html};
 use crate::gpu::Quad;
@@ -42,7 +46,7 @@ const TITLEBAR_H: f32 = 38.0;
 const TOOLBAR_H: f32 = 44.0;
 const HEAD_H: f32 = 28.0;
 const ROW_H: f32 = 28.0;
-const RULE: f32 = 10.0;
+const RULE: f32 = 8.0;
 const COL_TIME: f32 = 96.0;
 const COL_TOPIC: f32 = 168.0;
 const COL_SOURCE: f32 = 112.0;
@@ -59,34 +63,22 @@ const INSPECTOR_H_MIN: f32 = 96.0;
 const INSPECTOR_H_MAX: f32 = 640.0;
 
 #[derive(Clone, Copy)]
-struct Geom {
-    stage_w: f32,
-    work_h: f32,
+struct Metrics {
     main_w: f32,
     rail_w: f32,
     log_h: f32,
     inspect_h: f32,
     payload_w: f32,
-    sidebar_x: f32,
-    sidebar_y: f32,
-    sidebar_h: f32,
-    tool_x: f32,
-    tool_y: f32,
-    log_x: f32,
-    log_y: f32,
-    inspect_y: f32,
-    rail_x: f32,
-    rail_y: f32,
 }
 
-fn geom(
+fn metrics(
     css_w: f32,
     css_h: f32,
     floating: bool,
     plane: Plane,
     rail_w: f32,
     inspector_h: f32,
-) -> Geom {
+) -> Metrics {
     let stage_h = if floating {
         (css_h - TITLEBAR_H).max(200.0)
     } else {
@@ -107,131 +99,58 @@ fn geom(
         Plane::Call => COL_TIME + COL_CALL + COL_CALLER + COL_STATUS + COL_GAP * 4.0,
     };
     let payload_w = (main_w - cols - LOG_PAD_X).max(80.0);
-    let title_h = if floating { TITLEBAR_H } else { 0.0 };
-    let sidebar_y = title_h;
-    let sidebar_h = (css_h - title_h).max(160.0);
-    let tool_x = SIDEBAR_W;
-    let tool_y = title_h;
-    let log_x = SIDEBAR_W;
-    let log_y = title_h + TOOLBAR_H;
-    let inspect_y = log_y + log_h + RULE;
-    let rail_x = SIDEBAR_W + main_w + RULE;
-    let rail_y = log_y;
-    Geom {
-        stage_w,
-        work_h,
+    Metrics {
         main_w,
         rail_w,
         log_h,
         inspect_h,
         payload_w,
-        sidebar_x: 0.0,
-        sidebar_y,
-        sidebar_h,
-        tool_x,
-        tool_y,
-        log_x,
-        log_y,
-        inspect_y,
-        rail_x,
-        rail_y,
     }
 }
 
-fn abs_css(x: f32, y: f32, w: f32, h: f32, column: bool, scroll: bool) -> String {
-    let (x, y, w, h) = (x.round(), y.round(), w.round(), h.round());
-    let dir = if column { "column" } else { "row" };
-    let ov = if scroll { "scroll" } else { "hidden" };
-    format!(
-        "position:absolute;left:{x}px;top:{y}px;width:{w}px;height:{h}px;min-width:0px;min-height:0px;max-width:{w}px;max-height:{h}px;overflow:{ov};flex-direction:{dir}"
-    )
-}
-
-fn apply_geom(root: &mut Elem, g: Geom) {
-    markup::set_style(
-        root,
-        "sidebar",
-        &abs_css(
-            g.sidebar_x,
-            g.sidebar_y,
-            SIDEBAR_W,
-            g.sidebar_h,
-            true,
-            false,
-        ),
-    );
-    let mut tool = abs_css(g.tool_x, g.tool_y, g.stage_w, TOOLBAR_H, false, false);
-    tool = tool.replace("overflow:hidden", "overflow:visible");
-    markup::set_style(root, "monitor-toolbar", &tool);
-    markup::set_style(
-        root,
-        "monitor-log",
-        &abs_css(g.log_x, g.log_y, g.main_w, g.log_h, true, false),
-    );
-    markup::set_style(
-        root,
-        "log-head",
-        &abs_css(0.0, 0.0, g.main_w, HEAD_H, false, false),
-    );
-    markup::set_style(
-        root,
-        "log-scroll",
-        &abs_css(
-            0.0,
-            HEAD_H,
-            g.main_w,
-            (g.log_h - HEAD_H).max(40.0),
-            true,
-            true,
-        ),
-    );
-    markup::set_style(
-        root,
-        "rule-h",
-        &abs_css(g.log_x, g.log_y + g.log_h, g.main_w, RULE, false, false),
-    );
+fn apply_sizes(root: &mut Elem, m: Metrics) {
+    let h = m.inspect_h.round();
+    let w = m.rail_w.round();
     markup::set_style(
         root,
         "inspect-pane",
-        &abs_css(g.log_x, g.inspect_y, g.main_w, g.inspect_h, true, false),
-    );
-    markup::set_style(
-        root,
-        "inspect-scroll",
-        &abs_css(
-            0.0,
-            HEAD_H,
-            g.main_w,
-            (g.inspect_h - HEAD_H).max(40.0),
-            true,
-            true,
-        ),
-    );
-    markup::set_style(
-        root,
-        "rule-v",
-        &abs_css(g.log_x + g.main_w, g.rail_y, RULE, g.work_h, true, false),
+        &format!("height:{h}px;min-height:{h}px;max-height:{h}px;flex-grow:0;flex-shrink:0"),
     );
     markup::set_style(
         root,
         "rail-pane",
-        &abs_css(g.rail_x, g.rail_y, g.rail_w, g.work_h, true, false),
+        &format!("width:{w}px;min-width:{w}px;max-width:{w}px;height:100%;flex-grow:0;flex-shrink:0"),
     );
-}
-
-fn split_h_hit(g: Geom, x: f32, y: f32) -> bool {
-    x >= g.log_x && x < g.log_x + g.main_w && y >= g.log_y + g.log_h && y < g.log_y + g.log_h + RULE
-}
-
-fn split_v_hit(g: Geom, x: f32, y: f32) -> bool {
-    y >= g.rail_y
-        && y < g.rail_y + g.work_h
-        && x >= g.log_x + g.main_w
-        && x < g.log_x + g.main_w + RULE
 }
 
 fn box_overlaps(x: f32, y: f32, w: f32, h: f32, pane: (f32, f32, f32, f32)) -> bool {
     x < pane.0 + pane.2 && x + w > pane.0 && y < pane.1 + pane.3 && y + h > pane.1
+}
+
+fn is_log_chrome(item: &crate::layout::PaintItem) -> bool {
+    item.classes
+        .iter()
+        .any(|c| matches!(c.as_str(), "log-row" | "log-spacer" | "log-empty"))
+}
+
+fn is_inspect_chrome(item: &crate::layout::PaintItem) -> bool {
+    item.classes.iter().any(|c| {
+        matches!(
+            c.as_str(),
+            "json-line"
+                | "inspect-head"
+                | "pane-head"
+                | "inspect-body"
+                | "inspect"
+                | "split-rule"
+                | "split-rule-h"
+                | "split-line"
+                | "split-line-h"
+        )
+    }) || matches!(
+        item.data_id.as_deref(),
+        Some("inspect-scroll" | "inspect-pane" | "inspect-head" | "rule-h" | "rule-v")
+    )
 }
 
 fn clip_to_pane(items: &mut [crate::layout::PaintItem], id: &str) {
@@ -243,25 +162,39 @@ fn clip_to_pane(items: &mut [crate::layout::PaintItem], id: &str) {
     else {
         return;
     };
+    let inspect_pane = items
+        .iter()
+        .find(|i| i.data_id.as_deref() == Some("inspect-pane"))
+        .map(|i| (i.x, i.y, i.w, i.h));
     let mut leaked_rows: Vec<(f32, f32, f32, f32)> = Vec::new();
     for item in items.iter_mut() {
-        if item.z >= 20 {
+        if item.z >= 8 {
+            continue;
+        }
+        if id == "log-scroll"
+            && (is_inspect_chrome(item)
+                || item.data_id.as_deref() == Some("log-head")
+                || item.classes.iter().any(|c| c == "log-head")
+                || item.y + 1.0 < pane.1)
+        {
+            continue;
+        }
+        if id == "log-scroll"
+            && inspect_pane.is_some_and(|p| box_overlaps(item.x, item.y, item.w, item.h, p))
+            && !is_log_chrome(item)
+        {
             continue;
         }
         let overlaps = box_overlaps(item.x, item.y, item.w, item.h, pane);
         if overlaps {
-            match crate::layout::intersect_clip(item.clip, pane.0, pane.1, pane.2, pane.3) {
-                Some(c) => item.clip = Some(c),
-                None => item.hidden = true,
+            if let Some(c) =
+                crate::layout::intersect_clip(item.clip, pane.0, pane.1, pane.2, pane.3)
+            {
+                item.clip = Some(c);
             }
             continue;
         }
-        if id == "log-scroll"
-            && item
-                .classes
-                .iter()
-                .any(|c| c == "log-row" || c == "log-spacer" || c == "log-empty")
-        {
+        if id == "log-scroll" && is_log_chrome(item) {
             leaked_rows.push((item.x, item.y, item.w, item.h));
             item.hidden = true;
         }
@@ -270,7 +203,12 @@ fn clip_to_pane(items: &mut [crate::layout::PaintItem], id: &str) {
         return;
     }
     for item in items.iter_mut() {
-        if item.hidden || item.z >= 20 {
+        if item.hidden || item.z >= 8 || is_inspect_chrome(item) {
+            continue;
+        }
+        if inspect_pane.is_some_and(|p| box_overlaps(item.x, item.y, item.w, item.h, p))
+            && !is_log_chrome(item)
+        {
             continue;
         }
         if leaked_rows
@@ -395,7 +333,7 @@ pub struct Monitor {
     running: Vec<BusWindow>,
     last_ui: Instant,
     log_dirty: bool,
-    last_geom: Option<Geom>,
+    last_metrics: Option<Metrics>,
     layout_dirty: bool,
     hover_dirty: bool,
 }
@@ -493,7 +431,7 @@ impl Monitor {
             running: Vec::new(),
             last_ui: Instant::now(),
             log_dirty: false,
-            last_geom: None,
+            last_metrics: None,
             layout_dirty: true,
             hover_dirty: false,
         }
@@ -550,26 +488,33 @@ impl Monitor {
     }
 
     fn pointer_in_log(&self, x: f32, y: f32) -> bool {
-        if self
-            .last_items
+        self.last_items.iter().any(|i| {
+            (i.data_id.as_deref() == Some("log-scroll") || i.classes.iter().any(|c| c == "log-row"))
+                && point_in_item(i, x, y)
+        })
+    }
+
+    fn hit_id(&self, id: &str, x: f32, y: f32) -> bool {
+        self.last_items
             .iter()
-            .any(|i| i.data_id.as_deref() == Some("log-scroll") && point_in_item(i, x, y))
-        {
-            return true;
+            .any(|i| i.data_id.as_deref() == Some(id) && point_in_item(i, x, y))
+    }
+
+    fn chrome_top(&self) -> f32 {
+        if self.is_floating() {
+            TITLEBAR_H
+        } else {
+            0.0
         }
-        if self
-            .last_items
+    }
+
+    fn log_view_h(&self) -> f32 {
+        self.last_items
             .iter()
-            .any(|i| i.classes.iter().any(|c| c == "log-row") && point_in_item(i, x, y))
-        {
-            return true;
-        }
-        let Some(g) = self.last_geom else {
-            return false;
-        };
-        let body_y = g.log_y + HEAD_H;
-        let body_h = (g.log_h - HEAD_H).max(40.0);
-        x >= g.log_x && x < g.log_x + g.main_w && y >= body_y && y < body_y + body_h
+            .find(|i| i.data_id.as_deref() == Some("log-scroll"))
+            .map(|i| i.h)
+            .or_else(|| self.last_metrics.map(|m| (m.log_h - HEAD_H).max(40.0)))
+            .unwrap_or(200.0)
     }
 
     fn scroll_log(&mut self, dy: f32, max: f32) -> bool {
@@ -1100,12 +1045,30 @@ impl Monitor {
     fn rebuild(&mut self) {
         self.sync_fields();
         let mut root = self.html_root.clone();
+        self.fill_chrome(&mut root);
         if !self.is_floating() {
             markup::hide_if(&mut root, |el| {
                 el.data_id.as_deref() == Some("csd") || el.classes.iter().any(|c| c == "titlebar")
             });
         }
         self.fill_sidebar(&mut root);
+        let m = metrics(
+            self.css_w,
+            self.css_h,
+            self.is_floating(),
+            self.plane,
+            self.rail_w,
+            self.inspector_h,
+        );
+        self.last_metrics = Some(m);
+        self.fill_toolbar(&mut root);
+        self.fill_select(&mut root);
+        self.fill_log(&mut root, m);
+        self.fill_inspect(&mut root);
+        self.fill_rail(&mut root);
+        if !self.select_open {
+            markup::hide_slot(&mut root, "select-menu", true);
+        }
         markup::walk_mut(&mut root, &mut |el| {
             if self.is_floating() && el.classes.iter().any(|c| c == "app") {
                 markup::add_class(el, "is-float");
@@ -1114,23 +1077,7 @@ impl Monitor {
                 markup::add_class(el, "is-open");
             }
         });
-        let g = geom(
-            self.css_w,
-            self.css_h,
-            self.is_floating(),
-            self.plane,
-            self.rail_w,
-            self.inspector_h,
-        );
-        apply_geom(&mut root, g);
-        self.last_geom = Some(g);
-        self.fill_select(&mut root);
-        self.fill_log(&mut root, g);
-        self.fill_inspect(&mut root);
-        self.fill_rail(&mut root);
-        if !self.select_open {
-            markup::hide_slot(&mut root, "select-menu", true);
-        }
+        apply_sizes(&mut root, m);
         markup::apply_fields(&mut root, &self.fields);
         markup::apply_placeholder(
             &mut root,
@@ -1169,10 +1116,15 @@ impl Monitor {
     }
 
     fn patch_log_content_h(&mut self) {
-        let Some(g) = self.last_geom else {
+        let Some(m) = self.last_metrics else {
             return;
         };
-        let view_h = (g.log_h - HEAD_H).max(40.0);
+        let view_h = self
+            .last_items
+            .iter()
+            .find(|i| i.data_id.as_deref() == Some("log-scroll"))
+            .map(|i| i.h)
+            .unwrap_or_else(|| (m.log_h - HEAD_H).max(40.0));
         let n = match self.plane {
             Plane::Bus => self.bus_visible().len(),
             Plane::Call => self.call_visible().len(),
@@ -1208,47 +1160,126 @@ impl Monitor {
         true
     }
 
+    fn fill_chrome(&self, root: &mut Elem) {
+        let mut next = markup::next_uid(root);
+        markup::replace_slot(root, "titlebar", titlebar(&mut next, WINDOW_TITLE));
+        markup::replace_slot(
+            root,
+            "split-h",
+            split::horizontal(&mut next, "split-drag-h", "rule-h"),
+        );
+        markup::replace_slot(
+            root,
+            "split-v",
+            split::vertical(&mut next, "split-drag", "rule-v"),
+        );
+        markup::replace_slot(
+            root,
+            "inspect-head",
+            pane::head(&mut next, "inspect-head", "inspect-title", "Inspector"),
+        );
+    }
+
+    fn fill_toolbar(&self, root: &mut Elem) {
+        let mut next = 12_000u32;
+        let mut filter = field::input(&mut next, "filter");
+        markup::add_class(&mut filter, "monitor-filter");
+        filter.style_attr =
+            Some("width:220px;min-width:220px;max-width:220px;flex-grow:0;flex-shrink:0".into());
+        let mut sel = select::select(
+            &mut next,
+            "filter-select",
+            Some("monitor-select"),
+            "select-label",
+        );
+        sel.style_attr =
+            Some("width:180px;min-width:180px;max-width:180px;flex-grow:0;flex-shrink:0".into());
+        let mut count = text::bind_caption(&mut next, "count");
+        markup::add_class(&mut count, "toolbar-count");
+        let mut pause = button(&mut next, Btn::Toolbar, false, "pause", None, "Pause");
+        pause.data_bind = Some("pause-label".into());
+        let clear = button(&mut next, Btn::Toolbar, false, "clear", None, "Clear");
+        let spacer = markup::node(&mut next, &["spacer"], None, None, "");
+        markup::replace_slot(
+            root,
+            "toolbar",
+            toolbar::bar(
+                &mut next,
+                "monitor-toolbar",
+                &["monitor-toolbar"],
+                vec![filter, sel, count, spacer, pause, clear],
+            ),
+        );
+    }
+
     fn fill_select(&self, root: &mut Elem) {
         let mut next = 20_000u32;
         let mut items = Vec::new();
         match self.plane {
             Plane::Bus => {
-                items.push(menu_item(
+                items.push(select::menu_item(
                     &mut next,
-                    "All topics",
+                    "pick-filter",
                     "*",
+                    "All topics",
                     self.topic_filter.is_none(),
                 ));
                 for name in topic_names() {
                     let active = self.topic_filter.as_deref() == Some(name);
-                    items.push(menu_item(&mut next, name, name, active));
+                    items.push(select::menu_item(
+                        &mut next,
+                        "pick-filter",
+                        name,
+                        name,
+                        active,
+                    ));
                 }
             }
             Plane::Call => {
-                items.push(menu_item(
+                items.push(select::menu_item(
                     &mut next,
-                    "All owners",
+                    "pick-filter",
                     "*",
+                    "All owners",
                     self.owner_filter.is_none(),
                 ));
                 for o in &self.catalog {
                     let active = self.owner_filter.as_deref() == Some(o.owner.as_str());
-                    items.push(menu_item(&mut next, &o.owner, &o.owner, active));
+                    items.push(select::menu_item(
+                        &mut next,
+                        "pick-filter",
+                        &o.owner,
+                        &o.owner,
+                        active,
+                    ));
                 }
             }
         }
         markup::fill_slot(root, "select-menu", items);
     }
 
-    fn fill_log(&mut self, root: &mut Elem, g: Geom) {
+    fn fill_log(&mut self, root: &mut Elem, m: Metrics) {
         let mut next = 30_000u32;
-        let view_h = (g.log_h - HEAD_H).max(40.0);
+        let view_h = (m.log_h - HEAD_H).max(40.0);
         match self.plane {
             Plane::Bus => {
                 markup::fill_slot(
                     root,
                     "log-head",
-                    log_head(&mut next, &["Time", "Topic", "Source"]),
+                    pane::column_labels(
+                        &mut next,
+                        &[
+                            ("col-time", "Time"),
+                            ("col-topic", "Topic"),
+                            ("col-source", "Source"),
+                            ("col-payload", "Payload"),
+                        ],
+                    ),
+                );
+                markup::set_style(
+                    root,
+                    "log-head",
+                    "height:28px;min-height:28px;max-height:28px;flex-grow:0;flex-shrink:0",
                 );
                 let vis = self.bus_visible();
                 let n = vis.len();
@@ -1270,7 +1301,7 @@ impl Monitor {
                     for e in &vis[start..end] {
                         let selected = self.selection == Selection::Bus(e.seq);
                         let id = e.seq.to_string();
-                        rows.push(bus_row(&mut next, e, selected, &id, g));
+                        rows.push(bus_row(&mut next, e, selected, &id, m));
                     }
                     if bot > 0.5 {
                         rows.push(log_spacer(&mut next, bot));
@@ -1283,7 +1314,21 @@ impl Monitor {
                 markup::fill_slot(
                     root,
                     "log-head",
-                    log_head(&mut next, &["Time", "Call", "Caller", "Status"]),
+                    pane::column_labels(
+                        &mut next,
+                        &[
+                            ("col-time", "Time"),
+                            ("col-call", "Call"),
+                            ("col-caller", "Caller"),
+                            ("col-status", "Status"),
+                            ("col-payload", "Payload"),
+                        ],
+                    ),
+                );
+                markup::set_style(
+                    root,
+                    "log-head",
+                    "height:28px;min-height:28px;max-height:28px;flex-grow:0;flex-shrink:0",
                 );
                 let vis = self.call_visible();
                 let n = vis.len();
@@ -1304,7 +1349,7 @@ impl Monitor {
                     }
                     for e in &vis[start..end] {
                         let selected = matches!(&self.selection, Selection::Call(k) if k == &e.key);
-                        rows.push(call_row(&mut next, e, selected, g));
+                        rows.push(call_row(&mut next, e, selected, m));
                     }
                     if bot > 0.5 {
                         rows.push(log_spacer(&mut next, bot));
@@ -1774,10 +1819,7 @@ impl Surface for Monitor {
             return false;
         }
         if self.pointer_in_log(x, y) {
-            let view_h = self
-                .last_geom
-                .map(|g| (g.log_h - HEAD_H).max(40.0))
-                .unwrap_or(200.0);
+            let view_h = self.log_view_h();
             let n = match self.plane {
                 Plane::Bus => self.bus_visible().len(),
                 Plane::Call => self.call_visible().len(),
@@ -1820,17 +1862,15 @@ impl Surface for Monitor {
                 }
             }
             Drag::SplitH => {
-                if let Some(g) = self.last_geom {
-                    let top = g.log_y;
-                    let bottom = g.inspect_y + g.inspect_h;
-                    let avail = (bottom - top - RULE).max(80.0 + INSPECTOR_H_MIN);
-                    let log_h = (y - top).clamp(80.0, avail - INSPECTOR_H_MIN);
-                    let insp = (avail - log_h).clamp(INSPECTOR_H_MIN, INSPECTOR_H_MAX);
-                    if (insp - self.inspector_h).abs() > 0.5 {
-                        self.inspector_h = insp;
-                        self.bump_layout();
-                        dirty = true;
-                    }
+                let top = self.chrome_top() + TOOLBAR_H;
+                let bottom = self.css_h;
+                let avail = (bottom - top - RULE).max(80.0 + INSPECTOR_H_MIN);
+                let log_h = (y - top).clamp(80.0, avail - INSPECTOR_H_MIN);
+                let insp = (avail - log_h).clamp(INSPECTOR_H_MIN, INSPECTOR_H_MAX);
+                if (insp - self.inspector_h).abs() > 0.5 {
+                    self.inspector_h = insp;
+                    self.bump_layout();
+                    dirty = true;
                 }
             }
             Drag::Scroll {
@@ -1870,13 +1910,11 @@ impl Surface for Monitor {
         }) {
             return crate::host::CursorKind::Pointer;
         }
-        if let Some(g) = self.last_geom {
-            if split_h_hit(g, x, y) {
-                return crate::host::CursorKind::NsResize;
-            }
-            if split_v_hit(g, x, y) {
-                return crate::host::CursorKind::EwResize;
-            }
+        if self.hit_id("rule-h", x, y) {
+            return crate::host::CursorKind::NsResize;
+        }
+        if self.hit_id("rule-v", x, y) {
+            return crate::host::CursorKind::EwResize;
         }
         let hit = self
             .last_items
@@ -1953,15 +1991,13 @@ impl Surface for Monitor {
             self.begin_scroll_drag(id.as_deref(), y, action.as_deref() == Some("scroll-track"));
             return self.picked();
         }
-        if let Some(g) = self.last_geom {
-            if split_h_hit(g, x, y) {
-                self.drag = Drag::SplitH;
-                return self.picked();
-            }
-            if split_v_hit(g, x, y) {
-                self.drag = Drag::Split;
-                return self.picked();
-            }
+        if self.hit_id("rule-h", x, y) {
+            self.drag = Drag::SplitH;
+            return self.picked();
+        }
+        if self.hit_id("rule-v", x, y) {
+            self.drag = Drag::Split;
+            return self.picked();
         }
         let Some(hit) = hit_test(&self.last_items, x, y) else {
             if self.dismiss_overlays() {
@@ -2111,39 +2147,6 @@ impl Surface for Monitor {
     }
 }
 
-fn menu_item(next: &mut u32, label: &str, id: &str, active: bool) -> Elem {
-    let classes: &[&str] = if active {
-        &["menu-item", "is-active"]
-    } else {
-        &["menu-item"]
-    };
-    markup::node(next, classes, Some("pick-filter"), Some(id), label)
-}
-
-fn log_head(next: &mut u32, cols: &[&str]) -> Vec<Elem> {
-    let mut kids = Vec::new();
-    for (i, label) in cols.iter().enumerate() {
-        let class = match (i, cols.len()) {
-            (0, _) => "col-time",
-            (1, 3) => "col-topic",
-            (2, 3) => "col-source",
-            (1, _) => "col-call",
-            (2, _) => "col-caller",
-            (3, _) => "col-status",
-            _ => "col-payload",
-        };
-        kids.push(markup::node(next, &["t-caption", class], None, None, label));
-    }
-    kids.push(markup::node(
-        next,
-        &["t-caption", "col-payload"],
-        None,
-        None,
-        "Payload",
-    ));
-    kids
-}
-
 fn log_view_max(n: usize, view_h: f32) -> f32 {
     (n as f32 * ROW_H - view_h).max(0.0)
 }
@@ -2164,7 +2167,7 @@ fn empty_row(next: &mut u32, copy: &str) -> Elem {
     wrap
 }
 
-fn bus_row(next: &mut u32, e: &BusEntry, selected: bool, id: &str, g: Geom) -> Elem {
+fn bus_row(next: &mut u32, e: &BusEntry, selected: bool, id: &str, m: Metrics) -> Elem {
     let classes: &[&str] = if selected {
         &["log-row", "is-active"]
     } else {
@@ -2173,8 +2176,8 @@ fn bus_row(next: &mut u32, e: &BusEntry, selected: bool, id: &str, g: Geom) -> E
     let mut row = markup::node(next, classes, Some("select-bus"), Some(id), "");
     row.style_attr = Some(format!(
         "width:{}px;min-width:0px;max-width:{}px;overflow:hidden",
-        g.main_w.round(),
-        g.main_w.round()
+        m.main_w.round(),
+        m.main_w.round()
     ));
     row.children.push(markup::node(
         next,
@@ -2188,11 +2191,11 @@ fn bus_row(next: &mut u32, e: &BusEntry, selected: bool, id: &str, g: Geom) -> E
     row.children
         .push(markup::node(next, &["col-source"], None, None, &e.source));
     row.children
-        .push(json_preview(next, &e.payload_preview, g.payload_w));
+        .push(json_preview(next, &e.payload_preview, m.payload_w));
     row
 }
 
-fn call_row(next: &mut u32, e: &CallEntry, selected: bool, g: Geom) -> Elem {
+fn call_row(next: &mut u32, e: &CallEntry, selected: bool, m: Metrics) -> Elem {
     let classes: &[&str] = if selected {
         &["log-row", "is-active"]
     } else {
@@ -2201,8 +2204,8 @@ fn call_row(next: &mut u32, e: &CallEntry, selected: bool, g: Geom) -> Elem {
     let mut row = markup::node(next, classes, Some("select-call"), Some(&e.key), "");
     row.style_attr = Some(format!(
         "width:{}px;min-width:0px;max-width:{}px;overflow:hidden",
-        g.main_w.round(),
-        g.main_w.round()
+        m.main_w.round(),
+        m.main_w.round()
     ));
     row.children.push(markup::node(
         next,
@@ -2229,9 +2232,7 @@ fn call_row(next: &mut u32, e: &CallEntry, selected: bool, g: Geom) -> Elem {
         CallStatus::Up => ("up", "badge-accent"),
         CallStatus::Down => ("down", "badge-neutral"),
     };
-    status
-        .children
-        .push(markup::node(next, &["badge", tone], None, None, label));
+    status.children.push(badge(next, tone, label));
     if let Some(ms) = e.duration_ms {
         status.children.push(markup::node(
             next,
@@ -2243,7 +2244,7 @@ fn call_row(next: &mut u32, e: &CallEntry, selected: bool, g: Geom) -> Elem {
     }
     row.children.push(status);
     row.children
-        .push(json_preview(next, &e.params_preview, g.payload_w));
+        .push(json_preview(next, &e.params_preview, m.payload_w));
     row
 }
 
@@ -2434,36 +2435,125 @@ mod chrome_layout {
     use crate::layout::layout_tree;
     use crate::paint::Fonts;
 
-    #[test]
-    fn toolbar_above_log_and_log_does_not_cover_rail() {
+    fn id<'a>(items: &'a [PaintItem], name: &str) -> &'a PaintItem {
+        items
+            .iter()
+            .find(|i| i.data_id.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {name}"))
+    }
+
+    fn text_of<'a>(items: &'a [PaintItem], needle: &str) -> &'a PaintItem {
+        items
+            .iter()
+            .find(|i| i.text.as_ref().is_some_and(|t| t.text == needle))
+            .unwrap_or_else(|| panic!("missing text {needle}"))
+    }
+
+    fn layout_chrome() -> (Vec<PaintItem>, Metrics) {
         let sheet = parse_sheet(include_str!("../assets/kit.css"));
         let mut root = parse_html(include_str!("../assets/monitor.html"));
         markup::hide_if(&mut root, |el| {
             el.data_id.as_deref() == Some("csd") || el.classes.iter().any(|c| c == "titlebar")
         });
-        let mut side_next = markup::next_uid(&root);
-        let sb = Sidebar::new([
-            SidebarItem::new("bus", "Bus")
-                .action("plane")
-                .subtitle("Fan-out facts")
-                .active(true),
-            SidebarItem::new("call", "Call")
-                .action("plane")
-                .subtitle("Request / reply"),
-        ])
-        .data_id("sidebar")
-        .build(&mut side_next);
-        markup::replace_slot(&mut root, "sidebar", sb);
-        let g = geom(
+        let mut next = markup::next_uid(&root);
+        markup::replace_slot(
+            &mut root,
+            "sidebar",
+            Sidebar::new([
+                SidebarItem::new("bus", "Bus")
+                    .action("plane")
+                    .subtitle("Fan-out facts")
+                    .active(true),
+                SidebarItem::new("call", "Call")
+                    .action("plane")
+                    .subtitle("Request / reply"),
+            ])
+            .data_id("sidebar")
+            .build(&mut next),
+        );
+        let mut filter = field::input(&mut next, "filter");
+        markup::add_class(&mut filter, "monitor-filter");
+        let sel = select::select(
+            &mut next,
+            "filter-select",
+            Some("monitor-select"),
+            "select-label",
+        );
+        let count = text::bind_caption(&mut next, "count");
+        let pause = button(&mut next, Btn::Toolbar, false, "pause", None, "Pause");
+        let clear = button(&mut next, Btn::Toolbar, false, "clear", None, "Clear");
+        let spacer = markup::node(&mut next, &["spacer"], None, None, "");
+        markup::replace_slot(
+            &mut root,
+            "toolbar",
+            toolbar::bar(
+                &mut next,
+                "monitor-toolbar",
+                &["monitor-toolbar"],
+                vec![filter, sel, count, spacer, pause, clear],
+            ),
+        );
+        markup::fill_slot(
+            &mut root,
+            "log-head",
+            pane::column_labels(
+                &mut next,
+                &[
+                    ("col-time", "Time"),
+                    ("col-topic", "Topic"),
+                    ("col-source", "Source"),
+                    ("col-payload", "Payload"),
+                ],
+            ),
+        );
+        markup::set_style(
+            &mut root,
+            "log-head",
+            "height:28px;min-height:28px;max-height:28px;flex-grow:0;flex-shrink:0",
+        );
+        markup::replace_slot(
+            &mut root,
+            "inspect-head",
+            pane::head(&mut next, "inspect-head", "inspect-title", "Inspector"),
+        );
+        markup::replace_slot(
+            &mut root,
+            "split-h",
+            split::horizontal(&mut next, "split-drag-h", "rule-h"),
+        );
+        markup::replace_slot(
+            &mut root,
+            "split-v",
+            split::vertical(&mut next, "split-drag", "rule-v"),
+        );
+        let mut rail_items = vec![SidebarItem::header("Last known")];
+        rail_items.push(
+            SidebarItem::new("Session", "Session")
+                .action("select-sticky")
+                .subtitle("Session manager"),
+        );
+        markup::replace_slot(
+            &mut root,
+            "rail",
+            Sidebar::new(rail_items)
+                .fill()
+                .nav_id("rail-scroll")
+                .build(&mut next),
+        );
+        let m = metrics(
             1434.0,
-            2132.0,
+            900.0,
             false,
             Plane::Bus,
             RAIL_W_DEFAULT,
             INSPECTOR_H_DEFAULT,
         );
-        apply_geom(&mut root, g);
-        let mut next = 1u32;
+        apply_sizes(&mut root, m);
+        markup::apply_placeholder(&mut root, "filter", true, "Filter");
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("select-label".into(), "All topics".into());
+        fields.insert("count".into(), "8".into());
+        markup::apply_fields(&mut root, &fields);
         let e = BusEntry {
             seq: 1,
             timestamp: 0.0,
@@ -2477,7 +2567,7 @@ mod chrome_layout {
         markup::fill_slot(
             &mut root,
             "log-rows",
-            vec![bus_row(&mut next, &e, false, "1", g)],
+            vec![bus_row(&mut next, &e, false, "1", m)],
         );
         let mut fonts = Fonts::new();
         let mut items = layout_tree(
@@ -2485,66 +2575,185 @@ mod chrome_layout {
             &sheet,
             None,
             1434.0,
-            2132.0,
+            900.0,
             &mut fonts,
             &Default::default(),
         );
         clip_to_pane(&mut items, "log-scroll");
-        let toolbar = items
-            .iter()
-            .find(|i| i.data_id.as_deref() == Some("monitor-toolbar"))
-            .expect("toolbar");
-        let log = items
-            .iter()
-            .find(|i| i.data_id.as_deref() == Some("log-scroll"))
-            .expect("log");
-        let rail = items
-            .iter()
-            .find(|i| i.data_id.as_deref() == Some("rail-pane"))
-            .expect("rail");
+        (items, m)
+    }
+
+    #[test]
+    fn chrome_matches_iced_tree() {
+        let (items, m) = layout_chrome();
+        let sidebar = id(&items, "sidebar");
+        let toolbar = id(&items, "monitor-toolbar");
+        let filter = id(&items, "filter");
+        let log = id(&items, "log-scroll");
+        let head = id(&items, "log-head");
+        let inspect = id(&items, "inspect-pane");
+        let rail = id(&items, "rail-pane");
+        let time = text_of(&items, "Time");
+        let topic = text_of(&items, "Topic");
+        let payload = text_of(&items, "Payload");
+        let pause = text_of(&items, "Pause");
+        let clear = text_of(&items, "Clear");
+        let last_known = text_of(&items, "Last known");
+
         assert!(
             toolbar.h >= 36.0,
             "toolbar height collapsed to {}",
             toolbar.h
         );
         assert!(
-            toolbar.y < 1.0,
-            "toolbar y={} should sit at the top of the stage",
-            toolbar.y
-        );
-        assert!(
-            log.y + 0.5 >= toolbar.y + toolbar.h,
-            "log y={} overlaps toolbar bottom {}",
-            log.y,
-            toolbar.y + toolbar.h
-        );
-        assert!(
-            (toolbar.x - SIDEBAR_W).abs() < 1.0,
-            "toolbar x={} expected {}",
+            (toolbar.x - SIDEBAR_W).abs() < 2.0,
+            "toolbar x={} should start at the sidebar edge {}",
             toolbar.x,
             SIDEBAR_W
         );
         assert!(
-            log.x + log.w <= rail.x + 1.5,
-            "log right {} overlaps rail left {}",
-            log.x + log.w,
+            toolbar.x + toolbar.w <= rail.x + 1.5,
+            "toolbar right {} should stop at the rail {}",
+            toolbar.x + toolbar.w,
             rail.x
         );
-        let payload = items
+        assert!(
+            filter.x + 1.0 >= SIDEBAR_W,
+            "Filter x={} is under the sidebar ({})",
+            filter.x,
+            SIDEBAR_W
+        );
+        assert!(
+            filter.w >= 160.0 && filter.h >= 24.0,
+            "Filter collapsed to {}x{}",
+            filter.w,
+            filter.h
+        );
+        assert!(
+            filter.y + filter.h <= toolbar.y + toolbar.h + 1.0,
+            "Filter y={} is not in the toolbar",
+            filter.y
+        );
+        assert!(
+            (pause.y - toolbar.y).abs() < 20.0,
+            "Pause y={} is not in the toolbar {}",
+            pause.y,
+            toolbar.y
+        );
+        assert!(
+            (clear.y - toolbar.y).abs() < 20.0,
+            "Clear y={} is not in the toolbar {}",
+            clear.y,
+            toolbar.y
+        );
+        assert!(
+            head.h >= 20.0,
+            "log-head collapsed to height {}",
+            head.h
+        );
+        assert!(
+            !time.hidden && time.h >= 8.0 && time.w >= 20.0,
+            "Time header hidden={} {}x{} at {},{}",
+            time.hidden,
+            time.w,
+            time.h,
+            time.x,
+            time.y
+        );
+        assert!(
+            time.y + 4.0 <= log.y + 1.0,
+            "Time y={} must sit above log-scroll y={}",
+            time.y,
+            log.y
+        );
+        assert!(
+            head.y + 0.5 >= toolbar.y + toolbar.h,
+            "column headers y={} overlap toolbar bottom {}",
+            head.y,
+            toolbar.y + toolbar.h
+        );
+        assert!(
+            time.y + 1.0 >= toolbar.y + toolbar.h,
+            "Time header y={} is not below the toolbar",
+            time.y
+        );
+        assert!(
+            topic.x > time.x,
+            "Topic x={} should sit right of Time {}",
+            topic.x,
+            time.x
+        );
+        assert!(
+            payload.x > topic.x,
+            "Payload x={} should sit right of Topic {}",
+            payload.x,
+            topic.x
+        );
+        assert!(
+            log.y + 0.5 >= head.y + head.h - 1.0,
+            "log y={} overlaps headers {}",
+            log.y,
+            head.y + head.h
+        );
+        assert!(
+            rail.x + 1.0 >= log.x + log.w,
+            "last-known x={} should sit right of the log {}",
+            rail.x,
+            log.x + log.w
+        );
+        assert!(
+            rail.y < 2.0,
+            "last-known y={} should meet the top of the window",
+            rail.y
+        );
+        assert!(
+            rail.h + rail.y >= 890.0,
+            "last-known height {} should fill the window",
+            rail.h
+        );
+        assert!(
+            pause.x + 8.0 < rail.x && clear.x + 8.0 < rail.x,
+            "Pause/Clear should sit on the log toolbar, not over the rail (pause.x={} rail.x={})",
+            pause.x,
+            rail.x
+        );
+        assert!(
+            last_known.x + 1.0 >= rail.x,
+            "Last known heading x={} is not in the right rail {}",
+            last_known.x,
+            rail.x
+        );
+        assert!(
+            inspect.y + 0.5 >= log.y + 40.0,
+            "inspector y={} should sit under the log {}",
+            inspect.y,
+            log.y
+        );
+        assert!(
+            inspect.x + 40.0 < rail.x,
+            "inspector x={} should not be the right pane (rail x={})",
+            inspect.x,
+            rail.x
+        );
+        assert!(
+            (sidebar.w - SIDEBAR_W).abs() < 2.0,
+            "sidebar width {}",
+            sidebar.w
+        );
+        let row_payload = items
             .iter()
-            .find(|i| i.classes.iter().any(|c| c == "col-payload"))
-            .expect("payload");
+            .find(|i| {
+                i.classes.iter().any(|c| c == "col-payload")
+                    && i.text
+                        .as_ref()
+                        .is_none_or(|t| t.text != "Payload")
+            })
+            .expect("payload cell");
         assert!(
-            payload.w <= g.payload_w + 2.0,
+            row_payload.w <= m.payload_w + 4.0,
             "payload width {} > cell {}",
-            payload.w,
-            g.payload_w
-        );
-        assert!(
-            payload.x + payload.w <= rail.x + 1.5,
-            "payload right {} overlaps rail {}",
-            payload.x + payload.w,
-            rail.x
+            row_payload.w,
+            m.payload_w
         );
         let log_right = log.x + log.w;
         for item in &items {

@@ -110,6 +110,23 @@
   flex-grow: 1;
 }
 
+.rail .row {
+  height: 36px;
+  margin-left: 6px;
+  margin-right: 6px;
+  margin-bottom: 0;
+}
+
+.rail .row.has-sub {
+  height: 40px;
+}
+
+.rail .row.is-header {
+  height: 22px;
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+
 .nav {
   display: flex;
   flex-direction: column;
@@ -1437,6 +1454,33 @@
   justify-content: center;
 }
 
+.split-rule.is-fill {
+  width: 8px;
+  height: 100%;
+  background: var(--bg);
+  z-index: 8;
+}
+
+.split-rule.is-fill .split-line {
+  height: 100%;
+}
+
+.split-rule-h.is-fill {
+  width: 100%;
+  height: 8px;
+  background: var(--bg);
+  z-index: 8;
+}
+
+.split-rule.is-fill:hover .split-line,
+.split-rule-h.is-fill:hover .split-line-h {
+  background: var(--hairline);
+}
+
+.pane-head {
+  z-index: 6;
+}
+
 .split-line-h {
   display: flex;
   width: 100%;
@@ -1828,7 +1872,8 @@
   gap: 2px;
 }
 
-/* Monitor (lab) — fill-height work surface. Do not reuse .split (storybook is 202px). */
+/* Monitor (lab): nav | log column (filter toolbar + log + inspector) | full-height rail.
+   Do not reuse .stage (settings padding) or .split (storybook is 202px). */
 .monitor-stage {
   display: flex;
   flex-direction: column;
@@ -1837,7 +1882,7 @@
   flex-basis: 0;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   background: var(--bg);
 }
 
@@ -1848,15 +1893,40 @@
   height: 44px;
   flex-shrink: 0;
   align-items: center;
-  gap: 12px;
-  padding-left: 16px;
-  padding-right: 16px;
-  background: var(--bg);
+  gap: 8px;
+  padding-left: 12px;
+  padding-right: 12px;
+  background: var(--chrome);
   border-bottom: 1px solid var(--hairline);
+  overflow: visible;
+  z-index: 20;
+}
+
+.monitor-toolbar .input {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  height: 30px;
+  flex-grow: 0;
+  flex-shrink: 0;
+  background: #0a0c10;
+  border: 1px solid #2a2e36;
+}
+
+.monitor-toolbar .select {
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
+  flex-grow: 0;
+  flex-shrink: 0;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
 }
 
 .monitor-filter {
   width: 220px;
+  min-width: 220px;
+  max-width: 220px;
   height: 30px;
   flex-grow: 0;
   flex-shrink: 0;
@@ -1864,7 +1934,10 @@
 
 .monitor-select {
   width: 180px;
+  min-width: 180px;
+  max-width: 180px;
   flex-shrink: 0;
+  flex-grow: 0;
 }
 
 .toolbar-count {
@@ -1966,27 +2039,33 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  flex-shrink: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: 0;
+  background: var(--bg);
 }
 
 .inspect {
   display: flex;
   flex-direction: column;
   width: 100%;
-  flex-grow: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  flex-grow: 0;
+  flex-shrink: 0;
   background: var(--well);
 }
 
 .rail {
   display: flex;
   flex-direction: column;
-  flex-grow: 1;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  flex-grow: 0;
+  flex-shrink: 0;
   background: var(--chrome);
 }
 
@@ -1995,26 +2074,41 @@
   flex-direction: row;
   width: 100%;
   height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  flex-grow: 0;
   flex-shrink: 0;
   align-items: center;
-  gap: 16px;
-  padding-left: 16px;
-  padding-right: 16px;
-  background: var(--bg);
+  gap: 12px;
+  padding-left: 12px;
+  padding-right: 12px;
+  background: var(--chrome);
   border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
+  z-index: 6;
+}
+
+.log-head .t-caption {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: "SF Pro Text";
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .inspect-head {
   display: flex;
   flex-direction: row;
   width: 100%;
-  height: 28px;
+  height: 22px;
   flex-shrink: 0;
   align-items: center;
-  padding-left: 16px;
-  padding-right: 16px;
+  padding-left: 12px;
+  padding-right: 12px;
   background: var(--bg);
   border-bottom: 1px solid var(--hairline);
+  z-index: 6;
 }
 
 .rail .inspect-head {
@@ -2045,8 +2139,8 @@
   overflow: scroll;
   padding-top: 10px;
   padding-bottom: 10px;
-  padding-left: 16px;
-  padding-right: 16px;
+  padding-left: 12px;
+  padding-right: 12px;
   gap: 2px;
 }
 
@@ -2071,11 +2165,12 @@
   height: 28px;
   flex-shrink: 0;
   align-items: center;
-  gap: 16px;
-  padding-left: 16px;
-  padding-right: 16px;
+  gap: 12px;
+  padding-left: 12px;
+  padding-right: 12px;
   overflow: hidden;
   min-width: 0;
+  border-radius: 5px;
 }
 
 .log-row:hover {
@@ -2083,7 +2178,7 @@
 }
 
 .log-row.is-active {
-  background: var(--hover);
+  background: var(--etch-lip);
 }
 
 .col-time {

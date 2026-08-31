@@ -1,11 +1,7 @@
 <div class="settings-split">
   <div class="settings-list">
     <div class="card settings-list-card">
-      <div class="btn-row">
-        <div class="btn btn-sm btn-ghost" data-action="app-add">+ Add application</div>
-        <div class="spacer"></div>
-        <div class="t-caption nowrap" data-bind="app-count"></div>
-      </div>
+      <div class="btn-row" data-slot="app-toolbar"></div>
       <div class="list-stack" data-slot="app-rows" data-id="app-list"></div>
     </div>
     <div class="card cand-wrap" data-id="cand-wrap">

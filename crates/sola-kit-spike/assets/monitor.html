@@ -1,42 +1,30 @@
-<!-- Monitor (lab). Panes are absolutely positioned from apply_geom. -->
+<!-- Monitor (lab). Body row: nav | log column (toolbar + log + inspector) | last-known rail to the top. -->
 <div class="app">
-  <div class="titlebar" data-action="drag" data-id="csd">
-    <div class="traffic">
-      <div class="close" data-action="close"></div>
+  <div data-slot="titlebar"></div>
+  <div class="body">
+    <div data-slot="sidebar"></div>
+    <div class="monitor-stage">
+      <div data-slot="toolbar"></div>
+      <div class="monitor-main" data-id="monitor-main">
+        <div class="log" data-id="monitor-log">
+          <div class="log-head" data-id="log-head" data-slot="log-head">
+            <div class="t-caption col-time">Time</div>
+            <div class="t-caption col-topic">Topic</div>
+            <div class="t-caption col-source">Source</div>
+            <div class="t-caption col-payload">Payload</div>
+          </div>
+          <div class="log-body" data-id="log-scroll" data-slot="log-rows"></div>
+        </div>
+        <div data-slot="split-h"></div>
+        <div class="inspect" data-id="inspect-pane">
+          <div data-slot="inspect-head"></div>
+          <div class="inspect-body" data-id="inspect-scroll" data-slot="inspect-body"></div>
+        </div>
+      </div>
     </div>
-    <div class="title">Monitor (lab)</div>
-    <div class="traffic-spacer"></div>
-  </div>
-  <div data-slot="sidebar"></div>
-  <div class="monitor-toolbar" data-id="monitor-toolbar">
-    <div class="input monitor-filter" data-action="focus" data-id="filter" data-bind="filter"></div>
-    <div class="select monitor-select" data-action="select-toggle" data-id="filter-select">
-      <div class="select-label" data-bind="select-label"></div>
-      <div class="icon chevron" data-kind="icon" data-id="lucide/chevron-down"></div>
-      <div class="menu menu-hang" data-slot="select-menu"></div>
+    <div data-slot="split-v"></div>
+    <div class="rail" data-id="rail-pane">
+      <div data-slot="rail"></div>
     </div>
-    <div class="t-caption toolbar-count" data-bind="count"></div>
-    <div class="spacer"></div>
-    <div class="toolbar-btn" data-action="pause" data-bind="pause-label">Pause</div>
-    <div class="toolbar-btn" data-action="clear">Clear</div>
-  </div>
-  <div class="log" data-id="monitor-log">
-    <div class="log-head" data-slot="log-head" data-id="log-head"></div>
-    <div class="log-body" data-id="log-scroll" data-slot="log-rows"></div>
-  </div>
-  <div class="monitor-rule-h" data-action="split-drag-h" data-id="rule-h">
-    <div class="monitor-line-h"></div>
-  </div>
-  <div class="inspect" data-id="inspect-pane">
-    <div class="inspect-head">
-      <div class="t-caption" data-bind="inspect-title">Inspector</div>
-    </div>
-    <div class="inspect-body" data-id="inspect-scroll" data-slot="inspect-body"></div>
-  </div>
-  <div class="monitor-rule" data-action="split-drag" data-id="rule-v">
-    <div class="monitor-line"></div>
-  </div>
-  <div class="rail" data-id="rail-pane">
-    <div data-slot="rail"></div>
   </div>
 </div>

@@ -9,11 +9,13 @@ calloop**. Binaries (do not install):
 - `sola-settings-lab` — Applications + Mail twin. `app_id` `sola-settings-lab`,
   title `Settings (lab)`. Same bus topics as iced settings.
 - `sola-monitor-lab` — Bus + Call inspector twin. `app_id` `sola-monitor-lab`,
-  title `Monitor (lab)`. Same observer path as iced monitor.
+  title `Monitor (lab)`. Same observer path as iced monitor. Chrome is nested
+  flex: nav | log column (Filter toolbar + log + inspector) | last-known rail
+  to the top of the window. Not absolutely positioned panes.
 **Kit components** (defined once in `src/components/`, not copied per app):
-`sidebar` (list-etch `aside.sidebar > .nav > .row > .etch > .label`; optional
-subtitle stack) and `json`. Settings-lab, monitor-lab (nav + last-known rail),
-and storybook chrome all call `sidebar`. Apps leave a `data-slot` in HTML.
+`sidebar`, `json`, `button`, `field`, `text`, `badge`, `select`, `card`,
+`titlebar`, `split`, `toolbar`, `icon`, `pane`. Settings-lab and monitor-lab
+compose those builders. Apps leave a `data-slot` in HTML.
 **Removed:** `sola-blitz-spike`, `sola-html-spike` (probes; hole notes below).
 **Out of scope:** replacing `sola-kit` / iced on master; putting the terminal
 grid in HTML; JS/DOM (punted); IME. `cargo make install` skips `*-spike` /

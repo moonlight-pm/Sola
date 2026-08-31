@@ -18,7 +18,8 @@ use sola_core::KeyCode;
 use sola_core::applications::{command_exists, resolve_in_path};
 
 use crate::app::Click;
-use crate::components::{Sidebar, SidebarItem};
+use crate::components::button::Kind as Btn;
+use crate::components::{Sidebar, SidebarItem, badge, button, field, text, titlebar};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
 use crate::host::Surface;
@@ -452,6 +453,8 @@ impl Settings {
             Panel::Mail => self.mail_html.as_str(),
         };
         let mut root = markup::expand(&self.html, &[], WINDOW_TITLE, heading, "", demo, "", false);
+        let mut tb = markup::next_uid(&root);
+        markup::replace_slot(&mut root, "titlebar", titlebar(&mut tb, WINDOW_TITLE));
         if !self.is_floating() {
             markup::hide_if(&mut root, |el| {
                 el.data_id.as_deref() == Some("csd") || el.classes.iter().any(|c| c == "titlebar")
@@ -516,18 +519,11 @@ impl Settings {
         });
         if apps.is_empty() && self.selected.is_none() && !self.draft {
             let mut empty = markup::node(&mut next, &["empty-block"], None, None, "");
-            empty.children.push(markup::node(
+            empty
+                .children
+                .push(text::muted(&mut next, "No applications yet"));
+            empty.children.push(text::caption(
                 &mut next,
-                &["t-body", "t-muted"],
-                None,
-                None,
-                "No applications yet",
-            ));
-            empty.children.push(markup::node(
-                &mut next,
-                &["t-caption"],
-                None,
-                None,
                 "Add one above, or configure a running app below.",
             ));
             rows.push(empty);
@@ -544,21 +540,16 @@ impl Settings {
             };
             let mut hit =
                 markup::node(&mut next, &classes, Some("app-select"), Some(&a.app_id), "");
-            hit.children
-                .push(markup::node(&mut next, &["t-body"], None, None, title));
+            hit.children.push(text::body(&mut next, title));
             if !command_exists(&a.command) {
-                hit.children.push(markup::node(
-                    &mut next,
-                    &["badge", "badge-warning"],
-                    None,
-                    None,
-                    "not found",
-                ));
+                hit.children
+                    .push(badge(&mut next, "badge-warning", "not found"));
             }
-            let rm = markup::node(
+            let rm = button(
                 &mut next,
-                &["btn", "btn-sm", "btn-danger-outline"],
-                Some("app-remove"),
+                Btn::DangerOutline,
+                true,
+                "app-remove",
                 Some(&a.app_id),
                 "Remove",
             );
@@ -568,6 +559,24 @@ impl Settings {
             rows.push(row);
         }
         markup::fill_slot(root, "app-rows", rows);
+        let mut count = text::bind_caption(&mut next, "app-count");
+        markup::add_class(&mut count, "nowrap");
+        markup::fill_slot(
+            root,
+            "app-toolbar",
+            vec![
+                button(
+                    &mut next,
+                    Btn::Ghost,
+                    true,
+                    "app-add",
+                    None,
+                    "+ Add application",
+                ),
+                markup::node(&mut next, &["spacer"], None, None, ""),
+                count,
+            ],
+        );
 
         let configured: std::collections::HashSet<_> =
             self.apps.apps.iter().map(|a| a.app_id.clone()).collect();
@@ -597,14 +606,13 @@ impl Settings {
                     None => format!("{title} · command unknown — fill in manually"),
                 };
                 let mut copy = markup::node(&mut next, &["cand-copy"], None, None, "");
-                copy.children
-                    .push(markup::node(&mut next, &["t-body"], None, None, &w.app_id));
-                copy.children
-                    .push(markup::node(&mut next, &["t-caption"], None, None, &detail));
-                let cfg = markup::node(
+                copy.children.push(text::body(&mut next, &w.app_id));
+                copy.children.push(text::caption(&mut next, &detail));
+                let cfg = button(
                     &mut next,
-                    &["btn", "btn-sm", "btn-ghost"],
-                    Some("app-cand"),
+                    Btn::Ghost,
+                    true,
+                    "app-cand",
                     Some(&w.app_id),
                     "Configure",
                 );
@@ -619,18 +627,9 @@ impl Settings {
         let mut detail = Vec::new();
         if self.selected.is_none() && !self.draft {
             let mut empty = markup::node(&mut next, &["empty-center"], None, None, "");
-            empty.children.push(markup::node(
+            empty.children.push(text::sub(&mut next, "No selection"));
+            empty.children.push(text::caption(
                 &mut next,
-                &["t-sub", "t-muted"],
-                None,
-                None,
-                "No selection",
-            ));
-            empty.children.push(markup::node(
-                &mut next,
-                &["t-caption"],
-                None,
-                None,
                 "Select an app from the list, or add a new one.",
             ));
             detail.push(empty);
@@ -645,23 +644,14 @@ impl Settings {
                     .or_else(|| self.fields.get("app_id").cloned())
                     .unwrap_or_else(|| "Detail".into())
             };
-            detail.push(markup::node(
-                &mut next,
-                &["card-title"],
-                None,
-                None,
-                &heading,
-            ));
+            detail.push(text::title(&mut next, &heading));
             if self.draft {
-                detail.push(markup::node(
+                detail.push(text::caption(
                     &mut next,
-                    &["t-caption"],
-                    None,
-                    None,
                     "Fill in identity and launch command.",
                 ));
             } else if let Some(id) = &self.selected {
-                detail.push(markup::node(&mut next, &["t-caption"], None, None, id));
+                detail.push(text::caption(&mut next, id));
             }
             for (lab, id) in [
                 ("App ID", "app_id"),
@@ -669,57 +659,84 @@ impl Settings {
                 ("Command", "command"),
                 ("Icon", "icon"),
             ] {
-                let mut field =
-                    markup::node(&mut next, &["stack-field"], Some("focus"), Some(id), "");
-                field
-                    .children
-                    .push(markup::node(&mut next, &["stack-label"], None, None, lab));
-                let mut input = markup::node(&mut next, &["input"], Some("focus"), Some(id), "");
-                input.data_bind = Some(id.into());
-                field.children.push(input);
-                detail.push(field);
+                detail.push(field::stack(&mut next, lab, id));
             }
             if !self.error.is_empty() {
-                detail.push(markup::node(
-                    &mut next,
-                    &["help-danger"],
-                    None,
-                    None,
-                    &self.error,
-                ));
+                detail.push(text::danger(&mut next, &self.error));
             }
-            let mut footer = markup::node(&mut next, &["btn-row"], None, None, "");
-            footer.children.push(markup::node(
+            let mut footer = Vec::new();
+            footer.push(button(
                 &mut next,
-                &["btn", "btn-sm", "btn-primary"],
-                Some("app-save"),
+                Btn::Primary,
+                true,
+                "app-save",
                 None,
                 if self.draft { "Add" } else { "Save" },
             ));
-            footer.children.push(markup::node(
+            footer.push(button(
                 &mut next,
-                &["btn", "btn-sm", "btn-ghost"],
-                Some("app-discard"),
+                Btn::Ghost,
+                true,
+                "app-discard",
                 None,
                 "Discard",
             ));
-            footer
-                .children
-                .push(markup::node(&mut next, &["spacer"], None, None, ""));
-            footer.children.push(markup::node(
+            footer.push(markup::node(&mut next, &["spacer"], None, None, ""));
+            footer.push(button(
                 &mut next,
-                &["btn", "btn-sm", "btn-ghost"],
-                Some("app-close"),
+                Btn::Ghost,
+                true,
+                "app-close",
                 None,
                 "Close",
             ));
-            detail.push(footer);
+            detail.push(button::row(&mut next, footer));
         }
         markup::fill_slot(root, "app-detail", detail);
     }
 
     fn fill_rules(&self, root: &mut crate::dom::Elem) {
         let mut next = 8000u32;
+        let mut fields = Vec::new();
+        for (lab, id) in [
+            ("Email", "email"),
+            ("IMAP host", "imap_host"),
+            ("IMAP port", "imap_port"),
+            ("SMTP host", "smtp_host"),
+            ("SMTP port", "smtp_port"),
+            ("Username", "username"),
+            ("Password", "password"),
+        ] {
+            fields.push(field::stack(&mut next, lab, id));
+        }
+        markup::fill_slot(root, "mail-fields", fields);
+        markup::fill_slot(
+            root,
+            "mail-actions",
+            vec![
+                button(
+                    &mut next,
+                    Btn::Primary,
+                    true,
+                    "mail-save",
+                    None,
+                    "Save account",
+                ),
+                button(&mut next, Btn::Ghost, true, "mail-discard", None, "Revert"),
+            ],
+        );
+        markup::fill_slot(
+            root,
+            "mail-rule-add",
+            vec![button(
+                &mut next,
+                Btn::Ghost,
+                true,
+                "rule-add",
+                None,
+                "+ Add rule",
+            )],
+        );
         let mut rows = Vec::new();
         for (i, r) in self.mail.rules.iter().enumerate() {
             let label = if r.name.is_empty() {
@@ -734,23 +751,18 @@ impl Settings {
                 None,
                 &format!("{} · {}", label, r.action),
             );
-            row.children.push(markup::node(
+            row.children.push(button(
                 &mut next,
-                &["btn", "btn-sm", "btn-danger-outline"],
-                Some("rule-remove"),
+                Btn::DangerOutline,
+                true,
+                "rule-remove",
                 Some(&i.to_string()),
                 "Remove",
             ));
             rows.push(row);
         }
         if rows.is_empty() {
-            rows.push(markup::node(
-                &mut next,
-                &["t-body", "t-muted"],
-                None,
-                None,
-                "No rules configured.",
-            ));
+            rows.push(text::muted(&mut next, "No rules configured."));
         }
         markup::fill_slot(root, "rule-rows", rows);
     }

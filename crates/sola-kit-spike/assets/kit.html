@@ -4,13 +4,7 @@
   data-bind fills title / heading / lede / theme.
 -->
 <div class="app">
-  <div class="titlebar" data-action="drag">
-    <div class="traffic">
-      <div class="close" data-action="close"></div>
-    </div>
-    <div class="title" data-bind="title"></div>
-    <div class="traffic-spacer"></div>
-  </div>
+  <div data-slot="titlebar"></div>
   <div class="sb-header">
     <div class="select select-lg" data-action="theme-toggle">
       <div class="enamel" data-id="header-enamel"></div>

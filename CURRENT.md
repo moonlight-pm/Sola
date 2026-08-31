@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-30 (`kit-retarget`: HTML kit + lab twins settings/monitor; iced still the shipped kit)
+**As of:** 2026-08-31 (`kit-retarget`: HTML kit + lab twins settings/monitor; iced still the shipped kit)
 
 ---
 
@@ -121,27 +121,40 @@ Do not invent product policy.
     - **`sola-settings-lab`** / `Settings (lab)` dogfooded: Applications
       + Mail on iced bus topics (`Theme`, `Application`, `MailConfig`,
       `Windows`, `WindowFloating`). Zoned chrome-less; float = CSD +
-      14px rounded frame. Nav is kit `components::sidebar` (list etch);
-      fill-height apps catalog. Fields: I-beam, caret-follow, word/all
-      select, Emacs, key-repeat.
+      14px rounded frame. CSD is kit `titlebar`; nav is kit
+      `components::sidebar`. Catalog, mail form, and buttons use kit
+      `button` / `field` / `text` / `badge`. Fill-height apps catalog.
+      Fields: I-beam,
+      caret-follow, word/all select, Emacs, key-repeat.
     - **`sola-monitor-lab`** / `Monitor (lab)`: Bus + Call inspector
       (same observer path as iced: `Role::Observer` + `Wire::Trace`).
       Same kit sidebar as settings-lab (Bus/Call); last-known / owners
-      rail is that sidebar with `.is-fill`. Absolute chrome (toolbar /
-      log / inspector / rail). Live log virtualizes the visible slice of
-      the 5k buffer; payload JSON is kit `components::json` and clips at
-      the log pane. Hover restyles GPU quads only (no glyph re-upload).
+      rail is that sidebar with `.is-fill`. CSD is kit `titlebar`;
+      splitters are kit `split`; toolbar is kit `toolbar` + `field` /
+      `select` / `button` / `text`; inspector header is kit `pane::head`;
+      log column titles are kit `pane::columns`; call status is kit
+      `badge`. Nested flex: left nav | log column (Filter toolbar with
+      Pause/Clear on the right, then log + inspector) | last-known rail
+      to the top of the window. Column titles stay on the log.
+      Last-known is a compact title+subtitle list.
+      Live log virtualizes
+      the visible slice of the 5k buffer; payload JSON is kit
+      `components::json`. Log clip does not hide the inspector.
+      Hover restyles GPU quads only (no glyph re-upload).
       Overlay scrollbar on the log (12px thumb, hit before the split
       rule). Wheel is 5 rows/detent and unpins follow-tail on the first
-      notch up. Log rows clip to the log pane (no leak into inspector).
+      notch up.
       Rebuilds on log traffic at 200ms, not Frame-rate.
       Filter + topic/owner select, pause/clear, follow-tail. **Desk
       smoke pending.**
-    Host self-watches `current_exe()`. **Do not install**; run
+    Host self-watches `current_exe()` (did not re-exec this morning;
+    restart the lab after a rebuild). **Do not install**; run
     `target/release/sola-settings-lab` or
     `target/release/sola-monitor-lab`. Iced `sola-settings` /
     `sola-monitor` unchanged. JS punted. Do not retarget iced
     `sola-kit`. **Next:** another lab twin or freeze talk — not a merge.
+    Screenshot: `solactl compositor screenshot -a APP -w TITLE` (both
+    flags; first `wl_output` only).
 
 **Explicit holds:** HTML/CSS kit vs iced (**D5**, amended 2026-08-29) —
 lab twins with distinct `app_id`, no overwrite of iced binaries. Idea
