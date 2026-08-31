@@ -1,8 +1,17 @@
-//! Pick the highest-resolution mode ≥60Hz on each head.
+//! Pick an output mode on each head.
+//!
+//! Default (NixOS desk): highest-resolution mode ≥60Hz.
+//!
+//! Virtio-gpu advertises a long CVT list (1080p, 4K, …). Picking the
+//! largest makes a QEMU window balloon past the host `xres`/`yres`.
+//! `SOLA_OUTPUT_PICK=preferred` uses the EDID preferred mode instead
+//! (Oath sets this so virtio-gpu `xres`/`yres` wins).
+//! `SOLA_OUTPUT_MODE=WxH` requests an exact size (closest ≥60Hz / 0Hz
+//! fallback).
 //!
 //! On startup we bind `zwlr_output_manager_v1`, collect modes per head,
 //! and on the first `done` serial where any head isn't already running
-//! its best mode, issue a configuration to apply it.
+//! its target mode, issue a configuration to apply it.
 
 use std::collections::HashMap;
 
@@ -22,13 +31,80 @@ use crate::protocol::wlr_output_management_unstable_v1::{
 /// Hz * 1000 — wlr-output-management's refresh rate unit.
 const MIN_REFRESH_MHZ: i32 = 60_000;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct OutputModeInfo {
     pub width: i32,
     pub height: i32,
     pub refresh_mhz: i32,
     pub preferred: bool,
     pub head: Option<ObjectId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModePick {
+    Max,
+    Preferred,
+    Exact { width: i32, height: i32 },
+}
+
+fn parse_wxh(s: &str) -> Option<(i32, i32)> {
+    let s = s.trim().replace('×', "x");
+    let (w, h) = s.split_once('x')?;
+    let width: i32 = w.trim().parse().ok()?;
+    let height: i32 = h.trim().parse().ok()?;
+    (width >= 640 && height >= 480).then_some((width, height))
+}
+
+fn mode_pick_from_env() -> ModePick {
+    if let Ok(s) = std::env::var("SOLA_OUTPUT_MODE") {
+        if let Some((width, height)) = parse_wxh(&s) {
+            return ModePick::Exact { width, height };
+        }
+    }
+    match std::env::var("SOLA_OUTPUT_PICK").ok().as_deref() {
+        Some("preferred") => ModePick::Preferred,
+        _ => ModePick::Max,
+    }
+}
+
+fn mode_ok_60(m: &OutputModeInfo) -> bool {
+    m.refresh_mhz >= MIN_REFRESH_MHZ
+}
+
+fn pick_mode(modes: &[OutputModeInfo], pick: ModePick) -> Option<usize> {
+    match pick {
+        ModePick::Exact { width, height } => {
+            let usable: Vec<usize> = modes
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.refresh_mhz == 0 || mode_ok_60(m))
+                .map(|(i, _)| i)
+                .collect();
+            usable
+                .iter()
+                .copied()
+                .find(|&i| modes[i].width == width && modes[i].height == height)
+                .or_else(|| {
+                    let want = width as i64 * height as i64;
+                    usable.into_iter().min_by_key(|&i| {
+                        (modes[i].width as i64 * modes[i].height as i64 - want).unsigned_abs()
+                    })
+                })
+        }
+        ModePick::Preferred => modes
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.preferred && (m.refresh_mhz == 0 || mode_ok_60(m)))
+            .max_by_key(|(_, m)| m.width as i64 * m.height as i64)
+            .map(|(i, _)| i)
+            .or_else(|| pick_mode(modes, ModePick::Max)),
+        ModePick::Max => modes
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| mode_ok_60(m))
+            .max_by_key(|(_, m)| (m.width as i64 * m.height as i64, m.refresh_mhz))
+            .map(|(i, _)| i),
+    }
 }
 
 #[derive(Default)]
@@ -53,25 +129,17 @@ pub struct OutputConfigState {
 impl OutputConfigState {
     fn best_mode_for(&self, head_id: &ObjectId) -> Option<ObjectId> {
         let head = self.heads.get(head_id)?;
-        let mut best: Option<(ObjectId, i64, i32)> = None; // (id, pixels, refresh)
+        let mut infos = Vec::new();
+        let mut ids = Vec::new();
         for mode_id in &head.modes {
             let Some(m) = self.modes.get(mode_id) else {
                 continue;
             };
-            if m.refresh_mhz < MIN_REFRESH_MHZ {
-                continue;
-            }
-            let pixels = (m.width as i64) * (m.height as i64);
-            let score = (pixels, m.refresh_mhz);
-            let better = match &best {
-                None => true,
-                Some((_, bp, br)) => score > (*bp, *br),
-            };
-            if better {
-                best = Some((mode_id.clone(), pixels, m.refresh_mhz));
-            }
+            infos.push(m.clone());
+            ids.push(mode_id.clone());
         }
-        best.map(|(id, _, _)| id)
+        let idx = pick_mode(&infos, mode_pick_from_env())?;
+        Some(ids[idx].clone())
     }
 }
 
@@ -115,7 +183,8 @@ pub fn reconcile(state: &mut AppData, qh: &QueueHandle<AppData>) {
                         width = m.width,
                         height = m.height,
                         refresh_mhz = m.refresh_mhz,
-                        "applying best output mode"
+                        pick = ?mode_pick_from_env(),
+                        "applying output mode"
                     );
                 }
             }
@@ -312,5 +381,80 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ()> for AppData {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mode(w: i32, h: i32, hz: i32, preferred: bool) -> OutputModeInfo {
+        OutputModeInfo {
+            width: w,
+            height: h,
+            refresh_mhz: hz,
+            preferred,
+            head: None,
+        }
+    }
+
+    #[test]
+    fn parse_wxh_accepts_ascii_and_multiply() {
+        assert_eq!(parse_wxh("1280x800"), Some((1280, 800)));
+        assert_eq!(parse_wxh(" 1280×800 "), Some((1280, 800)));
+        assert_eq!(parse_wxh("640x480"), Some((640, 480)));
+        assert_eq!(parse_wxh("100x100"), None);
+        assert_eq!(parse_wxh("nope"), None);
+    }
+
+    #[test]
+    fn max_picks_largest_60hz_not_preferred_720p() {
+        let modes = [
+            mode(1280, 800, 60_000, true),
+            mode(1920, 1080, 60_000, false),
+            mode(3840, 2160, 60_000, false),
+            mode(1024, 768, 85_000, false),
+        ];
+        let i = pick_mode(&modes, ModePick::Max).unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (3840, 2160));
+    }
+
+    #[test]
+    fn preferred_uses_edid_not_4k_virtio_list() {
+        let modes = [
+            mode(1280, 800, 60_000, true),
+            mode(1920, 1080, 60_000, false),
+            mode(3840, 2160, 60_000, false),
+        ];
+        let i = pick_mode(&modes, ModePick::Preferred).unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (1280, 800));
+    }
+
+    #[test]
+    fn preferred_falls_back_to_max_when_none_flagged() {
+        let modes = [
+            mode(1920, 1080, 60_000, false),
+            mode(1280, 800, 60_000, false),
+        ];
+        let i = pick_mode(&modes, ModePick::Preferred).unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (1920, 1080));
+    }
+
+    #[test]
+    fn exact_hits_1280x800_on_virtio_list() {
+        let modes = [
+            mode(1024, 768, 60_000, false),
+            mode(1280, 800, 60_000, true),
+            mode(3840, 2160, 60_000, false),
+        ];
+        let i = pick_mode(
+            &modes,
+            ModePick::Exact {
+                width: 1280,
+                height: 800,
+            },
+        )
+        .unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (1280, 800));
     }
 }
