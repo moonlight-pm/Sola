@@ -1,11 +1,13 @@
 # sola-mail — kit-native design
 
 **Date:** 2026-07-27  
-**Branch:** master (mail-polish merged)  
-**Status:** implemented (partial) — dogfood installed locally 2026-08-21; optimistic delete + keyed list on master (`install mail` 2026-08-26); other-client inbox expunge **installed** on master (`mail` debug, 2026-08-28)  
+**Branch:** master (merged from sola-mail)  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; **installed** `mail` debug 2026-08-31  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only
+**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing
+
+**Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
 ## Goal
 
@@ -299,13 +301,14 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 ### Move / undo
 
-1. `Move` + local list update + `last_move` stash.
-2. `u` issues reverse `Move`.
+1. `Move` + local list update + `last_move` stash (source UID + dest folder).
+2. Worker returns the **destination UID** (IMAP UIDs are per-mailbox). `UID MOVE` COPYUID when untagged; otherwise scan recent dest envelopes by Message-ID.
+3. `u` restores the row locally, then reverse-`Move`s **that dest UID** back. It never uses the source UID against Trash/Junk (that number is a different message). If dest UID is not in yet, undo waits for `Moved`.
 
 ## Error handling
 
 - Worker maps failures to `MailEvent::Error { context, message }` (e.g. `context: "connect" | "fetch" | "send" | ...`).
-- UI: toast/banner for user-initiated ops; silent/log for background IDLE refresh failures.
+- UI: toast/banner for user-initiated ops (auto-dismiss after 5s); silent/log for background IDLE refresh failures.
 - Disconnect: clear connection-dependent state; show reconnect path (auto-retry on next `Reconfigure` / explicit reconnect when config present).
 - Never lose errors only to TTY — `tracing` to sola log path via kit startup.
 
@@ -322,7 +325,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 1. Launch with valid MailConfig from settings → folders + INBOX.
 2. Open message → body; auto mark-read; unread counts update.
 3. Compose → send → appears in Sent.
-4. `d` → Trash + advance; `u` restores.
+4. `d` → Trash + advance; `u` restores **that** message (destination UID, not the source UID in Trash).
 5. IDLE new mail → list/counts refresh.
 6. Search → filter; clear → restore.
 7. Smart mailbox → rule-matched only.

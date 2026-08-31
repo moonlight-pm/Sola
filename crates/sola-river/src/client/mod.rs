@@ -39,6 +39,7 @@ pub mod manage;
 pub mod op;
 pub mod output_config;
 pub mod screenshot;
+pub mod screenshot_window;
 pub mod seat;
 pub mod shadow;
 pub mod virtual_keyboard;
@@ -278,6 +279,16 @@ pub fn bus_tick(state: &mut AppData) {
     // bar in the middle of the screen.
     if state.bus.ensure_connected() {
         republish_after_bus_reconnect(state);
+    }
+    // Hard-killed clients (lag spike + SIGKILL) never send `closed`.
+    // Zombie sola-shell surfaces then occupy composition and the
+    // replacement iced process does not map — menubar gone, process up.
+    let pruned = crate::client::window::prune_dead_pid_windows(state);
+    if pruned > 0 {
+        tracing::info!(count = pruned, "pruned windows with dead pids");
+        crate::translator::emit_windows(state);
+        state.pending.manage_dirty = true;
+        state.pending.render_dirty = true;
     }
     state.bus.drain_notify();
     // Screenshot PNG encode runs off-thread; deliver results here.
@@ -544,6 +555,29 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let mgr: ZwlrScreencopyManagerV1 = proxy.bind(name, version.min(3), qh, ());
                     info!(%version, "bound zwlr_screencopy_manager_v1");
                     state.screenshot.manager = Some(mgr);
+                }
+                "ext_foreign_toplevel_list_v1" => {
+                    use crate::protocol::ext_foreign_toplevel_list_v1::ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1;
+                    let list: ExtForeignToplevelListV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound ext_foreign_toplevel_list_v1");
+                    state.screenshot.foreign_list = Some(list);
+                }
+                "ext_foreign_toplevel_image_capture_source_manager_v1" => {
+                    use crate::protocol::ext_image_capture_source_v1::ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1;
+                    let mgr: ExtForeignToplevelImageCaptureSourceManagerV1 =
+                        proxy.bind(name, version.min(1), qh, ());
+                    info!(
+                        %version,
+                        "bound ext_foreign_toplevel_image_capture_source_manager_v1"
+                    );
+                    state.screenshot.toplevel_source_manager = Some(mgr);
+                }
+                "ext_image_copy_capture_manager_v1" => {
+                    use crate::protocol::ext_image_copy_capture_v1::ext_image_copy_capture_manager_v1::ExtImageCopyCaptureManagerV1;
+                    let mgr: ExtImageCopyCaptureManagerV1 =
+                        proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound ext_image_copy_capture_manager_v1");
+                    state.screenshot.copy_manager = Some(mgr);
                 }
                 "wl_shm" => {
                     let shm: wl_shm::WlShm = proxy.bind(name, version.min(1), qh, ());

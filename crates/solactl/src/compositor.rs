@@ -9,6 +9,9 @@ use crate::call;
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Capture a PNG of the output, or of one window with `--app`.
+    ///
+    /// `--app` copies that window's own buffer. The window does not need
+    /// to be on top and is not raised.
     Screenshot {
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
@@ -16,6 +19,9 @@ pub enum Command {
         app: Option<String>,
         #[arg(short, long)]
         window: Option<String>,
+        /// `png` (default) or `rgba` (packed RGBA8, no PNG encode).
+        #[arg(long)]
+        format: Option<String>,
         #[arg(short, long, default_value_t = 10)]
         timeout: u64,
     },
@@ -70,6 +76,7 @@ pub fn run(cmd: Command) -> i32 {
             output,
             app,
             window,
+            format,
             timeout,
         } => {
             let mut params = serde_json::Map::new();
@@ -84,6 +91,9 @@ pub fn run(cmd: Command) -> i32 {
             }
             if let Some(w) = window {
                 params.insert("window".into(), serde_json::Value::String(w));
+            }
+            if let Some(f) = format {
+                params.insert("format".into(), serde_json::Value::String(f));
             }
             call::run(
                 OWNER_COMPOSITOR,

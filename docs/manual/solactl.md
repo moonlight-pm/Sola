@@ -6,7 +6,7 @@ the **bus** only for `emit`.
 ## Call plane (needs `sola-call` + the owner process)
 
 ```text
-solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE]
+solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
 solactl compositor sample [--size N]
 solactl compositor windows
 solactl compositor input click|move|scroll|key …
@@ -16,6 +16,11 @@ solactl session close  <app_id>
 
 If `sola-call` or the owner is down, the command fails. It does **not**
 launch a window.
+
+`compositor screenshot --app` copies that window’s own buffer
+(`ext-image-copy-capture`). The window does not need to be on top and
+is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
+shell freeze picker.
 
 `workspaces` is a first-class subcommand (`solactl` / `solactl --help`).
 Other running apps that have advertised methods: `solactl <app-id>` lists

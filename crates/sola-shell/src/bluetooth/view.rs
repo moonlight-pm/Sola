@@ -1,7 +1,7 @@
 //! Bluetooth popover — hosted in the Menu overlay.
 
-use iced::widget::{column, container, mouse_area, row, stack, text, toggler};
-use iced::{Alignment, Color, Element, Length, Padding};
+use iced::widget::{column, row, text, toggler};
+use iced::{Alignment, Color, Element, Length};
 
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::form::{form_row, toggle_style};
@@ -16,6 +16,8 @@ use crate::app::{Msg, Shell};
 use crate::bluetooth::{AgentKind, Device, Ui};
 
 pub const CARD_WIDTH: f32 = 320.0;
+/// Live overlay height (adapter + device list). Caps at usable area.
+pub const CARD_HEIGHT: f32 = 480.0;
 
 /// Dim text derived from `palette().text` (same trap calendar/stats avoid:
 /// kit `muted` on the popover face can vanish).
@@ -29,38 +31,11 @@ fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
 }
 
 pub fn panel(shell: &Shell) -> Element<'_, Msg> {
-    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    let left = shell
-        .estimate_bluetooth_x()
-        .min((output_w - CARD_WIDTH - 8.0).max(0.0))
-        .max(0.0);
-
     let card: Element<'_, Msg> = popover(card_body(shell))
         .padding(SPACE_MD)
-        .width(Length::Fixed(CARD_WIDTH))
-        .into();
-
-    let positioned: Element<'_, Msg> = container(card)
-        .padding(Padding {
-            top: 0.0,
-            left,
-            right: 0.0,
-            bottom: 0.0,
-        })
         .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Top)
         .into();
-
-    let backdrop: Element<'_, Msg> =
-        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-            .on_press(Msg::CloseMenu)
-            .into();
-
-    stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    crate::menu::host_card(card)
 }
 
 fn card_body(shell: &Shell) -> Element<'_, Msg> {

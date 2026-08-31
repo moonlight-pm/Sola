@@ -56,9 +56,9 @@ pub struct LaunchResultPayload {
 
 /// Request that the shell omit an app's surfaces from composition
 /// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
-/// to show again. Used by sola-arcade to park Steam's client UI while a
-/// game runs under windowed gamescope — Sola has no taskbar minimize, so
-/// the shell shows a menubar chip for each hidden app as the restore path.
+/// to show again. Super+H on the focused app emits this; restore via
+/// Super+Tab or the launcher (already-running). Also used to park Steam's
+/// client UI while a game runs under windowed gamescope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppHidden {
     pub app_id: String,
@@ -452,8 +452,9 @@ pub struct BrowserHistory {
 /// Not a bus topic — requests go through `sola-call`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureScreenPayload {
-    /// Where to write the PNG. `None` → auto-generate a path under
-    /// `/tmp/sola/screenshots/<unix-ms>.png`.
+    /// Where to write the file. `None` → auto-generate under
+    /// `/tmp/sola/screenshots/<unix-ms>.png` (PNG) or
+    /// `/dev/shm/sola-freeze-<ms>.rgba` (RGBA freeze).
     pub path: Option<PathBuf>,
     /// What to capture. `FullOutput` (default) captures the whole
     /// compositor output. `Window { app_id, title? }` captures the
@@ -461,6 +462,20 @@ pub struct CaptureScreenPayload {
     /// absolute rectangle on the first `wl_output` (V1 single-output).
     #[serde(default)]
     pub target: CaptureTarget,
+    /// `png` (default) writes a PNG. `rgba` writes packed RGBA8 and
+    /// skips PNG encode — used by Super+Shift+4 so the picker can
+    /// freeze the live frame without a multi-second encode.
+    #[serde(default)]
+    pub format: CaptureFormat,
+}
+
+/// Encode target for [`CaptureScreenPayload`].
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureFormat {
+    #[default]
+    Png,
+    Rgba,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -74,6 +74,12 @@ pub fn prune_pending_gone(
     pending_gone.retain(|(f, uid)| f != folder || present.contains(uid));
 }
 
+/// UID to use when reversing a move. IMAP UIDs are per-mailbox: never fall
+/// back to the source UID against the destination folder.
+pub fn reverse_move_uid(_source_uid: u32, dest_uid: Option<u32>) -> Option<u32> {
+    dest_uid
+}
+
 pub fn insert_summary_desc(messages: &mut Vec<MessageSummary>, msg: MessageSummary) {
     if messages.iter().any(|m| m.uid == msg.uid) {
         return;
@@ -204,6 +210,12 @@ mod tests {
         prune_pending_gone(&mut gone, "INBOX", &incoming, 0);
         assert!(!gone.contains(&("INBOX".into(), 90)));
         assert!(gone.contains(&("INBOX".into(), 40)));
+    }
+
+    #[test]
+    fn undo_does_not_reuse_source_uid() {
+        assert_eq!(reverse_move_uid(123, Some(456)), Some(456));
+        assert_eq!(reverse_move_uid(123, None), None);
     }
 
     #[test]

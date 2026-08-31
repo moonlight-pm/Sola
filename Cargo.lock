@@ -8467,6 +8467,7 @@ dependencies = [
  "iced",
  "nix 0.31.3",
  "nvml-wrapper",
+ "png 0.18.1",
  "serde",
  "serde_json",
  "sola-assets",

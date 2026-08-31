@@ -124,6 +124,8 @@ to the bus and tolerate compositor restarts.
    sola-monitor is the consumer (`install_observer`). RPC still does not
    travel on the bus.  
 3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
+   `compositor.screenshot` full/region uses `wlr-screencopy`; `--app` uses
+   `ext-image-copy-capture` of the foreign toplevel (no raise).
 
 ---
 
@@ -173,12 +175,23 @@ area. Iced does not present full-output swapchains in the background (see
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |
-| Selection | Super+Shift+4 marquee (parked 2×2 while dismissed; live Frame is full output) |
+| Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
 
 Zoning / floating is coordinated with `sola-river` over the bus:
 unassigned windows **default-float** (client size + `Topic::WindowFloating`);
 saved zones restore frames; Meta+numpad snaps assign zones.
+
+**Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
+`Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab
+(switcher still lists hidden apps), launcher on an already-running hidden app
+(unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
+unread, notification click). Last window of a hidden app retracts the sticky
+so a later map is not stuck hidden. No menubar chip.
+
+A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
+`closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn
+can map a new menubar. Shell composition also ignores dead-pid windows.
 
 ### Games / Arcade (as-built)
 
@@ -192,7 +205,7 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 | Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`). Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |
-| AppHidden | Bus sticky still exists (shell hide chip path); Arcade UI does not expose hide-Steam |
+| AppHidden | Super+H + switcher/launcher restore (no menubar chip); Arcade UI does not expose hide-Steam |
 
 Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
@@ -224,7 +237,8 @@ content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
 | Binary / argv | `sola-wrapper <id>`; helper `sola-wrapper --engine --profile=<id>` (same binary, `current_exe`). |
 | App id | The configured id (`slack`), set on kit `startup` / `window_settings_transparent`. |
 | Catalog | `Topic::Application` fields `kind: wrapper` + `url`. Command synthesized `/opt/sola/bin/sola-wrapper <id>`. Launch lookup: `state.yaml` (bus persistence). |
-| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
+| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. Notification grants `…/notifications.json`; mic/camera `…/media.json`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
+| Chrome | Kit CSD while floating + one CEF page. **Edit** menubar (⌘X/C/V/A) via shell `MenuAction`; paste is iced clipboard → `PasteText`. Web `Notification` → desk card (`app_id` = wrapper id). Off-site `target=_blank` / ⌘-click / `window.open` → `sola_core::open_url` (sola-browser). Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (huddle). `getUserMedia` → kit Allow / Block. |
 | Singleton | `$XDG_RUNTIME_DIR/sola/wrapper/<id>.sock` — second spawn raises the live window. |
 
 ---

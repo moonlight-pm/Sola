@@ -239,6 +239,9 @@ pub enum Msg {
     /// Site Notification.requestPermission — Allow / Block.
     NotifyAllow,
     NotifyBlock,
+    /// getUserMedia / huddle mic (and camera) — Allow / Block.
+    MediaAllow,
+    MediaBlock,
     /// Page context-menu action (after CEF cancelled the native OSR menu).
     PageMenu(PageMenuAction),
 }
@@ -510,6 +513,8 @@ pub struct App<E: Engine> {
     download_icon: iced::widget::svg::Handle,
     /// In-chrome Notification.requestPermission prompt.
     pending_notify: Option<crate::notify::IpcPerm>,
+    /// In-chrome getUserMedia / huddle permission prompt.
+    pending_media: Option<crate::media::IpcMedia>,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
 }
@@ -640,6 +645,7 @@ impl<E: Engine> App<E> {
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
             pending_notify: None,
+            pending_media: None,
             copy_url_flash: None,
         };
         #[cfg(feature = "bitwarden")]
@@ -1622,6 +1628,8 @@ impl<E: Engine> App<E> {
             }
             Msg::NotifyAllow => self.resolve_notify_permission("granted"),
             Msg::NotifyBlock => self.resolve_notify_permission("denied"),
+            Msg::MediaAllow => self.resolve_media_permission("granted"),
+            Msg::MediaBlock => self.resolve_media_permission("denied"),
             Msg::DownloadRemove(id) => {
                 self.downloads.remove(&id);
             }
@@ -2542,6 +2550,8 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
+        } else if self.pending_media.is_some() {
+            stack![content, self.view_media_permission()].into()
         } else if self.pending_notify.is_some() {
             stack![content, self.view_notify_permission()].into()
         } else {
@@ -3624,8 +3634,93 @@ impl<E: Engine> App<E> {
                         self.pending_notify = Some(perm);
                     }
                 }
+                crate::notify::Ipc::Media(m) => self.on_media_ipc(m),
             }
         }
+    }
+
+    fn on_media_ipc(&mut self, m: crate::media::IpcMedia) {
+        let profile = crate::profiles::active().id;
+        let known = crate::media::permission_for(&profile, &m.origin);
+        if known != "default" {
+            crate::media::send_resolve(&self.cmd_tx, &m, known == "granted");
+            return;
+        }
+        if let Some(pending) = self.pending_media.as_mut() {
+            if crate::notify::canon_origin(&pending.origin)
+                == crate::notify::canon_origin(&m.origin)
+            {
+                crate::media::merge(pending, &m);
+                return;
+            }
+            crate::media::send_resolve(&self.cmd_tx, &m, false);
+            return;
+        }
+        tracing::info!(
+            origin = %m.origin,
+            audio = m.audio,
+            video = m.video,
+            "media permission request"
+        );
+        self.pending_media = Some(m);
+    }
+
+    fn resolve_media_permission(&mut self, result: &str) {
+        let Some(perm) = self.pending_media.take() else {
+            return;
+        };
+        let profile = crate::profiles::active().id;
+        if let Err(e) = crate::media::set_permission(&profile, &perm.origin, result) {
+            tracing::warn!(error = %e, "media: persist permission failed");
+        }
+        crate::media::send_resolve(&self.cmd_tx, &perm, result == "granted");
+    }
+
+    fn view_media_permission(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let Some(perm) = self.pending_media.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        let (title_s, hint_s) = crate::media::copy(perm);
+        let title = text(title_s).size(15).font(sola_kit::fonts::ui_medium());
+        let hint = text(hint_s).size(12).style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().background.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.72, ..t }),
+            }
+        });
+        let actions = row![
+            kit_button::labeled("Allow", kit_button::primary).on_press(Msg::MediaAllow),
+            kit_button::labeled("Block", kit_button::ghost).on_press(Msg::MediaBlock),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center);
+        let body = column![title, hint, actions]
+            .spacing(SPACE_SM)
+            .width(Length::Fixed(300.0));
+        let panel =
+            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(340.0));
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.22,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::MediaBlock);
+        let centered = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        stack![backdrop, centered].into()
     }
 
     fn resolve_notify_permission(&mut self, result: &str) {

@@ -38,8 +38,6 @@ pub struct Entry {
     /// binary via `/proc/<pid>/…`.
     pub pid: Option<u32>,
     /// Last frame received from the shell as `(x, y, width, height)`.
-    /// Used by solactl's per-window screenshot to pass a region to
-    /// `grim`. May be stale immediately after a resize but converges.
     pub frame: Option<(i32, i32, i32, i32)>,
     /// Actual content size from `river_window_v1.dimensions`. `None` until the
     /// first dimensions event. Distinct from `frame` (the shell's requested
@@ -107,6 +105,24 @@ impl WindowRegistry {
 
     pub fn pid_for(&self, id: u32) -> Option<u32> {
         self.by_id.get(&id).and_then(|e| e.pid)
+    }
+
+    /// Window ids whose `unreliable_pid` is set and that process is gone.
+    /// Used to drop compositor entries after a client is SIGKILL'd without
+    /// a `river_window_v1.closed` (the shell then stays invisible: zombies
+    /// occupy composition, the replacement process never maps).
+    pub fn dead_pid_ids(&self) -> Vec<u32> {
+        self.by_id
+            .iter()
+            .filter_map(|(id, e)| {
+                let pid = e.pid?;
+                if crate::proc_identity::process_is_alive(pid) {
+                    None
+                } else {
+                    Some(*id)
+                }
+            })
+            .collect()
     }
 
     /// If `app_id` is empty/missing and the window's pid looks like gamescope,
@@ -287,6 +303,20 @@ mod tests {
         let id = r.mint();
         r.remove(id);
         assert!(r.get(id).is_none());
+    }
+
+    #[test]
+    fn dead_pid_ids_skips_live_and_unset() {
+        let mut r = WindowRegistry::new();
+        let live = r.mint();
+        r.set_pid(live, std::process::id());
+        let dead = r.mint();
+        r.set_pid(dead, u32::MAX);
+        let unset = r.mint();
+        let mut ids = r.dead_pid_ids();
+        ids.sort();
+        assert_eq!(ids, vec![dead]);
+        let _ = unset;
     }
 
     #[test]

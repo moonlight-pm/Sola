@@ -74,6 +74,7 @@ windows are actually restarted.
 | Overlay first-show at live output | `sola-shell` `overlay_open_rect` | **Dogfooded.** No 1920-wide placeholder / default-center jump. |
 | River hide until Composition | `sola-river` `last_composition` | **Dogfooded** with overlay park (no center flash of hidden surfaces). |
 | Shell overlays parked 2×2 off-output | `sola-shell` `zoning::overlay_frame` | **Dogfooded** (position, then flash, then iced `Resized` gate). Show is Frame while hidden, Composition after live `Resized` + one tick. **Never park at 1×1** (winit min 2×1 + `resizable=false` → `xdg_toplevel` invalid_size panic-loop). |
+| Menu overlay is card-sized | `sola-shell` `zoning::menu_overlay_frame` | **In code (2026-08-31).** Dropdown / calendar / stat / BT / volume / pile Frame to the card, not the full usable area. Full-output wgpu on software GL (llvmpipe) pegged a core on first click. Launcher / switcher / selection still full-output. |
 | Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | **In code, not fully smoked.** ARGB kept for float CSD. Tiled `theme_for(false)` → full opaque-region. Float / overlay theme → region cleared. |
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`

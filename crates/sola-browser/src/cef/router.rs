@@ -719,13 +719,12 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         }),
         Cmd::CloseTab(id) => Some(ToEngine::CloseTab(id.0)),
         Cmd::SetActiveTab(id) => Some(ToEngine::SetActiveTab(id.0)),
-        Cmd::NotifyPermission {
-            prompt_id,
-            granted,
-        } => Some(ToEngine::NotifyPermission {
-            prompt_id,
-            granted,
-        }),
+        Cmd::NotifyPermission { prompt_id, granted } => {
+            Some(ToEngine::NotifyPermission { prompt_id, granted })
+        }
+        Cmd::MediaPermission { req_id, granted } => {
+            Some(ToEngine::MediaPermission { req_id, granted })
+        }
         Cmd::ShowDevTools {
             panel,
             inspect_x,

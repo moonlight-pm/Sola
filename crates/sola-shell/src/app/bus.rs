@@ -160,6 +160,15 @@ impl Shell {
     /// and re-register chords, which made focus-follows-mouse feel like a
     /// double re-paint on chatty clients (e.g. Electron titles).
     fn on_windows(&mut self, windows: Vec<Window>) {
+        // River can keep `closed`-less entries after a hard kill. Drop
+        // those here so composition does not target a dead menubar id.
+        let windows: Vec<Window> = windows
+            .into_iter()
+            .filter(|w| match w.pid {
+                None => true,
+                Some(pid) => std::path::Path::new("/proc").join(pid.to_string()).is_dir(),
+            })
+            .collect();
         tracing::info!(count = windows.len(), "shell received Windows");
 
         // Same surfaces/apps, possibly new titles — skip the heavy path.
@@ -233,6 +242,11 @@ impl Shell {
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;
+            }
+            // Last surface gone — drop AppHidden so a later map of this
+            // app_id is not stuck hidden (Super+H / Arcade).
+            if self.is_app_hidden(id) {
+                self.retract_app_hidden(id);
             }
         }
 
@@ -385,7 +399,7 @@ impl Shell {
         // only the menubar (added/removed are empty after the
         // app_id filter), so the early-return paths that normally call
         // `emit_registered_chords` never fire — and sola-river never
-        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+Grave /
+        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+H / Meta+Grave /
         // Meta+Numpad{…}, so no keyboard chord ever reaches the shell.
         self.emit_registered_chords();
     }
@@ -437,6 +451,12 @@ impl Shell {
     /// never-raised external windows from living in the "not in MRU" bucket.
     /// It never moves an already-listed app forward (that is raise-only).
     fn apply_focus(&mut self, app_id: &str, bump_mru: bool) {
+        // Composition-hidden apps are not on screen; focusing them would
+        // route keys to a River-hidden surface. Unhide first (raise_app).
+        if self.is_app_hidden(app_id) {
+            tracing::debug!(%app_id, "apply_focus: skip hidden app");
+            return;
+        }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
         self.zoning.set_focused(app_id.to_string());
@@ -471,9 +491,9 @@ impl Shell {
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
     fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
         tracing::debug!(window_id, ?prev_focused, "emit Focus");
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
-        }
+        });
     }
 
     /// Pointer focus (no raise, no stack change). Used after the FFM dwell
@@ -528,9 +548,22 @@ impl Shell {
     }
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
-    /// No-op when that app has no mapped window yet.
+    /// Unhides a Super+H / AppHidden app first. No-op when that app has no
+    /// mapped window yet.
     pub(crate) fn raise_app(&mut self, app_id: &str) {
-        let Some(window_id) = self.lookup_any_window_id(app_id) else {
+        if self.is_app_hidden(app_id) {
+            self.unhide_app(app_id);
+            return;
+        }
+        let Some(window_id) = self
+            .lookup_any_window_id(app_id)
+            .or_else(|| {
+                self.known_windows
+                    .iter()
+                    .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
+                    .map(|w| w.window_id)
+            })
+        else {
             tracing::debug!(%app_id, "raise_app: no mapped window");
             return;
         };
@@ -799,7 +832,7 @@ impl Shell {
         // while one is active (see `emit_registered_chords`), so we don't
         // steal Escape from terminal apps otherwise.
         if chord.keycode == sola_core::KeyCode::ESCAPE && bare {
-            if self.selection.active {
+            if self.selection.active || self.selection.pending {
                 return Task::done(Msg::CloseSelection);
             }
             if self.launcher.active {
@@ -814,7 +847,19 @@ impl Shell {
         }
 
         // Selection marquee is modal — Escape cancels; ignore other chords.
+        // Pending freeze is not modal (overlay is not up yet) but it owns the
+        // screenshot slot, so ignore competing Super+Shift+3/4/5.
         if self.selection.active {
+            return Task::none();
+        }
+        if self.selection.pending
+            && chord.meta
+            && chord.shift
+            && matches!(
+                chord.keycode,
+                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
+            )
+        {
             return Task::none();
         }
 
@@ -845,6 +890,11 @@ impl Shell {
             }
             if chord.keycode == KeyCode::LEFT {
                 return Task::done(Msg::SwitcherNav { next: false });
+            }
+            // Super+H while the switcher is up would hide the focused app
+            // then Super-release would confirm and unhide it. Eat the chord.
+            if chord.meta && chord.keycode == KeyCode::H {
+                return Task::none();
             }
             if chord.meta && chord.keycode == KeyCode::Q {
                 if let Some(target) = self.switcher.apps.get(self.switcher.selected).cloned() {
@@ -898,6 +948,17 @@ impl Shell {
             return Task::none();
         }
 
+        // Meta+H: hide focused app (omit from composition; River hide).
+        if chord.meta
+            && !chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::H
+        {
+            self.hide_focused_app();
+            return Task::none();
+        }
+
         // Super+Shift+3: full-output screenshot (auto path) → toast + preview.
         if chord.meta
             && chord.shift
@@ -910,14 +971,14 @@ impl Shell {
             return crate::screenshot::full();
         }
 
-        // Super+Shift+4: interactive selection marquee (macOS order).
+        // Super+Shift+4: freeze live output, then selection marquee (macOS order).
         if chord.meta
             && chord.shift
             && !chord.ctrl
             && !chord.alt
             && chord.keycode == sola_core::KeyCode::KEY_4
         {
-            tracing::info!("Super+Shift+4 — selection capture");
+            tracing::info!("Super+Shift+4 — selection freeze");
             return Task::done(Msg::OpenSelection);
         }
 
@@ -1086,6 +1147,14 @@ impl Shell {
             .any(|w| w.window_id == e.window_id && w.app_id == Self::APP_ID);
         if is_shell {
             tracing::debug!(window_id = e.window_id, "FFM enter shell — cancel dwell");
+            return Task::none();
+        }
+
+        // Composition-hidden surfaces are River-hidden; ignore stray enter.
+        if self
+            .app_id_for_window(e.window_id)
+            .is_some_and(|id| self.is_app_hidden(&id))
+        {
             return Task::none();
         }
 

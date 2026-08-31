@@ -309,20 +309,59 @@ impl ImapClient {
         })
     }
 
-    /// Move a message to another folder (COPY + DELETE + EXPUNGE).
+    /// Move a message to another folder. Returns the UID in `dest`.
     ///
-    /// Note: this is not atomic. If the connection dies mid-operation (e.g. after COPY
-    /// but before EXPUNGE), the retry may create a duplicate in the destination folder.
+    /// IMAP UIDs are per-mailbox. Undo must use this destination UID, never
+    /// the source UID against the dest folder (Trash often already has a
+    /// different message with that number).
+    ///
+    /// Prefers `UID MOVE` (COPYUID). Falls back to COPY + DELETE + EXPUNGE.
+    /// If COPYUID is missing (tagged OK is dropped by the imap crate), scans
+    /// recent dest envelopes for the Message-ID peeked before the move.
+    ///
+    /// Note: COPY+EXPUNGE is not atomic. If the connection dies mid-operation
+    /// (e.g. after COPY but before EXPUNGE), the retry may duplicate in dest.
     /// This is preferable to losing mail.
-    pub fn move_message(&mut self, folder: &str, uid: u32, dest: &str) -> anyhow::Result<()> {
+    pub fn move_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        dest: &str,
+    ) -> anyhow::Result<Option<u32>> {
         let folder = folder.to_string();
         let dest = dest.to_string();
         self.with_reconnect(move |s| {
             s.ensure_selected(&folder)?;
-            s.session.uid_copy(uid.to_string(), &dest)?;
-            s.session.uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
-            s.session.expunge()?;
-            Ok(())
+            let ident = peek_identity(&mut s.session, uid)?;
+            let dest_q = quote_mailbox(&dest);
+            let response = match s
+                .session
+                .run_command_and_read_response(&format!("UID MOVE {uid} {dest_q}"))
+            {
+                Ok(r) => r,
+                Err(e) if matches!(e, imap::Error::Bad(_) | imap::Error::No(_)) => {
+                    debug!("UID MOVE unavailable ({e}); COPY+EXPUNGE");
+                    let r = s
+                        .session
+                        .run_command_and_read_response(&format!("UID COPY {uid} {dest_q}"))?;
+                    s.session.uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
+                    s.session.expunge()?;
+                    r
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let mut dest_uid = parse_copyuid_dest(&response);
+            if dest_uid.is_none() {
+                dest_uid = find_copied_uid(s, &dest, &ident)?;
+            }
+            if dest_uid.is_none() {
+                warn!(
+                    uid,
+                    dest = dest.as_str(),
+                    "move succeeded but destination UID was not identified"
+                );
+            }
+            Ok(dest_uid)
         })
     }
 
@@ -577,6 +616,166 @@ fn is_connection_error(err: &anyhow::Error) -> bool {
         || msg.contains("temporarily unavailable")
         || msg.contains("os error 11")
         || msg.contains("would block")
+}
+
+/// How many newest dest-folder messages to scan when COPYUID is missing.
+const DEST_UID_SCAN: u32 = 40;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MailIdent {
+    message_id: Option<String>,
+    from: String,
+    subject: String,
+    date: String,
+}
+
+impl MailIdent {
+    fn from_fetch(fetch: &Fetch) -> Option<Self> {
+        let env = fetch.envelope()?;
+        Some(Self {
+            message_id: normalize_message_id(
+                env.message_id
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or(""),
+            ),
+            from: env
+                .from
+                .as_ref()
+                .and_then(|addrs| addrs.first())
+                .map(|a| {
+                    let name = a
+                        .name
+                        .as_ref()
+                        .and_then(|n| std::str::from_utf8(n).ok())
+                        .unwrap_or("");
+                    let mailbox = a
+                        .mailbox
+                        .as_ref()
+                        .and_then(|m| std::str::from_utf8(m).ok())
+                        .unwrap_or("");
+                    let host = a
+                        .host
+                        .as_ref()
+                        .and_then(|h| std::str::from_utf8(h).ok())
+                        .unwrap_or("");
+                    if name.is_empty() {
+                        format!("{mailbox}@{host}")
+                    } else {
+                        format!("{name} <{mailbox}@{host}>")
+                    }
+                })
+                .unwrap_or_default(),
+            subject: env
+                .subject
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .unwrap_or("")
+                .to_string(),
+            date: env
+                .date
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .unwrap_or("")
+                .to_string(),
+        })
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        match (&self.message_id, &other.message_id) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => {
+                if self.from.is_empty() && self.subject.is_empty() {
+                    false
+                } else {
+                    self.from == other.from
+                        && self.subject == other.subject
+                        && self.date == other.date
+                }
+            }
+        }
+    }
+}
+
+fn normalize_message_id(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_matches(|c| c == '<' || c == '>');
+    let s = s.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+fn quote_mailbox(name: &str) -> String {
+    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn peek_identity(session: &mut ImapSession, uid: u32) -> anyhow::Result<MailIdent> {
+    let fetches = session.uid_fetch(uid.to_string(), "(UID ENVELOPE)")?;
+    let fetch = fetches
+        .iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Message UID {uid} not found"))?;
+    MailIdent::from_fetch(fetch).ok_or_else(|| anyhow::anyhow!("No envelope for UID {uid}"))
+}
+
+fn find_copied_uid(
+    client: &mut ImapClient,
+    dest: &str,
+    ident: &MailIdent,
+) -> anyhow::Result<Option<u32>> {
+    let exists = client.select_folder(dest)?;
+    if exists == 0 {
+        return Ok(None);
+    }
+    let start = exists
+        .saturating_sub(DEST_UID_SCAN.saturating_sub(1))
+        .max(1);
+    let fetches = client
+        .session
+        .fetch(format!("{start}:{exists}"), "(UID ENVELOPE)")?;
+    let mut best = None;
+    for fetch in fetches.iter() {
+        let Some(uid) = fetch.uid else { continue };
+        let Some(other) = MailIdent::from_fetch(fetch) else {
+            continue;
+        };
+        if ident.matches(&other) {
+            best = Some(best.map_or(uid, |b: u32| b.max(uid)));
+        }
+    }
+    Ok(best)
+}
+
+/// Dest UID from an IMAP COPYUID response code (RFC 4315).
+///
+/// The rust imap crate drops the tagged OK line, so this only sees COPYUID
+/// when the server sends it untagged (typical for UID MOVE).
+fn parse_copyuid_dest(response: &[u8]) -> Option<u32> {
+    let text = String::from_utf8_lossy(response);
+    for line in text.split(['\r', '\n']) {
+        if let Some(uid) = copyuid_dest_from_line(line) {
+            return Some(uid);
+        }
+    }
+    None
+}
+
+fn copyuid_dest_from_line(line: &str) -> Option<u32> {
+    let upper = line.to_ascii_uppercase();
+    let idx = upper.find("[COPYUID ")?;
+    let rest = line.get(idx + "[COPYUID ".len()..)?;
+    let end = rest.find(']')?;
+    let inner = rest[..end].trim();
+    let mut parts = inner.splitn(3, char::is_whitespace);
+    let _uidvalidity = parts.next()?;
+    let _src = parts.next()?;
+    let dest_set = parts.next()?.trim();
+    first_uid_in_set(dest_set)
+}
+
+fn first_uid_in_set(set: &str) -> Option<u32> {
+    let first = set.split(',').next()?.trim();
+    let start = first.split(':').next()?.trim();
+    start.parse().ok()
 }
 
 /// Parse a FETCH response into a MessageSummary.
@@ -843,4 +1042,89 @@ fn build_imap_search(conditions: &[MailRuleCondition]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copyuid_from_untagged_move() {
+        let raw = b"* OK [COPYUID 1511554416 142 4567] Moved UIDs.\r\n";
+        assert_eq!(parse_copyuid_dest(raw), Some(4567));
+    }
+
+    #[test]
+    fn copyuid_from_tagged_ok() {
+        let raw = b"a1 OK [COPYUID 38505 304 3956] Done\r\n";
+        assert_eq!(parse_copyuid_dest(raw), Some(3956));
+    }
+
+    #[test]
+    fn copyuid_dest_set_takes_first_uid() {
+        let raw = b"* OK [COPYUID 1511554416 142,399 41:42] Moved UIDs.\r\n";
+        assert_eq!(parse_copyuid_dest(raw), Some(41));
+    }
+
+    #[test]
+    fn copyuid_absent() {
+        assert_eq!(parse_copyuid_dest(b"a1 OK COPY completed\r\n"), None);
+        assert_eq!(parse_copyuid_dest(b""), None);
+    }
+
+    #[test]
+    fn quote_mailbox_escapes() {
+        assert_eq!(quote_mailbox("Trash"), "\"Trash\"");
+        assert_eq!(quote_mailbox(r#"a"b"#), r#""a\"b""#);
+    }
+
+    #[test]
+    fn ident_matches_message_id() {
+        let a = MailIdent {
+            message_id: Some("abc@x".into()),
+            from: "a@x".into(),
+            subject: "s".into(),
+            date: "d".into(),
+        };
+        let b = MailIdent {
+            message_id: Some("ABC@x".into()),
+            from: "other".into(),
+            subject: "nope".into(),
+            date: "nope".into(),
+        };
+        let c = MailIdent {
+            message_id: Some("other@x".into()),
+            from: "a@x".into(),
+            subject: "s".into(),
+            date: "d".into(),
+        };
+        assert!(a.matches(&b));
+        assert!(!a.matches(&c));
+    }
+
+    #[test]
+    fn ident_weak_match_without_message_id() {
+        let a = MailIdent {
+            message_id: None,
+            from: "a@x".into(),
+            subject: "Hello".into(),
+            date: "1 Jan".into(),
+        };
+        let b = a.clone();
+        let empty = MailIdent {
+            message_id: None,
+            from: String::new(),
+            subject: String::new(),
+            date: String::new(),
+        };
+        assert!(a.matches(&b));
+        assert!(!empty.matches(&a));
+        assert!(!a.matches(&empty));
+    }
+
+    #[test]
+    fn normalize_strips_angle_brackets() {
+        assert_eq!(normalize_message_id(" <id@host> "), Some("id@host".into()));
+        assert_eq!(normalize_message_id("   "), None);
+    }
 }

@@ -1,10 +1,14 @@
 //! Interactive screen-selection overlay for Super+Shift+4.
 //!
-//! Transparent full-output surface, parked at 2×2 while dismissed and
-//! framed to the output while `SelectionState::active`. Drag a rectangle;
-//! release emits a region capture after the overlay is hidden so the
-//! marquee is not in the PNG.
+//! Super+Shift+4 first freezes the live output (RGBA dump, no PNG encode)
+//! so menus and text selections stay in the shot, then shows that still
+//! full-output (no dim — it is the desktop) with a cyan marquee while
+//! dragging. The overlay joins composition only after the freeze texture
+//! is on the GPU, so the first visible frame matches the live output.
+//! Drag a rectangle; release crops the freeze in memory. Parked at 2×2
+//! while dismissed.
 
+pub mod freeze;
 pub mod state;
 pub mod view;
 

@@ -234,3 +234,41 @@ pub fn activate_gpu_env() {
         }
     }
 }
+
+/// True when this process has a working `systemd --user` manager
+/// (`systemd-run --user --scope`, transient tmux units). Loginless
+/// install seats often do not.
+pub fn user_systemd_available() -> bool {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        if runtime_dir_has_systemd_private(&dir) {
+            return true;
+        }
+    }
+    match std::process::Command::new("systemctl")
+        .args(["--user", "is-system-running"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        // 0 = running; 1 often means degraded but still usable.
+        Ok(st) => st.success() || st.code() == Some(1),
+        Err(_) => false,
+    }
+}
+
+fn runtime_dir_has_systemd_private(dir: &str) -> bool {
+    Path::new(dir).join("systemd/private").exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn systemd_private_socket_is_under_runtime_dir() {
+        assert!(!runtime_dir_has_systemd_private(
+            "/tmp/sola-no-systemd-here"
+        ));
+    }
+}

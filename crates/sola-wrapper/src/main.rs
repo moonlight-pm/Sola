@@ -7,6 +7,8 @@ mod app;
 mod argv;
 mod catalog;
 mod instance;
+mod links;
+mod menu;
 mod profile;
 
 use std::process::ExitCode;

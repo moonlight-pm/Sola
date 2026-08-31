@@ -28,7 +28,7 @@ use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::components::{
-    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, field, readable, sidebar,
+    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, readable, sidebar,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -41,6 +41,14 @@ const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
 const LIST_W: f32 = 328.0;
 const SIDEBAR_W: f32 = 200.0;
+/// Undo / status toast stays long enough to click Undo, then leaves.
+const TOAST_TTL: Duration = Duration::from_secs(5);
+/// Compose header label column — wide enough for “Subject” at caption size.
+const COMPOSE_LABEL_W: f32 = 56.0;
+/// Header fields (From/To/Cc/Subject) — quieter than kit body.
+const COMPOSE_HEADER_SIZE: f32 = 11.0;
+/// Compose body — kit body size, not iced’s 16px default.
+const COMPOSE_BODY_SIZE: f32 = 13.0;
 /// Shared list-header / reader-toolbar height so icons sit on one line.
 const CHROME_H: f32 = 40.0;
 /// Comfortable reading measure (~65ch at 14px prose).
@@ -85,6 +93,10 @@ pub enum Msg {
     /// Visible letter selection (None = caret / cleared).
     BodySelect(Option<String>),
     DismissToast,
+    /// Auto-hide a toast after [`TOAST_TTL`]; ignored if a newer toast replaced it.
+    ToastExpired {
+        generation: u64,
+    },
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
@@ -102,10 +114,15 @@ pub enum Msg {
 #[derive(Debug, Clone)]
 struct LastMove {
     uid: u32,
+    /// UID in `to_folder` once IMAP COPY/MOVE reports it. Undo must use this
+    /// — source UIDs are not valid in the destination mailbox.
+    dest_uid: Option<u32>,
     from_folder: String,
     to_folder: String,
     list_id: String,
     summary: Option<MessageSummary>,
+    undo_requested: bool,
+    undo_imap_sent: bool,
 }
 
 struct RemovedMail {
@@ -153,6 +170,8 @@ pub struct App {
     toast: Option<String>,
     /// When set, toast (and reading toolbar) offer Undo.
     toast_undo: bool,
+    /// Bumped on every toast so a late expiry cannot hide a newer one.
+    toast_gen: u64,
     composing: bool,
     draft: ComposeDraft,
     last_move: Option<LastMove>,
@@ -194,6 +213,7 @@ impl Default for App {
             is_loading_more: false,
             toast: None,
             toast_undo: false,
+            toast_gen: 0,
             composing: false,
             draft: empty_draft(""),
             last_move: None,
@@ -451,9 +471,7 @@ impl App {
             }
             Msg::Send => {
                 if self.draft.to.trim().is_empty() {
-                    self.toast = Some("To address is required".into());
-                    self.toast_undo = false;
-                    return Task::none();
+                    return self.show_toast("To address is required", false);
                 }
                 mail_send(MailCmd::Send {
                     from: self.draft.from.clone(),
@@ -474,13 +492,9 @@ impl App {
             Msg::Undo => self.undo_last_move(),
             Msg::EmptyFolder => {
                 let folder = self.selected_folder.clone();
-                self.begin_empty(&folder);
-                Task::none()
+                self.begin_empty(&folder)
             }
-            Msg::EmptyNamed(folder) => {
-                self.begin_empty(&folder);
-                Task::none()
-            }
+            Msg::EmptyNamed(folder) => self.begin_empty(&folder),
             Msg::Refresh => {
                 if self.connected && !self.loading {
                     self.refresh_all();
@@ -492,8 +506,13 @@ impl App {
                 Task::none()
             }
             Msg::DismissToast => {
-                self.toast = None;
-                self.toast_undo = false;
+                self.clear_toast();
+                Task::none()
+            }
+            Msg::ToastExpired { generation } => {
+                if self.toast_gen == generation {
+                    self.clear_toast();
+                }
                 Task::none()
             }
             Msg::KeyPressed(key, mods) => self.on_key(key, mods),
@@ -719,26 +738,31 @@ impl App {
             }
             MailEvent::Sent => {
                 self.composing = false;
-                self.toast = Some("Message sent".into());
-                self.toast_undo = false;
                 mail_send(MailCmd::ListFolders);
+                return self.show_toast("Message sent", false);
             }
-            MailEvent::Moved { uid } => {
-                self.pending_removed.remove(&uid);
+            MailEvent::Moved { uid, dest_uid } => {
+                return self.on_moved(uid, dest_uid);
             }
             MailEvent::MoveFailed { uid, message } => {
-                self.toast = Some(format!("move: {message}"));
-                self.toast_undo = false;
                 self.restore_removed(uid);
+                if self
+                    .last_move
+                    .as_ref()
+                    .is_some_and(|lm| lm.uid == uid || lm.dest_uid == Some(uid))
+                {
+                    self.last_move = None;
+                }
+                return self.show_toast(format!("move: {message}"), false);
             }
             MailEvent::Emptied { folder } => {
                 self.folder_loading = false;
-                self.toast = Some(format!("{} erased", folder_label(&folder)));
-                self.toast_undo = false;
                 mail_send(MailCmd::ListFolders);
+                let toast = format!("{} erased", folder_label(&folder));
                 if self.selected_folder.eq_ignore_ascii_case(&folder) {
                     self.load_folder(folder);
                 }
+                return self.show_toast(toast, false);
             }
             MailEvent::NewMail => {
                 self.refresh_all();
@@ -747,14 +771,13 @@ impl App {
                 self.loading = false;
                 self.folder_loading = false;
                 self.is_loading_more = false;
-                self.toast = Some(format!("{context}: {message}"));
-                self.toast_undo = false;
                 if context == "connect" {
                     self.connected = false;
                 }
                 if context == "empty_folder" {
                     self.load_folder(self.selected_folder.clone());
                 }
+                return self.show_toast(format!("{context}: {message}"), false);
             }
         }
         Task::none()
@@ -845,9 +868,7 @@ impl App {
         Task::none()
     }
 
-    fn begin_empty(&mut self, folder: &str) {
-        self.toast = Some(format!("Erasing {}…", folder_label(folder)));
-        self.toast_undo = false;
+    fn begin_empty(&mut self, folder: &str) -> Task<Msg> {
         self.select_gen = self.select_gen.saturating_add(1);
         if self.selected_folder.eq_ignore_ascii_case(folder) {
             self.folder_loading = true;
@@ -862,6 +883,7 @@ impl App {
         mail_send(MailCmd::EmptyFolder {
             folder: folder.to_string(),
         });
+        self.show_toast(format!("Erasing {}…", folder_label(folder)), false)
     }
 
     fn is_emptyable_folder(&self) -> bool {
@@ -933,13 +955,15 @@ impl App {
         let summary = idx.and_then(|i| self.messages.get(i).cloned());
         self.last_move = Some(LastMove {
             uid,
+            dest_uid: None,
             from_folder: folder.clone(),
             to_folder: dest.clone(),
             list_id: self.selected_folder.clone(),
             summary: summary.clone(),
+            undo_requested: false,
+            undo_imap_sent: false,
         });
-        self.toast = Some(format!("Moved to {dest}"));
-        self.toast_undo = true;
+        let toast = self.show_toast(format!("Moved to {dest}"), true);
         self.pending_gone
             .insert((self.selected_folder.clone(), uid));
         if let Some(summary) = summary.clone() {
@@ -963,48 +987,160 @@ impl App {
             self.message_body = None;
             self.body_selection = None;
             self.reading_blocks.clear();
-            return Task::none();
+            return toast;
         }
         let Some(i) = idx else {
-            return Task::none();
+            return toast;
         };
         let next = if i > 0 { i - 1 } else { 0 };
         let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
         self.selected_uid = Some(next_uid);
         let generation = self.select_gen;
-        Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
-            Msg::SettleSelect {
-                uid: next_uid,
-                generation,
-            }
-        })
+        Task::batch([
+            toast,
+            Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
+                Msg::SettleSelect {
+                    uid: next_uid,
+                    generation,
+                }
+            }),
+        ])
     }
 
     fn undo_last_move(&mut self) -> Task<Msg> {
-        let Some(lm) = self.last_move.take() else {
+        let Some(lm) = self.last_move.as_mut() else {
             return Task::none();
         };
-        mail_send(MailCmd::Move {
-            folder: lm.to_folder.clone(),
-            uid: lm.uid,
-            dest: lm.from_folder.clone(),
-        });
-        self.toast = Some("Move undone".into());
-        self.toast_undo = false;
-        self.pending_gone.remove(&(lm.list_id.clone(), lm.uid));
+        if lm.undo_requested {
+            return Task::none();
+        }
+        lm.undo_requested = true;
+        let src_uid = lm.uid;
+        let dest_uid = lm.dest_uid;
+        let to_folder = lm.to_folder.clone();
+        let from_folder = lm.from_folder.clone();
+        let list_id = lm.list_id.clone();
+        let summary = lm.summary.clone();
+        if dest_uid.is_some() {
+            lm.undo_imap_sent = true;
+        }
+        self.pending_gone.remove(&(list_id.clone(), src_uid));
         let summary = self
             .pending_removed
-            .remove(&lm.uid)
+            .remove(&src_uid)
             .map(|r| r.summary)
-            .or(lm.summary);
+            .or(summary);
         if let Some(summary) = summary {
-            if self.selected_folder == lm.list_id {
-                self.adjust_counts_for_move(&summary, &lm.from_folder, &lm.to_folder, false);
+            if self.selected_folder == list_id {
+                self.adjust_counts_for_move(&summary, &from_folder, &to_folder, false);
                 self.total_messages = self.total_messages.saturating_add(1);
                 list_sync::insert_summary_desc(&mut self.messages, summary);
             }
         }
+        // Never reverse using the source UID against dest — that UID names a
+        // different message in Trash/Junk (often one another client already
+        // moved). Wait for dest_uid if the copy has not finished yet.
+        if let Some(dest_uid) = list_sync::reverse_move_uid(src_uid, dest_uid) {
+            mail_send(MailCmd::Move {
+                folder: to_folder,
+                uid: dest_uid,
+                dest: from_folder,
+            });
+        }
+        self.show_toast("Move undone", false)
+    }
+
+    fn on_moved(&mut self, uid: u32, dest_uid: Option<u32>) -> Task<Msg> {
+        self.pending_removed.remove(&uid);
+        let Some(lm) = self.last_move.as_ref() else {
+            return Task::none();
+        };
+        let src_uid = lm.uid;
+        let undo_requested = lm.undo_requested;
+        let undo_imap_sent = lm.undo_imap_sent;
+        let known_dest = lm.dest_uid;
+        let to_folder = lm.to_folder.clone();
+        let from_folder = lm.from_folder.clone();
+
+        // Reverse completed (dest UID in the event is the source of this MOVE).
+        if undo_requested && known_dest == Some(uid) {
+            if let Some(new_uid) = dest_uid {
+                self.rewrite_list_uid(src_uid, new_uid);
+            }
+            self.last_move = None;
+            return Task::none();
+        }
+        if src_uid == uid && !undo_requested {
+            if let Some(lm) = self.last_move.as_mut() {
+                lm.dest_uid = dest_uid.or(lm.dest_uid);
+            }
+            return Task::none();
+        }
+        if src_uid == uid && undo_requested {
+            let d = dest_uid.or(known_dest);
+            if let Some(lm) = self.last_move.as_mut() {
+                lm.dest_uid = d;
+            }
+            if undo_imap_sent {
+                return Task::none();
+            }
+            match d {
+                Some(d) => {
+                    if let Some(lm) = self.last_move.as_mut() {
+                        lm.undo_imap_sent = true;
+                    }
+                    mail_send(MailCmd::Move {
+                        folder: to_folder,
+                        uid: d,
+                        dest: from_folder,
+                    });
+                }
+                None => {
+                    self.last_move = None;
+                    return self
+                        .show_toast("Could not undo: copy in destination not identified", false);
+                }
+            }
+        }
         Task::none()
+    }
+
+    fn rewrite_list_uid(&mut self, old: u32, new: u32) {
+        if old == new {
+            return;
+        }
+        if let Some(m) = self.messages.iter_mut().find(|m| m.uid == old) {
+            m.uid = new;
+        }
+        if self.selected_uid == Some(old) {
+            self.selected_uid = Some(new);
+        }
+        if let Some(body) = &mut self.message_body {
+            if body.uid == old {
+                body.uid = new;
+            }
+        }
+        self.messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
+    }
+
+    fn can_offer_undo(&self) -> bool {
+        self.last_move.as_ref().is_some_and(|lm| !lm.undo_requested)
+    }
+
+    fn show_toast(&mut self, text: impl Into<String>, undo: bool) -> Task<Msg> {
+        self.toast = Some(text.into());
+        self.toast_undo = undo;
+        self.toast_gen = self.toast_gen.saturating_add(1);
+        let generation = self.toast_gen;
+        Task::perform(tokio::time::sleep(TOAST_TTL), move |_| Msg::ToastExpired {
+            generation,
+        })
+    }
+
+    fn clear_toast(&mut self) {
+        self.toast = None;
+        self.toast_undo = false;
+        self.toast_gen = self.toast_gen.saturating_add(1);
     }
 
     fn restore_removed(&mut self, uid: u32) {
@@ -1199,7 +1335,7 @@ impl App {
 
     fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
         let mut actions = row![].spacing(SPACE_SM);
-        if self.toast_undo && self.last_move.is_some() {
+        if self.toast_undo && self.can_offer_undo() {
             actions =
                 actions.push(kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo));
         }
@@ -1391,7 +1527,7 @@ impl App {
                 Some(Msg::CopyBody),
             ));
         }
-        if self.last_move.is_some() {
+        if self.can_offer_undo() {
             bar = bar.push(icon_tool("lucide/undo-2", "Undo move", Some(Msg::Undo)));
         }
 
@@ -1463,34 +1599,29 @@ impl App {
             .placeholder("Write a message…")
             .height(Length::Fill)
             .padding(12)
+            .font(fonts::ui())
+            .size(COMPOSE_BODY_SIZE)
             .style(compose_editor_style)
             .on_action(Msg::ComposeBodyAction);
 
-        let form = column![
-            field(
-                "From",
-                text_input("from@", &self.draft.from).on_input(Msg::ComposeFrom),
-                None,
-                None,
-            ),
-            field(
-                "To",
-                text_input("to@", &self.draft.to).on_input(Msg::ComposeTo),
-                None,
-                None,
-            ),
-            field(
-                "Cc",
-                text_input("cc@", &self.draft.cc).on_input(Msg::ComposeCc),
-                None,
-                None,
-            ),
-            field(
+        let headers = column![
+            compose_header_row("From", "from@", &self.draft.from, Msg::ComposeFrom),
+            h_hairline(),
+            compose_header_row("To", "to@", &self.draft.to, Msg::ComposeTo),
+            h_hairline(),
+            compose_header_row("Cc", "cc@", &self.draft.cc, Msg::ComposeCc),
+            h_hairline(),
+            compose_header_row(
                 "Subject",
-                text_input("Subject", &self.draft.subject).on_input(Msg::ComposeSubject),
-                None,
-                None,
+                "Subject",
+                &self.draft.subject,
+                Msg::ComposeSubject,
             ),
+        ];
+
+        let form = column![
+            headers,
+            h_hairline(),
             container(editor)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -1501,19 +1632,16 @@ impl App {
             ]
             .spacing(SPACE_SM),
         ]
-        .spacing(SPACE_MD)
-        .padding(Padding::from([SPACE_XL, SPACE_XL]))
-        .width(Length::Fill);
-
-        container(
-            readable(form, READ_MAX_W)
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
+        .spacing(SPACE_SM)
+        .padding(Padding::from([SPACE_LG, SPACE_LG]))
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(read_pane_style)
-        .into()
+        .height(Length::Fill);
+
+        container(form)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(read_pane_style)
+            .into()
     }
 }
 
@@ -1877,6 +2005,35 @@ fn h_hairline() -> Element<'static, Msg> {
         .into()
 }
 
+fn compose_header_row<'a>(
+    label: &'static str,
+    placeholder: &str,
+    value: &str,
+    on_input: fn(String) -> Msg,
+) -> Element<'a, Msg> {
+    row![
+        kit_text::caption(label)
+            .style(kit_text::muted)
+            .width(Length::Fixed(COMPOSE_LABEL_W)),
+        text_input(placeholder, value)
+            .font(fonts::ui())
+            .size(COMPOSE_HEADER_SIZE)
+            .padding(Padding {
+                top: 4.0,
+                right: SPACE_SM,
+                bottom: 4.0,
+                left: SPACE_SM,
+            })
+            .width(Length::Fill)
+            .style(compose_header_input_style)
+            .on_input(on_input),
+    ]
+    .spacing(SPACE_MD)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
+    .into()
+}
+
 // ── List cursor ───────────────────────────────────────────────────────
 
 /// Default arrow over the message list: no I-bar, no hand, no text copy.
@@ -2086,6 +2243,28 @@ fn compose_field_style(theme: &Theme) -> container::Style {
             radius: RADIUS_MD.into(),
         },
         ..container::Style::default()
+    }
+}
+
+fn compose_header_input_style(
+    theme: &Theme,
+    _status: sola_kit::components::text_input::Status,
+) -> sola_kit::components::text_input::Style {
+    let p = theme.extended_palette();
+    sola_kit::components::text_input::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        icon: p.secondary.base.text,
+        placeholder: Color {
+            a: 0.75,
+            ..p.secondary.base.text
+        },
+        value: p.background.base.text,
+        selection: mix_white(p.background.weaker.color, 0.16),
     }
 }
 
