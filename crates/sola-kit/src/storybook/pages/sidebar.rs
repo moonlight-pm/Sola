@@ -1,17 +1,20 @@
 //! Sidebar showcase — drag dogfood for grouped + ungrouped rows.
 //!
 //! Gesture state lives in kit [`SidebarState`]. This page applies
-//! [`SidebarEvent`] onto named groups (A/B/C) and a loose run.
+//! [`SidebarEvent`] onto named groups (A/B/C) and a loose run. Pencil
+//! enters rename; a color swatch in edit mode tints the pocket.
 
 use iced::widget::{column, container, row};
-use iced::{Element, Length, Theme};
+use iced::{Color, Element, Length, Padding, Theme};
 
 use sola_kit::components::card::style as card_style;
+use sola_kit::components::color_picker;
 use sola_kit::components::sidebar::{self, Dest, Event as SidebarEvent};
 use sola_kit::components::text::{body, heading, muted};
+use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    DividerColors, SidebarDensity, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
-    SidebarState,
+    ColorPicker, DividerColors, SidebarDensity, SidebarIndicator, SidebarItem, SidebarPanel,
+    SidebarSection, SidebarState, group_well_fill,
 };
 
 #[derive(Clone, Debug)]
@@ -19,6 +22,12 @@ pub enum Msg {
     Panel(sidebar::Msg),
     Select(String),
     ToggleGroup(String),
+    EditGroup(String),
+    RenameInput(String),
+    RenameCommit,
+    OpenColor(String),
+    Picker(color_picker::Message),
+    ClosePicker,
     Noop,
 }
 
@@ -33,6 +42,7 @@ struct DemoGroup {
     id: String,
     name: String,
     collapsed: bool,
+    color: Option<Color>,
     items: Vec<DemoItem>,
 }
 
@@ -48,6 +58,8 @@ pub struct State {
     pub panel: SidebarState,
     blocks: Vec<Block>,
     selected: String,
+    renaming: Option<(String, String)>,
+    color_picker: Option<(String, ColorPicker)>,
 }
 
 impl Default for State {
@@ -60,12 +72,14 @@ impl Default for State {
                     id: "a".into(),
                     name: "Group A".into(),
                     collapsed: false,
+                    color: None,
                     items: items(&[("a1", "Item A1"), ("a2", "Item A2"), ("a3", "Item A3")]),
                 }),
                 Block::Group(DemoGroup {
                     id: "b".into(),
                     name: "Group B".into(),
                     collapsed: false,
+                    color: None,
                     items: items(&[
                         ("b1", "Item B1"),
                         ("b2", "Item B2"),
@@ -78,6 +92,7 @@ impl Default for State {
                     id: "c".into(),
                     name: "Group C".into(),
                     collapsed: false,
+                    color: None,
                     items: items(&[
                         ("c1", "Item C1"),
                         ("c2", "Item C2"),
@@ -107,6 +122,8 @@ impl Default for State {
                 }),
             ],
             selected: "a1".into(),
+            renaming: None,
+            color_picker: None,
         }
     }
 }
@@ -134,8 +151,69 @@ impl State {
             }
             Msg::Select(id) => self.selected = id,
             Msg::ToggleGroup(id) => self.toggle_group(&id),
+            Msg::EditGroup(id) => {
+                let name = self.group(&id).map(|g| g.name.clone()).unwrap_or_default();
+                self.renaming = Some((id, name));
+                self.color_picker = None;
+            }
+            Msg::RenameInput(s) => {
+                if let Some((_, draft)) = &mut self.renaming {
+                    *draft = s;
+                }
+            }
+            Msg::RenameCommit => {
+                if let Some((id, name)) = self.renaming.take() {
+                    if let Some(g) = self.group_mut(&id) {
+                        let name = name.trim();
+                        if !name.is_empty() {
+                            g.name = name.to_string();
+                        }
+                    }
+                }
+                self.color_picker = None;
+            }
+            Msg::OpenColor(id) => {
+                if self
+                    .color_picker
+                    .as_ref()
+                    .is_some_and(|(gid, _)| gid == &id)
+                {
+                    self.color_picker = None;
+                } else {
+                    let seed = self
+                        .group(&id)
+                        .and_then(|g| g.color)
+                        .unwrap_or_else(group_well_fill);
+                    self.color_picker = Some((id, ColorPicker::new(seed)));
+                }
+            }
+            Msg::Picker(m) => {
+                if let Some((gid, picker)) = &mut self.color_picker {
+                    picker.update(m);
+                    let color = picker.color();
+                    let gid = gid.clone();
+                    if let Some(g) = self.group_mut(&gid) {
+                        g.color = Some(color);
+                    }
+                }
+            }
+            Msg::ClosePicker => self.color_picker = None,
             Msg::Noop => {}
         }
+    }
+
+    fn group(&self, id: &str) -> Option<&DemoGroup> {
+        self.blocks.iter().find_map(|b| match b {
+            Block::Group(g) if g.id == id => Some(g),
+            _ => None,
+        })
+    }
+
+    fn group_mut(&mut self, id: &str) -> Option<&mut DemoGroup> {
+        self.blocks.iter_mut().find_map(|b| match b {
+            Block::Group(g) if g.id == id => Some(g),
+            _ => None,
+        })
     }
 
     fn toggle_group(&mut self, id: &str) {
@@ -295,13 +373,43 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
                             .active(state.selected == it.id)
                     })
                     .collect();
-                sections.push(
-                    SidebarSection::new(g.name.clone(), rows)
-                        .id(g.id.clone())
-                        .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
-                        .header_count(n)
-                        .header_edit(Msg::Noop),
-                );
+                let mut section = SidebarSection::new(g.name.clone(), rows)
+                    .id(g.id.clone())
+                    .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
+                    .header_count(n)
+                    .color(g.color);
+                let renaming_this = state.renaming.as_ref().is_some_and(|(rid, _)| rid == &g.id);
+                if renaming_this {
+                    let draft = state
+                        .renaming
+                        .as_ref()
+                        .map(|(_, d)| d.as_str())
+                        .unwrap_or("");
+                    let field = text_input("Group name", draft)
+                        .size(12)
+                        .font(sola_kit::fonts::ui_medium())
+                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
+                        .on_input(Msg::RenameInput)
+                        .on_submit(Msg::RenameCommit)
+                        .style(sola_kit::components::text_input::style)
+                        .padding(Padding::from([1, 4]))
+                        .width(Length::Fill);
+                    section = section
+                        .header_content(field)
+                        .header_color(Msg::OpenColor(g.id.clone()))
+                        .header_commit(Msg::RenameCommit);
+                    if let Some((pid, picker)) = &state.color_picker {
+                        if pid == &g.id {
+                            section = section.header_color_picker(
+                                picker.view().map(Msg::Picker),
+                                Msg::ClosePicker,
+                            );
+                        }
+                    }
+                } else {
+                    section = section.header_edit(Msg::EditGroup(g.id.clone()));
+                }
+                sections.push(section);
             }
             Block::Item(it) => {
                 let row = SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
@@ -334,7 +442,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         body(
             "Morphing-hole reorder (Scratch morph2). Click a group title \
              to fold it; drag it to move the whole group. 2px before the \
-             drag starts. Hover a group header for a pencil (rename)."
+             drag starts. Hover a group header for a pencil — edit mode \
+             shows a color swatch and a check to save. Selected rows lift \
+             the column or pocket (plus a 1px lip); ink follows the fill."
         )
         .style(muted),
         demo,

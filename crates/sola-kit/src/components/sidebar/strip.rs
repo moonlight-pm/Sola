@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use iced::advanced::Renderer as _;
 use iced::advanced::layout::{self, Layout};
+use iced::advanced::overlay;
 use iced::advanced::renderer;
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget};
@@ -21,7 +22,10 @@ use iced::{
 use crate::components::style::{CHROME_SURFACE, alpha};
 
 use super::gesture::{Dest, Drop, Event as SidebarEvent, Msg};
-use super::{PANEL_REORDER_ANIM_MS, PANEL_REORDER_THRESHOLD, group_well_style, px};
+use super::{
+    PANEL_REORDER_ANIM_MS, PANEL_REORDER_THRESHOLD, group_well_style, pocket_fill, px,
+    well_select_plate,
+};
 
 const WELL_PAD: i32 = 3;
 const ROW_GAP: i32 = 3;
@@ -49,6 +53,7 @@ pub struct LeafMeta {
     pub id: String,
     pub kind: LeafKind,
     pub group: Option<String>,
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,6 +338,12 @@ fn group_spans(view: &[ViewRow], absorb: Option<&str>) -> Vec<(usize, usize)> {
         i = end;
     }
     spans
+}
+
+fn well_color(meta: &[LeafMeta], gid: Option<&str>) -> Option<Color> {
+    meta.iter()
+        .find(|m| m.kind == LeafKind::Header && m.group.as_deref() == gid)
+        .and_then(|m| m.color)
 }
 
 fn group_end(view: &[ViewRow], i: usize) -> bool {
@@ -980,7 +991,6 @@ where
         let st = tree.state.downcast_ref::<StripState>();
         let now = Instant::now();
         let children: Vec<Layout<'_>> = layout.children().collect();
-        let well = group_well_style();
         for (start, end) in group_spans(&st.view, st.absorb.as_deref()) {
             if start >= st.rest.len() || end == 0 || end - 1 >= st.rest.len() {
                 continue;
@@ -1000,6 +1010,10 @@ where
                 width: (layout.bounds().width - 4.0).max(0.0),
                 height: (bottom - top).max(0.0),
             };
+            let well = group_well_style(well_color(
+                &self.meta,
+                st.view.get(start).and_then(|r| r.group.as_deref()),
+            ));
             if let Some(bg) = well.background {
                 renderer.fill_quad(
                     renderer::Quad {
@@ -1089,6 +1103,9 @@ where
                                     width: (layout.bounds().width - 4.0).max(0.0),
                                     height: b.height + 2.0 * WELL_PAD as f32,
                                 };
+                                let well = group_well_style(
+                                    self.meta.get(held.start).and_then(|m| m.color),
+                                );
                                 if let Some(bg) = well.background {
                                     let bg = match bg {
                                         Background::Color(c) => Background::Color(alpha(c, 0.8)),
@@ -1131,10 +1148,15 @@ where
                                         },
                                         snap: true,
                                     },
-                                    Background::Color(Color {
-                                        a: 0.5,
-                                        ..CHROME_SURFACE
-                                    }),
+                                    Background::Color(
+                                        self.meta
+                                            .get(held.start)
+                                            .and_then(|m| {
+                                                m.group.as_ref().map(|_| pocket_fill(m.color))
+                                            })
+                                            .map(well_select_plate)
+                                            .unwrap_or_else(|| well_select_plate(CHROME_SURFACE)),
+                                    ),
                                 );
                             }
                         }
@@ -1211,6 +1233,25 @@ where
             })
             .max()
             .unwrap_or(mouse::Interaction::None)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        // Header color pickers (and any future overlay) live on a leaf.
+        overlay::from_children(
+            &mut self.leaves,
+            tree,
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 

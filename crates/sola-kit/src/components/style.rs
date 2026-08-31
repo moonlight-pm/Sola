@@ -270,6 +270,51 @@ pub const ON_FILL_DARK: Color = Color {
     a: 1.0,
 };
 
+/// sRGB relative luminance (WCAG 2).
+pub fn relative_luminance(c: Color) -> f32 {
+    let lin = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// Black or white ink for text sitting on `bg`. Threshold `0.179` is the
+/// WCAG 4.5:1 crossover between white-on-dark and dark-on-light.
+/// Light fills get true black (not [`ON_FILL_DARK`]) so titles stay
+/// sharp on pale pocket colours.
+pub fn on_color(bg: Color) -> Color {
+    if relative_luminance(bg) > 0.179 {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    }
+}
+
+/// Neutral wash of [`on_color`] at `amount` alpha — selected / hover
+/// overlays that keep the underlying fill visible.
+pub fn on_wash(bg: Color, amount: f32) -> Color {
+    Color {
+        a: amount.clamp(0.0, 1.0),
+        ..on_color(bg)
+    }
+}
+
+/// Porter-Duff src-over: translucent `src` onto opaque `dst`.
+pub fn src_over(src: Color, dst: Color) -> Color {
+    let a = src.a.clamp(0.0, 1.0);
+    let k = 1.0 - a;
+    Color {
+        r: src.r * a + dst.r * k,
+        g: src.g * a + dst.g * k,
+        b: src.b * a + dst.b * k,
+        a: 1.0,
+    }
+}
+
 /// Soft accent glow under primary actions (OD `--glow-accent` approx).
 pub fn accent_glow(accent: Color) -> Shadow {
     Shadow {
@@ -485,5 +530,31 @@ mod tests {
         assert_eq!(RADIUS_SM, 5.0);
         assert_eq!(RADIUS_MD, 7.0);
         assert_eq!(RADIUS_LG, 10.0);
+    }
+
+    #[test]
+    fn on_color_picks_dark_ink_on_white() {
+        assert_eq!(on_color(Color::WHITE), Color::BLACK);
+        assert_eq!(on_color(Color::from_rgb(1.0, 0.95, 0.2)), Color::BLACK);
+    }
+
+    #[test]
+    fn on_color_picks_white_ink_on_black() {
+        assert_eq!(on_color(Color::BLACK), Color::WHITE);
+        assert_eq!(on_color(Color::from_rgb(0.07, 0.09, 0.13)), Color::WHITE);
+    }
+
+    #[test]
+    fn src_over_white_wash_lightens() {
+        let base = Color::from_rgb(0.2, 0.2, 0.2);
+        let out = src_over(
+            Color {
+                a: 0.5,
+                ..Color::WHITE
+            },
+            base,
+        );
+        assert!(out.r > base.r);
+        assert!((out.a - 1.0).abs() < 1e-6);
     }
 }

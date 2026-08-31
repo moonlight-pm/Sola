@@ -38,6 +38,9 @@ pub struct SessionGroup {
     pub name: String,
     #[serde(default)]
     pub collapsed: bool,
+    /// Pocket fill (`#rrggbb` / `#rrggbbaa`). Absent = kit default well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// A tab closed this session, restored LIFO by ⌘⇧T.
@@ -308,6 +311,10 @@ pub fn fingerprint(session: &BrowserSession) -> String {
         s.push_str(&g.name);
         s.push('\x1e');
         s.push(if g.collapsed { '1' } else { '0' });
+        s.push('\x1e');
+        if let Some(c) = &g.color {
+            s.push_str(c);
+        }
         s.push('\x1f');
     }
     for c in &session.closed {
@@ -477,6 +484,29 @@ mod tests {
             url: "https://gone/".into(),
             ..ClosedTab::default()
         });
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+    }
+
+    #[test]
+    fn fingerprint_changes_with_group_color() {
+        let a = BrowserSession {
+            tabs: vec![SessionTab {
+                url: "https://a/".into(),
+                group_id: Some("work".into()),
+                ..SessionTab::default()
+            }],
+            active_index: 0,
+            sidebar_w: 200.0,
+            groups: vec![SessionGroup {
+                id: "work".into(),
+                name: "Work".into(),
+                collapsed: false,
+                color: None,
+            }],
+            closed: Vec::new(),
+        };
+        let mut b = a.clone();
+        b.groups[0].color = Some("#3dd6f5".into());
         assert_ne!(fingerprint(&a), fingerprint(&b));
     }
 }

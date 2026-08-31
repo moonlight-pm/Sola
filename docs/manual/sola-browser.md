@@ -117,13 +117,18 @@ stay in one run underneath. `⌘G` (Browser → **New Group**) wraps the
 `Group` (then `Group 2`, …) so the next keystroke replaces it. Enter
 keeps it; Esc reverts. The chord does nothing when the current tab is
 already in a group. Hover a group header for a **pencil** to rename
-later. The strip has no right-click menu. Click the header to collapse
+later. Rename also shows a **color chip** (ink ring on the pocket fill)
+and a **check** to save (Enter still works if the name is focused).
+Click the chip to open or close the color picker (it sits beside the
+check). The color is saved with the session. Titles on light fills are
+black and a step heavier so they match loose-tab type. Esc reverts the
+name. The strip has no right-click menu. Click the header to collapse
 — the page stays if you were on a tab inside. Drag a loose tab into a
 group to join it; drag a member into the loose run to leave. `⌘T` and links from other apps
 (`xdg-open`, `solactl open`) always make a **loose** tab at the **bottom**
 of the strip. Only ⌘-click inserts under the current tab.
-Empty groups disappear. There are no colors, nested groups, or spaces
-yet.
+The current tab is a quiet lift of the column or pocket, with a 1px
+lip. Empty groups disappear. There are no nested groups or spaces yet.
 
 ## Omnibox
 

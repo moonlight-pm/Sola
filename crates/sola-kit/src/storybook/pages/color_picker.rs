@@ -37,7 +37,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
     column![
         lede(
             "ColorPicker",
-            "Drag the field and rails, or type Hex / RGB / HSL. Hue survives value → 0.",
+            "One column: field, rails, then hex / RGB / HSL. Hue survives value → 0.",
         ),
         panel(state.picker.view().map(Msg::Picker)),
     ]

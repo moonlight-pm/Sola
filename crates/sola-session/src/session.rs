@@ -192,7 +192,7 @@ impl Session {
         // TTY dogfood). Loginless install seats often have no systemd --user
         // (runuser without PAM/logind) — scopes fail immediately and apps
         // look like they "launch then quit". Fall back to a direct spawn.
-        let use_scope = user_systemd_available();
+        let use_scope = env::user_systemd_available();
         let mut cmd = if use_scope {
             let mut c = Command::new("systemd-run");
             c.args([
@@ -446,29 +446,6 @@ fn stop_scope(unit: &str) {
             let _ = child.wait();
         }
         Err(e) => warn!(%unit, %e, "failed to spawn systemctl stop"),
-    }
-}
-
-/// True when this process has a working `systemd --user` manager (needed
-/// for `systemd-run --user --scope`). Loginless install seats often do not.
-fn user_systemd_available() -> bool {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        let private = std::path::Path::new(&dir).join("systemd/private");
-        if private.exists() {
-            return true;
-        }
-    }
-    // Probe without relying on path layout (some setups use different sockets).
-    match Command::new("systemctl")
-        .args(["--user", "is-system-running"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        // 0 = running; 1 often means degraded but still usable.
-        Ok(st) => st.success() || st.code() == Some(1),
-        Err(_) => false,
     }
 }
 

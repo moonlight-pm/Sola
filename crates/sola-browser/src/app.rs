@@ -21,14 +21,15 @@ use sola_kit::components::card;
 use sola_kit::components::divider::DIVIDER_HIT_PX;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
+use sola_kit::components::color_picker;
 use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::sidebar::{self, Event as SidebarEvent};
 use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{
-    DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection,
-    SidebarState, field, horizontal_divider, menu_at,
+    ColorPicker, DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel,
+    SidebarSection, SidebarState, field, group_well_fill, horizontal_divider, menu_at,
 };
 
 use crate::engine::{
@@ -113,6 +114,10 @@ pub enum Msg {
     RenameSelectAll,
     RenameInput(String),
     RenameCommit,
+    /// Toggle the edit-mode group color picker.
+    GroupColor(String),
+    GroupColorMsg(color_picker::Message),
+    GroupColorDismiss,
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
@@ -395,6 +400,8 @@ pub struct App<E: Engine> {
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     renaming: Option<(String, String)>,
+    /// Color picker anchored to the edit-mode group swatch.
+    group_color: Option<(String, ColorPicker)>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -552,6 +559,7 @@ impl<E: Engine> App<E> {
             nav_hold: None,
             page_menus,
             renaming: None,
+            group_color: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
             app_id,
@@ -2041,6 +2049,31 @@ impl<E: Engine> App<E> {
                     return crate::integration::unfocus_chrome();
                 }
             }
+            Msg::GroupColor(id) => {
+                if self.group_color.as_ref().is_some_and(|(gid, _)| gid == &id) {
+                    self.group_color = None;
+                } else {
+                    let seed = self
+                        .groups
+                        .group(&id)
+                        .and_then(|g| g.color.as_deref())
+                        .and_then(sola_kit::theme::try_parse)
+                        .unwrap_or_else(group_well_fill);
+                    self.group_color = Some((id, ColorPicker::new(seed)));
+                }
+            }
+            Msg::GroupColorMsg(m) => {
+                if let Some((gid, picker)) = &mut self.group_color {
+                    picker.update(m);
+                    let hex = persist_group_color(picker.color());
+                    let gid = gid.clone();
+                    self.groups.set_color(&gid, hex);
+                    self.persist_session();
+                }
+            }
+            Msg::GroupColorDismiss => {
+                self.group_color = None;
+            }
             Msg::WebViewFocused => {
                 // Page took the click: drop iced chrome focus so keys go to
                 // the shader → CEF, and tell the host it is the focused OSR
@@ -2319,6 +2352,7 @@ impl<E: Engine> App<E> {
             .map(|g| g.name.clone())
             .unwrap_or_default();
         self.renaming = Some((id, name));
+        self.group_color = None;
         GROUP_RENAMING.store(true, Ordering::Relaxed);
         self.url_bar_focused = false;
         // Drop CEF host focus so keys land in iced, not the page.
@@ -2333,11 +2367,13 @@ impl<E: Engine> App<E> {
 
     fn clear_group_rename(&mut self) {
         self.renaming = None;
+        self.group_color = None;
         GROUP_RENAMING.store(false, Ordering::Relaxed);
     }
 
     fn take_group_rename(&mut self) -> Option<(String, String)> {
         let value = self.renaming.take();
+        self.group_color = None;
         GROUP_RENAMING.store(false, Ordering::Relaxed);
         value
     }
@@ -2609,7 +2645,8 @@ impl<E: Engine> App<E> {
                     .id(g.id.clone())
                     .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
                     .header_active(header_active)
-                    .header_count(n);
+                    .header_count(n)
+                    .color(g.color.as_deref().and_then(sola_kit::theme::try_parse));
                 let renaming_this = self.renaming.as_ref().is_some_and(|(rid, _)| rid == &g.id);
                 if renaming_this {
                     let draft = self
@@ -2627,7 +2664,18 @@ impl<E: Engine> App<E> {
                         .style(sola_kit::components::text_input::style)
                         .padding(Padding::from([1, 4]))
                         .width(Length::Fill);
-                    section = section.header_content(field);
+                    section = section
+                        .header_content(field)
+                        .header_color(Msg::GroupColor(g.id.clone()))
+                        .header_commit(Msg::RenameCommit);
+                    if let Some((pid, picker)) = &self.group_color {
+                        if pid == &g.id {
+                            section = section.header_color_picker(
+                                picker.view().map(Msg::GroupColorMsg),
+                                Msg::GroupColorDismiss,
+                            );
+                        }
+                    }
                 } else {
                     section = section.header_edit(Msg::RenameGroup(g.id.clone()));
                 }
@@ -5439,6 +5487,16 @@ fn vault_kind_icon(kind: ItemKind) -> iced::widget::svg::Handle {
 
 fn group_rename_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-group-rename")
+}
+
+/// Persist a pocket fill; omit when it matches the kit default well.
+fn persist_group_color(color: iced::Color) -> Option<String> {
+    let hex = sola_kit::theme::color_to_hex(color);
+    if hex == sola_kit::theme::color_to_hex(group_well_fill()) {
+        None
+    } else {
+        Some(hex)
+    }
 }
 
 fn nav_icon_back() -> iced::widget::svg::Handle {
