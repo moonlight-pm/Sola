@@ -3,10 +3,10 @@
 //! Reorder dest lives in [`super::strip`] (Morph2 hole + FLIP). This
 //! module is hover + the divider, plus forwarding [`Msg::Outcome`].
 
+use super::{PANEL_W_MAX, PANEL_W_MIN};
 use iced::Subscription;
 use iced::event::{self, Event as IcedEvent};
 use iced::mouse;
-use super::{PANEL_W_MAX, PANEL_W_MIN};
 
 /// Opaque hover / resize state. Hold one per sidebar.
 #[derive(Debug, Default)]

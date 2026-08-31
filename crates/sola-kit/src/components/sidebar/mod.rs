@@ -16,6 +16,8 @@
 //! ([`SidebarItemChrome::Row`]) is the browser etched title stack
 //! (muted idle, reserved 1px lip + inset active well, hover-only `×`).
 //! Collapsible sections render as an inset pocket with nested members.
+//! Edit mode (inline header field) shows a color swatch for the pocket
+//! fill; [`SidebarSection::color`] paints the well.
 //! [`SidebarItemChrome::Card`] is a separate product surface and is not
 //! restyled by list etch.
 //!
@@ -64,10 +66,12 @@ use iced::{
 };
 
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+use crate::components::popover::{popover, popover_anchored};
 use crate::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
-    hairline_on, inset_surface, linear_bg, mix, mix_white,
+    CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
+    inset_surface, linear_bg, mix, mix_white, on_color, src_over,
 };
+use crate::components::swatch::swatch_sized;
 use crate::fonts;
 
 /// Card chrome: roomier face pad (Overview rule-card density).
@@ -176,6 +180,9 @@ pub struct SidebarItem<'a, Message> {
     /// Collapsible section header: `Some(collapsed)` draws a lucide
     /// chevron and folder-caption type instead of a tab title.
     pub section_header: Option<bool>,
+    /// Group pocket fill. When set, selected/hover is a neutral wash
+    /// over this colour and title ink is black or white for contrast.
+    pub well: Option<Color>,
 }
 
 impl<'a, Message> SidebarItem<'a, Message> {
@@ -199,6 +206,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             on_context: None,
             indent: 0,
             section_header: None,
+            well: None,
         }
     }
 
@@ -306,6 +314,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
         self.section_header = Some(collapsed);
         self
     }
+
+    /// Sit this row in a coloured group pocket.
+    pub fn well(mut self, color: Color) -> Self {
+        self.well = Some(color);
+        self
+    }
 }
 
 /// A group of sidebar rows with an optional section header label.
@@ -349,6 +363,16 @@ pub struct SectionCollapse<'a, Message> {
     pub count: Option<String>,
     /// Replace the default chevron+name body (e.g. an inline rename field).
     pub header_content: Option<Element<'a, Message, Theme>>,
+    /// Pocket fill. `None` uses [`group_well_fill`].
+    pub color: Option<Color>,
+    /// Click the edit-mode color swatch (shown with `header_content`).
+    pub on_color: Option<Message>,
+    /// Open color picker anchored to the edit-mode swatch.
+    pub color_picker: Option<Element<'a, Message, Theme>>,
+    /// Outside-click dismiss for [`Self::color_picker`].
+    pub on_color_dismiss: Option<Message>,
+    /// Commit button in edit mode (check next to the swatch).
+    pub on_commit: Option<Message>,
 }
 
 impl<'a, Message> SidebarSection<'a, Message> {
@@ -414,6 +438,11 @@ impl<'a, Message> SidebarSection<'a, Message> {
             on_edit: None,
             count: None,
             header_content: None,
+            color: None,
+            on_color: None,
+            color_picker: None,
+            on_color_dismiss: None,
+            on_commit: None,
         });
         self
     }
@@ -451,6 +480,46 @@ impl<'a, Message> SidebarSection<'a, Message> {
     pub fn header_edit(mut self, msg: Message) -> Self {
         if let Some(c) = &mut self.collapse {
             c.on_edit = Some(msg);
+        }
+        self
+    }
+
+    /// Pocket fill. `None` keeps the default inset well.
+    pub fn color(mut self, color: Option<Color>) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.color = color;
+        }
+        self
+    }
+
+    /// Click the edit-mode color swatch. The swatch is shown whenever
+    /// [`Self::header_content`] is set; this makes it a press target.
+    pub fn header_color(mut self, msg: Message) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.on_color = Some(msg);
+        }
+        self
+    }
+
+    /// Anchor a color picker to the edit-mode swatch. Construct only
+    /// while the picker is open.
+    pub fn header_color_picker(
+        mut self,
+        picker: impl Into<Element<'a, Message, Theme>>,
+        on_dismiss: Message,
+    ) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.color_picker = Some(picker.into());
+            c.on_color_dismiss = Some(on_dismiss);
+        }
+        self
+    }
+
+    /// Check button in edit mode — commits the name without focusing
+    /// the field (so a colour pick can be saved in one tap).
+    pub fn header_commit(mut self, msg: Message) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.on_commit = Some(msg);
         }
         self
     }
@@ -742,11 +811,12 @@ impl SidebarDensity {
     }
 }
 
-/// 1px rim of the etch — a hair lighter than the column so the cut
-/// reads as a lip, not a painted card.
-fn tab_etch_lip() -> container::Style {
+/// 1px selected rim — stronger lift than the fill so it reads as a
+/// border (loose column or group pocket).
+fn tab_etch_lip(well: Option<Color>) -> container::Style {
+    let fill = well_lift(well_face(row_surface(well)), WELL_SELECT_LIP);
     container::Style {
-        background: Some(Background::Color(mix_white(CHROME_SURFACE, 0.06))),
+        background: Some(Background::Color(fill)),
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
@@ -769,11 +839,82 @@ pub(crate) const GROUP_WELL_PAD_V: f32 = SPACE_XS;
 /// Body pad inside a group well (`Padding::from([2, 4])`).
 pub(crate) const COLLAPSE_BODY_PAD_V: f32 = 2.0;
 
+/// Default collapsible-pocket fill (inset chrome surface). New groups
+/// start here until the header color swatch picks something else.
+pub fn group_well_fill() -> Color {
+    inset_surface(CHROME_SURFACE, 0.12)
+}
+
+/// Selected / hover mix toward white (dark pockets) or black (light).
+/// Enough to read, still the group colour — not a grey slab.
+const WELL_SELECT_MIX: f32 = 0.14;
+const WELL_HOVER_MIX: f32 = 0.07;
+/// 1px selected rim (same job as the ungrouped etch lip). Stronger
+/// than the fill so it reads as a border.
+const WELL_SELECT_LIP: f32 = 0.24;
+/// Idle title on a pocket (same ink, quieter).
+const WELL_MUTED_A: f32 = 0.70;
+
+pub(crate) fn pocket_fill(color: Option<Color>) -> Color {
+    color.unwrap_or_else(group_well_fill)
+}
+
+/// Surface under a list-etch row: the group pocket, or the column.
+fn row_surface(well: Option<Color>) -> Color {
+    well.unwrap_or(CHROME_SURFACE)
+}
+
+/// Flatten a possibly translucent pocket onto the column.
+pub(crate) fn well_face(c: Color) -> Color {
+    if c.a >= 0.999 {
+        c
+    } else {
+        src_over(c, CHROME_SURFACE)
+    }
+}
+
+pub(crate) fn well_ink(c: Color) -> Color {
+    on_color(well_face(c))
+}
+
+/// Slight lighten or darken of `face`, staying in its hue.
+fn well_lift(face: Color, amount: f32) -> Color {
+    if on_color(face) == Color::WHITE {
+        mix_white(face, amount)
+    } else {
+        inset_surface(face, amount)
+    }
+}
+
+/// Selected face for a pocket row / drag ghost — the pocket, a hair lighter
+/// or darker, not a grey overlay.
+pub(crate) fn well_select_plate(c: Color) -> Color {
+    well_lift(well_face(c), WELL_SELECT_MIX)
+}
+
+fn well_row_colors(well: Color, active: bool, hovered: bool) -> (Color, Color) {
+    let face = well_face(well);
+    let ink = on_color(face);
+    if active {
+        (well_lift(face, WELL_SELECT_MIX), ink)
+    } else if hovered {
+        (well_lift(face, WELL_HOVER_MIX), ink)
+    } else {
+        (
+            Color::TRANSPARENT,
+            Color {
+                a: WELL_MUTED_A,
+                ..ink
+            },
+        )
+    }
+}
+
 /// Quiet inset pocket for a collapsible section — membership reads as
 /// containment. A 1px etch rim (same hairline as fields) marks the
 /// well so a drop at the floor stays in this group, not the next.
-pub(crate) fn group_well_style() -> container::Style {
-    let fill = inset_surface(CHROME_SURFACE, 0.12);
+pub(crate) fn group_well_style(color: Option<Color>) -> container::Style {
+    let fill = color.unwrap_or_else(group_well_fill);
     container::Style {
         background: Some(Background::Color(fill)),
         border: hairline_on(fill, HAIRLINE_A, RADIUS_SM),
@@ -784,6 +925,7 @@ pub(crate) fn group_well_style() -> container::Style {
 pub(crate) fn wrap_group_well<'a, Message: 'a>(
     body: impl Into<Element<'a, Message>>,
     clip: bool,
+    color: Option<Color>,
 ) -> Element<'a, Message> {
     container(body.into())
         .width(Length::Fill)
@@ -793,24 +935,18 @@ pub(crate) fn wrap_group_well<'a, Message: 'a>(
             left: GROUP_WELL_PAD_H,
             right: GROUP_WELL_PAD_H,
         })
-        .style(|_theme: &Theme| group_well_style())
+        .style(move |_theme: &Theme| group_well_style(color))
         .clip(clip)
         .into()
 }
 
-fn section_chevron<'a, Message: 'a>(collapsed: bool) -> Element<'a, Message> {
+fn section_chevron<'a, Message: 'a>(collapsed: bool, ink: Color) -> Element<'a, Message> {
     let name = if collapsed {
         "lucide/chevron-right"
     } else {
         "lucide/chevron-down"
     };
-    let color = Color {
-        r: 0.55,
-        g: 0.58,
-        b: 0.64,
-        a: 0.95,
-    };
-    icon_svg_colored(icon_handle(name), 12, color)
+    icon_svg_colored(icon_handle(name), 12, Color { a: 0.85, ..ink })
 }
 
 fn tab_close_icon() -> iced::widget::svg::Handle {
@@ -823,38 +959,29 @@ fn tab_edit_icon() -> iced::widget::svg::Handle {
     H.get_or_init(|| icon_handle("lucide/pencil")).clone()
 }
 
-/// Quiet title stack: idle is muted type on nothing; active is a
-/// darker well (etched into the column), not a gradient card.
-fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
-    let p = theme.extended_palette();
-    let muted = p.secondary.base.text;
-    let fg = p.background.base.text;
-    if active {
-        return button::Style {
-            background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.22))),
-            text_color: fg,
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 4.0.into(),
-            },
-            shadow: Default::default(),
-            snap: false,
-        };
-    }
-    let (bg, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => {
-            (alpha(p.background.strong.color, 0.45), fg)
-        }
-        _ => (Color::TRANSPARENT, muted),
-    };
+fn tab_commit_icon() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/check")).clone()
+}
+
+/// Quiet title stack: idle is muted type on nothing; selected / hover
+/// is a hue-preserving lift of the column (or group pocket) plus the
+/// 1px lip in [`tab_etch_lip`].
+fn tab_item_style(
+    _theme: &Theme,
+    status: button::Status,
+    active: bool,
+    well: Option<Color>,
+) -> button::Style {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_SM.into(),
+            radius: 4.0.into(),
         },
         shadow: Default::default(),
         snap: false,
@@ -866,27 +993,42 @@ fn tab_close_style(
     status: button::Status,
     active: bool,
     chrome: SidebarItemChrome,
+    well: Option<Color>,
 ) -> button::Style {
     let p = theme.extended_palette();
     // Opaque chip so the stacked × covers the title instead of sitting
     // on it. Idle hover wash is 45% alpha; bake that onto the column
     // so the pad matches the row without the glyphs showing through.
-    let rest = match chrome {
-        SidebarItemChrome::Row => {
-            if active {
-                inset_surface(CHROME_SURFACE, 0.22)
-            } else {
-                mix(p.background.strong.color, CHROME_SURFACE, 0.45)
-            }
-        }
-        SidebarItemChrome::Card => {
-            let raised = p.background.weaker.color;
-            if active {
-                mix(p.background.strong.color, raised, 0.92)
-            } else {
-                let idle = mix(raised, p.background.base.color, 0.42);
-                mix(p.background.strong.color, idle, 0.55)
-            }
+    if chrome == SidebarItemChrome::Row {
+        let face = well_face(row_surface(well));
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let (wash, ink) = well_row_colors(face, active, hovered);
+        let rest = if wash.a <= 0.001 {
+            face
+        } else if wash.a >= 0.999 {
+            wash
+        } else {
+            src_over(wash, face)
+        };
+        return button::Style {
+            background: Some(Background::Color(rest)),
+            text_color: ink,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_SM.into(),
+            },
+            shadow: Default::default(),
+            snap: false,
+        };
+    }
+    let rest = {
+        let raised = p.background.weaker.color;
+        if active {
+            mix(p.background.strong.color, raised, 0.92)
+        } else {
+            let idle = mix(raised, p.background.base.color, 0.42);
+            mix(p.background.strong.color, idle, 0.55)
         }
     };
     let bg = match status {
@@ -914,10 +1056,12 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
     collapse: SectionCollapse<'a, Message>,
 ) -> SidebarItem<'a, Message> {
     let name = label.unwrap_or_default();
+    let fill = pocket_fill(collapse.color);
     let mut item = SidebarItem::new(name.clone(), collapse.on_toggle)
         .active(collapse.header_active)
         .id(format!("__section:{name}"))
-        .section_header(collapse.collapsed);
+        .section_header(collapse.collapsed)
+        .well(fill);
     if collapse.collapsed {
         if let Some(n) = collapse.count {
             item = item.secondary(n);
@@ -932,14 +1076,75 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         }
     }
     if let Some(content) = collapse.header_content {
-        // Keep the folder chevron; only the name is the field.
-        let body = row![section_chevron(collapse.collapsed), content]
+        // Chevron + name field + color swatch + commit check.
+        let ink = well_ink(fill);
+        let swatch = header_color_swatch(
+            fill,
+            collapse.on_color,
+            collapse.color_picker,
+            collapse.on_color_dismiss,
+        );
+        let mut body = row![section_chevron(collapse.collapsed, ink), content, swatch]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
             .width(Length::Fill);
+        if let Some(msg) = collapse.on_commit {
+            body = body.push(header_commit_button(msg, ink));
+        }
         item = item.content(body);
     }
     item
+}
+
+/// Compact well-color chip on a renaming header. 14px stays inside the
+/// Large-density etch row; click opens the kit color picker popover.
+fn header_color_swatch<'a, Message: Clone + 'a>(
+    color: Color,
+    on_press: Option<Message>,
+    picker: Option<Element<'a, Message, Theme>>,
+    on_dismiss: Option<Message>,
+) -> Element<'a, Message, Theme> {
+    const SIZE: f32 = 14.0;
+    let tile = swatch_sized::<Message>(color, SIZE);
+    let trigger: Element<'a, Message, Theme> = match on_press {
+        Some(msg) => mouse_area(tile)
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(msg)
+            .into(),
+        None => tile,
+    };
+    match (picker, on_dismiss) {
+        (Some(view), Some(dismiss)) => popover_anchored(trigger, popover(view), dismiss).into(),
+        _ => trigger,
+    }
+}
+
+/// Compact commit control — check, always visible in edit mode.
+fn header_commit_button<'a, Message: Clone + 'a>(
+    msg: Message,
+    ink: Color,
+) -> Element<'a, Message, Theme> {
+    button(icon_svg_colored(tab_commit_icon(), 12, ink))
+        .padding(Padding::from([2, 5]))
+        .style(move |_theme: &Theme, status| {
+            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: Some(Background::Color(Color {
+                    a: if hover { 0.18 } else { 0.08 },
+                    ..ink
+                })),
+                border: Border {
+                    color: Color { a: 0.40, ..ink },
+                    width: 1.0,
+                    radius: RADIUS_SM.into(),
+                },
+                text_color: ink,
+                shadow: Default::default(),
+                snap: false,
+            }
+        })
+        .on_press(msg)
+        .into()
 }
 
 fn section_header<'a, Message: Clone + 'a>(
@@ -1144,6 +1349,8 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
     for (si, section) in sections.into_iter().enumerate() {
         let grouped = section.collapse.is_some();
         let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
+        let well_color = section.collapse.as_ref().and_then(|c| c.color);
+        let pocket = grouped.then(|| pocket_fill(well_color));
         let start = leaves.len();
         let gid = section
             .id
@@ -1170,16 +1377,17 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                 id: hid.clone(),
                 kind: strip::LeafKind::Header,
                 group: Some(hid),
+                color: pocket,
             });
             row_index += 1;
         }
         if !hide {
             for item in section.items {
-                let item = assign_close_id(item, row_index);
-                let id = item
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| format!("i{row_index}"));
+                let mut item = assign_close_id(item, row_index);
+                if let Some(c) = pocket {
+                    item.well = Some(c);
+                }
+                let id = item.id.clone().unwrap_or_else(|| format!("i{row_index}"));
                 let show = item
                     .id
                     .as_ref()
@@ -1199,6 +1407,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                     id: id.clone(),
                     kind: strip::LeafKind::Item,
                     group: if grouped { gid.clone() } else { None },
+                    color: pocket,
                 });
                 row_index += 1;
             }
@@ -1210,8 +1419,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         });
     }
     let strip: Element<'a, Message> =
-        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action))
-            .into();
+        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action)).into();
     mouse_area(hidden_scroll(strip, None, None))
         .on_exit(on_action(Msg::Hover(None)))
         .into()
@@ -1266,6 +1474,7 @@ where
         on_context,
         indent,
         section_header,
+        well,
     } = item;
 
     let m = density.metrics();
@@ -1306,6 +1515,7 @@ where
             chrome,
             density,
             section_header,
+            well,
         )
     };
 
@@ -1316,7 +1526,7 @@ where
         let row_el: Element<'a, Message> = container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered))
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well))
             .into();
         return finish_list_row(
             row_el,
@@ -1326,6 +1536,7 @@ where
             on_edit,
             hover_tracked,
             density,
+            well,
         );
     }
 
@@ -1337,64 +1548,64 @@ where
         // pattern as the list-etch close overlay — so showing it never steals width
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
-        let row_el: Element<'a, Message> =
-            if hover_action.is_some() {
-                let mut select =
-                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                        move |theme: &Theme| row_container_style(theme, active, chrome, hovered),
-                    ))
-                    .interaction(mouse::Interaction::Pointer)
-                    .on_press(message);
-                if let Some(ctx) = on_context.clone() {
-                    select = select.on_right_press(ctx);
-                }
-                if let Some(dbl) = on_double_click {
-                    select = select.on_double_click(dbl);
-                }
-                if show_hover_action {
-                    if let Some(action) = hover_action {
-                        // Float trash over the trailing age corner; stack sizes
-                        // to the base row so nothing reflows.
-                        let trash = container(hover_action_button(action))
-                            .align_x(iced::alignment::Horizontal::Right)
-                            .align_y(iced::alignment::Vertical::Bottom)
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .padding(Padding {
-                                top: 0.0,
-                                right: (pad_h - 2.0).max(0.0),
-                                bottom: (pad_v - 2.0).max(0.0),
-                                left: 0.0,
-                            });
-                        stack![select, trash].into()
-                    } else {
-                        select.into()
-                    }
+        let row_el: Element<'a, Message> = if hover_action.is_some() {
+            let mut select = mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well),
+            ))
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(message);
+            if let Some(ctx) = on_context.clone() {
+                select = select.on_right_press(ctx);
+            }
+            if let Some(dbl) = on_double_click {
+                select = select.on_double_click(dbl);
+            }
+            if show_hover_action {
+                if let Some(action) = hover_action {
+                    // Float trash over the trailing age corner; stack sizes
+                    // to the base row so nothing reflows.
+                    let trash = container(hover_action_button(action))
+                        .align_x(iced::alignment::Horizontal::Right)
+                        .align_y(iced::alignment::Vertical::Bottom)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .padding(Padding {
+                            top: 0.0,
+                            right: (pad_h - 2.0).max(0.0),
+                            bottom: (pad_v - 2.0).max(0.0),
+                            left: 0.0,
+                        });
+                    stack![select, trash].into()
                 } else {
                     select.into()
                 }
-            } else if on_double_click.is_some() || on_context.is_some() {
-                let mut area =
-                    mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                        move |theme: &Theme| row_container_style(theme, active, chrome, false),
-                    ))
-                    .interaction(mouse::Interaction::Pointer)
-                    .on_press(message);
-                if let Some(ctx) = on_context {
-                    area = area.on_right_press(ctx);
-                }
-                if let Some(dbl) = on_double_click {
-                    area = area.on_double_click(dbl);
-                }
-                area.into()
             } else {
-                button(body)
-                    .style(move |t, status| item_style_chrome(t, status, active, chrome))
-                    .padding(pad)
-                    .width(Length::Fill)
-                    .on_press(message)
-                    .into()
-            };
+                select.into()
+            }
+        } else if on_double_click.is_some() || on_context.is_some() {
+            let mut area = mouse_area(container(body).width(Length::Fill).padding(pad).style(
+                move |theme: &Theme| row_container_style(theme, active, chrome, false, well),
+            ))
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(message);
+            if let Some(ctx) = on_context {
+                area = area.on_right_press(ctx);
+            }
+            if let Some(dbl) = on_double_click {
+                area = area.on_double_click(dbl);
+            }
+            area.into()
+        } else {
+            button(body)
+                .style(move |t, status| match chrome {
+                    SidebarItemChrome::Row => tab_item_style(t, status, active, well),
+                    SidebarItemChrome::Card => item_style_chrome(t, status, active, chrome),
+                })
+                .padding(pad)
+                .width(Length::Fill)
+                .on_press(message)
+                .into()
+        };
         return finish_list_row(
             row_el,
             chrome,
@@ -1403,6 +1614,7 @@ where
             on_edit,
             hover_tracked,
             density,
+            well,
         );
     };
 
@@ -1419,7 +1631,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered)),
+            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1445,6 +1657,7 @@ where
         on_edit,
         hover_tracked,
         density,
+        well,
     )
 }
 
@@ -1462,6 +1675,7 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     on_edit: Option<Message>,
     hover_tracked: bool,
     density: SidebarDensity,
+    well: Option<Color>,
 ) -> Element<'a, Message> {
     let etched: Element<'a, Message> = if chrome == SidebarItemChrome::Row {
         container(row_el)
@@ -1469,7 +1683,7 @@ fn finish_list_row<'a, Message: Clone + 'a>(
             .width(Length::Fill)
             .style(move |_theme: &Theme| {
                 if active {
-                    tab_etch_lip()
+                    tab_etch_lip(well)
                 } else {
                     container::Style::default()
                 }
@@ -1480,9 +1694,16 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     };
 
     let chip = if let Some(msg) = on_close {
-        Some(hover_chip(HoverChip::Close, msg, active, chrome, density))
+        Some(hover_chip(
+            HoverChip::Close,
+            msg,
+            active,
+            chrome,
+            density,
+            well,
+        ))
     } else {
-        on_edit.map(|msg| hover_chip(HoverChip::Edit, msg, active, chrome, density))
+        on_edit.map(|msg| hover_chip(HoverChip::Edit, msg, active, chrome, density, well))
     };
     let Some(chip) = chip else {
         return etched;
@@ -1513,14 +1734,20 @@ fn hover_chip<'a, Message: Clone + 'a>(
     active: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
+    well: Option<Color>,
 ) -> Element<'a, Message> {
     let m = density.metrics();
     let handle = match kind {
         HoverChip::Close => tab_close_icon(),
         HoverChip::Edit => tab_edit_icon(),
     };
-    let chip = button(icon_svg(handle, m.close as u16))
-        .style(move |theme, status| tab_close_style(theme, status, active, chrome))
+    let glyph = if let Some(w) = well {
+        icon_svg_colored(handle, m.close as u16, well_ink(w))
+    } else {
+        icon_svg(handle, m.close as u16)
+    };
+    let chip = button(glyph)
+        .style(move |theme, status| tab_close_style(theme, status, active, chrome, well))
         .padding(Padding::from([3, 6]))
         .on_press(msg);
     container(chip)
@@ -1675,6 +1902,7 @@ fn item_text_block<'a, Message: 'a>(
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
+    well: Option<Color>,
 ) -> Element<'a, Message> {
     let is_header = section_header.is_some();
     let (title_font, title_size) = match chrome {
@@ -1688,15 +1916,35 @@ fn item_text_block<'a, Message: 'a>(
         }
         SidebarItemChrome::Card => (fonts::ui(), 14),
     };
-    let title = text(label.to_string())
+    let ink = well.map(well_ink);
+    let title_color = ink.map(|c| {
+        if active || is_header {
+            c
+        } else {
+            Color {
+                a: WELL_MUTED_A,
+                ..c
+            }
+        }
+    });
+    let mut title = text(label.to_string())
         .font(title_font)
         .size(title_size)
         .wrapping(Wrapping::None)
         .width(Length::Fill);
+    if let Some(c) = title_color {
+        title = title.style(move |_theme: &Theme| iced::widget::text::Style { color: Some(c) });
+    }
 
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
     if let Some(collapsed) = section_header {
-        title_row = title_row.push(section_chevron(collapsed));
+        let chev = ink.unwrap_or(Color {
+            r: 0.55,
+            g: 0.58,
+            b: 0.64,
+            a: 0.95,
+        });
+        title_row = title_row.push(section_chevron(collapsed, chev));
     }
     if let Some(ind) = indicator {
         title_row = title_row.push(status_dot(ind));
@@ -1718,8 +1966,8 @@ fn item_text_block<'a, Message: 'a>(
                 text(sub.to_string())
                     .font(fonts::ui())
                     .size(11)
-                    .style(|theme: &Theme| {
-                        let c = theme.extended_palette().background.base.text;
+                    .style(move |theme: &Theme| {
+                        let c = ink.unwrap_or(theme.extended_palette().background.base.text);
                         iced::widget::text::Style {
                             color: Some(Color { a: 0.42, ..c }),
                         }
@@ -1745,16 +1993,17 @@ fn item_trailing<'a, Message: Clone + 'a>(
     secondary: Option<&str>,
     shortcut: Option<u8>,
     hover_action: Option<SidebarHoverAction<Message>>,
+    well: Option<Color>,
 ) -> Element<'a, Message> {
     let mut trailing = column![].spacing(2.0).align_x(iced::Alignment::End);
     if let Some(sec) = secondary {
         // Allow "42k/500k\\n12m" style badges (context + age).
         for line in sec.lines().filter(|l| !l.is_empty()) {
-            trailing = trailing.push(dim_label(line));
+            trailing = trailing.push(dim_label(line, well));
         }
     }
     if let Some(n) = shortcut {
-        trailing = trailing.push(dim_label(&n.to_string()));
+        trailing = trailing.push(dim_label(&n.to_string(), well));
     }
     if let Some(action) = hover_action {
         trailing = trailing.push(hover_action_button(action));
@@ -1789,6 +2038,7 @@ fn item_content<'a, Message: Clone + 'a>(
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
+    well: Option<Color>,
 ) -> Element<'a, Message> {
     let text_box = item_text_block(
         label,
@@ -1798,6 +2048,7 @@ fn item_content<'a, Message: Clone + 'a>(
         chrome,
         density,
         section_header,
+        well,
     );
     let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
@@ -1805,7 +2056,7 @@ fn item_content<'a, Message: Clone + 'a>(
         .align_y(iced::Alignment::Start)
         .width(Length::Fill);
     if has_trail {
-        r = r.push(item_trailing(secondary, shortcut, hover_action));
+        r = r.push(item_trailing(secondary, shortcut, hover_action, well));
     }
     r.into()
 }
@@ -1881,16 +2132,14 @@ fn collapsed_content<'a, Message: 'a>(number: u8) -> Element<'a, Message> {
         .into()
 }
 
-fn dim_label<'a, Message: 'a>(s: &str) -> Element<'a, Message> {
+fn dim_label<'a, Message: 'a>(s: &str, well: Option<Color>) -> Element<'a, Message> {
     text(s.to_string())
         .font(fonts::ui())
         .size(12)
-        .style(|theme: &Theme| {
-            let p = theme.extended_palette();
-            // Dim = the base foreground at reduced alpha, so the hint reads as
-            // a muted accent to the label regardless of theme (secondary.base.text
-            // is not reliably dim — it renders ~white in the active theme).
-            let c = p.background.base.text;
+        .style(move |theme: &Theme| {
+            let c = well
+                .map(well_ink)
+                .unwrap_or(theme.extended_palette().background.base.text);
             iced::widget::text::Style {
                 color: Some(iced::Color { a: 0.45, ..c }),
             }
@@ -2138,6 +2387,8 @@ where
             let mut prev_collapsible = false;
             for (si, section) in sections.into_iter().enumerate() {
                 let is_collapsible = section.collapse.is_some();
+                let well_color = section.collapse.as_ref().and_then(|c| c.color);
+                let pocket = is_collapsible.then(|| pocket_fill(well_color));
                 if si > 0 && !collapsed {
                     let gap = if is_collapsible || prev_collapsible {
                         GROUP_WELL_GAP
@@ -2149,11 +2400,16 @@ where
                 prev_collapsible = is_collapsible;
 
                 let hide_items = section.collapse.as_ref().is_some_and(|c| c.collapsed);
-                let visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
+                let mut visible_items: Vec<SidebarItem<'a, Message>> = if hide_items {
                     Vec::new()
                 } else {
                     section.items
                 };
+                if let Some(c) = pocket {
+                    for item in &mut visible_items {
+                        item.well = Some(c);
+                    }
+                }
                 let n_in_section = visible_items.len() + usize::from(section.collapse.is_some());
                 let mut content_h =
                     section_content_height_with(&visible_items, item_spacing, density);
@@ -2251,7 +2507,7 @@ where
                     // scrollbar — no `↓ N` chip against a fake viewport.
                     let scroll_cb = on_section_scroll.take();
                     let fill_col = if is_collapsible {
-                        column![wrap_group_well(body_items, true)].width(Length::Fill)
+                        column![wrap_group_well(body_items, true, well_color)].width(Length::Fill)
                     } else {
                         body_items
                     };
@@ -2269,7 +2525,7 @@ where
                     sections_col = sections_col.push(body);
                 } else {
                     let body_el: Element<'a, Message> = if is_collapsible {
-                        wrap_group_well(body_items, true)
+                        wrap_group_well(body_items, true, well_color)
                     } else {
                         body_items.into()
                     };
@@ -2694,12 +2950,15 @@ where
     let number = item.shortcut.unwrap_or((index + 1) as u8);
     let active = item.active;
     let chrome = item.chrome;
+    let well = item.well;
     match reorder {
         Some(cfg) => mouse_area(
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| row_container_style(theme, active, chrome, false)),
+                .style(move |theme: &Theme| {
+                    row_container_style(theme, active, chrome, false, well)
+                }),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -2726,8 +2985,8 @@ pub fn style(theme: &Theme) -> container::Style {
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder / hover-action path).
 ///
-/// - **Row:** browser etch — idle flat / muted; active inset well on
-///   [`CHROME_SURFACE`]; hover wash. No selection-teal.
+/// - **Row:** idle flat / muted; selected and hover lift [`CHROME_SURFACE`]
+///   (or the group pocket) with a 1px lip. No selection-teal.
 /// - **Card:** OD session-tab graphite (not selection teal). Idle raised
 ///   wash + hairline; active gradient + stronger border. Same box either way.
 /// Mid-drag lift (scale + shadow) is applied by [`with_reorder_motion`].
@@ -2736,36 +2995,18 @@ fn row_container_style(
     active: bool,
     chrome: SidebarItemChrome,
     hovered: bool,
+    well: Option<Color>,
 ) -> container::Style {
-    let p = theme.extended_palette();
     match chrome {
         SidebarItemChrome::Row => {
-            let muted = p.secondary.base.text;
-            let fg = p.background.base.text;
-            if active {
-                return container::Style {
-                    background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.22))),
-                    text_color: Some(fg),
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: 4.0.into(),
-                    },
-                    ..container::Style::default()
-                };
-            }
-            let (bg, text_color) = if hovered {
-                (alpha(p.background.strong.color, 0.45), fg)
-            } else {
-                (Color::TRANSPARENT, muted)
-            };
+            let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
                 border: Border {
                     color: Color::TRANSPARENT,
                     width: 0.0,
-                    radius: RADIUS_SM.into(),
+                    radius: 4.0.into(),
                 },
                 ..container::Style::default()
             }
@@ -2830,7 +3071,7 @@ fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::
 /// building custom row widgets (e.g. with leading icons) can match the
 /// kit's visual language.
 ///
-/// List etch: idle muted + flat; active inset well (no selection wash).
+/// List etch: idle muted + flat; selected is a column/pocket lift.
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     item_style_chrome(theme, status, active, SidebarItemChrome::Row)
 }
@@ -2844,7 +3085,7 @@ pub fn item_style_chrome(
 ) -> button::Style {
     let p = theme.extended_palette();
     match chrome {
-        SidebarItemChrome::Row => tab_item_style(theme, status, active),
+        SidebarItemChrome::Row => tab_item_style(theme, status, active, None),
         SidebarItemChrome::Card => {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
@@ -2877,23 +3118,17 @@ mod tests {
     }
 
     #[test]
-    fn row_chrome_is_etch_not_selection() {
+    fn row_chrome_is_column_lift_not_selection() {
         let theme = crate::default_theme();
         let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
+        let want = well_lift(CHROME_SURFACE, WELL_SELECT_MIX);
         match row.background {
-            Some(Background::Color(c)) => {
-                assert_eq!(c, inset_surface(CHROME_SURFACE, 0.22));
-            }
-            other => panic!("row active should be solid inset, got {other:?}"),
+            Some(Background::Color(c)) => assert_eq!(c, want),
+            other => panic!("row active should be column lift, got {other:?}"),
         }
         assert_eq!(row.border.width, 0.0);
-        assert_ne!(
-            match row.background {
-                Some(Background::Color(c)) => c,
-                _ => Color::TRANSPARENT,
-            },
-            crate::theme::selection()
-        );
+        assert_ne!(want, crate::theme::selection());
+        assert_ne!(want, inset_surface(CHROME_SURFACE, 0.22));
     }
 
     #[test]
@@ -2956,6 +3191,11 @@ mod tests {
                 on_edit: None,
                 count: Some("3".into()),
                 header_content: None,
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: None,
             },
         );
         assert_eq!(item.label, "Work");
@@ -2975,6 +3215,11 @@ mod tests {
                 on_edit: Some(()),
                 count: None,
                 header_content: None,
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: None,
             },
         );
         assert!(idle.on_edit.is_some());
@@ -2988,9 +3233,15 @@ mod tests {
                 on_edit: Some(()),
                 count: None,
                 header_content: Some(iced::widget::text("Work").into()),
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: None,
             },
         );
         assert!(renaming.on_edit.is_none());
+        assert!(renaming.content.is_some());
     }
 
     #[test]
@@ -3005,6 +3256,11 @@ mod tests {
                 on_edit: None,
                 count: None,
                 header_content: None,
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: None,
             },
         );
         let renaming = collapse_header_item(
@@ -3017,6 +3273,11 @@ mod tests {
                 on_edit: None,
                 count: None,
                 header_content: Some(iced::widget::text("Work").into()),
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: None,
             },
         );
         assert_eq!(
@@ -3024,6 +3285,95 @@ mod tests {
             item_row_height(&renaming, SidebarDensity::Large)
         );
         assert!(item_row_height(&renaming, SidebarDensity::Large) < CARD_HEIGHT_HINT);
+    }
+
+    #[test]
+    fn group_well_default_is_inset_chrome() {
+        match group_well_style(None).background {
+            Some(Background::Color(c)) => assert_eq!(c, group_well_fill()),
+            other => panic!("default well should be solid inset, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn group_well_uses_custom_fill() {
+        let c = Color::from_rgb(0.18, 0.32, 0.55);
+        match group_well_style(Some(c)).background {
+            Some(Background::Color(got)) => assert_eq!(got, c),
+            other => panic!("custom well should be solid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn well_ink_tracks_pocket_luminance() {
+        assert_eq!(
+            well_ink(Color::WHITE),
+            crate::components::style::ON_FILL_DARK
+        );
+        assert_eq!(well_ink(Color::BLACK), Color::WHITE);
+        assert_eq!(well_ink(group_well_fill()), Color::WHITE);
+    }
+
+    #[test]
+    fn grouped_select_stays_in_pocket_hue() {
+        let theme = crate::default_theme();
+        let blue = Color::from_rgb(0.15, 0.35, 0.70);
+        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(blue));
+        match s.background {
+            Some(Background::Color(c)) => {
+                assert!((c.a - 1.0).abs() < 1e-6);
+                assert_ne!(c, blue);
+                assert!(c.b > c.r && c.b > c.g, "still blue, got {c:?}");
+                let d_blue = (c.r - blue.r).abs() + (c.g - blue.g).abs() + (c.b - blue.b).abs();
+                let d_white = (1.0 - c.r) + (1.0 - c.g) + (1.0 - c.b);
+                assert!(d_blue < d_white, "must stay nearer the pocket than white");
+            }
+            other => panic!("expected solid lift, got {other:?}"),
+        }
+        let white = Color::WHITE;
+        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(white));
+        match s.background {
+            Some(Background::Color(c)) => {
+                assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");
+                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+            }
+            other => panic!("expected solid lift, got {other:?}"),
+        }
+        assert_eq!(s.text_color, Some(crate::components::style::ON_FILL_DARK));
+    }
+
+    #[test]
+    fn grouped_select_lip_is_stronger_than_fill() {
+        let blue = Color::from_rgb(0.15, 0.35, 0.70);
+        let fill = well_lift(well_face(blue), WELL_SELECT_MIX);
+        let lip = well_lift(well_face(blue), WELL_SELECT_LIP);
+        assert_ne!(fill, lip);
+        // Dark pocket: lip is lighter than the fill (ungrouped etch analog).
+        let luma = |c: Color| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        assert!(luma(lip) > luma(fill));
+    }
+
+    #[test]
+    fn header_commit_stays_on_rename_row() {
+        let renaming = collapse_header_item(
+            Some("Work".into()),
+            SectionCollapse {
+                collapsed: false,
+                on_toggle: (),
+                header_active: false,
+                on_context: None,
+                on_edit: None,
+                count: None,
+                header_content: Some(iced::widget::text("Work").into()),
+                color: None,
+                on_color: None,
+                color_picker: None,
+                on_color_dismiss: None,
+                on_commit: Some(()),
+            },
+        );
+        assert!(renaming.content.is_some());
+        assert!(renaming.on_edit.is_none());
     }
 
     fn sv(v: &[&str]) -> Vec<String> {

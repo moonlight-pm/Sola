@@ -34,7 +34,7 @@ Three parallel looks, two public APIs, one module:
 
 | Surface | API | Selection material | Used by |
 |---------|-----|--------------------|---------|
-| **Etched tabs** | `vertical_tabs` / `vertical_tabs_sized` + `TabDescriptor` + `TabSize` | Idle: transparent + muted type; active: lip + inset well on `CHROME_SURFACE`; hover `×` floats | **sola-browser** |
+| **Etched tabs** | `vertical_tabs` / `vertical_tabs_sized` + `TabDescriptor` + `TabSize` | Idle: transparent + muted type; active: 1px lip + hue-preserving lift of `CHROME_SURFACE` (same recipe as group pockets); hover `×` floats | **sola-browser** |
 | **Row** | `SidebarItem` default / `sidebar()` / `SidebarPanel` | Quiet `theme::selection()` wash, packed pad, optional always-on close sibling | **terminal**, **settings**, **mail**, **preview**, storybook nav |
 | **Card** | `SidebarItem::card()` + custom `content` on `SidebarPanel` | OD graphite raised cards, surface-only select | **sola-agent** sessions |
 
