@@ -16,6 +16,8 @@ use sola_kit::fonts::INTER_MEDIUM;
 
 /// Fixed width of the calendar card.
 pub const CARD_WIDTH: f32 = 248.0;
+/// Live overlay height (month grid + chrome). Caps at usable area.
+pub const CARD_HEIGHT: f32 = 320.0;
 
 const WEEKDAYS: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 

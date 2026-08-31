@@ -158,6 +158,54 @@ pub fn notify_overlay_frame(
     Some(notify_live_frame(window_id, ow, oh, stack_h, enter_t))
 }
 
+/// Live size for the menu overlay (dropdown / calendar / stat / chips).
+///
+/// A full-output swapchain is cheap on a GPU and disastrous on software
+/// GL (llvmpipe): first show compiles pipelines and fills ~1M pixels,
+/// pegging a core. Size the buffer to the card, like notify.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuOverlaySpec {
+    pub x: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Extra height so the popover drop-shadow is not clipped.
+pub const MENU_SHADOW_PAD: i32 = 16;
+
+pub fn menu_live_frame(
+    window_id: u32,
+    output_w: i32,
+    output_h: i32,
+    spec: MenuOverlaySpec,
+) -> FrameUpdate {
+    let usable_h = (output_h - MENUBAR_HEIGHT).max(64);
+    let w = spec.width.max(64).min(output_w.max(64));
+    let h = (spec.height + MENU_SHADOW_PAD).max(64).min(usable_h);
+    let x = spec.x.clamp(0, (output_w - w).max(0));
+    FrameUpdate {
+        window_id,
+        x,
+        y: MENUBAR_HEIGHT,
+        width: w,
+        height: h,
+        fullscreen: false,
+    }
+}
+
+pub fn menu_overlay_frame(
+    window_id: u32,
+    visible: bool,
+    output: Option<(i32, i32)>,
+    spec: MenuOverlaySpec,
+) -> Option<FrameUpdate> {
+    if !visible {
+        return Some(overlay_park_frame(window_id));
+    }
+    let (ow, oh) = output?;
+    Some(menu_live_frame(window_id, ow, oh, spec))
+}
+
 /// Inset, in pixels per edge, applied to a freshly-floated window. A float
 /// with no remembered geometry centers in the usable area shrunk by this
 /// much on every side — a clear "this window is floating" cue (and, until a
@@ -1451,6 +1499,37 @@ mod tests {
     }
 
     #[test]
+    fn menu_live_frame_is_the_card_not_the_output() {
+        let spec = MenuOverlaySpec {
+            x: 40,
+            width: 220,
+            height: 360,
+        };
+        let f = menu_live_frame(3, 1280, 800, spec);
+        assert_eq!(f.x, 40);
+        assert_eq!(f.y, MENUBAR_HEIGHT);
+        assert_eq!(f.width, 220);
+        assert_eq!(f.height, 360 + MENU_SHADOW_PAD);
+        assert!(f.width * f.height < 1280 * (800 - MENUBAR_HEIGHT));
+        assert!(overlay_geometry_is_live(f.width, f.height));
+
+        let clamped = menu_live_frame(
+            3,
+            1280,
+            800,
+            MenuOverlaySpec {
+                x: 1200,
+                width: 220,
+                height: 900,
+            },
+        );
+        assert_eq!(clamped.x, 1280 - 220);
+        assert_eq!(clamped.height, 800 - MENUBAR_HEIGHT);
+        assert!(menu_overlay_frame(3, false, None, spec).is_some());
+        assert!(menu_overlay_frame(3, true, None, spec).is_none());
+    }
+
+    #[test]
     fn overlay_geometry_is_live_rejects_park() {
         assert!(!overlay_geometry_is_live(OVERLAY_PARK, OVERLAY_PARK));
         assert!(!overlay_geometry_is_live(2, 1));
@@ -1466,10 +1545,7 @@ mod tests {
         assert_eq!(start.window_id, 9);
         assert_eq!(start.width, NOTIFY_CARD_W);
         assert_eq!(start.height, 76.max(64));
-        assert_eq!(
-            start.x,
-            1920 - NOTIFY_CARD_W - NOTIFY_MARGIN_RIGHT
-        );
+        assert_eq!(start.x, 1920 - NOTIFY_CARD_W - NOTIFY_MARGIN_RIGHT);
         assert_eq!(start.y, MENUBAR_HEIGHT + NOTIFY_MARGIN_TOP - NOTIFY_DROP);
 
         let rest = notify_live_frame(9, 1920, 1080, 76, 1.0);

@@ -1,7 +1,7 @@
 //! Notification overlay (live cards) and the missed-pile menu panel.
 
 use iced::widget::{button, column, container, mouse_area, row, text};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Element, Length};
 
 use sola_bus::topics::AppNotification;
 use sola_kit::components::button as kit_btn;
@@ -16,7 +16,8 @@ const TITLE_SIZE: f32 = 13.0;
 const SOURCE_SIZE: f32 = 11.0;
 const BODY_SIZE: f32 = 12.0;
 const ICON: u16 = 16;
-const PILE_WIDTH: f32 = 320.0;
+pub const PILE_WIDTH: f32 = 320.0;
+pub const PILE_HEIGHT: f32 = 400.0;
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.notify.visible() {
@@ -102,9 +103,6 @@ fn icon_for<'a>(shell: &'a Shell, n: &'a AppNotification) -> &'a str {
 
 /// Missed-pile list hosted in the menu overlay (calendar-style).
 pub fn pile_panel(shell: &Shell) -> Element<'_, Msg> {
-    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    let left = (output_w - PILE_WIDTH - 8.0).max(0.0);
-
     let title: Element<'_, Msg> = text("Notifications")
         .font(fonts::ui_medium())
         .size(13.0)
@@ -133,30 +131,9 @@ pub fn pile_panel(shell: &Shell) -> Element<'_, Msg> {
 
     let card: Element<'_, Msg> = popover(column(rows).spacing(SPACE_SM).width(Length::Fill))
         .padding(SPACE_MD)
-        .width(Length::Fixed(PILE_WIDTH))
-        .into();
-
-    let positioned: Element<'_, Msg> = container(card)
-        .padding(Padding {
-            top: 0.0,
-            left,
-            right: 0.0,
-            bottom: 0.0,
-        })
         .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Top)
         .into();
-
-    let backdrop: Element<'_, Msg> =
-        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-            .on_press(Msg::CloseMenu)
-            .into();
-
-    iced::widget::stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    crate::menu::host_card(card)
 }
 
 fn pile_row<'a>(shell: &'a Shell, n: &'a AppNotification) -> Element<'a, Msg> {
@@ -167,23 +144,17 @@ fn pile_row<'a>(shell: &'a Shell, n: &'a AppNotification) -> Element<'a, Msg> {
         .size(SOURCE_SIZE)
         .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(muted) })
         .into();
-    let title: Element<'_, Msg> = text(n.title.clone())
-        .font(fonts::ui())
-        .size(12.0)
-        .into();
+    let title: Element<'_, Msg> = text(n.title.clone()).font(fonts::ui()).size(12.0).into();
     let dismiss_id = id.clone();
     let x: Element<'_, Msg> = button(icon_colored("lucide/x", 12, muted))
         .padding([2, 4])
         .style(kit_btn::ghost)
         .on_press(Msg::NotifyDismiss(dismiss_id))
         .into();
-    let click: Element<'_, Msg> = mouse_area(
-        column![source, title]
-            .spacing(SPACE_XS)
-            .width(Length::Fill),
-    )
-    .on_press(Msg::NotifyActivate(id))
-    .into();
+    let click: Element<'_, Msg> =
+        mouse_area(column![source, title].spacing(SPACE_XS).width(Length::Fill))
+            .on_press(Msg::NotifyActivate(id))
+            .into();
 
     container(
         row![click, x]

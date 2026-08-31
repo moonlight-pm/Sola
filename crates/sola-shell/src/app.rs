@@ -1194,9 +1194,18 @@ impl Shell {
 
     fn collect_overlay_frames(&self, frames: &mut Vec<FrameUpdate>) {
         let output = self.zoning.output_size;
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+            if let Some(f) = crate::zoning::menu_overlay_frame(
+                wid,
+                self.menu_open,
+                output,
+                self.menu_overlay_spec(),
+            ) {
+                frames.push(f);
+            }
+        }
         for (title, visible, cover_menubar) in [
             ("launcher", self.launcher.active, false),
-            ("menu", self.menu_open, false),
             ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
         ] {
@@ -1448,6 +1457,64 @@ impl Shell {
         const BT_W: f32 = 32.0;
         const GAP: f32 = 4.0;
         self.estimate_stat_x(crate::stats::Metric::Cpu) - GAP - BT_W
+    }
+
+    /// Card-sized live frame for the menu overlay (not the full output).
+    fn menu_overlay_spec(&self) -> crate::zoning::MenuOverlaySpec {
+        const GUTTER: f32 = 8.0;
+        let ow = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
+        let clamp_x = |x: f32, w: f32| x.min((ow - w - GUTTER).max(0.0)).max(0.0);
+        let (x, width, height) = match self.open_panel {
+            Some(Panel::Calendar) => {
+                let w = crate::calendar::CARD_WIDTH;
+                (clamp_x(ow - w - GUTTER, w), w, crate::calendar::CARD_HEIGHT)
+            }
+            Some(Panel::Stat(m)) => {
+                let w = crate::stats::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_stat_x(m), w),
+                    w,
+                    crate::stats::view::CARD_HEIGHT,
+                )
+            }
+            Some(Panel::NotifyPile) => {
+                let w = crate::notify::view::PILE_WIDTH;
+                (
+                    clamp_x(ow - w - GUTTER, w),
+                    w,
+                    crate::notify::view::PILE_HEIGHT,
+                )
+            }
+            Some(Panel::Bluetooth) => {
+                let w = crate::bluetooth::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_bluetooth_x(), w),
+                    w,
+                    crate::bluetooth::view::CARD_HEIGHT,
+                )
+            }
+            Some(Panel::Audio) => {
+                let w = crate::audio::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_audio_x(), w),
+                    w,
+                    crate::audio::view::CARD_HEIGHT,
+                )
+            }
+            None => {
+                let w = crate::menu::view::MENU_WIDTH;
+                (
+                    clamp_x(self.menu_anchor_x, w),
+                    w,
+                    crate::menu::view::MENU_HEIGHT,
+                )
+            }
+        };
+        crate::zoning::MenuOverlaySpec {
+            x: x.round() as i32,
+            width: width.round() as i32,
+            height: height.round() as i32,
+        }
     }
 
     /// Left edge of the volume chip (left of Bluetooth when that chip is
@@ -1705,6 +1772,7 @@ impl Shell {
                     self.calendar_month =
                         crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1719,6 +1787,7 @@ impl Shell {
                     self.current_open_index = None;
                     self.current_open_is_system = false;
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1761,6 +1830,7 @@ impl Shell {
                     self.menu_open = false;
                     self.current_open_index = None;
                     self.current_open_is_system = false;
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::none();
@@ -1777,6 +1847,7 @@ impl Shell {
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
                 self.set_open_panel(None);
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1798,6 +1869,7 @@ impl Shell {
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.set_open_panel(None);
+                    self.emit_overlay_frames();
                 }
                 iced::Task::none()
             }
@@ -1806,6 +1878,7 @@ impl Shell {
                 self.current_open_index = None;
                 self.current_open_is_system = false;
                 self.set_open_panel(None);
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1970,6 +2043,7 @@ impl Shell {
                     self.current_open_index = None;
                     self.current_open_is_system = false;
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 iced::Task::none()
             }
@@ -1993,6 +2067,7 @@ impl Shell {
                     self.current_open_index = None;
                     self.current_open_is_system = false;
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -2026,6 +2101,7 @@ impl Shell {
                     self.current_open_index = None;
                     self.current_open_is_system = false;
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
