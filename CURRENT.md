@@ -15,7 +15,7 @@ Do not invent product policy.
 
 ## Now
 
-1. **Screenshots (this worktree)** — Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show). `solactl compositor screenshot --app` copies the window scene (`ext-image-copy-capture`); does not raise. **Installed** `river` + `shell` debug 2026-08-31. Desk: freeze picker smoked; `--app sola-arcade` 1434×2132 PNG. Gaps: occluded / Super+H-hidden `--app`; multi-output. Super+H hide is on master.
+1. **Screenshots** — Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show). `solactl compositor screenshot --app` copies the window scene (`ext-image-copy-capture`); does not raise. **Installed** `river` + `shell` debug 2026-08-31. Desk: freeze picker smoked; `--app sola-arcade` 1434×2132 PNG. Gaps: occluded / Super+H-hidden `--app`; multi-output. Super+H hide is on master.
 2. **Browser** — codecs CEF (H.264/AAC `canPlayType` `probably`) +
    `--autoplay-policy=no-user-gesture-required`; unified Bitwarden panel;
    **⌘G** new group (name focused+selected; hover pencil). Freeze
