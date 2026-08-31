@@ -19,7 +19,9 @@ use sola_core::applications::{command_exists, resolve_in_path};
 
 use crate::app::Click;
 use crate::components::button::Kind as Btn;
-use crate::components::{Sidebar, SidebarItem, badge, button, card, field, text, titlebar, toolbar};
+use crate::components::{
+    Sidebar, SidebarItem, badge, button, card, field, text, titlebar, toolbar,
+};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
 use crate::host::Surface;
@@ -600,7 +602,11 @@ impl Settings {
         }
         let mut crow = Vec::new();
         if cands.is_empty() {
-            markup::replace_slot(root, "cand-card", markup::node(&mut next, &["is-hidden"], None, Some("cand-wrap"), ""));
+            markup::replace_slot(
+                root,
+                "cand-card",
+                markup::node(&mut next, &["is-hidden"], None, Some("cand-wrap"), ""),
+            );
         } else {
             for w in &cands {
                 let cmd = suggest_command(&w.app_id, w.pid);
@@ -786,14 +792,7 @@ impl Settings {
         }
         let mut stack = markup::node(&mut next, &["list-stack"], None, None, "");
         stack.children = rows;
-        let add = button(
-            &mut next,
-            Btn::Ghost,
-            true,
-            "rule-add",
-            None,
-            "+ Add rule",
-        );
+        let add = button(&mut next, Btn::Ghost, true, "rule-add", None, "+ Add rule");
         markup::replace_slot(
             root,
             "mail-rules",
@@ -958,6 +957,7 @@ fn is_system_app(app_id: &str) -> bool {
         "sola-kit-spike",
         "sola-agent",
         "sola-mail",
+        "sola-mail-lab",
         "sola-preview",
         "sola-paint",
         "sola-workspaces",

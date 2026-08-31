@@ -9,6 +9,13 @@ pub fn input(next: &mut u32, id: &str) -> Elem {
     el
 }
 
+/// Wrapping body well (compose). Same bind/focus key as [`input`].
+pub fn textarea(next: &mut u32, id: &str) -> Elem {
+    let mut el = markup::node(next, &["input", "textarea"], Some("focus"), Some(id), "");
+    el.data_bind = Some(id.into());
+    el
+}
+
 /// Label stacked above an input. `id` is the focus/bind key.
 pub fn stack(next: &mut u32, label: &str, id: &str) -> Elem {
     let mut field = markup::node(next, &["stack-field"], Some("focus"), Some(id), "");

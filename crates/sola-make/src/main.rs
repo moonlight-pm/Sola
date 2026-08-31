@@ -349,6 +349,8 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
         || name == "sola-settings-lab"
         || name == "monitor-lab"
         || name == "sola-monitor-lab"
+        || name == "mail-lab"
+        || name == "sola-mail-lab"
     {
         return "sola-kit-spike".into();
     }

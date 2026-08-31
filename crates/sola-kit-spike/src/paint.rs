@@ -274,7 +274,8 @@ pub fn paint_glyphs(
         if item.data_kind.as_deref() == Some("icon") {
             if let Some(name) = item.data_id.as_deref() {
                 let size = item.h.min(item.w).max(8.0) * s;
-                let tint = item.color.unwrap_or(Rgba::rgb(0xa1, 0xad, 0xc7));
+                let tint = item.color.unwrap_or(Rgba::rgb(0xe9, 0xec, 0xf2));
+                let bg = covering_bg(items, i);
                 if let Some(px) = pass.icons.rgba(name, size.round() as u32, tint) {
                     blit_icon(
                         &mut buf,
@@ -285,6 +286,7 @@ pub fn paint_glyphs(
                         (item.x * s).round() as i32,
                         (item.y * s).round() as i32,
                         clip,
+                        Some(bg),
                     );
                 }
             }
@@ -507,7 +509,7 @@ fn draw_text(
     wrap: bool,
     center: bool,
 ) {
-    let metrics = Metrics::new(size, size * 1.3);
+    let metrics = Metrics::new(size, size * if wrap { 1.45 } else { 1.3 });
     let mut buffer = Buffer::new(&mut fonts.system, metrics);
     buffer.set_wrap(
         &mut fonts.system,
@@ -567,6 +569,7 @@ fn blit_icon(
     x: i32,
     y: i32,
     clip: Option<(f32, f32, f32, f32)>,
+    dest_bg: Option<Rgba>,
 ) {
     for iy in 0..size {
         for ix in 0..size {
@@ -592,7 +595,7 @@ fn blit_icon(
                 },
                 a,
                 clip,
-                None,
+                dest_bg,
             );
         }
     }

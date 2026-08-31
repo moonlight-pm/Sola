@@ -78,7 +78,8 @@ struct TextCtx {
 }
 
 fn line_height(c: &Computed) -> f32 {
-    c.font_size.unwrap_or(12.0) * 1.3
+    let size = c.font_size.unwrap_or(12.0);
+    size * if c.wrap { 1.45 } else { 1.3 }
 }
 
 fn measure_text(
@@ -92,7 +93,7 @@ fn measure_text(
     };
     let pad_x = ctx.pad[1] + ctx.pad[3];
     let pad_y = ctx.pad[0] + ctx.pad[2];
-    let lh = ctx.size * 1.3;
+    let lh = ctx.size * if ctx.wrap { 1.45 } else { 1.3 };
     let inner = |w: f32| (w - pad_x).max(1.0);
     let avail_w = match known.width {
         Some(w) => inner(w),
@@ -489,13 +490,16 @@ pub fn apply_pointer_hover(items: &mut [PaintItem], hover: Option<u32>) {
         items
             .iter()
             .rev()
-            .find(|i| (has_class(i, "log-row") || has_class(i, "row")) && point_in_item(i, x, y))
+            .find(|i| {
+                (has_class(i, "log-row") || has_class(i, "row") || has_class(i, "list-item"))
+                    && point_in_item(i, x, y)
+            })
             .map(|i| i.uid)
             .or(Some(uid))
     });
     let rows: Vec<(u32, f32, f32, f32, f32, bool, bool, bool)> = items
         .iter()
-        .filter(|i| has_class(i, "log-row") || has_class(i, "row"))
+        .filter(|i| has_class(i, "log-row") || has_class(i, "row") || has_class(i, "list-item"))
         .map(|i| {
             (
                 i.uid,
@@ -510,13 +514,16 @@ pub fn apply_pointer_hover(items: &mut [PaintItem], hover: Option<u32>) {
         })
         .collect();
     for item in items.iter_mut() {
-        if has_class(item, "log-row") {
+        if has_class(item, "log-row") || has_class(item, "list-item") {
             let on = hovered_row == Some(item.uid);
             let active = has_class(item, "is-active");
             item.bg = if active || on { Some(HOVER_FILL) } else { None };
             continue;
         }
-        if has_class(item, "toolbar-btn") || has_class(item, "menu-item") {
+        if has_class(item, "toolbar-btn")
+            || has_class(item, "menu-item")
+            || has_class(item, "toolbar-icon")
+        {
             let on = hover == Some(item.uid) || hovered_row == Some(item.uid);
             item.bg = if on { Some(HOVER_FILL) } else { None };
             continue;

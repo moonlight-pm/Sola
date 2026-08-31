@@ -141,10 +141,7 @@ impl ImapClient {
             if exists == 0 {
                 return Ok((Vec::new(), 0));
             }
-            let fetches = s.session.fetch(
-                format!("1:{exists}"),
-                "(UID FLAGS)",
-            )?;
+            let fetches = s.session.fetch(format!("1:{exists}"), "(UID FLAGS)")?;
             let excluded = smart_mailbox_uids(&mut s.session, &rules);
             let mut kept: Vec<u32> = fetches
                 .iter()

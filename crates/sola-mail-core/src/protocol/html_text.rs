@@ -1,7 +1,8 @@
 //! HTML message bodies → readable letter blocks (no HTML engine in the UI).
 
 use html2text::render::{RichAnnotation, TaggedLine};
-use sola_kit::components::prose::{flatten, parse_plain, ProseBlock, ProseRun};
+
+use super::letter::{ProseBlock, ProseRun, flatten, parse_plain};
 
 /// Convert HTML mail into plain text suitable for copy / reply quoting.
 #[allow(dead_code)] // used by tests; reading pane goes through `to_blocks`.

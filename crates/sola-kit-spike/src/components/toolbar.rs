@@ -19,3 +19,15 @@ pub fn bar(next: &mut u32, id: &str, extra: &[&str], kids: Vec<Elem>) -> Elem {
     el.children = kids;
     el
 }
+
+/// Icon-only toolbar control. Omit `action` to mute (no hit).
+pub fn icon_btn(next: &mut u32, action: Option<&str>, id: Option<&str>, icon_name: &str) -> Elem {
+    let mut classes = vec!["toolbar-icon"];
+    if action.is_none() {
+        classes.push("is-disabled");
+    }
+    let mut el = markup::node(next, &classes, action, id, "");
+    el.children
+        .push(crate::components::icon::icon(next, icon_name, &["icon-16"]));
+    el
+}

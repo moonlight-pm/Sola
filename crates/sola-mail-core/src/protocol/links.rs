@@ -146,11 +146,12 @@ pub fn extract_urls_from_text(text: &str) -> Vec<String> {
             r += 1;
         }
         // Strip trailing punctuation that is rarely part of the URI.
-        while uri
-            .chars()
-            .last()
-            .is_some_and(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'))
-        {
+        while uri.chars().last().is_some_and(|c| {
+            matches!(
+                c,
+                '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'
+            )
+        }) {
             uri.pop();
         }
         if is_http_url(&uri) {
@@ -240,7 +241,8 @@ mod tests {
 
     #[test]
     fn rejoins_soft_wrapped_url() {
-        let text = "Click https://auth.example.com/login/magic/verify?token=abc\ndef-ghi&next=1 please";
+        let text =
+            "Click https://auth.example.com/login/magic/verify?token=abc\ndef-ghi&next=1 please";
         let u = extract_urls_from_text(text);
         assert_eq!(
             u,
@@ -252,7 +254,10 @@ mod tests {
     fn rejoins_wrap_after_slash() {
         let text = "https://cdn.example.com/very/long/\npath/to/resource";
         let u = extract_urls_from_text(text);
-        assert_eq!(u, vec!["https://cdn.example.com/very/long/path/to/resource"]);
+        assert_eq!(
+            u,
+            vec!["https://cdn.example.com/very/long/path/to/resource"]
+        );
     }
 
     #[test]

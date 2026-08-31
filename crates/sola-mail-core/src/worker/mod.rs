@@ -11,9 +11,7 @@ use sola_bus::topics::MailConfig;
 use tracing::{debug, warn};
 
 use crate::bridge;
-use crate::protocol::{
-    start_idle, Account, IdleChange, ImapClient, rule_matches, sender, wicket,
-};
+use crate::protocol::{Account, IdleChange, ImapClient, rule_matches, sender, start_idle, wicket};
 
 struct WorkerState {
     account: Option<Account>,
@@ -159,11 +157,8 @@ fn do_connect(state: &mut WorkerState) {
     }
 
     let from_addresses = {
-        let addrs = wicket::fetch_from_addresses(
-            &account.imap_host,
-            &account.username,
-            &account.password,
-        );
+        let addrs =
+            wicket::fetch_from_addresses(&account.imap_host, &account.username, &account.password);
         if addrs.is_empty() {
             vec![account.email.clone()]
         } else {
@@ -177,7 +172,10 @@ fn do_connect(state: &mut WorkerState) {
         .filter(|r| r.action == "move")
         .cloned()
         .collect();
-    *state.idle_move_rules.lock().unwrap_or_else(|e| e.into_inner()) = move_rules;
+    *state
+        .idle_move_rules
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = move_rules;
 
     let shared_rules = Arc::clone(&state.idle_move_rules);
     let idle = start_idle(account.clone(), move |change, idle_client| {

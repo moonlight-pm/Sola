@@ -3,32 +3,35 @@
 use std::sync::{Arc, OnceLock};
 
 use iced::event;
+use iced::futures::Stream;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::widget::scrollable::Viewport;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_editor};
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
-use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_bus::Message;
+use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::prose::prose_selectable;
 use sola_kit::components::style::{
-    mix_white, HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+    HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::components::{
-    button as kit_btn, field, readable, sidebar, ProseBlock, SidebarItem, SidebarSection,
+    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, field, readable, sidebar,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-use crate::bridge::{self, mail_send};
-use crate::protocol::{folder_count_badge, folder_label, Folder, MessageBody, MessageSummary};
-use crate::worker::{MailCmd, MailEvent};
+use sola_mail_core::bridge::mail_send;
+use sola_mail_core::protocol::{
+    Folder, MessageBody, MessageSummary, folder_count_badge, folder_label,
+};
+use sola_mail_core::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
@@ -172,6 +175,56 @@ impl Default for App {
     }
 }
 
+fn to_kit_blocks(blocks: Vec<sola_mail_core::protocol::ProseBlock>) -> Vec<ProseBlock> {
+    use sola_kit::components::prose::ProseRun;
+    blocks
+        .into_iter()
+        .map(|b| match b {
+            sola_mail_core::protocol::ProseBlock::Paragraph(runs) => ProseBlock::Paragraph(
+                runs.into_iter()
+                    .map(|r| ProseRun {
+                        text: r.text,
+                        url: r.url,
+                    })
+                    .collect(),
+            ),
+            sola_mail_core::protocol::ProseBlock::Quote(runs) => ProseBlock::Quote(
+                runs.into_iter()
+                    .map(|r| ProseRun {
+                        text: r.text,
+                        url: r.url,
+                    })
+                    .collect(),
+            ),
+        })
+        .collect()
+}
+
+fn mail_subscription() -> Subscription<MailEvent> {
+    Subscription::run(mail_event_stream)
+}
+
+fn mail_event_stream() -> impl Stream<Item = MailEvent> {
+    let rx = sola_mail_core::bridge::take_event_rx();
+    let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<MailEvent>();
+    std::thread::spawn(move || {
+        loop {
+            if iced_tx.is_closed() {
+                break;
+            }
+            match rx.recv() {
+                Ok(ev) => {
+                    if iced_tx.unbounded_send(ev).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    iced_rx
+}
+
 fn empty_draft(from: &str) -> ComposeDraft {
     ComposeDraft {
         from: from.to_string(),
@@ -227,7 +280,7 @@ impl App {
         };
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
-            bridge::mail_subscription().map(Msg::Worker),
+            mail_subscription().map(Msg::Worker),
             event::listen_with(|event, _status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed(key, modifiers))
@@ -651,7 +704,7 @@ impl App {
                 self.total_messages = total;
             }
             MailEvent::Body(body) => {
-                let blocks = body.reading_blocks();
+                let blocks = to_kit_blocks(body.reading_blocks());
                 let plain = sola_kit::components::prose::flatten(&blocks);
                 tracing::debug!(
                     uid = body.uid,

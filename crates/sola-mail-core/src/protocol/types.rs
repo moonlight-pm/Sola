@@ -113,7 +113,9 @@ mod tests {
         let names: Vec<_> = folders.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["INBOX", "Sent", "Drafts", "Archive", "Junk", "Trash", "Zebra"]
+            vec![
+                "INBOX", "Sent", "Drafts", "Archive", "Junk", "Trash", "Zebra"
+            ]
         );
     }
 
@@ -145,8 +147,8 @@ mod tests {
         };
         let blocks = body.reading_blocks();
         let has = blocks.iter().any(|b| match b {
-            sola_kit::components::prose::ProseBlock::Paragraph(runs)
-            | sola_kit::components::prose::ProseBlock::Quote(runs) => {
+            crate::protocol::ProseBlock::Paragraph(runs)
+            | crate::protocol::ProseBlock::Quote(runs) => {
                 runs.iter().any(|r| r.url.as_deref() == Some(url.as_str()))
             }
         });
@@ -183,14 +185,14 @@ impl MessageBody {
     /// Copy / reply text. Prefers a real plaintext part; uses HTML when
     /// the plain part is a generator stub (the usual HTML-mail case).
     pub fn display_text(&self) -> String {
-        sola_kit::components::prose::flatten(&self.reading_blocks())
+        crate::protocol::flatten(&self.reading_blocks())
     }
 
     /// Letter blocks for the reading pane. Prefer HTML whenever it is
     /// present — that is the part mail apps actually render.
-    pub fn reading_blocks(&self) -> Vec<sola_kit::components::prose::ProseBlock> {
+    pub fn reading_blocks(&self) -> Vec<crate::protocol::ProseBlock> {
         use crate::protocol::html_text::to_blocks;
-        use sola_kit::components::prose::parse_plain;
+        use crate::protocol::parse_plain;
 
         if let Some(html) = &self.html {
             if !html.trim().is_empty() {

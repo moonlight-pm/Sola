@@ -69,7 +69,9 @@ pub enum MailEvent {
     Body(MessageBody),
     Sent,
     Moved,
-    Emptied { folder: String },
+    Emptied {
+        folder: String,
+    },
     /// IDLE saw remaining new mail after move-rules.
     NewMail,
     Error {

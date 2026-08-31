@@ -1,0 +1,18 @@
+<!-- Mail (lab). Three panes: folders | list | reader. CSD hidden unless floating. -->
+<div class="app">
+  <div data-slot="titlebar"></div>
+  <div class="body" data-slot="stage">
+    <div data-slot="sidebar"></div>
+    <div data-slot="rule-folders"></div>
+    <div class="mail-list">
+      <div data-slot="list-toolbar"></div>
+      <div class="mail-list-body" data-id="list-scroll" data-slot="list-rows"></div>
+    </div>
+    <div data-slot="rule-list"></div>
+    <div class="mail-reader">
+      <div data-slot="reader-toolbar"></div>
+      <div class="mail-letter" data-id="letter-scroll" data-slot="reader"></div>
+    </div>
+  </div>
+  <div data-slot="toast"></div>
+</div>

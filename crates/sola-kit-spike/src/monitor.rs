@@ -119,7 +119,9 @@ fn apply_sizes(root: &mut Elem, m: Metrics) {
     markup::set_style(
         root,
         "rail-pane",
-        &format!("width:{w}px;min-width:{w}px;max-width:{w}px;height:100%;flex-grow:0;flex-shrink:0"),
+        &format!(
+            "width:{w}px;min-width:{w}px;max-width:{w}px;height:100%;flex-grow:0;flex-shrink:0"
+        ),
     );
 }
 
@@ -501,11 +503,7 @@ impl Monitor {
     }
 
     fn chrome_top(&self) -> f32 {
-        if self.is_floating() {
-            TITLEBAR_H
-        } else {
-            0.0
-        }
+        if self.is_floating() { TITLEBAR_H } else { 0.0 }
     }
 
     fn log_view_h(&self) -> f32 {
@@ -2646,11 +2644,7 @@ mod chrome_layout {
             clear.y,
             toolbar.y
         );
-        assert!(
-            head.h >= 20.0,
-            "log-head collapsed to height {}",
-            head.h
-        );
+        assert!(head.h >= 20.0, "log-head collapsed to height {}", head.h);
         assert!(
             !time.hidden && time.h >= 8.0 && time.w >= 20.0,
             "Time header hidden={} {}x{} at {},{}",
@@ -2744,9 +2738,7 @@ mod chrome_layout {
             .iter()
             .find(|i| {
                 i.classes.iter().any(|c| c == "col-payload")
-                    && i.text
-                        .as_ref()
-                        .is_none_or(|t| t.text != "Payload")
+                    && i.text.as_ref().is_none_or(|t| t.text != "Payload")
             })
             .expect("payload cell");
         assert!(

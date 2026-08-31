@@ -181,7 +181,24 @@ fn resolve(val: &str, vars: &std::collections::HashMap<String, String>) -> Strin
             return found.clone();
         }
     }
-    v.to_string()
+    let mut out = String::new();
+    let mut rest = v;
+    while let Some(i) = rest.find("var(") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 4..];
+        if let Some(end) = after.find(')') {
+            let name = after[..end].trim();
+            if let Some(found) = vars.get(name) {
+                out.push_str(found);
+            }
+            rest = &after[end + 1..];
+        } else {
+            out.push_str(rest);
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn strip_comments(s: &str) -> String {

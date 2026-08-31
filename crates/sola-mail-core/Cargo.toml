@@ -1,0 +1,24 @@
+[package]
+name = "sola-mail-core"
+version.workspace = true
+edition.workspace = true
+description = "IMAP/SMTP protocol + worker for sola-mail (iced) and sola-mail-lab"
+publish = false
+
+[dependencies]
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+anyhow = "1"
+
+imap = { workspace = true }
+rustls = { workspace = true }
+rustls-connector = { workspace = true }
+lettre = { workspace = true }
+mail-parser = { workspace = true }
+ureq = { workspace = true }
+base64 = { workspace = true }
+html2text = { workspace = true }

@@ -8357,6 +8357,7 @@ dependencies = [
  "sola-bus",
  "sola-call",
  "sola-core",
+ "sola-mail-core",
  "taffy",
  "tiny-skia",
  "tracing",
@@ -8387,10 +8388,21 @@ dependencies = [
 name = "sola-mail"
 version = "0.1.0"
 dependencies = [
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-mail-core",
+ "tracing",
+]
+
+[[package]]
+name = "sola-mail-core"
+version = "0.1.0"
+dependencies = [
  "anyhow",
  "base64 0.22.1",
  "html2text",
- "iced",
  "imap",
  "lettre",
  "mail-parser",
@@ -8400,7 +8412,6 @@ dependencies = [
  "serde_json",
  "sola-bus",
  "sola-core",
- "sola-kit",
  "tracing",
  "ureq",
 ]

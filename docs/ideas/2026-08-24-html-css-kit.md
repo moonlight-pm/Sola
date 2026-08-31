@@ -12,10 +12,14 @@ calloop**. Binaries (do not install):
   title `Monitor (lab)`. Same observer path as iced monitor. Chrome is nested
   flex: nav | log column (Filter toolbar + log + inspector) | last-known rail
   to the top of the window. Not absolutely positioned panes.
+- `sola-mail-lab` — IMAP client twin. `app_id` `sola-mail-lab`, title
+  `Mail (lab)`. Same worker as iced via `sola-mail-core`. Three panes:
+  kit sidebar (folders) | kit `list_item` | kit toolbar + `prose` letter.
+  Does not publish `Topic::MailStatus`.
 **Kit components** (defined once in `src/components/`, not copied per app):
 `sidebar`, `json`, `button`, `field`, `text`, `badge`, `select`, `card`,
-`titlebar`, `split`, `toolbar`, `icon`, `pane`. Settings-lab and monitor-lab
-compose those builders. Apps leave a `data-slot` in HTML.
+`titlebar`, `split`, `toolbar`, `icon`, `pane`, `list_item`, `prose`,
+`toast`. Labs compose those builders. Apps leave a `data-slot` in HTML.
 **Removed:** `sola-blitz-spike`, `sola-html-spike` (probes; hole notes below).
 **Out of scope:** replacing `sola-kit` / iced on master; putting the terminal
 grid in HTML; JS/DOM (punted); IME. `cargo make install` skips `*-spike` /

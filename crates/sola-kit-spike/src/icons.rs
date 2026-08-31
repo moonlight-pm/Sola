@@ -1,4 +1,8 @@
 //! Rasterize lucide SVGs from `/opt/sola/share/icons` and tint them.
+//!
+//! Coverage stays in alpha; RGB is the tint (straight). Glyph overlay
+//! composites onto the CSS box colour — do not premultiply here or AA
+//! fringes go black (wispy).
 
 use std::collections::HashMap;
 
@@ -15,7 +19,7 @@ impl Icons {
         }
     }
 
-    /// RGBA8 pixels, `size * size`.
+    /// RGBA8 pixels, `size * size`. RGB is the tint; A is coverage.
     pub fn rgba(&mut self, name: &str, size: u32, tint: Rgba) -> Option<&[u8]> {
         let size = size.max(8).min(64);
         let key = (name.to_string(), size, pack_tint(tint));
@@ -35,21 +39,38 @@ fn raster(name: &str, size: u32, tint: Rgba) -> Option<Vec<u8>> {
     let path = format!("/opt/sola/share/icons/{name}.svg");
     let data = std::fs::read(&path).ok()?;
     let tree = usvg::Tree::from_data(&data, &usvg::Options::default()).ok()?;
-    let mut pixmap = tiny_skia::Pixmap::new(size, size)?;
+    // 2× then box-filter: 16px lucide strokes stay solid like iced SVG.
+    let hi = (size * 2).min(128);
+    let mut pixmap = tiny_skia::Pixmap::new(hi, hi)?;
     let ts = tree.size();
-    let sx = size as f32 / ts.width().max(1.0);
-    let sy = size as f32 / ts.height().max(1.0);
+    let sx = hi as f32 / ts.width().max(1.0);
+    let sy = hi as f32 / ts.height().max(1.0);
     let transform = tiny_skia::Transform::from_scale(sx, sy);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    let mut out = pixmap.data().to_vec();
-    for px in out.chunks_exact_mut(4) {
-        let a = px[3] as f32 / 255.0;
-        if a <= 0.0 {
-            continue;
+    let src = pixmap.data();
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    let scale = (hi / size).max(1);
+    for y in 0..size {
+        for x in 0..size {
+            let mut a_sum = 0.0f32;
+            let n = (scale * scale) as f32;
+            for oy in 0..scale {
+                for ox in 0..scale {
+                    let sx = x * scale + ox;
+                    let sy = y * scale + oy;
+                    let i = ((sy * hi + sx) * 4) as usize;
+                    if i + 3 < src.len() {
+                        a_sum += src[i + 3] as f32;
+                    }
+                }
+            }
+            let a = (a_sum / n).round().clamp(0.0, 255.0) as u8;
+            let o = ((y * size + x) * 4) as usize;
+            out[o] = tint.r;
+            out[o + 1] = tint.g;
+            out[o + 2] = tint.b;
+            out[o + 3] = a;
         }
-        px[0] = ((tint.r as f32) * a) as u8;
-        px[1] = ((tint.g as f32) * a) as u8;
-        px[2] = ((tint.b as f32) * a) as u8;
     }
     Some(out)
 }

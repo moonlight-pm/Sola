@@ -2,9 +2,6 @@
 
 use std::sync::{Mutex, OnceLock, mpsc};
 
-use iced::Subscription;
-use iced::futures::Stream;
-
 use crate::worker::{MailCmd, MailEvent};
 
 static EVENT_TX: OnceLock<mpsc::Sender<MailEvent>> = OnceLock::new();
@@ -59,33 +56,15 @@ pub fn take_cmd_rx() -> mpsc::Receiver<MailCmd> {
     }
 }
 
-pub fn mail_subscription() -> Subscription<MailEvent> {
-    Subscription::run(event_stream)
-}
-
-fn event_stream() -> impl Stream<Item = MailEvent> {
+pub fn take_event_rx() -> mpsc::Receiver<MailEvent> {
     init_channels();
-    let rx_opt = EVENT_RX.lock().unwrap().take();
-    let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<MailEvent>();
-    match rx_opt {
-        Some(std_rx) => {
-            std::thread::spawn(move || loop {
-                if iced_tx.is_closed() {
-                    break;
-                }
-                match std_rx.recv() {
-                    Ok(ev) => {
-                        if iced_tx.unbounded_send(ev).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            });
-        }
+    match EVENT_RX.lock().unwrap().take() {
+        Some(rx) => rx,
         None => {
-            tracing::warn!("mail event receiver already taken");
+            tracing::warn!("take_event_rx: receiver already taken; returning disconnected");
+            let (tx, rx) = mpsc::channel();
+            drop(tx);
+            rx
         }
     }
-    iced_rx
 }

@@ -11,6 +11,7 @@ pub struct SidebarItem {
     pub id: Option<String>,
     pub label: String,
     pub subtitle: Option<String>,
+    pub badge: Option<String>,
     pub header: bool,
     pub active: bool,
     pub action: Option<String>,
@@ -22,6 +23,7 @@ impl SidebarItem {
             id: Some(id.into()),
             label: label.into(),
             subtitle: None,
+            badge: None,
             header: false,
             active: false,
             action: None,
@@ -33,6 +35,7 @@ impl SidebarItem {
             id: None,
             label: label.into(),
             subtitle: None,
+            badge: None,
             header: true,
             active: false,
             action: None,
@@ -54,6 +57,15 @@ impl SidebarItem {
 
     pub fn action(mut self, action: impl Into<String>) -> Self {
         self.action = Some(action.into());
+        self
+    }
+
+    /// Trailing count / status (unread). Empty is omitted.
+    pub fn badge(mut self, s: impl Into<String>) -> Self {
+        let s = s.into();
+        if !s.is_empty() {
+            self.badge = Some(s);
+        }
         self
     }
 }
@@ -120,8 +132,16 @@ impl Sidebar {
             nav_classes.push(c.as_str());
         }
         let mut nav = markup::node(next, &nav_classes, None, self.nav_id.as_deref(), "");
+        let mut seen_header = false;
         for item in &self.items {
-            nav.children.push(row(next, item));
+            let mut r = row(next, item);
+            if item.header {
+                if seen_header {
+                    markup::add_class(&mut r, "is-follow");
+                }
+                seen_header = true;
+            }
+            nav.children.push(r);
         }
         aside.children.push(nav);
         aside
@@ -165,6 +185,15 @@ fn row(next: &mut u32, item: &SidebarItem) -> Elem {
     } else {
         etch.children
             .push(markup::node(next, &["label"], None, None, &item.label));
+    }
+    if let Some(badge) = &item.badge {
+        etch.children.push(markup::node(
+            next,
+            &["t-caption", "nav-badge"],
+            None,
+            None,
+            badge,
+        ));
     }
     row.children.push(etch);
     row
@@ -229,5 +258,26 @@ mod tests {
         let bus = &monitor.children[0].children[0];
         assert!(bus.has_class("has-sub"));
         assert!(bus.has_class("is-active"));
+    }
+
+    #[test]
+    fn badge_sits_on_the_etch() {
+        let mut next = 1u32;
+        let el = Sidebar::new([
+            SidebarItem::header("MAILBOXES"),
+            SidebarItem::new("INBOX", "Inbox")
+                .action("folder")
+                .badge("12")
+                .active(true),
+        ])
+        .build(&mut next);
+        let etch = &el.children[0].children[1].children[0];
+        assert!(etch.has_class("etch"));
+        let badge = etch
+            .children
+            .iter()
+            .find(|c| c.classes.iter().any(|k| k == "nav-badge"))
+            .expect("badge");
+        assert_eq!(badge.text, "12");
     }
 }

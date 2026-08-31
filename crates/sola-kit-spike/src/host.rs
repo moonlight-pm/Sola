@@ -229,7 +229,7 @@ fn boot(app_id: &str) {
     // Same contract as iced kit `startup`: re-exec when this binary
     // changes on disk. Lab twins are not installed, so this watches
     // `current_exe()` (`target/release/sola-settings-lab` /
-    // `sola-monitor-lab`, not `/opt/sola/bin`). Skip when the process
+    // `sola-monitor-lab` / `sola-mail-lab`, not `/opt/sola/bin`). Skip when the process
     // manager already supervises.
     if std::env::var_os("SOLA_NO_SELF_WATCH").is_none() {
         sola_core::watcher::watch_own_binary();

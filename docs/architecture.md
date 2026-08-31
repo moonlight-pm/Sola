@@ -62,13 +62,14 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
 | `crates/sola-shell` | Menubar, launcher, switcher, zoning (iced daemon) |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`) |
-| `crates/sola-kit-spike` | HTML/CSS kit (**sctk** 0.20, wgpu 27, workspace member) + storybook `sola-kit-spike` and lab twins `sola-settings-lab` (`Settings (lab)`; same bus topics as iced settings) and `sola-monitor-lab` (`Monitor (lab)`; bus + call observer). Kit components in `src/components/` (`sidebar`, `json`, `button`, `field`, `text`, `badge`, `select`, `card`, `titlebar`, `split`, `toolbar`, `icon`, `pane`); apps leave `data-slot` and compose the builder. Identities distinct from iced. Do not install; run from `target/release/`. |
+| `crates/sola-kit-spike` | HTML/CSS kit (**sctk** 0.20, wgpu 27, workspace member) + storybook `sola-kit-spike` and lab twins `sola-settings-lab` (`Settings (lab)`), `sola-monitor-lab` (`Monitor (lab)`), `sola-mail-lab` (`Mail (lab)`; same IMAP worker as iced via `sola-mail-core`). Kit components in `src/components/` (`sidebar`, `json`, `button`, `field`, `text`, `badge`, `select`, `card`, `titlebar`, `split`, `toolbar`, `icon`, `pane`, `list_item`, `prose`, `toast`); apps leave `data-slot` and compose the builder. Identities distinct from iced. Do not install; run from `target/release/`. |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
 | `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock`; OSC 9999 stripped in the term lib. Compaction `×N` reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). |
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of Workspaces |
-| `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
+| `crates/sola-mail-core` | IMAP/SMTP protocol + worker (no UI). Used by iced `sola-mail` and HTML `sola-mail-lab`. |
+| `crates/sola-mail` | Kit-native iced mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Screenshot + standalone argv image viewer |

@@ -1,5 +1,5 @@
 # HTML/CSS kit — sctk window, no winit.
-# Storybook: sola-kit-spike. Lab twins: sola-settings-lab, sola-monitor-lab.
+# Storybook: sola-kit-spike. Lab twins: sola-settings-lab, sola-monitor-lab, sola-mail-lab.
 # Do not install; run from crate / workspace target/.
 [package]
 name = "sola-kit-spike"
@@ -22,6 +22,10 @@ path = "src/bin/settings.rs"
 name = "sola-monitor-lab"
 path = "src/bin/monitor.rs"
 
+[[bin]]
+name = "sola-mail-lab"
+path = "src/bin/mail.rs"
+
 [dependencies]
 cosmic-text = "0.15"
 taffy = { version = "0.7", default-features = false, features = ["std", "flexbox", "taffy_tree"] }
@@ -39,5 +43,6 @@ tiny-skia = "0.11"
 sola-bus = { path = "../sola-bus" }
 sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
+sola-mail-core = { path = "../sola-mail-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -26,3 +26,8 @@ pub fn horizontal(next: &mut u32, action: &str, id: &str) -> Elem {
 pub fn hairline(next: &mut u32) -> Elem {
     markup::node(next, &["hairline"], None, None, "")
 }
+
+/// 1px vertical rule between panes.
+pub fn vline(next: &mut u32) -> Elem {
+    markup::node(next, &["v-hairline"], None, None, "")
+}

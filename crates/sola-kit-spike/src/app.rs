@@ -134,6 +134,13 @@ const PAGES: &[Page] = &[
         lede: "Kit atoms — not one-off hex.",
     },
     Page {
+        id: "list_item",
+        label: "List item",
+        section: "Components",
+        heading: "List item",
+        lede: "Two-line selectable row. Unread is weight. Selection is graphite lift, not an accent wash.",
+    },
+    Page {
         id: "number_input",
         label: "NumberInput",
         section: "Components",
@@ -1858,6 +1865,7 @@ fn rgba(c: crate::css::Rgba) -> [f32; 4] {
     ]
 }
 
+#[allow(dead_code)]
 fn mix_white_u8(c: crate::css::Rgba, amount: f32) -> crate::css::Rgba {
     let t = amount.clamp(0.0, 1.0);
     let k = 1.0 - t;
@@ -1902,7 +1910,10 @@ pub(crate) fn chrome_quads(
         let sides = item.border;
         let all = sides[0]
             .filter(|a| sides[1] == Some(*a) && sides[2] == Some(*a) && sides[3] == Some(*a));
-        let hair = all.map(|(bw, _)| (bw * s).max(1.0)).unwrap_or(0.0);
+        // Shader hair only on large radii (cards). Inputs (r 5) skip that
+        // path, so we stroke the CSS border colour on the box instead.
+        let shader_hair = all.filter(|_| radius > 10.0);
+        let hair = shader_hair.map(|(bw, _)| (bw * s).max(1.0)).unwrap_or(0.0);
         if let Some(bg) = item.bg {
             let c2 = item.bg2.unwrap_or(bg);
             let mode = spec.unwrap_or(item.gradient as f32);
@@ -1923,31 +1934,30 @@ pub(crate) fn chrome_quads(
                 color2: rgba(picker),
             });
         }
-        if all.is_none() {
+        if shader_hair.is_none() {
             let [x, y, w, h] = xywh;
-            let base = item.bg.unwrap_or(crate::css::Rgba::rgb(0x15, 0x19, 0x22));
-            let stroke = |box_: [f32; 4]| Quad {
+            let stroke = |box_: [f32; 4], col: crate::css::Rgba| Quad {
                 xywh: box_,
-                color: rgba(mix_white_u8(base, 0.14)),
+                color: rgba(col),
                 clip,
                 extra: [0.0, 0.0, 0.0, 0.0],
-                color2: rgba(mix_white_u8(base, 0.14)),
+                color2: rgba(col),
             };
-            if let Some((bw, _)) = sides[0] {
+            if let Some((bw, col)) = sides[0] {
                 let t = (bw * s).max(1.0);
-                out.push(stroke([x, y, w, t]));
+                out.push(stroke([x, y, w, t], col));
             }
-            if let Some((bw, _)) = sides[1] {
+            if let Some((bw, col)) = sides[1] {
                 let t = (bw * s).max(1.0);
-                out.push(stroke([x + w - t, y, t, h]));
+                out.push(stroke([x + w - t, y, t, h], col));
             }
-            if let Some((bw, _)) = sides[2] {
+            if let Some((bw, col)) = sides[2] {
                 let t = (bw * s).max(1.0);
-                out.push(stroke([x, y + h - t, w, t]));
+                out.push(stroke([x, y + h - t, w, t], col));
             }
-            if let Some((bw, _)) = sides[3] {
+            if let Some((bw, col)) = sides[3] {
                 let t = (bw * s).max(1.0);
-                out.push(stroke([x, y, t, h]));
+                out.push(stroke([x, y, t, h], col));
             }
         }
     }

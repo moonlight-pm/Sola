@@ -1,14 +1,12 @@
 //! sola-mail — kit-native IMAP/SMTP client for Sola.
 
-mod bridge;
-mod protocol;
 mod ui;
-mod worker;
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
+use sola_mail_core::{bridge, worker};
 
 use crate::ui::App;
 
@@ -16,7 +14,7 @@ const APP_ID: &str = "sola-mail";
 
 fn main() -> iced::Result {
     // Rustls crypto provider (required before any TLS).
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    sola_mail_core::install_crypto();
 
     startup(APP_ID);
 

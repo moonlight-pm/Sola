@@ -20,12 +20,7 @@ pub fn with_title(mut card: Elem, next: &mut u32, title: &str, lede: &str) -> El
 }
 
 /// Card plus optional title/lede and body children.
-pub fn panel(
-    next: &mut u32,
-    extra: &[&str],
-    title: Option<(&str, &str)>,
-    kids: Vec<Elem>,
-) -> Elem {
+pub fn panel(next: &mut u32, extra: &[&str], title: Option<(&str, &str)>, kids: Vec<Elem>) -> Elem {
     let mut el = match title {
         Some((t, lede)) => with_title(card(next, extra), next, t, lede),
         None => card(next, extra),

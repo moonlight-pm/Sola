@@ -252,6 +252,7 @@ pub fn page_atoms(page: &str) -> &'static [&'static str] {
         "field" => &["raised", "hairline", "fg", "muted", "danger", "accent"],
         "form" => &["accent", "raised", "hover", "hairline", "fg", "muted"],
         "icon" => &["fg", "muted", "accent"],
+        "list_item" => &["bg", "hover", "fg", "muted"],
         "number_input" => &["bg", "hairline", "fg", "muted", "accent"],
         "readable" => &["bg", "raised", "fg", "muted"],
         "prose" => &["bg", "raised", "fg", "muted", "accent"],
