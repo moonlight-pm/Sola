@@ -1,15 +1,4 @@
 <div class="demo-stack wide">
-  <div class="card">
-    <div class="card-title">Account</div>
-    <div class="card-body">IMAP receive + SMTP send credentials.</div>
-    <div data-slot="mail-fields"></div>
-    <div class="help-danger" data-bind="mail-error"></div>
-    <div class="btn-row" data-slot="mail-actions"></div>
-  </div>
-  <div class="card">
-    <div class="card-title">Rules</div>
-    <div class="card-body">Each condition row must match for the rule to fire.</div>
-    <div class="list-stack" data-slot="rule-rows"></div>
-    <div data-slot="mail-rule-add"></div>
-  </div>
+  <div data-slot="mail-account"></div>
+  <div data-slot="mail-rules"></div>
 </div>

@@ -122,7 +122,8 @@ Do not invent product policy.
       + Mail on iced bus topics (`Theme`, `Application`, `MailConfig`,
       `Windows`, `WindowFloating`). Zoned chrome-less; float = CSD +
       14px rounded frame. CSD is kit `titlebar`; nav is kit
-      `components::sidebar`. Catalog, mail form, and buttons use kit
+      `components::sidebar`. Heading is kit `text`; catalog/mail panels
+      are kit `card`; app list chrome is kit `toolbar`; actions are kit
       `button` / `field` / `text` / `badge`. Fill-height apps catalog.
       Fields: I-beam,
       caret-follow, word/all select, Emacs, key-repeat.

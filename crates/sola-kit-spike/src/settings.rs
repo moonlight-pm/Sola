@@ -19,7 +19,7 @@ use sola_core::applications::{command_exists, resolve_in_path};
 
 use crate::app::Click;
 use crate::components::button::Kind as Btn;
-use crate::components::{Sidebar, SidebarItem, badge, button, field, text, titlebar};
+use crate::components::{Sidebar, SidebarItem, badge, button, card, field, text, titlebar, toolbar};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
 use crate::host::Surface;
@@ -474,6 +474,9 @@ impl Settings {
         .nav_class("settings-nav")
         .build(&mut next);
         markup::replace_slot(&mut root, "sidebar", sb);
+        let mut head = text::heading(&mut next, "");
+        head.data_bind = Some("heading".into());
+        markup::replace_slot(&mut root, "heading", head);
         markup::walk_mut(&mut root, &mut |el| {
             if self.is_floating() && el.classes.iter().any(|c| c == "app") {
                 markup::add_class(el, "is-float");
@@ -558,24 +561,29 @@ impl Settings {
             row.children.push(rm);
             rows.push(row);
         }
-        markup::fill_slot(root, "app-rows", rows);
         let mut count = text::bind_caption(&mut next, "app-count");
         markup::add_class(&mut count, "nowrap");
-        markup::fill_slot(
-            root,
+        let add = button(
+            &mut next,
+            Btn::Ghost,
+            true,
+            "app-add",
+            None,
+            "+ Add application",
+        );
+        let spacer = markup::node(&mut next, &["spacer"], None, None, "");
+        let tb = toolbar::bar(
+            &mut next,
             "app-toolbar",
-            vec![
-                button(
-                    &mut next,
-                    Btn::Ghost,
-                    true,
-                    "app-add",
-                    None,
-                    "+ Add application",
-                ),
-                markup::node(&mut next, &["spacer"], None, None, ""),
-                count,
-            ],
+            &["settings-toolbar"],
+            vec![add, spacer, count],
+        );
+        let mut stack = markup::node(&mut next, &["list-stack"], None, Some("app-list"), "");
+        stack.children = rows;
+        markup::replace_slot(
+            root,
+            "app-list-card",
+            card::panel(&mut next, &["settings-list-card"], None, vec![tb, stack]),
         );
 
         let configured: std::collections::HashSet<_> =
@@ -592,7 +600,7 @@ impl Settings {
         }
         let mut crow = Vec::new();
         if cands.is_empty() {
-            markup::hide_if(root, |el| el.data_id.as_deref() == Some("cand-wrap"));
+            markup::replace_slot(root, "cand-card", markup::node(&mut next, &["is-hidden"], None, Some("cand-wrap"), ""));
         } else {
             for w in &cands {
                 let cmd = suggest_command(&w.app_id, w.pid);
@@ -621,8 +629,20 @@ impl Settings {
                 row.children.push(cfg);
                 crow.push(row);
             }
+            let mut cstack = markup::node(&mut next, &["list-stack"], None, None, "");
+            cstack.children = crow;
+            let mut cand = card::panel(
+                &mut next,
+                &["cand-wrap"],
+                Some((
+                    "Running, not configured",
+                    "Apps open on the desktop but not in the catalog yet.",
+                )),
+                vec![cstack],
+            );
+            cand.data_id = Some("cand-wrap".into());
+            markup::replace_slot(root, "cand-card", cand);
         }
-        markup::fill_slot(root, "cand-rows", crow);
 
         let mut detail = Vec::new();
         if self.selected.is_none() && !self.draft {
@@ -692,7 +712,11 @@ impl Settings {
             ));
             detail.push(button::row(&mut next, footer));
         }
-        markup::fill_slot(root, "app-detail", detail);
+        markup::replace_slot(
+            root,
+            "app-detail",
+            card::panel(&mut next, &[], None, detail),
+        );
     }
 
     fn fill_rules(&self, root: &mut crate::dom::Elem) {
@@ -709,33 +733,29 @@ impl Settings {
         ] {
             fields.push(field::stack(&mut next, lab, id));
         }
-        markup::fill_slot(root, "mail-fields", fields);
-        markup::fill_slot(
-            root,
-            "mail-actions",
-            vec![
-                button(
-                    &mut next,
-                    Btn::Primary,
-                    true,
-                    "mail-save",
-                    None,
-                    "Save account",
-                ),
-                button(&mut next, Btn::Ghost, true, "mail-discard", None, "Revert"),
-            ],
+        let mut err = text::danger(&mut next, "");
+        err.data_bind = Some("mail-error".into());
+        let save = button(
+            &mut next,
+            Btn::Primary,
+            true,
+            "mail-save",
+            None,
+            "Save account",
         );
-        markup::fill_slot(
+        let revert = button(&mut next, Btn::Ghost, true, "mail-discard", None, "Revert");
+        let actions = button::row(&mut next, vec![save, revert]);
+        fields.push(err);
+        fields.push(actions);
+        markup::replace_slot(
             root,
-            "mail-rule-add",
-            vec![button(
+            "mail-account",
+            card::panel(
                 &mut next,
-                Btn::Ghost,
-                true,
-                "rule-add",
-                None,
-                "+ Add rule",
-            )],
+                &[],
+                Some(("Account", "IMAP receive + SMTP send credentials.")),
+                fields,
+            ),
         );
         let mut rows = Vec::new();
         for (i, r) in self.mail.rules.iter().enumerate() {
@@ -764,7 +784,29 @@ impl Settings {
         if rows.is_empty() {
             rows.push(text::muted(&mut next, "No rules configured."));
         }
-        markup::fill_slot(root, "rule-rows", rows);
+        let mut stack = markup::node(&mut next, &["list-stack"], None, None, "");
+        stack.children = rows;
+        let add = button(
+            &mut next,
+            Btn::Ghost,
+            true,
+            "rule-add",
+            None,
+            "+ Add rule",
+        );
+        markup::replace_slot(
+            root,
+            "mail-rules",
+            card::panel(
+                &mut next,
+                &[],
+                Some((
+                    "Rules",
+                    "Each condition row must match for the rule to fire.",
+                )),
+                vec![stack, add],
+            ),
+        );
     }
 
     fn save_app(&mut self) {

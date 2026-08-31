@@ -1,16 +1,9 @@
 <div class="settings-split">
   <div class="settings-list">
-    <div class="card settings-list-card">
-      <div class="btn-row" data-slot="app-toolbar"></div>
-      <div class="list-stack" data-slot="app-rows" data-id="app-list"></div>
-    </div>
-    <div class="card cand-wrap" data-id="cand-wrap">
-      <div class="card-title">Running, not configured</div>
-      <div class="card-body">Apps open on the desktop but not in the catalog yet.</div>
-      <div class="list-stack" data-slot="cand-rows"></div>
-    </div>
+    <div data-slot="app-list-card"></div>
+    <div data-slot="cand-card"></div>
   </div>
   <div class="settings-detail">
-    <div class="card" data-slot="app-detail"></div>
+    <div data-slot="app-detail"></div>
   </div>
 </div>
