@@ -157,9 +157,9 @@ impl RiverSupervisor {
         // still copies it into sola-scope. A hardware cursor lives on its
         // own plane and is omitted from the capture.
         // wlroots picks its backend by env: WAYLAND_DISPLAY → nested wayland,
-        // DISPLAY → X11 (both failed on canto from a bare TTY), otherwise
-        // drm + libinput (what we actually want). Strip both so River falls
-        // through to the DRM backend.
+        // DISPLAY → X11 (both fail from a bare TTY), otherwise drm + libinput
+        // (what we actually want). Strip both so River falls through to the
+        // DRM backend.
         cmd.env_remove("WAYLAND_DISPLAY");
         cmd.env_remove("DISPLAY");
         // SAFETY: the pre_exec hook only invokes async-signal-safe libc calls.

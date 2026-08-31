@@ -35,7 +35,7 @@
 - `apps/shell/src/launcher/state.rs` — same import change
 - `apps/shell/Cargo.toml` — add `sola-applications` dependency
 
-**Touched on canto (deploy-time)**
+**Touched at install time**
 - `~/.config/sola/shell/applications.json` — add a `sola-settings` entry so the launcher can spawn it
 
 ---
@@ -1210,26 +1210,26 @@ Otherwise skip.
 
 ---
 
-## Task 7: Deploy and manual verification
+## Task 7: Install and manual verification
 
-**Only run after user grants deploy permission** (per `CLAUDE.md`).
+**Only run after user grants install permission** (per `CLAUDE.md`).
 
-### - [ ] Step 1: Ask for deploy permission
+### - [ ] Step 1: Ask for install permission
 
-Pause here and confirm with the user: *"Ready to deploy `sola-settings` to canto. Proceed?"*
+Pause here and confirm with the user: *"Ready to install `sola-settings`. Proceed?"*
 
-### - [ ] Step 2: Deploy
+### - [ ] Step 2: Install
 
-Run: `cargo make deploy settings --canto`
+Run: `cargo make install settings`
 
-Expected: release build + rsync `sola-settings` binary to `/opt/sola/bin/` on canto.
+Expected: build + copy `sola-settings` binary to `/opt/sola/bin/`.
 
-### - [ ] Step 3: Add the launcher entry on canto
+### - [ ] Step 3: Add the launcher entry
 
-SSH to canto and append `sola-settings` to `~/.config/sola/shell/applications.json`:
+Append `sola-settings` to `~/.config/sola/shell/applications.json`:
 
 ```bash
-ssh canto 'python3 -c "
+python3 -c "
 import json, pathlib
 p = pathlib.Path.home() / \".config/sola/shell/applications.json\"
 cfg = json.loads(p.read_text())
@@ -1242,7 +1242,7 @@ if not any(a[\"app_id\"] == \"sola-settings\" for a in cfg[\"apps\"]):
     })
     p.write_text(json.dumps(cfg, indent=2))
 print(\"ok\")
-"'
+"
 ```
 
 Expected: prints `ok`. Subsequent runs are idempotent.
@@ -1250,14 +1250,14 @@ Expected: prints `ok`. Subsequent runs are idempotent.
 ### - [ ] Step 4: Verify end-to-end
 
 Ask the user to:
-1. On canto, open the launcher (usual shortcut) — confirm "Settings" appears.
+1. Open the launcher (usual shortcut) — confirm "Settings" appears.
 2. Launch it — confirm a window opens titled "Settings" with a sidebar and an Applications list populated with current entries.
 3. Add a test entry, close and reopen the launcher — confirm the new entry appears.
 4. Edit an entry (change its label), close and reopen the launcher — confirm the label updated.
 5. Remove the test entry — confirm it's gone from the next launcher open.
-6. Inspect `~/.config/sola/shell/applications.json` on canto — confirm it's pretty-printed and well-formed.
+6. Inspect `~/.config/sola/shell/applications.json` — confirm it's pretty-printed and well-formed.
 
-If any step fails, inspect `/opt/sola/log/sola.log` on canto for tracing output.
+If any step fails, inspect `/opt/sola/log/sola.log` for tracing output.
 
 ### - [ ] Step 5: Commit any follow-up fixes, then stop
 
@@ -1275,7 +1275,7 @@ Against the spec `docs/specs/2026-04-19-sola-settings-design.md`:
 - **Add / edit / remove** — Task 4 (UI) + Task 5 (Rust handlers) ✓
 - **Atomic save via `JsonConfigIn`** — `ApplicationsConfig::save()` already does tempfile+rename ✓
 - **Shell picks up edits on launcher open** — no shell changes beyond imports; the existing reload-on-open logic in `apps/shell/src/app.rs:863` is untouched ✓
-- **Entry added to applications.json on canto** — Task 7 step 3 ✓
+- **Entry added to applications.json** — Task 7 step 3 ✓
 - **Out-of-scope confirmations:** no reorder, no icon picker, no detect-running, no live shell-refresh bus topic, no validation beyond non-empty required fields ✓
 
 Placeholder scan: no TBD / TODO / fill-in; every code-changing step shows code.

@@ -50,7 +50,7 @@
 
 ## Build sequence overview
 
-14 tasks. Each ends with a `cargo check` (or `cargo test`) pass and a commit. Task 13 is a full manual smoke test on canto; user runs the deploy.
+14 tasks. Each ends with a `cargo check` (or `cargo test`) pass and a commit. Task 13 is a full manual smoke test on a TTY; user runs the install.
 
 ---
 
@@ -131,7 +131,7 @@ Expected: Succeeds.
 
 - [ ] **Step 5: Check sola-make registration**
 
-Read `crates/sola-make/src/` and check whether apps are auto-discovered or require a listing. If `mail` needs to be added somewhere, add it so `cargo make build mail` and `cargo make deploy mail --canto` resolve.
+Read `crates/sola-make/src/` and check whether apps are auto-discovered or require a listing. If `mail` needs to be added somewhere, add it so `cargo make build mail` and `cargo make install mail` resolve.
 
 Run: `cargo make build mail`
 Expected: Succeeds.
@@ -1010,7 +1010,7 @@ git commit -m "feat(mail): message/compose views, toast, keyboard shortcuts, IDL
 
 ## Task 14: Styling pass + final smoke test
 
-Layer on the styles. Manual smoke test on canto — **user deploys, you run it.**
+Layer on the styles. Manual smoke test on a TTY — **user installs, you run it.**
 
 **Files:**
 - Modify: `apps/mail/web/src/theme.css`
@@ -1038,7 +1038,7 @@ git commit -m "feat(mail): styling pass"
 
 - [ ] **Step 5: Await user deploy + smoke test**
 
-Announce to user: "Ready for deploy. Run `cargo make deploy mail --canto` when you're ready, then launch sola."
+Announce to user: "Ready for install. Run `cargo make install mail` when you're ready, then launch sola."
 
 Smoke test checklist (walk through with user):
 1. Startup → folders + INBOX list appear.
