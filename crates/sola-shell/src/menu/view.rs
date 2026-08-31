@@ -1,20 +1,15 @@
 //! Menu dropdown window view.
 //!
-//! Layout:
-//!   Full-window transparent backdrop (mouse_area → CloseMenu on outside click)
-//!   └── Stack layer 1: container with left-padding = menu_anchor_x
-//!       └── Card column of menu items for the currently open menu.
-//!
-//! The window is always present but renders nothing visible when
-//! `shell.menu_open` is false — composition hides the surface (Task 10).
-//! The backdrop mouse_area still catches clicks so we can emit CloseMenu
-//! if something slips through.
+//! Layout: the overlay window is already placed at the card (see
+//! [`crate::zoning::menu_overlay_frame`]). View is the card plus a
+//! backdrop that fills leftover window pixels (dismiss). Clicks outside
+//! the surface hit whatever is under it (app / menubar / empty seat).
 //!
 //! Density matches macOS menu-bar dropdowns: chrome type at 13, compact
 //! row pad, hairline separators with vertical breathing room, kit
 //! `popover` chrome (calmer materials) + `menu_item` hover.
 
-use iced::widget::{column, container, mouse_area, row, stack, text};
+use iced::widget::{column, container, mouse_area, row, text};
 use iced::{Element, Length, Padding};
 
 use crate::app::Msg;
@@ -34,7 +29,9 @@ const ITEM_PAD: [f32; 2] = [3.0, 10.0];
 /// Vertical breathing room around a separator hairline.
 const SEP_V_PAD: f32 = 4.0;
 /// Fixed menu card width (macOS-ish min; content rarely exceeds this).
-const MENU_WIDTH: f32 = 220.0;
+pub const MENU_WIDTH: f32 = 220.0;
+/// Generous height for a typical app/system menu (capped by usable area).
+pub const MENU_HEIGHT: f32 = 400.0;
 
 /// Render the menu overlay for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
@@ -103,33 +100,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     // Dropdown card — kit popover chrome (raised bg, calm shadow, MD radius).
     // Default popover pad is already SPACE_SM (4); keep explicit for clarity.
-    let anchor_x = shell.menu_anchor_x;
-    let card: Element<'_, Msg> = popover(items_el).width(Length::Fixed(MENU_WIDTH)).into();
-
-    // Outer container positions the card at anchor_x by using left padding.
-    let positioned: Element<'_, Msg> = container(card)
-        .padding(Padding {
-            top: 0.0,
-            left: anchor_x,
-            right: 0.0,
-            bottom: 0.0,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Top)
-        .into();
-
-    // Backdrop: full-screen mouse_area that dismisses on outside click.
-    let backdrop: Element<'_, Msg> =
-        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-            .on_press(Msg::CloseMenu)
-            .into();
-
-    // Stack: backdrop (layer 0, sets intrinsic size) + positioned card (layer 1).
-    stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let card: Element<'_, Msg> = popover(items_el).width(Length::Fill).into();
+    crate::menu::host_card(card)
 }
 
 // ---------------------------------------------------------------------------
@@ -140,33 +112,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 /// over a full-screen dismiss backdrop (same window as the menu dropdown).
 fn calendar_panel(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let today = shell.menubar.clock_now.date_naive();
-    let card = crate::calendar::view(shell.calendar_month, today);
-
-    // Right-align the card near the screen's right edge (under the clock).
-    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    let left = (output_w - crate::calendar::CARD_WIDTH - 8.0).max(0.0);
-
-    let positioned: Element<'_, Msg> = container(card)
-        .padding(Padding {
-            top: 0.0,
-            left,
-            right: 0.0,
-            bottom: 0.0,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Top)
-        .into();
-
-    let backdrop: Element<'_, Msg> =
-        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-            .on_press(Msg::CloseMenu)
-            .into();
-
-    stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    crate::menu::host_card(crate::calendar::view(shell.calendar_month, today))
 }
 
 /// Build a menu item element from owned data (no borrows from caller's locals).
