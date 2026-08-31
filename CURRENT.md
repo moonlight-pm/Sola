@@ -9,18 +9,13 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-31 (shell Super+H hide + river dead-pid prune on sola-shell; wrapper Edit/links/notify/huddle on master; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-08-31 (screenshot freeze-then-crop + `--app` toplevel capture on sola-shell; Super+H hide + river dead-pid prune; wrapper Edit/links/notify/huddle on master; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
 ## Now
 
-1. **Shell Super+H hide** (this worktree) — composition hide via sticky
-   `Topic::AppHidden` (River `hide`, not send-to-back). Restore: Super+Tab
-   or launcher (already-running). No menubar chip. SIGKILL during lag
-   left zombie sola-shell surfaces (no `closed`); river now prunes
-   dead-pid windows. **Installed** `river` + `shell` (debug, 2026-08-31);
-   menubar remapped. Gaps: Steam `app_id` variants; no hide animation.
+1. **Screenshots (this worktree)** — Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show). `solactl compositor screenshot --app` copies the window scene (`ext-image-copy-capture`); does not raise. **Installed** `river` + `shell` debug 2026-08-31. Desk: freeze picker smoked; `--app sola-arcade` 1434×2132 PNG. Gaps: occluded / Super+H-hidden `--app`; multi-output. Super+H hide remains in this worktree.
 2. **Browser** — codecs CEF (H.264/AAC `canPlayType` `probably`) +
    `--autoplay-policy=no-user-gesture-required`; unified Bitwarden panel;
    **⌘G** new group (name focused+selected; hover pencil). Freeze
@@ -187,7 +182,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Dist path | Shape 1 colleague module (`INSTALL.md`); tarball v0.1.1 **404**. From-source: `CONTRIBUTING.md` (`installRelease = false`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **master** (workspaces + wrapper + **scope**). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
 | Scope | **On master.** Pixel loupe: live follow, zoom 65×65…3×3, hex copy, remembered float. Desktop pointer visible; grid omits the sprite (patched wlroots + River). Installed `scope`+`river`+`shell`; compositor `/opt/sola/bin/river`. | — |
-| Shell | **This worktree.** Super+H hide (no menubar chip; restore Super+Tab / launcher). Dead-pid prune after hard kill. **Installed** `river`+`shell` debug 2026-08-31; menubar remapped. | — |
+| Shell | **This worktree.** Window `--app` screenshot (toplevel scene, no raise) **installed** `river` debug 2026-08-31. Super+Shift+4 freeze-then-crop (no dim) **installed** `shell` debug 2026-08-31. Super+H hide. Dead-pid prune; menubar remapped. | — |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **⌘G** new group on a loose tab, name focused+selected; hover pencil to rename; strip has no right-click); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden **unified vault** (one toolbar icon — lock / key / shield when this page has TOTP / fingerprint on passkey; search + type chips + item records; **Create login** via **+**; fill/cards/identities/TOTP/passkeys decrypt **org vaults** too — **installed** `browser` --release 2026-08-28, desk smoke next; create still personal); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts the vault icon, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). Steam store autoplay: codecs CEF + `--autoplay-policy` **installed** 2026-08-30 (`canPlayType` AAC/H.264 `probably`; reload trailer). | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |

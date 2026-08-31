@@ -161,8 +161,16 @@ pub enum Msg {
     },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
-    /// Super+Shift+4: open the selection marquee overlay.
+    /// Super+Shift+4: freeze the output, then open the selection marquee.
     OpenSelection,
+    /// RGBA freeze for Super+Shift+4 finished (call plane). Overlay opens
+    /// only after this so menus/selections stay in the still.
+    SelectionFreeze {
+        generation: u64,
+        result: Result<FreezeImage, String>,
+    },
+    /// Freeze texture is on the GPU; overlay may join composition.
+    SelectionTextureReady,
     /// Escape / cancel selection without capturing.
     CloseSelection,
     /// Pointer down on the selection overlay (compositor-space coords).
@@ -183,6 +191,24 @@ pub enum Msg {
     /// `compositor.screenshot` finished (call plane, not the bus).
     ScreenshotDone(Result<std::path::PathBuf, String>),
     Noop,
+}
+
+/// Frozen full-output RGBA for the selection overlay. Handle clone is cheap
+/// (refcount); Debug omits the pixel buffer.
+#[derive(Clone)]
+pub struct FreezeImage {
+    pub handle: iced::widget::image::Handle,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl std::fmt::Debug for FreezeImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreezeImage")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish()
+    }
 }
 
 /// Which non-menu panel the Menu window is hosting.
@@ -647,6 +673,50 @@ impl Shell {
         });
     }
 
+    fn on_selection_freeze(
+        &mut self,
+        generation: u64,
+        result: Result<FreezeImage, String>,
+    ) -> iced::Task<Msg> {
+        if generation != self.selection.freeze_generation || !self.selection.pending {
+            return iced::Task::none();
+        }
+        match result {
+            Err(e) => {
+                let prior = self.selection.cancel();
+                self.emit_registered_chords();
+                let keep = prior.or(self.screenshot_return_focus.take());
+                self.restore_app_focus(keep);
+                self.open_preview_on_next = false;
+                tracing::warn!(%e, "selection freeze failed");
+                self.menubar.push_toast(format!("Screenshot failed: {e}"));
+                let toast_gen = self.menubar.toast_generation;
+                iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                    Msg::ToastExpire(toast_gen)
+                })
+            }
+            Ok(img) => {
+                // Dismiss shell menus *after* the still is in hand, and
+                // *before* `apply_freeze` marks the overlay active (dismiss
+                // would otherwise cancel the selection).
+                self.dismiss_transient_overlays();
+                if !self.selection.apply_freeze(generation, img.handle) {
+                    return iced::Task::none();
+                }
+                tracing::info!(
+                    width = img.width,
+                    height = img.height,
+                    "selection freeze ready"
+                );
+                // Frame the overlay to the output while still hidden. It
+                // joins composition on SelectionTextureReady (after GPU
+                // upload) so the first visible frame is the still.
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+        }
+    }
+
     /// Put keyboard focus on `window_id` if it is still a live non-shell
     /// window. Used after selection ends and after preview handoff so we
     /// never leave focus on a hidden shell surface.
@@ -884,7 +954,10 @@ impl Shell {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
-        if self.overlay_should_compose("selection", self.selection.active) {
+        if self.overlay_should_compose(
+            "selection",
+            self.selection.active && self.selection.presentable,
+        ) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
                 entries.push(CompositionEntry { window_id: wid });
             }
@@ -988,7 +1061,12 @@ impl Shell {
         // While any overlay is active, grab Escape so the user can dismiss it
         // regardless of which surface owns input focus. Deregistered as soon as
         // the overlay closes so terminal apps keep their Escape.
-        if self.launcher.active || self.switcher.active || self.menu_open || self.selection.active {
+        if self.launcher.active
+            || self.switcher.active
+            || self.menu_open
+            || self.selection.active
+            || self.selection.pending
+        {
             chords.push(RegisteredChord {
                 keysym: keys::KEYSYM_ESCAPE,
                 modifiers: 0,
@@ -1204,7 +1282,7 @@ impl Shell {
         for (title, want) in [
             ("launcher", self.launcher.active),
             ("switcher", self.switcher.active),
-            ("selection", self.selection.active),
+            ("selection", self.selection.active && self.selection.presentable),
         ] {
             if !self.overlay_should_compose(title, want) {
                 continue;
@@ -1576,6 +1654,19 @@ impl Shell {
                 };
                 let live = self.note_overlay_iced_size(kind, size);
                 if live && self.overlay_want(kind) {
+                    if kind == WindowKind::Selection && !self.selection.presentable {
+                        return iced::Task::none();
+                    }
+                    return iced::Task::done(Msg::CommitOverlayShow);
+                }
+                iced::Task::none()
+            }
+            Msg::SelectionTextureReady => {
+                if !self.selection.active || self.selection.presentable {
+                    return iced::Task::none();
+                }
+                self.selection.presentable = true;
+                if self.overlay_iced_live_for_title("selection") {
                     return iced::Task::done(Msg::CommitOverlayShow);
                 }
                 iced::Task::none()
@@ -2016,25 +2107,24 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenSelection => {
-                // Snapshot the live app under the keyboard *before* overlays
-                // are dismissed / marquee steals focus.
+                if self.selection.active || self.selection.pending {
+                    return iced::Task::none();
+                }
+                // Snapshot the live app under the keyboard *before* the
+                // freeze capture. Do not dismiss overlays or steal focus
+                // yet — that would drop menus/text selections from the still.
                 let prior = self.focused_window_id.filter(|wid| {
                     self.known_windows
                         .iter()
                         .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
                 });
-                self.dismiss_transient_overlays();
-                self.selection.begin(prior);
+                let generation = self.selection.start_freeze(prior);
                 self.screenshot_return_focus = prior;
-                self.emit_composition();
                 self.emit_registered_chords();
-                // Focus the selection surface so canvas gets pointer/keyboard.
-                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
-                iced::Task::none()
+                crate::screenshot::freeze(generation)
+            }
+            Msg::SelectionFreeze { generation, result } => {
+                self.on_selection_freeze(generation, result)
             }
             Msg::CloseSelection => {
                 let prior = self.selection.cancel();
@@ -2055,9 +2145,10 @@ impl Shell {
             }
             Msg::SelectionRelease { x, y } => {
                 self.selection.move_to(x, y);
+                let freeze = self.selection.freeze.clone();
                 let (region, prior) = self.selection.finish_region();
-                // Hide overlay before capture so the marquee/scrim is not
-                // in the PNG (Composition precedes the screenshot call).
+                // Hide overlay; crop the freeze in-process (no second capture,
+                // so the still keeps menus/selections the live screen lost).
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Always return keyboard to the pre-marquee window — even on
@@ -2072,9 +2163,21 @@ impl Shell {
                     self.open_preview_on_next = false;
                     return iced::Task::none();
                 };
-                tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection capture");
+                let Some(handle) = freeze else {
+                    tracing::warn!("selection capture missing freeze frame");
+                    self.screenshot_return_focus = None;
+                    self.open_preview_on_next = false;
+                    self.menubar
+                        .push_toast("Screenshot failed: no freeze frame");
+                    let toast_gen = self.menubar.toast_generation;
+                    return iced::Task::perform(
+                        tokio::time::sleep(Duration::from_secs(5)),
+                        move |_| Msg::ToastExpire(toast_gen),
+                    );
+                };
+                tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection crop from freeze");
                 self.open_preview_on_next = true;
-                crate::screenshot::region(rx, ry, rw, rh)
+                crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
             Msg::CycleAppWindows => {

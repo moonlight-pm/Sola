@@ -832,7 +832,7 @@ impl Shell {
         // while one is active (see `emit_registered_chords`), so we don't
         // steal Escape from terminal apps otherwise.
         if chord.keycode == sola_core::KeyCode::ESCAPE && bare {
-            if self.selection.active {
+            if self.selection.active || self.selection.pending {
                 return Task::done(Msg::CloseSelection);
             }
             if self.launcher.active {
@@ -847,7 +847,19 @@ impl Shell {
         }
 
         // Selection marquee is modal — Escape cancels; ignore other chords.
+        // Pending freeze is not modal (overlay is not up yet) but it owns the
+        // screenshot slot, so ignore competing Super+Shift+3/4/5.
         if self.selection.active {
+            return Task::none();
+        }
+        if self.selection.pending
+            && chord.meta
+            && chord.shift
+            && matches!(
+                chord.keycode,
+                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
+            )
+        {
             return Task::none();
         }
 
@@ -959,14 +971,14 @@ impl Shell {
             return crate::screenshot::full();
         }
 
-        // Super+Shift+4: interactive selection marquee (macOS order).
+        // Super+Shift+4: freeze live output, then selection marquee (macOS order).
         if chord.meta
             && chord.shift
             && !chord.ctrl
             && !chord.alt
             && chord.keycode == sola_core::KeyCode::KEY_4
         {
-            tracing::info!("Super+Shift+4 — selection capture");
+            tracing::info!("Super+Shift+4 — selection freeze");
             return Task::done(Msg::OpenSelection);
         }
 

@@ -1,7 +1,8 @@
 # sola-preview + selection capture — Design
 
 **Date:** 2026-08-04  
-**Status:** approved (approach A); capture still as-built; **screenshot dest is sola-preview** (paint is MIME / `solactl open` dest)  
+**Status:** approved (approach A); **screenshot dest is sola-preview** (paint is MIME / `solactl open` dest)  
+**Implementation:** Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show) **installed** `river`+`shell` debug 2026-08-31 and smoked.  
 **Depends on:** `docs/specs/2026-07-20-screenshot-capture-plan.md` (screencopy live); [paint](2026-08-14-sola-paint-design.md)
 
 ## 1. Goal
@@ -30,7 +31,8 @@ Super+Shift+3/4/5
         ▼
 sola-shell
   · 3 → CaptureScreen FullOutput
-  · 4 → open selection overlay → drag rect → CaptureScreen Region
+  · 4 → compositor.screenshot format=rgba (full output) → overlay shows that still
+        → drag rect → crop freeze in-process (no second capture)
   · 5 → CaptureScreen Window(focused)
   · set open_preview_on_next = true
         │
@@ -65,6 +67,8 @@ pub enum CaptureTarget {
 
 River: `capture_output_region` with the rect; reject non-positive width/height.
 
+`compositor.screenshot` also takes `format`: `png` (default, writes a PNG) or `rgba` (packed RGBA8 on tmpfs, no PNG encode). RGBA reply is `{ path, width, height, format: "rgba8" }`. Super+Shift+4 uses this so the picker can freeze a 5K output without a multi-second encode.
+
 ### 4.2 `OpenImage` (ephemeral)
 
 Mirror `OpenUrl`:
@@ -96,7 +100,7 @@ pub struct OpenImageRequest {
 | Chord | Action |
 |-------|--------|
 | Super+Shift+3 | Full output |
-| Super+Shift+4 | Open selection overlay (no capture yet) |
+| Super+Shift+4 | Freeze live output (RGBA), then selection overlay |
 | Super+Shift+5 | Focused window (existing Super+Shift+4 logic) |
 
 Register `KEY_5.meta_shift()` in `shell_key_chords`.
@@ -105,15 +109,16 @@ Register `KEY_5.meta_shift()` in `shell_key_chords`.
 
 - New `WindowKind::Selection` / title `"selection"` — fifth daemon window, boot-opened, composition-gated (like launcher/switcher).
 - Full **output** frame `(0, 0, w, h)` so pointer coords match compositor coords (not work-area-below-menubar).
-- View: dim translucent scrim + marquee while dragging; Escape cancels.
+- **Freeze first.** Super+Shift+4 does **not** map the overlay immediately (that steals focus and drops menus / text selections). River captures the live output as packed RGBA8 (`compositor.screenshot` `format=rgba`, tmpfs dump, **no PNG encode**). The overlay is that still at full brightness (no dim — it is the desktop) and joins composition only after the freeze texture is on the GPU, so the first visible frame matches the live output. Cyan marquee while dragging.
+- View: freeze image + dim scrim + cyan marquee; Escape cancels (also while freeze is in flight).
 - Pointer: iced listen while active (press → start, move → current, release → finish).
 - Min size: 2×2 px; smaller → cancel without capture.
 - On successful release:
-  1. `selection.active = false`
-  2. `emit_composition()` (drop overlay from stack)
-  3. `CaptureScreen { path: None, target: Region {…} }`
+  1. clone the freeze `Handle` (refcount)
+  2. `selection.active = false` / `emit_composition()` (drop overlay)
+  3. crop the freeze in-process and write a PNG (no second screencopy)
   4. `open_preview_on_next = true`
-- Capture runs **after** the overlay is hidden so the marquee/scrim is not in the PNG (composition emitted before CaptureScreen on the bus).
+- The marquee/scrim never enter the PNG because the crop is from the freeze, not a live capture.
 
 ### 5.3 Handoff flag
 
@@ -226,7 +231,8 @@ Optional later: `solactl screenshot --region x,y,w,h`. **Not required for V1** (
 
 | Risk | Mitigation |
 |------|------------|
-| Overlay in PNG | Hide selection + emit Composition before CaptureScreen |
+| Overlay in PNG | Crop from the freeze still, not a live recapture |
+| Freeze feels slow | Skip PNG encode of the 5K frame; RGBA dump on tmpfs (`/dev/shm`); convert off the Wayland thread |
 | Cold-start delay | LaunchApp with path arg so first paint can load without OpenImage race |
 | Tiny drag | Min 2×2; treat smaller as cancel |
 | Focus race on LaunchApp | Rely on session spawn + zoning; OpenImage only when window already known |

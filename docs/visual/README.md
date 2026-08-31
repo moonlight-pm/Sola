@@ -84,7 +84,7 @@ away chrome detail.
 | `Meta+Tab` | Switcher (hold-style; capture while open) |
 | `Meta+\`` | Cycle windows of focused app |
 | `Super+Shift+3` | Full-output screenshot → toast + sola-preview |
-| `Super+Shift+4` | Selection marquee → region capture → toast + sola-preview |
+| `Super+Shift+4` | Freeze live output → selection marquee → crop still → toast + sola-preview |
 | `Super+Shift+5` | Focused-window region screenshot → toast + sola-preview |
 | `Escape` | Dismiss launcher / switcher / menu / selection / panels |
 

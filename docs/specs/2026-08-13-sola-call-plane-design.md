@@ -89,7 +89,7 @@ missing).
 
 | CLI owner | Process | Methods |
 |-----------|---------|---------|
-| `compositor` | `sola-river` | `screenshot`, `sample`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
+| `compositor` | `sola-river` | `screenshot` (`format=png` default, or `rgba` packed RGBA8 freeze), `sample`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | `launch`, `close` |
 
 Kit apps do **not** grow commands here. Agent-terminal will advertise when that worktree resumes.

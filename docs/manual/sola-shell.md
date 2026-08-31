@@ -14,7 +14,7 @@ Menubar remapped after a hard-kill left zombie shell surfaces.
 | Super+\` | Cycle windows of the focused app |
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
-| Super+Shift+3 / 4 / 5 | Screenshot: full output / selection / focused window |
+| Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
 ## Hide
@@ -30,6 +30,16 @@ The process keeps running. Notifications, mail unread, and an outside
 open (`solactl open` / `xdg-open`) also unhide when they raise the app.
 
 Hiding the last visible app leaves the menubar and wallpaper.
+
+## Screenshots
+
+Super+Shift+4 freezes the live output first (menus, text selections, and
+other transient UI stay in the still), then opens a full-brightness
+marquee on that still (no dim). The crop is taken from the freeze — not
+a second live capture.
+
+Super+Shift+5 and `solactl compositor screenshot --app` copy the
+window’s own buffer. They do not raise the app.
 
 ## Limits
 

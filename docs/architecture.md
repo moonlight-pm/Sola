@@ -124,6 +124,8 @@ to the bus and tolerate compositor restarts.
    sola-monitor is the consumer (`install_observer`). RPC still does not
    travel on the bus.  
 3. **Wayland** — buffers, seats, layers, xdg surfaces. Pixel and input plane.
+   `compositor.screenshot` full/region uses `wlr-screencopy`; `--app` uses
+   `ext-image-copy-capture` of the foreign toplevel (no raise).
 
 ---
 
@@ -173,7 +175,7 @@ area. Iced does not present full-output swapchains in the background (see
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |
-| Selection | Super+Shift+4 marquee (parked 2×2 while dismissed; live Frame is full output) |
+| Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
 
 Zoning / floating is coordinated with `sola-river` over the bus:

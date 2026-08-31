@@ -38,8 +38,6 @@ pub struct Entry {
     /// binary via `/proc/<pid>/…`.
     pub pid: Option<u32>,
     /// Last frame received from the shell as `(x, y, width, height)`.
-    /// Used by solactl's per-window screenshot to pass a region to
-    /// `grim`. May be stale immediately after a resize but converges.
     pub frame: Option<(i32, i32, i32, i32)>,
     /// Actual content size from `river_window_v1.dimensions`. `None` until the
     /// first dimensions event. Distinct from `frame` (the shell's requested
