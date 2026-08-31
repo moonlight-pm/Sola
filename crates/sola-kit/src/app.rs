@@ -43,9 +43,13 @@ static BUS_KINDS: std::sync::RwLock<Option<&'static [TopicKind]>> = std::sync::R
 /// has not been called yet — that's a setup-order bug, not a
 /// recoverable runtime condition.
 pub fn bus() -> &'static Mutex<BusClient> {
-    BUS.get()
-        .expect("sola_kit::bus: BUS not initialised")
-        .as_ref()
+    try_bus().expect("sola_kit::bus: BUS not initialised")
+}
+
+/// Borrow the process-wide bus if [`BusSetup::install`] has run.
+/// Unit tests and optional emit paths use this instead of panicking.
+pub fn try_bus() -> Option<&'static Mutex<BusClient>> {
+    BUS.get().map(|a| a.as_ref())
 }
 
 /// Remember the process's bus subscription kinds for reconnect.

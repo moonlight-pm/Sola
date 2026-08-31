@@ -1,7 +1,7 @@
 # sola-mail — kit-native design
 
 **Date:** 2026-07-27  
-**Branch:** sola-mail worktree (base mail-polish on master)  
+**Branch:** master (merged from sola-mail)  
 **Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; **installed** `mail` debug 2026-08-31  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  

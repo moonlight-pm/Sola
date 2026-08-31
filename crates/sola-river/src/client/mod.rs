@@ -279,6 +279,16 @@ pub fn bus_tick(state: &mut AppData) {
     if state.bus.ensure_connected() {
         republish_after_bus_reconnect(state);
     }
+    // Hard-killed clients (lag spike + SIGKILL) never send `closed`.
+    // Zombie sola-shell surfaces then occupy composition and the
+    // replacement iced process does not map — menubar gone, process up.
+    let pruned = crate::client::window::prune_dead_pid_windows(state);
+    if pruned > 0 {
+        tracing::info!(count = pruned, "pruned windows with dead pids");
+        crate::translator::emit_windows(state);
+        state.pending.manage_dirty = true;
+        state.pending.render_dirty = true;
+    }
     state.bus.drain_notify();
     // Screenshot PNG encode runs off-thread; deliver results here.
     screenshot::poll_results(state);

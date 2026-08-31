@@ -56,9 +56,9 @@ pub struct LaunchResultPayload {
 
 /// Request that the shell omit an app's surfaces from composition
 /// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
-/// to show again. Used by sola-arcade to park Steam's client UI while a
-/// game runs under windowed gamescope — Sola has no taskbar minimize, so
-/// the shell shows a menubar chip for each hidden app as the restore path.
+/// to show again. Super+H on the focused app emits this; restore via
+/// Super+Tab or the launcher (already-running). Also used to park Steam's
+/// client UI while a game runs under windowed gamescope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppHidden {
     pub app_id: String,
