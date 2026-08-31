@@ -79,13 +79,11 @@ fn capture_freeze() -> Result<FreezeImage, String> {
     let width = v
         .get("width")
         .and_then(|w| w.as_u64())
-        .ok_or_else(|| "screenshot: no width in freeze reply".to_string())?
-        as u32;
-    let height = v
-        .get("height")
-        .and_then(|h| h.as_u64())
-        .ok_or_else(|| "screenshot: no height in freeze reply".to_string())?
-        as u32;
+        .ok_or_else(|| "screenshot: no width in freeze reply".to_string())? as u32;
+    let height =
+        v.get("height")
+            .and_then(|h| h.as_u64())
+            .ok_or_else(|| "screenshot: no height in freeze reply".to_string())? as u32;
     let pixels = fs::read(path).map_err(|e| format!("read freeze {path}: {e}"))?;
     let _ = fs::remove_file(path);
     let expected = (width as usize)

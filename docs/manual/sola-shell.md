@@ -1,9 +1,11 @@
 # sola-shell
 
-Desktop shell: menubar, launcher, switcher, zoning.
+Desktop shell: menubar, launcher, switcher, zoning, shortcuts overlay.
 
 **Partial.** Super+H hide **installed** `river` + `shell` (debug, 2026-08-31).
-Menubar remapped after a hard-kill left zombie shell surfaces.
+Window menu + Super+K shortcuts overlay **installed** `kit`+`shell`+`paint`+`terminal`
+(debug, 2026-08-31). Menubar remapped after a hard-kill left zombie
+shell surfaces.
 
 ## Keyboard
 
@@ -14,8 +16,20 @@ Menubar remapped after a hard-kill left zombie shell surfaces.
 | Super+\` | Cycle windows of the focused app |
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
+| Super+K | Keyboard shortcuts overlay (same chord as Omarchy) |
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
+
+The flower menu also has **Keyboard Shortcuts**. Type in the overlay to
+filter; click or Enter runs the action. Escape / Super+K again / click
+outside dismisses.
+
+## Window menu
+
+Every focused app gets a **Window** menu (kit default; an app can replace
+it). Hide, cycle windows, float, and every zone — the mouse path for
+chords that used to be keyboard-only. The shell handles those items even
+for XWayland windows.
 
 ## Hide
 

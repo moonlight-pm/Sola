@@ -13,7 +13,6 @@ use iced::widget::{column, container, mouse_area, row, text};
 use iced::{Element, Length, Padding};
 
 use crate::app::Msg;
-use crate::menu::state::synthesized_menu;
 use sola_bus::topics::MenuItem;
 use sola_kit::components::{
     button as kit_btn, divider::horizontal_divider, popover, text as kit_text,
@@ -29,9 +28,9 @@ const ITEM_PAD: [f32; 2] = [3.0, 10.0];
 /// Vertical breathing room around a separator hairline.
 const SEP_V_PAD: f32 = 4.0;
 /// Fixed menu card width (macOS-ish min; content rarely exceeds this).
-pub const MENU_WIDTH: f32 = 220.0;
+pub const MENU_WIDTH: f32 = 240.0;
 /// Generous height for a typical app/system menu (capped by usable area).
-pub const MENU_HEIGHT: f32 = 400.0;
+pub const MENU_HEIGHT: f32 = 480.0;
 
 /// Render the menu overlay for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
@@ -70,13 +69,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .unwrap_or(crate::app::Shell::APP_ID);
         let index = shell.current_open_index.unwrap_or(0);
 
-        let payload = match shell.menus.get_menu(app_id_str) {
-            Some(p) => p.clone(),
-            None => {
-                let label = resolve_label(shell, app_id_str);
-                synthesized_menu(app_id_str, &label)
-            }
-        };
+        let payload = shell.effective_app_menu(app_id_str);
 
         let items = payload
             .menus
@@ -206,15 +199,3 @@ fn menu_separator() -> Element<'static, Msg> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Resolve a human-readable label for an app_id from the applications catalog.
-fn resolve_label(shell: &crate::app::Shell, app_id: &str) -> String {
-    if let Some(app) = shell.applications.get(app_id) {
-        return app.label.clone();
-    }
-    let mut chars = app_id.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}

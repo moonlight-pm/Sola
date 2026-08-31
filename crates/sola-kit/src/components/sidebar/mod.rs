@@ -1176,10 +1176,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         if !hide {
             for item in section.items {
                 let item = assign_close_id(item, row_index);
-                let id = item
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| format!("i{row_index}"));
+                let id = item.id.clone().unwrap_or_else(|| format!("i{row_index}"));
                 let show = item
                     .id
                     .as_ref()
@@ -1210,8 +1207,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         });
     }
     let strip: Element<'a, Message> =
-        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action))
-            .into();
+        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action)).into();
     mouse_area(hidden_scroll(strip, None, None))
         .on_exit(on_action(Msg::Hover(None)))
         .into()

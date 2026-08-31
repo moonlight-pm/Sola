@@ -8,7 +8,7 @@
 |--|--|
 | **Implementation** | New crate `crates/sola-paint`. MIME + argv + `solactl open` image paths. Second spawn hands off via `OpenImage` (`app_id=sola-paint`). Wheel/drag zoom-pan; crop maps through the live dest. Left `SidebarPanel` Large tabs. Crop / rotate / flip / undo / save. Open/Save via kit `FilePicker`. |
 | **Dogfood** | `paint` + `kit` installed locally; FilePicker used. Singleton + zoom/pan need reinstall `paint`. Screenshots stay on preview (need `install shell` if that dest was flipped). |
-| **Gaps** | No clipboard image, no adjust/filters, no undo-after-save distinction. Unsaved buffers are not persisted. |
+| **Gaps** | No clipboard image, no adjust/filters, no undo-after-save distinction. Unsaved buffers are not persisted. Crop shortcut is **⌘⇧K** (⌘K is the shell shortcuts overlay). |
 
 ## Intent
 

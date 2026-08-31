@@ -33,6 +33,7 @@ fn main() -> iced::Result {
             TopicKind::WindowFloating,
         ])
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
+        .window_menu()
         .install();
 
     let app = iced::application(

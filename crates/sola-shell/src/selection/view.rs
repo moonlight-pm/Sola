@@ -73,12 +73,9 @@ impl canvas::Program<Msg> for Marquee {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => Some(
                 canvas::Action::publish(Msg::SelectionPress { x: pos.x, y: pos.y }).and_capture(),
             ),
-            Event::Mouse(mouse::Event::CursorMoved { .. }) if self.drag_start.is_some() => {
-                Some(
-                    canvas::Action::publish(Msg::SelectionMove { x: pos.x, y: pos.y })
-                        .and_capture(),
-                )
-            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if self.drag_start.is_some() => Some(
+                canvas::Action::publish(Msg::SelectionMove { x: pos.x, y: pos.y }).and_capture(),
+            ),
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(
                 canvas::Action::publish(Msg::SelectionRelease { x: pos.x, y: pos.y }).and_capture(),
             ),
