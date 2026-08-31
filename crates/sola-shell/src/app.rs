@@ -23,6 +23,17 @@ use crate::zoning::ZoningState;
 
 pub mod bus;
 
+/// Emit/retract on the kit bus if it is installed. No-op in unit tests.
+fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
+    let Some(slot) = sola_kit::app::try_bus() else {
+        return;
+    };
+    match slot.lock() {
+        Ok(mut bus) => f(&mut bus),
+        Err(poisoned) => f(&mut poisoned.into_inner()),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Menubar,
@@ -103,8 +114,6 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
-    /// Menubar chip: unhide a composition-hidden app (AppHidden retract) and raise it.
-    UnhideApp(String),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
     /// Expire a live notification banner (`NotifyState` generation).
@@ -255,8 +264,8 @@ pub struct Shell {
     pub applications: ApplicationsConfig,
 
     /// Apps omitted from composition (River `hide`). Keyed lowercased for
-    /// case-insensitive match; value is the original app_id for menubar labels
-    /// and AppHidden retract. Filled from sticky `Topic::AppHidden`.
+    /// case-insensitive match; value is the original app_id for AppHidden
+    /// retract. Filled from sticky `Topic::AppHidden`.
     pub hidden_apps: HashMap<String, String>,
 
     // Menu cache (built up from Topic::SetAppMenu replays)
@@ -417,6 +426,14 @@ impl Shell {
     /// Look up a window_id by (app_id, title). sola-river includes shell surfaces
     /// in Topic::Windows with the title set by the iced `title()` callback.
     pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
+        if app_id == Self::APP_ID {
+            let me = std::process::id();
+            if let Some(w) = self.known_windows.iter().find(|w| {
+                w.app_id == app_id && w.title == title && w.pid == Some(me)
+            }) {
+                return Some(w.window_id);
+            }
+        }
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
@@ -427,41 +444,100 @@ impl Shell {
         self.hidden_apps.contains_key(&app_id.to_ascii_lowercase())
     }
 
-    /// Menubar labels for hidden apps (original app_id casing), sorted.
-    pub fn hidden_app_labels(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.hidden_apps.values().cloned().collect();
-        v.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
-        v
+    /// Retract sticky AppHidden without raising. Used when the app's last
+    /// surface is gone so a later map of the same app_id is not stuck hidden.
+    pub fn retract_app_hidden(&mut self, app_id: &str) {
+        let key = app_id.to_ascii_lowercase();
+        let Some(original) = self.hidden_apps.remove(&key) else {
+            return;
+        };
+        with_bus(|bus| {
+            let _ = bus.retract(Topic::AppHidden(sola_bus::topics::AppHidden {
+                app_id: original,
+            }));
+        });
     }
 
-    /// Retract AppHidden, optionally focus a live window of that app, recompose.
+    /// Retract AppHidden and raise a live window of that app (composition +
+    /// seat). No-op raise when no surface exists; the sticky is still cleared.
     pub fn unhide_app(&mut self, app_id: &str) {
         let key = app_id.to_ascii_lowercase();
         let original = self
             .hidden_apps
             .remove(&key)
             .unwrap_or_else(|| app_id.to_string());
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.retract(Topic::AppHidden(sola_bus::topics::AppHidden {
                 app_id: original.clone(),
             }));
+        });
+        let raise_id = self
+            .known_windows
+            .iter()
+            .find(|w| w.app_id.eq_ignore_ascii_case(&original))
+            .map(|w| w.app_id.clone())
+            .unwrap_or(original);
+        self.raise_app(&raise_id);
+    }
+
+    /// Super+H: omit the focused app from composition (River `hide`).
+    /// Focuses the next visible MRU app. Does not hide the shell.
+    pub fn hide_focused_app(&mut self) {
+        let Some(app_id) = self.focused_app_id.clone() else {
+            return;
+        };
+        if app_id == Self::APP_ID || self.is_app_hidden(&app_id) {
+            return;
         }
-        // Raise / focus if a surface exists.
-        if let Some(wid) = self.mru_window_by_app.get(&original).copied().or_else(|| {
+        tracing::info!(app_id = %app_id, "Super+H — hide focused app");
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        self.hidden_apps
+            .insert(app_id.to_ascii_lowercase(), app_id.clone());
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::AppHidden(sola_bus::topics::AppHidden {
+                app_id: app_id.clone(),
+            }));
+        });
+        if self.pointer_window_id.is_some_and(|wid| {
             self.known_windows
                 .iter()
-                .find(|w| w.app_id.eq_ignore_ascii_case(&original))
-                .map(|w| w.window_id)
+                .any(|w| w.window_id == wid && w.app_id.eq_ignore_ascii_case(&app_id))
         }) {
-            self.mru_apps
-                .retain(|id| !id.eq_ignore_ascii_case(&original));
-            self.mru_apps.insert(0, original.clone());
-            self.mru_window_by_app.insert(original.clone(), wid);
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-            }
+            self.pointer_window_id = None;
         }
-        self.emit_composition();
+        let next = self
+            .mru_apps
+            .iter()
+            .find(|id| id.as_str() != Self::APP_ID && !self.is_app_hidden(id))
+            .cloned();
+        if let Some(next) = next {
+            self.raise_app(&next);
+        } else {
+            self.focused_app_id = None;
+            self.focused_window_id = None;
+            self.emit_registered_chords();
+            self.emit_composition();
+        }
+    }
+
+    /// Catalog / window app_id of a composition-hidden mapped app matching
+    /// `catalog_id`, if any. Launcher uses this to unhide instead of spawn.
+    pub fn mapped_hidden_app_id(&self, catalog_id: &str) -> Option<String> {
+        if self.is_app_hidden(catalog_id) {
+            return Some(
+                self.hidden_apps
+                    .get(&catalog_id.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| catalog_id.to_string()),
+            );
+        }
+        self.known_windows.iter().find_map(|w| {
+            if self.matches_pending_app(&w.app_id, catalog_id) && self.is_app_hidden(&w.app_id) {
+                Some(w.app_id.clone())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn mail_is_mapped(&self) -> bool {
@@ -627,9 +703,17 @@ impl Shell {
     }
 
     /// Emit LaunchApp for `app_id`, show opening toast, close launcher.
+    /// A composition-hidden running app is unhidden and raised instead of
+    /// spawned again.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
+            if let Some(hidden) = self.mapped_hidden_app_id(id) {
+                self.launcher.active = false;
+                self.unhide_app(&hidden);
+                self.emit_registered_chords();
+                return iced::Task::none();
+            }
             if let Some(app) = self.applications.get(id) {
                 let command = app.command.clone();
                 let label = app.label.clone();
@@ -832,9 +916,9 @@ impl Shell {
             return;
         }
         self.last_composition = order;
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.emit(Topic::Composition(entries));
-        }
+        });
     }
 
     /// Which top-level menu of `app_id` contains `action_id`, as a position
@@ -924,7 +1008,7 @@ impl Shell {
 
     /// Emit Topic::RegisteredChords based on current overlay state and focused app.
     ///
-    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
+    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+H, Meta+Grave,
     /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
     /// always registered so ChordReleased fires for switcher confirm. Escape
     /// registered only while an overlay is active. Meta+Left/Right registered
@@ -945,9 +1029,9 @@ impl Shell {
             switcher = self.switcher.active,
             "emitting RegisteredChords"
         );
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.emit(Topic::RegisteredChords(chords));
-        }
+        });
     }
 
     /// Build the list of chords the shell wants River to grab.
@@ -978,6 +1062,7 @@ impl Shell {
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
+        bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
@@ -1755,10 +1840,6 @@ impl Shell {
                 }
                 self.launch_from_launcher(Some(&app_id))
             }
-            Msg::UnhideApp(app_id) => {
-                self.unhide_app(&app_id);
-                iced::Task::none()
-            }
             Msg::RaiseMail => {
                 self.activate_mail();
                 iced::Task::none()
@@ -1894,20 +1975,8 @@ impl Shell {
                 self.switcher.active = false;
 
                 if let Some(ref app_id) = app_id {
-                    // Update focus and MRU.
-                    self.bus_set_focus(app_id);
-                    let wid = self
-                        .mru_window_by_app
-                        .get(app_id)
-                        .copied()
-                        .or_else(|| self.lookup_any_window_id(app_id));
-                    if let Some(wid) = wid {
-                        self.focused_window_id = Some(wid);
-                        self.mru_window_by_app.insert(app_id.clone(), wid);
-                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                        }
-                    }
+                    // Unhide if Super+H parked this app, then raise (MRU + seat).
+                    self.raise_app(app_id);
                 }
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -2179,5 +2248,196 @@ mod pending_launch_tests {
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_none());
         assert!(shell.menubar.toast.is_none());
+    }
+}
+
+#[cfg(test)]
+mod hide_tests {
+    use super::*;
+
+    fn win(id: u32, app: &str, title: &str) -> Window {
+        Window {
+            window_id: id,
+            app_id: app.into(),
+            title: title.into(),
+            pid: None,
+        }
+    }
+
+    fn test_shell(windows: Vec<Window>, focused: Option<&str>, mru: &[&str]) -> Shell {
+        let mut window_id_by_key = HashMap::new();
+        let mut mru_window_by_app = HashMap::new();
+        for w in &windows {
+            window_id_by_key.insert((w.app_id.clone(), w.title.clone()), w.window_id);
+            if w.app_id != Shell::APP_ID {
+                mru_window_by_app
+                    .entry(w.app_id.clone())
+                    .or_insert(w.window_id);
+            }
+        }
+        let focused_window_id = focused.and_then(|app| {
+            windows
+                .iter()
+                .find(|w| w.app_id == app)
+                .map(|w| w.window_id)
+        });
+        Shell {
+            theme: theme::default_theme(),
+            style: theme::ShellStyle::default(),
+            menubar_window_id: None,
+            menu_window_id: None,
+            launcher_window_id: None,
+            switcher_window_id: None,
+            selection_window_id: None,
+            notify_window_id: None,
+            focused_app_id: focused.map(str::to_string),
+            focused_window_id,
+            pointer_window_id: focused_window_id,
+            pending_focus_generation: 0,
+            mru_apps: mru.iter().map(|s| s.to_string()).collect(),
+            mru_window_by_app,
+            known_windows: windows,
+            window_id_by_key,
+            last_composition: Vec::new(),
+            last_registered_chords: Vec::new(),
+            applications: ApplicationsConfig {
+                apps: crate::builtins::builtin_apps(),
+            },
+            hidden_apps: HashMap::new(),
+            menus: MenuCache::new(),
+            output_size: None,
+            menu_open: false,
+            menu_anchor_x: 0.0,
+            current_open_index: None,
+            current_open_is_system: false,
+            open_panel: None,
+            calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
+            switcher: SwitcherState::default(),
+            launcher: LauncherState::default(),
+            selection: SelectionState::default(),
+            notify: crate::notify::NotifyState::default(),
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
+            open_preview_on_next: false,
+            screenshot_return_focus: None,
+            suppress_map_focus_for: None,
+            zoning: ZoningState::new(),
+            menubar: MenubarState::new(),
+            pending_launch: None,
+            stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
+            cpu_hist: crate::stats::History::new(60),
+            mem_hist: crate::stats::History::new(60),
+            net_down_hist: crate::stats::History::new(60),
+            net_up_hist: crate::stats::History::new(60),
+            gpu_hist: crate::stats::History::new(60),
+            inbox_unread: None,
+            overlay_iced_live: [false; 5],
+        }
+    }
+
+    fn desktop() -> Shell {
+        test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-terminal", "Terminal"),
+                win(3, "sola-browser", "Browser"),
+            ],
+            Some("sola-terminal"),
+            &["sola-terminal", "sola-browser"],
+        )
+    }
+
+    fn composed_apps(shell: &Shell) -> Vec<u32> {
+        shell
+            .build_composition_entries()
+            .into_iter()
+            .map(|e| e.window_id)
+            .collect()
+    }
+
+    #[test]
+    fn shell_key_chords_include_super_h() {
+        let shell = desktop();
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::H && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+H must be a registered shell chord"
+        );
+    }
+
+    #[test]
+    fn hide_omits_app_from_composition_and_focuses_next() {
+        let mut shell = desktop();
+        assert_eq!(composed_apps(&shell), vec![1, 3, 2]); // menubar, browser, terminal (MRU top)
+
+        shell.hide_focused_app();
+
+        assert!(shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-browser"));
+        assert_eq!(shell.focused_window_id, Some(3));
+        assert_eq!(composed_apps(&shell), vec![1, 3]); // terminal omitted
+        assert_eq!(
+            shell.mapped_hidden_app_id("sola-terminal").as_deref(),
+            Some("sola-terminal")
+        );
+    }
+
+    #[test]
+    fn hide_does_not_hide_shell() {
+        let mut shell = test_shell(
+            vec![win(1, Shell::APP_ID, "menubar")],
+            Some(Shell::APP_ID),
+            &[],
+        );
+        shell.hide_focused_app();
+        assert!(!shell.is_app_hidden(Shell::APP_ID));
+        assert_eq!(shell.focused_app_id.as_deref(), Some(Shell::APP_ID));
+        assert_eq!(composed_apps(&shell), vec![1]);
+    }
+
+    #[test]
+    fn hide_last_app_clears_focus() {
+        let mut shell = test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-terminal", "Terminal"),
+            ],
+            Some("sola-terminal"),
+            &["sola-terminal"],
+        );
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+        assert!(shell.focused_app_id.is_none());
+        assert!(shell.focused_window_id.is_none());
+        assert_eq!(composed_apps(&shell), vec![1]);
+    }
+
+    #[test]
+    fn unhide_restores_composition_and_focus() {
+        let mut shell = desktop();
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+
+        shell.unhide_app("sola-terminal");
+
+        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+        let composed = composed_apps(&shell);
+        assert!(composed.contains(&2), "terminal must be in composition");
+        assert_eq!(*composed.last().unwrap(), 2, "unhide raises to top");
+    }
+
+    #[test]
+    fn raise_app_unhides() {
+        let mut shell = desktop();
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+
+        shell.raise_app("sola-terminal");
+
+        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
     }
 }

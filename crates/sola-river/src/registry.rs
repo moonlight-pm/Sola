@@ -109,6 +109,24 @@ impl WindowRegistry {
         self.by_id.get(&id).and_then(|e| e.pid)
     }
 
+    /// Window ids whose `unreliable_pid` is set and that process is gone.
+    /// Used to drop compositor entries after a client is SIGKILL'd without
+    /// a `river_window_v1.closed` (the shell then stays invisible: zombies
+    /// occupy composition, the replacement process never maps).
+    pub fn dead_pid_ids(&self) -> Vec<u32> {
+        self.by_id
+            .iter()
+            .filter_map(|(id, e)| {
+                let pid = e.pid?;
+                if crate::proc_identity::process_is_alive(pid) {
+                    None
+                } else {
+                    Some(*id)
+                }
+            })
+            .collect()
+    }
+
     /// If `app_id` is empty/missing and the window's pid looks like gamescope,
     /// force `app_id = "gamescope"` (and a floor title when still unset).
     ///
@@ -287,6 +305,20 @@ mod tests {
         let id = r.mint();
         r.remove(id);
         assert!(r.get(id).is_none());
+    }
+
+    #[test]
+    fn dead_pid_ids_skips_live_and_unset() {
+        let mut r = WindowRegistry::new();
+        let live = r.mint();
+        r.set_pid(live, std::process::id());
+        let dead = r.mint();
+        r.set_pid(dead, u32::MAX);
+        let unset = r.mint();
+        let mut ids = r.dead_pid_ids();
+        ids.sort();
+        assert_eq!(ids, vec![dead]);
+        let _ = unset;
     }
 
     #[test]

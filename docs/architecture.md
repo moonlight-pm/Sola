@@ -180,6 +180,17 @@ Zoning / floating is coordinated with `sola-river` over the bus:
 unassigned windows **default-float** (client size + `Topic::WindowFloating`);
 saved zones restore frames; Meta+numpad snaps assign zones.
 
+**Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
+`Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab
+(switcher still lists hidden apps), launcher on an already-running hidden app
+(unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
+unread, notification click). Last window of a hidden app retracts the sticky
+so a later map is not stuck hidden. No menubar chip.
+
+A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
+`closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn
+can map a new menubar. Shell composition also ignores dead-pid windows.
+
 ### Games / Arcade (as-built)
 
 | Piece | Role |
@@ -192,7 +203,7 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 | Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`). Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |
-| AppHidden | Bus sticky still exists (shell hide chip path); Arcade UI does not expose hide-Steam |
+| AppHidden | Super+H + switcher/launcher restore (no menubar chip); Arcade UI does not expose hide-Steam |
 
 Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 

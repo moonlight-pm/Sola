@@ -291,6 +291,28 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_letter_h() {
+        // Super+H hide — same letter-keysym class as Q (must register as
+        // lowercase XK_h, not raw evdev).
+        let chord = KeyChord {
+            keycode: KeyCode::H,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let reg = to_registered(&chord);
+        assert_eq!(reg.keysym, b'h' as u32, "H must map to XK_h");
+        let back = from_chord_event(&ChordEvent {
+            keysym: reg.keysym,
+            modifiers: reg.modifiers,
+        })
+        .expect("round-trip must succeed for H");
+        assert_eq!(back.keycode, KeyCode::H);
+        assert!(back.meta);
+    }
+
+    #[test]
     fn round_trip_letter_q() {
         let chord = KeyChord {
             keycode: KeyCode::Q,

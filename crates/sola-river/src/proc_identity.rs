@@ -4,6 +4,11 @@
 
 use std::path::Path;
 
+/// True when `/proc/<pid>` exists (process still in the table).
+pub fn process_is_alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).is_dir()
+}
+
 /// True when `pid` looks like a gamescope host process (cmdline contains
 /// `gamescope` as an argv token or path component).
 pub fn process_is_gamescope(pid: u32) -> bool {
@@ -35,6 +40,16 @@ pub fn is_gamescope_app_id(app_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_is_alive_self() {
+        assert!(process_is_alive(std::process::id()));
+    }
+
+    #[test]
+    fn process_is_alive_missing() {
+        assert!(!process_is_alive(u32::MAX));
+    }
 
     #[test]
     fn is_gamescope_app_id_case_insensitive() {
