@@ -245,7 +245,9 @@ pub fn page_atoms(page: &str) -> &'static [&'static str] {
         "text" => &["fg", "muted", "accent", "success", "warning", "danger"],
         "json" => &["fg", "muted", "accent", "success", "warning"],
         "button" => &["accent", "danger", "bg", "hover", "hairline", "fg"],
-        "badge" => &["accent", "success", "warning", "danger", "hairline", "muted"],
+        "badge" => &[
+            "accent", "success", "warning", "danger", "hairline", "muted",
+        ],
         "card" => &["bg", "raised", "hairline", "fg", "accent"],
         "field" => &["raised", "hairline", "fg", "muted", "danger", "accent"],
         "form" => &["accent", "raised", "hover", "hairline", "fg", "muted"],

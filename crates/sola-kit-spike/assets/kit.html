@@ -1,6 +1,6 @@
 <!--
   Kit spike storybook chrome. Edit this file; the process reloads on mtime.
-  data-template="row" is cloned into data-slot="nav".
+  data-slot="sidebar" is replaced by components::sidebar.
   data-bind fills title / heading / lede / theme.
 -->
 <div class="app">
@@ -26,15 +26,7 @@
     <div class="btn btn-sm btn-danger-outline" data-action="theme-delete">Delete</div>
   </div>
   <div class="body">
-    <aside class="sidebar">
-      <div class="nav" data-slot="nav" data-id="nav-scroll">
-        <div class="row" data-template="row" data-id="" data-kind="item">
-          <div class="etch">
-            <div class="label" data-bind="label"></div>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <div data-slot="sidebar"></div>
     <main class="stage" data-id="stage-scroll">
       <div class="heading" data-bind="heading"></div>
       <div class="lede" data-bind="lede"></div>

@@ -241,16 +241,24 @@ pub fn paint_glyphs(
         }
         if let Some(run) = &item.text {
             let bg = covering_bg(items, i);
-            let box_w = (item.w - item.pad[1] - item.pad[3]).max(1.0) * s;
+            let mut box_w = (item.w - item.pad[1] - item.pad[3]).max(1.0) * s;
             let box_h = (item.h - item.pad[0] - item.pad[2]).max(1.0) * s;
+            let tx = (item.x + item.pad[3] - scroll) * s;
+            let ty = (item.y + item.pad[0]) * s;
+            if let Some((cx, _cy, cw, _ch)) = clip {
+                box_w = box_w.min((cx + cw - tx).max(0.0));
+            }
+            if box_w < 0.5 {
+                continue;
+            }
             draw_text(
                 &mut buf,
                 w,
                 h,
                 fonts,
                 run.text.as_str(),
-                (item.x + item.pad[3] - scroll) * s,
-                (item.y + item.pad[0]) * s,
+                tx,
+                ty,
                 box_w,
                 box_h,
                 run.color,

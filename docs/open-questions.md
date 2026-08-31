@@ -117,10 +117,10 @@ remains the shipped kit. Idea:
 
 1. Dead probes **removed** (`sola-blitz-spike`, `sola-html-spike`).  
 2. Dual-kit era: HTML kit is a workspace member (wgpu 27). Storybook
-   stays `sola-kit-spike`. First app twin is **`sola-settings-lab`**
-   (`app_id` `sola-settings-lab`, title `Settings (lab)`).  
+   stays `sola-kit-spike`. Lab twins: **`sola-settings-lab`**
+   (`Settings (lab)`) and **`sola-monitor-lab`** (`Monitor (lab)`).  
 3. Install still skips `*-spike` / `*-lab` — run from `target/release/`.
-   Never overwrite iced `sola-settings`.  
+   Never overwrite iced `sola-settings` / `sola-monitor`.  
 4. One bus `Topic::Theme` (`sola_core::theme::Theme`). HTML kit binds
    via `Theme::to_css` / CSS vars. No protocol version field.  
 5. JS/DOM still punted. Window host remains sctk + calloop.
@@ -136,6 +136,7 @@ that is an explicit decision.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-30 | D5 apply | Second lab twin `sola-monitor-lab`. Kit `components` (`sidebar`, `json`). Host sctk 0.20. | CURRENT, idea, capabilities, architecture |
 | 2026-08-29 | D5 amend | Drop blitz/html-spike. Dual-kit: workspace HTML kit + `sola-settings-lab`. Same `Topic::Theme`. Install skips `*-lab`. | CURRENT, idea, capabilities, architecture |
 | 2026-08-25 | D5 | Spike examples (not canary install). First crate `sola-kit-spike`. Distinct `app_id` `sola-kit-spike` / title `Kit (spike)`. No install, no merge. sctk not winit. JS punted. | CURRENT, idea, capabilities, architecture |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |

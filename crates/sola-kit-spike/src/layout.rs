@@ -1,5 +1,7 @@
 //! Taffy flex layout from computed CSS.
 
+use std::collections::HashMap;
+
 use taffy::prelude::*;
 
 use crate::css::{Computed, Len, Rgba, Sheet, compute};
@@ -148,8 +150,12 @@ fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
         },
         size: Size { width, height },
         min_size: Size {
-            width: min_width,
-            height: if c.overflow_scroll && c.min_height.is_none() {
+            width: if (c.overflow_hidden || c.overflow_scroll) && c.min_width.is_none() {
+                length(0.0)
+            } else {
+                min_width
+            },
+            height: if (c.overflow_hidden || c.overflow_scroll) && c.min_height.is_none() {
                 length(0.0)
             } else {
                 dim(c.min_height)
@@ -157,7 +163,7 @@ fn to_style(c: &Computed, el: &Elem, fonts: &mut Fonts) -> Style {
         },
         max_size: Size {
             width: dim(c.max_width),
-            height: Dimension::Auto,
+            height: dim(c.max_height),
         },
         flex_grow: c.flex_grow,
         flex_shrink: c.flex_shrink,
@@ -459,4 +465,245 @@ pub fn hover_at(items: &[PaintItem], x: f32, y: f32) -> Option<u32> {
             .find(|i| point_in_item(i, x, y))
             .map(|i| i.uid)
     })
+}
+
+/// Graphite hover / etch fills. Applied after layout so a pointer move can
+/// restyle without rebuilding the tree or rerastering glyphs.
+const HOVER_FILL: Rgba = Rgba::rgb(0x1e, 0x25, 0x33);
+const ETCH_LIP: Rgba = Rgba::rgb(0x20, 0x25, 0x2f);
+const ETCH_WELL: Rgba = Rgba::rgb(0x0e, 0x12, 0x1b);
+
+fn has_class(item: &PaintItem, class: &str) -> bool {
+    item.classes.iter().any(|c| c == class)
+}
+
+/// Patch list-etch / log / toolbar hover onto already-laid-out items.
+pub fn apply_pointer_hover(items: &mut [PaintItem], hover: Option<u32>) {
+    let hit = hover.and_then(|uid| {
+        items
+            .iter()
+            .find(|i| i.uid == uid)
+            .map(|i| (i.x + 1.0, i.y + 1.0, i.uid))
+    });
+    let hovered_row = hit.and_then(|(x, y, uid)| {
+        items
+            .iter()
+            .rev()
+            .find(|i| (has_class(i, "log-row") || has_class(i, "row")) && point_in_item(i, x, y))
+            .map(|i| i.uid)
+            .or(Some(uid))
+    });
+    let rows: Vec<(u32, f32, f32, f32, f32, bool, bool, bool)> = items
+        .iter()
+        .filter(|i| has_class(i, "log-row") || has_class(i, "row"))
+        .map(|i| {
+            (
+                i.uid,
+                i.x,
+                i.y,
+                i.w,
+                i.h,
+                has_class(i, "is-active"),
+                has_class(i, "is-header"),
+                has_class(i, "log-row"),
+            )
+        })
+        .collect();
+    for item in items.iter_mut() {
+        if has_class(item, "log-row") {
+            let on = hovered_row == Some(item.uid);
+            let active = has_class(item, "is-active");
+            item.bg = if active || on { Some(HOVER_FILL) } else { None };
+            continue;
+        }
+        if has_class(item, "toolbar-btn") || has_class(item, "menu-item") {
+            let on = hover == Some(item.uid) || hovered_row == Some(item.uid);
+            item.bg = if on { Some(HOVER_FILL) } else { None };
+            continue;
+        }
+        if has_class(item, "row") {
+            if has_class(item, "is-header") {
+                item.bg = None;
+            } else if has_class(item, "is-active") {
+                item.bg = Some(ETCH_LIP);
+            } else {
+                item.bg = None;
+            }
+            continue;
+        }
+        if has_class(item, "etch") {
+            let cx = item.x + item.w * 0.5;
+            let cy = item.y + item.h * 0.5;
+            let parent = rows
+                .iter()
+                .rev()
+                .find(|r| cx >= r.1 && cy >= r.2 && cx < r.1 + r.3 && cy < r.2 + r.4);
+            let Some(p) = parent else {
+                continue;
+            };
+            item.bg = if p.6 {
+                None
+            } else if p.5 {
+                Some(ETCH_WELL)
+            } else if hovered_row == Some(p.0) {
+                Some(HOVER_FILL)
+            } else {
+                None
+            };
+            continue;
+        }
+        if has_class(item, "sb-thumb") {
+            let on = hover == Some(item.uid);
+            item.bg = Some(if on {
+                Rgba::rgb(0xa1, 0xad, 0xc7)
+            } else {
+                SCROLL_THUMB
+            });
+        }
+    }
+}
+
+const SCROLL_THUMB: Rgba = Rgba {
+    r: 0x8b,
+    g: 0x94,
+    b: 0xa8,
+    a: 0xb0,
+};
+const SCROLL_TRACK: Rgba = Rgba {
+    r: 0x00,
+    g: 0x00,
+    b: 0x00,
+    a: 0x00,
+};
+
+/// Overlay scrollbar width (CSS px). Wide enough to grab; inset from the
+/// log/rail splitter so the resize hit band does not steal the thumb.
+pub const SCROLLBAR_W: f32 = 12.0;
+const SCROLLBAR_PAD: f32 = 6.0;
+const THUMB_MIN: f32 = 32.0;
+
+/// Overlay thumb for a scroll pane. `None` when content fits.
+pub fn scrollbar_thumb(pane_h: f32, content_h: f32, scroll: f32) -> Option<(f32, f32, f32)> {
+    if content_h <= pane_h + 1.0 {
+        return None;
+    }
+    let track_h = (pane_h - SCROLLBAR_PAD * 2.0).max(THUMB_MIN);
+    let thumb_h = ((pane_h / content_h) * track_h).clamp(THUMB_MIN, track_h);
+    let max = (content_h - pane_h).max(0.0);
+    let t = if max < 0.5 {
+        0.0
+    } else {
+        (scroll / max).clamp(0.0, 1.0)
+    };
+    let thumb_y = SCROLLBAR_PAD + t * (track_h - thumb_h);
+    Some((thumb_y, thumb_h, max))
+}
+
+fn overlay_fill(
+    uid: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    bg: Rgba,
+    radius: f32,
+    z: i32,
+    action: &str,
+    id: &str,
+    class: &str,
+) -> PaintItem {
+    PaintItem {
+        uid,
+        x,
+        y,
+        w,
+        h,
+        bg: Some(bg),
+        bg2: None,
+        gradient: 0,
+        border: [None, None, None, None],
+        radius,
+        text: None,
+        data_id: Some(id.into()),
+        data_kind: None,
+        data_surface: None,
+        data_input: None,
+        data_action: Some(action.into()),
+        classes: vec![class.into()],
+        clip: None,
+        overflow_scroll: false,
+        content_h: h,
+        color: None,
+        hidden: false,
+        pad: [0.0; 4],
+        text_align_center: false,
+        z,
+        wrap: false,
+    }
+}
+
+/// Overlay track + thumb on every overflowing scroll pane. Hit-test wins
+/// because these are appended last (higher z).
+pub fn append_scrollbars(items: &mut Vec<PaintItem>, scrolls: &HashMap<String, f32>) {
+    let panes: Vec<(String, f32, f32, f32, f32, f32)> = items
+        .iter()
+        .filter(|i| i.overflow_scroll && i.data_id.is_some())
+        .filter(|i| i.content_h > i.h + 1.0)
+        .map(|i| (i.data_id.clone().unwrap(), i.x, i.y, i.w, i.h, i.content_h))
+        .collect();
+    let mut uid = 800_000u32;
+    for (id, x, y, w, h, content_h) in panes {
+        let scroll = scrolls.get(&id).copied().unwrap_or(0.0);
+        let Some((thumb_y, thumb_h, _)) = scrollbar_thumb(h, content_h, scroll) else {
+            continue;
+        };
+        let track_x = x + w - SCROLLBAR_W - SCROLLBAR_PAD;
+        uid += 1;
+        items.push(overlay_fill(
+            uid,
+            track_x,
+            y,
+            SCROLLBAR_W,
+            h,
+            SCROLL_TRACK,
+            0.0,
+            20,
+            "scroll-track",
+            &id,
+            "sb-track",
+        ));
+        uid += 1;
+        items.push(overlay_fill(
+            uid,
+            track_x,
+            y + thumb_y,
+            SCROLLBAR_W,
+            thumb_h,
+            SCROLL_THUMB,
+            3.5,
+            21,
+            "scroll-thumb",
+            &id,
+            "sb-thumb",
+        ));
+    }
+}
+
+#[cfg(test)]
+mod scrollbar_tests {
+    use super::*;
+
+    #[test]
+    fn thumb_hides_when_content_fits() {
+        assert!(scrollbar_thumb(200.0, 180.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn thumb_moves_with_scroll() {
+        let (y0, h0, max) = scrollbar_thumb(200.0, 1000.0, 0.0).unwrap();
+        let (y1, h1, _) = scrollbar_thumb(200.0, 1000.0, max).unwrap();
+        assert!((h0 - h1).abs() < 0.01);
+        assert!(y1 > y0 + 50.0);
+        assert!(max > 700.0);
+    }
 }

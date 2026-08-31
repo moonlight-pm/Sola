@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-30 (`kit-retarget`: HTML kit + dogfood `sola-settings-lab`; iced still the shipped kit)
+**As of:** 2026-08-30 (`kit-retarget`: HTML kit + lab twins settings/monitor; iced still the shipped kit)
 
 ---
 
@@ -116,19 +116,32 @@ Do not invent product policy.
    loopback is `http://`. Passkey **create** smoked. Page menu
    DevTools / Inspect Element; HTML5 drag/drop.
 11. **HTML kit (this worktree)** — workspace member `crates/sola-kit-spike`
-    (wgpu 27, sctk). Storybook `sola-kit-spike` / `Kit (spike)`. First
-    app twin **`sola-settings-lab`** / `Settings (lab)` dogfooded:
-    Applications + Mail on iced bus topics (`Theme`, `Application`,
-    `MailConfig`, `Windows`, `WindowFloating`). Save/remove emit the
-    same stickies iced settings already consumes. Zoned chrome-less;
-    float = CSD + 14px rounded frame. List-etch nav; fill-height apps
-    catalog + 380px detail. Fields: I-beam, caret-follow scroll,
-    word/all select, Emacs motions, key-repeat. Host self-watches
-    `current_exe()`. **Do not install**; run
-    `target/release/sola-settings-lab`. Iced `sola-settings` unchanged.
-    `sola-blitz-spike` / `sola-html-spike` **removed**. JS punted. Do
-    not retarget iced `sola-kit`. **Next:** another lab twin or freeze
-    talk — not a merge.
+    (wgpu 27, sctk). Storybook `sola-kit-spike` / `Kit (spike)`. Lab twins
+    (distinct `app_id`, never overwrite iced):
+    - **`sola-settings-lab`** / `Settings (lab)` dogfooded: Applications
+      + Mail on iced bus topics (`Theme`, `Application`, `MailConfig`,
+      `Windows`, `WindowFloating`). Zoned chrome-less; float = CSD +
+      14px rounded frame. Nav is kit `components::sidebar` (list etch);
+      fill-height apps catalog. Fields: I-beam, caret-follow, word/all
+      select, Emacs, key-repeat.
+    - **`sola-monitor-lab`** / `Monitor (lab)`: Bus + Call inspector
+      (same observer path as iced: `Role::Observer` + `Wire::Trace`).
+      Same kit sidebar as settings-lab (Bus/Call); last-known / owners
+      rail is that sidebar with `.is-fill`. Absolute chrome (toolbar /
+      log / inspector / rail). Live log virtualizes the visible slice of
+      the 5k buffer; payload JSON is kit `components::json` and clips at
+      the log pane. Hover restyles GPU quads only (no glyph re-upload).
+      Overlay scrollbar on the log (12px thumb, hit before the split
+      rule). Wheel is 5 rows/detent and unpins follow-tail on the first
+      notch up. Log rows clip to the log pane (no leak into inspector).
+      Rebuilds on log traffic at 200ms, not Frame-rate.
+      Filter + topic/owner select, pause/clear, follow-tail. **Desk
+      smoke pending.**
+    Host self-watches `current_exe()`. **Do not install**; run
+    `target/release/sola-settings-lab` or
+    `target/release/sola-monitor-lab`. Iced `sola-settings` /
+    `sola-monitor` unchanged. JS punted. Do not retarget iced
+    `sola-kit`. **Next:** another lab twin or freeze talk — not a merge.
 
 **Explicit holds:** HTML/CSS kit vs iced (**D5**, amended 2026-08-29) —
 lab twins with distinct `app_id`, no overwrite of iced binaries. Idea
@@ -149,7 +162,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** (workspaces + browser + paint + mail + monitor + **terminal**). Worktree `kit-retarget` = HTML kit + `sola-settings-lab` (D5 lab twin). Not on master | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (workspaces + browser + paint + mail + monitor + **terminal**). Worktree `kit-retarget` = HTML kit + `sola-settings-lab` + `sola-monitor-lab` (D5 lab twins). Not on master | Feature work in worktrees / Orca workspaces |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket + nested members; selected title no longer shifts — **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |

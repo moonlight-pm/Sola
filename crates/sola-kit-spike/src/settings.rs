@@ -18,6 +18,7 @@ use sola_core::KeyCode;
 use sola_core::applications::{command_exists, resolve_in_path};
 
 use crate::app::Click;
+use crate::components::{Sidebar, SidebarItem};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
 use crate::host::Surface;
@@ -456,6 +457,20 @@ impl Settings {
                 el.data_id.as_deref() == Some("csd") || el.classes.iter().any(|c| c == "titlebar")
             });
         }
+        let mut next = markup::next_uid(&root);
+        let sb = Sidebar::new([
+            SidebarItem::header("SETTINGS"),
+            SidebarItem::new("apps", "Applications")
+                .action("panel")
+                .active(self.panel == Panel::Apps),
+            SidebarItem::new("mail", "Mail")
+                .action("panel")
+                .active(self.panel == Panel::Mail),
+        ])
+        .class("sidebar-settings")
+        .nav_class("settings-nav")
+        .build(&mut next);
+        markup::replace_slot(&mut root, "sidebar", sb);
         markup::walk_mut(&mut root, &mut |el| {
             if self.is_floating() && el.classes.iter().any(|c| c == "app") {
                 markup::add_class(el, "is-float");
@@ -469,16 +484,6 @@ impl Settings {
                         "is-apps"
                     },
                 );
-            }
-            if el.data_action.as_deref() == Some("panel") {
-                let active = match el.data_id.as_deref() {
-                    Some("apps") => self.panel == Panel::Apps,
-                    Some("mail") => self.panel == Panel::Mail,
-                    _ => false,
-                };
-                if active {
-                    markup::add_class(el, "is-active");
-                }
             }
         });
         if self.panel == Panel::Apps {
@@ -892,6 +897,7 @@ fn is_system_app(app_id: &str) -> bool {
         "sola-settings",
         "sola-settings-lab",
         "sola-monitor",
+        "sola-monitor-lab",
         "sola-terminal",
         "sola-browser",
         "sola-kit",
@@ -1185,14 +1191,17 @@ impl Surface for Settings {
     fn floating_chrome(&self) -> bool {
         self.is_floating()
     }
-    fn live_layers(&mut self) -> (Vec<Quad>, Vec<u32>) {
+    fn live_layers(&mut self) -> (Vec<Quad>, Option<Vec<u32>>) {
         self.rebuild();
         let caret = self.caret_px();
         let sel = self.sel_px();
         let focus_uid = self.focused.as_deref().and_then(|id| {
-            self.last_items.iter().find(|i| {
-                i.data_id.as_deref() == Some(id) && i.classes.iter().any(|c| c == "input")
-            }).map(|i| i.uid)
+            self.last_items
+                .iter()
+                .find(|i| {
+                    i.data_id.as_deref() == Some(id) && i.classes.iter().any(|c| c == "input")
+                })
+                .map(|i| i.uid)
         });
         let (bw, bh) = self.buffer_size();
         let quads = crate::app::chrome_quads(
@@ -1203,7 +1212,7 @@ impl Surface for Settings {
             0.5,
             crate::css::Rgba::rgb(0x3d, 0xd6, 0xf5),
         );
-        let pix = paint_glyphs(
+        let pix = Some(paint_glyphs(
             &self.last_items,
             &mut self.fonts,
             self.css_w,
@@ -1217,7 +1226,7 @@ impl Surface for Settings {
                 focus_uid,
                 icons: &mut self.icons,
             },
-        );
+        ));
         (quads, pix)
     }
     fn wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {

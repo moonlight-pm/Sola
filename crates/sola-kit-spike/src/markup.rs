@@ -238,6 +238,52 @@ pub fn fill_slot(root: &mut Elem, name: &str, kids: Vec<Elem>) {
     }
 }
 
+pub fn next_uid(root: &Elem) -> u32 {
+    max_uid(root) + 1
+}
+
+/// Replace the element that carries `data-slot=name` with `replacement`.
+/// Kit components (sidebar, …) own their root markup; apps only leave a slot.
+pub fn replace_slot(root: &mut Elem, name: &str, replacement: Elem) -> bool {
+    if root.data_slot.as_deref() == Some(name) {
+        *root = replacement;
+        return true;
+    }
+    fn walk(el: &mut Elem, name: &str, replacement: &mut Option<Elem>) -> bool {
+        if let Some(i) = el
+            .children
+            .iter()
+            .position(|c| c.data_slot.as_deref() == Some(name))
+        {
+            if let Some(rep) = replacement.take() {
+                el.children[i] = rep;
+                return true;
+            }
+            return false;
+        }
+        for c in &mut el.children {
+            if walk(c, name, replacement) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(root, name, &mut Some(replacement))
+}
+
+pub fn tagged(
+    next: &mut u32,
+    tag: &str,
+    classes: &[&str],
+    action: Option<&str>,
+    id: Option<&str>,
+    text: &str,
+) -> Elem {
+    let mut el = node(next, classes, action, id, text);
+    el.tag = tag.into();
+    el
+}
+
 pub fn set_style(root: &mut Elem, id: &str, style: &str) {
     if let Some(el) = find_id_mut(root, id) {
         el.style_attr = Some(style.to_string());

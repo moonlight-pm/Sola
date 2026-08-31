@@ -3,11 +3,17 @@
 **Status:** idea + HTML kit in this worktree. **Not** a freeze, **not** a
 switch from iced.  
 **Worktree:** `.worktrees/kit-retarget` (branch `kit-retarget`).  
-**Crate:** `crates/sola-kit-spike/` — workspace member (wgpu 27). **sctk +
+**Crate:** `crates/sola-kit-spike/` — workspace member (wgpu 27). **sctk 0.20 +
 calloop**. Binaries (do not install):
 - `sola-kit-spike` — storybook. `app_id` `sola-kit-spike`, title `Kit (spike)`.
 - `sola-settings-lab` — Applications + Mail twin. `app_id` `sola-settings-lab`,
   title `Settings (lab)`. Same bus topics as iced settings.
+- `sola-monitor-lab` — Bus + Call inspector twin. `app_id` `sola-monitor-lab`,
+  title `Monitor (lab)`. Same observer path as iced monitor.
+**Kit components** (defined once in `src/components/`, not copied per app):
+`sidebar` (list-etch `aside.sidebar > .nav > .row > .etch > .label`; optional
+subtitle stack) and `json`. Settings-lab, monitor-lab (nav + last-known rail),
+and storybook chrome all call `sidebar`. Apps leave a `data-slot` in HTML.
 **Removed:** `sola-blitz-spike`, `sola-html-spike` (probes; hole notes below).
 **Out of scope:** replacing `sola-kit` / iced on master; putting the terminal
 grid in HTML; JS/DOM (punted); IME. `cargo make install` skips `*-spike` /
@@ -46,7 +52,7 @@ pages. User-run binary only (`cargo make build sola-html-spike --release`).
 | CSS-sized native hole | **Locked.** `wl_subsurface` (same client). |
 | GPU on that hole | **Parked.** Vulkan WSI + later SHM attach trips River `wp_linux_drm_syncobj` (“buffer attached but no acquire point”). Hole is SHM-only when embedding. |
 | Another process in the hole | **Locked as nested compositor.** Parent binds `wayland-html-hole-*`, auto-spawns `sola-html-spike --foreign-client` (operator does not start it). Magenta/cyan SHM stripes **dogfooded moving**. Client must read the socket (`blocking_dispatch`) or `wl_buffer.release` never lands and animation freezes after two frames. `wl_subsurface` cannot parent a *River* client (same-connection only). |
-| Overlay scrollbar | **Locked.** |
+| Overlay scrollbar | **Locked** (lab: track+thumb on overflow panes; log uses virt height). |
 | IME preedit | **Parked** (English-only desk). Space on a Mac board is `NamedKey::Space`. |
 
 **Rejected on the way:** Blitz/`<img>` bake; Vello/Parley type; `.so` / `dlopen`

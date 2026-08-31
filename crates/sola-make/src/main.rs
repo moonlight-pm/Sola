@@ -345,7 +345,11 @@ fn build_exec(target: Option<String>, release: bool) -> ! {
 /// (e.g. "sola-shell") by reading `crates/<name>/Cargo.toml`.
 /// Falls back to "sola-<name>" if not found.
 pub(crate) fn resolve_crate_name(name: &str) -> String {
-    if name == "settings-lab" || name == "sola-settings-lab" {
+    if name == "settings-lab"
+        || name == "sola-settings-lab"
+        || name == "monitor-lab"
+        || name == "sola-monitor-lab"
+    {
         return "sola-kit-spike".into();
     }
     let toml_path = format!("crates/{name}/Cargo.toml");

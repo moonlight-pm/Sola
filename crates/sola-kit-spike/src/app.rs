@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::components::{Sidebar, SidebarItem};
 use crate::css::{Sheet, parse_sheet};
 use crate::gpu::Quad;
 use crate::icons::Icons;
 use crate::layout::{PaintItem, hit_test, hover_at, layout_tree, point_in_item};
-use crate::markup::{self, RowSpec};
+use crate::markup::{self};
 use crate::paint::{Fonts, PaintPass, paint_glyphs};
 use crate::palette::{
     ATOMS, SELECT_NAMES, SELECT_SEEDS, format_hex, hsv_to_rgb, page_atoms, parse_hex, rgb_to_hsl,
@@ -500,7 +501,7 @@ impl App {
         changed
     }
 
-    pub fn live_layers(&mut self) -> (Vec<Quad>, Vec<u32>) {
+    pub fn live_layers(&mut self) -> (Vec<Quad>, Option<Vec<u32>>) {
         self.reload_if_changed();
         self.rebuild_items();
         let (bw, bh) = self.buffer_size();
@@ -514,7 +515,7 @@ impl App {
         );
         let sel = self.prose.map(|(uid, a, b)| (uid, a, b));
         let caret = self.caret_px();
-        let pix = paint_glyphs(
+        let pix = Some(paint_glyphs(
             &self.last_items,
             &mut self.fonts,
             self.css_w,
@@ -528,7 +529,7 @@ impl App {
                 focus_uid: None,
                 icons: &mut self.icons,
             },
-        );
+        ));
         (quads, pix)
     }
 
@@ -926,12 +927,11 @@ impl App {
             .iter()
             .find(|p| p.id == self.selected)
             .unwrap_or(&PAGES[0]);
-        let rows = nav_rows(self.selected);
         let demo_path = self.assets.join("pages").join(format!("{}.html", page.id));
         let demo = std::fs::read_to_string(&demo_path).unwrap_or_default();
         let mut root = markup::expand(
             &self.html,
-            &rows,
+            &[],
             crate::WINDOW_TITLE,
             page.heading,
             page.lede,
@@ -939,6 +939,11 @@ impl App {
             &self.theme,
             self.theme_open,
         );
+        let mut next = markup::next_uid(&root);
+        let sb = Sidebar::new(nav_items(self.selected))
+            .nav_id("nav-scroll")
+            .build(&mut next);
+        markup::replace_slot(&mut root, "sidebar", sb);
         markup::apply_split(&mut root, self.split);
         markup::apply_split_h(&mut root, self.split_h);
         if self.status.is_empty() {
@@ -1796,29 +1801,15 @@ pub enum Click {
     Select,
 }
 
-fn nav_rows(selected: &str) -> Vec<RowSpec> {
+fn nav_items(selected: &str) -> Vec<SidebarItem> {
     let mut rows = Vec::new();
     let mut last_section = "";
     for page in PAGES {
         if page.section != last_section {
             last_section = page.section;
-            rows.push(RowSpec {
-                id: format!("section-{}", page.section.to_lowercase()),
-                kind: "header".into(),
-                label: page.section.to_uppercase(),
-                classes: vec!["is-header".into()],
-            });
+            rows.push(SidebarItem::header(page.section.to_uppercase()));
         }
-        let mut classes = Vec::new();
-        if page.id == selected {
-            classes.push("is-active".into());
-        }
-        rows.push(RowSpec {
-            id: page.id.into(),
-            kind: "item".into(),
-            label: page.label.into(),
-            classes,
-        });
+        rows.push(SidebarItem::new(page.id, page.label).active(page.id == selected));
     }
     rows
 }
@@ -2012,7 +2003,7 @@ impl crate::host::Surface for App {
     fn reload_if_changed(&mut self) -> bool {
         App::reload_if_changed(self)
     }
-    fn live_layers(&mut self) -> (Vec<Quad>, Vec<u32>) {
+    fn live_layers(&mut self) -> (Vec<Quad>, Option<Vec<u32>>) {
         App::live_layers(self)
     }
     fn wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {

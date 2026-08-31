@@ -18,19 +18,18 @@ impl Gpu {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
             ..Default::default()
         });
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-            },
-        )) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!(%e, "wgpu request_adapter");
-                return None;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(%e, "wgpu request_adapter");
+                    return None;
+                }
+            };
         tracing::info!(
             name = %adapter.get_info().name,
             backend = ?adapter.get_info().backend,
@@ -220,19 +219,18 @@ impl Present {
                 return None;
             }
         };
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            },
-        )) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!(%e, "wgpu request_adapter");
-                return None;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(%e, "wgpu request_adapter");
+                    return None;
+                }
+            };
         tracing::info!(
             name = %adapter.get_info().name,
             backend = ?adapter.get_info().backend,
@@ -449,7 +447,7 @@ impl Present {
     pub fn frame(
         &mut self,
         quads: &[Quad],
-        glyphs: &[u32],
+        glyphs: Option<&[u32]>,
         width: u32,
         height: u32,
         hole: Option<(u32, u32, u32, u32)>,
@@ -459,6 +457,10 @@ impl Present {
         self.resize(width, height);
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
+            Err(wgpu::SurfaceError::Timeout) => {
+                tracing::debug!("wgpu surface timeout");
+                return;
+            }
             Err(e) => {
                 tracing::warn!(?e, "wgpu get_current_texture");
                 self.surface.configure(&self.device, &self.config);
@@ -471,7 +473,9 @@ impl Present {
             bytemuck::bytes_of(&[width as f32, height as f32, window_radius, 0.0f32]),
         );
         self.upload_instances(quads);
-        self.upload_chrome(glyphs, width, height, window_radius);
+        if let Some(glyphs) = glyphs {
+            self.upload_chrome(glyphs, width, height, window_radius);
+        }
         let Some(chrome_tex) = self.chrome.as_ref() else {
             return;
         };
@@ -538,7 +542,10 @@ impl Present {
 
     fn upload_instances(&mut self, quads: &[Quad]) {
         let bytes = (quads.len().max(1) * std::mem::size_of::<Quad>()) as u64;
-        let need_new = self.instance.as_ref().is_none_or(|_| self.instance_cap < bytes);
+        let need_new = self
+            .instance
+            .as_ref()
+            .is_none_or(|_| self.instance_cap < bytes);
         if need_new {
             self.instance = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("quad-inst"),
@@ -549,8 +556,11 @@ impl Present {
             self.instance_cap = bytes;
         }
         if !quads.is_empty() {
-            self.queue
-                .write_buffer(self.instance.as_ref().unwrap(), 0, bytemuck::cast_slice(quads));
+            self.queue.write_buffer(
+                self.instance.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(quads),
+            );
         }
     }
 
@@ -698,19 +708,18 @@ impl ChildSwap {
                 return None;
             }
         };
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            },
-        )) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!(%e, "wgpu child request_adapter");
-                return None;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(%e, "wgpu child request_adapter");
+                    return None;
+                }
+            };
         tracing::info!(
             name = %adapter.get_info().name,
             backend = ?adapter.get_info().backend,
@@ -770,6 +779,7 @@ impl ChildSwap {
         }
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
+            Err(wgpu::SurfaceError::Timeout) => return,
             Err(e) => {
                 tracing::warn!(?e, "wgpu child get_current_texture");
                 self.surface.configure(&self.device, &self.config);

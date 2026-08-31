@@ -4,7 +4,7 @@
 //! decorations only — River must not draw SSD.
 
 use std::ptr::NonNull;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
@@ -22,7 +22,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         Capability, SeatHandler, SeatState,
-        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
@@ -42,7 +42,7 @@ use wayland_client::{
 use crate::app::Click;
 use crate::gpu::{Present, Quad};
 
-/// Per-window UI driven by the sctk host. Storybook and settings-lab
+/// Per-window UI driven by the sctk host. Storybook and lab twins
 /// each implement this; the host is kit-agnostic.
 pub trait Surface: Send {
     fn set_view(&mut self, w: f32, h: f32, scale: f32);
@@ -74,7 +74,9 @@ pub trait Surface: Send {
     fn mouse_up(&mut self);
     fn buffer_size(&self) -> (u32, u32);
     fn reload_if_changed(&mut self) -> bool;
-    fn live_layers(&mut self) -> (Vec<Quad>, Vec<u32>);
+    /// Glyph overlay is `Some` when it must be uploaded. `None` keeps the
+    /// previous texture (hover-only frames).
+    fn live_layers(&mut self) -> (Vec<Quad>, Option<Vec<u32>>);
     fn wheel(&mut self, x: f32, y: f32, dy: f32) -> bool;
     fn mouse_move(&mut self, x: f32, y: f32) -> bool;
     fn right_click(&mut self, x: f32, y: f32) -> bool;
@@ -95,6 +97,8 @@ pub enum CursorKind {
     Default,
     Text,
     Pointer,
+    NsResize,
+    EwResize,
 }
 
 const BTN_LEFT: u32 = 0x110;
@@ -166,25 +170,30 @@ pub fn run_with(app_id: &'static str, title: &'static str, app: Box<dyn Surface>
         shift: false,
         ctrl: false,
         alt: false,
+        last_frame: Instant::now(),
     };
 
     tracing::info!(app_id, title, "sctk window created");
-    let mut last = std::time::Instant::now();
+    let mut last = Instant::now();
 
     loop {
-        let wait = if host.app.needs_frame() {
-            Duration::from_millis(16)
-        } else {
-            Duration::from_millis(200)
-        };
-        event_loop.dispatch(wait, &mut host).expect("dispatch");
+        // Always pump Wayland on a short cadence. A long wait + a heavy
+        // draw (live bus inspector) lets the socket fill until River
+        // drops the client (Broken pipe).
+        match event_loop.dispatch(Duration::from_millis(8), &mut host) {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!(%e, "wayland dispatch ended");
+                break;
+            }
+        }
         if host.exit {
             break;
         }
         if !host.configured {
             continue;
         }
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let dt = now.saturating_duration_since(last).as_secs_f32();
         last = now;
         host.app.tick(dt);
@@ -194,8 +203,9 @@ pub fn run_with(app_id: &'static str, title: &'static str, app: Box<dyn Surface>
         if host.app.reload_if_changed() || host.app.needs_frame() {
             host.dirty = true;
         }
-        if host.dirty {
+        if host.dirty && host.last_frame.elapsed() >= Duration::from_millis(32) {
             host.draw();
+            host.last_frame = Instant::now();
         }
     }
 }
@@ -218,8 +228,9 @@ fn boot(app_id: &str) {
     }
     // Same contract as iced kit `startup`: re-exec when this binary
     // changes on disk. Lab twins are not installed, so this watches
-    // `current_exe()` (`target/release/sola-settings-lab`, not
-    // `/opt/sola/bin`). Skip when the process manager already supervises.
+    // `current_exe()` (`target/release/sola-settings-lab` /
+    // `sola-monitor-lab`, not `/opt/sola/bin`). Skip when the process
+    // manager already supervises.
     if std::env::var_os("SOLA_NO_SELF_WATCH").is_none() {
         sola_core::watcher::watch_own_binary();
     } else {
@@ -299,6 +310,7 @@ struct Host {
     shift: bool,
     ctrl: bool,
     alt: bool,
+    last_frame: Instant,
 }
 
 impl Host {
@@ -346,7 +358,15 @@ impl Host {
         } else {
             0.0
         };
-        present.frame(&quads, &glyphs, w, h, None, self.app.time(), radius);
+        present.frame(
+            &quads,
+            glyphs.as_deref(),
+            w,
+            h,
+            None,
+            self.app.time(),
+            radius,
+        );
         self.dirty = false;
     }
 
@@ -366,6 +386,8 @@ impl Host {
             CursorKind::Text => Shape::Text,
             CursorKind::Pointer => Shape::Pointer,
             CursorKind::Default => Shape::Default,
+            CursorKind::NsResize => Shape::NsResize,
+            CursorKind::EwResize => Shape::EwResize,
         };
         dev.set_shape(self.pointer_serial, shape);
     }
@@ -708,6 +730,17 @@ impl KeyboardHandler for Host {
         self.handle_key(event);
     }
 
+    fn repeat_key(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        self.handle_key(event);
+    }
+
     fn release_key(
         &mut self,
         _: &Connection,
@@ -725,6 +758,7 @@ impl KeyboardHandler for Host {
         _: &wl_keyboard::WlKeyboard,
         _serial: u32,
         modifiers: Modifiers,
+        _raw: RawModifiers,
         _layout: u32,
     ) {
         self.shift = modifiers.shift;
@@ -809,11 +843,21 @@ impl PointerHandler for Host {
                     self.app.mouse_up();
                 }
                 PointerEventKind::Axis { vertical, .. } => {
-                    let dy = if vertical.absolute.abs() > 0.01 {
-                        vertical.absolute as f32
+                    if vertical.is_none() {
+                        continue;
+                    }
+                    // wl_pointer v8+ sends value120 (120 = one detent) and
+                    // dropped axis_discrete. sctk 0.19 discarded that event.
+                    let dy = if vertical.value120 != 0 {
+                        vertical.value120 as f32 / 120.0 * 28.0 * 5.0
+                    } else if vertical.discrete != 0 {
+                        vertical.discrete as f32 * 28.0 * 5.0
                     } else {
-                        vertical.discrete as f32 * 24.0
+                        vertical.absolute as f32 * 3.0
                     };
+                    if dy.abs() < 0.01 {
+                        continue;
+                    }
                     let (x, y) = self.cursor;
                     if self.app.wheel(x, y, dy) {
                         self.dirty = true;
