@@ -6,8 +6,8 @@
 
 | | |
 |--|--|
-| **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. Edit menu (⌘X/C/V/A) via shell `MenuAction` + iced clipboard. Web `Notification` → `Topic::AppNotification` with the wrapper `app_id`. Off-site popups → `sola_core::open_url`. Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (Slack huddle). `getUserMedia` → kit Allow / Block (`media.json`). |
-| **Dogfood** | **On master.** Slack paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). |
+| **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. Edit menu (⌘X/C/V/A) via shell `MenuAction` + iced clipboard. Web `Notification` → `Topic::AppNotification` with the wrapper `app_id`. Off-site popups → `sola_core::open_url`. Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (Slack huddle). `getUserMedia` → kit Allow / Block (`media.json`) + Chromium `MEDIASTREAM_*` content settings. |
+| **Dogfood** | **On master.** Slack paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam huddle camera **smoked** 2026-09-01. |
 | **Gaps** | No Bitwarden / downloads / tab chrome; no throwaway `--url`; no PWA manifest install. |
 
 ## Intent
@@ -99,7 +99,7 @@ Main-frame navigations are **not** cancelled (Google SSO in the Slack window mus
 
 Slack huddles are `window.open('about:blank')` + `document.write` (NEW_POPUP). Cancelling that popup makes `window.open` return null and the huddle button does nothing. Same-site / `about:blank` / NEW_POPUP is allowed as a **windowless CEF browser**; the wrapper paints that tab until it closes. Off-site http(s) still go to sola-browser.
 
-CEF OSR has no Chromium permission bubble; Alloy default-denies `getUserMedia`. The wrapper (and sola-browser) intercept `OnRequestMediaAccessPermission` and mic/camera `OnShowPermissionPrompt`, show the kit Allow / Block overlay, and persist at `…/wrapper/<id>/media.json` (browser: `profiles/<uuid>/media.json`). Allow grants the requested capture bits (mic and/or camera and/or screen). Playback does not prompt.
+CEF OSR has no Chromium permission bubble; Alloy default-denies `getUserMedia`. The wrapper (and sola-browser) intercept `OnRequestMediaAccessPermission` and mic/camera `OnShowPermissionPrompt`, show the kit Allow / Block overlay, and persist at `…/wrapper/<id>/media.json` (browser: `profiles/<uuid>/media.json`). Allow grants the requested capture bits (mic and/or camera and/or screen) **and** writes Chromium `MEDIASTREAM_CAMERA` / `MEDIASTREAM_MIC` content settings for that origin so `permissions.query` matches. Playback does not prompt.
 
 ## Settings UX
 

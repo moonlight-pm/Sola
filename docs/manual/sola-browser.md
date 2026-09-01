@@ -195,7 +195,8 @@ action buttons yet.
 
 A page that calls `getUserMedia` (WebRTC, huddles, camera) gets the same
 Allow / Block overlay as notifications. Grants live in
-`profiles/<uuid>/media.json`. Chromium has no permission bubble in this
+`profiles/<uuid>/media.json` and in Chromium camera/microphone site
+settings for that origin. Chromium has no permission bubble in this
 OSR path — without Allow, the request is denied. Screen share is the
 same dialog when the page asks for desktop capture.
 

@@ -127,6 +127,21 @@ pub fn is_media_prompt(bits: u32) -> bool {
     bits & (mic_stream_bit() | camera_stream_bit()) != 0
 }
 
+/// Origin URL Chromium `SetContentSetting` will accept. `about:` / `data:`
+/// / empty are skipped — huddle `about:blank` inherits the opener origin
+/// for getUserMedia; we never persist a grant on the blank URL itself.
+pub fn content_setting_origin(origin: &str) -> Option<String> {
+    let url = crate::notify::canon_origin(origin);
+    if url.is_empty() || url == "null" {
+        return None;
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("about:") || lower.starts_with("data:") {
+        return None;
+    }
+    Some(url)
+}
+
 pub fn send_resolve<E: Engine>(tx: &Sender<Cmd<E>>, media: &IpcMedia, granted: bool) {
     if let Some(prompt_id) = media.prompt_id {
         let _ = tx.send(Cmd::NotifyPermission { prompt_id, granted });
@@ -228,5 +243,15 @@ mod tests {
         assert!(!is_media_prompt(
             cef::PermissionRequestTypes::NOTIFICATIONS.get_raw()
         ));
+    }
+
+    #[test]
+    fn content_setting_origin_skips_blank() {
+        assert_eq!(
+            content_setting_origin("https://app.slack.com/"),
+            Some("https://app.slack.com".into())
+        );
+        assert_eq!(content_setting_origin("about:blank"), None);
+        assert_eq!(content_setting_origin(""), None);
     }
 }
