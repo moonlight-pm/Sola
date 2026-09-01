@@ -256,10 +256,10 @@ One shot in this worktree:
 3. Delete `crates/sola-compositor/`.
 4. Update `sola-bus` topics (delete `SetWindowPolicy`, add the new five).
 5. Update `crates/sola/src/main.rs` (`MANAGED` list).
-6. Update `crates/sola-make` build/deploy targets.
+6. Update `crates/sola-make` build/install targets.
 7. Refactor `sola-shell`: chords via bus, MRU tracking, mouse handling, no SetWindowPolicy.
 8. Strip `SetWindowPolicy` emission from `sola-terminal` and `sola-monitor`.
-9. `cargo make deploy --canto`; launch `sola` from a canto TTY; exercise the stack.
+9. `cargo make install`; launch `sola` from a TTY; exercise the stack.
 
 If anything fundamental doesn't work, `git worktree remove .worktrees/sola-river` and we're back on master with today's compositor intact.
 

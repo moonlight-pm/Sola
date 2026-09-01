@@ -555,15 +555,12 @@ impl Shell {
             self.unhide_app(app_id);
             return;
         }
-        let Some(window_id) = self
-            .lookup_any_window_id(app_id)
-            .or_else(|| {
-                self.known_windows
-                    .iter()
-                    .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
-                    .map(|w| w.window_id)
-            })
-        else {
+        let Some(window_id) = self.lookup_any_window_id(app_id).or_else(|| {
+            self.known_windows
+                .iter()
+                .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
+                .map(|w| w.window_id)
+        }) else {
             tracing::debug!(%app_id, "raise_app: no mapped window");
             return;
         };
@@ -838,6 +835,9 @@ impl Shell {
             if self.launcher.active {
                 return Task::done(Msg::CloseLauncher);
             }
+            if self.shortcuts.active {
+                return Task::done(Msg::CloseShortcuts);
+            }
             if self.menu_open {
                 return Task::done(Msg::CloseMenu);
             }
@@ -863,9 +863,24 @@ impl Shell {
             return Task::none();
         }
 
-        // Launcher is modal — it owns the keyboard while active, so eat
-        // every other chord. (Switcher has its own navigation branch below.)
-        if self.launcher.active {
+        // Super+K: keyboard-shortcuts overlay (Omarchy). Toggle even while
+        // the launcher is up so the cheatsheet is always one chord away.
+        if chord.meta
+            && !chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::K
+        {
+            if self.shortcuts.active {
+                return Task::done(Msg::CloseShortcuts);
+            }
+            return Task::done(Msg::OpenShortcuts);
+        }
+
+        // Launcher / shortcuts are modal — they own the keyboard while
+        // active, so eat every other chord. (Switcher has its own
+        // navigation branch below.)
+        if self.launcher.active || self.shortcuts.active {
             return Task::none();
         }
 
@@ -1044,31 +1059,8 @@ impl Shell {
         }
 
         // Zone snapping (Meta+Numpad).
-        if let Some(frame) = self
-            .zoning
-            .handle_key(chord.keycode.raw(), self.focused_window_id)
-        {
-            // If that snap floated the focused window, persist the rect
-            // handle_key just cached so the on-disk FloatGeometry isn't a
-            // stale rect a later restore would clobber with.
-            let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
-                (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
-                    self.zoning.float_geometry.get(&app_id).cloned()
-                }
-                _ => None,
-            };
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::Frame(frame));
-                if let Some(zones) = self.zoning.take_zones_update() {
-                    let _ = bus.emit(Topic::Zones(zones));
-                }
-                if let Some(fg) = float_fg {
-                    let _ = bus.emit(Topic::FloatGeometry(fg));
-                }
-            }
-            // Announce the float/unfloat to sola-river (gates move/resize).
-            self.sync_window_floating();
-            return Task::none();
+        if let Some(zone) = crate::zoning::zone_for_keycode(chord.keycode.raw()) {
+            return self.snap_focused_zone(zone);
         }
 
         // Shell system menu shortcuts (Quit Sola has none — Super+Q is CloseApp).
@@ -1308,7 +1300,7 @@ impl Shell {
     /// since the last call, so sola-river can gate interactive move/resize on
     /// the window under the pointer. Called after every handler that can change
     /// a window's zone (float key, window appearance, zone-map replay).
-    fn sync_window_floating(&mut self) {
+    pub(super) fn sync_window_floating(&mut self) {
         let ids: Vec<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
         let changes = self.zoning.take_floating_changes(&ids);
         if changes.is_empty() {

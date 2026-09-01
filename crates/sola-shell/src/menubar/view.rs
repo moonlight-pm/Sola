@@ -369,14 +369,7 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
         return Vec::new();
     };
 
-    let owned_synth;
-    let payload = match shell.menus.get_menu(app_id) {
-        Some(p) => p,
-        None => {
-            owned_synth = synthesized_menu(app_id, &display_label(shell, app_id));
-            &owned_synth
-        }
-    };
+    let payload = shell.effective_app_menu(app_id);
 
     payload
         .menus

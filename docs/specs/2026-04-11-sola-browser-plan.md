@@ -2140,20 +2140,20 @@ Expected: All unit tests pass (state persistence, chrome layout)
 Run: `cargo make build`
 Expected: Clean build with no warnings relevant to sola-browser
 
-- [ ] **Step 3: Deploy to canto**
+- [ ] **Step 3: Install locally**
 
-Run: `cargo make deploy canto`
-Expected: Successful deploy. Binary appears at `/opt/sola/bin/sola-browser` on canto.
+Run: `cargo make install browser`
+Expected: Successful install. Binary appears at `/opt/sola/bin/sola-browser`.
 
-- [ ] **Step 4: Smoke test on canto**
+- [ ] **Step 4: Smoke test on a TTY**
 
-SSH to canto and verify the binary exists and runs:
+Verify the binary exists and runs:
 
 ```bash
-ssh canto "ls -la /opt/sola/bin/sola-browser"
+ls -la /opt/sola/bin/sola-browser
 ```
 
-Full testing requires running sola from a TTY on canto and interacting with the browser.
+Full testing requires running sola from a physical TTY and interacting with the browser.
 
 - [ ] **Step 5: Final commit if any fixes were needed**
 

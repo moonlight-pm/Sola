@@ -3,7 +3,7 @@
 **Date:** 2026-04-16
 **Worktree:** `.worktrees/sola-river`
 **Branch:** `sola-river`
-**Status:** Builds clean, 39 tests pass workspace-wide. Unverified on canto.
+**Status:** Builds clean, 39 tests pass workspace-wide. Unverified on a TTY.
 
 ## What landed
 
@@ -45,7 +45,7 @@
 - `cargo test --workspace` ✅ (10 new tests in `sola-river::{registry,pending}`)
 - `cargo make build --release` ✅ — all 8 binaries built, including `sola-river`.
 
-## NOT verified (requires canto deploy)
+## NOT verified (requires TTY install)
 
 - River actually starts under `sola-river` spawn path (should — standard
   fork/exec with stdio captured to `/opt/sola/log/river.log`).
@@ -76,12 +76,12 @@
   up with whatever River picks, which matches the design doc
   ("propose_dimensions(0, 0) initially") but may need refinement.
 
-## Deploy procedure
+## Install procedure
 
 ```bash
 cd .worktrees/sola-river
-cargo make deploy --canto
-# On canto TTY:
+cargo make install
+# On a TTY:
 RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 ```
 

@@ -15,6 +15,15 @@ use sola_core::{KeyChord, KeyCode};
 /// hasn't shipped its own menu.
 pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
 
+/// Focused-app menus with the kit Window menu injected when missing.
+pub fn effective_app_menu(cache: &MenuCache, app_id: &str, label: &str) -> AppMenuPayload {
+    let base = cache
+        .get_menu(app_id)
+        .cloned()
+        .unwrap_or_else(|| synthesized_menu(app_id, label));
+    sola_kit::menu::ensure_window_menu(base)
+}
+
 /// Build a default menu for an external app that hasn't shipped its own.
 /// Single menu labeled `<label>` containing one item: "Quit <label>" with
 /// the Meta+Q shortcut shown next to it. The chord itself is already
@@ -182,6 +191,14 @@ mod tests {
         cache.set_menu(synthesized_menu("firefox", "Firefox"));
         let chord = KeyCode::Q.meta();
         assert!(cache.lookup_shortcut(&chord, "zed").is_none());
+    }
+
+    #[test]
+    fn effective_app_menu_appends_window() {
+        let cache = MenuCache::new();
+        let payload = effective_app_menu(&cache, "firefox", "Firefox");
+        assert_eq!(payload.menus[0].label, "Firefox");
+        assert_eq!(payload.menus[1].label, sola_kit::WINDOW_MENU_LABEL);
     }
 
     #[test]

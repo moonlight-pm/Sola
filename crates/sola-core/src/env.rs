@@ -184,6 +184,26 @@ pub fn wait_for_wayland_socket(display: &str, timeout_ms: u64) -> bool {
     }
 }
 
+/// True on an Oath guest (live catalog at `/oath`).
+pub fn on_oath() -> bool {
+    Path::new("/oath/INDEX.md").is_file()
+}
+
+/// Directory of Sola ELFs: `/bin` on Oath (symlink farm), `/opt/sola/bin`
+/// on NixOS.
+pub fn bin_dir() -> PathBuf {
+    if on_oath() {
+        PathBuf::from("/bin")
+    } else {
+        PathBuf::from("/opt/sola/bin")
+    }
+}
+
+/// `bin_dir()` joined with a binary name (`sola-session`, …).
+pub fn bin_path(name: &str) -> PathBuf {
+    bin_dir().join(name)
+}
+
 /// Point NixOS-specific GPU dispatch env at `/run/opengl-driver/` so
 /// any wgpu/EGL/VAAPI/Vulkan client launched from a TTY (where the
 /// desktop session never ran to set these) can actually find vendor
@@ -270,5 +290,16 @@ mod tests {
         assert!(!runtime_dir_has_systemd_private(
             "/tmp/sola-no-systemd-here"
         ));
+    }
+
+    #[test]
+    fn bin_dir_is_opt_sola_off_oath() {
+        // Host unit tests do not have `/oath/INDEX.md`.
+        assert!(!on_oath());
+        assert_eq!(bin_dir(), PathBuf::from("/opt/sola/bin"));
+        assert_eq!(
+            bin_path("sola-session"),
+            PathBuf::from("/opt/sola/bin/sola-session")
+        );
     }
 }

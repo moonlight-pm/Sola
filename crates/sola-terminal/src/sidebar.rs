@@ -89,9 +89,7 @@ pub fn apply_drop(tabs: &mut Tabs, drop: sidebar::Drop) {
         | Dest::Join { before: None, .. }
         | Dest::BeforeGroup { .. }
         | Dest::BlockBefore { .. }
-        | Dest::Sections(_) => {
-            new_order.len()
-        }
+        | Dest::Sections(_) => new_order.len(),
     };
     new_order.insert(insert.min(new_order.len()), dragged);
 

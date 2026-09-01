@@ -169,7 +169,7 @@ This is the main intentional break from macOS chrome.
 
 - **New windows without a zone assignment float** at the **client-requested size** (centered by the compositor). The shell emits `Topic::WindowFloating` so kit apps know to draw CSD (titlebar / drag / close).
 - **Zoning is opt-in** (Meta+numpad snaps). A saved zone assignment still restores on relaunch; explicit float (`Meta`+numpad `*`) persists `Zone::Float` + float geometry.
-- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients.
+- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients. The menubar **Window** menu (zones, float, hide, cycle) is the mouse path for those compositor actions.
 - **Floating windows draw client decorations** (kit `titlebar` / `floating_frame` when floating). Mental model: **float = CSD + app size; zoned = no title bar + zone frame**.
 
 ### Implications for visual design

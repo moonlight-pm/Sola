@@ -159,6 +159,14 @@ impl BusSetup {
         self.app_menu(menu_label, items)
     }
 
+    /// Include the kit **Window** menu (zones, float, hide, cycle). The
+    /// shell handles these action ids; the app can replace the menu by
+    /// publishing its own `"Window"` definition instead. The shell also
+    /// injects this menu when an app omits it.
+    pub fn window_menu(self) -> Self {
+        self.app_menu_definition(crate::menu::window_menu())
+    }
+
     /// Advertise call-plane methods as CLI owner `owner` (e.g. `"workspaces"`).
     /// Starts the reconnecting provider when [`install`](Self::install) runs.
     /// Fold [`crate::call_subscription`] into iced to receive invokes.

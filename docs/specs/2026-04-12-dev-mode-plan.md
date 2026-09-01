@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enable live frontend development by having sola-app watch its own binary for restarts, and adding a `--watch` flag to `cargo make deploy` that rebuilds and deploys on file changes.
+**Goal:** Enable live frontend development by having sola-app watch its own binary for restarts, and adding a `--watch` flag to `cargo make install` that rebuilds and installs on file changes.
 
-**Architecture:** Two independent pieces. (1) `sola-app` gains a binary watcher module that calls `execv` when the binary is replaced on disk. (2) `sola-make` gains a `--watch` flag on the `Deploy` subcommand that uses the `notify` crate to watch source directories and re-runs build+deploy on changes.
+**Architecture:** Two independent pieces. (1) `sola-app` gains a binary watcher module that calls `execv` when the binary is replaced on disk. (2) `sola-make` gains a `--watch` flag on the `Install` subcommand that uses the `notify` crate to watch source directories and re-runs build+install on changes.
 
 **Tech Stack:** Rust, `notify` crate (inotify), `nix` crate (execv), clap derive
 
@@ -21,8 +21,8 @@ crates/sola-app/
 crates/sola-make/
   Cargo.toml        # Modify: add notify dependency
   src/
-    main.rs         # Modify: add --watch and --canto flags to Deploy, refactor deploy_canto to accept app filter
-    watch.rs        # Create: file watching + rebuild/deploy loop
+    main.rs         # Modify: add --watch flag to Install, optional app filter
+    watch.rs        # Create: file watching + rebuild/install loop
 ```
 
 ---
@@ -211,27 +211,23 @@ git commit -m "Add self-restart binary watcher to sola-app"
 
 ---
 
-### Task 2: Refactor deploy command to accept app targeting and flags
+### Task 2: Refactor install command to accept app targeting and flags
 
 **Files:**
 - Modify: `crates/sola-make/src/main.rs`
 
-- [ ] **Step 1: Update the `Deploy` variant in `Commands` enum**
+- [ ] **Step 1: Update the `Install` variant in `Commands` enum**
 
-Change the `Deploy` variant from a single positional `target` to support `--canto` as a flag, an optional app name, and `--watch`:
+Change the `Install` variant to support an optional app name and `--watch`:
 
 ```rust
-/// Deploy to a target machine.
-Deploy {
-    /// Specific app to deploy (e.g. "terminal").
-    /// Omit to deploy all binaries.
+/// Install binaries locally to /opt/sola/bin.
+Install {
+    /// Specific app to install (e.g. "terminal").
+    /// Omit to install all binaries.
     app: Option<String>,
 
-    /// Deploy to canto.
-    #[arg(long)]
-    canto: bool,
-
-    /// Watch for changes and redeploy automatically.
+    /// Watch for changes and reinstall automatically.
     #[arg(long)]
     watch: bool,
 },
@@ -240,40 +236,36 @@ Deploy {
 - [ ] **Step 2: Update `main()` match arm**
 
 ```rust
-Commands::Deploy { app, canto, watch } => {
-    if !canto {
-        eprintln!("error: specify a deploy target (e.g. --canto)");
-        exit(1);
-    }
+Commands::Install { app, watch } => {
     if watch && app.is_none() {
         eprintln!("error: --watch requires an app name");
         exit(1);
     }
     if watch {
-        watch::watch_and_deploy(&app.unwrap());
+        watch::watch_and_install(&app.unwrap());
     } else {
-        deploy_canto(app.as_deref());
+        install::install(app.as_deref());
     }
 }
 ```
 
-- [ ] **Step 3: Update `deploy_canto` to accept an optional app filter**
+- [ ] **Step 3: Update `install` to accept an optional app filter**
 
-Modify the existing `deploy_canto` function to optionally deploy only a single app:
+Modify the existing `install` function to optionally install only a single app:
 
 ```rust
-/// Deploy binaries to canto via rsync over SSH.
-fn deploy_canto(app: Option<&str>) {
+/// Build and install binaries locally to /opt/sola/bin.
+fn install(app: Option<&str>) {
     let target = match app {
         Some(name) => Some(name.to_string()),
         None => None,
     };
 
-    println!("Building release...");
-    build(target.clone(), true);
+    println!("Building...");
+    build(target.clone(), false);
 
-    println!("Preparing canto...");
-    run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
+    println!("Preparing install...");
+    run_or_exit("mkdir", &["-p", "/opt/sola/bin", "/opt/sola/log"]);
 
     let binaries: Vec<String> = if let Some(name) = app {
         // Resolve the crate name: apps use "sola-<name>" as their package name
@@ -283,21 +275,21 @@ fn deploy_canto(app: Option<&str>) {
         discover_binaries()
     };
 
-    println!("Deploying binaries to canto...");
+    println!("Installing binaries...");
     for name in &binaries {
-        let src = format!("target/release/{name}");
+        let src = format!("target/debug/{name}");
         if std::path::Path::new(&src).exists() {
             run_or_exit(
-                "rsync",
-                &["-az", "--progress", &src, "canto:/opt/sola/bin/"],
+                "cp",
+                &["--remove-destination", &src, "/opt/sola/bin/"],
             );
-            println!("  deployed {name}");
+            println!("  installed {name}");
         } else {
             eprintln!("  warning: binary not found: {src}");
         }
     }
 
-    println!("Deployed to canto:/opt/sola/bin/");
+    println!("Installed to /opt/sola/bin/");
 }
 
 /// Resolve a short app name (e.g. "terminal") to the crate's package name
@@ -327,29 +319,29 @@ Update existing tests for the new CLI shape and add validation tests:
 
 ```rust
 #[test]
-fn cli_parses_deploy_canto() {
-    let cli = Cli::try_parse_from(["sola-make", "deploy", "--canto"]).unwrap();
+fn cli_parses_install() {
+    let cli = Cli::try_parse_from(["sola-make", "install"]).unwrap();
     assert!(matches!(
         cli.command,
-        Commands::Deploy { app: None, canto: true, watch: false }
+        Commands::Install { app: None, watch: false }
     ));
 }
 
 #[test]
-fn cli_parses_deploy_app_canto() {
-    let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto"]).unwrap();
+fn cli_parses_install_app() {
+    let cli = Cli::try_parse_from(["sola-make", "install", "terminal"]).unwrap();
     assert!(matches!(
         cli.command,
-        Commands::Deploy { app: Some(ref a), canto: true, watch: false } if a == "terminal"
+        Commands::Install { app: Some(ref a), watch: false } if a == "terminal"
     ));
 }
 
 #[test]
-fn cli_parses_deploy_watch() {
-    let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
+fn cli_parses_install_watch() {
+    let cli = Cli::try_parse_from(["sola-make", "install", "terminal", "--watch"]).unwrap();
     assert!(matches!(
         cli.command,
-        Commands::Deploy { app: Some(ref a), canto: true, watch: true } if a == "terminal"
+        Commands::Install { app: Some(ref a), watch: true } if a == "terminal"
     ));
 }
 ```
@@ -368,7 +360,7 @@ Expected: all tests pass.
 
 ```bash
 git add crates/sola-make/src/main.rs
-git commit -m "Refactor deploy command with --canto flag and optional app targeting"
+git commit -m "Refactor install command with optional app targeting"
 ```
 
 ---
@@ -400,12 +392,12 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 const DEBOUNCE_MS: u64 = 500;
 
-/// Watch app source directories and rebuild+deploy on changes.
+/// Watch app source directories and rebuild+install on changes.
 ///
 /// Watches `apps/<app>/` and `crates/sola-app/` for file changes.
-/// On change: debounce, build the app in release mode, deploy to canto.
+/// On change: debounce, build the app, install locally to /opt/sola/bin.
 /// Errors don't kill the watcher — it continues watching.
-pub fn watch_and_deploy(app: &str) {
+pub fn watch_and_install(app: &str) {
     let app_dir = format!("apps/{app}");
     let framework_dir = "crates/sola-app";
 
@@ -418,11 +410,11 @@ pub fn watch_and_deploy(app: &str) {
 
     println!("[watch] watching {app_dir}/, {framework_dir}/");
 
-    // Initial build + deploy
-    println!("[watch] initial build + deploy...");
-    let ok = build_and_deploy(&crate_name);
+    // Initial build + install
+    println!("[watch] initial build + install...");
+    let ok = build_and_install(&crate_name);
     if ok {
-        println!("[deploy] {crate_name} → canto ✓");
+        println!("[install] {crate_name} ✓");
     }
 
     let (event_tx, event_rx) = mpsc::channel::<notify::Event>();
@@ -474,20 +466,20 @@ pub fn watch_and_deploy(app: &str) {
         println!("[watch] changed: {changed_file}");
         println!("[watch] building {crate_name}...");
 
-        if build_and_deploy(&crate_name) {
-            println!("[deploy] {crate_name} → canto ✓");
+        if build_and_install(&crate_name) {
+            println!("[install] {crate_name} ✓");
         }
 
         println!("[watch] waiting for changes...");
     }
 }
 
-/// Build a single crate in release mode and deploy to canto.
+/// Build a single crate and install it locally to /opt/sola/bin.
 /// Returns true on success, false on failure (with error printed).
-fn build_and_deploy(crate_name: &str) -> bool {
+fn build_and_install(crate_name: &str) -> bool {
     // Build
     let status = Command::new("cargo")
-        .args(["build", "-p", crate_name, "--release"])
+        .args(["build", "-p", crate_name])
         .status();
 
     match status {
@@ -505,28 +497,28 @@ fn build_and_deploy(crate_name: &str) -> bool {
         }
     }
 
-    // Deploy
-    let src = format!("target/release/{crate_name}");
+    // Install
+    let src = format!("target/debug/{crate_name}");
     if !Path::new(&src).exists() {
-        eprintln!("[deploy] FAILED: binary not found: {src}");
+        eprintln!("[install] FAILED: binary not found: {src}");
         return false;
     }
 
-    let status = Command::new("rsync")
-        .args(["-az", "--progress", &src, "canto:/opt/sola/bin/"])
+    let status = Command::new("cp")
+        .args(["--remove-destination", &src, "/opt/sola/bin/"])
         .status();
 
     match status {
         Ok(s) if s.success() => true,
         Ok(s) => {
             eprintln!(
-                "[deploy] FAILED (exit {})",
+                "[install] FAILED (exit {})",
                 s.code().unwrap_or(1)
             );
             false
         }
         Err(err) => {
-            eprintln!("[deploy] FAILED: {err}");
+            eprintln!("[install] FAILED: {err}");
             false
         }
     }
@@ -560,7 +552,7 @@ Expected: builds successfully.
 
 ```bash
 git add crates/sola-make/src/watch.rs crates/sola-make/src/main.rs crates/sola-make/Cargo.toml
-git commit -m "Add --watch flag to deploy command for live development"
+git commit -m "Add --watch flag to install command for live development"
 ```
 
 ---
@@ -570,35 +562,35 @@ git commit -m "Add --watch flag to deploy command for live development"
 - [ ] **Step 1: Verify the full CLI works**
 
 ```bash
-cargo make deploy --help
+cargo make install --help
 ```
 
-Expected output should show `app`, `--canto`, and `--watch` options.
+Expected output should show `app` and `--watch` options.
 
-- [ ] **Step 2: Verify single-app deploy still works**
+- [ ] **Step 2: Verify single-app install still works**
 
 ```bash
-cargo make deploy terminal --canto
+cargo make install terminal
 ```
 
-Expected: builds sola-terminal in release mode, deploys to canto.
+Expected: builds sola-terminal, installs to `/opt/sola/bin/`.
 
-- [ ] **Step 3: Verify deploy-all still works**
+- [ ] **Step 3: Verify install-all still works**
 
 ```bash
-cargo make deploy --canto
+cargo make install
 ```
 
-Expected: builds all binaries, deploys to canto.
+Expected: builds all binaries, installs to `/opt/sola/bin/`.
 
 - [ ] **Step 4: Test watch mode briefly**
 
 ```bash
 # Start watch mode (Ctrl+C to stop)
-cargo make deploy terminal --canto --watch
+cargo make install terminal --watch
 ```
 
-Expected: initial build+deploy succeeds, then prints `[watch] waiting for changes...`. Touch a file in `apps/terminal/` and verify it triggers a rebuild+deploy.
+Expected: initial build+install succeeds, then prints `[watch] waiting for changes...`. Touch a file in `apps/terminal/` and verify it triggers a rebuild+install.
 
 - [ ] **Step 5: Run all sola-make tests**
 

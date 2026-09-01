@@ -7,7 +7,7 @@
 use iced::advanced::image::Renderer as ImageRenderer;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
-use iced::advanced::widget::{tree, Tree, Widget};
+use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Shell};
 use iced::widget::image::{self, FilterMethod, Handle};
 use iced::window;

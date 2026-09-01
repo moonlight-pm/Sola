@@ -1,11 +1,11 @@
 # Dev Mode — Design Spec
 
 **Date:** 2026-04-12
-**Scope:** Live development workflow for sola-app frontends. Two independent pieces: self-restart in `sola-app`, and a `--watch` flag on `cargo make deploy`.
+**Scope:** Live development workflow for sola-app frontends. Two independent pieces: self-restart in `sola-app`, and a `--watch` flag on `cargo make install`.
 
 ## Goal
 
-Make the frontend iteration loop: save file → see change on canto in seconds. No changes to the asset serving architecture (`app:///`, `include_str!`, on-demand TS stripping). The production binary is the dev artifact.
+Make the frontend iteration loop: save file → see change on the TTY in seconds. No changes to the asset serving architecture (`app:///`, `include_str!`, on-demand TS stripping). The production binary is the dev artifact.
 
 ## Piece 1: Self-Restart in `sola-app`
 
@@ -37,35 +37,35 @@ Start the watcher thread inside `SolaApp::run()`, after GTK initialization but b
 
 `notify` and `nix` are already workspace dependencies (used by `crates/sola/`). Add them to `sola-app/Cargo.toml`.
 
-## Piece 2: `cargo make deploy --watch`
+## Piece 2: `cargo make install --watch`
 
 ### Command Interface
 
 ```
-cargo make deploy <app> --canto --watch
+cargo make install <app> --watch
 ```
 
-Added as flags on the existing `Deploy` subcommand via clap derive.
+Added as a flag on the existing `Install` subcommand via clap derive.
 
 ### Behavior
 
-1. **Initial build+deploy:** Run immediately so the target is current before watching
+1. **Initial build+install:** Run immediately so `/opt/sola/bin` is current before watching
 2. **Watch:** Monitor `apps/<app>/` and `crates/sola-app/` for file changes
 3. **Debounce:** 500ms after last change before triggering a rebuild
-4. **Rebuild+deploy:** Run `build <app>` then deploy to canto
+4. **Rebuild+install:** Run `build <app>` then install locally to `/opt/sola/bin/`
 5. **Coalesce:** If changes arrive during an active build, queue one pending rebuild — not a pile-up
-6. **Error resilience:** Compile failures and deploy failures are printed but don't kill the watcher. It continues watching for the next change.
+6. **Error resilience:** Compile failures and install failures are printed but don't kill the watcher. It continues watching for the next change.
 
 ### Output
 
 ```
 [watch] watching apps/terminal/, crates/sola-app/
-[watch] initial build + deploy...
-[deploy] sola-terminal → canto ✓
+[watch] initial build + install...
+[install] sola-terminal ✓
 [watch] changed: apps/terminal/web/src/app.ts
 [watch] building sola-terminal...
-[watch] deploying to canto...
-[deploy] sola-terminal → canto ✓
+[watch] installing...
+[install] sola-terminal ✓
 ```
 
 On error:
@@ -79,19 +79,19 @@ On error:
 
 ### Implementation
 
-Lives entirely in `crates/sola-make/src/main.rs` (or a new `watch.rs` module if it's cleaner). Uses the `notify` crate for file watching. The build and deploy steps call the same functions as the existing `build` and `deploy` subcommands.
+Lives entirely in `crates/sola-make/src/main.rs` (or a new `watch.rs` module if it's cleaner). Uses the `notify` crate for file watching. The build and install steps call the same functions as the existing `build` and `install` subcommands.
 
-### `--watch` requires `--canto`
+### `--watch` requires an app name
 
-`--watch` only makes sense with a deploy target. If `--watch` is passed without a target, print an error. (Currently `canto` is the only target, but this keeps the interface correct if more targets are added.)
+`--watch` only makes sense with a single app. If `--watch` is passed without an app name, print an error.
 
 ## End-to-End Dev Loop
 
-1. Developer runs `cargo make deploy terminal --canto --watch`
-2. Initial build + deploy completes
-3. Developer edits `apps/terminal/web/src/app.ts` on their dev machine
-4. Watcher detects the change, rebuilds `sola-terminal`, rsync's to canto
-5. On canto, `sola-terminal` detects its binary was replaced, execs itself
+1. Developer runs `cargo make install terminal --watch`
+2. Initial build + install completes
+3. Developer edits `apps/terminal/web/src/app.ts`
+4. Watcher detects the change, rebuilds `sola-terminal`, copies it to `/opt/sola/bin/`
+5. `sola-terminal` detects its binary was replaced, execs itself
 6. Fresh app appears with the new frontend code
 
 ## What This Doesn't Do

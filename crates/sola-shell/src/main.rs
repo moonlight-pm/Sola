@@ -1,7 +1,9 @@
 //! sola-shell — iced-native desktop shell. Multi-window daemon
-//! (menubar, menu, launcher, switcher, selection marquee, notifications).
+//! (menubar, menu, launcher, switcher, shortcuts, selection marquee,
+//! notifications).
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
+use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
@@ -19,6 +21,7 @@ pub mod menubar;
 pub mod notify;
 mod screenshot;
 pub mod selection;
+pub mod shortcuts;
 pub mod stats;
 pub mod switcher;
 pub mod zoning;
@@ -42,6 +45,13 @@ fn main() -> iced::Result {
                     id: "launch".into(),
                     label: "Launch Application…".into(),
                     shortcut: None,
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Action {
+                    id: "shortcuts".into(),
+                    label: "Keyboard Shortcuts".into(),
+                    shortcut: Some(KeyCode::K.meta()),
                     disabled: false,
                     checked: false,
                 },

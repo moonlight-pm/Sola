@@ -76,7 +76,7 @@ X11 apps ──X11──→ XWayland ──Wayland──→ sola-x ──Wayland
 - Workspace assignments (once workspaces exist)
 - Output configuration (which output is primary, layout)
 
-**Storage:** JSON file at `$XDG_STATE_HOME/sola/session.json` (or `/opt/sola/state/session.json` on canto).
+**Storage:** JSON file at `$XDG_STATE_HOME/sola/session.json` (or `/opt/sola/state/session.json` on the TTY install).
 
 **Implementation:**
 1. Before `execv()`, iterate the Space and serialize each window's geometry, title, app_id/class

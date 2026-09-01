@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sola_bus::topics::{
-    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload, MenuItem,
-    RegisteredChord, Topic, Window,
+    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
+    MenuActionPayload, MenuItem, RegisteredChord, Topic, Window, Zone,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -18,6 +18,7 @@ use crate::menu::state::MenuCache;
 use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
 use crate::selection::state::SelectionState;
+use crate::shortcuts::state::ShortcutsState;
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
@@ -42,7 +43,11 @@ pub enum WindowKind {
     Switcher,
     Selection,
     Notify,
+    Shortcuts,
 }
+
+/// Live-swapchain slots: menu, launcher, switcher, selection, notify, shortcuts.
+const OVERLAY_LIVE_SLOTS: usize = 6;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -114,6 +119,16 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
+    /// Super+K / flower menu: show the keyboard-shortcuts overlay.
+    OpenShortcuts,
+    /// Dismiss the shortcuts overlay and restore prior focus.
+    CloseShortcuts,
+    /// Filter text in the shortcuts overlay.
+    ShortcutsQuery(String),
+    /// Activate the selected shortcuts row (Enter).
+    ShortcutsActivate,
+    /// Activate a visible shortcuts row by filtered index (click).
+    ShortcutsPick(usize),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
     /// Expire a live notification banner (`NotifyState` generation).
@@ -256,6 +271,7 @@ pub struct Shell {
     pub switcher_window_id: Option<iced::window::Id>,
     pub selection_window_id: Option<iced::window::Id>,
     pub notify_window_id: Option<iced::window::Id>,
+    pub shortcuts_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -317,6 +333,7 @@ pub struct Shell {
     pub calendar_month: chrono::NaiveDate,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
+    pub shortcuts: ShortcutsState,
     pub selection: SelectionState,
     pub notify: crate::notify::NotifyState,
     /// Menubar Bluetooth chip + popover (in-process BlueZ).
@@ -354,9 +371,9 @@ pub struct Shell {
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
     /// Iced-reported live swapchain for menu / launcher / switcher /
-    /// selection / notify. Composition waits on this so River does not
-    /// show a stretched 2×2.
-    overlay_iced_live: [bool; 5],
+    /// selection / notify / shortcuts. Composition waits on this so River
+    /// does not show a stretched 2×2.
+    overlay_iced_live: [bool; OVERLAY_LIVE_SLOTS],
 }
 
 impl Shell {
@@ -398,6 +415,7 @@ impl Shell {
             switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
+            shortcuts_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -422,6 +440,7 @@ impl Shell {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
@@ -439,7 +458,7 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 5],
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
         (state, task)
@@ -454,9 +473,11 @@ impl Shell {
     pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
         if app_id == Self::APP_ID {
             let me = std::process::id();
-            if let Some(w) = self.known_windows.iter().find(|w| {
-                w.app_id == app_id && w.title == title && w.pid == Some(me)
-            }) {
+            if let Some(w) = self
+                .known_windows
+                .iter()
+                .find(|w| w.app_id == app_id && w.title == title && w.pid == Some(me))
+            {
                 return Some(w.window_id);
             }
         }
@@ -504,6 +525,118 @@ impl Shell {
             .map(|w| w.app_id.clone())
             .unwrap_or(original);
         self.raise_app(&raise_id);
+    }
+
+    /// Focused app menus plus a Window menu if the app did not publish one.
+    pub fn effective_app_menu(&self, app_id: &str) -> AppMenuPayload {
+        let label = self
+            .applications
+            .get_for_window(app_id)
+            .map(|a| a.label.clone())
+            .unwrap_or_else(|| app_id.to_string());
+        crate::menu::state::effective_app_menu(&self.menus, app_id, &label)
+    }
+
+    /// Snap the focused window to `zone` (numpad, Window menu, Super+K).
+    pub fn snap_focused_zone(&mut self, zone: Zone) -> iced::Task<Msg> {
+        let Some(frame) = self.zoning.apply_zone(zone, self.focused_window_id) else {
+            return iced::Task::none();
+        };
+        let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
+            (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
+                self.zoning.float_geometry.get(&app_id).cloned()
+            }
+            _ => None,
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Frame(frame));
+            if let Some(zones) = self.zoning.take_zones_update() {
+                let _ = bus.emit(Topic::Zones(zones));
+            }
+            if let Some(fg) = float_fg {
+                let _ = bus.emit(Topic::FloatGeometry(fg));
+            }
+        }
+        self.sync_window_floating();
+        iced::Task::none()
+    }
+
+    fn handle_window_action(&mut self, action: sola_kit::WindowAction) -> iced::Task<Msg> {
+        match action {
+            sola_kit::WindowAction::Hide => {
+                self.hide_focused_app();
+                iced::Task::none()
+            }
+            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
+        }
+    }
+
+    fn activate_selected_shortcut(&mut self) -> iced::Task<Msg> {
+        use crate::shortcuts::state::ShortcutAction;
+        let Some(row) = self.shortcuts.selected_row().cloned() else {
+            return iced::Task::none();
+        };
+        self.shortcuts.active = false;
+        self.emit_composition();
+        self.emit_registered_chords();
+        match row.action {
+            ShortcutAction::OpenShortcuts => iced::Task::none(),
+            ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
+            ShortcutAction::OpenSwitcher => {
+                crate::switcher::state::rebuild_apps(
+                    &mut self.switcher,
+                    &self.mru_apps.clone(),
+                    &self.known_windows.clone(),
+                );
+                self.switcher.active = true;
+                self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+                self.emit_registered_chords();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            ShortcutAction::Hide => {
+                self.hide_focused_app();
+                iced::Task::none()
+            }
+            ShortcutAction::CloseApp => {
+                if let Some(ref focused) = self.focused_app_id.clone() {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::CloseApp(focused.clone()));
+                    }
+                }
+                iced::Task::none()
+            }
+            ShortcutAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            ShortcutAction::ScreenshotFull => {
+                self.arm_screenshot_handoff();
+                crate::screenshot::full()
+            }
+            ShortcutAction::ScreenshotRegion => iced::Task::done(Msg::OpenSelection),
+            ShortcutAction::ScreenshotWindow => {
+                let Some(app_id) = self.focused_app_id.clone() else {
+                    self.menubar
+                        .push_toast("Screenshot failed: no focused window");
+                    let toast_gen = self.menubar.toast_generation;
+                    return iced::Task::perform(
+                        tokio::time::sleep(Duration::from_secs(5)),
+                        move |_| Msg::ToastExpire(toast_gen),
+                    );
+                };
+                let title = self.focused_window_id.and_then(|wid| {
+                    self.known_windows
+                        .iter()
+                        .find(|w| w.window_id == wid)
+                        .map(|w| w.title.clone())
+                });
+                self.arm_screenshot_handoff();
+                crate::screenshot::window(app_id, title)
+            }
+            ShortcutAction::Zone(zone) => self.snap_focused_zone(zone),
+            ShortcutAction::Menu { app_id, action_id } => {
+                iced::Task::done(Msg::MenuAction { app_id, action_id })
+            }
+        }
     }
 
     /// Super+H: omit the focused app from composition (River `hide`).
@@ -638,6 +771,10 @@ impl Shell {
         let mut changed = false;
         if self.launcher.active {
             self.launcher.active = false;
+            changed = true;
+        }
+        if self.shortcuts.active {
+            self.shortcuts.active = false;
             changed = true;
         }
         if self.switcher.active {
@@ -954,6 +1091,11 @@ impl Shell {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
+        if self.overlay_should_compose("shortcuts", self.shortcuts.active) {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "shortcuts") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
         if self.overlay_should_compose(
             "selection",
             self.selection.active && self.selection.presentable,
@@ -998,7 +1140,7 @@ impl Shell {
     /// in its menu list (0 = the app-name slot shown as the title). `None`
     /// if the app has no cached menu or the action isn't found.
     fn menu_index_for_action(&self, app_id: &str, action_id: &str) -> Option<usize> {
-        let payload = self.menus.get_menu(app_id)?;
+        let payload = self.effective_app_menu(app_id);
         payload.menus.iter().position(|menu| {
             menu.items
                 .iter()
@@ -1062,6 +1204,7 @@ impl Shell {
         // regardless of which surface owns input focus. Deregistered as soon as
         // the overlay closes so terminal apps keep their Escape.
         if self.launcher.active
+            || self.shortcuts.active
             || self.switcher.active
             || self.menu_open
             || self.selection.active
@@ -1139,6 +1282,7 @@ impl Shell {
         bindings.push(KeyCode::TAB.meta()); // Meta+Tab → switcher
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
+        bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
         bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
@@ -1208,6 +1352,7 @@ impl Shell {
             ("launcher", self.launcher.active, false),
             ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
+            ("shortcuts", self.shortcuts.active, false),
         ] {
             let Some(wid) = self.lookup_window_id(Self::APP_ID, title) else {
                 continue;
@@ -1245,6 +1390,7 @@ impl Shell {
             WindowKind::Switcher => Some(2),
             WindowKind::Selection => Some(3),
             WindowKind::Notify => Some(4),
+            WindowKind::Shortcuts => Some(5),
             WindowKind::Menubar => None,
         }
     }
@@ -1256,6 +1402,7 @@ impl Shell {
             WindowKind::Switcher,
             WindowKind::Selection,
             WindowKind::Notify,
+            WindowKind::Shortcuts,
         ]
         .into_iter()
         .find(|&kind| self.overlay_id(kind) == Some(id))
@@ -1268,6 +1415,7 @@ impl Shell {
             "switcher" => 2,
             "selection" => 3,
             "notify" => 4,
+            "shortcuts" => 5,
             _ => return false,
         };
         self.overlay_iced_live[idx]
@@ -1291,7 +1439,11 @@ impl Shell {
         for (title, want) in [
             ("launcher", self.launcher.active),
             ("switcher", self.switcher.active),
-            ("selection", self.selection.active && self.selection.presentable),
+            (
+                "selection",
+                self.selection.active && self.selection.presentable,
+            ),
+            ("shortcuts", self.shortcuts.active),
         ] {
             if !self.overlay_should_compose(title, want) {
                 continue;
@@ -1340,6 +1492,9 @@ impl Shell {
         }
         if Some(window) == self.notify_window_id {
             return "notify".to_string();
+        }
+        if Some(window) == self.shortcuts_window_id {
+            return "shortcuts".to_string();
         }
         Self::APP_ID.to_string()
     }
@@ -1395,11 +1550,16 @@ impl Shell {
         let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
 
         let app_id = self.focused_app_id.as_deref().unwrap_or("");
-        let payload = self.menus.get_menu(app_id);
+        let owned = if app_id.is_empty() {
+            None
+        } else {
+            Some(self.effective_app_menu(app_id))
+        };
 
         let mut x = SYSTEM_BTN_W + title_w;
         for i in 1..index {
-            let label_len = payload
+            let label_len = owned
+                .as_ref()
                 .and_then(|p| p.menus.get(i))
                 .map(|m| m.label.len())
                 .unwrap_or(6); // fallback 6 chars
@@ -1607,6 +1767,7 @@ impl Shell {
             self.open_overlay(WindowKind::Switcher),
             self.open_overlay(WindowKind::Selection),
             self.open_overlay(WindowKind::Notify),
+            self.open_overlay(WindowKind::Shortcuts),
         ])
     }
 
@@ -1618,6 +1779,7 @@ impl Shell {
             WindowKind::Switcher => self.switcher_window_id,
             WindowKind::Selection => self.selection_window_id,
             WindowKind::Notify => self.notify_window_id,
+            WindowKind::Shortcuts => self.shortcuts_window_id,
         }
     }
 
@@ -1629,6 +1791,7 @@ impl Shell {
             WindowKind::Switcher => &mut self.switcher_window_id,
             WindowKind::Selection => &mut self.selection_window_id,
             WindowKind::Notify => &mut self.notify_window_id,
+            WindowKind::Shortcuts => &mut self.shortcuts_window_id,
         }
     }
 
@@ -1640,16 +1803,18 @@ impl Shell {
             WindowKind::Switcher => self.switcher.active,
             WindowKind::Selection => self.selection.active,
             WindowKind::Notify => self.notify.visible(),
+            WindowKind::Shortcuts => self.shortcuts.active,
         }
     }
 
-    fn overlay_visibility(&self) -> [bool; 5] {
+    fn overlay_visibility(&self) -> [bool; OVERLAY_LIVE_SLOTS] {
         [
             self.menu_open,
             self.launcher.active,
             self.switcher.active,
             self.selection.active,
             self.notify.visible(),
+            self.shortcuts.active,
         ]
     }
 
@@ -1663,6 +1828,7 @@ impl Shell {
             WindowKind::Switcher => crate::switcher::open_window(),
             WindowKind::Selection => crate::selection::open_window(),
             WindowKind::Notify => crate::notify::open_window(),
+            WindowKind::Shortcuts => crate::shortcuts::open_window(),
             WindowKind::Menubar => return iced::Task::none(),
         };
         *self.overlay_id_mut(kind) = Some(id);
@@ -1680,6 +1846,11 @@ impl Shell {
                 crate::launcher::view::QUERY_INPUT_ID,
             ));
         }
+        if kind == WindowKind::Shortcuts && self.shortcuts.active {
+            return iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                crate::shortcuts::view::QUERY_INPUT_ID,
+            ));
+        }
         iced::Task::none()
     }
 
@@ -1693,12 +1864,13 @@ impl Shell {
                 || self.launcher_window_id.is_none()
                 || self.switcher_window_id.is_none()
                 || self.selection_window_id.is_none()
-                || self.notify_window_id.is_none())
+                || self.notify_window_id.is_none()
+                || self.shortcuts_window_id.is_none())
         {
             tasks.push(self.ensure_overlay_windows());
         }
         if before != after {
-            for i in 0..5 {
+            for i in 0..OVERLAY_LIVE_SLOTS {
                 if before[i] && !after[i] {
                     self.overlay_iced_live[i] = false;
                 }
@@ -1900,6 +2072,22 @@ impl Shell {
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenLauncher);
                 }
+                if app_id == Self::APP_ID && action_id == "shortcuts" {
+                    self.menu_open = false;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return iced::Task::done(Msg::OpenShortcuts);
+                }
+                if let Some(action) = sola_kit::parse_window_action(&action_id) {
+                    self.menu_open = false;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return self.handle_window_action(action);
+                }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
                         let _ = bus.emit(Topic::Shutdown);
@@ -1927,7 +2115,71 @@ impl Shell {
                 iced::Task::none()
             }
             // --- Launcher ---
+            Msg::OpenShortcuts => {
+                if self.launcher.active {
+                    self.launcher.active = false;
+                }
+                if self.switcher.active {
+                    self.switcher.active = false;
+                }
+                if self.menu_open {
+                    self.menu_open = false;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                }
+                self.shortcuts.prior_focus = self.focused_window_id;
+                let menu = self
+                    .focused_app_id
+                    .as_deref()
+                    .map(|id| self.effective_app_menu(id));
+                self.shortcuts.rebuild(menu.as_ref());
+                self.shortcuts.active = true;
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                    crate::shortcuts::view::QUERY_INPUT_ID,
+                ))
+            }
+            Msg::CloseShortcuts => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.shortcuts.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                if let Some(wid) = self.shortcuts.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                iced::Task::none()
+            }
+            Msg::ShortcutsQuery(text) => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.shortcuts.apply_query(&text);
+                iced::Task::none()
+            }
+            Msg::ShortcutsActivate => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.activate_selected_shortcut()
+            }
+            Msg::ShortcutsPick(index) => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                if index < self.shortcuts.filtered.len() {
+                    self.shortcuts.selected = index;
+                }
+                self.activate_selected_shortcut()
+            }
             Msg::OpenLauncher => {
+                if self.shortcuts.active {
+                    self.shortcuts.active = false;
+                }
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
                 let apps = self.applications.clone();
@@ -1942,6 +2194,9 @@ impl Shell {
                 ))
             }
             Msg::CloseLauncher => {
+                if self.shortcuts.active {
+                    return iced::Task::done(Msg::CloseShortcuts);
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -1963,7 +2218,11 @@ impl Shell {
             }
             Msg::LauncherNav { up } => {
                 // Keyboard sub is always live (stable subscription recipe);
-                // ignore nav when the launcher is closed.
+                // ignore nav when neither overlay is up.
+                if self.shortcuts.active {
+                    self.shortcuts.nav(up);
+                    return iced::Task::none();
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -1979,6 +2238,9 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::Launch => {
+                if self.shortcuts.active {
+                    return self.activate_selected_shortcut();
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -2320,6 +2582,9 @@ impl Shell {
         if Some(window) == self.notify_window_id {
             return crate::notify::view::view(self);
         }
+        if Some(window) == self.shortcuts_window_id {
+            return crate::shortcuts::view::view(self);
+        }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
             .width(iced::Length::Fill)
@@ -2357,6 +2622,7 @@ mod pending_launch_tests {
             switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
+            shortcuts_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -2386,6 +2652,7 @@ mod pending_launch_tests {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
@@ -2407,7 +2674,7 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 5],
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         shell.menubar.toast_generation = 1;
         shell.menubar.toast = Some("Opening Terminal…".into());
@@ -2469,6 +2736,7 @@ mod hide_tests {
             switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
+            shortcuts_window_id: None,
             focused_app_id: focused.map(str::to_string),
             focused_window_id,
             pointer_window_id: focused_window_id,
@@ -2493,6 +2761,7 @@ mod hide_tests {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
@@ -2510,7 +2779,7 @@ mod hide_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 5],
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         }
     }
 
@@ -2544,6 +2813,68 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::H && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+H must be a registered shell chord"
         );
+    }
+
+    #[test]
+    fn shell_key_chords_include_super_k() {
+        let shell = desktop();
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::K && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+K must be a registered shell chord (Omarchy cheatsheet)"
+        );
+    }
+
+    #[test]
+    fn effective_app_menu_injects_window_when_missing() {
+        let shell = desktop();
+        let payload = shell.effective_app_menu("sola-terminal");
+        assert!(
+            payload
+                .menus
+                .iter()
+                .any(|m| m.label == sola_kit::WINDOW_MENU_LABEL),
+            "Window menu is injected for apps that did not publish one"
+        );
+        assert!(payload.menus.iter().any(|m| m.items.iter().any(|item| {
+            matches!(item, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_FLOAT)
+        })));
+    }
+
+    #[test]
+    fn effective_app_menu_keeps_published_window_menu() {
+        let mut shell = desktop();
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-terminal".into(),
+            menus: vec![
+                sola_bus::topics::MenuDefinition {
+                    label: "Terminal".into(),
+                    items: vec![],
+                },
+                sola_bus::topics::MenuDefinition {
+                    label: sola_kit::WINDOW_MENU_LABEL.into(),
+                    items: vec![MenuItem::Action {
+                        id: "window.new".into(),
+                        label: "New Window".into(),
+                        shortcut: None,
+                        disabled: false,
+                        checked: false,
+                    }],
+                },
+            ],
+        });
+        let payload = shell.effective_app_menu("sola-terminal");
+        let window = payload
+            .menus
+            .iter()
+            .find(|m| m.label == sola_kit::WINDOW_MENU_LABEL)
+            .expect("Window menu");
+        match &window.items[0] {
+            MenuItem::Action { id, .. } => assert_eq!(id, "window.new"),
+            other => panic!("expected Action, got {other:?}"),
+        }
     }
 
     #[test]

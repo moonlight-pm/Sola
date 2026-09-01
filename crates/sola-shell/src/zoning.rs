@@ -524,8 +524,15 @@ impl ZoningState {
     /// Returns the `FrameUpdate` to emit. Caller emits `Topic::Frame` and
     /// calls `take_zones_update()` → `Topic::Zones` in Task 10.
     pub fn handle_key(&mut self, code: u32, focused_window_id: Option<u32>) -> Option<FrameUpdate> {
-        let zone = zone_for_keycode(code)?;
+        self.apply_zone(zone_for_keycode(code)?, focused_window_id)
+    }
 
+    /// Snap the focused window to `zone` (menu / Super+K path).
+    pub fn apply_zone(
+        &mut self,
+        zone: Zone,
+        focused_window_id: Option<u32>,
+    ) -> Option<FrameUpdate> {
         let app_id = match self.focused_app_id.clone() {
             Some(id) => id,
             None => {
@@ -722,7 +729,7 @@ pub const ZONING_KEYCODES: &[u32] = &[
     KeyCode::KP_ADD.raw(),
 ];
 
-fn zone_for_keycode(code: u32) -> Option<Zone> {
+pub fn zone_for_keycode(code: u32) -> Option<Zone> {
     match code {
         c if c == KeyCode::KP_8.raw() => Some(Zone::TopMiddle),
         c if c == KeyCode::KP_4.raw() => Some(Zone::Left),

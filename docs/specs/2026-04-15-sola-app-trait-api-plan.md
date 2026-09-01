@@ -2081,7 +2081,7 @@ These are checks to eyeball before calling the migration done:
 
 ## Out of scope
 
-Runtime testing (actual deployment to canto + visual verification) requires explicit user permission per project policy and is not part of this plan's execution.
+Runtime testing (actual install + visual verification) requires explicit user permission per project policy and is not part of this plan's execution.
 
 ## Known caveats
 

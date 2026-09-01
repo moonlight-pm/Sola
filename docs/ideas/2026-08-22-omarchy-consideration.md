@@ -1,7 +1,9 @@
 # Omarchy — ideas worth considering for Sola
 
-**Status:** idea (parked 2026-08-22). Do not implement from this file. Promote a
-slice into a freeze + plan + `CURRENT.md` **Now** if work starts.  
+**Status:** idea (parked 2026-08-22). Super+K cheatsheet **promoted** 2026-08-31
+([freeze](../specs/2026-08-31-window-menu-and-shortcuts-design.md)). Do not
+implement the rest from this file. Promote a slice into a freeze + plan +
+`CURRENT.md` **Now** if work starts.  
 **Sources:** [omarchy.org](https://omarchy.org/), [Quattro manual](https://omarchy.org/manual/),
 [`basecamp/omarchy` `quattro`](https://github.com/basecamp/omarchy) (v4.0.0, 2026-08-14).  
 **Sola locks this must not reopen:** Iced + sola-kit; River; bus + call plane;
@@ -127,13 +129,13 @@ thumbnail opens the annotator.
 **Sola version:** Super+C/V in sola-terminal + Workspaces PTYs; clipboard
 history overlay in the shell; screenshot/image paste into paint.
 
-### 3. Super+K as the only hotkey you memorize
+### 3. Super+K as the only hotkey you memorize — **promoted 2026-08-31**
 
 Live cheatsheet overlay. Coming-from-Mac chapter: “when you blank, hit Super+K.”
 
-**Sola version:** shell overlay listing **what this desktop actually binds**
-(launcher, switcher, Workspaces, capture, …). Cheap, high leverage for
-colleagues and for you after a week off.
+**Sola version (installed `kit`+`shell` debug 2026-08-31):**
+[freeze](../specs/2026-08-31-window-menu-and-shortcuts-design.md). Shell overlay
+lists built-in chords + the focused app’s menus; click/Enter runs the action.
 
 ### 4. Capture as a product, not a PNG dump
 

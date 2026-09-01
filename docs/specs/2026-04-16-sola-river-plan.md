@@ -24,7 +24,7 @@ crates/sola-river/
 ├── Cargo.toml
 ├── build.rs                        # wayland-scanner codegen
 ├── protocols/
-│   ├── river-window-management-v1.xml  # vendored from canto /usr/share/river-protocols
+│   ├── river-window-management-v1.xml  # vendored from /usr/share/river-protocols
 │   └── river-xkb-bindings-v1.xml
 └── src/
     ├── main.rs                     # entry point
@@ -1520,7 +1520,7 @@ cargo make build --release
 
 - [ ] **Step 1: Write `docs/specs/2026-04-16-sola-river-handoff.md`**
 
-One page: what was implemented, what needs canto deploy testing (River startup sequencing, first-window timing, chord events, mouse events, focus sequencing, decoration-off behavior for third-party apps), and the rollback command (`git worktree remove .worktrees/sola-river`).
+One page: what was implemented, what needs TTY install testing (River startup sequencing, first-window timing, chord events, mouse events, focus sequencing, decoration-off behavior for third-party apps), and the rollback command (`git worktree remove .worktrees/sola-river`).
 
 ---
 
