@@ -261,7 +261,8 @@ pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settin
 /// 1. `sola_core::log::init(app_id)`
 /// 2. `sola_core::env::activate_wayland_session(20s)` — sets
 ///    `WAYLAND_DISPLAY` so winit's wayland client finds the river
-///    socket.
+///    socket, and `XDG_SESSION_TYPE=wayland` when the TTY launch
+///    left it as `tty` (Chromium camera / portal).
 /// 3. `sola_core::env::wait_for_wayland_socket(10s)` — blocks until
 ///    the socket file actually exists. river publishes the name file
 ///    a beat before the socket is bind-ready on cold boot; winit

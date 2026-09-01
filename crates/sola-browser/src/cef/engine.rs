@@ -515,6 +515,7 @@ pub(super) fn run_worker(
     initialize_cef(app_id);
     *state.request_context.borrow_mut() = None;
     *state.live_profile_id.borrow_mut() = crate::profiles::active().id;
+    apply_stored_media_content_settings();
     if let Some(tx) = &state.ipc_events {
         let _ = tx.send(crate::cef::ipc::FromEngine::Ready {
             tabs: Vec::new(),
@@ -1913,6 +1914,46 @@ fn finish_media_prompt(cb: Option<&mut cef::PermissionPromptCallback>, granted: 
     }
 }
 
+/// Push our persisted `media.json` Allow / Block into Chromium content
+/// settings (`MEDIASTREAM_CAMERA` / `MEDIASTREAM_MIC`). Alloy's
+/// `OnRequestMediaAccessPermission` grant does not update the Permission
+/// API on its own — Slack (and others) query `camera` / `microphone` and
+/// treat `prompt` as “not allowed.”
+fn apply_media_content_settings(origin: &str, granted: bool) {
+    use cef::ImplRequestContext;
+    let Some(url) = crate::media::content_setting_origin(origin) else {
+        return;
+    };
+    let Some(ctx) = cef::request_context_get_global_context() else {
+        return;
+    };
+    let url_c = cef::CefString::from(url.as_str());
+    let value = if granted {
+        cef::ContentSettingValues::ALLOW
+    } else {
+        cef::ContentSettingValues::BLOCK
+    };
+    for ty in [
+        cef::ContentSettingTypes::MEDIASTREAM_CAMERA,
+        cef::ContentSettingTypes::MEDIASTREAM_MIC,
+    ] {
+        ctx.set_content_setting(Some(&url_c), Some(&url_c), ty, value);
+    }
+}
+
+fn apply_stored_media_content_settings() {
+    let Some(profile) = crate::profiles::active_if_bound() else {
+        return;
+    };
+    for (origin, value) in crate::media::load_map(&profile.id) {
+        match value.as_str() {
+            "granted" => apply_media_content_settings(&origin, true),
+            "denied" => apply_media_content_settings(&origin, false),
+            _ => {}
+        }
+    }
+}
+
 fn finish_media_access(cb: Option<&mut cef::MediaAccessCallback>, bits: u32, granted: bool) {
     if let Some(cb) = cb {
         if granted {
@@ -1936,10 +1977,12 @@ fn handle_media_prompt(
         .map(|p| crate::media::permission_for(&p.id, &origin))
         .unwrap_or_else(|| "default".into());
     if known == "granted" {
+        apply_media_content_settings(&origin, true);
         finish_media_prompt(callback, true);
         return 1;
     }
     if known == "denied" {
+        apply_media_content_settings(&origin, false);
         finish_media_prompt(callback, false);
         return 1;
     }
@@ -1971,10 +2014,12 @@ fn handle_media_access(
         .map(|p| crate::media::permission_for(&p.id, &origin))
         .unwrap_or_else(|| "default".into());
     if known == "granted" {
+        apply_media_content_settings(&origin, true);
         finish_media_access(callback, requested_permissions, true);
         return 1;
     }
     if known == "denied" {
+        apply_media_content_settings(&origin, false);
         finish_media_access(callback, requested_permissions, false);
         return 1;
     }
@@ -2367,6 +2412,10 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::NotifyPermission { prompt_id, granted } => {
+            // Overlay persist lands in media.json before this cmd; keep
+            // Chromium MEDIASTREAM_* in lockstep so permissions.query
+            // matches our Allow / Block.
+            apply_stored_media_content_settings();
             if let Some(cb) = state.pending_permission.borrow_mut().remove(&prompt_id) {
                 cb.cont(if granted {
                     cef::PermissionRequestResult::ACCEPT
@@ -2376,6 +2425,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::MediaPermission { req_id, granted } => {
+            apply_stored_media_content_settings();
             if let Some((cb, bits)) = state.pending_media.borrow_mut().remove(&req_id) {
                 if granted {
                     cb.cont(bits);

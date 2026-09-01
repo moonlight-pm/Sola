@@ -146,6 +146,12 @@ pub fn resolve_wayland_display(timeout_ms: u64) -> String {
 /// thread the value through. Returns the resolved name for callers that
 /// want to log or use it directly.
 ///
+/// Also sets `XDG_SESSION_TYPE=wayland` when the inherited value is still
+/// `tty` (or unset). Sola is launched from a physical TTY, so logind leaves
+/// `XDG_SESSION_TYPE=tty` on the process tree; Chromium/CEF/Electron camera
+/// and portal paths treat that as “not a Wayland session.” Does not override
+/// an explicit `wayland` or `x11` (nested gamescope sets `x11`).
+///
 /// Call once, early, single-threaded — before any wayland connection
 /// is opened in this process. Safe to call from a non-graphical shell
 /// where `WAYLAND_DISPLAY` isn't set by the login session; that's the
@@ -154,7 +160,13 @@ pub fn resolve_wayland_display(timeout_ms: u64) -> String {
 pub fn activate_wayland_session(timeout_ms: u64) -> String {
     let display = resolve_wayland_display(timeout_ms);
     // SAFETY: documented as single-threaded pre-init.
-    unsafe { std::env::set_var("WAYLAND_DISPLAY", &display) };
+    unsafe {
+        std::env::set_var("WAYLAND_DISPLAY", &display);
+        match std::env::var("XDG_SESSION_TYPE") {
+            Ok(v) if v == "wayland" || v == "x11" => {}
+            _ => std::env::set_var("XDG_SESSION_TYPE", "wayland"),
+        }
+    }
     display
 }
 

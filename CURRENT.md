@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-01 (mail move-rules on connect + From/To `equals` matches `Name <addr>`; settings rules list+detail + dest select; browser tab favicons + `window.open` / NEW_POPUP as a focused tab; Window menu + Super+K overlay **installed** `kit`+`shell`+`paint`+`terminal`; screenshot freeze-then-crop + `--app` toplevel capture; Super+H hide + river dead-pid prune; wrapper Edit/links/notify/huddle; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-01 (Slack huddle camera **smoked**; mail move-rules on connect + From/To `equals` matches `Name <addr>`; settings rules list+detail + dest select; browser tab favicons + `window.open` / NEW_POPUP as a focused tab; Window menu + Super+K overlay **installed** `kit`+`shell`+`paint`+`terminal`; screenshot freeze-then-crop + `--app` toplevel capture; Super+H hide + river dead-pid prune; wrapper Edit/links/notify/huddle; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -167,7 +167,7 @@ Do not invent product policy.
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.
 15. **Distribution follow-through** (when resumed)** — ISO e2e, TZ, tarball.
-16. **Follow-ups (unordered backlog):** IPC contract handshake
+16. **Follow-ups (unordered backlog):** Host `video` extraGroup (uaccess already RW on `/dev/video*`); CEF PipeWire camera needs `rtc_use_pipewire` (build has `use_sysroot=false`). IPC contract handshake
    ([idea](docs/ideas/2026-08-30-ipc-contract-compat.md) — mixed worktree
    installs; not Now); create-card; vault item edit;
    float chrome, D2, preview, kvm clipboard, switcher FFM holdoff
@@ -204,7 +204,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **Installed** `mail` + `settings` (debug, 2026-09-01): move rules on connect + From/To equals vs display-name; settings rules list+detail + dest select. No HTML engine / attachments | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
-| Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). | — |
+| Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Agent | **Retired** (this worktree). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
