@@ -20,6 +20,10 @@ shell surfaces.
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
+The number pad types digits at session start (NumLock is turned on for
+each keyboard). Super+Numpad zoning still works if you turn NumLock off
+(the pad then sends Home / End / arrows). Press NumLock to toggle.
+
 The flower menu also has **Keyboard Shortcuts**. Type in the overlay to
 filter; click or Enter runs the action. Escape / Super+K again / click
 outside dismisses.

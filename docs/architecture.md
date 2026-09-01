@@ -100,7 +100,7 @@ to the bus and tolerate compositor restarts.
 | Compositor | External **River**; bridge **sola-river** |
 | IPC control plane | **Sola Bus** over a Unix socket |
 | IPC call plane | **sola-call** over `$XDG_RUNTIME_DIR/sola-call` |
-| Surfaces / input | Wayland protocols via River |
+| Surfaces / input | Wayland protocols via River. sola-river turns **NumLock on** for each keyboard (`river-xkb-config-v1`) so the number pad types digits; Super+Numpad zoning still matches both keysym sets. |
 | Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
 | Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
