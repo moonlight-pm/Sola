@@ -39,7 +39,8 @@ browser) fallback.
 chrome.sock handoff as `solactl open`). It claims `x-scheme-handler/http`,
 `https`, `about`, and `unknown`, plus `text/html` and `application/xhtml+xml`,
 so GIO / `xdg-open` do not pick another browser for those types. An HTML
-file path is opened as `file://`.
+file path (absolute or relative to the calling process) is opened as
+`file://` — not `https://apocrypha/…`.
 
 If a Browser window is already open, an outside open **raises it**
 to the top (same as a click) and focuses the new tab. A second
