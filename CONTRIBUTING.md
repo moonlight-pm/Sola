@@ -74,7 +74,7 @@ tarball:
 
 In `configuration.nix`, add **compile** tools the module does not ship
 (the module already has `patchelf`, `wayland`, `libxkbcommon`, `xwayland`,
-Inter, and JetBrains Mono):
+`alsa-lib`, `libpulseaudio`, Inter, and JetBrains Mono):
 
 ```nix
 environment.extraOutputsToInstall = [ "dev" "lib" ];
@@ -117,6 +117,8 @@ which river
 ls /run/current-system/sw/share/nix-ld/lib | head
 fc-list : family | grep -E '^Inter$|^JetBrains Mono$'
 pkg-config --exists xkbcommon && echo xkbcommon-ok
+pkg-config --exists alsa && echo alsa-ok
+pkg-config --exists libpulse && echo pulse-ok
 ```
 
 `installRelease = false` creates real directories at `/opt/sola/{bin,share,log}`

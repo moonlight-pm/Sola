@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-31 (Window menu + Super+K overlay **installed** `kit`+`shell`+`paint`+`terminal`; tab-group pocket color on master; screenshot freeze-then-crop + `--app` toplevel capture; mail dest-UID undo + compose table; Super+H hide + river dead-pid prune; wrapper Edit/links/notify/huddle; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-01 (sola-spotify first pass **on master**, **installed** debug; launcher row waits `install shell`; Window menu + Super+K overlay **installed** `kit`+`shell`+`paint`+`terminal`; tab-group pocket color on master; screenshot freeze-then-crop + `--app` toplevel capture; mail dest-UID undo + compose table; Super+H hide + river dead-pid prune; wrapper Edit/links/notify/huddle; codecs CEF + autoplay + vault/⌘G; shell Bluetooth + volume; `crates/sola-agent` retired; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -168,7 +168,8 @@ Do not invent product policy.
    ([idea](docs/ideas/2026-08-30-ipc-contract-compat.md) — mixed worktree
    installs; not Now); create-card; vault item edit;
    float chrome, D2, preview, kvm clipboard, switcher FFM holdoff
-   (`naturalethic/switcher-ffm-holdoff` unmerged). Browser: org-vault fill
+   (`naturalethic/switcher-ffm-holdoff` unmerged); spotify podcasts / tray /
+   playlist edit; `install shell` for the Spotify launcher row. Browser: org-vault fill
    **desk smoke**; hover × follows the pointer after close; scheme-less
    localhost / loopback is `http://`. Passkey **create** smoked. Page
    menu DevTools / Inspect Element; HTML5 drag/drop. Tab-group pockets
@@ -193,7 +194,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`); tarball v0.1.1 **404**. From-source: `CONTRIBUTING.md` (`installRelease = false`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **master** (workspaces + wrapper + **scope**). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
+| Branch | **master** (workspaces + wrapper + **scope** + **spotify** first pass). Feature work in worktrees | Feature work in worktrees / Orca workspaces |
 | Scope | **On master.** Pixel loupe: live follow, zoom 65×65…3×3, hex copy, remembered float. Desktop pointer visible; grid omits the sprite (patched wlroots + River). Installed `scope`+`river`+`shell`; compositor `/opt/sola/bin/river`. | — |
 | Shell | Super+Shift+4 freeze-then-crop (no dim) + `--app` toplevel capture (no raise) **installed** `river`+`shell` debug 2026-08-31 (`sola-arcade` smoke). Super+H hide. Dead-pid prune; menubar remapped. Window menu + Super+K overlay **installed** `kit`+`shell`+`paint`+`terminal` debug 2026-08-31. | — |
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Screenshots stay on preview (`install shell` if dest was flipped) | — |
@@ -203,7 +204,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
-| Agent | **Retired** (this worktree). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
+| Spotify | **On master.** First pass **installed** `spotify` debug 2026-09-01 (library, play here, skip-to-row, hide, disk page cache + last playlist). Host NixOS has `alsa-lib` + `libpulseaudio`. Run `/opt/sola/bin/sola-spotify` until `install shell` for the launcher row. | — |
+| Agent | **Retired** (on master). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit

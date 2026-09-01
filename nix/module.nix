@@ -65,6 +65,10 @@ in
       gst_all_1.gst-plugins-bad
       gst_all_1.gst-plugins-ugly
       gst_all_1.gst-libav
+
+      # sola-spotify local playback (librespot rodio/cpal + Pulse/PipeWire).
+      alsa-lib
+      libpulseaudio
     ] ++ lib.optional cfg.installRelease cfg.package;
 
     # Defaults every Sola app's font roles reach for. Missing families
@@ -94,6 +98,7 @@ in
       cairo
       pango
       alsa-lib
+      libpulseaudio
       libxkbcommon
       libgbm
       libdrm

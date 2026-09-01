@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sola Spotify
+Comment=Sola Spotify client — library, Connect, and local playback
+Exec=/opt/sola/bin/sola-spotify
+Terminal=false
+Categories=Audio;Music;Player;AudioVideo;
+StartupNotify=true
+StartupWMClass=sola-spotify
+Icon=sola-spotify
