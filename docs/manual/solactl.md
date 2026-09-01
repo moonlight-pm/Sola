@@ -20,7 +20,8 @@ launch a window.
 `compositor screenshot --app` copies that window’s own buffer
 (`ext-image-copy-capture`). The window does not need to be on top and
 is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
-shell freeze picker.
+shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
+copy to the clipboard instead of writing this file.
 
 `workspaces` is a first-class subcommand (`solactl` / `solactl --help`).
 Other running apps that have advertised methods: `solactl <app-id>` lists

@@ -47,13 +47,19 @@ Hiding the last visible app leaves the menubar and wallpaper.
 
 ## Screenshots
 
+Super+Shift+3 / 4 / 5 copy a PNG onto the system clipboard and toast
+**Screenshot copied**. The clipboard is offered at the chord — paste in
+Slack immediately; the paste waits until encode finishes. They do not
+write a file or open Preview.
+
 Super+Shift+4 freezes the live output first (menus, text selections, and
 other transient UI stay in the still), then opens a full-brightness
 marquee on that still (no dim). The crop is taken from the freeze — not
 a second live capture.
 
 Super+Shift+5 and `solactl compositor screenshot --app` copy the
-window’s own buffer. They do not raise the app.
+window’s own buffer. They do not raise the app. The CLI still writes a
+PNG path; the chord copies to the clipboard.
 
 ## Limits
 

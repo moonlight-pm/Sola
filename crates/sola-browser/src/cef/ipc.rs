@@ -31,6 +31,11 @@ pub enum ToEngine {
     Nav(NavCmd),
     Edit(EditCmd),
     PasteText(String),
+    PasteImage {
+        mime: String,
+        filename: String,
+        bytes: Vec<u8>,
+    },
     EvaluateJs(String),
     OpenTab {
         id: u64,

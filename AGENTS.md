@@ -178,11 +178,13 @@ docs/
 Uses the xtask pattern with a `sola-make` crate:
 
 ```
-cargo make build                                  # Build everything
-cargo make build <target>                         # Build a specific target
-cargo make install                                # Build + install all to /opt/sola/bin
-cargo make install <app>…                         # Build + install one or more apps
-cargo make install <app> --watch                  # Watch + reinstall on change
+cargo make build                                  # Release build everything
+cargo make build <target>                         # Release-build a specific target
+cargo make build --debug                          # Unoptimized debug build
+cargo make install                                # Release build + install all to /opt/sola/bin
+cargo make install <app>…                         # Release-build + install one or more apps
+cargo make install <app> --debug                  # Debug install
+cargo make install <app> --watch                  # Watch + reinstall (release)
 ```
 
 Alias configured in `.cargo/config.toml`:

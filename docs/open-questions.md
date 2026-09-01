@@ -94,6 +94,8 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-09-01 | cargo make | `build` / `install` default to **release**. `--debug` for unoptimized. `--release` still accepted. | sola-make, AGENTS, CONTRIBUTING, CURRENT locks |
+| 2026-09-01 | Screenshots | Super+Shift+3/4/5 copy Fastest PNG to the compositor clipboard (promised offer). No auto file / Preview. `solactl` still writes a path. | [image clipboard](specs/2026-09-01-image-clipboard-design.md), CURRENT, capabilities, manual/sola-shell |
 | 2026-09-01 | Browser tab favicons | Tab strip shows a reserved 16px leading favicon (CEF `on_favicon_urlchange` + `download_image`). Globe while a http(s) page has no icon yet; empty slot on blank. No domain-name prefix. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-09-01 | Browser popups | `window.open` with features (`NEW_POPUP`) and `about:blank` stay windowless CEF so the site gets a `Window`; chrome paints that as a focused tab beside the opener. `target=_blank` focuses a new tab; ⌘-click stays background. No native OS popup windows. Wrapper off-site still sola-browser; huddle OSR unchanged. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-31 | Super+K / Window | Super+K is the system keyboard-shortcuts overlay (Omarchy chord). Kit Window menu is the mouse path for zones, float, hide, and cycle; the shell injects it when an app omits it. Paint Crop is Super+Shift+K. | [freeze](specs/2026-08-31-window-menu-and-shortcuts-design.md), CURRENT locks, capabilities, manual/sola-shell |
@@ -126,7 +128,7 @@ Claude hook policy.
 | 2026-08-13 | Browser vault | Create login: save Bitwarden cipher first, then fill; always available on unlocked card; last username + generated password + bare apex URL | create-login freeze, CURRENT, capabilities, manual |
 | 2026-08-12 | Browser persist | YouTube login survives full quit; ARGB→BGRA swizzle confirmed (no red wash) | CURRENT, capabilities |
 | 2026-08-12 | Browser vault | Passkey **get** dogfooded (Google): intercept → picker → assert; clean web `clientDataJSON`; wire field `clientDataJSON` (not camelCase) | CURRENT, capabilities, manual/sola-browser |
-| 2026-08-12 | Browser install | Prefer `cargo make install browser --release` for Bitwarden KDF; restore `--release` on install | sola-make, CURRENT, manual |
+| 2026-08-12 | Browser install | Prefer `cargo make install browser --release` for Bitwarden KDF; restore `--release` on install *(superseded 2026-09-01: release is default)* | sola-make, CURRENT, manual |
 | 2026-08-12 | D8 / Browser | Profiles menubar (switch/create/rename/delete); switch re-exec; CEF under `profiles/<uuid>/cef/` | profiles freeze, CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-12 | Browser windows | One iced chrome window (`sola-browser`). Instant profile switch via headless per-profile CEF helpers, not extra Wayland windows / unique app_ids. | CURRENT, capabilities, architecture, manual |
 | 2026-08-11 | T2 / Browser | CEF-only single crate `sola-browser`; WPE multi-crate path retired after failed dogfood | CURRENT, architecture, capabilities, AGENTS |

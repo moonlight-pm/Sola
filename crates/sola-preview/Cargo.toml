@@ -15,5 +15,5 @@ sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt"] }
 tracing = "0.1"

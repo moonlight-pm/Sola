@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::{column, container, image, row, text, Space};
+use iced::widget::{Space, column, container, image, row, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme,
 };
@@ -21,9 +21,7 @@ use sola_kit::app::{
     window_settings_transparent,
 };
 use sola_kit::components::button as kit_btn;
-use sola_kit::components::style::{
-    HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
-};
+use sola_kit::components::style::{HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
@@ -59,10 +57,10 @@ struct App {
     history: Vec<PathBuf>,
     /// Currently displayed path (must be in `history` when Some).
     selected: Option<PathBuf>,
-    /// Header button shows “Copied” until this token is cleared.
-    path_copied: bool,
+    /// Which header button is flashing “Copied”.
+    copied: Option<CopiedKind>,
     /// Bumps on each copy so late clears from earlier clicks are ignored.
-    path_copied_gen: u64,
+    copied_gen: u64,
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -73,8 +71,8 @@ impl Default for App {
         Self {
             history: Vec::new(),
             selected: None,
-            path_copied: false,
-            path_copied_gen: 0,
+            copied: None,
+            copied_gen: 0,
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
@@ -82,14 +80,23 @@ impl Default for App {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopiedKind {
+    Image,
+    Path,
+}
+
 #[derive(Debug, Clone)]
 enum Msg {
     Bus(Arc<Message>),
     Select(PathBuf),
+    /// Copy the selected image’s bytes (`image/png` etc.) to the compositor clipboard.
+    CopyImage,
+    CopyImageDone(Result<(), String>),
     /// Copy the selected image’s absolute path to the clipboard.
     CopyPath,
     /// Dismiss copy feedback if `token` still matches.
-    ClearPathCopied(u64),
+    ClearCopied(u64),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -106,10 +113,7 @@ impl App {
             }
             app.open_path(path);
         }
-        (
-            app,
-            sola_kit::window_ready_task(Msg::WindowReady),
-        )
+        (app, sola_kit::window_ready_task(Msg::WindowReady))
     }
 
     fn title(&self) -> String {
@@ -135,7 +139,7 @@ impl App {
             self.history.truncate(MAX_HISTORY);
         }
         self.selected = Some(path);
-        self.path_copied = false;
+        self.copied = None;
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
@@ -159,32 +163,51 @@ impl App {
             Msg::Select(path) => {
                 if self.history.iter().any(|p| p == &path) {
                     self.selected = Some(path);
-                    self.path_copied = false;
+                    self.copied = None;
                 }
             }
+            Msg::CopyImage => {
+                let Some(path) = self.selected.clone() else {
+                    return Task::none();
+                };
+                if !path.exists() {
+                    return Task::none();
+                }
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            sola_kit::clipboard::write_image_path(&path)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()))
+                    },
+                    Msg::CopyImageDone,
+                );
+            }
+            Msg::CopyImageDone(result) => match result {
+                Ok(()) => {
+                    tracing::debug!("copied image bytes");
+                    return self.flash_copied(CopiedKind::Image);
+                }
+                Err(e) => {
+                    tracing::warn!(%e, "copy image failed");
+                }
+            },
             Msg::CopyPath => {
                 let Some(path) = self.selected.as_ref() else {
                     return Task::none();
                 };
                 let s = path.display().to_string();
-                self.path_copied_gen = self.path_copied_gen.wrapping_add(1);
-                let token = self.path_copied_gen;
-                self.path_copied = true;
                 tracing::debug!(%s, "copied image path");
                 return Task::batch([
                     iced::clipboard::write(s),
-                    Task::perform(
-                        async move {
-                            tokio::time::sleep(Duration::from_millis(COPY_FEEDBACK_MS)).await;
-                            token
-                        },
-                        Msg::ClearPathCopied,
-                    ),
+                    self.flash_copied(CopiedKind::Path),
                 ]);
             }
-            Msg::ClearPathCopied(token) => {
-                if self.path_copied_gen == token {
-                    self.path_copied = false;
+            Msg::ClearCopied(token) => {
+                if self.copied_gen == token {
+                    self.copied = None;
                 }
             }
             Msg::WindowReady(id) => self.window_id = id,
@@ -193,6 +216,19 @@ impl App {
             Msg::TitleClose => sola_kit::close_app(APP_ID),
         }
         Task::none()
+    }
+
+    fn flash_copied(&mut self, kind: CopiedKind) -> Task<Msg> {
+        self.copied_gen = self.copied_gen.wrapping_add(1);
+        let token = self.copied_gen;
+        self.copied = Some(kind);
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_millis(COPY_FEEDBACK_MS)).await;
+                token
+            },
+            Msg::ClearCopied,
+        )
     }
 
     fn view(&self) -> Element<'_, Msg> {
@@ -230,16 +266,14 @@ impl App {
         )
     }
 
-    /// Top chrome: filename + path meta on the left, Copy path on the right.
+    /// Top chrome: filename + path meta on the left, Copy then Copy path on the right.
     fn header_bar(&self) -> Element<'_, Msg> {
         let content: Element<'_, Msg> = match self.selected.as_ref() {
             Some(path) => {
                 let name = display_label(path);
                 let dir = parent_display(path);
 
-                let title = text(name)
-                    .font(fonts::ui_medium())
-                    .size(14);
+                let title = text(name).font(fonts::ui_medium()).size(14);
 
                 let subtitle: Element<'_, Msg> = if dir.is_empty() {
                     Space::new().height(0.0).into()
@@ -255,40 +289,47 @@ impl App {
                     .spacing(SPACE_SM)
                     .width(Length::Fill);
 
-                let copy_btn = if self.path_copied {
+                let copy_image = if self.copied == Some(CopiedKind::Image) {
+                    kit_btn::labeled_sm("Copied", kit_btn::secondary)
+                } else {
+                    let btn = kit_btn::labeled_sm("Copy", kit_btn::secondary);
+                    if path.exists() {
+                        btn.on_press(Msg::CopyImage)
+                    } else {
+                        btn
+                    }
+                };
+                let copy_path = if self.copied == Some(CopiedKind::Path) {
                     kit_btn::labeled_sm("Copied", kit_btn::secondary)
                 } else {
                     kit_btn::labeled_sm("Copy path", kit_btn::secondary).on_press(Msg::CopyPath)
                 };
 
-                row![meta, copy_btn]
-                    .spacing(SPACE_LG)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                    .into()
+                row![
+                    meta,
+                    row![copy_image, copy_path]
+                        .spacing(SPACE_SM)
+                        .align_y(Alignment::Center),
+                ]
+                .spacing(SPACE_LG)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .into()
             }
             None => column![
-                text("Preview")
-                    .font(fonts::ui_medium())
-                    .size(14),
-                text("No image open")
-                    .size(11)
-                    .style(kit_text::muted),
+                text("Preview").font(fonts::ui_medium()).size(14),
+                text("No image open").size(11).style(kit_text::muted),
             ]
             .spacing(SPACE_SM)
             .into(),
         };
 
-        container(
-            container(content)
-                .width(Length::Fill)
-                .padding(Padding {
-                    top: SPACE_MD,
-                    right: SPACE_LG,
-                    bottom: SPACE_MD,
-                    left: SPACE_LG,
-                }),
-        )
+        container(container(content).width(Length::Fill).padding(Padding {
+            top: SPACE_MD,
+            right: SPACE_LG,
+            bottom: SPACE_MD,
+            left: SPACE_LG,
+        }))
         .width(Length::Fill)
         .height(Length::Fixed(HEADER_H))
         .center_y(Length::Fixed(HEADER_H))
@@ -360,10 +401,7 @@ fn header_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     let surface = p.background.weaker.color;
     container::Style {
-        background: Some(Background::Color(Color {
-            a: 0.96,
-            ..surface
-        })),
+        background: Some(Background::Color(Color { a: 0.96, ..surface })),
         border: Border {
             // Bottom-only hairline: iced can't do per-side, so a full
             // 1px edge on a solid strip reads as a quiet separator.

@@ -1,25 +1,29 @@
 //! Shell-initiated capture via `compositor.screenshot` (not the bus).
+//!
+//! Super+Shift+3/4/5 advertise `image/png` immediately, then Fastest-encode
+//! in the background (shell owns the offer). Paste waits on the pipe.
+//! No file, no Preview. `solactl compositor screenshot` still writes a PNG.
 
-use std::fs::{self, File};
-use std::io::BufWriter;
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::fs;
+use std::time::Duration;
 
 use iced::widget::image;
 use sola_call::methods::OWNER_COMPOSITOR;
 
 use crate::app::{FreezeImage, Msg};
 
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(8);
+
 pub fn full() -> iced::Task<Msg> {
-    invoke(serde_json::json!({}))
+    copy_capture(serde_json::json!({ "format": "rgba" }))
 }
 
 pub fn window(app_id: String, title: Option<String>) -> iced::Task<Msg> {
-    let mut params = serde_json::json!({ "app": app_id });
+    let mut params = serde_json::json!({ "app": app_id, "format": "rgba" });
     if let Some(t) = title {
         params["window"] = serde_json::Value::String(t);
     }
-    invoke(params)
+    copy_capture(params)
 }
 
 /// Full-output RGBA freeze (no PNG). Overlay stays hidden until this returns.
@@ -40,7 +44,7 @@ pub fn freeze(generation: u64) -> iced::Task<Msg> {
     )
 }
 
-/// Crop a freeze handle to `region` and write a PNG. No second screencopy.
+/// Crop a freeze handle to `region` and copy a Fast PNG. No second screencopy.
 pub fn crop_freeze(
     handle: image::Handle,
     x: i32,
@@ -64,14 +68,74 @@ pub fn crop_freeze(
     )
 }
 
-fn capture_freeze() -> Result<FreezeImage, String> {
-    let v = sola_call::invoke(
-        OWNER_COMPOSITOR,
-        "screenshot",
-        serde_json::json!({ "format": "rgba" }),
-        Duration::from_secs(8),
+fn copy_capture(params: serde_json::Value) -> iced::Task<Msg> {
+    iced::Task::perform(
+        async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let r = copy_capture_sync(params);
+                let _ = tx.send(r);
+            });
+            match rx.await {
+                Ok(r) => r,
+                Err(_) => Err("screenshot: worker dropped".into()),
+            }
+        },
+        Msg::ScreenshotDone,
     )
-    .map_err(|e| e.to_string())?;
+}
+
+/// Advertise `image/png` first so Slack ⌘V can open a pipe, then capture.
+/// Encode runs in the background; paste waits on the pipe until it lands.
+fn copy_capture_sync(params: serde_json::Value) -> Result<(), String> {
+    let offer = sola_kit::clipboard::offer_png().map_err(|e| e.to_string())?;
+    let (w, h, rgba) = match capture_rgba(params) {
+        Ok(v) => v,
+        Err(e) => {
+            offer.fail();
+            return Err(e);
+        }
+    };
+    fulfill_png(offer, w, h, rgba);
+    Ok(())
+}
+
+fn fulfill_png(offer: sola_kit::clipboard::PngOffer, width: u32, height: u32, rgba: Vec<u8>) {
+    let _ = std::thread::Builder::new()
+        .name("sola-clip-encode".into())
+        .spawn(move || {
+            let t0 = std::time::Instant::now();
+            match sola_kit::clipboard::encode_png_fast(width, height, &rgba) {
+                Ok(png) => {
+                    tracing::info!(
+                        width,
+                        height,
+                        png_bytes = png.len(),
+                        encode_ms = t0.elapsed().as_millis(),
+                        "screenshot png ready"
+                    );
+                    offer.fulfill(png);
+                }
+                Err(e) => {
+                    tracing::warn!(%e, "screenshot png encode failed");
+                    offer.fail();
+                }
+            }
+        });
+}
+
+fn capture_freeze() -> Result<FreezeImage, String> {
+    let (width, height, pixels) = capture_rgba(serde_json::json!({ "format": "rgba" }))?;
+    Ok(FreezeImage {
+        handle: image::Handle::from_rgba(width, height, pixels),
+        width,
+        height,
+    })
+}
+
+fn capture_rgba(params: serde_json::Value) -> Result<(u32, u32, Vec<u8>), String> {
+    let v = sola_call::invoke(OWNER_COMPOSITOR, "screenshot", params, CAPTURE_TIMEOUT)
+        .map_err(|e| e.to_string())?;
     let path = v
         .get("path")
         .and_then(|p| p.as_str())
@@ -96,11 +160,7 @@ fn capture_freeze() -> Result<FreezeImage, String> {
             pixels.len()
         ));
     }
-    Ok(FreezeImage {
-        handle: image::Handle::from_rgba(width, height, pixels),
-        width,
-        height,
-    })
+    Ok((width, height, pixels))
 }
 
 fn crop_freeze_sync(
@@ -109,7 +169,7 @@ fn crop_freeze_sync(
     y: i32,
     width: i32,
     height: i32,
-) -> Result<PathBuf, String> {
+) -> Result<(), String> {
     let image::Handle::Rgba {
         width: src_w,
         height: src_h,
@@ -120,36 +180,8 @@ fn crop_freeze_sync(
         return Err("screenshot: freeze is not RGBA".into());
     };
     let (w, h, rgba) = crop_rgba(pixels.as_ref(), *src_w, *src_h, x, y, width, height)?;
-    let path = default_png_path()?;
-    write_png(&path, w, h, &rgba)?;
-    Ok(path)
-}
-
-fn default_png_path() -> Result<PathBuf, String> {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = PathBuf::from(format!("/tmp/sola/screenshots/{ms}.png"));
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
-    }
-    Ok(path)
-}
-
-fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
-    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
-    let w = BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| format!("png header: {e}"))?;
-    writer
-        .write_image_data(rgba)
-        .map_err(|e| format!("png write: {e}"))?;
+    let offer = sola_kit::clipboard::offer_png().map_err(|e| e.to_string())?;
+    fulfill_png(offer, w, h, rgba);
     Ok(())
 }
 
@@ -200,40 +232,12 @@ pub fn crop_rgba(
     Ok((w, h, out))
 }
 
-fn invoke(params: serde_json::Value) -> iced::Task<Msg> {
-    iced::Task::perform(
-        async move {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            std::thread::spawn(move || {
-                let r = sola_call::invoke(
-                    OWNER_COMPOSITOR,
-                    "screenshot",
-                    params,
-                    Duration::from_secs(20),
-                );
-                let _ = tx.send(r);
-            });
-            match rx.await {
-                Ok(Ok(v)) => v
-                    .get("path")
-                    .and_then(|p| p.as_str())
-                    .map(PathBuf::from)
-                    .ok_or_else(|| "screenshot: no path in reply".into()),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Err("screenshot: worker dropped".into()),
-            }
-        },
-        Msg::ScreenshotDone,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn crop_rgba_extracts_center() {
-        // 3×2, each pixel unique RGB
         let mut src = vec![0u8; 3 * 2 * 4];
         for i in 0..6 {
             let o = i * 4;

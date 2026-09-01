@@ -252,14 +252,9 @@ passkey ceremony. The open panel’s icon is the accent wash.
 
 ### Unlock speed
 
-Bitwarden’s master-password KDF is expensive (~600k PBKDF2). Prefer:
-
-```bash
-cargo make install browser --release
-```
-
-Debug installs also compile crypto crates at opt-level 3 (faster than plain
-debug, still slower than full release).
+Bitwarden’s master-password KDF is expensive (~600k PBKDF2). `cargo make install browser` is **release** (needed for Bitwarden KDF).
+Debug (`--debug`) also compiles crypto crates at opt-level 3, still slower
+than full release.
 
 Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 (shared across profiles).
@@ -268,11 +263,14 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 
 ⌘C / ⌘V on the page go through chrome (River steals the chords). Copy
 extracts the selection in the engine helper and writes the system
-clipboard; paste inserts **once** into the focused field without emptying
-the clipboard. In-page **Copy** buttons (`navigator.clipboard.writeText`
-and `document.execCommand('copy')`) are hooked the same way — Chromium’s
-own clipboard never reaches Wayland. Newlines in the copied text are kept.
-Triple-click selects a line / field the way Chromium expects.
+clipboard; paste reads the compositor clipboard and inserts **once** into
+the focused field. An image offer (`image/png` and siblings) is a `File`
+paste event (so Slack and similar composers accept a screenshot); text
+is inserted as before. Chromium’s own clipboard never reaches Wayland.
+In-page **Copy** buttons (`navigator.clipboard.writeText` and
+`document.execCommand('copy')`) are hooked the same way. Newlines in the
+copied text are kept. Triple-click selects a line / field the way
+Chromium expects. The omnibox and vault fields stay text-only.
 
 ⌘-click (or Ctrl-click) a link opens it in a **background tab**
 just below the current tab (same group, if the current tab is in one). A

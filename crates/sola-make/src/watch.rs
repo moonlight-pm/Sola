@@ -14,7 +14,7 @@ const DEBOUNCE_MS: u64 = 500;
 /// Watches `crates/<name>/` for file changes.
 /// On change: debounce, build, install.
 /// Errors don't kill the watcher — it continues watching.
-pub fn watch_and_install(name: &str) {
+pub fn watch_and_install(name: &str, release: bool) {
     let crate_dir = format!("crates/{name}");
 
     if !Path::new(&crate_dir).exists() {
@@ -28,7 +28,7 @@ pub fn watch_and_install(name: &str) {
 
     // Initial build + install
     println!("[watch] initial build + install...");
-    if build_and_install(&crate_name) {
+    if build_and_install(&crate_name, release) {
         println!("[install] {crate_name} ✓");
     }
 
@@ -78,7 +78,7 @@ pub fn watch_and_install(name: &str) {
         println!("[watch] changed: {changed_file}");
         println!("[watch] building {crate_name}...");
 
-        if build_and_install(&crate_name) {
+        if build_and_install(&crate_name, release) {
             println!("[install] {crate_name} ✓");
         }
 
@@ -88,11 +88,12 @@ pub fn watch_and_install(name: &str) {
 
 /// Build a single crate and install locally.
 /// Returns true on success, false on failure (with error printed).
-fn build_and_install(crate_name: &str) -> bool {
-    // Build
-    let status = Command::new("cargo")
-        .args(["build", "-p", crate_name])
-        .status();
+fn build_and_install(crate_name: &str, release: bool) -> bool {
+    let mut args = vec!["build".to_string(), "-p".to_string(), crate_name.to_string()];
+    if release {
+        args.push("--release".to_string());
+    }
+    let status = Command::new("cargo").args(&args).status();
 
     match status {
         Ok(s) if s.success() => {}
@@ -107,7 +108,8 @@ fn build_and_install(crate_name: &str) -> bool {
     }
 
     // Install
-    let src = format!("target/debug/{crate_name}");
+    let profile = if release { "release" } else { "debug" };
+    let src = format!("target/{profile}/{crate_name}");
     if !Path::new(&src).exists() {
         eprintln!("[install] FAILED: binary not found: {src}");
         return false;

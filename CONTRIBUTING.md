@@ -164,17 +164,17 @@ only). Steam store DASH and typical MP4 need `scripts/cef-codecs/` (same
 pin, hours). MPEG-LA if that `libcef.so` is redistributed.
 
 The first `cargo make …` compiles `sola-make` itself; the first full
-`install` is a long debug workspace build. `install` also runs
+`install` is a long **release** workspace build. `install` also runs
 `cargo make assets sync` when icon/cursor packs are missing under
 `/opt/sola/share/` (GitHub clones of Lucide, Simple Icons, McMojave).
 
-Debug is the default. For release (smaller, slower to compile; strongly
-preferred for sola-browser Bitwarden KDF):
+Release is the default (optimized; needed for Bitwarden KDF and fast
+screenshot PNG). For an unoptimized debug build:
 
 ```sh
-cargo make install --release
+cargo make install --debug
 # or one app:
-cargo make install browser --release
+cargo make install browser --debug
 ```
 
 ## 3. Run it
