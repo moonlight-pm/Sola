@@ -27,4 +27,4 @@ Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
 ## Not in this pass
 
-Clipboard image, color adjust, filters, layers.
+Clipboard image (Preview **Copy** is the screenshot path), color adjust, filters, layers.

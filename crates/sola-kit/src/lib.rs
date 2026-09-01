@@ -34,6 +34,7 @@
 
 pub mod app;
 pub mod call;
+pub mod clipboard;
 pub mod components;
 pub mod float;
 pub mod fonts;

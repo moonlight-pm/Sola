@@ -20,7 +20,7 @@ Sola needs one default place images land — file open, MIME, `solactl open`, an
 |-------|----------|
 | App | `sola-paint` kit iced app; `app_id` matches binary |
 | Default dest | MIME `image/*` via `sola-paint.desktop`; `Topic::OpenImage` with default/`sola-paint` dest |
-| Preview | Screenshot dest; consumes `OpenImage` only when `app_id=sola-preview` |
+| Preview | Argv / launcher viewer; consumes `OpenImage` only when `app_id=sola-preview`. Shell hotkeys copy to the clipboard. |
 | Chrome | Left tab strip (`SidebarPanel` Large) + top tool strip + checker stage |
 | Edits | Crop (drag + Apply), rotate 90°, flip H/V, 8-step undo, save / save-as |
 | View | Wheel zoom toward cursor; drag to pan; ⌘+/⌘−/⌘0 |

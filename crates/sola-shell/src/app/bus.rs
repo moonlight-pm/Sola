@@ -9,9 +9,8 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget, LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload,
-    MouseEnteredPayload, OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window,
-    WindowFloating, WindowGeometry,
+    FocusTarget, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
+    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -663,90 +662,22 @@ impl Shell {
         })
     }
 
-    /// Screenshot capture finished (`compositor.screenshot` reply).
-    /// When the capture was shell-initiated (`open_preview_on_next`), also
-    /// open/raise sola-preview with the image **without** stealing keyboard
-    /// (macOS-style: show the shot, keep typing in the previous app).
-    pub(crate) fn on_screenshot_done(
-        &mut self,
-        result: Result<std::path::PathBuf, String>,
-    ) -> Task<Msg> {
-        let open_preview = self.open_preview_on_next;
-        self.open_preview_on_next = false;
+    /// Screenshot capture finished: Fast PNG is on the compositor clipboard
+    /// (or the call failed). No file, no Preview.
+    pub(crate) fn on_screenshot_done(&mut self, result: Result<(), String>) -> Task<Msg> {
         let return_focus = self.screenshot_return_focus.take();
-
-        let msg = match &result {
-            Ok(path) => format!("Screenshot saved: {}", path.display()),
+        let msg = match result {
+            Ok(()) => "Screenshot copied".to_string(),
             Err(e) => format!("Screenshot failed: {e}"),
         };
         self.menubar.push_toast(msg);
         let toast_gen = self.menubar.toast_generation;
-        let toast_task = Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+        if let Some(wid) = return_focus {
+            self.restore_app_focus(Some(wid));
+        }
+        Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
             Msg::ToastExpire(toast_gen)
-        });
-
-        if open_preview {
-            if let Ok(path) = result {
-                self.open_or_raise_preview(&path);
-            }
-        }
-        // Always re-assert the pre-capture app focus after handoff so a
-        // warm OpenImage / composition raise cannot leave the seat on a
-        // shell surface or a non-interactive preview load freeze.
-        if open_preview {
-            self.restore_app_focus(return_focus);
-        }
-
-        toast_task
-    }
-
-    /// Open/raise sola-preview with `path`. Raises in the stack so the
-    /// shot is visible, but does **not** take keyboard focus — the caller
-    /// reasserts `screenshot_return_focus` afterward.
-    fn open_or_raise_preview(&mut self, path: &std::path::Path) {
-        const PREVIEW_ID: &str = "sola-preview";
-        let preview_wid = self
-            .known_windows
-            .iter()
-            .find(|w| w.app_id == PREVIEW_ID)
-            .map(|w| w.window_id);
-
-        if let Some(window_id) = preview_wid {
-            // activate:false — viewer should load the image but not
-            // demand seat focus (shell keeps keyboard on the prior app).
-            //
-            // IMPORTANT: do not call `emit_composition` (or any other
-            // helper that locks the bus) while holding `bus().lock()` —
-            // `std::sync::Mutex` is not reentrant and deadlocks the
-            // shell (frozen menubar / FFM / chords after screenshot).
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::OpenImage(OpenImageRequest {
-                    path: path.to_path_buf(),
-                    activate: false,
-                    app_id: Some(PREVIEW_ID.into()),
-                }));
-            }
-            // Raise via MRU so composition puts preview on top.
-            self.mru_apps.retain(|id| id != PREVIEW_ID);
-            self.mru_apps.insert(0, PREVIEW_ID.to_string());
-            self.mru_window_by_app
-                .insert(PREVIEW_ID.to_string(), window_id);
-            self.emit_composition();
-        } else {
-            // sola-session splits the command on whitespace (no shell).
-            // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
-            // no spaces — so a bare path is safe.
-            // Suppress the normal "new app maps → steal focus" path so
-            // the cold-start preview window doesn't yank the keyboard.
-            self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
-            let command = format!("/opt/sola/bin/sola-preview {}", path.display());
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
-                    app_id: PREVIEW_ID.to_string(),
-                    command,
-                }));
-            }
-        }
+        })
     }
 
     // -------------------------------------------------------------------------

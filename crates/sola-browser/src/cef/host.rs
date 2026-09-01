@@ -275,6 +275,15 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         ToEngine::Nav(n) => Cmd::Nav(n),
         ToEngine::Edit(e) => Cmd::Edit(e),
         ToEngine::PasteText(s) => Cmd::PasteText(s),
+        ToEngine::PasteImage {
+            mime,
+            filename,
+            bytes,
+        } => Cmd::PasteImage {
+            mime,
+            filename,
+            bytes,
+        },
         ToEngine::EvaluateJs(s) => Cmd::EvaluateJs(s),
         ToEngine::OpenTab { id, url, title } => Cmd::OpenTab {
             id: TabId(id),

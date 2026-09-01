@@ -2411,6 +2411,16 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 eval_js_focused(&tab.browser, &script);
             }
         }
+        Cmd::PasteImage {
+            mime,
+            filename,
+            bytes,
+        } => {
+            if let Some(tab) = active_tab(state) {
+                let script = crate::paste_js::paste_image_script(&mime, &filename, &bytes);
+                eval_js_focused(&tab.browser, &script);
+            }
+        }
         Cmd::NotifyPermission { prompt_id, granted } => {
             // Overlay persist lands in media.json before this cmd; keep
             // Chromium MEDIASTREAM_* in lockstep so permissions.query

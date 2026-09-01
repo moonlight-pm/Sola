@@ -443,9 +443,9 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// names like `shell` resolve to `sola-shell`). Otherwise builds and
 /// installs all workspace binaries.
 ///
-/// When `release` is true, builds with `--release` and copies from
-/// `target/release/` (optimized; much faster KDF / crypto paths for
-/// sola-browser Bitwarden unlock).
+/// Default is release (`target/release/`). Pass `--debug` for an
+/// unoptimized build. Release is much faster at runtime (Bitwarden KDF,
+/// screenshot PNG encode).
 pub fn install(apps: &[String], release: bool) {
     // Bootstrap third-party assets if any pack is missing.
     // /opt/sola/share is the single source of truth at runtime; install
