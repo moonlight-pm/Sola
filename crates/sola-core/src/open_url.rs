@@ -7,8 +7,9 @@
 //! - sola-shell handling of `Topic::OpenUrl`
 //! - terminal / mail / arcade clickable links
 //!
-//! Spawns `/opt/sola/bin/sola-browser <url>` detached. Override the binary
-//! with `SOLA_BROWSER`. No other browser fallback.
+//! Spawns `env::bin_path("sola-browser")` (`/bin` on Oath, `/opt/sola/bin`
+//! on NixOS). Override the binary with `SOLA_BROWSER`. No other browser
+//! fallback.
 //!
 //! When sola-browser is already running, [`open`] first writes the URL to
 //! `chrome.sock` (the iced singleton). Only if that fails do we spawn a
@@ -21,10 +22,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Env override for the sola-browser binary (defaults to
-/// `/opt/sola/bin/sola-browser`).
+/// [`crate::env::bin_path`] `"sola-browser"`).
 pub const SOLA_BROWSER_ENV: &str = "SOLA_BROWSER";
-
-const DEFAULT_SOLA_BROWSER: &str = "/opt/sola/bin/sola-browser";
 
 /// Open `uri` in sola-browser. Spawns detached; returns after spawn (not
 /// after the browser finishes).
@@ -39,8 +38,9 @@ pub fn open(uri: &str) -> Result<(), String> {
 
     let bin = sola_browser_bin().ok_or_else(|| {
         format!(
-            "sola-browser not found at {DEFAULT_SOLA_BROWSER} \
-             (install it, or set {SOLA_BROWSER_ENV} to the binary path)"
+            "sola-browser not found at {} \
+             (install it, or set {SOLA_BROWSER_ENV} to the binary path)",
+            crate::env::bin_path("sola-browser").display()
         )
     })?;
     Command::new(&bin)
@@ -103,7 +103,7 @@ pub fn sola_browser_bin() -> Option<PathBuf> {
             "{SOLA_BROWSER_ENV} set but file missing; falling back to default"
         );
     }
-    let path = PathBuf::from(DEFAULT_SOLA_BROWSER);
+    let path = crate::env::bin_path("sola-browser");
     path.is_file().then_some(path)
 }
 
@@ -121,7 +121,7 @@ mod tests {
     fn sola_browser_default_when_present() {
         // SAFETY: test-only, single-threaded unit test process.
         unsafe { std::env::remove_var(SOLA_BROWSER_ENV) };
-        let path = PathBuf::from(DEFAULT_SOLA_BROWSER);
+        let path = crate::env::bin_path("sola-browser");
         if !path.is_file() {
             return;
         }

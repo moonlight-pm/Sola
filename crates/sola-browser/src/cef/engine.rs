@@ -4,6 +4,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -3516,11 +3517,64 @@ fn dispatch_nav(browser: &cef::Browser, nav: NavCmd) {
 
 // ── CEF initialization (paths + Settings) ─────────────────────────
 
-fn initialize_cef(app_id: &'static str) {
-    use std::path::PathBuf;
-    let cef_dir: PathBuf = PathBuf::from(env!("SOLA_BROWSER_CEF_DIR"));
+/// Directory that contains `Release/libcef.so` (cache layout) or a
+/// flat `libcef.so` (publish layout).
+///
+/// Order: `SOLA_CEF_DIR`, then `<prefix>/cef` next to `bin/` /
+/// `libexec/` (`/opt/sola/cef`, `/oath/store/pkg/sola/cef`, …), then
+/// the compile-time `install-cef` cache. Do not bake a host home
+/// path into a relocated tree.
+fn resolve_cef_dir() -> PathBuf {
+    let has_libcef = |dir: &PathBuf| {
+        dir.join("Release").join("libcef.so").is_file() || dir.join("libcef.so").is_file()
+    };
+
+    if let Ok(p) = std::env::var("SOLA_CEF_DIR") {
+        let p = PathBuf::from(p);
+        if has_libcef(&p) {
+            return p;
+        }
+        tracing::warn!(
+            path = %p.display(),
+            "SOLA_CEF_DIR set but libcef.so missing; trying prefix then cache"
+        );
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+            let cand = prefix.join("cef");
+            if has_libcef(&cand) {
+                return cand;
+            }
+        }
+    }
+
+    PathBuf::from(env!("SOLA_BROWSER_CEF_DIR"))
+}
+
+fn cef_release_and_resources(cef_dir: &PathBuf) -> (PathBuf, PathBuf) {
     let release = cef_dir.join("Release");
-    let resources = cef_dir.join("Resources");
+    if release.join("libcef.so").is_file() {
+        let resources = cef_dir.join("Resources");
+        let resources = if resources.is_dir() {
+            resources
+        } else {
+            release.clone()
+        };
+        (release, resources)
+    } else {
+        (cef_dir.clone(), cef_dir.clone())
+    }
+}
+
+fn initialize_cef(app_id: &'static str) {
+    let cef_dir = resolve_cef_dir();
+    let (release, resources) = cef_release_and_resources(&cef_dir);
+    tracing::info!(
+        dir = %cef_dir.display(),
+        release = %release.display(),
+        "CEF framework dir"
+    );
     let locales = resources.join("locales");
     let exe = std::env::current_exe().expect("current_exe");
 
