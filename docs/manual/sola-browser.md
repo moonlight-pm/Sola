@@ -25,14 +25,21 @@ Launch from the shell launcher (**Browser**), or
 
 ## Default URL handler
 
-Sola routes http(s) opens to **sola-browser**:
+Sola routes web opens to **sola-browser**. There is no Helium (or other
+browser) fallback.
 
 | Path | Behavior |
 |------|----------|
 | Terminal / mail / arcade link click | `sola_core::open_url` → `chrome.sock` if chrome is up, else spawn |
 | `solactl open <url>` | same |
 | Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
-| `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
+| Terminal `open` / `xdg-open` | `xdg-open`; MIME via `sola-browser.desktop`; a second process hands off and exits |
+
+`sola-browser.desktop` `Exec` is `/opt/sola/bin/sola-browser %u` (same
+chrome.sock handoff as `solactl open`). It claims `x-scheme-handler/http`,
+`https`, `about`, and `unknown`, plus `text/html` and `application/xhtml+xml`,
+so GIO / `xdg-open` do not pick another browser for those types. An HTML
+file path is opened as `file://`.
 
 If a Browser window is already open, an outside open **raises it**
 to the top (same as a click) and focuses the new tab. A second
@@ -41,7 +48,8 @@ to the top (same as a click) and focuses the new tab. A second
 Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
 hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
-Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
+Install copies the desktop file to `~/.local/share/applications/` and
+re-registers MIME defaults from every `sola-*.desktop` `MimeType=` line.
 Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
 fallback — if the binary is missing, open fails.
 

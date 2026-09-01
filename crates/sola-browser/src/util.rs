@@ -177,14 +177,19 @@ pub fn fallback_favicon_url(page: &str) -> Option<String> {
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
 /// Normalize input into a navigable URL. An explicit scheme (`https:`,
-/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. Everything else
-/// gets a scheme prefix: `http://` for localhost / loopback (local servers
-/// almost never present a trusted cert), `https://` otherwise. `host:port`
-/// (digits after the colon) counts as a bare host, not a scheme.
+/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. An absolute
+/// filesystem path (xdg-open `%u` for a local HTML file) becomes `file://`.
+/// Everything else gets a scheme prefix: `http://` for localhost / loopback
+/// (local servers almost never present a trusted cert), `https://` otherwise.
+/// `host:port` (digits after the colon) counts as a bare host, not a scheme.
 pub fn normalize_url(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return String::new();
+    }
+    // xdg-open `%u` for `text/html` is often a path, not a file:// URL.
+    if trimmed.starts_with('/') {
+        return format!("file://{trimmed}");
     }
     // Shortcuts → built-in stress page.
     let lower = trimmed.to_ascii_lowercase();
@@ -511,6 +516,15 @@ mod tests {
         assert_eq!(normalize_url("https://example.com"), "https://example.com");
         assert_eq!(normalize_url("about:blank"), "about:blank");
         assert_eq!(normalize_url("file:///home/x"), "file:///home/x");
+    }
+
+    #[test]
+    fn normalize_url_treats_absolute_path_as_file() {
+        assert_eq!(normalize_url("/tmp/index.html"), "file:///tmp/index.html");
+        assert_eq!(
+            normalize_url("  /home/me/page.html  "),
+            "file:///home/me/page.html"
+        );
     }
 
     #[test]

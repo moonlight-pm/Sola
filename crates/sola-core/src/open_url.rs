@@ -3,7 +3,7 @@
 //! All Sola surfaces that open links should call [`open`] so behaviour
 //! stays consistent:
 //!
-//! - `solactl open` (xdg-open / MIME path when pointed here)
+//! - `solactl open` (and `xdg-open` / terminal `open` when MIME points here)
 //! - sola-shell handling of `Topic::OpenUrl`
 //! - terminal / mail / arcade clickable links
 //!
