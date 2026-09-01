@@ -290,21 +290,21 @@ impl App {
     }
 
     fn drain_outbound_links(&mut self) {
-        let urls: Vec<String> = self
+        let urls: Vec<sola_browser::ChromeTabRequest> = self
             .engine
             .background_tabs_handle()
             .lock()
             .unwrap()
             .drain(..)
             .collect();
-        for url in urls {
-            match links::classify(&self.start_url, &url) {
-                links::LinkAction::Browser => links::open_in_browser(&url),
+        for req in urls {
+            match links::classify(&self.start_url, &req.url) {
+                links::LinkAction::Browser => links::open_in_browser(&req.url),
                 links::LinkAction::InApp => {
-                    tracing::debug!(%url, "wrapper: same-site popup stays in-app");
+                    tracing::debug!(url = %req.url, "wrapper: same-site popup stays in-app");
                 }
                 links::LinkAction::Ignore => {
-                    tracing::debug!(%url, "wrapper: ignore popup url");
+                    tracing::debug!(url = %req.url, "wrapper: ignore popup url");
                 }
             }
         }

@@ -3,17 +3,18 @@
 //! `Msg` and the consts were stubbed out in Task 1 and are kept here. Task 2
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
+    Shader, Space, button, column, container, image, mouse_area, row, scrollable, stack, text,
 };
 use iced::{
-    Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse,
+    Alignment, ContentFit, Element, Event, Length, Padding, Subscription, Task, event, keyboard,
+    mouse,
 };
 use sola_kit::components::badge::{self, Tone as BadgeTone};
 use sola_kit::components::button as kit_button;
@@ -517,6 +518,11 @@ pub struct App<E: Engine> {
     pending_media: Option<crate::media::IpcMedia>,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
+    /// Live tab favicons (CEF PNG → iced handle).
+    favicons: HashMap<TabId, iced::widget::image::Handle>,
+    /// Parked favicons per profile so a switch does not wait for CEF.
+    favicon_park: HashMap<String, HashMap<TabId, iced::widget::image::Handle>>,
+    globe: iced::widget::svg::Handle,
 }
 
 impl<E: Engine> App<E> {
@@ -647,6 +653,9 @@ impl<E: Engine> App<E> {
             pending_notify: None,
             pending_media: None,
             copy_url_flash: None,
+            favicons: HashMap::new(),
+            favicon_park: HashMap::new(),
+            globe: icon_handle("lucide/globe"),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -1004,6 +1013,8 @@ impl<E: Engine> App<E> {
                     recently_closed: self.recently_closed.clone(),
                 },
             );
+            let parked = std::mem::take(&mut self.favicons);
+            self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
 
         let profile = crate::profiles::active();
@@ -1018,6 +1029,7 @@ impl<E: Engine> App<E> {
                 self.cached_active = active;
                 self.groups = snap.groups;
                 self.recently_closed = snap.recently_closed;
+                self.favicons = self.favicon_park.remove(&resume_id).unwrap_or_default();
                 self.apply_workspace_chrome_focus();
                 // Helper already has these browsers. Pass the parked list
                 // only as a fallback if the helper was evicted/died.
@@ -1047,6 +1059,7 @@ impl<E: Engine> App<E> {
             }
         }
 
+        self.favicons.clear();
         let (create_tabs, active) = self.cold_workspace_from_session();
         let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
@@ -1146,6 +1159,7 @@ impl<E: Engine> App<E> {
                     self.slot.forget_tab(t.id);
                 }
             }
+            self.favicon_park.remove(&id);
             let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
                 profile_id: id.clone(),
             });
@@ -1814,6 +1828,7 @@ impl<E: Engine> App<E> {
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
                 self.groups.on_tab_closed(id);
+                self.favicons.remove(&id);
                 self.persist_session();
             }
             Msg::ReopenClosedTab => {
@@ -1892,10 +1907,28 @@ impl<E: Engine> App<E> {
                 // not blank out after session restore.
                 let live = self.tabs_handle.lock().unwrap().clone();
                 if !live.is_empty() {
+                    let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
+                    let opener = self.cached_active;
                     self.cached_tabs =
                         merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs);
                     self.closed_tabs
                         .retain(|id| live.iter().any(|t| t.id == *id));
+                    let new_popups = place_engine_popup_tabs(
+                        &mut self.groups,
+                        &mut self.cached_tabs,
+                        &prev_ids,
+                        opener,
+                    );
+                    if !new_popups.is_empty() {
+                        self.groups.normalize(&mut self.cached_tabs);
+                        let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
+                        let focus = new_popups
+                            .iter()
+                            .copied()
+                            .find(|id| *id == engine_active)
+                            .unwrap_or(*new_popups.last().unwrap());
+                        self.switch_active_tab(focus);
+                    }
                 }
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
@@ -1957,8 +1990,8 @@ impl<E: Engine> App<E> {
                         });
                     }
                 }
-                // ⌘-click / popup: helper found a URL; chrome owns the tab id.
-                let bg: Vec<String> = self
+                // ⌘-click / target=_blank: helper found a URL; chrome owns the id.
+                let bg: Vec<crate::engine::ChromeTabRequest> = self
                     .engine
                     .background_tabs_handle()
                     .lock()
@@ -1966,13 +1999,17 @@ impl<E: Engine> App<E> {
                     .drain(..)
                     .collect();
                 self.drain_notify_ipc();
-                for url in bg {
-                    if url.contains("/devtools/inspector.html") {
-                        tracing::info!(%url, "DevTools frontend tab");
-                        self.open_tab(url, true);
+                self.drain_favicons();
+                for req in bg {
+                    if req.url.contains("/devtools/inspector.html") {
+                        tracing::info!(url = %req.url, "DevTools frontend tab");
+                        self.open_tab(req.url, true);
+                    } else if req.activate {
+                        tracing::info!(url = %req.url, "popup / target=_blank → tab");
+                        self.open_tab_beside(req.url, true);
                     } else {
-                        tracing::info!(%url, "cmd-click → background tab");
-                        self.open_tab_beside(url, false);
+                        tracing::info!(url = %req.url, "cmd-click → background tab");
+                        self.open_tab_beside(req.url, false);
                     }
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
@@ -2603,6 +2640,42 @@ impl<E: Engine> App<E> {
         }
     }
 
+    fn drain_favicons(&mut self) {
+        let evs: Vec<crate::engine::FaviconIpc> = self
+            .engine
+            .favicons_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ev in evs {
+            if ev.png.is_empty() {
+                self.favicons.remove(&ev.tab_id);
+            } else {
+                self.favicons
+                    .insert(ev.tab_id, iced::widget::image::Handle::from_bytes(ev.png));
+            }
+        }
+    }
+
+    fn tab_leading(&self, tab: &TabInfo) -> Element<'_, Msg> {
+        if let Some(handle) = self.favicons.get(&tab.id) {
+            image(handle.clone())
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0))
+                .content_fit(ContentFit::Contain)
+                .border_radius(2.0)
+                .into()
+        } else if crate::util::tab_url_has_site_icon(&tab.url) {
+            icon_svg_colored(self.globe.clone(), 14, {
+                let t = self.theme.extended_palette().background.base.text;
+                iced::Color { a: 0.42, ..t }
+            })
+        } else {
+            Space::new().width(16).height(16).into()
+        }
+    }
+
     /// Left vertical tab column. Profile switch lives in the full-width
     /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
     pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
@@ -2620,6 +2693,7 @@ impl<E: Engine> App<E> {
                 .active(t.id == active_id)
                 .on_close(Msg::CloseTab(t.id))
                 .id(t.id.0.to_string())
+                .leading(self.tab_leading(t))
         };
         let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
         let mut i = 0usize;
@@ -5634,6 +5708,31 @@ fn omnibox_progress_overlay<'a>(frac: f32) -> Element<'a, Msg> {
     .into()
 }
 
+/// Engine-created browsers (`window.open` / NEW_POPUP) appear in the live
+/// snapshot with ids chrome did not mint. Move each beside `after` (same
+/// group as the opener) and return those ids.
+fn place_engine_popup_tabs(
+    groups: &mut Groups,
+    tabs: &mut Vec<TabInfo>,
+    prev_ids: &HashSet<TabId>,
+    after: TabId,
+) -> Vec<TabId> {
+    let new: Vec<TabId> = tabs
+        .iter()
+        .map(|t| t.id)
+        .filter(|id| !prev_ids.contains(id))
+        .collect();
+    let mut after = after;
+    for id in &new {
+        if let Some(pos) = tabs.iter().position(|t| t.id == *id) {
+            let info = tabs.remove(pos);
+            groups.insert_beside(tabs, after, info);
+            after = *id;
+        }
+    }
+    new
+}
+
 /// Chrome owns which tabs exist and their order. Engine owns field updates
 /// (url / title / loading). Engine-only ids (popups) are appended unless
 /// chrome already closed them.
@@ -5782,6 +5881,49 @@ mod tests {
         let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].id, TabId(3));
+    }
+
+    #[test]
+    fn engine_popup_sits_beside_the_opener() {
+        let mut tabs = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, "https://b.example/", "B"),
+            tab(9, "https://popup.example/", "Popup"),
+        ];
+        let prev = HashSet::from([TabId(1), TabId(2)]);
+        let mut groups = Groups::default();
+        let new = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
+        assert_eq!(new, vec![TabId(9)]);
+        assert_eq!(
+            tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![TabId(1), TabId(9), TabId(2)]
+        );
+    }
+
+    #[test]
+    fn engine_popup_joins_the_opener_group() {
+        let mut tabs = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, "https://a.example/b", "B"),
+            tab(9, "https://popup.example/", "Popup"),
+        ];
+        let prev = HashSet::from([TabId(1), TabId(2)]);
+        let mut groups = Groups::default();
+        groups.groups.push(crate::groups::TabGroup {
+            id: "g1".into(),
+            name: "Work".into(),
+            collapsed: false,
+            color: None,
+        });
+        groups.member.insert(TabId(1), "g1".into());
+        groups.member.insert(TabId(2), "g1".into());
+        let _ = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
+        assert_eq!(groups.of_tab(TabId(9)), Some("g1"));
+        groups.normalize(&mut tabs);
+        assert_eq!(
+            tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![TabId(1), TabId(9), TabId(2)]
+        );
     }
 
     #[test]

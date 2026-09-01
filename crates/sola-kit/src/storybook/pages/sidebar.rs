@@ -9,6 +9,7 @@ use iced::{Color, Element, Length, Padding, Theme};
 
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::color_picker;
+use sola_kit::components::icon::{icon_handle, icon_svg};
 use sola_kit::components::sidebar::{self, Dest, Event as SidebarEvent};
 use sola_kit::components::text::{body, heading, muted};
 use sola_kit::components::text_input::text_input;
@@ -457,6 +458,14 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         )
         .style(muted),
         marks_demo(),
+        heading("Favicons"),
+        body(
+            "Reserved 16px leading slot. Browser tabs always take it so \
+             titles do not shift: site icon when CEF has one, muted globe \
+             while a page has a URL, empty on a blank tab."
+        )
+        .style(muted),
+        favicon_demo(),
         body("Density — Normal vs Large").style(muted),
         density_demo(),
     ]
@@ -488,6 +497,38 @@ fn marks_demo<'a>() -> Element<'a, Msg> {
         .style(card_style)
         .width(Length::Fixed(260.0))
         .height(Length::Fixed(220.0))
+        .into()
+}
+
+fn favicon_demo<'a>() -> Element<'a, Msg> {
+    let globe = icon_handle("lucide/globe");
+    let rows = [
+        ("GitHub", true, true),
+        ("Slack | Illuno", false, true),
+        ("New Tab", false, false),
+    ];
+    let items: Vec<SidebarItem<Msg>> = rows
+        .into_iter()
+        .map(|(label, active, has_url)| {
+            let mut item = SidebarItem::new(label, Msg::Noop)
+                .active(active)
+                .on_close(Msg::Noop)
+                .id(label);
+            if has_url {
+                item = item.leading(icon_svg(globe.clone(), 14));
+            } else {
+                item = item.leading(iced::widget::Space::new().width(16).height(16));
+            }
+            item
+        })
+        .collect();
+    let panel = SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
+        .density(SidebarDensity::Large)
+        .build();
+    container(panel)
+        .style(card_style)
+        .width(Length::Fixed(260.0))
+        .height(Length::Fixed(160.0))
         .into()
 }
 

@@ -1,6 +1,8 @@
 //! Pick an output mode on each head.
 //!
-//! Default (NixOS desk): highest-resolution mode ≥60Hz.
+//! Default: highest-resolution mode whose pixel aspect matches the
+//! panel's physical mm (so a stacked 2560×2880@30 HDMI wins over
+//! 4K@60 16:9). If physical size is unknown, highest-resolution ≥60Hz.
 //!
 //! Virtio-gpu advertises a long CVT list (1080p, 4K, …). Picking the
 //! largest makes a QEMU window balloon past the host `xres`/`yres`.
@@ -71,25 +73,72 @@ fn mode_ok_60(m: &OutputModeInfo) -> bool {
     m.refresh_mhz >= MIN_REFRESH_MHZ
 }
 
-fn pick_mode(modes: &[OutputModeInfo], pick: ModePick) -> Option<usize> {
+fn aspect(w: i32, h: i32) -> f64 {
+    if h == 0 {
+        0.0
+    } else {
+        w as f64 / h as f64
+    }
+}
+
+/// Relative error between a mode's pixels and the panel's physical mm.
+fn aspect_err(m: &OutputModeInfo, phys_w: i32, phys_h: i32) -> f64 {
+    let target = aspect(phys_w, phys_h).abs().max(1e-6);
+    (aspect(m.width, m.height) - aspect(phys_w, phys_h)).abs() / target
+}
+
+/// Modes whose pixel aspect matches the physical panel (e.g. 2560×2880
+/// stacked 16:9 on a ~square 470×520 mm HDMI). 8% slack.
+const ASPECT_SLACK: f64 = 0.08;
+
+fn pick_max(modes: &[OutputModeInfo], phys: Option<(i32, i32)>) -> Option<usize> {
+    if let Some((pw, ph)) = phys.filter(|(w, h)| *w > 0 && *h > 0) {
+        let matching: Vec<usize> = modes
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| aspect_err(m, pw, ph) <= ASPECT_SLACK)
+            .map(|(i, _)| i)
+            .collect();
+        if !matching.is_empty() {
+            // Prefer 60Hz among aspect matches, else the native 30Hz stacked
+            // mode beats a 16:9 4K@60 that does not fit the panel.
+            return matching.into_iter().max_by_key(|&i| {
+                let m = &modes[i];
+                let hz60 = i32::from(mode_ok_60(m) || m.refresh_mhz == 0);
+                (hz60, m.width as i64 * m.height as i64, m.refresh_mhz)
+            });
+        }
+    }
+    modes
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| mode_ok_60(m) || m.refresh_mhz == 0)
+        .max_by_key(|(_, m)| (m.width as i64 * m.height as i64, m.refresh_mhz))
+        .map(|(i, _)| i)
+}
+
+fn pick_mode(modes: &[OutputModeInfo], pick: ModePick, phys: Option<(i32, i32)>) -> Option<usize> {
     match pick {
         ModePick::Exact { width, height } => {
+            let exact: Vec<usize> = modes
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.width == width && m.height == height)
+                .map(|(i, _)| i)
+                .collect();
+            if !exact.is_empty() {
+                return exact.into_iter().max_by_key(|&i| modes[i].refresh_mhz);
+            }
             let usable: Vec<usize> = modes
                 .iter()
                 .enumerate()
                 .filter(|(_, m)| m.refresh_mhz == 0 || mode_ok_60(m))
                 .map(|(i, _)| i)
                 .collect();
-            usable
-                .iter()
-                .copied()
-                .find(|&i| modes[i].width == width && modes[i].height == height)
-                .or_else(|| {
-                    let want = width as i64 * height as i64;
-                    usable.into_iter().min_by_key(|&i| {
-                        (modes[i].width as i64 * modes[i].height as i64 - want).unsigned_abs()
-                    })
-                })
+            let want = width as i64 * height as i64;
+            usable.into_iter().min_by_key(|&i| {
+                (modes[i].width as i64 * modes[i].height as i64 - want).unsigned_abs()
+            })
         }
         ModePick::Preferred => modes
             .iter()
@@ -97,13 +146,8 @@ fn pick_mode(modes: &[OutputModeInfo], pick: ModePick) -> Option<usize> {
             .filter(|(_, m)| m.preferred && (m.refresh_mhz == 0 || mode_ok_60(m)))
             .max_by_key(|(_, m)| m.width as i64 * m.height as i64)
             .map(|(i, _)| i)
-            .or_else(|| pick_mode(modes, ModePick::Max)),
-        ModePick::Max => modes
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| mode_ok_60(m))
-            .max_by_key(|(_, m)| (m.width as i64 * m.height as i64, m.refresh_mhz))
-            .map(|(i, _)| i),
+            .or_else(|| pick_mode(modes, ModePick::Max, phys)),
+        ModePick::Max => pick_max(modes, phys),
     }
 }
 
@@ -114,6 +158,8 @@ pub struct OutputHeadInfo {
     pub current_mode: Option<ObjectId>,
     pub modes: Vec<ObjectId>,
     pub proxy: Option<ZwlrOutputHeadV1>,
+    pub phys_width: i32,
+    pub phys_height: i32,
 }
 
 #[derive(Default)]
@@ -138,7 +184,19 @@ impl OutputConfigState {
             infos.push(m.clone());
             ids.push(mode_id.clone());
         }
-        let idx = pick_mode(&infos, mode_pick_from_env())?;
+        let phys = (head.phys_width > 0 && head.phys_height > 0)
+            .then_some((head.phys_width, head.phys_height));
+        let idx = pick_mode(&infos, mode_pick_from_env(), phys)?;
+        let m = &infos[idx];
+        info!(
+            name = %head.name,
+            width = m.width,
+            height = m.height,
+            refresh_mhz = m.refresh_mhz,
+            phys_w = head.phys_width,
+            phys_h = head.phys_height,
+            "picked output mode"
+        );
         Some(ids[idx].clone())
     }
 }
@@ -290,6 +348,10 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for AppData {
             zwlr_output_head_v1::Event::CurrentMode { mode } => {
                 entry.current_mode = Some(mode.id());
             }
+            zwlr_output_head_v1::Event::PhysicalSize { width, height } => {
+                entry.phys_width = width;
+                entry.phys_height = height;
+            }
             zwlr_output_head_v1::Event::Finished => {
                 if let Some(h) = state.output_config.heads.remove(&head_id) {
                     for m in h.modes {
@@ -415,7 +477,7 @@ mod tests {
             mode(3840, 2160, 60_000, false),
             mode(1024, 768, 85_000, false),
         ];
-        let i = pick_mode(&modes, ModePick::Max).unwrap();
+        let i = pick_mode(&modes, ModePick::Max, None).unwrap();
         assert_eq!((modes[i].width, modes[i].height), (3840, 2160));
     }
 
@@ -426,7 +488,7 @@ mod tests {
             mode(1920, 1080, 60_000, false),
             mode(3840, 2160, 60_000, false),
         ];
-        let i = pick_mode(&modes, ModePick::Preferred).unwrap();
+        let i = pick_mode(&modes, ModePick::Preferred, None).unwrap();
         assert_eq!((modes[i].width, modes[i].height), (1280, 800));
     }
 
@@ -436,7 +498,7 @@ mod tests {
             mode(1920, 1080, 60_000, false),
             mode(1280, 800, 60_000, false),
         ];
-        let i = pick_mode(&modes, ModePick::Preferred).unwrap();
+        let i = pick_mode(&modes, ModePick::Preferred, None).unwrap();
         assert_eq!((modes[i].width, modes[i].height), (1920, 1080));
     }
 
@@ -453,8 +515,52 @@ mod tests {
                 width: 1280,
                 height: 800,
             },
+            None,
         )
         .unwrap();
         assert_eq!((modes[i].width, modes[i].height), (1280, 800));
+    }
+
+    #[test]
+    fn exact_allows_30hz_stacked_mode() {
+        let modes = [
+            mode(3840, 2160, 60_000, true),
+            mode(2560, 2880, 29_987, false),
+            mode(1920, 1080, 60_000, false),
+        ];
+        let i = pick_mode(
+            &modes,
+            ModePick::Exact {
+                width: 2560,
+                height: 2880,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (2560, 2880));
+    }
+
+    #[test]
+    fn max_picks_stacked_30hz_when_physical_is_square() {
+        // Canto HDMI: two 1440p 16:9 stacked. EDID 4K@60 is 16:9; native
+        // 2560×2880 is ~30Hz and matches 470×520 mm.
+        let modes = [
+            mode(3840, 2160, 60_000, true),
+            mode(2560, 2880, 29_987, false),
+            mode(1920, 1080, 60_000, false),
+        ];
+        let i = pick_mode(&modes, ModePick::Max, Some((470, 520))).unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (2560, 2880));
+    }
+
+    #[test]
+    fn max_still_picks_4k_on_16x9_panel() {
+        let modes = [
+            mode(3840, 2160, 60_000, true),
+            mode(2560, 2880, 29_987, false),
+            mode(1920, 1080, 60_000, false),
+        ];
+        let i = pick_mode(&modes, ModePick::Max, Some((600, 340))).unwrap();
+        assert_eq!((modes[i].width, modes[i].height), (3840, 2160));
     }
 }

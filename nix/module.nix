@@ -99,6 +99,7 @@ in
       pango
       alsa-lib
       libpulseaudio
+      pipewire            # libpipewire-0.3 — CEF/Chromium camera + portal dlopen
       libxkbcommon
       libgbm
       libdrm

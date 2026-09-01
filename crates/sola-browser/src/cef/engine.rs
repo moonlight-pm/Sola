@@ -4,6 +4,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -140,6 +141,7 @@ pub struct CefEngine {
     page_menus: PageMenusHandle,
     background_tabs: crate::engine::BackgroundTabsHandle,
     notifications: NotificationsHandle,
+    favicons: crate::engine::FaviconsHandle,
 }
 
 impl Engine for CefEngine {
@@ -209,6 +211,7 @@ impl Engine for CefEngine {
             page_menus: handles.page_menus,
             background_tabs: handles.background_tabs,
             notifications: handles.notifications,
+            favicons: handles.favicons,
         }
     }
 
@@ -261,6 +264,10 @@ impl Engine for CefEngine {
 
     fn notifications_handle(&self) -> NotificationsHandle {
         self.notifications.clone()
+    }
+
+    fn favicons_handle(&self) -> crate::engine::FaviconsHandle {
+        self.favicons.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -363,6 +370,10 @@ struct CefThreadState {
     debug_port: Cell<u16>,
     /// Inspect-element coords to run once the frontend tab has loaded.
     pending_inspect: Cell<Option<(i32, i32, TabId)>>,
+    /// In-flight `download_image` callbacks, keyed by tab id.
+    pending_favicon: RefCell<std::collections::HashMap<u64, cef::DownloadImageCallback>>,
+    /// Favicon URLs that arrived before `on_after_created` pushed the tab.
+    pending_favicon_urls: RefCell<std::collections::HashMap<i32, Vec<String>>>,
 }
 
 /// OSR drag session: CEF gave us `DragData`; we must echo target events.
@@ -492,6 +503,8 @@ pub(super) fn run_worker(
         osr_drag: RefCell::new(None),
         debug_port: Cell::new(0),
         pending_inspect: Cell::new(None),
+        pending_favicon: RefCell::new(std::collections::HashMap::new()),
+        pending_favicon_urls: RefCell::new(std::collections::HashMap::new()),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone())
@@ -502,6 +515,7 @@ pub(super) fn run_worker(
     initialize_cef(app_id);
     *state.request_context.borrow_mut() = None;
     *state.live_profile_id.borrow_mut() = crate::profiles::active().id;
+    apply_stored_media_content_settings();
     if let Some(tx) = &state.ipc_events {
         let _ = tx.send(crate::cef::ipc::FromEngine::Ready {
             tabs: Vec::new(),
@@ -961,10 +975,11 @@ cef::wrap_life_span_handler! {
             _extra_info: Option<&mut Option<cef::DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
-            // Slack huddles: `window.open('about:blank')` then
-            // `popup.document.write(...)`. Cancelling the popup makes
-            // `window.open` return null and the huddle button does nothing.
-            // Off-site http(s) still become a chrome tab / sola-browser.
+            // Never create a native OS window. `window.open` with features
+            // (`NEW_POPUP`) and `about:blank` stay windowless CEF so the
+            // site still gets a Window (huddle / Cloudways consoles).
+            // Chrome adopts that engine tab. `target=_blank` / ⌘-click
+            // cancel the native popup and ask chrome to open a tab.
             let url = target_url.map(|u| u.to_string()).unwrap_or_default();
             tracing::info!(
                 url = %url,
@@ -977,98 +992,51 @@ cef::wrap_life_span_handler! {
                 .and_then(|b| b.main_frame())
                 .map(|f| cef_string_userfree_display(&f.url()))
                 .unwrap_or_default();
-            if is_offsite_http(&opener, &url) {
-                let state = cef_state();
-                state.cmd_click_opened.set(true);
-                state.pending_new_tab_click.take();
-                request_background_tab(&state, url);
-                return 1;
+            let action = crate::popup::classify_popup(
+                &opener,
+                &url,
+                popup_disposition(target_disposition),
+                crate::profiles::is_external(),
+            );
+            tracing::info!(url = %url, ?action, "on_before_popup action");
+            match action {
+                crate::popup::PopupAction::Osr => {
+                    tracing::info!(url = %url, "allowing OSR popup (window.open / huddle)");
+                    let state = cef_state();
+                    state.cmd_click_opened.set(true);
+                    state.pending_new_tab_click.take();
+                    configure_osr_popup(window_info, client, settings);
+                    0
+                }
+                crate::popup::PopupAction::ChromeTab { activate } => {
+                    let state = cef_state();
+                    state.cmd_click_opened.set(true);
+                    state.pending_new_tab_click.take();
+                    request_chrome_tab(&state, url, activate);
+                    1
+                }
+                crate::popup::PopupAction::Cancel => 1,
             }
-            if is_osr_popup(&url, target_disposition) {
-                tracing::info!(url = %url, "allowing OSR popup (window.open / huddle)");
-                configure_osr_popup(window_info, client, settings);
-                return 0;
-            }
-            if url.is_empty() {
-                return 1;
-            }
-            let state = cef_state();
-            state.cmd_click_opened.set(true);
-            state.pending_new_tab_click.take();
-            request_background_tab(&state, url);
-            1
         }
     }
 }
 
-fn is_blank_popup_url(url: &str) -> bool {
-    let t = url.trim();
-    t.is_empty() || t.eq_ignore_ascii_case("about:blank") || {
-        let lower = t.to_ascii_lowercase();
-        lower.starts_with("about:blank?") || lower.starts_with("about:blank#")
-    }
-}
-
-fn is_osr_popup(url: &str, disposition: cef::WindowOpenDisposition) -> bool {
-    is_blank_popup_url(url) || disposition == cef::WindowOpenDisposition::NEW_POPUP
-}
-
-fn is_offsite_http(opener: &str, target: &str) -> bool {
-    let t = target.trim();
-    let lower = t.to_ascii_lowercase();
-    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return false;
-    }
-    offsite_hosts(opener, t)
-}
-
-fn offsite_hosts(a: &str, b: &str) -> bool {
-    match (popup_host(a), popup_host(b)) {
-        (Some(ha), Some(hb)) => !ha.eq_ignore_ascii_case(&hb) && popup_apex(&ha) != popup_apex(&hb),
-        _ => true,
-    }
-}
-
-fn popup_host(url: &str) -> Option<String> {
-    let t = url.trim();
-    let rest = if t.len() >= 8 && t[..8].eq_ignore_ascii_case("https://") {
-        &t[8..]
-    } else if t.len() >= 7 && t[..7].eq_ignore_ascii_case("http://") {
-        &t[7..]
+fn popup_disposition(d: cef::WindowOpenDisposition) -> crate::popup::PopupDisposition {
+    use crate::popup::PopupDisposition;
+    if d == cef::WindowOpenDisposition::NEW_BACKGROUND_TAB {
+        PopupDisposition::BackgroundTab
+    } else if d == cef::WindowOpenDisposition::NEW_FOREGROUND_TAB {
+        PopupDisposition::ForegroundTab
+    } else if d == cef::WindowOpenDisposition::NEW_POPUP {
+        PopupDisposition::Popup
+    } else if d == cef::WindowOpenDisposition::NEW_WINDOW {
+        PopupDisposition::Window
+    } else if d == cef::WindowOpenDisposition::SAVE_TO_DISK
+        || d == cef::WindowOpenDisposition::IGNORE_ACTION
+    {
+        PopupDisposition::Ignore
     } else {
-        return None;
-    };
-    let hostport = rest
-        .split(['/', '?', '#'])
-        .next()
-        .filter(|s| !s.is_empty())?;
-    let hostport = hostport.rsplit('@').next()?;
-    let host = if let Some(rest) = hostport.strip_prefix('[') {
-        rest.split(']').next()?
-    } else {
-        hostport.split(':').next()?
-    };
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_ascii_lowercase())
-    }
-}
-
-fn popup_apex(host: &str) -> &str {
-    if host.parse::<std::net::Ipv4Addr>().is_ok() {
-        return host;
-    }
-    let mut iter = host.rsplitn(3, '.');
-    let Some(tld) = iter.next() else {
-        return host;
-    };
-    match iter.next() {
-        Some(sld) => {
-            let start = host.len() - sld.len() - 1 - tld.len();
-            &host[start..]
-        }
-        None => host,
+        PopupDisposition::Other
     }
 }
 
@@ -1132,11 +1100,7 @@ fn adopt_created_browser(browser: &cef::Browser) {
         let title = std::mem::take(&mut *state.pending_created_title.borrow_mut());
         (id, url, title, false)
     } else {
-        let id = TabId(
-            state
-                .next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        );
+        let id = mint_engine_tab_id(&state);
         let url = browser
             .main_frame()
             .map(|f| cef_string_userfree_display(&f.url()))
@@ -1148,6 +1112,11 @@ fn adopt_created_browser(browser: &cef::Browser) {
     push_tab(&state, id, bid, browser.clone(), url, title);
     if activate {
         activate_tab(&state, id);
+    }
+    if !crate::profiles::is_external() {
+        if let Some(urls) = state.pending_favicon_urls.borrow_mut().remove(&bid) {
+            start_favicon_download(&state, browser, id, &urls);
+        }
     }
 }
 
@@ -1210,6 +1179,26 @@ cef::wrap_display_handler! {
             if set_tab_load_progress_by_browser_id(&state, bid, progress as f32) {
                 state.snapshot_dirty.set(true);
             }
+        }
+
+        fn on_favicon_urlchange(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            icon_urls: Option<&mut cef::CefStringList>,
+        ) {
+            if crate::profiles::is_external() {
+                return;
+            }
+            let Some(browser) = browser else { return };
+            let bid = browser.identifier();
+            let state = cef_state();
+            let urls: Vec<String> = icon_urls.map(cef_list_strings).unwrap_or_default();
+            tracing::debug!(browser_id = bid, n = urls.len(), ?urls, "favicon urls");
+            let Some(tab_id) = tab_id_by_browser_id(&state, bid) else {
+                state.pending_favicon_urls.borrow_mut().insert(bid, urls);
+                return;
+            };
+            start_favicon_download(&state, browser, tab_id, &urls);
         }
 
         fn on_title_change(
@@ -1925,6 +1914,46 @@ fn finish_media_prompt(cb: Option<&mut cef::PermissionPromptCallback>, granted: 
     }
 }
 
+/// Push our persisted `media.json` Allow / Block into Chromium content
+/// settings (`MEDIASTREAM_CAMERA` / `MEDIASTREAM_MIC`). Alloy's
+/// `OnRequestMediaAccessPermission` grant does not update the Permission
+/// API on its own — Slack (and others) query `camera` / `microphone` and
+/// treat `prompt` as “not allowed.”
+fn apply_media_content_settings(origin: &str, granted: bool) {
+    use cef::ImplRequestContext;
+    let Some(url) = crate::media::content_setting_origin(origin) else {
+        return;
+    };
+    let Some(ctx) = cef::request_context_get_global_context() else {
+        return;
+    };
+    let url_c = cef::CefString::from(url.as_str());
+    let value = if granted {
+        cef::ContentSettingValues::ALLOW
+    } else {
+        cef::ContentSettingValues::BLOCK
+    };
+    for ty in [
+        cef::ContentSettingTypes::MEDIASTREAM_CAMERA,
+        cef::ContentSettingTypes::MEDIASTREAM_MIC,
+    ] {
+        ctx.set_content_setting(Some(&url_c), Some(&url_c), ty, value);
+    }
+}
+
+fn apply_stored_media_content_settings() {
+    let Some(profile) = crate::profiles::active_if_bound() else {
+        return;
+    };
+    for (origin, value) in crate::media::load_map(&profile.id) {
+        match value.as_str() {
+            "granted" => apply_media_content_settings(&origin, true),
+            "denied" => apply_media_content_settings(&origin, false),
+            _ => {}
+        }
+    }
+}
+
 fn finish_media_access(cb: Option<&mut cef::MediaAccessCallback>, bits: u32, granted: bool) {
     if let Some(cb) = cb {
         if granted {
@@ -1948,10 +1977,12 @@ fn handle_media_prompt(
         .map(|p| crate::media::permission_for(&p.id, &origin))
         .unwrap_or_else(|| "default".into());
     if known == "granted" {
+        apply_media_content_settings(&origin, true);
         finish_media_prompt(callback, true);
         return 1;
     }
     if known == "denied" {
+        apply_media_content_settings(&origin, false);
         finish_media_prompt(callback, false);
         return 1;
     }
@@ -1983,10 +2014,12 @@ fn handle_media_access(
         .map(|p| crate::media::permission_for(&p.id, &origin))
         .unwrap_or_else(|| "default".into());
     if known == "granted" {
+        apply_media_content_settings(&origin, true);
         finish_media_access(callback, requested_permissions, true);
         return 1;
     }
     if known == "denied" {
+        apply_media_content_settings(&origin, false);
         finish_media_access(callback, requested_permissions, false);
         return 1;
     }
@@ -2379,6 +2412,10 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::NotifyPermission { prompt_id, granted } => {
+            // Overlay persist lands in media.json before this cmd; keep
+            // Chromium MEDIASTREAM_* in lockstep so permissions.query
+            // matches our Allow / Block.
+            apply_stored_media_content_settings();
             if let Some(cb) = state.pending_permission.borrow_mut().remove(&prompt_id) {
                 cb.cont(if granted {
                     cef::PermissionRequestResult::ACCEPT
@@ -2388,6 +2425,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::MediaPermission { req_id, granted } => {
+            apply_stored_media_content_settings();
             if let Some((cb, bits)) = state.pending_media.borrow_mut().remove(&req_id) {
                 if granted {
                     cb.cont(bits);
@@ -2492,6 +2530,124 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
 /// landing on the worker.
 fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
     tab_state_by_id(state, state.active.get())
+}
+
+fn tab_id_by_browser_id(state: &CefThreadState, browser_id: i32) -> Option<TabId> {
+    state
+        .tabs
+        .borrow()
+        .iter()
+        .find(|t| t.browser_id == browser_id)
+        .map(|t| t.id)
+}
+
+fn send_favicon(tab_id: TabId, png: Vec<u8>) {
+    let state = cef_state();
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Favicon {
+            tab_id: tab_id.0,
+            png,
+        });
+    }
+}
+
+/// `CefStringList::clone()` becomes a borrowed view that `into_iter`
+/// cannot read (always empty). Rebuild from the raw pointer instead.
+fn cef_list_strings(list: &mut cef::CefStringList) -> Vec<String> {
+    let raw: *mut cef::sys::_cef_string_list_t = list.into();
+    if raw.is_null() {
+        Vec::new()
+    } else {
+        cef::CefStringList::from(raw).into_iter().collect()
+    }
+}
+
+fn start_favicon_download(
+    state: &CefThreadState,
+    browser: &cef::Browser,
+    tab_id: TabId,
+    urls: &[String],
+) {
+    let page = state
+        .tabs
+        .borrow()
+        .iter()
+        .find(|t| t.id == tab_id)
+        .map(|t| t.url.lock().unwrap().clone())
+        .unwrap_or_default();
+    let url = crate::util::pick_favicon_url(urls)
+        .map(str::to_string)
+        .or_else(|| crate::util::fallback_favicon_url(&page));
+    let Some(url) = url else {
+        tracing::debug!(?tab_id, "favicon: no downloadable url");
+        return;
+    };
+    request_favicon(state, browser, tab_id, &url);
+}
+
+fn request_favicon(state: &CefThreadState, browser: &cef::Browser, tab_id: TabId, url: &str) {
+    use cef::ImplBrowserHost;
+    let Some(host) = browser.host() else { return };
+    tracing::info!(?tab_id, %url, "favicon download");
+    let url_c = cef::CefString::from(url);
+    let mut cb = FaviconCallback::new(tab_id.0);
+    // 0 = no pixel cap. 32px skipped many apple-touch / 180px icons.
+    host.download_image(Some(&url_c), 1, 0, 0, Some(&mut cb));
+    state.pending_favicon.borrow_mut().insert(tab_id.0, cb);
+}
+
+fn image_png_bytes(image: &mut cef::Image) -> Option<Vec<u8>> {
+    use cef::{ImplBinaryValue, ImplImage};
+    if image.is_empty() != 0 {
+        return None;
+    }
+    for scale in [1.0_f32, 2.0] {
+        let mut w = 0i32;
+        let mut h = 0i32;
+        let Some(bin) = image.as_png(scale, 1, Some(&mut w), Some(&mut h)) else {
+            continue;
+        };
+        let n = bin.size();
+        if n == 0 || n > 256 * 1024 {
+            continue;
+        }
+        let mut buf = vec![0u8; n];
+        let written = bin.data(Some(&mut buf), 0);
+        if written == 0 {
+            continue;
+        }
+        buf.truncate(written);
+        return Some(buf);
+    }
+    None
+}
+
+cef::wrap_download_image_callback! {
+    pub struct FaviconCallback {
+        tab_id: u64,
+    }
+
+    impl DownloadImageCallback {
+        fn on_download_image_finished(
+            &self,
+            _image_url: Option<&cef::CefString>,
+            http_status_code: ::std::os::raw::c_int,
+            image: Option<&mut cef::Image>,
+        ) {
+            let state = cef_state();
+            state.pending_favicon.borrow_mut().remove(&self.tab_id);
+            let png = image.and_then(image_png_bytes).unwrap_or_default();
+            tracing::info!(
+                tab_id = self.tab_id,
+                http_status_code,
+                png = png.len(),
+                "favicon download finished"
+            );
+            if !png.is_empty() {
+                send_favicon(TabId(self.tab_id), png);
+            }
+        }
+    }
 }
 
 fn tab_state_by_id(state: &CefThreadState, id: TabId) -> Option<std::cell::Ref<'_, CefTabState>> {
@@ -2835,6 +2991,7 @@ fn open_dev_tools_tab(
     if let Some(tx) = &state.ipc_events {
         let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab {
             url: frontend.clone(),
+            activate: true,
         });
     }
     tracing::info!(%frontend, panel, "DevTools frontend requested");
@@ -3329,13 +3486,33 @@ fn handle_link_hit(state: &CefThreadState, href: String) {
     }
     if crate::util::href_is_new_tab_target(&href) {
         state.cmd_click_opened.set(true);
-        request_background_tab(state, href);
+        request_chrome_tab(state, href, false);
     }
 }
 
-fn request_background_tab(state: &CefThreadState, url: String) {
+fn request_chrome_tab(state: &CefThreadState, url: String, activate: bool) {
     if let Some(tx) = &state.ipc_events {
-        let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab { url });
+        let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab { url, activate });
+    }
+}
+
+/// Helper-minted ids must not collide with chrome session tabs. `next_id`
+/// is bumped on `OpenTab`, but skip any leftover that is still live.
+fn mint_engine_tab_id(state: &CefThreadState) -> TabId {
+    let max_existing = state
+        .tabs
+        .borrow()
+        .iter()
+        .map(|t| t.id.0)
+        .max()
+        .unwrap_or(0);
+    loop {
+        let id = state
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if id > max_existing && id != 0 {
+            return TabId(id);
+        }
     }
 }
 
@@ -3516,11 +3693,64 @@ fn dispatch_nav(browser: &cef::Browser, nav: NavCmd) {
 
 // ── CEF initialization (paths + Settings) ─────────────────────────
 
-fn initialize_cef(app_id: &'static str) {
-    use std::path::PathBuf;
-    let cef_dir: PathBuf = PathBuf::from(env!("SOLA_BROWSER_CEF_DIR"));
+/// Directory that contains `Release/libcef.so` (cache layout) or a
+/// flat `libcef.so` (publish layout).
+///
+/// Order: `SOLA_CEF_DIR`, then `<prefix>/cef` next to `bin/` /
+/// `libexec/` (`/opt/sola/cef`, `/oath/store/pkg/sola/cef`, …), then
+/// the compile-time `install-cef` cache. Do not bake a host home
+/// path into a relocated tree.
+fn resolve_cef_dir() -> PathBuf {
+    let has_libcef = |dir: &PathBuf| {
+        dir.join("Release").join("libcef.so").is_file() || dir.join("libcef.so").is_file()
+    };
+
+    if let Ok(p) = std::env::var("SOLA_CEF_DIR") {
+        let p = PathBuf::from(p);
+        if has_libcef(&p) {
+            return p;
+        }
+        tracing::warn!(
+            path = %p.display(),
+            "SOLA_CEF_DIR set but libcef.so missing; trying prefix then cache"
+        );
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+            let cand = prefix.join("cef");
+            if has_libcef(&cand) {
+                return cand;
+            }
+        }
+    }
+
+    PathBuf::from(env!("SOLA_BROWSER_CEF_DIR"))
+}
+
+fn cef_release_and_resources(cef_dir: &PathBuf) -> (PathBuf, PathBuf) {
     let release = cef_dir.join("Release");
-    let resources = cef_dir.join("Resources");
+    if release.join("libcef.so").is_file() {
+        let resources = cef_dir.join("Resources");
+        let resources = if resources.is_dir() {
+            resources
+        } else {
+            release.clone()
+        };
+        (release, resources)
+    } else {
+        (cef_dir.clone(), cef_dir.clone())
+    }
+}
+
+fn initialize_cef(app_id: &'static str) {
+    let cef_dir = resolve_cef_dir();
+    let (release, resources) = cef_release_and_resources(&cef_dir);
+    tracing::info!(
+        dir = %cef_dir.display(),
+        release = %release.display(),
+        "CEF framework dir"
+    );
     let locales = resources.join("locales");
     let exe = std::env::current_exe().expect("current_exe");
 

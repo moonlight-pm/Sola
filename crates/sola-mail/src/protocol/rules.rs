@@ -2,6 +2,24 @@
 
 use sola_bus::topics::MailRule;
 
+/// Address inside `Name <user@host>` (or the trimmed field if there is
+/// no angle-bracket form). IMAP envelopes almost always carry a display
+/// name, so matchers that only compare the raw From/To string miss
+/// `no-reply@example.com` against `Bot <no-reply@example.com>`.
+pub fn extract_address(field_value: &str) -> &str {
+    if let Some(start) = field_value.find('<') {
+        let after = &field_value[start + 1..];
+        if let Some(end) = after.find('>') {
+            return after[..end].trim();
+        }
+    }
+    field_value.trim()
+}
+
+fn is_addr_field(field: &str) -> bool {
+    matches!(field, "from" | "to")
+}
+
 /// Returns true if every condition in the rule matches the given message fields.
 /// An empty conditions list never matches.
 pub fn rule_matches(rule: &MailRule, from: &str, subject: &str, to: &str) -> bool {
@@ -15,31 +33,35 @@ pub fn rule_matches(rule: &MailRule, from: &str, subject: &str, to: &str) -> boo
             "to" => to,
             _ => return false,
         };
-        let value = cond.value.to_lowercase();
+        let value = cond.value.trim().to_lowercase();
+        if value.is_empty() {
+            return false;
+        }
         match cond.match_type.as_str() {
             "domain" => {
-                if let Some(at_pos) = field_value.rfind('@') {
-                    let after_at = &field_value[at_pos + 1..];
-                    let domain = after_at.trim_end_matches('>').to_lowercase();
-                    domain == value
+                let addr = if is_addr_field(&cond.field) {
+                    extract_address(field_value)
+                } else {
+                    field_value
+                };
+                if let Some(at_pos) = addr.rfind('@') {
+                    addr[at_pos + 1..].trim().to_lowercase() == value
                 } else {
                     false
                 }
             }
-            "address" => {
-                if let Some(start) = field_value.find('<') {
-                    let after = &field_value[start + 1..];
-                    if let Some(end) = after.find('>') {
-                        after[..end].trim().to_lowercase() == value
-                    } else {
-                        false
-                    }
-                } else {
-                    field_value.trim().to_lowercase() == value
-                }
-            }
+            "address" => extract_address(field_value).to_lowercase() == value,
             "contains" => field_value.to_lowercase().contains(&value),
-            "equals" => field_value.to_lowercase() == value,
+            "equals" => {
+                let fv = field_value.trim().to_lowercase();
+                if fv == value {
+                    return true;
+                }
+                // From/To "is" an address: treat display-name envelopes as
+                // the address, so a saved `equals no-reply@x.com` still
+                // matches `List <no-reply@x.com>`.
+                is_addr_field(&cond.field) && extract_address(field_value).to_lowercase() == value
+            }
             _ => false,
         }
     })
@@ -103,5 +125,39 @@ mod tests {
         });
         assert!(rule_matches(&r, "x@example.com", "alert: down", ""));
         assert!(!rule_matches(&r, "x@example.com", "news", ""));
+    }
+
+    #[test]
+    fn equals_on_from_matches_display_name_envelope() {
+        // Settings "is" + a bare address used to fail against IMAP
+        // `Name <addr>` From lines (the live Illuno spam rule).
+        let rule = rule("from", "equals", "no-reply@illuno.com");
+        assert!(rule_matches(
+            &rule,
+            "Illuno <no-reply@illuno.com>",
+            "weekly digest",
+            ""
+        ));
+        assert!(rule_matches(&rule, "no-reply@illuno.com", "", ""));
+        assert!(!rule_matches(&rule, "other@illuno.com", "", ""));
+        assert!(!rule_matches(
+            &rule,
+            "Someone <someone@elsewhere.com>",
+            "",
+            ""
+        ));
+    }
+
+    #[test]
+    fn extract_address_from_angle_brackets() {
+        assert_eq!(extract_address("Bot <bot@github.com>"), "bot@github.com");
+        assert_eq!(extract_address("a@b.com"), "a@b.com");
+        assert_eq!(extract_address("  a@b.com  "), "a@b.com");
+    }
+
+    #[test]
+    fn empty_condition_value_never_matches() {
+        let rule = rule("from", "equals", "  ");
+        assert!(!rule_matches(&rule, "a@b.com", "", ""));
     }
 }

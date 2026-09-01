@@ -72,6 +72,15 @@ tarball:
 > zig rewrite) and the carried River/wlroots patches build cleanly. See
 > `INSTALL.md` for the failure mode if you follow.
 
+Camera / V4L2: systemd `uaccess` already grants the seat user RW on
+`/dev/video*`. Add `video` to the graphical user's `extraGroups` so
+tools that ignore logind ACLs (`ffmpeg`, some Electron apps) still
+open the node:
+
+```nix
+users.users.<you>.extraGroups = [ "video" /* wheel, input, … */ ];
+```
+
 In `configuration.nix`, add **compile** tools the module does not ship
 (the module already has `patchelf`, `wayland`, `libxkbcommon`, `xwayland`,
 `alsa-lib`, `libpulseaudio`, Inter, and JetBrains Mono):
