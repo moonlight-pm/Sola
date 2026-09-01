@@ -311,7 +311,8 @@ async fn run() {
         play_index: 0,
         last_playback: Playback::Stopped,
         advance_gen: 0,
-        hold_uri: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        hold: std::sync::Arc::new(std::sync::Mutex::new(EngineHold::default())),
+        last_engine_uri: None,
         now: NowPlaying::default(),
         devices: Vec::new(),
         page: Page::Home,
@@ -375,7 +376,8 @@ struct Worker {
     advance_gen: u64,
     skipped: Skipped,
     /// Drop engine snapshots for any other track while a click/skip settles.
-    hold_uri: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    hold: std::sync::Arc<std::sync::Mutex<EngineHold>>,
+    last_engine_uri: Option<String>,
     now: NowPlaying,
     devices: Vec<Device>,
     page: Page,
@@ -705,10 +707,10 @@ impl Worker {
         let int_tx = self.int_tx.clone();
         let notify: crate::player::Notify = {
             let int_tx = int_tx.clone();
-            let hold_uri = Arc::clone(&self.hold_uri);
+            let hold = Arc::clone(&self.hold);
             Arc::new(move |event| match event {
                 EngineEvent::State(state) => {
-                    if !hold_allows(&hold_uri, &state) {
+                    if !hold_allows(&hold, &state) {
                         return;
                     }
                     apply_local_state(state.clone());
@@ -1311,7 +1313,7 @@ impl Worker {
                 }
             }
             MediaCommand::Next => {
-                *self.hold_uri.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                self.ignore_current_track();
                 self.advance_gen = self.advance_gen.wrapping_add(1);
                 self.transport(PlayerCommand::Next, |api, id| async move {
                     api.next(id.as_deref()).await
@@ -1319,7 +1321,7 @@ impl Worker {
                 .await
             }
             MediaCommand::Previous => {
-                *self.hold_uri.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                self.ignore_current_track();
                 self.advance_gen = self.advance_gen.wrapping_add(1);
                 self.transport(PlayerCommand::Previous, |api, id| async move {
                     api.previous(id.as_deref()).await
@@ -1388,12 +1390,25 @@ impl Worker {
     }
 
     fn hold_play(&mut self, request: &PlayRequest) {
-        let uri = request
+        let want = request
             .offset_uri
             .clone()
             .or_else(|| request.uris.first().cloned());
-        *self.hold_uri.lock().unwrap_or_else(|p| p.into_inner()) = uri;
+        let ignore = self.last_engine_uri.clone().filter(|prev| {
+            !want
+                .as_ref()
+                .is_some_and(|w| w == prev || uri_ids_match(prev, w))
+        });
+        let mut hold = self.hold.lock().unwrap_or_else(|p| p.into_inner());
+        hold.want = want;
+        hold.ignore = ignore;
         self.advance_gen = self.advance_gen.wrapping_add(1);
+    }
+
+    fn ignore_current_track(&mut self) {
+        let mut hold = self.hold.lock().unwrap_or_else(|p| p.into_inner());
+        hold.want = None;
+        hold.ignore = self.last_engine_uri.clone();
     }
 
     fn remember_queue(&mut self, request: &PlayRequest) {
@@ -1418,6 +1433,9 @@ impl Worker {
         );
         let now_stopped = state.playback == Playback::Stopped;
         let uri = state.track.as_ref().map(|t| t.uri.clone());
+        if let Some(uri) = uri.as_ref() {
+            self.last_engine_uri = Some(uri.clone());
+        }
         self.last_playback = state.playback;
         if was_going && now_stopped {
             if let Some(uri) = uri {
@@ -1439,12 +1457,16 @@ impl Worker {
             if let Some(uri) = uri
                 && self.skipped.contains(&uri)
             {
-                let hold = self
-                    .hold_uri
+                let want = self
+                    .hold
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
+                    .want
                     .clone();
-                if hold.as_deref() != Some(uri.as_str()) {
+                if !want
+                    .as_ref()
+                    .is_some_and(|w| w == &uri || uri_ids_match(&uri, w))
+                {
                     self.skip_to_next_after(uri);
                 }
             }
@@ -1554,22 +1576,37 @@ impl Worker {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct EngineHold {
+    /// URI we just asked to play. Drop other URIs until this is Playing.
+    want: Option<String>,
+    /// URI we left. Drop even after `want` is playing (stale engine events).
+    ignore: Option<String>,
+}
+
 fn hold_allows(
-    hold_uri: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    hold: &std::sync::Arc<std::sync::Mutex<EngineHold>>,
     state: &crate::player::LocalState,
 ) -> bool {
-    let hold = hold_uri
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
-    let Some(hold) = hold else {
-        return true;
+    let mut hold = hold.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(uri) = state.track.as_ref().map(|t| t.uri.as_str()) else {
+        return hold.want.is_none();
     };
-    match state.track.as_ref().map(|t| t.uri.as_str()) {
-        Some(uri) if uri == hold || uri_ids_match(uri, &hold) => true,
-        Some(_) => false,
-        None => false,
+    if let Some(ignore) = hold.ignore.as_deref()
+        && (uri == ignore || uri_ids_match(uri, ignore))
+    {
+        return false;
     }
+    if let Some(want) = hold.want.as_deref() {
+        if uri == want || uri_ids_match(uri, want) {
+            if state.playback == Playback::Playing {
+                hold.want = None;
+            }
+            return true;
+        }
+        return false;
+    }
+    true
 }
 
 fn uri_ids_match(a: &str, b: &str) -> bool {
@@ -1687,5 +1724,56 @@ fn now_from_remote(state: &PlaybackState) -> NowPlaying {
         device_id: state.device.as_ref().and_then(|d| d.id.clone()),
         is_local: false,
         saved: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::{LocalState, LocalTrack};
+
+    fn state(uri: &str, playback: Playback) -> LocalState {
+        LocalState {
+            playback,
+            track: Some(LocalTrack {
+                uri: uri.into(),
+                title: "t".into(),
+                ..LocalTrack::default()
+            }),
+            ..LocalState::default()
+        }
+    }
+
+    fn hold(want: Option<&str>, ignore: Option<&str>) -> std::sync::Arc<std::sync::Mutex<EngineHold>> {
+        std::sync::Arc::new(std::sync::Mutex::new(EngineHold {
+            want: want.map(str::to_string),
+            ignore: ignore.map(str::to_string),
+        }))
+    }
+
+    #[test]
+    fn hold_allows_context_advance_after_wanted_track_plays() {
+        let h = hold(Some("spotify:track:a"), None);
+        assert!(hold_allows(&h, &state("spotify:track:a", Playback::Loading)));
+        assert!(hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
+        assert!(h.lock().unwrap().want.is_none());
+        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
+    }
+
+    #[test]
+    fn hold_drops_previous_track_while_switching() {
+        let h = hold(Some("spotify:track:b"), Some("spotify:track:a"));
+        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
+        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Stopped)));
+        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
+        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
+        assert!(hold_allows(&h, &state("spotify:track:c", Playback::Playing)));
+    }
+
+    #[test]
+    fn hold_without_want_still_ignores_left_track() {
+        let h = hold(None, Some("spotify:track:a"));
+        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Stopped)));
+        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
     }
 }

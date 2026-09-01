@@ -695,16 +695,10 @@ impl App {
                     return Task::none();
                 }
                 if let Some(pending) = &self.pending_uri {
-                    if !now.uri.is_empty()
-                        && now.uri != *pending
-                        && now.uri.rsplit(':').next() != pending.rsplit(':').next()
-                    {
+                    if !now.uri.is_empty() && !same_track_uri(&now.uri, pending) {
                         return Task::none();
                     }
-                    if now.playback == Playback::Playing
-                        && (now.uri == *pending
-                            || now.uri.rsplit(':').next() == pending.rsplit(':').next())
-                    {
+                    if now.playback == Playback::Playing && same_track_uri(&now.uri, pending) {
                         self.pending_uri = None;
                     }
                 }
@@ -1360,7 +1354,7 @@ impl App {
             .map(|(i, track)| {
                 let uri = track.uri.clone();
                 let ctx = context.clone();
-                let playing = self.now.uri == uri && !uri.is_empty();
+                let playing = same_track_uri(&self.now.uri, &uri);
                 let saved = self.is_saved(&uri);
                 let skipped = self.skipped.contains(&uri);
                 let artist_id = track.artists.first().and_then(|a| a.id.clone());
@@ -1777,6 +1771,10 @@ fn key_msg(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
         }
         _ => None,
     }
+}
+
+fn same_track_uri(a: &str, b: &str) -> bool {
+    !a.is_empty() && !b.is_empty() && (a == b || a.rsplit(':').next() == b.rsplit(':').next())
 }
 
 fn format_ms(ms: u32) -> String {

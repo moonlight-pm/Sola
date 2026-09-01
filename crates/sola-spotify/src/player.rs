@@ -478,10 +478,12 @@ async fn run_events(
             play_request_id = Some(*next);
             continue;
         }
-        if let (Some(current), Some(incoming)) = (play_request_id, event.get_play_request_id())
-            && current != incoming
-        {
-            continue;
+        if let Some(incoming) = event.get_play_request_id() {
+            match play_request_id {
+                Some(current) if incoming < current => continue,
+                Some(current) if incoming == current => {}
+                _ => play_request_id = Some(incoming),
+            }
         }
         let snapshot = {
             let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
