@@ -1,14 +1,14 @@
 # sola-preview + selection capture — Design
 
 **Date:** 2026-08-04  
-**Status:** approved (approach A); **screenshot dest is sola-preview** (paint is MIME / `solactl open` dest)  
-**Implementation:** Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show) **installed** `river`+`shell` debug 2026-08-31 and smoked.  
+**Status:** approved (approach A); **screenshot dest is the clipboard** (paint is MIME / `solactl open` dest; Preview is argv / launcher)  
+**Implementation:** Super+Shift+4 freeze-then-crop (RGBA still, no dim, GPU-ready before show) **installed** `river`+`shell` debug 2026-08-31 and smoked. Super+Shift+3/4/5 Fast PNG → clipboard + toast (no file, no Preview) is [image clipboard](2026-09-01-image-clipboard-design.md) — **installed** `kit`+`shell`+`river` debug 2026-09-01.  
 **Depends on:** `docs/specs/2026-07-20-screenshot-capture-plan.md` (screencopy live); [paint](2026-08-14-sola-paint-design.md)
 
 ## 1. Goal
 
-1. **sola-preview** — kit app that shows screenshots (macOS Preview–like for captures).
-2. Shell hotkeys open/raise preview with the new image and keep a short toast.
+1. **sola-preview** — kit app that can show image files (argv / launcher).
+2. Shell hotkeys copy a Fast PNG to the clipboard and toast **Screenshot copied**.
 3. **Selection capture** via Super+Shift+4 (macOS order), with chords remapped.
 
 ## 2. Product decisions
@@ -18,7 +18,7 @@
 | Architecture | Shell orchestrates; river captures; preview is a normal kit app |
 | Chords | Super+Shift+3 full · **4 selection** · **5 focused window** |
 | Selection UI | Shell full-screen marquee overlay |
-| After capture (shell hotkeys) | Toast path **and** open/raise sola-preview |
+| After capture (shell hotkeys) | Fast PNG on the compositor clipboard + toast **Screenshot copied**. No file, no Preview |
 | Already open | Replace main view with new image; **session sidebar history** of recent paths |
 | `solactl screenshot` | Path on stdout only — **no** preview open |
 | V1 scope | Screenshot-focused viewer (path from shell/CLI args/`OpenImage`); not a full file browser |
@@ -30,22 +30,15 @@ Super+Shift+3/4/5
         │
         ▼
 sola-shell
-  · 3 → CaptureScreen FullOutput
-  · 4 → compositor.screenshot format=rgba (full output) → overlay shows that still
-        → drag rect → crop freeze in-process (no second capture)
-  · 5 → CaptureScreen Window(focused)
-  · set open_preview_on_next = true
+  · 3 → compositor.screenshot format=rgba (full output)
+  · 4 → format=rgba freeze → overlay still → crop in-process
+  · 5 → compositor.screenshot format=rgba --app (toplevel scene)
         │
         ▼
-sola-river screenshot::handle  →  PNG under /tmp/sola/screenshots/
+sola-river  →  packed RGBA (tmpfs dump, deleted after read)
         │
         ▼
-Topic::Screenshot { Ok(path) | Err }
-        │
-        ├─ shell: always toast
-        └─ shell if open_preview_on_next:
-              if sola-preview window known → Focus + OpenImage(path)
-              else → LaunchApp sola-preview with path arg
+shell: Fast PNG → data-control clipboard; toast "Screenshot copied"
         │
         ▼
 sola-preview
@@ -116,35 +109,20 @@ Register `KEY_5.meta_shift()` in `shell_key_chords`.
 - On successful release:
   1. clone the freeze `Handle` (refcount)
   2. `selection.active = false` / `emit_composition()` (drop overlay)
-  3. crop the freeze in-process and write a PNG (no second screencopy)
-  4. `open_preview_on_next = true`
+  3. crop the freeze in-process and Fast-encode PNG onto the clipboard (no second screencopy, no file)
 - The marquee/scrim never enter the PNG because the crop is from the freeze, not a live capture.
 
-### 5.3 Handoff flag
-
-```rust
-/// When true, the next successful Topic::Screenshot from sola-river
-/// should open/raise sola-preview. Set only by shell hotkey / selection paths.
-open_preview_on_next: bool,
-```
-
-- Cleared after handling a Screenshot (success or failure).
-- `solactl` never sets it → no preview from CLI.
-
-### 5.4 Open / raise
+### 5.3 After capture
 
 ```text
-on_screenshot Ok(path):
-  toast "Screenshot saved: …"
-  if open_preview_on_next:
-    if let Some(wid) = first window with app_id == "sola-preview":
-      raise (no keyboard steal); OpenImage { path, activate: false, app_id: preview }
-    else:
-      LaunchApp { app_id: "sola-preview",
-                  command: "/opt/sola/bin/sola-preview <path>" }
+on_screenshot Ok:
+  toast "Screenshot copied"
+  restore pre-capture keyboard focus
 on_screenshot Err:
-  toast failure; clear flag
+  toast failure
 ```
+
+`solactl compositor screenshot` still writes a PNG path to stdout and does not touch the clipboard. Preview is launcher / argv only.
 
 Builtin catalog entry:
 

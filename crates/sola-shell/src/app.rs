@@ -204,7 +204,7 @@ pub enum Msg {
         y: f32,
     },
     /// `compositor.screenshot` finished (call plane, not the bus).
-    ScreenshotDone(Result<std::path::PathBuf, String>),
+    ScreenshotDone(Result<(), String>),
     Noop,
 }
 
@@ -340,12 +340,8 @@ pub struct Shell {
     pub bluetooth: crate::bluetooth::Ui,
     /// Menubar volume chip + popover (PipeWire / wpctl).
     pub audio: crate::audio::Ui,
-    /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
-    /// sola-preview. Set only by shell hotkey / selection paths.
-    pub open_preview_on_next: bool,
     /// Window that should keep keyboard after a shell-initiated capture
-    /// finishes (preview is raised without stealing focus). Set when a
-    /// Super+Shift+3/4/5 capture starts; applied after open/raise preview.
+    /// finishes. Set when a Super+Shift+3/4/5 capture starts.
     pub screenshot_return_focus: Option<u32>,
     /// When `Some(app_id)`, the next `on_windows` "new app mapped" focus
     /// steal for that app is skipped (screenshot cold-launch of preview
@@ -445,7 +441,6 @@ impl Shell {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
-            open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -797,11 +792,9 @@ impl Shell {
         }
     }
 
-    /// Mark the next Screenshot result as shell-initiated (preview handoff)
-    /// and remember which app window should keep the keyboard afterward.
+    /// Remember which app window should keep the keyboard after capture.
     pub fn arm_screenshot_handoff(&mut self) {
         self.dismiss_transient_overlays();
-        self.open_preview_on_next = true;
         // Prefer the app that currently has keyboard focus; never the shell.
         self.screenshot_return_focus = self.focused_window_id.filter(|wid| {
             self.known_windows
@@ -824,7 +817,6 @@ impl Shell {
                 self.emit_registered_chords();
                 let keep = prior.or(self.screenshot_return_focus.take());
                 self.restore_app_focus(keep);
-                self.open_preview_on_next = false;
                 tracing::warn!(%e, "selection freeze failed");
                 self.menubar.push_toast(format!("Screenshot failed: {e}"));
                 let toast_gen = self.menubar.toast_generation;
@@ -2470,7 +2462,6 @@ impl Shell {
                 self.emit_registered_chords();
                 self.restore_app_focus(prior.or(self.screenshot_return_focus));
                 self.screenshot_return_focus = None;
-                self.open_preview_on_next = false;
                 iced::Task::none()
             }
             Msg::SelectionPress { x, y } => {
@@ -2498,13 +2489,11 @@ impl Shell {
                 let Some((rx, ry, rw, rh)) = region else {
                     tracing::info!("selection cancelled (too small or empty)");
                     self.screenshot_return_focus = None;
-                    self.open_preview_on_next = false;
                     return iced::Task::none();
                 };
                 let Some(handle) = freeze else {
                     tracing::warn!("selection capture missing freeze frame");
                     self.screenshot_return_focus = None;
-                    self.open_preview_on_next = false;
                     self.menubar
                         .push_toast("Screenshot failed: no freeze frame");
                     let toast_gen = self.menubar.toast_generation;
@@ -2514,7 +2503,6 @@ impl Shell {
                     );
                 };
                 tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection crop from freeze");
-                self.open_preview_on_next = true;
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
@@ -2657,7 +2645,6 @@ mod pending_launch_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
-            open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -2766,7 +2753,6 @@ mod hide_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
-            open_preview_on_next: false,
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),

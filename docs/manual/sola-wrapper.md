@@ -25,7 +25,7 @@ A second launch raises the existing window. Cookies live under `~/.config/sola/w
 
 ## Edit
 
-Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The shell binds those chords globally and routes them back as menu actions — the page never sees Super, so the wrapper must handle the action (same pipe as sola-browser). Paste reads the Wayland clipboard in chrome and inserts once into the focused field.
+Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The shell binds those chords globally and routes them back as menu actions — the page never sees Super, so the wrapper must handle the action (same pipe as sola-browser). Paste reads the compositor clipboard in chrome: an image (`image/png` and siblings) is injected as a `File` paste into the focused field (Slack’s composer); otherwise the text is inserted once.
 
 ## Links
 

@@ -26,11 +26,12 @@
 //!
 //! ## Why off-thread encode?
 //!
-//! A 5120×2160 capture is ~44 MB RGBA. Convert + `png` encode can take
-//! multiple seconds on the CPU. River disconnects the window-management
-//! client if it is unresponsive for **>3 s** (`window manager unresponsive
-//! … disconnecting`). Doing encode on the calloop/Wayland thread froze the
-//! desktop and broke clients (terminals lost input / Broken pipe).
+//! A 5120×2160 capture is ~44 MB RGBA. Default (`Balanced`) PNG encode
+//! was ~10 s on the desk. Shell hotkeys skip this file and Fast-encode
+//! in sola-shell. `solactl` PNG still encodes here with
+//! `Compression::Fast` on a worker thread. River disconnects the
+//! window-management client if it is unresponsive for **>3 s**. Doing
+//! encode on the calloop/Wayland thread froze the desktop.
 //!
 //! V1 concurrency: one screenshot (Wayland flight **or** encode worker)
 //! and one live sample may run at once. A second screenshot while one
@@ -912,6 +913,9 @@ fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(),
     let mut encoder = png::Encoder::new(w, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // Fast still uses Adaptive filters (~2s on 5K debug). Fastest is
+    // fdeflate + Up filter.
+    encoder.set_compression(png::Compression::Fastest);
     let mut writer = encoder
         .write_header()
         .map_err(|e| format!("png header: {e}"))?;

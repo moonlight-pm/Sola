@@ -43,6 +43,7 @@ pub enum Msg {
     TitleResize(iced::window::Direction),
     TitleClose,
     PagePasted(Option<String>),
+    PageOffer(sola_kit::clipboard::Offer),
     NotifyAllow,
     NotifyBlock,
     MediaAllow,
@@ -232,6 +233,16 @@ impl App {
             Msg::TitleClose => {
                 sola_kit::close_app(self.app_id);
             }
+            Msg::PageOffer(offer) => {
+                use sola_kit::clipboard::Offer;
+                return match offer {
+                    Offer::Empty => iced::clipboard::read().map(Msg::PagePasted),
+                    other => {
+                        sola_browser::page_paste::send(&self.slot.cmd_tx, other);
+                        Task::none()
+                    }
+                };
+            }
             Msg::PagePasted(text) => {
                 let Some(s) = sola_browser::util::usable_clipboard_text(text) else {
                     return Task::none();
@@ -257,10 +268,10 @@ impl App {
     }
 
     fn run_edit(&mut self, cmd: EditCmd) -> Task<Msg> {
-        // Same pipe as sola-browser: iced owns the Wayland seat. CEF
-        // `paste()` after a chrome read hits an empty clipboard.
+        // Same pipe as sola-browser: data-control first (image or text).
+        // CEF `paste()` after a chrome read hits an empty clipboard.
         match cmd {
-            EditCmd::Paste => iced::clipboard::read().map(Msg::PagePasted),
+            EditCmd::Paste => sola_browser::page_paste::read_task().map(Msg::PageOffer),
             EditCmd::Copy | EditCmd::Cut => {
                 let _ = self.slot.cmd_tx.send(Cmd::EvaluateJs(
                     sola_browser::paste_js::copy_selection_script(),

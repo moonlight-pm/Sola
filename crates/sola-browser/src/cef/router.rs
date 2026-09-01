@@ -733,6 +733,15 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::Nav(n) => Some(ToEngine::Nav(n)),
         Cmd::Edit(e) => Some(ToEngine::Edit(e)),
         Cmd::PasteText(s) => Some(ToEngine::PasteText(s)),
+        Cmd::PasteImage {
+            mime,
+            filename,
+            bytes,
+        } => Some(ToEngine::PasteImage {
+            mime,
+            filename,
+            bytes,
+        }),
         Cmd::EvaluateJs(s) => Some(ToEngine::EvaluateJs(s)),
         Cmd::OpenTab { id, url, title } => Some(ToEngine::OpenTab {
             id: id.0,

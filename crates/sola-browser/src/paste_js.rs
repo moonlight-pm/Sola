@@ -75,6 +75,36 @@ pub fn copy_selection_script() -> String {
     )
 }
 
+/// IIFE that dispatches a `paste` event whose `clipboardData` holds an
+/// image `File`. Slack (and other web composers) listen for that shape.
+pub fn paste_image_script(mime: &str, filename: &str, bytes: &[u8]) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let mime = js_string_literal(mime);
+    let name = js_string_literal(filename);
+    format!(
+        r#"(function(){{
+  var mime={mime};
+  var name={name};
+  var b64="{b64}";
+  var bin=atob(b64);
+  var arr=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  var file=new File([arr],name,{{type:mime,lastModified:Date.now()}});
+  var dt=new DataTransfer();
+  try{{ dt.items.add(file); }}catch(e){{ return false; }}
+  function fire(target){{
+    if(!target) return false;
+    var ev=new ClipboardEvent('paste',{{bubbles:true,cancelable:true,composed:true,clipboardData:dt}});
+    try{{ Object.defineProperty(ev,'clipboardData',{{value:dt}}); }}catch(e){{}}
+    try{{ return !target.dispatchEvent(ev); }}catch(e){{ return false; }}
+  }}
+  var el=document.activeElement||document.body;
+  return fire(el);
+}})();"#
+    )
+}
+
 /// IIFE that inserts `text` at the caret of the focused input / textarea /
 /// contenteditable. Values are JSON-string-literal escaped.
 pub fn paste_into_focused_script(text: &str) -> String {
@@ -232,6 +262,24 @@ mod tests {
         assert_eq!(parse_js_json_string(r#""a\"b""#), "a\"b");
         assert_eq!(parse_js_json_string(r#""a\nb""#), "a\nb");
         assert_eq!(parse_js_json_string("bare"), "bare");
+    }
+
+    #[test]
+    fn paste_image_script_has_file_event() {
+        let s = paste_image_script("image/png", "shot.png", b"\x89PNG");
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("DataTransfer"));
+        assert!(s.contains("new File"));
+        assert!(s.contains("image/png"));
+        assert!(s.contains("shot.png"));
+        assert!(s.contains("atob"));
+        assert!(!s.contains('\0'));
+    }
+
+    #[test]
+    fn paste_image_script_escapes_filename() {
+        let s = paste_image_script("image/png", r#"a"b.png"#, b"xx");
+        assert!(s.contains(r#"a\"b.png"#));
     }
 
     #[test]
