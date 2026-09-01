@@ -81,6 +81,9 @@ const CARD_PAD_H: f32 = 14.0;
 const CARD_HEIGHT_HINT: f32 = 78.0;
 /// Gap between title and subtitle lines.
 const TITLE_SUB_GAP: f32 = 5.0;
+/// Leading mark for a list row (browser favicon). Titles stay put whether
+/// the icon has arrived or not.
+pub const LEADING_SLOT: f32 = 16.0;
 
 /// Visual chrome for a [`SidebarItem`].
 ///
@@ -122,7 +125,7 @@ pub struct SidebarHoverAction<Message> {
 /// is what the parent receives when the row is clicked.
 ///
 /// The `shortcut` / `on_close` / `secondary` / `subtitle` /
-/// `on_double_click` / `indicator` / `hover_action` / `chrome` /
+/// `on_double_click` / `indicator` / `leading` / `hover_action` / `chrome` /
 /// `content` fields are opt-in extras consumed by [`SidebarPanel`]
 /// (and the shared row renderer used by plain [`sidebar`]). They default
 /// to `None` / [`SidebarItemChrome::Row`]. List rows use etch materials;
@@ -159,6 +162,9 @@ pub struct SidebarItem<'a, Message> {
     pub on_double_click: Option<Message>,
     /// Optional leading status dot (activity), independent of selection.
     pub indicator: Option<SidebarIndicator>,
+    /// Optional leading widget (favicon, app face). Kit sizes it to
+    /// [`LEADING_SLOT`] so titles do not shift when it appears.
+    pub leading: Option<Element<'a, Message, Theme>>,
     /// Stable id for [`SidebarPanel::item_hover`] matching.
     pub id: Option<String>,
     /// Control under the secondary label; visible only while this row is
@@ -197,6 +203,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             subtitle: None,
             on_double_click: None,
             indicator: None,
+            leading: None,
             id: None,
             hover_action: None,
             chrome: SidebarItemChrome::Row,
@@ -255,6 +262,13 @@ impl<'a, Message> SidebarItem<'a, Message> {
     /// Leading status dot (e.g. session actively working).
     pub fn indicator(mut self, indicator: SidebarIndicator) -> Self {
         self.indicator = Some(indicator);
+        self
+    }
+
+    /// Leading 16px slot (browser favicon). Pass a raster or a muted
+    /// fallback icon; the slot is reserved either way.
+    pub fn leading(mut self, widget: impl Into<Element<'a, Message, Theme>>) -> Self {
+        self.leading = Some(widget.into());
         self
     }
 
@@ -1498,6 +1512,7 @@ where
         subtitle,
         on_double_click,
         indicator,
+        leading,
         id: _,
         hover_action,
         chrome,
@@ -1542,6 +1557,7 @@ where
             secondary.as_deref(),
             shortcut,
             indicator,
+            leading,
             inline_hover,
             active,
             chrome,
@@ -1930,6 +1946,7 @@ fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
     indicator: Option<SidebarIndicator>,
+    leading: Option<Element<'a, Message, Theme>>,
     active: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
@@ -1973,6 +1990,11 @@ fn item_text_block<'a, Message: 'a>(
             a: 0.95,
         });
         title_row = title_row.push(section_chevron(collapsed, chev));
+    }
+    if let Some(mark) = leading {
+        // `center_x(Fill)` would expand this slot across the row and
+        // leave the title with zero width (blank tab labels).
+        title_row = title_row.push(container(mark).center(Length::Fixed(LEADING_SLOT)));
     }
     if let Some(ind) = indicator {
         title_row = title_row.push(status_dot(ind));
@@ -2061,6 +2083,7 @@ fn item_content<'a, Message: Clone + 'a>(
     secondary: Option<&str>,
     shortcut: Option<u8>,
     indicator: Option<SidebarIndicator>,
+    leading: Option<Element<'a, Message, Theme>>,
     hover_action: Option<SidebarHoverAction<Message>>,
     active: bool,
     chrome: SidebarItemChrome,
@@ -2072,6 +2095,7 @@ fn item_content<'a, Message: Clone + 'a>(
         label,
         subtitle,
         indicator,
+        leading,
         active,
         chrome,
         density,

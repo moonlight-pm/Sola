@@ -3,9 +3,10 @@
 **Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
 fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA)
 and **create**.
-Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
+Tab rows show the site **favicon**. Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
 work on form fields and body text. ⌘-click a link to open it in a
-background tab. Right-click the page for a small kit menu. Hold back or
+background tab. A page `window.open` (database console, SSH terminal)
+opens as a new tab, not a popup window. Right-click the page for a small kit menu. Hold back or
 forward to jump in that tab’s session history. Site **notifications**
 leave the page and show as Sola desk cards (permission prompt first).
 Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
@@ -96,7 +97,9 @@ Manage (new / rename / delete) stays under **Menubar → Profiles**.
 
 ## Tabs
 
-The left strip is the tab list (`⌘T` for a new blank). **Drag a row** to
+The left strip is the tab list (`⌘T` for a new blank). Each row has a
+**16px site icon** (the page favicon; a quiet globe until it arrives;
+empty on a blank tab). **Drag a row** to
 reorder; a click (no drag) still selects. Titles fill the column and
 ellipsize at the edge (they grow if you widen the strip). Close removes
 the row immediately — no flash back. Closing the tab you are looking at
@@ -126,7 +129,10 @@ name. The strip has no right-click menu. Click the header to collapse
 — the page stays if you were on a tab inside. Drag a loose tab into a
 group to join it; drag a member into the loose run to leave. `⌘T` and links from other apps
 (`xdg-open`, `solactl open`) always make a **loose** tab at the **bottom**
-of the strip. Only ⌘-click inserts under the current tab.
+of the strip. ⌘-click inserts a background tab under the current one.
+A page `window.open` (database consoles, SSH terminals, and similar) or
+a `target=_blank` link opens a **new tab** under the current one and
+switches to it — there is no separate popup window.
 The current tab is a quiet lift of the column or pocket, with a 1px
 lip. Empty groups disappear. There are no nested groups or spaces yet.
 

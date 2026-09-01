@@ -16,6 +16,7 @@ pub mod media;
 pub mod notify;
 pub mod page_menu;
 pub mod paste_js;
+pub mod popup;
 pub mod profiles;
 pub mod run;
 pub mod session;
@@ -28,8 +29,8 @@ pub mod vault;
 pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
-    FrameReceiver, FrameSlot, HistoryEntry, ImeCaret, ImeHandle, NavCmd, PageContext,
+    ActiveHandle, ChromeTabRequest, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd,
+    Engine, FrameReceiver, FrameSlot, HistoryEntry, ImeCaret, ImeHandle, NavCmd, PageContext,
     PageMenusHandle, PasskeysHandle, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 pub use input::CursorKind;

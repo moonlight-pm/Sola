@@ -81,12 +81,19 @@ pub enum FromEngine {
     WebAuthn(WebAuthnEvent),
     /// Page right-click — chrome shows the kit context menu.
     PageContext(PageContext),
-    /// ⌘-click / popup: chrome opens a background tab (owns the id).
+    /// ⌘-click / `target=_blank` / `window.open` without features: chrome
+    /// opens a tab (owns the id). `activate` is `target=_blank` / new window.
     OpenBackgroundTab {
         url: String,
+        activate: bool,
     },
     /// Page Notification API (show or permission prompt).
     Notify(crate::notify::Ipc),
+    /// Decoded favicon PNG for a tab. Empty `png` clears the icon.
+    Favicon {
+        tab_id: u64,
+        png: Vec<u8>,
+    },
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).

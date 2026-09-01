@@ -94,6 +94,8 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-09-01 | Browser tab favicons | Tab strip shows a reserved 16px leading favicon (CEF `on_favicon_urlchange` + `download_image`). Globe while a http(s) page has no icon yet; empty slot on blank. No domain-name prefix. | CURRENT, capabilities, architecture, manual/sola-browser |
+| 2026-09-01 | Browser popups | `window.open` with features (`NEW_POPUP`) and `about:blank` stay windowless CEF so the site gets a `Window`; chrome paints that as a focused tab beside the opener. `target=_blank` focuses a new tab; ⌘-click stays background. No native OS popup windows. Wrapper off-site still sola-browser; huddle OSR unchanged. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-28 | D1 / T1 | `crates/sola-agent` retired. No ACP/Grok-leader GUI; Workspaces is the agent product. Multi-client ACP permission fan-out and pin UI are moot. Do not rebuild. | CURRENT, capabilities, architecture, this log |
 | 2026-08-28 | Browser vault | One toolbar Bitwarden control (not login / authenticator / card widgets). Search + type chips + full item record (notes, identities, cards, TOTP). Click opens the record; Autofill **Fill** injects. Icon may change (lock / key / shield / fingerprint). | [unified panel freeze](specs/2026-08-28-sola-browser-vault-panel-design.md), CURRENT, capabilities, manual/sola-browser |
 | 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |

@@ -7,7 +7,7 @@
 
 | | |
 |--|--|
-| **Implementation** | Kit `SidebarDensity` + etch list chrome; **kit-owned gesture** (`sidebar::State` + `Event`); browser/terminal/agent/workspaces on `SidebarPanel`; `vertical_tabs*` deleted |
+| **Implementation** | Kit `SidebarDensity` + etch list chrome; **kit-owned gesture** (`sidebar::State` + `Event`); browser/terminal/agent/workspaces on `SidebarPanel`; `SidebarItem::leading` 16px slot (browser favicons); `vertical_tabs*` deleted |
 | **Dogfood** | Gesture rewrite on `browser-polish` (2026-08-21) — **not installed**. Overflow chips require `section_scroll` + a measured viewport |
 | **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 

@@ -89,8 +89,8 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// glyph run overruns. The old hard cap of 20 left a visible empty band
 /// at the default 200 px column.
 pub fn tab_title_chars(sidebar_w: f32) -> usize {
-    // Body pad 8+8, row pad 10+10, active lip 2, a hair of clip slack.
-    const INSET: f32 = 32.0;
+    // Body pad 8+8, row pad 10+10, active lip 2, favicon 16+4, a hair of clip slack.
+    const INSET: f32 = 52.0;
     // 12 px SF Pro mixed-case. Optimistic so we use the well, not sit short.
     const PX_PER: f32 = 5.5;
     let inner = (sidebar_w - INSET).max(48.0);
@@ -108,6 +108,69 @@ pub fn tab_strip_label(title: &str, url: &str, sidebar_w: f32) -> String {
         return String::from("Loading…");
     };
     truncate(raw, tab_title_chars(sidebar_w))
+}
+
+/// True when the strip should show a globe until a favicon arrives.
+pub fn tab_url_has_site_icon(url: &str) -> bool {
+    let l = url.trim().to_ascii_lowercase();
+    (l.starts_with("https://") || l.starts_with("http://")) && !l.starts_with("http://127.0.0.1")
+}
+
+/// Pick one CEF favicon URL. Prefers raster (png/ico/gif) over svg.
+pub fn pick_favicon_url(urls: &[String]) -> Option<&str> {
+    let http: Vec<&str> = urls
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| {
+            let l = s.to_ascii_lowercase();
+            l.starts_with("https://") || l.starts_with("http://")
+        })
+        .collect();
+    if http.is_empty() {
+        return None;
+    }
+    let raster = http.iter().copied().rev().find(|s| {
+        let l = s.to_ascii_lowercase();
+        l.contains(".png")
+            || l.contains(".ico")
+            || l.contains(".gif")
+            || l.contains(".jpg")
+            || l.contains(".jpeg")
+            || l.contains(".webp")
+    });
+    raster.or_else(|| http.last().copied())
+}
+
+/// `https://host/path` → `https://host/favicon.ico` when CEF only lists
+/// `chrome://` or SVG icons that `download_image` will not decode.
+pub fn fallback_favicon_url(page: &str) -> Option<String> {
+    let t = page.trim();
+    let lower = t.to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &t[8..]
+    } else if lower.starts_with("http://") {
+        &t[7..]
+    } else {
+        return None;
+    };
+    let hostport = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|s| !s.is_empty())?;
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(hostport)
+    } else {
+        hostport.split(':').next().unwrap_or(hostport)
+    };
+    if host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+    let scheme = if lower.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    Some(format!("{scheme}://{hostport}/favicon.ico"))
 }
 
 /// Built-in scroll/tile stress page (fixed nav + tall image grid).
@@ -396,6 +459,46 @@ mod tests {
         let out = tab_strip_label(long, "", 200.0);
         assert!(out.ends_with('…'), "{out:?}");
         assert!(out.chars().count() < long.chars().count());
+    }
+
+    #[test]
+    fn pick_favicon_url_prefers_raster() {
+        let urls = [
+            "https://example.com/favicon.svg".into(),
+            "https://example.com/favicon-32.png".into(),
+        ];
+        assert_eq!(
+            pick_favicon_url(&urls),
+            Some("https://example.com/favicon-32.png")
+        );
+    }
+
+    #[test]
+    fn pick_favicon_url_skips_non_http() {
+        let urls = [
+            "data:image/png;base64,xx".into(),
+            "https://a/favicon.ico".into(),
+        ];
+        assert_eq!(pick_favicon_url(&urls), Some("https://a/favicon.ico"));
+        assert_eq!(pick_favicon_url(&["chrome://theme/IDR".into()]), None);
+    }
+
+    #[test]
+    fn tab_url_has_site_icon_http_only() {
+        assert!(tab_url_has_site_icon("https://github.com/sola"));
+        assert!(!tab_url_has_site_icon("about:blank"));
+        assert!(!tab_url_has_site_icon(""));
+        assert!(!tab_url_has_site_icon("http://127.0.0.1:9222/devtools"));
+    }
+
+    #[test]
+    fn fallback_favicon_url_uses_origin() {
+        assert_eq!(
+            fallback_favicon_url("https://github.com/sola/sola"),
+            Some("https://github.com/favicon.ico".into())
+        );
+        assert_eq!(fallback_favicon_url("about:blank"), None);
+        assert_eq!(fallback_favicon_url("http://127.0.0.1:9222/"), None);
     }
 
     #[test]

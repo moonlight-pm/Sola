@@ -17,9 +17,9 @@ use std::time::{Duration, Instant};
 use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
-    BackgroundTabsHandle, ClipboardHandle, Cmd, DownloadsHandle, FrameMailbox, FrameReceiver,
-    ImeCaret, ImeHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
-    TabsHandle,
+    BackgroundTabsHandle, ClipboardHandle, Cmd, DownloadsHandle, FaviconsHandle, FrameMailbox,
+    FrameReceiver, ImeCaret, ImeHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle,
+    TabId, TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -48,6 +48,7 @@ struct Shared {
     page_menus: PageMenusHandle,
     background_tabs: BackgroundTabsHandle,
     notifications: NotificationsHandle,
+    favicons: FaviconsHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -69,6 +70,7 @@ pub struct RouterHandles {
     pub page_menus: PageMenusHandle,
     pub background_tabs: BackgroundTabsHandle,
     pub notifications: NotificationsHandle,
+    pub favicons: FaviconsHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -85,6 +87,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let page_menus: PageMenusHandle = Arc::new(Mutex::new(Vec::new()));
     let background_tabs: BackgroundTabsHandle = Arc::new(Mutex::new(Vec::new()));
     let notifications: NotificationsHandle = Arc::new(Mutex::new(Vec::new()));
+    let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -99,6 +102,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         page_menus: page_menus.clone(),
         background_tabs: background_tabs.clone(),
         notifications: notifications.clone(),
+        favicons: favicons.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -125,6 +129,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         page_menus,
         background_tabs,
         notifications,
+        favicons,
     }
 }
 
@@ -641,15 +646,32 @@ fn handle_from(
                 crate::chrome_wake::wake();
             }
         }
-        FromEngine::OpenBackgroundTab { url } => {
+        FromEngine::OpenBackgroundTab { url, activate } => {
             if is_front && crate::util::href_is_new_tab_target(&url) {
-                shared.background_tabs.lock().unwrap().push(url);
+                shared
+                    .background_tabs
+                    .lock()
+                    .unwrap()
+                    .push(crate::engine::ChromeTabRequest { url, activate });
                 crate::chrome_wake::wake();
             }
         }
         FromEngine::Notify(ev) => {
             shared.notifications.lock().unwrap().push(ev);
             crate::chrome_wake::wake();
+        }
+        FromEngine::Favicon { tab_id, png } => {
+            if is_front {
+                shared
+                    .favicons
+                    .lock()
+                    .unwrap()
+                    .push(crate::engine::FaviconIpc {
+                        tab_id: TabId(tab_id),
+                        png,
+                    });
+                crate::chrome_wake::wake();
+            }
         }
     }
 }
