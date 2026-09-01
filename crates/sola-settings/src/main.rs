@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{column, container, row, scrollable};
+use iced::widget::{column, container, row};
 use iced::{Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::Message;
@@ -17,7 +17,7 @@ use sola_kit::app::{
     BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
 };
-use sola_kit::components::style::{SPACE_XL, SPACE_MD};
+use sola_kit::components::style::{SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
@@ -144,10 +144,7 @@ impl App {
                         if message.sticky {
                             self.applications.apps.push(app);
                         }
-                        applications::on_apps_changed(
-                            &self.applications,
-                            &mut self.apps_ui,
-                        );
+                        applications::on_apps_changed(&self.applications, &mut self.apps_ui);
                     }
                     Some(Topic::MailConfig(cfg)) => {
                         self.mail = cfg;
@@ -195,28 +192,24 @@ impl App {
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
         let page_pad = SPACE_XL + SPACE_MD;
-        // Applications master–detail needs fill-height + internal list scroll;
-        // Mail stays in an outer scrollable for long forms.
+        // Both panels are fill-height: Applications and Mail rules are
+        // list + detail with internal scroll (account sits above rules).
         let main_inner: Element<'_, Msg> = match self.panel {
             Panel::Applications => column![
                 kit_text::heading(title_text),
-                applications::view(&self.applications, &self.running, &self.apps_ui)
-                    .map(Msg::Apps),
+                applications::view(&self.applications, &self.running, &self.apps_ui).map(Msg::Apps),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))
             .height(Length::Fill)
             .into(),
-            Panel::Mail => scrollable(
-                column![
-                    kit_text::heading(title_text),
-                    mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
-                ]
-                .spacing(page_pad)
-                .padding(Padding::new(page_pad)),
-            )
+            Panel::Mail => column![
+                kit_text::heading(title_text),
+                mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
             .height(Length::Fill)
-            .width(Length::Fill)
             .into(),
         };
 
@@ -246,4 +239,3 @@ impl App {
         bus_subscription().map(Msg::BusMessage)
     }
 }
-

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sola_bus::topics::MailConfig;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::bridge;
 use crate::protocol::{Account, IdleChange, ImapClient, rule_matches, sender, start_idle, wicket};
@@ -137,6 +137,27 @@ fn do_connect(state: &mut WorkerState) {
     };
     let client_arc = Arc::new(Mutex::new(client));
 
+    let move_rules: Vec<_> = account
+        .rules
+        .iter()
+        .filter(|r| r.action == "move")
+        .cloned()
+        .collect();
+    *state
+        .idle_move_rules
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = move_rules.clone();
+
+    // File matching INBOX mail before the first UI list, not only on
+    // later IDLE arrivals. Saving a rule reconnects through Reconfigure.
+    {
+        let mut c = client_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let moved = apply_move_rules(&mut c, &move_rules, APPLY_ON_CONNECT);
+        if moved > 0 {
+            info!(moved, "move rules applied on connect");
+        }
+    }
+
     let (folders, smart) = {
         let mut c = client_arc.lock().unwrap_or_else(|e| e.into_inner());
         let folders = match c.list_folders() {
@@ -178,24 +199,13 @@ fn do_connect(state: &mut WorkerState) {
         }
     };
 
-    let move_rules: Vec<_> = account
-        .rules
-        .iter()
-        .filter(|r| r.action == "move")
-        .cloned()
-        .collect();
-    *state
-        .idle_move_rules
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = move_rules;
-
     let shared_rules = Arc::clone(&state.idle_move_rules);
     let idle = start_idle(account.clone(), move |change, idle_client| {
         match change {
             IdleChange::Arrived { new_count } => {
                 let rules = shared_rules.lock().unwrap_or_else(|e| e.into_inner());
                 if !rules.is_empty() {
-                    let _ = apply_move_rules_on_idle(idle_client, &rules, new_count);
+                    let _ = apply_move_rules(idle_client, &rules, new_count.max(20));
                 }
                 // Always refresh UI — even if every arrival was auto-moved away.
                 bridge::emit(MailEvent::NewMail);
@@ -502,34 +512,65 @@ fn do_send(
     }
 }
 
-fn apply_move_rules_on_idle(
+/// Newest INBOX envelopes to scan when applying move rules on connect.
+/// Apocrypha used 500; older matches wait for a later IDLE sweep of the
+/// newest page.
+const APPLY_ON_CONNECT: u32 = 500;
+
+/// Apply `action == "move"` rules to a page of newest INBOX messages.
+/// Returns how many messages were moved.
+fn apply_move_rules(
     client: &mut ImapClient,
     rules: &[sola_bus::topics::MailRule],
-    new_count: u32,
+    page: u32,
 ) -> u32 {
-    let messages = match client.list_messages("INBOX", 0, new_count.max(20)) {
+    let move_rules: Vec<_> = rules
+        .iter()
+        .filter(|r| r.action == "move" && r.dest.as_deref().is_some_and(|d| !d.trim().is_empty()))
+        .cloned()
+        .collect();
+    if move_rules.is_empty() || page == 0 {
+        return 0;
+    }
+    let messages = match client.list_messages("INBOX", 0, page) {
         Ok((msgs, _)) => msgs,
         Err(e) => {
-            warn!("IDLE move rules: failed to list messages: {e}");
-            return new_count;
+            warn!("move rules: failed to list INBOX: {e}");
+            return 0;
         }
     };
     let mut moved = 0u32;
-    for msg in messages.iter().take(new_count as usize) {
-        for rule in rules {
-            if let Some(dest) = &rule.dest {
-                if rule_matches(rule, &msg.from, &msg.subject, &msg.to) {
-                    if let Err(e) = client.move_message("INBOX", msg.uid, dest) {
-                        warn!("IDLE move: uid {} to {dest}: {e}", msg.uid);
-                    } else {
-                        moved += 1;
-                    }
-                    break;
+    for msg in &messages {
+        for rule in &move_rules {
+            let Some(dest) = rule
+                .dest
+                .as_deref()
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+            else {
+                continue;
+            };
+            if !rule_matches(rule, &msg.from, &msg.subject, &msg.to) {
+                continue;
+            }
+            match client.move_message("INBOX", msg.uid, dest) {
+                Ok(_) => {
+                    info!(
+                        uid = msg.uid,
+                        dest,
+                        rule = rule.name.as_str(),
+                        "move rule applied"
+                    );
+                    moved += 1;
+                }
+                Err(e) => {
+                    warn!("move rule {}: uid {} to {dest}: {e}", rule.name, msg.uid);
                 }
             }
+            break;
         }
     }
-    new_count.saturating_sub(moved)
+    moved
 }
 
 // Silence unused import warning if MailConfig only used via re-export paths.
