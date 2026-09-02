@@ -158,6 +158,21 @@ pub mod river_libinput_config_v1 {
     wayland_scanner::generate_client_code!("protocols/river-libinput-config-v1.xml");
 }
 
+pub mod river_xkb_config_v1 {
+    use wayland_client;
+
+    // `river_xkb_keyboard_v1.input_device` references this type.
+    use crate::protocol::river_input_management_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::river_input_management_v1::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/river-xkb-config-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/river-xkb-config-v1.xml");
+}
+
 /// Enables standard `wlr-layer-shell-unstable-v1` for non-WM clients.
 /// Binding this global is what tells River "the WM supports layer shell";
 /// without it, River closes every layer surface immediately.

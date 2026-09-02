@@ -19,6 +19,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 
 use crate::bus::BusClient;
 use crate::pending::PendingUpdate;
+use crate::protocol::river_input_management_v1::river_input_manager_v1::RiverInputManagerV1;
 use crate::protocol::river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;
 use crate::protocol::river_window_management_v1::{
     river_node_v1::RiverNodeV1, river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
@@ -27,6 +28,7 @@ use crate::protocol::river_window_management_v1::{
 use crate::protocol::river_xkb_bindings_v1::{
     river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1, river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
+use crate::protocol::river_xkb_config_v1::river_xkb_config_v1::RiverXkbConfigV1;
 use crate::protocol::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 use crate::protocol::wlr_virtual_pointer_unstable_v1::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
@@ -45,6 +47,7 @@ pub mod shadow;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
 pub mod window;
+pub mod xkb;
 
 pub struct AppData {
     pub wm: Option<RiverWindowManagerV1>,
@@ -119,6 +122,12 @@ pub struct AppData {
     /// Held so its `device` events keep firing; preferences (natural
     /// scroll) are applied in `client/input.rs`.
     pub libinput_config: Option<RiverLibinputConfigV1>,
+    /// Held so `river_input_device_v1` objects exist for xkb-config to
+    /// reference. Events are handled in `client/xkb.rs`.
+    pub input_manager: Option<RiverInputManagerV1>,
+    /// Held so keyboard events keep firing; NumLock default-on is applied
+    /// in `client/xkb.rs`.
+    pub xkb_config: Option<RiverXkbConfigV1>,
     pub qh: Option<QueueHandle<Self>>,
     /// Cloned from the wayland `Connection` so bus_tick (running on the
     /// calloop timer source) can flush outgoing wayland requests. Without
@@ -216,6 +225,8 @@ impl AppData {
             output_config: output_config::OutputConfigState::default(),
             virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),
             libinput_config: None,
+            input_manager: None,
+            xkb_config: None,
             virtual_pointer: virtual_pointer::VirtualPointerState::default(),
             qh: None,
             conn: None,
@@ -252,6 +263,11 @@ pub fn connect(
 
     if data.wm.is_none() {
         return Err("river_window_manager_v1 not advertised; is River 0.4.2+ running?".into());
+    }
+    if data.xkb_config.is_none() {
+        warn!(
+            "river_xkb_config_v1 not advertised; number pad stays at NumLock-off (navigation keys)"
+        );
     }
     data.qh = Some(qh.clone());
     data.conn = Some(conn.clone());
@@ -549,6 +565,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let cfg: RiverLibinputConfigV1 = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound river_libinput_config_v1");
                     state.libinput_config = Some(cfg);
+                }
+                "river_input_manager_v1" => {
+                    // xkb-config's `input_device` event references these
+                    // objects; bind the manager so they exist in our map.
+                    let mgr: RiverInputManagerV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound river_input_manager_v1");
+                    state.input_manager = Some(mgr);
+                }
+                "river_xkb_config_v1" => {
+                    let cfg: RiverXkbConfigV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound river_xkb_config_v1");
+                    state.xkb_config = Some(cfg);
                 }
                 "zwlr_screencopy_manager_v1" => {
                     use crate::protocol::wlr_screencopy_unstable_v1::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
