@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-29 (workspaces paste-send + desk-card copy on this branch; `crates/sola-agent` retired; notifications HUD; mail optimistic delete; `sola-scope` + wrapper on master)
+**As of:** 2026-09-02 (workspaces/terminal grid selection follows scroll; paste-send + desk-card copy; `crates/sola-agent` retired; notifications HUD; mail optimistic delete; `sola-scope` + wrapper on master)
 
 ---
 
@@ -35,8 +35,9 @@ Do not invent product policy.
    loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
 4. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
-   `selection` atom. Workspaces PTYs share the palette. **Installed**
-   `terminal` (2026-08-21).
+   `selection` atom. Wash is glued to buffer cells and re-anchors when a
+   TUI CUP-rewrites the live grid (`sel_follow`). Workspaces PTYs share
+   the palette and the follow. **Installed** `terminal` (2026-09-02).
 5. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
@@ -122,7 +123,8 @@ Do not invent product policy.
    Enter (raw PTY dump was clipping the composer and not submitting
    until a later wheel/focus). Desk cards (unfocused): title is
    `{project} · {tab}`, body is `grok is done` / `needs attention`.
-   Installed (self-restart).  
+   Grid selection follows the glyphs when the pane scrolls (was a
+   screen-fixed wash over changing text). Installed (self-restart).  
 9. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Screenshots stay on **preview**.
@@ -175,7 +177,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **installed**); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden unlock/fill + **Create login** (fill/cards/TOTP/passkeys now decrypt **org vaults** too — **desk smoke pending** after `install browser`; create still personal); **cards** (separate toolbar button; list + checkout fill; dogfooded); **authenticator** (shield; site-matched TOTP; click-to-copy); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts both icons, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default http(s) open** via sola-browser only (no Helium); **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **Notifications:** Allow prompt dogfooded; KenHerbert **pending** / no desk card (Native.prototype throw + origin slash). Fix **installed** `browser` 2026-08-27 (second) — retest pending → displayed + top-right card. | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **On master:** optimistic delete + stable scrolled list **installed** 2026-08-26. Still no HTML engine / attachments | — |
-| Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
+| Terminal | **On this branch** (installed 2026-09-02): grid selection is neon accent wash (`#3dd6f5` @ 55%). Wash follows scrolled glyphs (`sel_follow`). Workspaces PTYs share the palette and the follow (**installed** `workspaces` 2026-09-02) | — |
 | Wrapper | **On master.** Slack (`illuno.slack.com`) paints. `sola-wrapper <id>`; Settings Web wrapper; per-id CEF profile. | — |
 | Arcade | **Installed** 2026-08-25. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Agent | **Retired** (this worktree). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |

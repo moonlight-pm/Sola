@@ -15,7 +15,7 @@
 //!    the grid cache.
 
 use std::cell::Cell as StdCell;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use iced::advanced::mouse::click;
@@ -36,6 +36,7 @@ use crate::emulator::{self, CursorSnap, Listener};
 use crate::input::{self, Mods, WheelAction};
 use crate::links::{self, UrlSpan}; // UrlSpan: draw_url_underline (rate-limited pass TBD)
 use crate::perf;
+use crate::sel_follow;
 use sola_kit::fonts;
 
 /// Raw cell captured under the term lock (no colour resolution — that runs
@@ -44,6 +45,10 @@ use sola_kit::fonts;
 struct RawCell {
     /// Visible row (0-based in the viewport).
     line: i32,
+    /// Absolute buffer line (`display_iter` point). Selection `contains`
+    /// uses this so the wash stays on the same glyphs when the viewport
+    /// scrolls via `display_offset`.
+    buf_line: i32,
     col: usize,
     c: char,
     fg: AnsiColor,
@@ -463,6 +468,9 @@ pub struct TermView<'a, Message> {
     /// Lock-free cursor position (updated by the PTY reader). Overlay paint
     /// must never lock `term` — see [`CursorSnap`].
     pub cursor_snap: Arc<RwLock<CursorSnap>>,
+    /// Committed selection follow-state (TUI CUP-rewrites). Shared with
+    /// the pane's [`emulator::Emulator`].
+    pub selection_track: Arc<Mutex<sel_follow::Track>>,
     pub cache: &'a canvas::Cache,
     pub palette: &'a Palette,
     pub metrics: CellMetrics,
@@ -643,6 +651,9 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     } else {
                         let ty = selection_type_for_click(click.kind());
                         term.selection = Some(Selection::new(ty, point, side));
+                        if let Ok(mut track) = self.selection_track.lock() {
+                            sel_follow::uncommit(&mut track);
+                        }
                         // A word/line pick is deliberate — keep it on release. A
                         // single click that never drags stays a deselect.
                         !matches!(click.kind(), click::Kind::Single)
@@ -705,12 +716,20 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
                 if was_drag {
                     // Real drag → keep the installed selection for copy.
+                    let term = self.term.lock();
+                    if let Ok(mut track) = self.selection_track.lock() {
+                        sel_follow::commit(&term, &mut track);
+                    }
+                    drop(term);
                     Some(canvas::Action::capture())
                 } else {
                     // Plain click, no movement → clear any selection.
                     let mut term = self.term.lock();
                     term.selection = None;
                     drop(term);
+                    if let Ok(mut track) = self.selection_track.lock() {
+                        sel_follow::uncommit(&mut track);
+                    }
                     Some(canvas::Action::publish(self.on_select.clone()).and_capture())
                 }
             }
@@ -800,7 +819,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
 
     fn draw(
         &self,
-        _state: &SelState,
+        state: &SelState,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -827,11 +846,16 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             // NO URL scan here — those were ~3–6 ms on a ~12k-cell grid and
             // starved the PTY reader (see sola-terminal-perf.log lock_us).
             let t_lock = Instant::now();
-            let (raw_cells, selection, display_offset, screen_lines, colors) = {
+            let (raw_cells, selection, colors) = {
                 // Unfair: don't queue behind the reader's fair-lease. Snapshot
                 // is brief (raw Copy fields only); starving a single advance
                 // is fine.
-                let term = self.term.lock_unfair();
+                let mut term = self.term.lock_unfair();
+                if !state.dragging {
+                    if let Ok(mut track) = self.selection_track.lock() {
+                        sel_follow::follow(&mut *term, &mut track);
+                    }
+                }
                 let content = term.renderable_content();
                 let RenderableContent {
                     display_iter,
@@ -852,6 +876,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     }
                     raw.push(RawCell {
                         line: visible_row(indexed.point.line.0, display_offset),
+                        buf_line: indexed.point.line.0,
                         col: indexed.point.column.0,
                         c: cell.c,
                         fg: cell.fg,
@@ -861,7 +886,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
                 // Refresh lock-free cursor while we still hold the term.
                 emulator::publish_cursor(&*term, &self.cursor_snap);
-                (raw, selection, display_offset, screen_lines, colors)
+                (raw, selection, colors)
             };
             lock_us.set(t_lock.elapsed());
 
@@ -904,15 +929,12 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             flush(frame, &run);
 
             // ── Selection highlight ──
+            // Paint from the same cells as the glyphs (`contains` on buffer
+            // points) so a display_offset scroll moves the wash with the
+            // text. A TUI that CUP-rewrites is handled by `sel_follow`
+            // above, before this snapshot.
             if let Some(range) = selection {
-                draw_selection(
-                    frame,
-                    &range,
-                    metrics,
-                    palette.selection,
-                    display_offset,
-                    screen_lines,
-                );
+                draw_selection_cells(frame, &raw_cells, &range, metrics, palette.selection);
             }
 
             // ── Pass 2: glyphs (resolve fg only for non-blank cells) ──
@@ -1127,65 +1149,45 @@ fn stroke_h(frame: &mut Frame<Renderer>, x: f32, y: f32, width: f32, color: Colo
     frame.stroke(&path, Stroke::default().with_color(color).with_width(1.0));
 }
 
-/// Paint the selection highlight over the visible portion of `range`.
+/// Paint the selection wash on the same cells the glyphs use.
 ///
-/// `range.start`/`range.end` are buffer points (line can be negative for
-/// scrollback). We convert to visible lines via `display_offset` and clamp to
-/// the visible window, filling whole rows between start and end (line-mode) or
-/// the start/end columns (block-mode flagged by `is_block`).
-fn draw_selection(
+/// `range` is in buffer coordinates (`SelectionRange::contains`); each
+/// `RawCell.line` is already the visible row, so a `display_offset` change
+/// moves the wash with the text instead of leaving a screen-fixed plate.
+fn draw_selection_cells(
     frame: &mut Frame<Renderer>,
+    cells: &[RawCell],
     range: &SelectionRange,
     metrics: CellMetrics,
     color: Color,
-    display_offset: usize,
-    screen_lines: usize,
 ) {
-    // Buffer-line → visible-line (0 = top of viewport). display_offset shifts
-    // the viewport up into scrollback; a buffer line is visible when its
-    // offset-adjusted index falls in 0..screen_lines.
-    let to_visible = |p: GridPoint<Line, Column>| -> Option<(i32, usize)> {
-        let vis = p.line.0 + display_offset as i32;
-        if vis < 0 || vis as usize >= screen_lines {
-            return None;
+    let mut run: Option<(i32, usize, usize)> = None;
+    let flush = |frame: &mut Frame<Renderer>, run: &Option<(i32, usize, usize)>| {
+        if let Some((line, start, end)) = *run {
+            let x = PAD + start as f32 * metrics.cell_w;
+            let y = PAD + line as f32 * metrics.cell_h;
+            let w = (end - start + 1) as f32 * metrics.cell_w;
+            frame.fill_rectangle(Point::new(x, y), Size::new(w, metrics.cell_h), color);
         }
-        Some((vis, p.column.0))
     };
-
-    let start = range.start;
-    let end = range.end;
-    let is_block = range.is_block;
-
-    // Iterate buffer lines from start to end; for each visible row, fill the
-    // selected column span.
-    for buf_line in start.line.0..=end.line.0 {
-        let line_pt = GridPoint::new(Line(buf_line), Column(0));
-        let Some((vis_line, _)) = to_visible(line_pt) else {
-            continue;
-        };
-
-        let (col_start, col_end) = if is_block {
-            (start.column.0, end.column.0)
-        } else if start.line.0 == end.line.0 {
-            (start.column.0, end.column.0)
-        } else if buf_line == start.line.0 {
-            // First row: from start column to a generous right edge.
-            (start.column.0, usize::MAX)
-        } else if buf_line == end.line.0 {
-            (0, end.column.0)
-        } else {
-            (0, usize::MAX)
-        };
-
-        let x = PAD + col_start as f32 * metrics.cell_w;
-        let y = PAD + vis_line as f32 * metrics.cell_h;
-        // usize::MAX means "to the right edge"; cap at a wide span. The exact
-        // row width belongs to Task 4.1's selection model.
-        let span_cols = col_end.saturating_sub(col_start).saturating_add(1);
-        let span_cols = span_cols.min(512); // sane cap for the MAX sentinel
-        let w = span_cols as f32 * metrics.cell_w;
-        frame.fill_rectangle(Point::new(x, y), Size::new(w, metrics.cell_h), color);
+    for r in cells {
+        let pt = GridPoint::new(Line(r.buf_line), Column(r.col));
+        if range.contains(pt) {
+            match run.as_mut() {
+                Some((rl, _rs, re)) if *rl == r.line && *re + 1 == r.col => {
+                    *re = r.col;
+                }
+                _ => {
+                    flush(frame, &run);
+                    run = Some((r.line, r.col, r.col));
+                }
+            }
+        } else if run.is_some() {
+            flush(frame, &run);
+            run = None;
+        }
     }
+    flush(frame, &run);
 }
 
 #[cfg(test)]

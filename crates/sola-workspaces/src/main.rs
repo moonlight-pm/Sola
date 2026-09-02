@@ -707,6 +707,7 @@ impl App {
                 let view = term_view::TermView {
                     term: rt.emulator.term(),
                     cursor_snap: rt.emulator.cursor_snap(),
+                    selection_track: rt.emulator.selection_track(),
                     cache: &rt.cache,
                     palette: &self.palette,
                     metrics: self.metrics,

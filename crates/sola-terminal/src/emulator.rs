@@ -27,6 +27,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
+use crate::sel_follow;
+
 use iced::Subscription;
 use iced::futures::Stream;
 
@@ -440,6 +442,10 @@ pub struct Emulator {
     term: Arc<FairMutex<Term<Listener>>>,
     /// Lock-free cursor for the canvas overlay (see [`CursorSnap`]).
     cursor: Arc<RwLock<CursorSnap>>,
+    /// Committed selection text + viewport fingerprints so a TUI that
+    /// CUP-rewrites the live grid can keep the highlight on the same
+    /// glyphs (see [`sel_follow`]).
+    selection_track: Arc<Mutex<sel_follow::Track>>,
     // Used by Emulator::advance (called from unit tests and future PTY path).
     #[allow(dead_code)]
     parser: Processor,
@@ -471,6 +477,7 @@ impl Emulator {
         Self {
             term: Arc::new(FairMutex::new(term)),
             cursor: Arc::new(RwLock::new(CursorSnap::default())),
+            selection_track: Arc::new(sel_follow::track_mutex()),
             parser: Processor::new(),
         }
     }
@@ -514,6 +521,11 @@ impl Emulator {
     /// reader thread and the `TermView`.
     pub fn cursor_snap(&self) -> Arc<RwLock<CursorSnap>> {
         self.cursor.clone()
+    }
+
+    /// Shared committed-selection track. Clone into [`crate::term_view::TermView`].
+    pub fn selection_track(&self) -> Arc<Mutex<sel_follow::Track>> {
+        self.selection_track.clone()
     }
 
     /// `(history_size, display_offset)` — scrollback diagnostics for the parked
