@@ -42,8 +42,9 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   device picker. **This computer** is always the first device. Other Spotify
   Connect speakers sit under **Other devices**.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
+- **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go.
 
-Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`.
+Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`. Play, pause, next, and previous apply as soon as the key is pressed.
 
 ## Files
 

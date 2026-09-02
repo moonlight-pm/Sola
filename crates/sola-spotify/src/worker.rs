@@ -301,7 +301,10 @@ async fn run() {
         }
     });
 
-    let mut mpris = MediaService::spawn(|| {});
+    let (mut mpris, mut media_rx) = MediaService::spawn();
+    // Drop the MPRIS branch if the D-Bus thread dies — a closed channel
+    // would otherwise ready-spin the worker loop.
+    let mut mpris_commands = true;
 
     let mut worker = Worker {
         skipped: Skipped::load(&dirs),
@@ -353,14 +356,22 @@ async fn run() {
                 let Some(internal) = internal else { break; };
                 worker.handle_internal(internal).await;
             }
+            // Media keys used to drain only on the 2s playback poll.
+            media = media_rx.recv(), if mpris_commands => {
+                let Some(media) = media else {
+                    mpris_commands = false;
+                    continue;
+                };
+                worker.handle(Cmd::Media(media)).await;
+                while let Ok(more) = media_rx.try_recv() {
+                    worker.handle(Cmd::Media(more)).await;
+                }
+            }
             _ = tick.tick() => {
                 worker.poll().await;
-                for media in mpris.drain_commands() {
-                    worker.handle(Cmd::Media(media)).await;
-                }
-                mpris.update(worker.media_state());
             }
         }
+        mpris.update(worker.media_state());
     }
     if let Some(engine) = worker.engine.take() {
         engine.shutdown();

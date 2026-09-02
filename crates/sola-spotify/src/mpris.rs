@@ -1,11 +1,12 @@
 //! Linux desktop media controls (MPRIS) for sola-spotify.
 //!
 //! Adapted from Fastpotify (MIT). D-Bus runs on its own thread so a slow
-//! session bus cannot stall audio or the iced loop. `solactl media` talks
-//! to whichever MPRIS player is Playing — this identity is
+//! session bus cannot stall audio or the iced loop. Incoming PlayPause /
+//! Next / Previous land on a tokio channel the worker selects on — they
+//! must not wait for the playback poll. `solactl media` talks to whichever
+//! MPRIS player is Playing — this identity is
 //! `org.mpris.MediaPlayer2.sola-spotify`.
 
-use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,16 +26,15 @@ enum Update {
 
 pub struct MediaService {
     updates: tokio_mpsc::UnboundedSender<Update>,
-    commands: Receiver<MediaCommand>,
     published: Option<MediaState>,
     last_position_update: Instant,
 }
 
 impl MediaService {
-    pub fn spawn(wake: impl Fn() + Send + Sync + 'static) -> Self {
+    /// D-Bus thread plus the command receiver the worker should `select!` on.
+    pub fn spawn() -> (Self, tokio_mpsc::UnboundedReceiver<MediaCommand>) {
         let (updates, update_rx) = tokio_mpsc::unbounded_channel();
-        let (command_tx, commands) = std::sync::mpsc::channel();
-        let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(wake);
+        let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
         let spawned = thread::Builder::new()
             .name("sola-spotify-mpris".to_string())
             .spawn(move || {
@@ -49,7 +49,7 @@ impl MediaService {
                     }
                 };
                 let local = tokio::task::LocalSet::new();
-                let outcome = local.block_on(&runtime, run(update_rx, command_tx, wake));
+                let outcome = local.block_on(&runtime, run(update_rx, command_tx));
                 if let Err(error) = outcome {
                     tracing::warn!("MPRIS is unavailable: {error}");
                 }
@@ -57,16 +57,14 @@ impl MediaService {
         if let Err(error) = spawned {
             tracing::warn!("unable to start the MPRIS thread: {error}");
         }
-        Self {
-            updates,
-            commands,
-            published: None,
-            last_position_update: Instant::now() - PLAYING_POSITION_INTERVAL,
-        }
-    }
-
-    pub fn drain_commands(&self) -> Vec<MediaCommand> {
-        self.commands.try_iter().collect()
+        (
+            Self {
+                updates,
+                published: None,
+                last_position_update: Instant::now() - PLAYING_POSITION_INTERVAL,
+            },
+            command_rx,
+        )
     }
 
     pub fn update(&mut self, state: MediaState) {
@@ -105,8 +103,7 @@ fn same_except_position(left: &MediaState, right: &MediaState) -> bool {
 
 async fn run(
     mut updates: tokio_mpsc::UnboundedReceiver<Update>,
-    commands: Sender<MediaCommand>,
-    wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    commands: tokio_mpsc::UnboundedSender<MediaCommand>,
 ) -> mpris_server::zbus::Result<()> {
     let player = Player::builder("sola-spotify")
         .identity("Spotify")
@@ -125,11 +122,8 @@ async fn run(
 
     let send = {
         let commands = commands.clone();
-        let wake = wake.clone();
         move |command: MediaCommand| {
-            if commands.send(command).is_ok() {
-                wake();
-            }
+            let _ = commands.send(command);
         }
     };
     {

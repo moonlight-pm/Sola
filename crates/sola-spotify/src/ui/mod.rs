@@ -1,11 +1,14 @@
 //! Kit UI: library rail, pages, player bar.
 
+mod nav;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::mouse;
 use iced::widget::image::Handle as ImageHandle;
 use iced::widget::{
     Space, button, column, container, image as iced_image, operation, rich_text, row, scrollable,
@@ -44,6 +47,8 @@ use crate::worker::{
     AuthStatus, Cmd, Event, LocalPlayback, NowPlaying, Page, PageBody,
 };
 
+use self::nav::{NavEntry, NavHistory};
+
 const APP_ID: &str = "sola-spotify";
 const SIDEBAR_W: f32 = 220.0;
 const PLAYER_H: f32 = 84.0;
@@ -61,6 +66,8 @@ pub enum Msg {
     SignOut,
     PlayHere,
     Open(Page),
+    Back,
+    Forward,
     SearchChanged(String),
     SearchSubmit,
     PlayTrack {
@@ -103,6 +110,8 @@ struct Icons {
     pause: iced::widget::svg::Handle,
     next: iced::widget::svg::Handle,
     prev: iced::widget::svg::Handle,
+    back: iced::widget::svg::Handle,
+    forward: iced::widget::svg::Handle,
     shuffle: iced::widget::svg::Handle,
     repeat: iced::widget::svg::Handle,
     speaker: iced::widget::svg::Handle,
@@ -126,6 +135,8 @@ impl Icons {
             pause: icon_handle("lucide/pause"),
             next: icon_handle("lucide/skip-forward"),
             prev: icon_handle("lucide/skip-back"),
+            back: icon_handle("lucide/chevron-left"),
+            forward: icon_handle("lucide/chevron-right"),
             shuffle: icon_handle("lucide/shuffle"),
             repeat: icon_handle("lucide/repeat"),
             speaker: icon_handle("lucide/speaker"),
@@ -148,6 +159,7 @@ pub struct App {
     premium: Option<bool>,
     local: LocalPlayback,
     page: Page,
+    nav: NavHistory,
     body: Option<PageBody>,
     page_cache: HashMap<Page, PageBody>,
     now: NowPlaying,
@@ -192,6 +204,7 @@ impl App {
             premium: None,
             local: LocalPlayback::Unavailable,
             page: page.clone(),
+            nav: NavHistory::new(page.clone()),
             body: None,
             page_cache: HashMap::new(),
             now: NowPlaying::default(),
@@ -269,6 +282,10 @@ impl App {
             IcedEvent::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 key_msg(key, modifiers)
             }
+            IcedEvent::Mouse(mouse::Event::ButtonPressed(mouse::Button::Back)) => Some(Msg::Back),
+            IcedEvent::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => {
+                Some(Msg::Forward)
+            }
             _ => None,
         });
         let tick = if self.now.playback == Playback::Playing {
@@ -302,6 +319,14 @@ impl App {
             }
             Msg::Open(page) => {
                 self.navigate(page);
+                Task::none()
+            }
+            Msg::Back => {
+                self.go_back();
+                Task::none()
+            }
+            Msg::Forward => {
+                self.go_forward();
                 Task::none()
             }
             Msg::SearchChanged(s) => {
@@ -455,6 +480,30 @@ impl App {
     }
 
     fn navigate(&mut self, page: Page) {
+        self.nav.push(page.clone(), self.search.clone());
+        self.show(page);
+    }
+
+    fn go_back(&mut self) {
+        if let Some(entry) = self.nav.back() {
+            self.restore(entry);
+        }
+    }
+
+    fn go_forward(&mut self) {
+        if let Some(entry) = self.nav.forward() {
+            self.restore(entry);
+        }
+    }
+
+    fn restore(&mut self, entry: NavEntry) {
+        if entry.page == Page::Search {
+            self.search = entry.search;
+        }
+        self.show(entry.page);
+    }
+
+    fn show(&mut self, page: Page) {
         self.page = page.clone();
         if page.persist_as_last() {
             self.settings.last_page = page.encode();
@@ -658,6 +707,8 @@ impl App {
             "prev" => self.update(Msg::Prev),
             "shuffle" => self.update(Msg::Shuffle),
             "repeat" => self.update(Msg::Repeat),
+            "back" => self.update(Msg::Back),
+            "forward" => self.update(Msg::Forward),
             "home" => self.update(Msg::Open(Page::Home)),
             "search" => self.update(Msg::Open(Page::Search)),
             "liked" => self.update(Msg::Open(Page::Liked)),
@@ -987,7 +1038,7 @@ impl App {
         let content = row![
             self.view_library(),
             v_hairline(),
-            column![self.view_page(), self.view_player()]
+            column![self.view_nav(), self.view_page(), self.view_player()]
                 .width(Length::Fill)
                 .height(Length::Fill),
         ]
@@ -1038,6 +1089,33 @@ impl App {
             .height(Length::Fill)
             .style(chrome_style)
             .into()
+    }
+
+    fn view_nav(&self) -> Element<'_, Msg> {
+        container(
+            row![
+                toolbar_icon_tip(
+                    self.icons.back.clone(),
+                    "Back",
+                    self.nav.can_back().then_some(Msg::Back),
+                ),
+                toolbar_icon_tip(
+                    self.icons.forward.clone(),
+                    "Forward",
+                    self.nav.can_forward().then_some(Msg::Forward),
+                ),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding {
+            top: SPACE_LG,
+            right: SPACE_XL,
+            bottom: SPACE_SM,
+            left: SPACE_XL,
+        })
+        .width(Length::Fill)
+        .into()
     }
 
     fn view_page(&self) -> Element<'_, Msg> {
@@ -2057,8 +2135,20 @@ fn tracks_scroll_id() -> iced::widget::Id {
 fn key_msg(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
     match key {
         keyboard::Key::Named(NamedKey::Space) if !modifiers.command() => Some(Msg::Toggle),
+        keyboard::Key::Named(NamedKey::ArrowLeft)
+            if modifiers.alt() && !modifiers.command() =>
+        {
+            Some(Msg::Back)
+        }
+        keyboard::Key::Named(NamedKey::ArrowRight)
+            if modifiers.alt() && !modifiers.command() =>
+        {
+            Some(Msg::Forward)
+        }
         keyboard::Key::Named(NamedKey::ArrowRight) if modifiers.command() => Some(Msg::Next),
         keyboard::Key::Named(NamedKey::ArrowLeft) if modifiers.command() => Some(Msg::Prev),
+        keyboard::Key::Character(c) if modifiers.command() && c == "[" => Some(Msg::Back),
+        keyboard::Key::Character(c) if modifiers.command() && c == "]" => Some(Msg::Forward),
         keyboard::Key::Character(c) if modifiers.command() && c.eq_ignore_ascii_case("f") => {
             Some(Msg::Open(Page::Search))
         }
