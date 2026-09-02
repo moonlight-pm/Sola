@@ -1,11 +1,18 @@
 # Floating Windows — Phase D2: Self-drawn Titlebar — Design
 
 **Date:** 2026-06-30
-**Status:** Designed (not yet implemented). Part of the floating-windows feature
-(`2026-06-24-floating-windows-design.md` §6 / Phase D), following
-**D1** (`2026-06-29-floating-windows-phase-d1-move-resize-design.md`,
-implemented). This is the **D2** slice. The window menu (old D3 / phase C) is
+**Status:** Frozen — implemented in `sola-kit` (`titlebar` / `floating_frame` /
+`FloatState`); first-party kit apps opt in via `wrap_if_floating`. Part of
+[`2026-06-24-floating-windows-design.md`](2026-06-24-floating-windows-design.md)
+§6 / Phase D, following D1. The window menu (old D3 / phase C) is
 **out of scope — explicitly not wanted.**
+**Implementation:** in-window CSD (this freeze). Face clip is a rounded dest-out
+punch (`components/float_clip.rs`) because iced 0.14 `clip(true)` is AABB-only.
+**Dogfood:** unit tests (resize AABB hits + rounded-rect SDF); storybook Titlebar
+page uses a full-bleed body so the bottom-corner clip is visible. Not installed
+from the float-corners worktree.
+**Gaps:** desk smoke after `install kit` (and apps); CEF/terminal subsurfaces
+are covered only when they paint in the iced target before the punch layer.
 
 > **Supersedes the parent design's D2 sketch.** The parent proposed a
 > *shell-drawn overlay window per float* (`WindowKind::Titlebar`). That is
