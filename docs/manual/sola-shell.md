@@ -25,8 +25,10 @@ each keyboard). Super+Numpad zoning still works if you turn NumLock off
 (the pad then sends Home / End / arrows). Press NumLock to toggle.
 
 The flower menu also has **Keyboard Shortcuts**. Type in the overlay to
-filter; click or Enter runs the action. Escape / Super+K again / click
-outside dismisses.
+filter; click or Enter runs the action. Escape / Super+K again dismiss.
+Clicking the pad around the card dismisses (same as a menu dropdown).
+Clicks on the desk pass through — the overlay is the card, not a
+full-output dim.
 
 ## Window menu
 

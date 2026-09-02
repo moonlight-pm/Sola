@@ -3,9 +3,9 @@
 **Date:** 2026-08-31  
 **Status:** Frozen — implemented in `sola-kit` + `sola-shell`; installed 2026-08-31  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [floating](2026-06-24-floating-windows-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) § Super+K  
-**Implementation:** kit `crates/sola-kit/src/menu.rs`; shell inject + intercept; overlay `crates/sola-shell/src/shortcuts/`; terminal publishes Window after Edit  
-**Dogfood:** unit tests; **Installed** `kit`+`shell`+`paint`+`terminal` debug 2026-08-31 (desk smoke next)  
-**Gaps:** overlay is not yet every keyboard-only surface (launcher/switcher already clickable); no user-remappable chords; Window menu has no live checkmarks for the current zone
+**Implementation:** kit `crates/sola-kit/src/menu.rs`; shell inject + intercept; overlay `crates/sola-shell/src/shortcuts/`; terminal publishes Window after Edit; live Super+K Frame is `zoning::card_overlay_frame` (card + shadow pad, not the usable output)  
+**Dogfood:** unit tests; **Installed** `kit`+`shell`+`paint`+`terminal` debug 2026-08-31 (desk smoke next); card-sized live Frame in code 2026-09-02  
+**Gaps:** overlay is not yet every keyboard-only surface (launcher/switcher already clickable; they stay full-output because dim / click-outside *is* the usable area); no user-remappable chords; Window menu has no live checkmarks for the current zone
 
 ## Intent
 

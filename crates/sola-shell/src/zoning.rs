@@ -206,6 +206,82 @@ pub fn menu_overlay_frame(
     Some(menu_live_frame(window_id, ow, oh, spec))
 }
 
+/// Live size for a centered overlay card (Super+K; launcher/switcher can
+/// reuse this later). Same park/live split as [`menu_overlay_frame`]:
+/// dismissed is 2×2 off-output; shown is the card plus shadow pad, never
+/// the full usable area. A 1080p wgpu fill on software GL pegs a core
+/// on every `CursorMoved`.
+///
+/// `x`/`y` are the **card** origin (not including pad). The live Frame
+/// grows by [`CARD_SHADOW_PAD`] on each edge so the modal drop-shadow
+/// is not clipped. Visible + no output → `None` (no 1920 placeholder).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CardOverlaySpec {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Extra pixels on each edge so the modal drop-shadow is not clipped.
+/// Modal blur is 28 + 8px offset; menus only pad height ([`MENU_SHADOW_PAD`])
+/// because they hang from the bar.
+pub const CARD_SHADOW_PAD: i32 = 32;
+
+/// Center a content card in the usable area below the menubar.
+pub fn centered_card_spec(
+    output_w: i32,
+    output_h: i32,
+    width: i32,
+    height: i32,
+) -> CardOverlaySpec {
+    let usable_h = (output_h - MENUBAR_HEIGHT).max(1);
+    let w = width.max(1);
+    let h = height.max(1);
+    CardOverlaySpec {
+        x: ((output_w - w) / 2).max(0),
+        y: MENUBAR_HEIGHT + ((usable_h - h) / 2).max(0),
+        width: w,
+        height: h,
+    }
+}
+
+pub fn card_live_frame(
+    window_id: u32,
+    output_w: i32,
+    output_h: i32,
+    spec: CardOverlaySpec,
+) -> FrameUpdate {
+    let usable_y = MENUBAR_HEIGHT;
+    let usable_h = (output_h - MENUBAR_HEIGHT).max(64);
+    let pad = CARD_SHADOW_PAD;
+    let w = (spec.width + 2 * pad).max(64).min(output_w.max(64));
+    let h = (spec.height + 2 * pad).max(64).min(usable_h);
+    let x = (spec.x - pad).clamp(0, (output_w - w).max(0));
+    let y = (spec.y - pad).clamp(usable_y, usable_y + (usable_h - h).max(0));
+    FrameUpdate {
+        window_id,
+        x,
+        y,
+        width: w,
+        height: h,
+        fullscreen: false,
+    }
+}
+
+pub fn card_overlay_frame(
+    window_id: u32,
+    visible: bool,
+    output: Option<(i32, i32)>,
+    spec: CardOverlaySpec,
+) -> Option<FrameUpdate> {
+    if !visible {
+        return Some(overlay_park_frame(window_id));
+    }
+    let (ow, oh) = output?;
+    Some(card_live_frame(window_id, ow, oh, spec))
+}
+
 /// Inset, in pixels per edge, applied to a freshly-floated window. A float
 /// with no remembered geometry centers in the usable area shrunk by this
 /// much on every side — a clear "this window is floating" cue (and, until a
@@ -1534,6 +1610,83 @@ mod tests {
         assert_eq!(clamped.height, 800 - MENUBAR_HEIGHT);
         assert!(menu_overlay_frame(3, false, None, spec).is_some());
         assert!(menu_overlay_frame(3, true, None, spec).is_none());
+    }
+
+    #[test]
+    fn card_live_frame_is_the_card_not_the_output() {
+        let spec = CardOverlaySpec {
+            x: 700,
+            y: 200,
+            width: 520,
+            height: 500,
+        };
+        let f = card_live_frame(5, 1920, 1080, spec);
+        assert_eq!(f.width, 520 + 2 * CARD_SHADOW_PAD);
+        assert_eq!(f.height, 500 + 2 * CARD_SHADOW_PAD);
+        assert_eq!(f.x, 700 - CARD_SHADOW_PAD);
+        assert_eq!(f.y, 200 - CARD_SHADOW_PAD);
+        let usable = 1920 * (1080 - MENUBAR_HEIGHT);
+        assert!(
+            f.width * f.height < usable,
+            "card swapchain {}×{} must be well under usable {}×{}",
+            f.width,
+            f.height,
+            1920,
+            1080 - MENUBAR_HEIGHT
+        );
+        assert!(overlay_geometry_is_live(f.width, f.height));
+
+        let parked = card_overlay_frame(5, false, None, spec).unwrap();
+        assert_eq!(
+            (parked.x, parked.y, parked.width, parked.height),
+            overlay_park_tuple()
+        );
+        assert!(card_overlay_frame(5, true, None, spec).is_none());
+    }
+
+    #[test]
+    fn shortcuts_live_frame_is_card_sized_not_1080p() {
+        let spec = centered_card_spec(
+            1920,
+            1080,
+            crate::shortcuts::view::CARD_WIDTH.round() as i32,
+            crate::shortcuts::view::CARD_HEIGHT.round() as i32,
+        );
+        let f = card_live_frame(8, 1920, 1080, spec);
+        let usable_w = 1920;
+        let usable_h = 1080 - MENUBAR_HEIGHT;
+        assert!(f.width < usable_w, "live width {} is full output", f.width);
+        assert!(
+            f.height < usable_h,
+            "live height {} is full usable {}",
+            f.height,
+            usable_h
+        );
+        let live_px = f.width * f.height;
+        let usable_px = usable_w * usable_h;
+        assert!(
+            live_px * 4 < usable_px,
+            "Super+K live {}×{} ({} px) must stay well under usable {}×{} ({} px)",
+            f.width,
+            f.height,
+            live_px,
+            usable_w,
+            usable_h,
+            usable_px
+        );
+        assert!(f.y >= MENUBAR_HEIGHT);
+        assert!(overlay_geometry_is_live(f.width, f.height));
+        assert_eq!(
+            card_overlay_frame(8, false, Some((1920, 1080)), spec)
+                .unwrap()
+                .width,
+            OVERLAY_PARK
+        );
+        assert!(card_overlay_frame(8, true, None, spec).is_none());
+    }
+
+    fn overlay_park_tuple() -> (i32, i32, i32, i32) {
+        (OVERLAY_PARK_X, OVERLAY_PARK_Y, OVERLAY_PARK, OVERLAY_PARK)
     }
 
     #[test]
