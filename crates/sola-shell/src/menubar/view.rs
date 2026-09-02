@@ -26,39 +26,50 @@ use crate::app::Msg;
 use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
 use crate::menu::state::synthesized_menu;
-use crate::menubar::{FlashTarget, WINDOW_HEIGHT};
+use crate::menubar::{
+    EXTRA_PAD_H, FlashTarget, ICON_SIZE, MENU_PAD_H, PHRASE_GAP, STAT_INNER_SPACING, STAT_PAD_H,
+    WINDOW_HEIGHT,
+};
 
 // ── Density (logical px) ────────────────────────────────────────────────
 // macOS menu bar ~13pt system chrome, regular weight; app name bold.
-// Horizontal rhythm comes from per-item pad, not big row gaps.
+// Left titles keep MENU_PAD_H. The right cluster is four phrases (extras,
+// percents, rates, clock): tight pad inside a phrase, PHRASE_GAP between.
 // Bar height stays at `WINDOW_HEIGHT` (28) for zoning.
 const CHROME_SIZE: f32 = 13.0;
-const ICON_SIZE: u16 = 14;
 /// Full window height — every interactive label uses this so the hit box
 /// reaches the top edge of the screen (y=0), not a short centred chip.
 const BAR_H: f32 = WINDOW_HEIGHT as f32;
-/// Horizontal pad inside each menubar hit target.
-/// ~9px ≈ macOS menu-title breathing room at 13pt.
-const ITEM_PAD_H: f32 = 9.0;
-const ITEM_PAD: Padding = Padding {
-    top: 0.0,
-    right: ITEM_PAD_H,
-    bottom: 0.0,
-    left: ITEM_PAD_H,
-};
+fn menu_pad() -> Padding {
+    Padding {
+        top: 0.0,
+        right: MENU_PAD_H,
+        bottom: 0.0,
+        left: MENU_PAD_H,
+    }
+}
+fn extra_pad() -> Padding {
+    Padding {
+        top: 0.0,
+        right: EXTRA_PAD_H,
+        bottom: 0.0,
+        left: EXTRA_PAD_H,
+    }
+}
+fn stat_pad() -> Padding {
+    Padding {
+        top: 0.0,
+        right: STAT_PAD_H,
+        bottom: 0.0,
+        left: STAT_PAD_H,
+    }
+}
 /// Optical nudge for the flower glyph (SVG visual center sits slightly
 /// low relative to SF Pro Text cap height at 13pt).
 const FLOWER_NUDGE_UP: f32 = 1.5;
-/// Gap *between* right-cluster status buttons (CPU … clock). Combined with
-/// ITEM_PAD this reads like separate menu extras, not one fused strip.
-const CLUSTER_SPACING: f32 = 4.0;
-/// Gap between label and value inside one status indicator.
-const STAT_INNER_SPACING: f32 = 5.0;
-// Fixed value-slot widths so indicators don't reflow as digits change.
-// Chrome type is proportional — space-padding alone cannot pin layout.
-// "100%" / "—" ≈ 36px; rates up to "999.9 MB/s" ≈ 78px at 13pt.
-const STAT_VALUE_W: f32 = 36.0;
-const RATE_VALUE_W: f32 = 78.0;
+/// Pixel graphs are a 14px LED matrix; iced centers the text layout box,
+/// which hangs below the cap height, so the dots sit low. Lift to match.
+const PIXEL_NUDGE_UP: f32 = 2.0;
 
 /// Bold chrome for the focused-app title (macOS application menu name).
 fn app_title_font() -> iced::Font {
@@ -78,6 +89,7 @@ fn bar_button<'a>(
     content: impl Into<Element<'a, Msg>>,
     active: bool,
     on_press: Msg,
+    pad: Padding,
 ) -> iced::widget::Button<'a, Msg> {
     let centered = container(content.into())
         .width(Length::Shrink)
@@ -85,7 +97,7 @@ fn bar_button<'a>(
         .align_y(Alignment::Center);
     iced::widget::button(centered)
         .style(kit_btn::menubar(active))
-        .padding(ITEM_PAD)
+        .padding(pad)
         .height(Length::Fixed(BAR_H))
         .on_press(on_press)
 }
@@ -97,7 +109,7 @@ fn bar_item<'a>(
     on_press: Msg,
     on_enter: Option<Msg>,
 ) -> Element<'a, Msg> {
-    let btn = bar_button(content, active, on_press);
+    let btn = bar_button(content, active, on_press, menu_pad());
     match on_enter {
         Some(enter) => mouse_area(btn).on_enter(enter).into(),
         None => btn.into(),
@@ -144,21 +156,24 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         (shell.menu_open && !shell.current_open_is_system && shell.current_open_index == Some(0))
             || flashing(shell, false, 0);
     let app_title: Element<'_, Msg> = if clickable {
-        bar_item(
-            text(app_title_str).font(app_title_font()).size(CHROME_SIZE),
-            title_active,
-            Msg::OpenMenu {
-                index: 0,
-                is_system: false,
-            },
-            Some(Msg::HoverMenu {
-                index: 0,
-                is_system: false,
-            }),
+        crate::menubar::report::ReportX::wrap(
+            0,
+            bar_item(
+                text(app_title_str).font(app_title_font()).size(CHROME_SIZE),
+                title_active,
+                Msg::OpenMenu {
+                    index: 0,
+                    is_system: false,
+                },
+                Some(Msg::HoverMenu {
+                    index: 0,
+                    is_system: false,
+                }),
+            ),
         )
     } else {
         container(text(app_title_str).font(app_title_font()).size(CHROME_SIZE))
-            .padding(ITEM_PAD)
+            .padding(menu_pad())
             .height(Length::Fixed(BAR_H))
             .align_y(Alignment::Center)
             .into()
@@ -168,63 +183,70 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let menu_labels: Vec<Element<'_, Msg>> = app_menu_labels(shell);
 
     // ── Right cluster: stats + clock (toast is centered overlay) ─────
-    let clock_active = shell.menu_open && shell.open_panel == Some(crate::app::Panel::Calendar);
+    let clock_active = panel_active(shell, crate::app::Panel::Calendar);
     let clock: Element<'_, Msg> = bar_button(
         clock_widget(&mb.clock_now),
         clock_active,
         Msg::ToggleCalendar,
+        menu_pad(),
     )
     .into();
 
     // ── System-stat indicators (left of clock) ───────────────────────
-    let neutral = fg;
-    let first_tick = shell.cpu_hist.is_empty();
-    let cpu_pct = shell.stats.cpu_pct;
     let cpu_btn: Element<'_, Msg> = bar_button(
-        stat_indicator(
+        stat_graph(
             "CPU",
-            if first_tick {
-                "\u{2014}".to_string()
-            } else {
-                format!("{:.0}%", cpu_pct)
-            },
-            crate::stats::level_color(cpu_pct, neutral),
+            shell.cpu_hist.to_vec(),
+            100.0,
+            crate::stats::pixel::Tint::Level,
             muted,
-            STAT_VALUE_W,
         ),
-        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
+        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
         Msg::ToggleStatPanel(crate::stats::Metric::Cpu),
+        stat_pad(),
     )
     .into();
 
-    let mem_pct = shell.stats.mem_pct;
     let mem_btn: Element<'_, Msg> = bar_button(
-        stat_indicator(
+        stat_graph(
             "MEM",
-            if first_tick {
-                "\u{2014}".to_string()
-            } else {
-                format!("{:.0}%", mem_pct)
-            },
-            crate::stats::level_color(mem_pct, neutral),
+            shell.mem_hist.to_vec(),
+            100.0,
+            crate::stats::pixel::Tint::Level,
             muted,
-            STAT_VALUE_W,
         ),
-        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem)),
+        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Mem)),
         Msg::ToggleStatPanel(crate::stats::Metric::Mem),
+        stat_pad(),
     )
     .into();
 
+    let rx_peak = shell.net_down_hist.peak().max(1.0);
+    let tx_peak = shell.net_up_hist.peak().max(1.0);
     let rx_btn: Element<'_, Msg> = bar_button(
-        rate_indicator("RX", shell.stats.net_down, neutral, muted),
-        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Rx)),
+        stat_graph(
+            "RX",
+            shell.net_down_hist.to_vec(),
+            rx_peak,
+            crate::stats::pixel::Tint::Rx,
+            muted,
+        ),
+        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Rx)),
         Msg::ToggleStatPanel(crate::stats::Metric::Rx),
+        stat_pad(),
     )
     .into();
     let tx_btn: Element<'_, Msg> = bar_button(
-        rate_indicator("TX", shell.stats.net_up, neutral, muted),
-        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Tx)),
+        stat_graph(
+            "TX",
+            shell.net_up_hist.to_vec(),
+            tx_peak,
+            crate::stats::pixel::Tint::Tx,
+            muted,
+        ),
+        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Tx)),
         Msg::ToggleStatPanel(crate::stats::Metric::Tx),
+        stat_pad(),
     )
     .into();
 
@@ -232,64 +254,73 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
 
-    let mut cluster: Vec<Element<'_, Msg>> = Vec::new();
+    let mut extras: Vec<Element<'_, Msg>> = Vec::new();
     if let Some(unread) = shell.mail_unread_badge() {
         let accent = shell.theme.extended_palette().primary.base.color;
-        cluster.push(mail_unread_chip(unread, accent));
+        extras.push(mail_unread_chip(unread, accent));
     }
     if shell.notify.pile_count() > 0 {
-        let accent = shell.theme.extended_palette().primary.base.color;
-        cluster.push(notify_pile_chip(
-            shell.notify.pile_count(),
-            accent,
-            shell.open_panel == Some(crate::app::Panel::NotifyPile),
-        ));
+        let tint = if shell.notify.unseen {
+            shell.theme.extended_palette().primary.base.color
+        } else {
+            fg
+        };
+        extras.push(notify_pile_chip(tint));
     }
     if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
-        cluster.push(audio_chip(
+        extras.push(audio_chip(
             icon,
             fg,
             muted,
-            shell.open_panel == Some(crate::app::Panel::Audio),
+            panel_active(shell, crate::app::Panel::Audio),
         ));
     }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
-        cluster.push(bluetooth_chip(
+        extras.push(bluetooth_chip(
             icon,
             fg,
             muted,
-            shell.open_panel == Some(crate::app::Panel::Bluetooth),
+            panel_active(shell, crate::app::Panel::Bluetooth),
         ));
     }
-    cluster.push(cpu_btn);
-    if let Some(g) = shell.stats.gpu {
-        let gpu_btn: Element<'_, Msg> = bar_button(
-            stat_indicator(
-                "GPU",
-                format!("{:.0}%", g.util),
-                crate::stats::level_color(g.util, neutral),
-                muted,
-                STAT_VALUE_W,
-            ),
-            shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
-            Msg::ToggleStatPanel(crate::stats::Metric::Gpu),
-        )
-        .into();
-        cluster.push(gpu_btn);
-    }
-    cluster.push(mem_btn);
-    cluster.push(rx_btn);
-    cluster.push(tx_btn);
-    cluster.push(clock);
 
-    // Base chrome: left menus | flexible gap | right stats/clock.
+    let mut percents: Vec<Element<'_, Msg>> = vec![cpu_btn];
+    if shell.stats.gpu.is_some() {
+        percents.push(
+            bar_button(
+                stat_graph(
+                    "GPU",
+                    shell.gpu_hist.to_vec(),
+                    100.0,
+                    crate::stats::pixel::Tint::Level,
+                    muted,
+                ),
+                panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
+                Msg::ToggleStatPanel(crate::stats::Metric::Gpu),
+                stat_pad(),
+            )
+            .into(),
+        );
+    }
+    percents.push(mem_btn);
+
+    // Four phrases, not nine beads: extras · percents · rates · clock.
+    let mut phrases: Vec<Element<'_, Msg>> = Vec::new();
+    if !extras.is_empty() {
+        phrases.push(row(extras).height(Length::Fixed(BAR_H)).into());
+    }
+    phrases.push(row(percents).height(Length::Fixed(BAR_H)).into());
+    phrases.push(row![rx_btn, tx_btn].height(Length::Fixed(BAR_H)).into());
+    phrases.push(clock);
+
+    // Base chrome: left menus | flexible gap | right phrases.
     // Fixed BAR_H root — matches the window size so children with Fixed(BAR_H)
     // are not shrink-wrapped / vertically centred with a dead band at y=0.
     let base: Element<'_, Msg> = row![
         row(left).height(Length::Fixed(BAR_H)),
         iced::widget::Space::new().width(Length::Fill),
-        iced::widget::row(cluster)
-            .spacing(CLUSTER_SPACING)
+        iced::widget::row(phrases)
+            .spacing(PHRASE_GAP)
             .height(Length::Fixed(BAR_H)),
     ]
     .width(Length::Fill)
@@ -364,6 +395,13 @@ fn flashing(shell: &crate::app::Shell, is_system: bool, index: usize) -> bool {
     shell.menubar.flash == Some(FlashTarget { is_system, index })
 }
 
+/// Chip highlight only while that panel is actually showing. `open_panel`
+/// can lag `menu_open` on chord/focus dismiss — requiring both stops the
+/// volume (and other) chips from staying filled after the popover is gone.
+fn panel_active(shell: &crate::app::Shell, panel: crate::app::Panel) -> bool {
+    shell.menu_open && shell.open_panel == Some(panel)
+}
+
 fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
     let Some(ref app_id) = shell.focused_app_id else {
         return Vec::new();
@@ -381,19 +419,22 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
                 && !shell.current_open_is_system
                 && shell.current_open_index == Some(index))
                 || flashing(shell, false, index);
-            bar_item(
-                text(menu.label.clone())
-                    .font(fonts::chrome())
-                    .size(CHROME_SIZE),
-                active,
-                Msg::OpenMenu {
-                    index,
-                    is_system: false,
-                },
-                Some(Msg::HoverMenu {
-                    index,
-                    is_system: false,
-                }),
+            crate::menubar::report::ReportX::wrap(
+                index,
+                bar_item(
+                    text(menu.label.clone())
+                        .font(fonts::chrome())
+                        .size(CHROME_SIZE),
+                    active,
+                    Msg::OpenMenu {
+                        index,
+                        is_system: false,
+                    },
+                    Some(Msg::HoverMenu {
+                        index,
+                        is_system: false,
+                    }),
+                ),
             )
         })
         .collect()
@@ -427,29 +468,25 @@ fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
     }
 }
 
-/// Status indicator: muted chrome label + chrome value (same face/size as
-/// menu titles). No mono — menubar reads as one type system.
-///
-/// `value_w` pins the value slot so the cluster doesn't bounce when
-/// digits/units change (chrome is proportional).
-fn stat_indicator<'a>(
+/// Status indicator: muted chrome label + fixed btop-style pixel graph.
+fn stat_graph<'a>(
     label: &'a str,
-    value: String,
-    color: Color,
+    samples: Vec<f32>,
+    max: f32,
+    tint: crate::stats::pixel::Tint,
     muted: Color,
-    value_w: f32,
 ) -> Element<'a, Msg> {
     row![
         text(label)
             .font(fonts::chrome())
             .size(CHROME_SIZE)
             .style(move |_: &Theme| iced::widget::text::Style { color: Some(muted) }),
-        text(value)
-            .font(fonts::chrome())
-            .size(CHROME_SIZE)
-            .width(Length::Fixed(value_w))
-            .align_x(iced::alignment::Horizontal::Right)
-            .style(move |_: &Theme| iced::widget::text::Style { color: Some(color) }),
+        container(crate::stats::pixel::graph(samples, max, tint)).padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: PIXEL_NUDGE_UP,
+            left: 0.0,
+        }),
     ]
     .spacing(STAT_INNER_SPACING)
     .align_y(iced::alignment::Vertical::Center)
@@ -478,6 +515,7 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
         .align_y(Alignment::Center),
         false,
         Msg::RaiseMail,
+        extra_pad(),
     )
     .into()
 }
@@ -493,6 +531,7 @@ fn audio_chip(
         icon_colored(icon.name, ICON_SIZE, tint),
         active,
         Msg::ToggleAudio,
+        extra_pad(),
     )
     .into()
 }
@@ -508,36 +547,17 @@ fn bluetooth_chip(
         icon_colored(icon.name, ICON_SIZE, tint),
         active,
         Msg::ToggleBluetooth,
+        extra_pad(),
     )
     .into()
 }
 
-fn notify_pile_chip(count: u32, accent: Color, active: bool) -> Element<'static, Msg> {
-    let label = if count > 99 {
-        "99+".to_string()
-    } else {
-        count.to_string()
-    };
+fn notify_pile_chip(accent: Color) -> Element<'static, Msg> {
     bar_button(
-        row![
-            icon_colored("lucide/bell", ICON_SIZE, accent),
-            text(label)
-                .font(fonts::chrome())
-                .size(CHROME_SIZE)
-                .style(move |_: &Theme| iced::widget::text::Style {
-                    color: Some(accent)
-                }),
-        ]
-        .spacing(STAT_INNER_SPACING)
-        .align_y(Alignment::Center),
-        active,
+        icon_colored("lucide/bell", ICON_SIZE, accent),
+        false,
         Msg::ToggleNotifyPile,
+        extra_pad(),
     )
     .into()
-}
-
-/// TX/RX rate indicator — same chrome type as [`stat_indicator`].
-fn rate_indicator<'a>(label: &'a str, bps: f32, color: Color, muted: Color) -> Element<'a, Msg> {
-    let value = crate::stats::view::fmt_rate(bps);
-    stat_indicator(label, value, color, muted, RATE_VALUE_W)
 }

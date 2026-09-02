@@ -16,7 +16,12 @@ use sola_kit::app::window_settings;
 pub const CARD_H: i32 = 76;
 pub const CARD_GAP: i32 = 8;
 pub const MAX_LIVE: usize = 3;
-pub const MAX_PILE: usize = 30;
+/// Missed pile is a short session list; older rows drop off the bottom.
+pub const MAX_PILE: usize = 20;
+/// Compact empty-state overlay (title + one line + pad).
+pub const PILE_MIN_HEIGHT: f32 = 96.0;
+const PILE_ROW_H: f32 = 48.0;
+const PILE_CHROME_H: f32 = 52.0;
 pub const HOLD: Duration = Duration::from_secs(6);
 pub const ENTER: Duration = Duration::from_millis(180);
 pub const LEAVE: Duration = Duration::from_millis(140);
@@ -36,6 +41,8 @@ pub struct Banner {
 pub struct NotifyState {
     pub live: Vec<Banner>,
     pub pile: Vec<AppNotification>,
+    /// Accent on the menubar bell until the pile is opened (or emptied).
+    pub unseen: bool,
     generation: u64,
 }
 
@@ -44,6 +51,7 @@ impl Default for NotifyState {
         Self {
             live: Vec::new(),
             pile: Vec::new(),
+            unseen: false,
             generation: 0,
         }
     }
@@ -56,6 +64,23 @@ impl NotifyState {
 
     pub fn pile_count(&self) -> u32 {
         self.pile.len() as u32
+    }
+
+    /// Clicking the bell: icon returns to normal chrome (pile may still be there).
+    pub fn acknowledge(&mut self) {
+        self.unseen = false;
+    }
+
+    /// Live overlay height for the missed pile: content-sized, capped at the
+    /// usable area under the menubar so a full pile (~20) is not clipped.
+    pub fn pile_overlay_height(count: usize, usable_h: f32) -> f32 {
+        let wanted = if count == 0 {
+            PILE_MIN_HEIGHT
+        } else {
+            PILE_CHROME_H + count as f32 * PILE_ROW_H
+        };
+        let cap = usable_h.max(PILE_MIN_HEIGHT);
+        wanted.clamp(PILE_MIN_HEIGHT, cap)
     }
 
     pub fn stack_height(&self) -> i32 {
@@ -164,7 +189,11 @@ impl NotifyState {
             return Some(self.live.remove(pos).n);
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
-            return Some(self.pile.remove(pos));
+            let n = self.pile.remove(pos);
+            if self.pile.is_empty() {
+                self.unseen = false;
+            }
+            return Some(n);
         }
         None
     }
@@ -177,18 +206,18 @@ impl NotifyState {
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
             self.pile.remove(pos);
+            if self.pile.is_empty() {
+                self.unseen = false;
+            }
             return true;
         }
         false
     }
 
-    pub fn clear_pile(&mut self) {
-        self.pile.clear();
-    }
-
     fn push_pile(&mut self, n: AppNotification) {
         self.pile.retain(|p| p.id != n.id);
         self.pile.insert(0, n);
+        self.unseen = true;
         while self.pile.len() > MAX_PILE {
             self.pile.pop();
         }
@@ -278,6 +307,49 @@ mod tests {
         assert_eq!(s.live.len(), MAX_LIVE);
         assert_eq!(s.pile_count(), 1);
         assert_eq!(s.pile[0].id, "n0");
+        assert!(s.unseen);
+    }
+
+    #[test]
+    fn opening_pile_clears_bell_accent() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        let g = s.push(n("a", None), t0);
+        assert!(!s.unseen, "live banner is not the missed-pile chip");
+        assert!(s.begin_leave(g, t0));
+        s.finish_leave(t0 + LEAVE);
+        assert!(s.unseen);
+        s.acknowledge();
+        assert!(!s.unseen);
+        assert_eq!(s.pile_count(), 1);
+        let g = s.push(n("b", None), t0);
+        assert!(s.begin_leave(g, t0));
+        s.finish_leave(t0 + LEAVE);
+        assert!(s.unseen);
+    }
+
+    #[test]
+    fn pile_caps_at_twenty_drops_oldest() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        for i in 0..(MAX_LIVE + MAX_PILE + 1) {
+            s.push(n(&format!("n{i}"), None), t0);
+        }
+        assert_eq!(s.live.len(), MAX_LIVE);
+        assert_eq!(s.pile.len(), MAX_PILE);
+        assert_eq!(s.pile.last().map(|p| p.id.as_str()), Some("n1"));
+        assert!(s.pile.iter().all(|p| p.id != "n0"));
+    }
+
+    #[test]
+    fn pile_overlay_grows_then_caps() {
+        assert_eq!(NotifyState::pile_overlay_height(0, 1000.0), PILE_MIN_HEIGHT);
+        let twenty = NotifyState::pile_overlay_height(20, 2000.0);
+        assert!(twenty > 400.0);
+        assert_eq!(
+            NotifyState::pile_overlay_height(20, 300.0),
+            300.0_f32.max(PILE_MIN_HEIGHT)
+        );
     }
 
     #[test]

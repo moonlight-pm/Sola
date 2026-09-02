@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29)  
+**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (no count / no Clear / cap 20 / unseen accent) **installed** `shell` release 2026-09-02.  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -33,8 +33,8 @@ process exit. Notifications: Workspaces done-while-unfocused, web
 | × | Dismiss without raising. Not missed. |
 | Expire | ~6s with no interaction → retract into the bar → missed pile. |
 | Stack | Max 3 live cards; older live overflow goes straight to the pile. |
-| Pile | Menubar `lucide/bell` + count in the right cluster (same family as mail unread). Hidden at 0. Click opens a list under the chip (menu overlay). Session-only; cap 30. |
-| Pile click | Same as card click (raise source). Pile × / Clear removes. |
+| Pile | Menubar `lucide/bell` in the right cluster (**no count**). Hidden at 0. Accent only while the pile is unseen; **clicking the bell returns it to normal chrome** (panel may stay open). Click opens a list under the chip (menu overlay). Session-only; cap **20** (oldest drop off). Overlay sizes to the list, up to the usable area under the menubar; the list scrolls if it still overflows. |
+| Pile click | Same as card click (raise source) and closes the panel. Pile × dismisses one row. No Clear. |
 | Replace | Same `app_id` + `tag` replaces an in-flight banner. |
 | Keyboard | Overlay does **not** steal focus. Pile is a menu panel (Escape dismisses). |
 | Sound | Not this slice. |
@@ -116,3 +116,5 @@ promoting remaining `AppToast` senders (launch fail / exit).
 | 2026-08-25 | Drop-from-bar + missed-pile chip; click raises source |
 | 2026-08-25 | Browser via JS intercept, not a D-Bus notification server |
 | 2026-08-25 | No action buttons / sound in v1 |
+| 2026-09-02 | Pile cap 20 (drop oldest); no count on the bell; no Clear; chip highlight returns on click; panel grows to usable height |
+| 2026-09-02 | Bell accent is unseen-only; click acknowledges (normal menubar fg) |

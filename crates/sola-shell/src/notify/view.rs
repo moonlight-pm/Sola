@@ -1,6 +1,6 @@
 //! Notification overlay (live cards) and the missed-pile menu panel.
 
-use iced::widget::{button, column, container, mouse_area, row, text};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 use sola_bus::topics::AppNotification;
@@ -17,7 +17,6 @@ const SOURCE_SIZE: f32 = 11.0;
 const BODY_SIZE: f32 = 12.0;
 const ICON: u16 = 16;
 pub const PILE_WIDTH: f32 = 320.0;
-pub const PILE_HEIGHT: f32 = 400.0;
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.notify.visible() {
@@ -108,31 +107,36 @@ pub fn pile_panel(shell: &Shell) -> Element<'_, Msg> {
         .size(13.0)
         .into();
 
-    let mut rows: Vec<Element<'_, Msg>> = vec![title];
-    if shell.notify.pile.is_empty() {
+    let body: Element<'_, Msg> = if shell.notify.pile.is_empty() {
         let muted = shell.theme.extended_palette().secondary.base.text;
-        rows.push(
-            text("Nothing missed.")
-                .font(fonts::ui())
-                .size(12.0)
-                .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(muted) })
-                .into(),
-        );
+        text("Nothing missed.")
+            .font(fonts::ui())
+            .size(12.0)
+            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(muted) })
+            .into()
     } else {
-        for n in &shell.notify.pile {
-            rows.push(pile_row(shell, n));
-        }
-        rows.push(
-            kit_btn::labeled_sm("Clear", kit_btn::ghost)
-                .on_press(Msg::NotifyClearPile)
-                .into(),
-        );
-    }
+        let rows: Vec<Element<'_, Msg>> = shell
+            .notify
+            .pile
+            .iter()
+            .map(|n| pile_row(shell, n))
+            .collect();
+        scrollable(column(rows).spacing(SPACE_SM).width(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
 
-    let card: Element<'_, Msg> = popover(column(rows).spacing(SPACE_SM).width(Length::Fill))
-        .padding(SPACE_MD)
-        .width(Length::Fill)
-        .into();
+    let card: Element<'_, Msg> = popover(
+        column![title, body]
+            .spacing(SPACE_SM)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .padding(SPACE_MD)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
     crate::menu::host_card(card)
 }
 

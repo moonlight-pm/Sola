@@ -2,13 +2,15 @@
 //!
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
-//! - Right cluster: mail unread (when mail is open), missed-notification
-//!   bell, volume, Bluetooth, status indicators (CPU/GPU/MEM/RX/TX) + clock.
+//! - Right cluster: four phrases, tight within and a breath between —
+//!   extras (mail / bell / volume / bluetooth), percents (CPU / GPU / MEM),
+//!   rates (RX / TX), clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
 //! Density and type live in the view (compact chrome sizes, font roles);
 //! bar height stays fixed so zoning / overlay Y offsets stay stable.
 
+pub mod report;
 pub mod view;
 
 use chrono::Local;
@@ -18,6 +20,37 @@ use sola_kit::app::window_settings;
 /// Height of the menubar window in logical pixels.
 /// Keep in sync with [`crate::zoning::MENUBAR_HEIGHT`] and overlay Y=28.
 pub const WINDOW_HEIGHT: u32 = 28;
+
+/// Horizontal pad for left-side menu titles (macOS menu-title rhythm).
+pub const MENU_PAD_H: f32 = 9.0;
+/// Horizontal pad for icon extras (bell, volume, bluetooth, mail).
+pub const EXTRA_PAD_H: f32 = 5.0;
+/// Horizontal pad for CPU / GPU / MEM / RX / TX chips.
+pub const STAT_PAD_H: f32 = 6.0;
+/// Breath between right-cluster phrases (extras · percents · rates · clock).
+pub const PHRASE_GAP: f32 = 12.0;
+/// Gap between a stat label and its pixel graph.
+pub const STAT_INNER_SPACING: f32 = 4.0;
+/// Lucide extras in the right cluster.
+pub const ICON_SIZE: u16 = 14;
+
+/// Chrome 13pt advance used only for overlay-anchor estimates.
+const CHROME_CHAR_W: f32 = 7.5;
+
+/// Icon extra chip width (glyph + pad). Overlay anchors walk from this.
+pub fn extra_chip_w() -> f32 {
+    ICON_SIZE as f32 + EXTRA_PAD_H * 2.0
+}
+
+/// CPU / GPU / MEM chip width (3-letter label + fixed pixel graph).
+pub fn percent_chip_w() -> f32 {
+    3.0 * CHROME_CHAR_W + STAT_INNER_SPACING + crate::stats::pixel::GRAPH_W + STAT_PAD_H * 2.0
+}
+
+/// RX / TX chip width (2-letter label + fixed pixel graph).
+pub fn rate_chip_w() -> f32 {
+    2.0 * CHROME_CHAR_W + STAT_INNER_SPACING + crate::stats::pixel::GRAPH_W + STAT_PAD_H * 2.0
+}
 
 /// Identifies one menubar label for the keyboard-shortcut "flash" feedback,
 /// using the same `(is_system, index)` addressing as the open-menu state:
@@ -147,5 +180,15 @@ mod tests {
         // The current generation's expiry clears it.
         mb.expire_flash(second);
         assert_eq!(mb.flash, None);
+    }
+
+    #[test]
+    fn cluster_chip_widths_are_tighter_than_old_islands() {
+        // Old cluster was 9+4+9 pad/gap per item (~80px percents, ~115px rates).
+        assert!(extra_chip_w() < 32.0);
+        assert!(percent_chip_w() < 80.0);
+        assert!(rate_chip_w() < 80.0);
+        assert_eq!(percent_chip_w() - rate_chip_w(), CHROME_CHAR_W);
+        assert!(PHRASE_GAP > EXTRA_PAD_H * 2.0);
     }
 }

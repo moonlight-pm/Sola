@@ -174,7 +174,7 @@ area. Iced does not present full-output swapchains in the background (see
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, volume (hidden if no PipeWire), Bluetooth (hidden if no adapter), stats, whispers (`AppToast`) |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, volume (hidden if no PipeWire), Bluetooth (hidden if no adapter), pixel-graph stats (CPU/GPU/MEM/RX/TX), whispers (`AppToast`) |
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |

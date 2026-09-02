@@ -3,8 +3,8 @@
 **Date:** 2026-09-01  
 **Status:** Frozen — implemented in `sola-kit` + `sola-preview` + CEF paste  
 **Related:** [preview](2026-08-04-sola-preview-and-selection-capture-design.md); [paint](2026-08-14-sola-paint-design.md); [kvm clipboard](2026-07-30-sola-kvm-clipboard-design.md) (text only)  
-**Implementation:** Preview **Copy** (image bytes) next to **Copy path**. Wrapper / browser ⌘V pastes an image File into the focused frame. Super+Shift+3/4/5 Fast-encode PNG onto the compositor clipboard (shell owns the offer); no file, no Preview. **Installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01; screenshot dest + promised paste + Fastest **installed** `kit`+`shell` release 2026-09-01.  
-**Gaps:** paint has no image paste yet; kvm stays text; screenshot → Slack desk smoke.
+**Implementation:** Preview **Copy** (image bytes) next to **Copy path**. Wrapper / browser ⌘V pastes an image File into the focused frame. Super+Shift+3/4/5 Fast-encode PNG onto the compositor clipboard (shell owns the offer); no file, no Preview. **Installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01; screenshot dest + promised paste + Fastest **installed** `kit`+`shell` release 2026-09-01. Super+Shift+4 copies the live scene **before** dismissing menubar panels (**installed** `shell` release 2026-09-02).  
+**Gaps:** paint has no image paste yet; kvm stays text; freeze-with-open-panel desk smoke.
 
 ## Intent
 

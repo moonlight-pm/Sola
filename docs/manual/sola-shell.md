@@ -28,6 +28,9 @@ The flower menu also has **Keyboard Shortcuts**. Type in the overlay to
 filter; click or Enter runs the action. Escape / Super+K again / click
 outside dismisses.
 
+CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel
+graphs (last ~12 seconds). Exact numbers live in the click dropdown.
+
 ## Window menu
 
 Every focused app gets a **Window** menu (kit default; an app can replace
@@ -49,6 +52,14 @@ open (`solactl open` / `xdg-open`) also unhide when they raise the app.
 
 Hiding the last visible app leaves the menubar and wallpaper.
 
+## Notifications
+
+The missed-notifications bell (right cluster, no count) opens a list
+that grows with the pile (cap 20; oldest drop off). Accent while unseen;
+clicking the bell returns it to normal chrome. There is no Clear. Click a
+row to raise the source. Super+Shift+4 with the panel open keeps it in
+the freeze.
+
 ## Screenshots
 
 Super+Shift+3 / 4 / 5 copy a PNG onto the system clipboard and toast
@@ -58,8 +69,10 @@ write a file or open Preview.
 
 Super+Shift+4 freezes the live output first (menus, text selections, and
 other transient UI stay in the still), then opens a full-brightness
-marquee on that still (no dim). The crop is taken from the freeze — not
-a second live capture.
+marquee on that still (no dim). The chord does **not** dismiss an open
+notifications panel or other menubar popover before the copy — the
+freeze is the live pixels. The crop is taken from the freeze — not a
+second live capture.
 
 Super+Shift+5 and `solactl compositor screenshot --app` copy the
 window’s own buffer. They do not raise the app. The CLI still writes a
