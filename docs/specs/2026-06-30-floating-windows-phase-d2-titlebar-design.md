@@ -9,10 +9,12 @@
 **Implementation:** in-window CSD (this freeze). Face clip is a rounded dest-out
 punch (`components/float_clip.rs`) because iced 0.14 `clip(true)` is AABB-only.
 **Dogfood:** unit tests (resize AABB hits + rounded-rect SDF); storybook Titlebar
-page uses a full-bleed body so the bottom-corner clip is visible. Not installed
-from the float-corners worktree.
-**Gaps:** desk smoke after `install kit` (and apps); CEF/terminal subsurfaces
-are covered only when they paint in the iced target before the punch layer.
+page uses a full-bleed body so the bottom-corner clip is visible. **Installed**
+`kit` release 2026-09-02 (`/opt/sola/bin/sola-kit`). Other `wrap_if_floating`
+apps still need their own install to pick up the library.
+**Gaps:** desk smoke (storybook Titlebar + a floating first-party app after that
+app is reinstalled); CEF/terminal subsurfaces are covered only when they paint
+in the iced target before the punch layer.
 
 > **Supersedes the parent design's D2 sketch.** The parent proposed a
 > *shell-drawn overlay window per float* (`WindowKind::Titlebar`). That is
