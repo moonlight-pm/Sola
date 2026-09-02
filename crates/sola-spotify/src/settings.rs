@@ -17,6 +17,9 @@ pub struct Settings {
     /// Encoded `Page` (`home`, `playlist:<id>`, …). Empty means Home.
     #[serde(default)]
     pub last_page: String,
+    /// Last track URI on the restored page (selected row after restart).
+    #[serde(default)]
+    pub last_track: String,
 }
 
 fn default_true() -> bool {
@@ -32,6 +35,7 @@ impl Default for Settings {
             autoplay: true,
             gapless: true,
             last_page: String::new(),
+            last_track: String::new(),
         }
     }
 }

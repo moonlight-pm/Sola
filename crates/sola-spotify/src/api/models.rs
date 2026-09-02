@@ -251,6 +251,9 @@ pub struct Track {
     pub is_playable: Option<bool>,
     #[serde(default)]
     pub popularity: Option<u8>,
+    /// When this track was saved or added to the current playlist (`YYYY-MM-DD…`).
+    #[serde(default)]
+    pub added_at: Option<String>,
     #[serde(default)]
     pub external_urls: ExternalUrls,
 }
@@ -405,6 +408,29 @@ impl Playlist {
     pub fn owned_by(&self, user_id: &str) -> bool {
         self.owner.id.as_deref() == Some(user_id)
     }
+
+    /// Spotify-owned / algorithmic (Discover Weekly, Daily Mix, Release Radar, …).
+    pub fn is_generated(&self) -> bool {
+        self.id.starts_with("37i9dQ") || self.owner.id.as_deref() == Some("spotify")
+    }
+}
+
+/// Daily Mix / Discover first, then the rest of Made for you.
+pub fn generated_sort_key(name: &str) -> (u8, String) {
+    let rank = if name.starts_with("Discover Weekly") {
+        0
+    } else if name.starts_with("Release Radar") {
+        1
+    } else if name.starts_with("Daily Mix") {
+        2
+    } else if name.starts_with("On Repeat") {
+        3
+    } else if name.starts_with("Repeat Rewind") {
+        4
+    } else {
+        5
+    };
+    (rank, name.to_lowercase())
 }
 
 /// A track or an episode, as returned wherever Spotify mixes both.
@@ -498,6 +524,61 @@ impl PlaylistItem {
     pub fn playable(&self) -> Option<&PlayableItem> {
         self.item.as_ref().or(self.track.as_ref())
     }
+
+    pub fn into_track(&self) -> Option<Track> {
+        match self.playable() {
+            Some(PlayableItem::Track(track)) => {
+                let mut track = track.clone();
+                if track.added_at.is_none() {
+                    track.added_at = self.added_at.clone();
+                }
+                Some(track)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Spotify ID from a `spotify:{kind}:{id}` URI.
+pub fn spotify_id<'a>(uri: &'a str, kind: &str) -> Option<&'a str> {
+    let needle = format!("spotify:{kind}:");
+    uri.strip_prefix(&needle).filter(|id| !id.is_empty())
+}
+
+/// Compact added/created day from a Spotify timestamp (`2024-03-12T00:00:00Z`).
+pub fn format_added_at(iso: &str) -> Option<String> {
+    let date = iso.get(..10)?;
+    let mut parts = date.split('-');
+    let year = parts.next()?;
+    let month: usize = parts.next()?.parse().ok()?;
+    let day: u8 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || day == 0 {
+        return None;
+    }
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    Some(format!("{day} {} {year}", MONTHS[month - 1]))
+}
+
+/// Oldest → newest added dates on a track list, if any.
+pub fn added_span(items: &[Track]) -> Option<String> {
+    let mut days: Vec<String> = items
+        .iter()
+        .filter_map(|t| t.added_at.as_deref().and_then(format_added_at))
+        .collect();
+    if days.is_empty() {
+        return None;
+    }
+    days.sort();
+    days.dedup();
+    let first = days.first()?.clone();
+    let last = days.last()?.clone();
+    if first == last {
+        Some(format!("added {first}"))
+    } else {
+        Some(format!("{first} – {last}"))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -570,6 +651,13 @@ pub struct Device {
     #[serde(default, rename = "type")]
     #[serde(deserialize_with = "null_default")]
     pub kind: String,
+}
+
+/// `GET /browse/categories/{id}/playlists` wrapper.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct CategoryPlaylists {
+    #[serde(default)]
+    pub playlists: Page<Playlist>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -738,6 +826,32 @@ mod tests {
         assert_eq!(playlist.track_total(), 12);
         assert!(playlist.owned_by("me"));
         assert_eq!(playlist.owner_name(), "Me");
+        assert!(!playlist.is_generated());
+        let weekly: Playlist = serde_json::from_str(
+            r#"{"id":"37i9dQZEVXcUTwyIdCrnO5","name":"Discover Weekly","owner":{"id":"spotify","display_name":"Spotify"}}"#,
+        )
+        .unwrap();
+        assert!(weekly.is_generated());
+    }
+
+    #[test]
+    fn format_added_at_reads_iso_day() {
+        assert_eq!(
+            format_added_at("2024-03-12T18:22:00Z").as_deref(),
+            Some("12 Mar 2024")
+        );
+        assert_eq!(spotify_id("spotify:track:abc", "track"), Some("abc"));
+        let tracks = vec![
+            Track {
+                added_at: Some("2024-01-01T00:00:00Z".into()),
+                ..Track::default()
+            },
+            Track {
+                added_at: Some("2024-06-15T00:00:00Z".into()),
+                ..Track::default()
+            },
+        ];
+        assert_eq!(added_span(&tracks).as_deref(), Some("1 Jan 2024 – 15 Jun 2024"));
     }
 
     #[test]

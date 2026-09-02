@@ -7,7 +7,7 @@ use librespot_core::authentication::Credentials;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
-use crate::cache::{self, Skipped};
+use crate::cache::{self, Liked, Skipped};
 
 use crate::api::models::*;
 use crate::api::{ApiClient, ApiError, ApiSource, NetActivity, PlayRequest, TokenProvider, WebTokens};
@@ -49,6 +49,7 @@ pub enum Page {
     Home,
     Search,
     Liked,
+    MadeForYou,
     Albums,
     Artists,
     Playlist(String),
@@ -64,6 +65,7 @@ impl Page {
             Page::Home => "home".into(),
             Page::Search => "search".into(),
             Page::Liked => "liked".into(),
+            Page::MadeForYou => "made-for-you".into(),
             Page::Albums => "albums".into(),
             Page::Artists => "artists".into(),
             Page::Playlist(id) => format!("playlist:{id}"),
@@ -83,6 +85,7 @@ impl Page {
             "home" => Page::Home,
             "search" => Page::Search,
             "liked" => Page::Liked,
+            "made-for-you" => Page::MadeForYou,
             "albums" => Page::Albums,
             "artists" => Page::Artists,
             "queue" => Page::Queue,
@@ -106,6 +109,7 @@ impl Page {
             Page::Search | Page::Queue | Page::Settings => None,
             Page::Home => Some("home".into()),
             Page::Liked => Some("liked".into()),
+            Page::MadeForYou => Some("made-for-you".into()),
             Page::Albums => Some("albums".into()),
             Page::Artists => Some("artists".into()),
             Page::Playlist(id) => Some(format!("playlist-{id}")),
@@ -128,6 +132,11 @@ pub enum PageBody {
         top_tracks: Vec<Track>,
     },
     Search(SearchResults),
+    Playlists {
+        title: String,
+        subtitle: String,
+        items: Vec<Playlist>,
+    },
     Tracks {
         title: String,
         subtitle: String,
@@ -229,6 +238,10 @@ pub enum Event {
         uri: String,
         saved: bool,
     },
+    /// Full Liked Songs snapshot (uris). Replaces the UI's liked set.
+    Liked(Vec<String>),
+    /// Library playlists (sidebar + Home / Made for you), filled after first paint.
+    Playlists(Vec<Playlist>),
     Settings(Settings),
     Error(String),
     Raise,
@@ -292,6 +305,7 @@ async fn run() {
 
     let mut worker = Worker {
         skipped: Skipped::load(&dirs),
+        liked: Liked::load(&dirs),
         dirs,
         settings,
         http,
@@ -375,6 +389,7 @@ struct Worker {
     last_playback: Playback,
     advance_gen: u64,
     skipped: Skipped,
+    liked: Liked,
     /// Drop engine snapshots for any other track while a click/skip settles.
     hold: std::sync::Arc<std::sync::Mutex<EngineHold>>,
     last_engine_uri: Option<String>,
@@ -443,13 +458,15 @@ impl Worker {
         });
         self.signed_in = true;
         self.resume_engine();
-        self.open(Page::Home);
-        let last = Page::decode(&self.settings.last_page).unwrap_or(Page::Home);
-        if last != Page::Home {
-            self.open(last);
+        if !self.liked.uris.is_empty() {
+            bridge::emit(Event::Liked(self.liked.uris.iter().cloned().collect()));
         }
+        let last = Page::decode(&self.settings.last_page).unwrap_or(Page::Home);
+        self.open(last);
+        self.refresh_library_playlists();
         self.refresh_devices();
         self.refresh_playback();
+        self.refresh_liked();
     }
 
     async fn handle(&mut self, cmd: Cmd) {
@@ -840,6 +857,7 @@ impl Worker {
         self.emit_cached(&page);
         match &page {
             Page::Home => self.load_home(),
+            Page::MadeForYou => self.load_made_for_you(),
             Page::Search => self.load_search(),
             Page::Liked => self.load_liked(0),
             Page::Albums => self.load_albums(0),
@@ -886,25 +904,21 @@ impl Worker {
     fn load_home(&self) {
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
-            let recent = match api.recently_played(20, None, None).await {
+            let (recent, playlists, top_artists, top_tracks) = tokio::join!(
+                api.recently_played(20, None, None),
+                Worker::library_playlists_fast(&api),
+                api.top_artists("medium_term", 12),
+                api.top_tracks("medium_term", 10, 0),
+            );
+            let recent = match recent {
                 Ok(page) => page.items.into_iter().map(|h| h.track).collect(),
                 Err(error) => {
                     bridge::emit(Event::Error(error.to_string()));
                     Vec::new()
                 }
             };
-            let playlists = match api.my_playlists(0, 30).await {
-                Ok(page) => page.items,
-                Err(_) => Vec::new(),
-            };
-            let top_artists = match api.top_artists("medium_term", 12).await {
-                Ok(page) => page.items,
-                Err(_) => Vec::new(),
-            };
-            let top_tracks = match api.top_tracks("medium_term", 10, 0).await {
-                Ok(page) => page.items,
-                Err(_) => Vec::new(),
-            };
+            let top_artists = top_artists.map(|p| p.items).unwrap_or_default();
+            let top_tracks = top_tracks.map(|p| p.items).unwrap_or_default();
             let like_uris: Vec<String> = recent
                 .iter()
                 .chain(top_tracks.iter())
@@ -915,12 +929,79 @@ impl Worker {
                 page: Page::Home,
                 body: PageBody::Home {
                     recent,
-                    playlists,
+                    playlists: playlists.clone(),
                     top_artists,
                     top_tracks,
                 },
             });
-            Worker::emit_contains(api, like_uris);
+            Worker::emit_contains(Arc::clone(&api), like_uris);
+            Worker::library_playlists_rest(api, playlists).await;
+        });
+    }
+
+    fn merge_playlists(mut into: Vec<Playlist>, extra: Vec<Playlist>) -> Vec<Playlist> {
+        let mut seen: std::collections::HashSet<String> =
+            into.iter().map(|p| p.id.clone()).collect();
+        for playlist in extra {
+            if seen.insert(playlist.id.clone()) {
+                into.push(playlist);
+            }
+        }
+        into
+    }
+
+    async fn library_playlists_fast(api: &ApiClient) -> Vec<Playlist> {
+        let (mine, extra) = tokio::join!(api.my_playlists(0, 50), async {
+            api.made_for_you().await
+        });
+        let mine = mine.map(|page| page.items).unwrap_or_default();
+        Worker::merge_playlists(mine, extra)
+    }
+
+    async fn library_playlists_rest(api: Arc<ApiClient>, first: Vec<Playlist>) {
+        let mut playlists = first;
+        let mut offset = 50_u32;
+        for _ in 0..3 {
+            match api.my_playlists(offset, 50).await {
+                Ok(page) => {
+                    let n = page.items.len() as u32;
+                    if n == 0 {
+                        break;
+                    }
+                    playlists = Worker::merge_playlists(playlists, page.items);
+                    offset += 50;
+                    if n < 50 || page.next.is_none() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        bridge::emit(Event::Playlists(playlists));
+    }
+
+    fn refresh_library_playlists(&self) {
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            let first = Worker::library_playlists_fast(&api).await;
+            bridge::emit(Event::Playlists(first.clone()));
+            Worker::library_playlists_rest(api, first).await;
+        });
+    }
+
+    fn load_made_for_you(&self) {
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            let playlists = Worker::library_playlists_fast(&api).await;
+            bridge::emit(Event::Page {
+                page: Page::MadeForYou,
+                body: PageBody::Playlists {
+                    title: "Made for you".into(),
+                    subtitle: "Mixes Spotify builds from what you play.".into(),
+                    items: playlists.clone(),
+                },
+            });
+            Worker::library_playlists_rest(api, playlists).await;
         });
     }
 
@@ -942,10 +1023,24 @@ impl Worker {
                 )
                 .await
             {
-                Ok(results) => bridge::emit(Event::Page {
-                    page: Page::Search,
-                    body: PageBody::Search(results),
-                }),
+                Ok(results) => {
+                    let like_uris: Vec<String> = results
+                        .tracks
+                        .as_ref()
+                        .map(|page| {
+                            page.items
+                                .iter()
+                                .filter(|t| !t.uri.is_empty())
+                                .map(|t| t.uri.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    bridge::emit(Event::Page {
+                        page: Page::Search,
+                        body: PageBody::Search(results),
+                    });
+                    Worker::emit_contains(api, like_uris);
+                }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
@@ -956,7 +1051,17 @@ impl Worker {
         tokio::spawn(async move {
             match api.saved_tracks(offset, PAGE_SIZE).await {
                 Ok(page) => {
-                    let items: Vec<Track> = page.items.into_iter().map(|s| s.track).collect();
+                    let items: Vec<Track> = page
+                        .items
+                        .into_iter()
+                        .map(|s| {
+                            let mut track = s.track;
+                            if track.added_at.is_none() {
+                                track.added_at = s.added_at;
+                            }
+                            track
+                        })
+                        .collect();
                     for track in &items {
                         if !track.uri.is_empty() {
                             bridge::emit(Event::Saved {
@@ -969,7 +1074,14 @@ impl Worker {
                         page: Page::Liked,
                         body: PageBody::Tracks {
                             title: "Liked Songs".into(),
-                            subtitle: format!("{} songs", page.total),
+                            subtitle: {
+                                let mut line = format!("{} songs", page.total);
+                                if let Some(span) = crate::api::models::added_span(&items) {
+                                    line.push_str(" · ");
+                                    line.push_str(&span);
+                                }
+                                line
+                            },
                             art: None,
                             context_uri: Some("spotify:collection:tracks".into()),
                             items,
@@ -1021,30 +1133,38 @@ impl Worker {
     fn load_playlist(&mut self, id: String, offset: u32) {
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
-            let playlist = match api.playlist(&id).await {
+            let (playlist, items) = tokio::join!(
+                api.playlist(&id),
+                api.playlist_items(&id, offset, PAGE_SIZE),
+            );
+            let playlist = match playlist {
                 Ok(p) => p,
                 Err(error) => {
                     bridge::emit(Event::Error(error.to_string()));
                     return;
                 }
             };
-            match api.playlist_items(&id, offset, PAGE_SIZE).await {
+            match items {
                 Ok(page) => {
                     let items: Vec<Track> = page
                         .items
                         .iter()
-                        .filter_map(|item| match item.playable() {
-                            Some(PlayableItem::Track(track)) => Some(track.clone()),
-                            _ => None,
-                        })
+                        .filter_map(PlaylistItem::into_track)
                         .collect();
                     let art = crate::api::models::pick_image(&playlist.images, 300).map(str::to_string);
                     let title = playlist.name.clone();
-                    let subtitle = format!(
+                    let mut subtitle = format!(
                         "{} · {} songs",
                         playlist.owner_name(),
                         playlist.track_total()
                     );
+                    if playlist.is_generated() {
+                        subtitle.push_str(" · Made for you");
+                    }
+                    if let Some(span) = crate::api::models::added_span(&items) {
+                        subtitle.push_str(" · ");
+                        subtitle.push_str(&span);
+                    }
                     let total = page.total.max(playlist.track_total());
                     let context_uri = if playlist.uri.is_empty() {
                         format!("spotify:playlist:{id}")
@@ -1139,19 +1259,25 @@ impl Worker {
     fn load_artist(&self, id: String) {
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
-            let artist = match api.artist(&id).await {
+            let (artist, top, albums) = tokio::join!(
+                api.artist(&id),
+                api.artist_top_tracks(&id),
+                api.artist_albums(&id, "album,single", 0, 20),
+            );
+            let artist = match artist {
                 Ok(a) => a,
                 Err(error) => {
                     bridge::emit(Event::Error(error.to_string()));
                     return;
                 }
             };
-            let top = api.artist_top_tracks(&id).await.unwrap_or_default();
-            let albums = api
-                .artist_albums(&id, "album,single", 0, 20)
-                .await
-                .map(|p| p.items)
-                .unwrap_or_default();
+            let top = top.unwrap_or_default();
+            let albums = albums.map(|p| p.items).unwrap_or_default();
+            let like_uris: Vec<String> = top
+                .iter()
+                .filter(|t| !t.uri.is_empty())
+                .map(|t| t.uri.clone())
+                .collect();
             bridge::emit(Event::Page {
                 page: Page::Artist(id),
                 body: PageBody::Artist {
@@ -1160,6 +1286,7 @@ impl Worker {
                     albums,
                 },
             });
+            Worker::emit_contains(api, like_uris);
         });
     }
 
@@ -1193,15 +1320,35 @@ impl Worker {
             self.skipped.uris.remove(&uri);
         }
         self.skipped.save(&self.dirs);
-        if skipped
-            && matches!(self.last_playback, Playback::Playing | Playback::Loading)
-            && self.play_uris.get(self.play_index) == Some(&uri)
-        {
-            self.skip_to_next_after(uri);
+        if skipped && self.playing_uri(&uri) {
+            if self
+                .play_uris
+                .iter()
+                .any(|u| u == &uri || uri_ids_match(u, &uri))
+            {
+                self.skip_to_next_after(uri);
+            } else {
+                self.player(PlayerCommand::Next);
+            }
         }
     }
 
-    fn set_saved(&self, uri: String, saved: bool) {
+    fn playing_uri(&self, uri: &str) -> bool {
+        if !matches!(self.last_playback, Playback::Playing | Playback::Loading) {
+            return false;
+        }
+        self.play_uris
+            .get(self.play_index)
+            .is_some_and(|u| u == uri || uri_ids_match(u, uri))
+            || self
+                .last_engine_uri
+                .as_deref()
+                .is_some_and(|u| u == uri || uri_ids_match(u, uri))
+    }
+
+    fn set_saved(&mut self, uri: String, saved: bool) {
+        self.liked.set(uri.clone(), saved);
+        self.liked.save(&self.dirs);
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             let result = if saved {
@@ -1213,6 +1360,48 @@ impl Worker {
                 Ok(()) => bridge::emit(Event::Saved { uri, saved }),
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
+        });
+    }
+
+    fn refresh_liked(&self) {
+        let api = Arc::clone(&self.api);
+        let dirs = self.dirs.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            let mut uris = Vec::new();
+            let mut offset = 0_u32;
+            loop {
+                match api.saved_tracks(offset, PAGE_SIZE).await {
+                    Ok(page) => {
+                        if page.items.is_empty() {
+                            break;
+                        }
+                        for saved in page.items {
+                            if !saved.track.uri.is_empty() {
+                                uris.push(saved.track.uri);
+                            } else if let Some(id) = saved.track.id {
+                                uris.push(format!("spotify:track:{id}"));
+                            }
+                        }
+                        offset += PAGE_SIZE;
+                        if offset >= page.total {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("liked library: {error}");
+                        break;
+                    }
+                }
+            }
+            if uris.is_empty() {
+                return;
+            }
+            let liked = Liked {
+                uris: uris.iter().cloned().collect(),
+            };
+            liked.save(&dirs);
+            bridge::emit(Event::Liked(uris));
         });
     }
 
@@ -1231,7 +1420,7 @@ impl Worker {
                             });
                         }
                     }
-                    Err(error) => tracing::debug!("contains: {error}"),
+                    Err(error) => tracing::warn!("contains: {error}"),
                 }
             }
         });
@@ -1481,7 +1670,11 @@ impl Worker {
     }
 
     fn skip_to_next_after(&mut self, uri: String) {
-        let Some(idx) = self.play_uris.iter().position(|u| u == &uri) else {
+        let Some(idx) = self
+            .play_uris
+            .iter()
+            .position(|u| u == &uri || uri_ids_match(u, &uri))
+        else {
             return;
         };
         let mut next = idx + 1;

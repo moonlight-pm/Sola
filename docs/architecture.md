@@ -73,7 +73,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
-| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Tokens + `skipped.json` under `~/.local/state/sola/spotify/`; settings (incl. last page) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
+| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Tokens + `skipped.json` + `liked.json` under `~/.local/state/sola/spotify/`; settings (last page + last track) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
@@ -108,7 +108,7 @@ to the bus and tolerate compositor restarts.
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |
 | Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
 | Arcade singleton | `$XDG_RUNTIME_DIR/sola/arcade.lock.sock` (second spawn raises) |
-| Spotify state | settings `~/.config/sola/spotify/settings.json`; tokens + skipped URIs `~/.local/state/sola/spotify/`; page/audio/art cache `~/.cache/sola/spotify/` |
+| Spotify state | settings `~/.config/sola/spotify/settings.json` (last page + last track); tokens + skipped + liked URIs `~/.local/state/sola/spotify/`; page/audio/art cache `~/.cache/sola/spotify/` |
 | Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
 | Workspaces calls | sola-call owner `workspaces` (`solactl workspaces …`). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) |
 | Grok sessions | `~/.grok/sessions/` (Workspaces compaction `×N`; not an ACP leader socket) |

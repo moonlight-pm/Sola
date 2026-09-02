@@ -56,6 +56,10 @@ impl AppDirs {
         self.state.join("skipped.json")
     }
 
+    pub fn liked_file(&self) -> PathBuf {
+        self.state.join("liked.json")
+    }
+
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [
             &self.config,

@@ -2,13 +2,13 @@
 
 Kit-native Spotify client. Browse the library, search, control Spotify Connect devices, and (with Premium) play on this computer through librespot.
 
-**Partial.** First pass **installed** `spotify` (debug, 2026-09-01). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row waits on `install shell`; until then run `/opt/sola/bin/sola-spotify`.
+**Partial.** **Installed** `spotify` (release, 2026-09-02). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
 
 ## Requirements
 
 - Spotify account. **Playing on this computer needs Premium.** Free accounts can sign in, browse, search, and control another device.
 - `alsa-lib` and `libpulseaudio` at compile time (`pkg-config` `alsa` + `libpulse`). The NixOS module ships both. PipeWire’s Pulse compatibility is enough at runtime.
-- After a NixOS rebuild, `cargo make install spotify` (and `install shell` once for the launcher row).
+- After a NixOS rebuild, `cargo make install spotify`. A fresh shell install is needed once for the launcher row.
 
 ## Sign in
 
@@ -20,17 +20,27 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
 
 ## Use
 
-- **Library** rail: Home, Search, Liked Songs, Albums, Artists, Queue, playlists.
+- **Library** rail: Home, Search, Liked Songs, **Made for you**, Albums,
+  Artists, Queue, then your playlists. Made for you is one destination
+  (all Spotify mixes). Home shows a short shelf; **See all** opens the
+  catalog. Generated tiles are labelled Made for you.
 - Click a row or **Play** on a playlist/album to start it. With no other
   speaker on, that **sets up this computer** (a second browser approval,
   once per machine) and plays here. Premium required for local audio.
-- **+** saves to Liked Songs. **−** hides a row from autoplay (dims it;
-  does not delete from the playlist). Click − again to restore.
-- Reopen remembers the last playlist and paints it from a disk cache,
-  then refreshes.
-- Bottom bar: play/pause, skip, seek, shuffle, repeat, like, volume, device
-  picker. **This computer** is always the first device. Other Spotify Connect
-  speakers (phone, Electron, hardware) sit under **Other devices**.
+- A **cyan circled +** means the track is in Liked Songs (same library as
+  the official app). Click it to like or unlike. **−** hides a
+  row from autoplay: struck title, dim cover, muted meta — does not
+  delete from the playlist. Click − again to restore. **−** on the
+  playing song skips to the next track (once).
+- Reopen restores the last playlist and the last track (graphite lift =
+  selected; cyan play mark + accent title = playing).
+- Playlist pages show added dates on the header and on each row.
+- **Albums** and **Artists** are wrapping catalogs (same as Made for you).
+- Bottom bar: now playing on the left, transport in the center. Idle is
+  “Nothing playing” / “Pick a song”; setup copy only if this computer is
+  not connected yet. Play/pause, skip, seek, shuffle, repeat, like, volume,
+  device picker. **This computer** is always the first device. Other Spotify
+  Connect speakers sit under **Other devices**.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
 
 Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`.
@@ -39,8 +49,8 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
 
 | Path | What |
 |------|------|
-| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last viewed page |
-| `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, `skipped.json` |
+| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track |
+| `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, `skipped.json`, `liked.json` |
 | `~/.cache/sola/spotify/` | Audio, album art, page JSON (safe to delete) |
 
 ## Limits

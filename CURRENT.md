@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-01 (screenshot chords → clipboard + promised PNG **installed** `kit`+`shell` release; `cargo make` defaults to release; sola-spotify first pass **on master**; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-02 (sola-spotify dogfood on this worktree, **installed** `spotify` release, launcher row live; screenshot chords → clipboard **installed** `kit`+`shell` release; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -177,7 +177,7 @@ Do not invent product policy.
    installs; not Now); create-card; vault item edit;
    float chrome, D2, preview, kvm clipboard, switcher FFM holdoff
    (`naturalethic/switcher-ffm-holdoff` unmerged); spotify podcasts / tray /
-   playlist edit; `install shell` for the Spotify launcher row. Browser: org-vault fill
+   playlist edit. Browser: org-vault fill
    **desk smoke**; hover × follows the pointer after close; scheme-less
    localhost / loopback is `http://`. Passkey **create** smoked. Page
    menu DevTools / Inspect Element; HTML5 drag/drop. Tab-group pockets
@@ -212,7 +212,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). Image paste (Preview **Copy** → ⌘V) **installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01. | — |
 | Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
-| Spotify | **On master.** First pass **installed** `spotify` debug 2026-09-01 (library, play here, skip-to-row, hide, disk page cache + last playlist). Playlist auto-next updates the player bar and selected row (was stuck on the clicked track). Host NixOS has `alsa-lib` + `libpulseaudio`. Run `/opt/sola/bin/sola-spotify` until `install shell` for the launcher row. | — |
+| Spotify | **This worktree, installed** `spotify` release 2026-09-02 (launcher row live). Made for you is a catalog (Home shelf + See all); albums/artists wrap. Likes: cyan circled + from `liked.json` (`/me/tracks`). **−** on the playing song skips once. Hide is strike+dim; selected vs playing; last page + last track; added dates. Host NixOS has `alsa-lib` + `libpulseaudio`. | — |
 | Agent | **Retired** (on master). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
