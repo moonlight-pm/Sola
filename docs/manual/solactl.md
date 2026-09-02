@@ -82,9 +82,16 @@ add / wait use a longer call deadline than the default 8s.
 ```text
 solactl emit <Topic> '<json>'   # bus poke
 solactl logs [app] [-f]         # /opt/sola/log
-solactl open <url|path>         # sola-browser (http/https) or sola-paint (image path)
+solactl open <url|path>         # sola-browser (URL / HTML) or sola-paint (image path)
 solactl media <action>          # MPRIS / wpctl (shell key handler)
 ```
+
+`solactl open` calls `sola_core::open_url` (or `open_image` for a raster
+path). It does not go through MIME. In a Sola terminal, `open` is an alias
+for `xdg-open`; that path uses `sola-browser.desktop` (http(s), HTML,
+XHTML, `about:`, unknown schemes). Both land in sola-browser. A local HTML
+path is resolved to an absolute `file://` URL before handoff. There is no
+Helium fallback.
 
 `eval` is gone (WebView stack retired). Screenshot and synthetic input
 are calls, not bus topics.

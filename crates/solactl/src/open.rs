@@ -1,8 +1,8 @@
 //! `solactl open <target>` — URL → sola-browser, image path → sola-paint.
 //!
-//! Used as the desktop http/https handler when MIME defaults point at
-//! `sola-browser.desktop`, as the image handler via `sola-paint.desktop`,
-//! and as a CLI for scripts.
+//! Used as the desktop http/https (and HTML) handler when MIME defaults
+//! point at `sola-browser.desktop`, as the image handler via
+//! `sola-paint.desktop`, and as a CLI for scripts.
 
 use sola_core::{open_image, open_url};
 

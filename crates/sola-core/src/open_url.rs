@@ -3,7 +3,7 @@
 //! All Sola surfaces that open links should call [`open`] so behaviour
 //! stays consistent:
 //!
-//! - `solactl open` (xdg-open / MIME path when pointed here)
+//! - `solactl open` (and `xdg-open` / terminal `open` when MIME points here)
 //! - sola-shell handling of `Topic::OpenUrl`
 //! - terminal / mail / arcade clickable links
 //!
@@ -17,7 +17,7 @@
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -26,13 +26,16 @@ use std::time::Duration;
 pub const SOLA_BROWSER_ENV: &str = "SOLA_BROWSER";
 
 /// Open `uri` in sola-browser. Spawns detached; returns after spawn (not
-/// after the browser finishes).
+/// after the browser finishes). Local file paths are converted to absolute
+/// `file://` URLs first (xdg-open `%u` is often a cwd-relative HTML path).
 pub fn open(uri: &str) -> Result<(), String> {
-    if uri.trim().is_empty() {
+    let uri = uri.trim();
+    if uri.is_empty() {
         return Err("empty URL".into());
     }
+    let uri = file_url_from_local_path(uri).unwrap_or_else(|| uri.to_string());
 
-    if try_handoff_running_chrome(uri) {
+    if try_handoff_running_chrome(&uri) {
         return Ok(());
     }
 
@@ -44,13 +47,42 @@ pub fn open(uri: &str) -> Result<(), String> {
         )
     })?;
     Command::new(&bin)
-        .arg(uri)
+        .arg(&uri)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
     Ok(())
+}
+
+/// If `s` is a local file path, return an absolute `file://` URL.
+///
+/// `xdg-open` / terminal `open` pass `%u` as the original argument — often a
+/// relative path like `apocrypha/warehouse/viz/mapping.html`. Chrome.sock
+/// handoff must not send that string to a running browser (different cwd) or
+/// it becomes `https://apocrypha/…`.
+///
+/// Absolute Unix paths become `file://` even if the file is missing.
+/// Relative paths resolve against this process's cwd when the file exists,
+/// or when they start with `./` / `../`.
+pub fn file_url_from_local_path(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Some(format!("file://{trimmed}"));
+    }
+    if trimmed.starts_with("./") || trimmed.starts_with("../") || path.is_file() {
+        let abs = path
+            .canonicalize()
+            .ok()
+            .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join(path)))?;
+        return Some(format!("file://{}", abs.display()));
+    }
+    None
 }
 
 /// Path must match `sola-browser` `instance::chrome_sock_path`.
@@ -126,5 +158,45 @@ mod tests {
             return;
         }
         assert_eq!(sola_browser_bin().as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn absolute_path_becomes_file_url() {
+        assert_eq!(
+            file_url_from_local_path("/tmp/index.html").as_deref(),
+            Some("file:///tmp/index.html")
+        );
+        assert_eq!(
+            file_url_from_local_path("  /home/me/page.html  ").as_deref(),
+            Some("file:///home/me/page.html")
+        );
+    }
+
+    #[test]
+    fn http_url_is_not_a_file_path() {
+        assert_eq!(file_url_from_local_path("https://example.com"), None);
+        assert_eq!(file_url_from_local_path("example.com"), None);
+        assert_eq!(
+            file_url_from_local_path("no-such-host.example/mapping.html"),
+            None
+        );
+    }
+
+    #[test]
+    fn relative_existing_file_becomes_absolute_file_url() {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = cwd.join("target");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("open-url-relative.html");
+        std::fs::write(&path, "<html></html>").unwrap();
+        let rel = path.strip_prefix(&cwd).unwrap();
+        let rel = rel.to_str().expect("utf-8 path");
+        let url = file_url_from_local_path(rel).expect("relative file");
+        let canon = path.canonicalize().unwrap();
+        assert_eq!(url, format!("file://{}", canon.display()));
+        assert!(
+            !url.starts_with("https://"),
+            "must not https-prefix a local HTML path: {url}"
+        );
     }
 }
