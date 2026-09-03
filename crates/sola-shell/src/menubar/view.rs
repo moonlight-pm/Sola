@@ -193,6 +193,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             100.0,
             crate::stats::pixel::Tint::Level,
             muted,
+            &shell.theme,
         ),
         panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
         Msg::ToggleStatPanel(crate::stats::Metric::Cpu),
@@ -207,6 +208,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             100.0,
             crate::stats::pixel::Tint::Level,
             muted,
+            &shell.theme,
         ),
         panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Mem)),
         Msg::ToggleStatPanel(crate::stats::Metric::Mem),
@@ -223,6 +225,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             rx_peak,
             crate::stats::pixel::Tint::Rx,
             muted,
+            &shell.theme,
         ),
         panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Rx)),
         Msg::ToggleStatPanel(crate::stats::Metric::Rx),
@@ -236,6 +239,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             tx_peak,
             crate::stats::pixel::Tint::Tx,
             muted,
+            &shell.theme,
         ),
         panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Tx)),
         Msg::ToggleStatPanel(crate::stats::Metric::Tx),
@@ -268,8 +272,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             panel_active(shell, crate::app::Panel::Bluetooth),
         ));
     }
-    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot)
-        .map(|icon| audio_chip(icon.muted, panel_active(shell, crate::app::Panel::Audio)));
+    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot).map(|icon| {
+        audio_chip(
+            icon.muted,
+            panel_active(shell, crate::app::Panel::Audio),
+            &shell.theme,
+        )
+    });
 
     let mut percents: Vec<Element<'_, Msg>> = vec![cpu_btn];
     if shell.stats.gpu.is_some() {
@@ -281,6 +290,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
                     100.0,
                     crate::stats::pixel::Tint::Level,
                     muted,
+                    &shell.theme,
                 ),
                 panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
                 Msg::ToggleStatPanel(crate::stats::Metric::Gpu),
@@ -467,13 +477,14 @@ fn stat_graph<'a>(
     max: f32,
     tint: crate::stats::pixel::Tint,
     muted: Color,
+    theme: &Theme,
 ) -> Element<'a, Msg> {
     row![
         text(label)
             .font(fonts::chrome())
             .size(CHROME_SIZE)
             .style(move |_: &Theme| iced::widget::text::Style { color: Some(muted) }),
-        container(crate::stats::pixel::graph(samples, max, tint)).padding(Padding {
+        container(crate::stats::pixel::graph(samples, max, tint, theme)).padding(Padding {
             top: 0.0,
             right: 0.0,
             bottom: CHROME_NUDGE_UP,
@@ -528,9 +539,9 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
     .into()
 }
 
-fn audio_chip(muted: bool, active: bool) -> Element<'static, Msg> {
+fn audio_chip<'a>(muted: bool, active: bool, theme: &Theme) -> Element<'a, Msg> {
     bar_button(
-        container(crate::audio::wave::visualizer(muted)).padding(Padding {
+        container(crate::audio::wave::visualizer(muted, theme)).padding(Padding {
             top: 0.0,
             right: 0.0,
             bottom: CHROME_NUDGE_UP,
