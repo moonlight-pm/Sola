@@ -165,6 +165,11 @@ enum Msg {
     AddPath(String),
     AddProject,
     CloseWorkspace(String),
+    /// Close the tab and `git worktree remove` the checkout (`--worktree`).
+    RmCheckout {
+        id: String,
+        force: bool,
+    },
     DropProject(String),
     RestartShell(String),
     PaneFocused(String),
@@ -247,14 +252,16 @@ impl App {
             pending_waits: Vec::new(),
         };
         app.sync_all_rows();
-        let attach = if selected.is_empty() {
+        let reap = app.reap_missing_worktrees();
+        let attach = if app.selected.is_empty() {
             Task::none()
         } else {
-            app.attach_workspace(&selected)
+            let id = app.selected.clone();
+            app.attach_workspace(&id)
         };
         (
             app,
-            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), attach]),
+            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), reap, attach]),
         )
     }
 
@@ -384,6 +391,7 @@ impl App {
                 Task::none()
             }
             Msg::PresenceTick => {
+                let reap = self.reap_missing_worktrees();
                 let ids: Vec<String> = self
                     .workspaces
                     .iter()
@@ -409,7 +417,7 @@ impl App {
                 }
                 self.sync_all_rows();
                 self.flush_waits();
-                Task::none()
+                reap
             }
             Msg::SelectWorkspace(id) => {
                 if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
@@ -466,7 +474,8 @@ impl App {
                 Task::none()
             }
             Msg::AddProject => self.add_project(),
-            Msg::CloseWorkspace(id) => self.close_workspace(&id),
+            Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
+            Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
@@ -1225,10 +1234,22 @@ impl App {
                 let Some(ws) = param_str(params, "workspace") else {
                     return (Err("missing workspace".into()), Task::none());
                 };
+                let checkout = param_bool(params, "worktree");
+                let force = param_bool(params, "force");
+                if force && !checkout {
+                    return (Err("--force needs --worktree".into()), Task::none());
+                }
                 match self.cli_rm(&ws) {
+                    // Reply first; teardown on the next tick so solactl
+                    // (maybe running in a pane we are about to kill)
+                    // gets {ok:true} instead of a hang / timeout.
                     Ok(id) => (
                         Ok(serde_json::json!({ "ok": true })),
-                        Task::done(Msg::CloseWorkspace(id)),
+                        if checkout {
+                            Task::done(Msg::RmCheckout { id, force })
+                        } else {
+                            Task::done(Msg::CloseWorkspace(id))
+                        },
                     ),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -1829,22 +1850,19 @@ impl App {
         self.attach_workspace(&next)
     }
 
-    fn close_workspace(&mut self, id: &str) -> Task<Msg> {
-        let closable = self
-            .workspaces
-            .iter()
-            .find(|w| w.id == id)
-            .is_some_and(workspace::can_close);
-        if !closable {
+    /// Close a sibling tab. `checkout` also `git worktree remove`s (after
+    /// tmux dies so the pane is not sitting in that cwd). Hover × leaves
+    /// the folder. A gone path just prunes git metadata.
+    fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
+        let Some((panes, path, project_id)) =
+            self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
+                workspace::can_close(ws)
+                    .then(|| (ws.layout().leaves(), ws.path.clone(), ws.project_id.clone()))
+            })
+        else {
             return Task::none();
-        }
-        tracing::info!(workspace = %id, "closing workspace");
-        let panes = self
-            .workspaces
-            .iter()
-            .find(|w| w.id == id)
-            .map(|w| w.layout().leaves())
-            .unwrap_or_default();
+        };
+        tracing::info!(workspace = %id, checkout, "closing workspace");
         for pane in &panes {
             self.teardown_pane(pane);
         }
@@ -1863,7 +1881,37 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
+        if checkout {
+            if let Some(root) = self
+                .projects
+                .iter()
+                .find(|p| p.id == project_id)
+                .map(|p| p.root.clone())
+            {
+                if let Err(e) = spawn::remove_worktree(&root, &path, force) {
+                    tracing::warn!(workspace = %id, %e, "git worktree remove failed");
+                    self.emit_notice("Worktree leftover".into(), e, format!("git-rm-{id}"));
+                }
+            }
+        }
         self.attach_selected_if_needed()
+    }
+
+    /// If a sibling's checkout is already gone (`git worktree remove` from
+    /// inside the pane, or a deleted folder), drop the tab. The pane cannot
+    /// call `workspace.rm` after its cwd vanishes — the rail used to keep
+    /// a working spinner forever.
+    fn reap_missing_worktrees(&mut self) -> Task<Msg> {
+        let gone = workspace::missing_worktree_ids(&self.workspaces);
+        if gone.is_empty() {
+            return Task::none();
+        }
+        let mut tasks = Vec::with_capacity(gone.len());
+        for id in gone {
+            tracing::info!(workspace = %id, "worktree path gone; closing tab");
+            tasks.push(self.close_workspace(&id, true, false));
+        }
+        Task::batch(tasks)
     }
 
     /// Unregister the project and every workspace under it. Kills those
@@ -2237,4 +2285,8 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+fn param_bool(params: &serde_json::Value, key: &str) -> bool {
+    params.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }

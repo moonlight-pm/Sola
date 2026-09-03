@@ -589,6 +589,17 @@ pub fn can_close(ws: &Workspace) -> bool {
     ws.kind == Kind::Worktree
 }
 
+/// Worktree tabs whose checkout is already gone. The rail should reap
+/// them — `git worktree remove` from inside the pane cannot call
+/// `workspace.rm` afterward (cwd vanished).
+pub fn missing_worktree_ids(workspaces: &[Workspace]) -> Vec<String> {
+    workspaces
+        .iter()
+        .filter(|w| can_close(w) && !w.path.exists())
+        .map(|w| w.id.clone())
+        .collect()
+}
+
 /// Unregister a project and every workspace under it. Returns the
 /// workspace ids that left the catalog so the caller can kill tmux.
 /// Does not touch git worktrees or folders on disk.
@@ -1020,6 +1031,45 @@ mod tests {
         assert!(!can_close(&main));
         assert!(!can_close(&folder));
         assert!(can_close(&tree));
+    }
+
+    #[test]
+    fn missing_worktree_ids_skips_root_and_live_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "ws-missing-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = Workspace {
+            id: "ws-kid".into(),
+            project_id: "p".into(),
+            name: "kid".into(),
+            title: None,
+            path: dir.clone(),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let gone = Workspace {
+            id: "ws-gone".into(),
+            path: dir.join("nope"),
+            ..live.clone()
+        };
+        let root = Workspace {
+            id: "ws-main".into(),
+            path: PathBuf::from("/no/such/root"),
+            kind: Kind::Main,
+            ..live.clone()
+        };
+        assert!(missing_worktree_ids(&[live.clone(), root]).is_empty());
+        assert_eq!(missing_worktree_ids(&[live, gone]), ["ws-gone"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

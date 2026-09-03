@@ -79,7 +79,21 @@ pub fn methods() -> Vec<MethodSpec> {
         method(
             "workspace.rm",
             "Unregister a workspace and kill its tmux session",
-            &[req_s("workspace", Some('w'), "Workspace id or name")],
+            &[
+                req_s("workspace", Some('w'), "Workspace id or name"),
+                arg(
+                    "worktree",
+                    false,
+                    ArgType::Bool,
+                    None,
+                    "Also git worktree remove the checkout",
+                ),
+                flag(
+                    "force",
+                    'f',
+                    "Force git worktree remove (dirty / toss). Needs --worktree.",
+                ),
+            ],
         ),
         method(
             "workspace.select",
@@ -260,5 +274,10 @@ mod tests {
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
+        let rm = methods.iter().find(|m| m.name == "workspace.rm").unwrap();
+        assert!(rm.args.iter().any(|a| a.name == "worktree"));
+        let force = rm.args.iter().find(|a| a.name == "force").unwrap();
+        assert!(matches!(force.ty, ArgType::Bool));
+        assert!(!force.required);
     }
 }

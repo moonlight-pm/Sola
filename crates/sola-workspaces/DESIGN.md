@@ -119,7 +119,9 @@ modal. Do not restyle mail / settings / terminal.
 - Do stack project groups at the top (do not fill the selected group).
 - Do use the kit hover × on siblings only; never on root.
 - Do drop the **project** from the menu only (unregister + kill every
-  tmux session in the group). Never `git worktree remove`.
+  tmux session in the group). Hover × never `git worktree remove`.
+  CLI `workspace.rm --worktree` is the explicit checkout delete; a gone
+  path reaps the tab.
 - Do show **Start new shell** only when the **last** pane's PTY has
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches

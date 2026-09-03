@@ -1,7 +1,8 @@
 //! Create a sibling git worktree under `<project-root>/.worktrees/<slug>`.
 //!
 //! D4.2: the worktree base is always the project's `.worktrees` folder.
-//! `git worktree remove` is not this module — drop is unregister + tmux.
+//! Hover × / plain `workspace.rm` still leave the checkout. `--worktree`
+//! and a gone path call [`remove_worktree`].
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,37 @@ pub fn add_worktree_at(
     let err = git_stderr(root, &create);
     Err(if err.is_empty() {
         "git worktree add failed".into()
+    } else {
+        err
+    })
+}
+
+/// `git worktree remove` at `dest`. Already-gone paths prune leftover
+/// git metadata and succeed. `force` is `--force` (dirty / toss).
+pub fn remove_worktree(root: &Path, dest: &Path, force: bool) -> Result<(), String> {
+    if !dest.exists() {
+        if is_git_checkout(root) {
+            let _ = git_ok(root, &["worktree", "prune"]);
+        }
+        return Ok(());
+    }
+    if !is_git_checkout(root) {
+        return Err("project root is not a git checkout".into());
+    }
+    let dest_s = dest
+        .to_str()
+        .ok_or_else(|| "worktree path is not utf-8".to_string())?;
+    let mut args: Vec<&str> = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(dest_s);
+    if git_ok(root, &args) {
+        return Ok(());
+    }
+    let err = git_stderr(root, &args);
+    Err(if err.is_empty() {
+        "git worktree remove failed".into()
     } else {
         err
     })
@@ -323,5 +355,31 @@ mod tests {
         let err = add_worktree(&dir, "x").unwrap_err();
         assert!(err.contains("not a git"), "{err}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_worktree_deletes_checkout() {
+        let root = temp_git();
+        let dest = add_worktree(&root, "kid").expect("add");
+        assert!(dest.exists());
+        remove_worktree(&root, &dest, false).expect("remove");
+        assert!(!dest.exists());
+        remove_worktree(&root, &dest, false).expect("already gone");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_worktree_dirty_needs_force() {
+        let root = temp_git();
+        let dest = add_worktree(&root, "dirty").expect("add");
+        fs::write(dest.join("scratch"), "nope").unwrap();
+        let err = remove_worktree(&root, &dest, false).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("force") || dest.exists(),
+            "{err}"
+        );
+        remove_worktree(&root, &dest, true).expect("force");
+        assert!(!dest.exists());
+        let _ = fs::remove_dir_all(&root);
     }
 }

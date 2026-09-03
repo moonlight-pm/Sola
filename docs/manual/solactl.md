@@ -41,7 +41,7 @@ solactl workspaces workspace.spawn --project Sola --name ticket-123 \
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.exec --workspace ticket-123 [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
-solactl workspaces workspace.rm --workspace ticket-123
+solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
 solactl workspaces pane.list [--workspace ticket-123]
 solactl workspaces pane.send --text 'follow up' --enter [--pane ticket-123]
 solactl workspaces pane.read [--pane ticket-123] [--lines 40]
@@ -67,9 +67,13 @@ the first newline and a long prompt is not truncated. `--prompt` implies
 Grok. `--prompt` and `--prompt-file` are exclusive. Spawn parent defaults
 to `$SOLA_PANE_ID` when you run from a Workspaces pane. `--agent` is Grok
 only. `pane.wait` holds until status matches (`--fresh` waits for a
-transition). Drop unregisters; it does not `git worktree remove`.
+transition). Drop unregisters; it does not `git worktree remove` unless
+you pass `--worktree` (add `--force` to toss a dirty checkout).
 `workspace.rm` replies, then closes the tab on the next tick, so a
-call from inside that pane can finish instead of hanging.
+call from inside that pane can finish instead of hanging. Do **not**
+`git worktree remove` first from inside that pane — the cwd vanishes and
+the next tool cannot run. Use `--worktree` instead. If the checkout is
+already gone, Workspaces reaps the tab (no leftover working spinner).
 
 Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags. Spawn /
 add / wait use a longer call deadline than the default 8s.

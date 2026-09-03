@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-02 (workspaces/terminal grid selection follows scroll; paste-send + desk-card copy; `crates/sola-agent` retired; notifications HUD; mail optimistic delete; `sola-scope` + wrapper on master)
+**As of:** 2026-09-03 (workspaces self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; paste-send + desk-card copy; `crates/sola-agent` retired; notifications HUD; mail optimistic delete; `sola-scope` + wrapper on master)
 
 ---
 
@@ -118,7 +118,12 @@ Do not invent product policy.
    written back into `keyboard_mods`). Exiting Grok back to the shell
    idles the rail mark (grey disc; SessionEnd used to leave done).
    `workspace.rm` replies before it kills tmux (a pane closing itself
-   no longer hangs `solactl` / leaves the working ring). `pane.send` /
+   no longer hangs `solactl` / leaves the working ring). `--worktree`
+   also `git worktree remove`s after the tab closes — do not
+   `git worktree remove` from inside the pane first (cwd dies; the tab
+   used to stick with a working spinner). A gone `.worktrees/<name>`
+   path reaps the tab. Hover × / plain `workspace.rm` still leave the
+   checkout. `pane.send` /
    `workspace.exec --prompt` bracketed-paste into the tmux session then
    Enter (raw PTY dump was clipping the composer and not submitting
    until a later wheel/focus). Desk cards (unfocused): title is

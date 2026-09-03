@@ -6,7 +6,7 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
 **Dogfood:** `solactl workspaces` still needs a desk smoke after install  
 **Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4)
 
@@ -54,7 +54,7 @@ an agent needs to orchestrate is on the call plane.
 | Wait | `pane.wait` holds the call reply (does **not** block the iced thread). Default status `done`. `--fresh` waits for a *transition* onto that status |
 | Timeouts | MethodSpec may advertise `timeout_ms`. `solactl` uses that, or `timeout` arg + 2s slack. Spawn **60s**, add-project **15s**, wait default **300s** (arg overrides) |
 | Confirm | **D3** still open. Every live method is as privileged as the socket |
-| Drop | Unregister + kill tmux. Still not `git worktree remove` |
+| Drop | Unregister + kill tmux. Hover × / plain `workspace.rm` leave the checkout. `--worktree` also `git worktree remove` (`--force` if dirty / toss). A worktree tab whose path is already gone is reaped. |
 | Spawn focus | CLI `workspace.spawn` is background (rail stays). `--select` jumps. UI spawn / ⌘T always select. `workspace.exec` does not select |
 
 ---
@@ -70,7 +70,7 @@ an agent needs to orchestrate is on the call plane.
 | `project.rm` | `--project` | `{ok:true}` |
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
 | `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
-| `workspace.rm` | `--workspace` | `{ok:true}` |
+| `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` — bracketed paste into the tmux session, then optional Enter |
 | `pane.read` | `[--pane] [--lines]` | `{text, pane}` |
@@ -130,7 +130,7 @@ dedicated interrupt. Reply includes `selected: true|false`.
 ## Non-goals (this freeze)
 
 Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
-`--agent`. `git worktree remove`. Split-from-CLI. Rename / recolor / reorder.
+`--agent`. Split-from-CLI. Rename / recolor / reorder.
 
 ---
 
@@ -145,3 +145,4 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - Empty paste skips tmux; `pane.send` / exec `--prompt` use `paste-buffer -p` then Enter
 - CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout
+- `workspace.rm --worktree` / `--force`; gone worktree path reaps the tab

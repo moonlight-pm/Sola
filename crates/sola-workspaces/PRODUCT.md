@@ -54,7 +54,8 @@ in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws`, unfocused desk card
-(title `{project} · {tab}`, body `grok is done` / `needs attention`).
+(title `{project} · {tab}`, body `grok is done` / `needs attention`),
+`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab).
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.
