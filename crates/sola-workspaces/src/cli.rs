@@ -75,6 +75,42 @@ pub fn rail_label(w: &Workspace) -> String {
     }
 }
 
+/// Desk-card copy. Title is where (`Sola · sola-workspaces`); body is
+/// the event (`grok is done`). Waiting is `needs attention`.
+pub struct StatusNotice {
+    pub title: String,
+    pub body: String,
+}
+
+pub fn status_notice(
+    project: Option<&str>,
+    tab: &str,
+    agent: &str,
+    status: AgentStatus,
+) -> Option<StatusNotice> {
+    let verb = match status {
+        AgentStatus::Done => "is done",
+        AgentStatus::Waiting => "needs attention",
+        _ => return None,
+    };
+    let who = if agent.is_empty() { "agent" } else { agent };
+    Some(StatusNotice {
+        title: place_label(project, tab),
+        body: format!("{who} {verb}"),
+    })
+}
+
+/// `{project} · {tab}` — drop a missing/duplicate project.
+pub fn place_label(project: Option<&str>, tab: &str) -> String {
+    match project
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != tab)
+    {
+        Some(p) => format!("{p} · {tab}"),
+        None => tab.to_string(),
+    }
+}
+
 pub fn kind_str(kind: Kind) -> &'static str {
     match kind {
         Kind::Main => "main",
@@ -234,6 +270,34 @@ mod tests {
         assert_eq!(rail_label(&w), "sc-1234");
         w.title = Some("fix login".into());
         assert_eq!(rail_label(&w), "sc-1234 · fix login");
+    }
+
+    #[test]
+    fn status_notice_names_project_and_tab() {
+        let done =
+            status_notice(Some("Sola"), "sola-workspaces", "grok", AgentStatus::Done).unwrap();
+        assert_eq!(done.title, "Sola · sola-workspaces");
+        assert_eq!(done.body, "grok is done");
+        let wait = status_notice(
+            Some("Illuno"),
+            "sc-1234 · fix login",
+            "grok",
+            AgentStatus::Waiting,
+        )
+        .unwrap();
+        assert_eq!(wait.title, "Illuno · sc-1234 · fix login");
+        assert_eq!(wait.body, "grok needs attention");
+        let root = status_notice(Some("Sola"), "root", "grok", AgentStatus::Done).unwrap();
+        assert_eq!(root.title, "Sola · root");
+        assert_eq!(
+            status_notice(None, "root", "grok", AgentStatus::Done)
+                .unwrap()
+                .title,
+            "root"
+        );
+        assert_eq!(place_label(Some("root"), "root"), "root");
+        assert!(status_notice(Some("Sola"), "x", "grok", AgentStatus::Working).is_none());
+        assert_eq!(place_label(Some("Sola"), "ticket"), "Sola · ticket");
     }
 
     #[test]

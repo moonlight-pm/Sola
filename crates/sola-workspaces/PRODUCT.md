@@ -48,12 +48,16 @@ becoming this product.
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
 spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
 is background unless `--select`; can pass `--agent grok` + `--prompt` /
-`--prompt-file`), kit pane splits, Grok hooks
+`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok hooks
 + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok panes
 in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
-tmux persist on socket `sola-ws`, done-while-unfocused menubar toast.
+tmux persist on socket `sola-ws`, unfocused desk card
+(title `{project} · {tab}`, body `grok is done` / `needs attention`),
+`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
+`workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;
+`--branch` is `git branch -m`).
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.

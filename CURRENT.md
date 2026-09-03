@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-03 (idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats, volume 12-band LED spectrum, notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-03 (workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats, volume 12-band LED spectrum, notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -90,8 +90,10 @@ Do not invent product policy.
    loose tabs **intermix** (no groups-on-top). **Installed** `kit` + `browser`.
 7. **sola-terminal** — **partial** (on **master**; `terminal-polish` merged).
    Grid selection is kit neon `accent` (`#3dd6f5` @ 55%), not the graphite
-   `selection` atom. Workspaces PTYs share the palette. **Installed**
-   `terminal` (2026-08-21); Window menu **installed** 2026-08-31.
+   `selection` atom. Wash is glued to buffer cells and re-anchors when a
+   TUI CUP-rewrites the live grid (`sel_follow`). Workspaces PTYs share
+   the palette and the follow. **Installed** `terminal` (2026-09-02);
+   Window menu **installed** 2026-08-31.
 8. **sola-monitor** — **partial** (on **master**; `monitor-polish` merged).
    Bus + Call inspector on kit chrome (left plane rail, `list_item` log,
    inspector well, last-known stickies / live owners). Call traffic via
@@ -132,14 +134,16 @@ Do not invent product policy.
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
    **CLI freeze:** [`docs/specs/2026-08-18-workspaces-cli-design.md`](docs/specs/2026-08-18-workspaces-cli-design.md)  
-   **Next:** desk-smoke `solactl workspaces` (needs `install workspaces` + `solactl`). Polish:
-   rename/recolor/reorder.  
+   **Next:** desk-smoke `solactl workspaces`. Polish:
+   UI rename modal / recolor / reorder. CLI `workspace.set --name` moves
+   `.worktrees/<name>` (id stays); `--branch` is `git branch -m`.
+   **Installed** `workspaces` release 2026-09-03.  
    **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
    **Install:** standing OK to `install workspaces` after each finished
    round. Ask for any other target.  
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
    Methods on sola-call owner `workspaces` (`solactl workspaces ps` / `workspace.spawn` /
-   `workspace.exec` / `pane.wait` / `whoami` / …). Control plane is
+   `workspace.set` / `workspace.exec` / `pane.wait` / `whoami` / …). Control plane is
    first-class: verb changes update `calls.rs` + dispatch + tests +
    `docs/manual/solactl.md` together.
    Config `~/.config/sola/workspaces/` (migrates `agent-terminal/`). Tmux
@@ -175,8 +179,18 @@ Do not invent product policy.
    written back into `keyboard_mods`). Exiting Grok back to the shell
    idles the rail mark (grey disc; SessionEnd used to leave done).
    `workspace.rm` replies before it kills tmux (a pane closing itself
-   no longer hangs `solactl` / leaves the working ring). Installed
-   (self-restart).  
+   no longer hangs `solactl` / leaves the working ring). `--worktree`
+   also `git worktree remove`s after the tab closes — do not
+   `git worktree remove` from inside the pane first (cwd dies; the tab
+   used to stick with a working spinner). A gone `.worktrees/<name>`
+   path reaps the tab. Hover × / plain `workspace.rm` still leave the
+   checkout. `pane.send` /
+   `workspace.exec --prompt` bracketed-paste into the tmux session then
+   Enter (raw PTY dump was clipping the composer and not submitting
+   until a later wheel/focus). Desk cards (unfocused): title is
+   `{project} · {tab}`, body is `grok is done` / `needs attention`.
+   Grid selection follows the glyphs when the pane scrolls (was a
+   screen-fixed wash over changing text). Installed (self-restart).  
 12. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
    flip / save; left tabs; kit `FilePicker`; **single-instance** (second
    spawn hands off); **zoom/pan**. Crop is **⌘⇧K** (⌘K is Super+K overlay).
@@ -240,7 +254,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **⌘⌥G** new group on a loose tab, name focused+selected; hover pencil to rename; edit-mode color swatch + check; luminance ink; selected lift + 1px lip on pockets **and** loose tabs — persist hex, default well; **installed** `kit`+`browser --release` 2026-08-31; strip has no right-click); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); tab-strip favicons **smoked** 2026-09-01 (`browser` debug; SVG-only sites stay globe); `window.open` / `NEW_POPUP` → focused tab beside opener **smoked** (Cloudways DB/SSH); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden **unified vault** (one toolbar icon — lock / key / shield when this page has TOTP / fingerprint on passkey; search + type chips + item records; **Create login** via **+**; fill/cards/identities/TOTP/passkeys decrypt **org vaults** too — **installed** `browser` --release 2026-08-28, desk smoke next; create still personal); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts the vault icon, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default web open** via sola-browser (`sola-browser.desktop` claims http(s)+HTML+XHTML+about+unknown; no Helium fallback). Relative HTML `open` is absolute `file://` (not `https://apocrypha/…`) — **installed** `browser`+`solactl` 2026-09-02. This desk: `xdg-mime` for those types → `sola-browser.desktop`; **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). Steam store autoplay: codecs CEF + `--autoplay-policy` **installed** 2026-08-30 (`canPlayType` AAC/H.264 `probably`; reload trailer). JS `alert`/`confirm`/`prompt` kit modal; idle omnibox omits query strings; visit-history tray; Enter = Kagi lucky / Shift+Enter = SERP; idle-bar ⌘V → page **smoked**; Find `⌘F`/`⌘G`; DevTools docked **smoked** 2026-09-03. **Installed** `browser` release 2026-09-03. New Group is `⌘⌥G`. | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
 | Mail | **Installed** `mail` + `settings` (debug, 2026-09-01): move rules on connect + From/To equals vs display-name; settings rules list+detail + dest select. No HTML engine / attachments | — |
-| Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
+| Terminal | **On this branch** (installed 2026-09-02): grid selection is neon accent wash (`#3dd6f5` @ 55%). Wash follows scrolled glyphs (`sel_follow`). Workspaces PTYs share the palette and the follow (**installed** `workspaces` 2026-09-02) | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). Image paste (Preview **Copy** → ⌘V) **installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01. JS dialog overlay in this worktree. | — |
 | Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Spotify | **On master.** **Installed** `spotify` release 2026-09-03: Back/Forward **survives restart** (max 20 back steps in `settings.json`); **list-plus** add-to-playlist picker + **New playlist**; media keys apply immediately; page Back/Forward (chevrons, ⌥←/→, ⌘[/], mouse side buttons). Launcher row live. Made for you catalog; likes from `liked.json`; **−** skip-once; hide strike+dim; last page + last track. Host NixOS has `alsa-lib` + `libpulseaudio`. | — |

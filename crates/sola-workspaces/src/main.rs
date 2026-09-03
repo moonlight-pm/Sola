@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
-use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
+use iced::{Element, Event, Length, Subscription, Task, Theme};
 
-use sola_bus::Message;
 use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
+use sola_bus::Message;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
-    window_settings_transparent,
+    apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings_transparent,
+    BusSetup,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
+use sola_kit::theme::{atoms_from_bus_theme, default_theme, Atoms};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
@@ -165,6 +165,11 @@ enum Msg {
     AddPath(String),
     AddProject,
     CloseWorkspace(String),
+    /// Close the tab and `git worktree remove` the checkout (`--worktree`).
+    RmCheckout {
+        id: String,
+        force: bool,
+    },
     DropProject(String),
     RestartShell(String),
     PaneFocused(String),
@@ -247,14 +252,16 @@ impl App {
             pending_waits: Vec::new(),
         };
         app.sync_all_rows();
-        let attach = if selected.is_empty() {
+        let reap = app.reap_missing_worktrees();
+        let attach = if app.selected.is_empty() {
             Task::none()
         } else {
-            app.attach_workspace(&selected)
+            let id = app.selected.clone();
+            app.attach_workspace(&id)
         };
         (
             app,
-            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), attach]),
+            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), reap, attach]),
         )
     }
 
@@ -361,7 +368,7 @@ impl App {
                 let unconfirmed = st.restored_unconfirmed;
                 status::persist_all(&self.pane_status);
                 self.sync_row(&id);
-                self.maybe_toast_done(&id, prev, now, unconfirmed);
+                self.maybe_toast_status(&id, prev, now, unconfirmed);
                 self.flush_waits();
                 Task::none()
             }
@@ -378,12 +385,13 @@ impl App {
                     let unconfirmed = st.restored_unconfirmed;
                     status::persist_all(&self.pane_status);
                     self.sync_row(&id);
-                    self.maybe_toast_done(&id, prev, now, unconfirmed);
+                    self.maybe_toast_status(&id, prev, now, unconfirmed);
                     self.flush_waits();
                 }
                 Task::none()
             }
             Msg::PresenceTick => {
+                let reap = self.reap_missing_worktrees();
                 let ids: Vec<String> = self
                     .workspaces
                     .iter()
@@ -409,7 +417,7 @@ impl App {
                 }
                 self.sync_all_rows();
                 self.flush_waits();
-                Task::none()
+                reap
             }
             Msg::SelectWorkspace(id) => {
                 if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
@@ -466,7 +474,8 @@ impl App {
                 Task::none()
             }
             Msg::AddProject => self.add_project(),
-            Msg::CloseWorkspace(id) => self.close_workspace(&id),
+            Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
+            Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
@@ -707,6 +716,7 @@ impl App {
                 let view = term_view::TermView {
                     term: rt.emulator.term(),
                     cursor_snap: rt.emulator.cursor_snap(),
+                    selection_track: rt.emulator.selection_track(),
                     cache: &rt.cache,
                     palette: &self.palette,
                     metrics: self.metrics,
@@ -989,7 +999,7 @@ impl App {
         match self.spawn_workspace(&project_id, &name, None, None, None, None, None, true) {
             Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
-                self.maybe_toast_startup(startup_err);
+                self.maybe_toast_startup(startup_err, &id);
                 self.attach_pane(&id, &[])
             }
             Err(e) => {
@@ -1065,56 +1075,70 @@ impl App {
         Ok((id, startup_err))
     }
 
-    fn maybe_toast_startup(&self, err: Option<String>) {
-        let Some(e) = err else {
-            return;
+    fn toast_place(&self, pane_id: &str) -> (Option<String>, String) {
+        let Some(ws) = self.workspace_for_pane(pane_id) else {
+            return (None, pane_id.to_string());
         };
+        let project =
+            workspace::find_project(&self.projects, &ws.project_id).map(|p| p.name.clone());
+        (project, cli::rail_label(ws))
+    }
+
+    fn emit_notice(&self, title: String, body: String, tag: String) {
         if let Ok(mut client) = bus().lock() {
             let _ = client.emit(Topic::AppNotification(AppNotification {
-                id: format!("ws-startup-{}", now_millis()),
+                id: format!("ws-{tag}-{}", now_millis()),
                 app_id: APP_ID.into(),
                 source: "Workspaces".into(),
-                title: "Startup script failed".into(),
-                body: e,
-                tag: Some("startup".into()),
+                title,
+                body,
+                tag: Some(tag),
                 tab_id: None,
                 url: None,
             }));
         }
     }
 
-    fn maybe_toast_done(
+    fn maybe_toast_startup(&self, err: Option<String>, ws_id: &str) {
+        let Some(e) = err else {
+            return;
+        };
+        let (project, tab) = self.toast_place(ws_id);
+        self.emit_notice(
+            cli::place_label(project.as_deref(), &tab),
+            e,
+            format!("startup-{ws_id}"),
+        );
+    }
+
+    fn maybe_toast_status(
         &self,
         id: &str,
         prev: status::AgentStatus,
         now: status::AgentStatus,
         unconfirmed: bool,
     ) {
-        if now != status::AgentStatus::Done || prev == status::AgentStatus::Done {
+        if now == prev {
             return;
         }
         if unconfirmed || self.window_focused {
             return;
         }
-        let ws = self.workspace_for_pane(id);
-        let name = ws.map(|w| w.name.as_str()).unwrap_or(id);
+        let (project, tab) = self.toast_place(id);
         let agent = self
             .pane_status
             .get(id)
             .and_then(|s| s.agent.as_deref())
             .unwrap_or("agent");
-        if let Ok(mut client) = bus().lock() {
-            let _ = client.emit(Topic::AppNotification(AppNotification {
-                id: format!("ws-done-{id}-{}", now_millis()),
-                app_id: APP_ID.into(),
-                source: "Workspaces".into(),
-                title: format!("{name} is done"),
-                body: agent.to_string(),
-                tag: Some(format!("done-{id}")),
-                tab_id: None,
-                url: None,
-            }));
-        }
+        let Some(notice) = cli::status_notice(project.as_deref(), &tab, agent, now) else {
+            return;
+        };
+        let kind = match now {
+            status::AgentStatus::Done => "done",
+            status::AgentStatus::Waiting => "waiting",
+            _ => return,
+        };
+        self.emit_notice(notice.title, notice.body, format!("{kind}-{id}"));
     }
 
     fn on_call(&mut self, inc: sola_call::Incoming) -> Task<Msg> {
@@ -1210,10 +1234,22 @@ impl App {
                 let Some(ws) = param_str(params, "workspace") else {
                     return (Err("missing workspace".into()), Task::none());
                 };
+                let checkout = param_bool(params, "worktree");
+                let force = param_bool(params, "force");
+                if force && !checkout {
+                    return (Err("--force needs --worktree".into()), Task::none());
+                }
                 match self.cli_rm(&ws) {
+                    // Reply first; teardown on the next tick so solactl
+                    // (maybe running in a pane we are about to kill)
+                    // gets {ok:true} instead of a hang / timeout.
                     Ok(id) => (
                         Ok(serde_json::json!({ "ok": true })),
-                        Task::done(Msg::CloseWorkspace(id)),
+                        if checkout {
+                            Task::done(Msg::RmCheckout { id, force })
+                        } else {
+                            Task::done(Msg::CloseWorkspace(id))
+                        },
                     ),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -1232,7 +1268,12 @@ impl App {
                     return (Err("missing workspace".into()), Task::none());
                 };
                 (
-                    self.cli_set(&q, params.get("title").and_then(|v| v.as_str())),
+                    self.cli_set(
+                        &q,
+                        params.get("name").and_then(|v| v.as_str()),
+                        params.get("title").and_then(|v| v.as_str()),
+                        params.get("branch").and_then(|v| v.as_str()),
+                    ),
                     Task::none(),
                 )
             }
@@ -1422,24 +1463,99 @@ impl App {
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
     }
 
-    fn cli_set(&mut self, q: &str, title: Option<&str>) -> Result<serde_json::Value, String> {
+    fn cli_set(
+        &mut self,
+        q: &str,
+        name: Option<&str>,
+        title: Option<&str>,
+        branch: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
         let id = workspace::resolve_workspace(&self.workspaces, q)?
             .id
             .clone();
-        let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) else {
-            return Err(format!("unknown workspace '{q}'"));
-        };
+        let mut err = None;
+        if let Some(raw) = name {
+            if let Err(e) = self.rename_workspace(&id, raw) {
+                err = Some(e);
+            }
+        }
+        if err.is_none() {
+            if let Some(raw) = branch {
+                if let Err(e) = self.rename_workspace_branch(&id, raw) {
+                    err = Some(e);
+                }
+            }
+        }
         if let Some(raw) = title {
-            let t = raw.trim();
-            ws.title = if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            };
+            if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+                let t = raw.trim();
+                ws.title = if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                };
+            }
         }
         self.persist_catalog();
+        if let Some(e) = err {
+            return Err(e);
+        }
         let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
         Ok(cli::workspace_json(ws, Some(&self.selected)))
+    }
+
+    /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
+    fn rename_workspace(&mut self, id: &str, raw: &str) -> Result<(), String> {
+        let slug = spawn::slug(raw);
+        spawn::check_slug(&slug)?;
+        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
+        if ws.kind != workspace::Kind::Worktree {
+            return Err("cannot rename the project root".into());
+        }
+        let project_id = ws.project_id.clone();
+        let from = ws.path.clone();
+        if workspace::worktree_name_taken(&self.workspaces, &project_id, &slug, id) {
+            return Err(format!("workspace '{slug}' already exists"));
+        }
+        let root = workspace::resolve_project(&self.projects, &project_id)?
+            .root
+            .clone();
+        let dest = spawn::worktree_path(&root, &slug);
+        let path_changed = !workspace::path_same(&from, &dest);
+        if path_changed {
+            spawn::move_worktree(&root, &from, &slug)?;
+        }
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+            ws.name = slug;
+            ws.path = dest;
+        } else {
+            return Err(format!("unknown workspace '{id}'"));
+        }
+        if path_changed {
+            self.restamp_workspace_path(id);
+        }
+        Ok(())
+    }
+
+    fn rename_workspace_branch(&self, id: &str, raw: &str) -> Result<(), String> {
+        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
+        if ws.kind != workspace::Kind::Worktree {
+            return Err("cannot rename the project root branch".into());
+        }
+        spawn::rename_branch(&ws.path, raw)
+    }
+
+    fn restamp_workspace_path(&self, id: &str) {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+            return;
+        };
+        let cwd = ws.path.to_string_lossy();
+        for pane in ws.layout().leaves() {
+            let session = tmux::session_name(&pane);
+            if tmux::has_session(&session) {
+                tmux::set_environment(&session, workspace::SOLA_WS_PATH, cwd.as_ref());
+            }
+        }
     }
 
     fn cli_exec(
@@ -1584,18 +1700,8 @@ impl App {
 
     fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
         let session = tmux::session_name(id);
-        if let Some(rt) = self.runtimes.get(id) {
-            rt.backend.write(text.as_bytes());
-            if enter {
-                rt.backend.write(b"\r");
-            }
-            return Ok(());
-        }
-        if !tmux::send_literal(&session, text) {
+        if !tmux::send_prompt(&session, text, enter) {
             return Err("send failed".into());
-        }
-        if enter && !tmux::send_enter(&session) {
-            return Err("enter failed".into());
         }
         Ok(())
     }
@@ -1824,22 +1930,19 @@ impl App {
         self.attach_workspace(&next)
     }
 
-    fn close_workspace(&mut self, id: &str) -> Task<Msg> {
-        let closable = self
-            .workspaces
-            .iter()
-            .find(|w| w.id == id)
-            .is_some_and(workspace::can_close);
-        if !closable {
+    /// Close a sibling tab. `checkout` also `git worktree remove`s (after
+    /// tmux dies so the pane is not sitting in that cwd). Hover × leaves
+    /// the folder. A gone path just prunes git metadata.
+    fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
+        let Some((panes, path, project_id)) =
+            self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
+                workspace::can_close(ws)
+                    .then(|| (ws.layout().leaves(), ws.path.clone(), ws.project_id.clone()))
+            })
+        else {
             return Task::none();
-        }
-        tracing::info!(workspace = %id, "closing workspace");
-        let panes = self
-            .workspaces
-            .iter()
-            .find(|w| w.id == id)
-            .map(|w| w.layout().leaves())
-            .unwrap_or_default();
+        };
+        tracing::info!(workspace = %id, checkout, "closing workspace");
         for pane in &panes {
             self.teardown_pane(pane);
         }
@@ -1858,7 +1961,37 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
+        if checkout {
+            if let Some(root) = self
+                .projects
+                .iter()
+                .find(|p| p.id == project_id)
+                .map(|p| p.root.clone())
+            {
+                if let Err(e) = spawn::remove_worktree(&root, &path, force) {
+                    tracing::warn!(workspace = %id, %e, "git worktree remove failed");
+                    self.emit_notice("Worktree leftover".into(), e, format!("git-rm-{id}"));
+                }
+            }
+        }
         self.attach_selected_if_needed()
+    }
+
+    /// If a sibling's checkout is already gone (`git worktree remove` from
+    /// inside the pane, or a deleted folder), drop the tab. The pane cannot
+    /// call `workspace.rm` after its cwd vanishes — the rail used to keep
+    /// a working spinner forever.
+    fn reap_missing_worktrees(&mut self) -> Task<Msg> {
+        let gone = workspace::missing_worktree_ids(&self.workspaces);
+        if gone.is_empty() {
+            return Task::none();
+        }
+        let mut tasks = Vec::with_capacity(gone.len());
+        for id in gone {
+            tracing::info!(workspace = %id, "worktree path gone; closing tab");
+            tasks.push(self.close_workspace(&id, true, false));
+        }
+        Task::batch(tasks)
     }
 
     /// Unregister the project and every workspace under it. Kills those
@@ -2232,4 +2365,8 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+fn param_bool(params: &serde_json::Value, key: &str) -> bool {
+    params.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }

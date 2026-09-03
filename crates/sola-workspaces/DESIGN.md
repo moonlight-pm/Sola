@@ -69,7 +69,7 @@ state from hue alone — shape differs too.
 
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
 Workspace title 14. No agent name on the row — status is the mark, the
-toast names who. Sibling rows use the kit hover × (`on_close`, lucide/x).
+desk card names project, tab, and agent. Sibling rows use the kit hover × (`on_close`, lucide/x).
 Root has no row close. **Project** menu: New Project…, Startup Script…,
 Drop Project. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
 open, otherwise the focused pane (same as sola-terminal). Startup is a per-project `/bin/sh` run in each new
@@ -114,11 +114,14 @@ modal. Do not restyle mail / settings / terminal.
 ## Do's and Don'ts
 
 - Do reserve the mark slot on every row, including idle.
-- Do keep who off the row; state is the mark, toast names the agent.
+- Do keep who off the row; state is the mark. The desk card names
+  project, tab, and agent.
 - Do stack project groups at the top (do not fill the selected group).
 - Do use the kit hover × on siblings only; never on root.
 - Do drop the **project** from the menu only (unregister + kill every
-  tmux session in the group). Never `git worktree remove`.
+  tmux session in the group). Hover × never `git worktree remove`.
+  CLI `workspace.rm --worktree` is the explicit checkout delete; a gone
+  path reaps the tab.
 - Do show **Start new shell** only when the **last** pane's PTY has
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches
@@ -134,7 +137,10 @@ modal. Do not restyle mail / settings / terminal.
   (every leaf is a shell). `/exit` / process gone is idle, not a stuck
   done check.
 - Do put `+` on the project group, not a form in the rail.
-- Do toast done only when unfocused: `{workspace} · grok is done` (menubar).
+- Do notify done and waiting only when unfocused (desk card, not
+  menubar whisper): title `{project} · {tab}`, body `grok is done` /
+  `grok needs attention`. Tab is the rail label (`root`, slug, or
+  `slug · title`).
 - Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
   right, ⌘W close pane.
 - Don't infer status from OSC 0/2 titles.

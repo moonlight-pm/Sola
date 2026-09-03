@@ -9,10 +9,10 @@ use sola_kit::components::text_input::text_input;
 use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
 
-use crate::Msg;
 use crate::spawn;
 use crate::status::PaneStatus;
 use crate::workspace::{self, Project, Workspace};
+use crate::Msg;
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";

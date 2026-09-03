@@ -108,8 +108,8 @@ remaining `AppToast` senders (launch fail / exit). Pile grouping by
 | Shell HUD + pile | **done** (grouped; ≤4 list as rows; 5+ collapse; tag replace; Super+Tab unseen count mark) |
 | Browser intercept + permission | **done** (no Native ctor; dummy must not inherit `Notification.prototype`; origin keys canonicalized) |
 | Wrapper intercept + permission | **smoked** 2026-08-29 (same inject; emit with wrapper `app_id`; grants under wrapper data dir) |
-| Workspaces done → notification | **done** |
-| Dogfood | KenHerbert Allow → displayed + top-right desk card (`install browser` 2026-08-27) |
+| Workspaces done → notification | **done** (title `{project} · {tab}`, body `grok is done`; waiting is `needs attention`) |
+| Dogfood | KenHerbert Allow → displayed + top-right desk card (`install browser` 2026-08-27). Workspaces cards on this merge. |
 
 ## Decision log
 

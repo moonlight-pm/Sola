@@ -79,7 +79,21 @@ pub fn methods() -> Vec<MethodSpec> {
         method(
             "workspace.rm",
             "Unregister a workspace and kill its tmux session",
-            &[req_s("workspace", Some('w'), "Workspace id or name")],
+            &[
+                req_s("workspace", Some('w'), "Workspace id or name"),
+                arg(
+                    "worktree",
+                    false,
+                    ArgType::Bool,
+                    None,
+                    "Also git worktree remove the checkout",
+                ),
+                flag(
+                    "force",
+                    'f',
+                    "Force git worktree remove (dirty / toss). Needs --worktree.",
+                ),
+            ],
         ),
         method(
             "workspace.select",
@@ -88,10 +102,20 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "workspace.set",
-            "Set workspace fields (title today)",
+            "Set workspace name, title, and/or branch",
             &[
                 req_s("workspace", Some('w'), "Workspace id or name"),
+                opt_s(
+                    "name",
+                    Some('n'),
+                    "Rail slug; also git worktree move to .worktrees/<name>",
+                ),
                 opt_s("title", None, "Rail subtitle; empty clears"),
+                opt_s(
+                    "branch",
+                    Some('b'),
+                    "Rename this checkout's git branch (does not move the folder)",
+                ),
             ],
         ),
         method_ms(
@@ -117,11 +141,11 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "pane.send",
-            "Type into a pane",
+            "Paste into a pane (bracketed; Enter optional)",
             &[
                 opt_s("pane", None, "Workspace / pane id"),
-                req_s("text", Some('t'), "Text to type"),
-                flag("enter", 'e', "Send Enter after the text"),
+                req_s("text", Some('t'), "Text to paste"),
+                flag("enter", 'e', "Submit after the paste"),
             ],
         ),
         method(
@@ -260,5 +284,14 @@ mod tests {
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
+        let rm = methods.iter().find(|m| m.name == "workspace.rm").unwrap();
+        assert!(rm.args.iter().any(|a| a.name == "worktree"));
+        let force = rm.args.iter().find(|a| a.name == "force").unwrap();
+        assert!(matches!(force.ty, ArgType::Bool));
+        assert!(!force.required);
+        let set = methods.iter().find(|m| m.name == "workspace.set").unwrap();
+        assert!(set.args.iter().any(|a| a.name == "name"));
+        assert!(set.args.iter().any(|a| a.name == "title"));
+        assert!(set.args.iter().any(|a| a.name == "branch"));
     }
 }

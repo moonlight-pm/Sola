@@ -11,6 +11,7 @@ pub mod links;
 pub mod osc9999;
 pub mod perf;
 pub mod pty;
+pub mod sel_follow;
 pub mod state;
 pub mod term_view;
 pub mod tmux;
