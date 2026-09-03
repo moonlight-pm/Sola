@@ -1,14 +1,14 @@
 # sola-browser tab groups
 
 **Date:** 2026-08-15  
-**Status:** **Frozen** — implemented; pocket + insert rules + **⌘G** / hover rename + pocket color
+**Status:** **Frozen** — implemented; pocket + insert rules + **⌘⌥G** / hover rename + pocket color
 **Branch / worktree:** `sola-browser`  
 **Related:** [unified sidebar](2026-08-13-unified-sidebar-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [session persist](2026-06-15-session-persistence-design.md)
 
 | | |
 |--|--|
-| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip; **⌘G** new group; edit-mode color chip (ink ring) + check; compact kit picker (swatch toggles; anchored past the check); black/semibold titles on light fills; hue-preserving selected lift + 1px lip |
-| **Dogfood** | **installed** `kit` + `browser --release` 2026-08-31 (picker polish + contrast chip). ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside; **⌘G** focuses and selects the name; hover pencil to rename; edit mode shows a color chip and a check to save |
+| **Implementation** | kit inset pocket + hairline rim + **flush** members + lucide header; kit-owned drop (`Event::Drop` / `Dest`); header drag moves the block; title drop is a no-op; well extra / origin hole; reserved etch lip; chrome groups + persist + strip; **⌘⌥G** new group (`⌘G` is Find Next); edit-mode color chip (ink ring) + check; compact kit picker (swatch toggles; anchored past the check); black/semibold titles on light fills; hue-preserving selected lift + 1px lip |
+| **Dogfood** | **installed** `kit` + `browser --release` 2026-08-31 (picker polish + contrast chip). ⌘T / OpenUrl append loose at bottom; ⌘-click still inserts beside; **⌘⌥G** focuses and selects the name (`⌘G` is Find Next); hover pencil to rename; edit mode shows a color chip and a check to save |
 | **Gaps** | spaces; drag-to-create |
 
 ## Intent
@@ -27,7 +27,7 @@ Profiles stay “identity + workspace.” Groups do not get their own cookies.
 | Shape | In-strip folders. Group blocks and loose tabs **intermix** (Morph2). A group is a contiguous header+members atom; it may sit anywhere in the strip. |
 | Spaces | Later. Persist must not assume a single global strip forever. |
 | Membership | Drag across the group / loose boundary. |
-| New group | **⌘G** (Browser → New Group) on the **selected loose tab**. No-op if that tab is already in a group. Dragging one loose tab onto another does **not** create a group. |
+| New group | **⌘⌥G** (Browser → New Group) on the **selected loose tab**. No-op if that tab is already in a group. Dragging one loose tab onto another does **not** create a group. `⌘G` is Find Next. |
 | ⌘T / New Tab | Always loose, appended at the **end of the strip**. |
 | Collapse + active | Stay on that page. Member rows hide. Header uses the selected etch. |
 | Empty group | Dissolves. No parked empty headers. |
@@ -81,15 +81,15 @@ Dragging a hidden member is impossible (expand first).
 Live preview must match the commit: a loose tab crossing into a group block
 reads as joining, not as “order only.”
 
-## New group (⌘G)
+## New group (⌘⌥G)
 
 Default name `Group`, then `Group 2`, …. The **selected loose tab**
 becomes the first member; the header wraps it **in place** (groups and
 loose tabs intermix). Starts expanded. The name field is focused with
 the default selected so the next keystroke replaces it.
 
-No-op when the selected tab is already in a group. Chrome owns ⌘G (the
-page does not see it).
+No-op when the selected tab is already in a group. Chrome owns ⌘⌥G (the
+page does not see it). `⌘G` is Find Next.
 
 Hover the header for a **pencil** to rename later (same overlay as
 the tab ×). Edit mode also shows a **color swatch** (default well

@@ -19,7 +19,7 @@
 use std::hash::Hash;
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use iced::Subscription;
 use iced::futures::{SinkExt, Stream, StreamExt as _};
@@ -66,27 +66,30 @@ pub fn frame_stream<E: Engine>(
             .expect("spawn browser-frames thread");
 
         while let Some(tagged) = rx.recv().await {
-            // Only the painted tab may update the shader slot. Background
-            // frames drop immediately so inactive tabs cannot thrash GPU
-            // upload or steal the latest-wins mailbox.
+            // Page and docked inspector may both update their shader slots.
+            // Other tabs park only (no GPU upload).
             let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
+            let devtools_tab = slot.devtools_tab.load(Ordering::Relaxed);
             let tid = tagged.tab_id.0;
-            // Park every frame we see so a later tab/profile switch can
-            // present it synchronously (no helper round-trip).
             slot.parked_frames
                 .lock()
                 .unwrap()
                 .insert(tid, tagged.frame.clone());
-            if tid != paint_tab {
+            if tid == paint_tab {
+                *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                    tab_id: tagged.tab_id,
+                    frame: tagged.frame,
+                });
+            } else if tid == devtools_tab {
+                *slot.devtools_pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                    tab_id: tagged.tab_id,
+                    frame: tagged.frame,
+                });
+            } else {
                 let mut need = slot.need_park_prime.lock().unwrap();
-                need.remove(&tid); // consume one-shot primes without holding
+                need.remove(&tid);
                 continue;
             }
-            // Keep only the latest pending frame.
-            *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
-                tab_id: tagged.tab_id,
-                frame: tagged.frame,
-            });
             slot.last_frame_ms
                 .store(crate::engine::monotonic_ms(), Ordering::Relaxed);
             let _ = &active;
@@ -240,21 +243,13 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     let active_handle = engine.active_tab_handle();
     let cursor = engine.cursor_handle();
 
-    let slot = Arc::new(FrameSlot::<E> {
-        pending: Mutex::new(None),
-        cmd_tx: cmd_tx.clone(),
-        last_size: Mutex::new((VIEW_W, VIEW_H)),
+    let slot = Arc::new(FrameSlot::<E>::new(
+        cmd_tx.clone(),
         cursor,
-        paint_tab: std::sync::atomic::AtomicU64::new(u64::MAX),
-        need_park_prime: Mutex::new(std::collections::HashSet::new()),
-        drop_paint_tabs: Mutex::new(Vec::new()),
-        parked_frames: Mutex::new(std::collections::HashMap::new()),
-        blank_content: std::sync::atomic::AtomicBool::new(false),
-        redraw_queued: std::sync::atomic::AtomicBool::new(false),
-        pumping: std::sync::atomic::AtomicBool::new(false),
-        last_frame_ms: std::sync::atomic::AtomicU64::new(0),
-        ime: engine.ime_handle(),
-    });
+        engine.ime_handle(),
+        VIEW_W,
+        VIEW_H,
+    ));
 
     // Browser + Edit + Profiles (dynamic profile list with active check).
     let mut bus = sola_kit::app::BusSetup::new(app_id).subscribe(crate::integration::SUBSCRIBE);

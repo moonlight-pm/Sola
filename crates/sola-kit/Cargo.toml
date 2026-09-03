@@ -30,6 +30,9 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "image", "advanced", "canvas"] }
+# `floating_frame` punches rounded-rect ears via iced_wgpu custom primitives
+# (iced's `widget::shader` module does not re-export the Renderer trait).
+iced_wgpu = "0.14"
 # Direct dep so the kit's forked text-input widget (components/kit_input/) can
 # use iced's core widget machinery exactly as iced_widget does internally — the
 # vendored source was written against `iced_core` (iced_widget aliases it as

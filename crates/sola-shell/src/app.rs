@@ -1346,8 +1346,10 @@ impl Shell {
     /// Emit Topic::Frame for mapped shell windows and zoned app windows.
     ///
     /// Overlays stay mapped: live size while visible, 2×2 while dismissed
-    /// (see [`crate::zoning::overlay_frame`]). Lookup misses until River
-    /// publishes the surface — a later `Windows` / `WindowOpened` fills in.
+    /// (menu/shortcuts/notify are card-sized; launcher/switcher/selection
+    /// still use [`crate::zoning::overlay_frame`]). Lookup misses until
+    /// River publishes the surface — a later `Windows` / `WindowOpened`
+    /// fills in.
     pub fn emit_all_frames(&self) {
         let mut frames: Vec<FrameUpdate> = Vec::new();
 
@@ -1388,11 +1390,20 @@ impl Shell {
                 frames.push(f);
             }
         }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "shortcuts") {
+            if let Some(f) = crate::zoning::card_overlay_frame(
+                wid,
+                self.shortcuts.active,
+                output,
+                self.shortcuts_overlay_spec(),
+            ) {
+                frames.push(f);
+            }
+        }
         for (title, visible, cover_menubar) in [
             ("launcher", self.launcher.active, false),
             ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
-            ("shortcuts", self.shortcuts.active, false),
         ] {
             let Some(wid) = self.lookup_window_id(Self::APP_ID, title) else {
                 continue;
@@ -1676,6 +1687,17 @@ impl Shell {
         } else {
             self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
         }
+    }
+
+    /// Card-sized live frame for Super+K (not the full usable area).
+    fn shortcuts_overlay_spec(&self) -> crate::zoning::CardOverlaySpec {
+        let (ow, oh) = self.zoning.output_size.unwrap_or((0, 0));
+        crate::zoning::centered_card_spec(
+            ow,
+            oh,
+            crate::shortcuts::view::CARD_WIDTH.round() as i32,
+            crate::shortcuts::view::CARD_HEIGHT.round() as i32,
+        )
     }
 
     /// Card-sized live frame for the menu overlay (not the full output).

@@ -3,7 +3,7 @@
 //! `Msg` and the consts were stubbed out in Task 1 and are kept here. Task 2
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
@@ -59,6 +59,27 @@ pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 46.0;
 const NAV_BTN_W: f32 = 34.0;
+
+/// Left/right padding so the history tray matches the location field.
+/// Mirrors `view_chrome_bar`: pad + profile + divider + 4 nav buttons
+/// before the omnibox, vault + downloads after.
+fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
+    use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+    let pad = SPACE_MD;
+    let gap = SPACE_SM;
+    let left = pad
+        + sidebar_w
+        + DIVIDER_HIT_PX
+        + NAV_BTN_W * 4.0
+        + gap * 6.0;
+    let vault = if cfg!(feature = "bitwarden") {
+        NAV_BTN_W
+    } else {
+        0.0
+    };
+    let right = pad + vault + NAV_BTN_W + gap * 2.0;
+    (left, right)
+}
 /// How long the copy-URL glyph stays on the check after a successful copy.
 const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 /// Tab sidebar width (logical px) — the value the draggable divider
@@ -86,6 +107,11 @@ pub enum Msg {
     NavStop,
     UrlInput(String),
     UrlSubmit,
+    /// Shift+Enter: always the Kagi results page for the typed query.
+    UrlSearchResults,
+    OmniboxSelectNext,
+    OmniboxSelectPrev,
+    OmniboxPick(usize),
     CloseTab(TabId),
     /// ⌘⇧T — pop the recently-closed stack.
     ReopenClosedTab,
@@ -122,6 +148,12 @@ pub enum Msg {
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
+    /// Inspector pane took the click.
+    DevToolsFocused,
+    /// Docked inspector divider pressed.
+    DevToolsSplitDrag,
+    /// Window height (logical) for inspector divider math.
+    WindowResized(f32),
     /// A global left press — triggers a URL-bar focus query so we can
     /// select-all when the field has just gained focus (browser behavior).
     LeftPressed,
@@ -245,6 +277,21 @@ pub enum Msg {
     /// getUserMedia / huddle mic (and camera) — Allow / Block.
     MediaAllow,
     MediaBlock,
+    /// Page `alert` / `confirm` / `prompt` / leave-page.
+    JsDialogOk,
+    JsDialogCancel,
+    JsDialogInput(String),
+    /// Clicked the idle omnibox label — become an edit field.
+    UrlBarActivate,
+    FindOpen,
+    FindNext,
+    FindPrev,
+    FindInput(String),
+    FindClose,
+    FindResult {
+        count: i32,
+        ordinal: i32,
+    },
     /// Page context-menu action (after CEF cancelled the native OSR menu).
     PageMenu(PageMenuAction),
 }
@@ -416,6 +463,16 @@ pub struct App<E: Engine> {
     /// typing in the bar; cleared when a press lands in the web view.
     /// Best-effort heuristic — see the design spec's documented edge case.
     pub url_bar_focused: bool,
+    /// Ignore the LeftPressed focus query from the click that entered edit.
+    url_bar_activating: bool,
+    visits: crate::visit_history::VisitHistory,
+    /// Highlight in the omnibox history list (`None` = none yet).
+    omnibox_sel: Option<usize>,
+    find_open: bool,
+    find_query: String,
+    find_count: i32,
+    find_ordinal: i32,
+    find_field_focused: bool,
     /// Last written session fingerprint — skip disk when unchanged.
     session_fp: String,
     /// Tabs to open after the iced Wayland window exists (session restore).
@@ -518,8 +575,19 @@ pub struct App<E: Engine> {
     pending_notify: Option<crate::notify::IpcPerm>,
     /// In-chrome getUserMedia / huddle permission prompt.
     pending_media: Option<crate::media::IpcMedia>,
+    /// In-chrome `alert` / `confirm` / `prompt` / leave-page.
+    pending_js_dialog: Option<crate::js_dialog::Ipc>,
+    js_dialog_queue: VecDeque<crate::js_dialog::Ipc>,
+    js_dialog_prompt: String,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
+    /// Page tab the docked inspector is attached to (`None` = closed).
+    devtools: Option<TabId>,
+    /// Fraction of the page column given to the page (inspector below).
+    devtools_ratio: f32,
+    devtools_dragging: bool,
+    /// Logical window height for divider drag.
+    window_h: f32,
     /// Live tab favicons (CEF PNG → iced handle).
     favicons: HashMap<TabId, iced::widget::image::Handle>,
     /// Parked favicons per profile so a switch does not wait for CEF.
@@ -572,6 +640,14 @@ impl<E: Engine> App<E> {
             window_id: None,
             app_id,
             url_bar_focused: false,
+            url_bar_activating: false,
+            visits: crate::visit_history::VisitHistory::load(),
+            omnibox_sel: None,
+            find_open: false,
+            find_query: String::new(),
+            find_count: 0,
+            find_ordinal: 0,
+            find_field_focused: false,
             session_fp: String::new(),
             pending_session: Some((tabs, active_index, session_groups)),
             #[cfg(feature = "bitwarden")]
@@ -654,7 +730,14 @@ impl<E: Engine> App<E> {
             download_icon: icon_handle("lucide/download"),
             pending_notify: None,
             pending_media: None,
+            pending_js_dialog: None,
+            js_dialog_queue: VecDeque::new(),
+            js_dialog_prompt: String::new(),
             copy_url_flash: None,
+            devtools: None,
+            devtools_ratio: 0.62,
+            devtools_dragging: false,
+            window_h: VIEW_H as f32,
             favicons: HashMap::new(),
             favicon_park: HashMap::new(),
             globe: icon_handle("lucide/globe"),
@@ -666,7 +749,156 @@ impl<E: Engine> App<E> {
                 app.vault_paste_target = VaultPasteTarget::Password;
             }
         }
+        let seed: Vec<(String, String)> = app
+            .pending_session
+            .as_ref()
+            .map(|(tabs, _, _)| {
+                let mut v = Vec::new();
+                for tab in tabs {
+                    for h in tab.history.iter().rev() {
+                        v.push((h.url.clone(), h.title.clone()));
+                    }
+                    v.push((tab.url.clone(), tab.title.clone()));
+                }
+                v
+            })
+            .unwrap_or_default();
+        let mut dirty = false;
+        for (url, title) in &seed {
+            dirty |= app.visits.ingest(url, title);
+        }
+        if dirty {
+            app.visits.save();
+        }
         app
+    }
+
+    pub(crate) fn set_url_bar_focused(&mut self, on: bool) {
+        self.url_bar_focused = on;
+        URL_BAR_FOCUSED.store(on, Ordering::Relaxed);
+        if !on {
+            self.omnibox_sel = None;
+        }
+    }
+
+    fn omnibox_hits(&self) -> Vec<crate::visit_history::Visit> {
+        if !self.url_bar_focused {
+            return Vec::new();
+        }
+        self.visits.search(&self.url_field)
+    }
+
+    fn note_visit(&mut self, url: &str, title: &str) {
+        self.visits.record(url, title);
+    }
+
+    fn tab_already_at(&self, url: &str) -> Option<TabId> {
+        let want = crate::util::normalize_url(url);
+        if let Some(t) = self
+            .cached_tabs
+            .iter()
+            .find(|t| crate::util::normalize_url(&t.url) == want)
+        {
+            return Some(t.id);
+        }
+        let on_site: Vec<TabId> = self
+            .cached_tabs
+            .iter()
+            .filter(|t| crate::util::same_site(&t.url, url))
+            .map(|t| t.id)
+            .collect();
+        if on_site.iter().any(|id| *id == self.cached_active) {
+            return Some(self.cached_active);
+        }
+        on_site.first().copied()
+    }
+
+    fn open_omnibox_url(&mut self, url: String) -> Task<Msg> {
+        if url.is_empty() {
+            return Task::none();
+        }
+        if let Some(id) = self.tab_already_at(&url) {
+            let leaving = self.cached_active;
+            if id != leaving {
+                self.switch_active_tab(id);
+                // New-tab (⌘T) + jump to an already-open site must not
+                // leave the unused about:blank behind.
+                self.discard_scratch_tab(leaving);
+            }
+            self.omnibox_sel = None;
+            self.set_url_bar_focused(false);
+            self.persist_session();
+            return crate::integration::unfocus_chrome();
+        }
+        self.navigate_to(url)
+    }
+
+    /// Drop an unused `about:blank` we just left. Not pushed onto ⌘⇧T.
+    fn discard_scratch_tab(&mut self, id: TabId) {
+        if id == self.cached_active || self.cached_tabs.len() <= 1 {
+            return;
+        }
+        let scratch = self
+            .cached_tabs
+            .iter()
+            .find(|t| t.id == id)
+            .is_some_and(tab_is_scratch_blank);
+        if !scratch {
+            return;
+        }
+        self.slot.forget_tab(id);
+        self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
+        self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+        let _ = self.cmd_tx.send(Cmd::CloseTab(id));
+        self.closed_tabs.insert(id);
+        self.cached_tabs.retain(|t| t.id != id);
+        self.groups.on_tab_closed(id);
+        self.favicons.remove(&id);
+    }
+
+    fn navigate_to(&mut self, url: String) -> Task<Msg> {
+        if url.is_empty() {
+            return Task::none();
+        }
+        self.url_field = url.clone();
+        self.last_seen_url = url.clone();
+        self.set_url_bar_focused(false);
+        if let Some(t) = self
+            .cached_tabs
+            .iter_mut()
+            .find(|t| t.id == self.cached_active)
+        {
+            t.url = url.clone();
+            t.is_loading = true;
+            t.load_progress = 0.0;
+        }
+        let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+        let _ = self.cmd_tx.send(Cmd::Focus(true));
+        self.persist_session();
+        crate::integration::unfocus_chrome()
+    }
+
+    fn submit_omnibox(&mut self, search_results: bool) -> Task<Msg> {
+        let typed = self.url_field.trim().to_string();
+        if typed.is_empty() {
+            return Task::none();
+        }
+        let hits = self.visits.search(&typed);
+        let url = if search_results {
+            crate::util::kagi_search_url(&typed)
+        } else if let Some(i) = self.omnibox_sel {
+            hits.get(i).map(|v| v.url.clone()).unwrap_or_default()
+        } else if !crate::util::looks_like_url(&typed) {
+            if let Some(top) = hits.first() {
+                top.url.clone()
+            } else {
+                crate::util::kagi_lucky_url(&typed)
+            }
+        } else {
+            crate::util::resolve_query(&typed)
+        };
+        self.omnibox_sel = None;
+        self.open_omnibox_url(url)
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1018,6 +1250,15 @@ impl<E: Engine> App<E> {
             let parked = std::mem::take(&mut self.favicons);
             self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
+
+        self.devtools = None;
+        self.slot
+            .devtools_tab
+            .store(u64::MAX, Ordering::Relaxed);
+        self.slot.devtools_pending.lock().unwrap().take();
+        self.slot
+            .input_devtools
+            .store(false, Ordering::Relaxed);
 
         let profile = crate::profiles::active();
         let resume_id = profile.id.clone();
@@ -1646,6 +1887,35 @@ impl<E: Engine> App<E> {
             Msg::NotifyBlock => self.resolve_notify_permission("denied"),
             Msg::MediaAllow => self.resolve_media_permission("granted"),
             Msg::MediaBlock => self.resolve_media_permission("denied"),
+            Msg::JsDialogOk => return self.resolve_js_dialog(true),
+            Msg::JsDialogCancel => return self.resolve_js_dialog(false),
+            Msg::JsDialogInput(s) => {
+                self.js_dialog_prompt = s;
+            }
+            Msg::UrlBarActivate => {
+                self.set_url_bar_focused(true);
+                self.url_bar_activating = true;
+                let _ = self.cmd_tx.send(Cmd::Focus(false));
+                return Task::batch([
+                    crate::integration::focus_url_bar(),
+                    crate::integration::select_url_bar(),
+                ]);
+            }
+            Msg::FindOpen => return self.open_find(),
+            Msg::FindNext => return self.find_step(true),
+            Msg::FindPrev => return self.find_step(false),
+            Msg::FindInput(s) => {
+                self.find_query = s;
+                self.find_field_focused = true;
+                self.send_find(true, false);
+            }
+            Msg::FindClose => {
+                self.close_find();
+            }
+            Msg::FindResult { count, ordinal } => {
+                self.find_count = count;
+                self.find_ordinal = ordinal;
+            }
             Msg::DownloadRemove(id) => {
                 self.downloads.remove(&id);
             }
@@ -1741,6 +2011,19 @@ impl<E: Engine> App<E> {
                 return iced::clipboard::write(url);
             }
             Msg::NavStop => {
+                if self.find_open {
+                    self.close_find();
+                    return crate::integration::unfocus_chrome();
+                }
+                if self.url_bar_focused {
+                    self.set_url_bar_focused(false);
+                    self.url_field = if self.last_seen_url == BLANK_URL {
+                        String::new()
+                    } else {
+                        self.last_seen_url.clone()
+                    };
+                    return crate::integration::unfocus_chrome();
+                }
                 if self.renaming.is_some() {
                     self.clear_group_rename();
                     return crate::integration::unfocus_chrome();
@@ -1777,33 +2060,40 @@ impl<E: Engine> App<E> {
             }
             Msg::UrlInput(s) => {
                 self.url_field = s;
-                self.url_bar_focused = true;
+                self.set_url_bar_focused(true);
+                self.omnibox_sel = None;
+                return crate::integration::focus_url_bar();
             }
             Msg::UrlSubmit => {
-                // A URL navigates directly; anything else is searched on Kagi.
-                let url = crate::util::resolve_query(&self.url_field);
-                if url.is_empty() {
-                    return Task::none();
+                return self.submit_omnibox(false);
+            }
+            Msg::UrlSearchResults => {
+                return self.submit_omnibox(true);
+            }
+            Msg::OmniboxSelectNext => {
+                let n = self.omnibox_hits().len();
+                if n == 0 {
+                    return crate::integration::focus_url_bar();
                 }
-                // Instant typed → resolved, then drop the caret so the field
-                // is not an editable well while CEF settles the canonical URL.
-                self.url_field = url.clone();
-                self.last_seen_url = url.clone();
-                self.url_bar_focused = false;
-                // Optimistic: update cached tab url so session persists immediately.
-                if let Some(t) = self
-                    .cached_tabs
-                    .iter_mut()
-                    .find(|t| t.id == self.cached_active)
-                {
-                    t.url = url.clone();
-                    t.is_loading = true;
-                    t.load_progress = 0.0;
+                self.omnibox_sel = Some(match self.omnibox_sel {
+                    None => 0,
+                    Some(i) => (i + 1).min(n - 1),
+                });
+                return crate::integration::focus_url_bar();
+            }
+            Msg::OmniboxSelectPrev => {
+                self.omnibox_sel = match self.omnibox_sel {
+                    None | Some(0) => None,
+                    Some(i) => Some(i - 1),
+                };
+                return crate::integration::focus_url_bar();
+            }
+            Msg::OmniboxPick(i) => {
+                let n = self.omnibox_hits().len();
+                if i < n {
+                    self.omnibox_sel = Some(i);
                 }
-                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
-                let _ = self.cmd_tx.send(Cmd::Focus(true));
-                self.persist_session();
-                return crate::integration::unfocus_chrome();
+                return crate::integration::focus_url_bar();
             }
             Msg::CloseTab(id) => {
                 // Never drop below one tab: open a blank replacement first.
@@ -1957,6 +2247,13 @@ impl<E: Engine> App<E> {
                     );
                     self.url_field = field;
                     self.last_seen_url = seen;
+                    if let Some(info) = self.active_tab_info() {
+                        if !is_transient_nav_url(&info.url) {
+                            let url = info.url.clone();
+                            let title = info.title.clone();
+                            self.note_visit(&url, &title);
+                        }
+                    }
                 }
                 self.persist_session();
                 self.profile_options = crate::profiles::list();
@@ -2001,11 +2298,13 @@ impl<E: Engine> App<E> {
                     .drain(..)
                     .collect();
                 self.drain_notify_ipc();
+                let js_dlg = self.drain_js_dialogs();
+                self.drain_find_results();
                 self.drain_favicons();
+                self.drain_devtools();
                 for req in bg {
-                    if req.url.contains("/devtools/inspector.html") {
-                        tracing::info!(url = %req.url, "DevTools frontend tab");
-                        self.open_tab(req.url, true);
+                    if crate::popup::is_devtools_url(&req.url) {
+                        tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
                     } else if req.activate {
                         tracing::info!(url = %req.url, "popup / target=_blank → tab");
                         self.open_tab_beside(req.url, true);
@@ -2028,13 +2327,14 @@ impl<E: Engine> App<E> {
                     return Task::batch([
                         clip,
                         totp_clip,
+                        js_dlg,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip]);
+                return Task::batch([clip, totp_clip, js_dlg]);
                 #[cfg(not(feature = "bitwarden"))]
-                return clip;
+                return Task::batch([clip, js_dlg]);
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -2046,8 +2346,19 @@ impl<E: Engine> App<E> {
                 DIVIDER_DRAGGING.store(self.sidebar.resizing(), Ordering::Relaxed);
                 REORDER_TRACKING.store(self.sidebar.capturing(), Ordering::Relaxed);
             }
-            Msg::CursorMoved(_x, _y) => {}
+            Msg::CursorMoved(_x, y) => {
+                if self.devtools_dragging {
+                    let h = (self.window_h - CHROME_HEIGHT).max(120.0);
+                    self.devtools_ratio = ((y - CHROME_HEIGHT) / h).clamp(0.25, 0.82);
+                }
+            }
             Msg::CursorReleased => {
+                if self.devtools_dragging {
+                    self.devtools_dragging = false;
+                    if !self.sidebar.resizing() {
+                        DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
+                    }
+                }
                 return self.finish_nav_hold();
             }
             Msg::ToggleGroup(id) => {
@@ -2117,9 +2428,29 @@ impl<E: Engine> App<E> {
                 // Page took the click: drop iced chrome focus so keys go to
                 // the shader → CEF, and tell the host it is the focused OSR
                 // widget (caret blink / IME require SetFocus).
-                self.url_bar_focused = false;
+                self.set_url_bar_focused(false);
+                self.find_field_focused = false;
+                self.slot
+                    .input_devtools
+                    .store(false, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::Focus(true));
                 return crate::integration::unfocus_chrome();
+            }
+            Msg::DevToolsFocused => {
+                self.set_url_bar_focused(false);
+                self.find_field_focused = false;
+                self.slot
+                    .input_devtools
+                    .store(true, Ordering::Relaxed);
+                let _ = self.cmd_tx.send(Cmd::DevToolsFocus(true));
+                return crate::integration::unfocus_chrome();
+            }
+            Msg::DevToolsSplitDrag => {
+                self.devtools_dragging = true;
+                DIVIDER_DRAGGING.store(true, Ordering::Relaxed);
+            }
+            Msg::WindowResized(h) => {
+                self.window_h = h.max(1.0);
             }
             Msg::LeftPressed => {
                 // A press landed somewhere. Resolve, against the real widget
@@ -2128,10 +2459,25 @@ impl<E: Engine> App<E> {
                 return crate::integration::url_bar_is_focused(Msg::UrlBarFocusSync);
             }
             Msg::UrlBarFocusSync(now) => {
+                if self.url_bar_activating {
+                    self.url_bar_activating = false;
+                    if now {
+                        return crate::integration::select_url_bar();
+                    }
+                    // The activating click's global press query often lands
+                    // before the field is focused — keep edit mode.
+                    return Task::none();
+                }
                 // Select-all only on the false→true edge, so a second click in
                 // an already-focused field can place the caret normally.
+                if !now
+                    && self.url_bar_focused
+                    && !self.visits.search(&self.url_field).is_empty()
+                {
+                    return crate::integration::focus_url_bar();
+                }
                 let gained = now && !self.url_bar_focused;
-                self.url_bar_focused = now;
+                self.set_url_bar_focused(now);
                 if gained {
                     // Omnibox owns keys; CEF must not keep the OSR caret.
                     let _ = self.cmd_tx.send(Cmd::Focus(false));
@@ -2400,7 +2746,7 @@ impl<E: Engine> App<E> {
         self.renaming = Some((id, name));
         self.group_color = None;
         GROUP_RENAMING.store(true, Ordering::Relaxed);
-        self.url_bar_focused = false;
+        self.set_url_bar_focused(false);
         // Drop CEF host focus so keys land in iced, not the page.
         let _ = self.cmd_tx.send(Cmd::Focus(false));
         // `State::focus` parks the caret at the end; select-all on the
@@ -2500,6 +2846,9 @@ impl<E: Engine> App<E> {
         // keep sampling the previous tab until CEF answers).
         self.slot.present_tab(id);
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
+        if self.find_open && !self.find_query.trim().is_empty() {
+            self.send_find(true, false);
+        }
         // Omnibox follows chrome optimistically — don't wait for Tick
         // (250ms) or the worker URI notify, which feels laggy on tab click.
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == id) {
@@ -2540,8 +2889,10 @@ impl<E: Engine> App<E> {
         let webview = Shader::new(E::make_program(self.slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
-        let page_owns_keys = !self.url_bar_focused
+        let chrome_keys = !self.url_bar_focused
+            && !self.find_field_focused
             && self.profile_dialog.is_none()
+            && self.pending_js_dialog.is_none()
             && !self.downloads_panel_open
             && {
                 #[cfg(feature = "bitwarden")]
@@ -2553,13 +2904,43 @@ impl<E: Engine> App<E> {
                     true
                 }
             };
+        let dt_keys = self
+            .slot
+            .input_devtools
+            .load(Ordering::Relaxed);
+        let page_owns_keys = chrome_keys && !dt_keys;
         let webview = crate::cef::page_ime::page_ime(webview, self.slot.clone(), page_owns_keys);
 
-        // Full-width chrome (profile + nav + omnibox), then tabs | page.
-        // SidebarPanel owns the kit divider + drag overlay.
+        let page: Element<'_, Msg> = if self.find_open {
+            stack![webview, self.view_find_bar()].into()
+        } else {
+            webview.into()
+        };
+        let page: Element<'_, Msg> = if self.devtools == Some(self.cached_active) {
+            let inspector = Shader::new(E::make_devtools_program(self.slot.clone()))
+                .width(Length::Fill)
+                .height(Length::Fill);
+            let inspector = crate::cef::page_ime::page_ime(
+                inspector,
+                self.slot.clone(),
+                chrome_keys && dt_keys,
+            );
+            let canvas = self.theme.extended_palette().background.base.color;
+            let border = self.theme.extended_palette().background.strong.color;
+            sola_kit::components::split_with(
+                sola_bus::topics::SplitDir::Horizontal,
+                page,
+                self.devtools_ratio,
+                Msg::DevToolsSplitDrag,
+                inspector,
+                DividerColors::uniform(canvas, border),
+            )
+        } else {
+            page
+        };
         let lower = row![
             self.view_tab_sidebar(),
-            container(webview).width(Length::Fill).height(Length::Fill),
+            container(page).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill);
         let main = column![self.view_chrome_bar(), horizontal_divider(), lower]
@@ -2581,6 +2962,10 @@ impl<E: Engine> App<E> {
             })
             .into();
 
+        // Always stack so the location bar widget path is stable — wrapping
+        // only when hits appear remounts the field and drops focus.
+        let content: Element<'_, Msg> = stack![content, self.view_omnibox_hits()].into();
+
         let content: Element<'_, Msg> = if self.downloads_panel_open {
             stack![content, self.view_downloads_panel()].into()
         } else {
@@ -2596,6 +2981,8 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
+        } else if self.pending_js_dialog.is_some() {
+            stack![content, self.view_js_dialog()].into()
         } else if self.pending_media.is_some() {
             stack![content, self.view_media_permission()].into()
         } else if self.pending_notify.is_some() {
@@ -2644,6 +3031,56 @@ impl<E: Engine> App<E> {
                         .into_iter()
                         .map(|(index, label)| MenuItem::action(label, Msg::NavJump(index)))
                         .collect()
+                }
+            }
+        }
+    }
+
+    fn drain_devtools(&mut self) {
+        let evs: Vec<crate::engine::DevToolsEvent> = self
+            .engine
+            .devtools_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ev in evs {
+            match ev {
+                crate::engine::DevToolsEvent::Opened { tab_id, paint_id } => {
+                    self.devtools = Some(tab_id);
+                    self.slot
+                        .devtools_tab
+                        .store(paint_id.0, Ordering::Relaxed);
+                    self.slot
+                        .devtools_blank
+                        .store(true, Ordering::Relaxed);
+                    self.slot
+                        .input_devtools
+                        .store(true, Ordering::Relaxed);
+                    if let Some(frame) = self.slot.parked_frames.lock().unwrap().get(&paint_id.0) {
+                        *self.slot.devtools_pending.lock().unwrap() =
+                            Some(crate::engine::PendingFrame {
+                                tab_id: paint_id,
+                                frame: frame.clone(),
+                            });
+                        self.slot
+                            .devtools_blank
+                            .store(false, Ordering::Relaxed);
+                    }
+                    tracing::info!(?tab_id, ?paint_id, "DevTools panel open");
+                }
+                crate::engine::DevToolsEvent::Closed { tab_id } => {
+                    if self.devtools == Some(tab_id) || self.devtools.is_some() {
+                        self.devtools = None;
+                        self.slot
+                            .devtools_tab
+                            .store(u64::MAX, Ordering::Relaxed);
+                        self.slot.devtools_pending.lock().unwrap().take();
+                        self.slot
+                            .input_devtools
+                            .store(false, Ordering::Relaxed);
+                        tracing::info!(?tab_id, "DevTools panel closed");
+                    }
                 }
             }
         }
@@ -2907,17 +3344,134 @@ impl<E: Engine> App<E> {
     }
 
     fn view_omnibox(&self) -> Element<'_, Msg> {
-        let field = text_input("Search or enter URL", &self.url_field)
-            .id(crate::integration::url_input_id())
-            .on_input(Msg::UrlInput)
-            .on_submit(Msg::UrlSubmit)
-            .size(13)
-            .style(sola_kit::components::text_input::style)
-            .width(Length::Fill);
+        let field: Element<'_, Msg> = if self.url_bar_focused {
+            text_input("Search or enter URL", &self.url_field)
+                .id(crate::integration::url_input_id())
+                .on_input(Msg::UrlInput)
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill)
+                .into()
+        } else {
+            let shown = crate::util::display_url(&self.url_field);
+            let idle = if shown.is_empty() {
+                text("Search or enter URL")
+                    .size(13)
+                    .font(sola_kit::fonts::ui())
+                    .style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().secondary.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.55, ..t }),
+                        }
+                    })
+            } else {
+                text(shown)
+                    .size(13)
+                    .font(sola_kit::fonts::ui())
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.base.text),
+                    })
+            };
+            mouse_area(
+                container(idle)
+                    .width(Length::Fill)
+                    .padding(sola_kit::components::text_input::DEFAULT_PADDING)
+                    .align_y(Alignment::Center),
+            )
+            .on_press(Msg::UrlBarActivate)
+            .into()
+        };
         match self.active_load_frac() {
             Some(frac) => stack![field, omnibox_progress_overlay(frac)].into(),
-            None => field.into(),
+            None => field,
         }
+    }
+
+    fn view_omnibox_hits(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{HAIRLINE_A, RADIUS_MD, SPACE_XS, mix_white};
+        let hits = self.omnibox_hits();
+        if hits.is_empty() {
+            return Space::new().width(Length::Shrink).height(Length::Shrink).into();
+        }
+        let mut list = column![].spacing(SPACE_XS).width(Length::Fill);
+        for (i, hit) in hits.iter().enumerate() {
+            let selected = self.omnibox_sel == Some(i);
+            let title = if hit.title.trim().is_empty() {
+                crate::util::compact_history_url(&hit.url)
+            } else {
+                crate::util::truncate(hit.title.trim(), 56)
+            };
+            let url_line = crate::util::compact_history_url(&hit.url);
+            let body = column![
+                text(title)
+                    .size(13)
+                    .font(sola_kit::fonts::ui_medium())
+                    .wrapping(iced::widget::text::Wrapping::None),
+                text(url_line).size(11).style(|theme: &iced::Theme| {
+                    let t = theme.extended_palette().background.base.text;
+                    iced::widget::text::Style {
+                        color: Some(iced::Color { a: 0.62, ..t }),
+                    }
+                }),
+            ]
+            .spacing(1)
+            .width(Length::Fill);
+            let row = container(body)
+                .padding(Padding::from([8, 14]))
+                .width(Length::Fill)
+                .style(move |theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    let bg = if selected {
+                        p.background.strong.color
+                    } else {
+                        iced::Color::TRANSPARENT
+                    };
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        border: iced::Border {
+                            color: iced::Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: RADIUS_MD.into(),
+                        },
+                        ..Default::default()
+                    }
+                });
+            list = list.push(mouse_area(row).on_press(Msg::OmniboxPick(i)));
+        }
+        let tray = container(list)
+            .width(Length::Fill)
+            .padding(Padding::from([6, 8]))
+            .style(move |_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                border: iced::Border {
+                    color: mix_white(CHROME_SURFACE, HAIRLINE_A),
+                    width: 1.0,
+                    radius: iced::border::Radius {
+                        top_left: 0.0,
+                        top_right: 0.0,
+                        bottom_right: RADIUS_MD,
+                        bottom_left: RADIUS_MD,
+                    },
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: iced::Vector::new(0.0, 8.0),
+                    blur_radius: 20.0,
+                },
+                ..Default::default()
+            });
+        let (left, right) = omnibox_tray_insets(self.sidebar_w);
+        container(tray)
+            .width(Length::Fill)
+            .padding(Padding {
+                top: CHROME_HEIGHT,
+                right,
+                bottom: 0.0,
+                left,
+            })
+            .align_x(Alignment::Start)
+            .align_y(Alignment::Start)
+            .into()
     }
 
     /// Determinate load fraction for the omnibox hairline, if the active tab
@@ -3722,6 +4276,246 @@ impl<E: Engine> App<E> {
         }
     }
 
+    fn drain_js_dialogs(&mut self) -> Task<Msg> {
+        let evs: Vec<crate::js_dialog::Event> = self
+            .engine
+            .js_dialogs_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        let mut focus = Task::none();
+        for ev in evs {
+            match ev {
+                crate::js_dialog::Event::Open(dlg) => {
+                    tracing::info!(
+                        id = dlg.id,
+                        origin = %dlg.origin,
+                        kind = ?dlg.kind,
+                        "js dialog"
+                    );
+                    if self.pending_js_dialog.is_none() {
+                        focus = self.show_js_dialog(dlg);
+                    } else {
+                        self.js_dialog_queue.push_back(dlg);
+                    }
+                }
+                crate::js_dialog::Event::Reset { ids } => {
+                    let drop = |d: &crate::js_dialog::Ipc| ids.contains(&d.id);
+                    self.js_dialog_queue.retain(|d| !drop(d));
+                    if self.pending_js_dialog.as_ref().is_some_and(drop) {
+                        self.pending_js_dialog = None;
+                        self.js_dialog_prompt.clear();
+                        if let Some(next) = self.js_dialog_queue.pop_front() {
+                            focus = self.show_js_dialog(next);
+                        } else {
+                            crate::js_dialog::set_open(false);
+                        }
+                    }
+                }
+            }
+        }
+        focus
+    }
+
+    fn show_js_dialog(&mut self, dlg: crate::js_dialog::Ipc) -> Task<Msg> {
+        crate::js_dialog::set_kind(Some(dlg.kind));
+        self.js_dialog_prompt = dlg.default_prompt.clone();
+        if dlg.tab_id != 0 && self.cached_active.0 != dlg.tab_id {
+            if self.cached_tabs.iter().any(|t| t.id.0 == dlg.tab_id) {
+                self.switch_active_tab(TabId(dlg.tab_id));
+            }
+        }
+        let prompt = dlg.kind == crate::js_dialog::Kind::Prompt;
+        self.pending_js_dialog = Some(dlg);
+        if prompt {
+            Task::batch([
+                iced::widget::operation::focus(crate::js_dialog::prompt_input_id()),
+                iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        crate::js_dialog::prompt_input_id(),
+                    ),
+                ),
+            ])
+        } else {
+            crate::integration::unfocus_chrome()
+        }
+    }
+
+    fn resolve_js_dialog(&mut self, success: bool) -> Task<Msg> {
+        let Some(dlg) = self.pending_js_dialog.take() else {
+            crate::js_dialog::set_open(false);
+            return Task::none();
+        };
+        let input = if dlg.kind == crate::js_dialog::Kind::Prompt {
+            std::mem::take(&mut self.js_dialog_prompt)
+        } else {
+            String::new()
+        };
+        let _ = self.cmd_tx.send(Cmd::JsDialog {
+            id: dlg.id,
+            success,
+            input,
+        });
+        if let Some(next) = self.js_dialog_queue.pop_front() {
+            self.show_js_dialog(next)
+        } else {
+            crate::js_dialog::set_open(false);
+            Task::none()
+        }
+    }
+
+    fn drain_find_results(&mut self) {
+        let evs: Vec<crate::engine::FindResult> = self
+            .engine
+            .find_results_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        if let Some(last) = evs.last().copied() {
+            self.find_count = last.count;
+            self.find_ordinal = last.ordinal;
+        }
+    }
+
+    fn begin_find(&mut self) {
+        self.find_open = true;
+        self.find_field_focused = true;
+        FIND_OPEN.store(true, Ordering::Relaxed);
+    }
+
+    fn focus_find(&self) -> Task<Msg> {
+        Task::batch([
+            iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<
+                Msg,
+            >(crate::integration::find_input_id())),
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                    crate::integration::find_input_id(),
+                ),
+            ),
+        ])
+    }
+
+    fn open_find(&mut self) -> Task<Msg> {
+        self.begin_find();
+        if !self.find_query.is_empty() {
+            self.send_find(true, false);
+        }
+        self.focus_find()
+    }
+
+    fn close_find(&mut self) {
+        self.find_open = false;
+        self.find_field_focused = false;
+        self.find_count = 0;
+        self.find_ordinal = 0;
+        FIND_OPEN.store(false, Ordering::Relaxed);
+        let _ = self.cmd_tx.send(Cmd::StopFind { clear: true });
+    }
+
+    fn find_step(&mut self, forward: bool) -> Task<Msg> {
+        if !self.find_open {
+            self.begin_find();
+            if !self.find_query.is_empty() {
+                self.send_find(forward, false);
+            }
+            return self.focus_find();
+        }
+        if self.find_query.is_empty() {
+            return self.focus_find();
+        }
+        self.send_find(forward, true);
+        Task::none()
+    }
+
+    fn send_find(&mut self, forward: bool, next: bool) {
+        let text = self.find_query.trim();
+        if text.is_empty() {
+            let _ = self.cmd_tx.send(Cmd::StopFind { clear: true });
+            self.find_count = 0;
+            self.find_ordinal = 0;
+            return;
+        }
+        let _ = self.cmd_tx.send(Cmd::Find {
+            text: text.to_string(),
+            forward,
+            next,
+        });
+    }
+
+    fn view_find_bar(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{
+            CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD, SPACE_MD, SPACE_SM, hairline_on,
+        };
+
+        let field = text_input("Find in page", &self.find_query)
+            .id(crate::integration::find_input_id())
+            .on_input(Msg::FindInput)
+            .on_submit(Msg::FindNext)
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fixed(180.0));
+        let count = if self.find_query.trim().is_empty() {
+            String::new()
+        } else if self.find_count <= 0 {
+            "No results".into()
+        } else {
+            format!("{} of {}", self.find_ordinal.max(1), self.find_count)
+        };
+        let count_el = text(count).size(11).style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().secondary.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.8, ..t }),
+            }
+        });
+        let prev =
+            kit_toolbar::toolbar_icon_tip(nav_icon_find_prev(), "Previous", Some(Msg::FindPrev));
+        let next = kit_toolbar::toolbar_icon_tip(nav_icon_find_next(), "Next", Some(Msg::FindNext));
+        let close = kit_toolbar::toolbar_icon_tip(nav_icon_stop(), "Close", Some(Msg::FindClose));
+        let row = row![field, count_el, prev, next, close]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+        let panel = container(row)
+            .padding([SPACE_SM, SPACE_MD])
+            .style(move |_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                border: hairline_on(CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD),
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            });
+        row![Space::new().width(Length::Fill), panel]
+            .padding(Padding {
+                top: SPACE_MD,
+                right: SPACE_MD,
+                bottom: 0.0,
+                left: 0.0,
+            })
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn view_js_dialog(&self) -> Element<'_, Msg> {
+        let Some(dlg) = self.pending_js_dialog.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        crate::js_dialog::overlay(
+            dlg,
+            &self.js_dialog_prompt,
+            Msg::JsDialogOk,
+            Msg::JsDialogCancel,
+            Msg::JsDialogInput,
+        )
+    }
+
     fn on_media_ipc(&mut self, m: crate::media::IpcMedia) {
         let profile = crate::profiles::active().id;
         let known = crate::media::permission_for(&profile, &m.origin);
@@ -4080,7 +4874,7 @@ impl<E: Engine> App<E> {
             chips,
         ]
         .spacing(SPACE_SM)
-        .width(Length::Fixed(360.0));
+        .width(Length::Fill);
 
         if !host_hint.is_empty() && q.is_empty() {
             col = col.push(soft(host_hint));
@@ -4093,18 +4887,28 @@ impl<E: Engine> App<E> {
             }));
         }
 
-        const LIST_H: f32 = 420.0;
-        let mut list = column![].spacing(2.0);
+        // Autofill sits *above* the scroll rail so Fill is never under the
+        // overlay scrollbar (iced draws the thumb on the right of the
+        // scrollable, on top of the last child in the row).
+        const SUGGEST_CAP: usize = 3;
+        const SCROLL_GUTTER: f32 = 14.0;
+        let suggest: Vec<&ItemSummary> = suggestions.into_iter().take(SUGGEST_CAP).collect();
+        if !suggest.is_empty() {
+            let mut autofill = column![soft_sm("Autofill".into())]
+                .spacing(2.0)
+                .width(Length::Fill);
+            for item in &suggest {
+                autofill = autofill.push(self.view_vault_item_row(item, true));
+            }
+            col = col.push(autofill);
+        }
+
+        const LIST_H: f32 = 360.0;
+        let mut list = column![].spacing(2.0).width(Length::Fill);
 
         if self.vault_items_loading && self.vault_items.is_empty() {
             list = list.push(text("Looking up vault…").size(13));
         } else {
-            if !suggestions.is_empty() {
-                list = list.push(soft_sm("Autofill".into()));
-                for item in &suggestions {
-                    list = list.push(self.view_vault_item_row(item, true));
-                }
-            }
             let rest_label = if q.is_empty() { "All items" } else { "Results" };
             if filtered.is_empty() {
                 if q.is_empty() && self.vault_filter == ItemFilter::All {
@@ -4114,7 +4918,7 @@ impl<E: Engine> App<E> {
                     list = list.push(text("No items match.").size(13));
                 }
             } else {
-                if !suggestions.is_empty() {
+                if !suggest.is_empty() {
                     list = list.push(soft_sm(rest_label.into()));
                 }
                 for item in &filtered {
@@ -4123,10 +4927,18 @@ impl<E: Engine> App<E> {
             }
         }
 
+        let list_h = if suggest.is_empty() { 400.0 } else { LIST_H };
         col = col.push(
-            scrollable(list)
-                .height(Length::Fixed(LIST_H))
-                .width(Length::Fill),
+            scrollable(
+                container(list).width(Length::Fill).padding(Padding {
+                    top: 0.0,
+                    right: SCROLL_GUTTER,
+                    bottom: 0.0,
+                    left: 0.0,
+                }),
+            )
+            .height(Length::Fixed(list_h))
+            .width(Length::Fill),
         );
 
         let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
@@ -4187,10 +4999,12 @@ impl<E: Engine> App<E> {
         if suggestion && item.kind.can_fill() && !self.vault_busy {
             row![
                 open,
-                kit_button::labeled_sm("Fill", kit_button::ghost).on_press(Msg::VaultFillItem(id)),
+                kit_button::labeled_sm("Fill", kit_button::primary)
+                    .on_press(Msg::VaultFillItem(id)),
             ]
             .spacing(SPACE_SM)
             .align_y(Alignment::Center)
+            .width(Length::Fill)
             .into()
         } else {
             open.into()
@@ -4211,7 +5025,7 @@ impl<E: Engine> App<E> {
             .style(kit_button::ghost)
             .on_press(Msg::VaultItemBack);
 
-        let mut col = column![].spacing(SPACE_SM).width(Length::Fixed(360.0));
+        let mut col = column![].spacing(SPACE_SM).width(Length::Fill);
 
         if self.vault_item_loading && self.vault_item.is_none() {
             col = col.push(
@@ -4369,9 +5183,16 @@ impl<E: Engine> App<E> {
         }
 
         col = col.push(
-            scrollable(fields)
-                .height(Length::Fixed(420.0))
-                .width(Length::Fill),
+            scrollable(
+                container(fields).width(Length::Fill).padding(Padding {
+                    top: 0.0,
+                    right: 14.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                }),
+            )
+            .height(Length::Fixed(360.0))
+            .width(Length::Fill),
         );
         col.into()
     }
@@ -5184,6 +6005,9 @@ impl<E: Engine> App<E> {
                     // A left press anywhere: resolve whether it focused the URL bar
                     // (for click-to-select-all). Received regardless of which widget
                     // captures it, unlike a wrapping `mouse_area`.
+                    Event::Window(iced::window::Event::Resized(size)) => {
+                        Some(Msg::WindowResized(size.height))
+                    }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                         Some(Msg::LeftPressed)
                     }
@@ -5206,12 +6030,44 @@ impl<E: Engine> App<E> {
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                         if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('g') =>
                     {
-                        Some(Msg::NewGroup)
+                        Some(Msg::FindNext)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('f') =>
+                    {
+                        Some(Msg::FindOpen)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::is_find_prev_shortcut(&key, modifiers) =>
+                    {
+                        Some(Msg::FindPrev)
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if GROUP_RENAMING.load(Ordering::Relaxed)
+                    }) if crate::js_dialog::is_open() => Some(if crate::js_dialog::is_alert() {
+                        Msg::JsDialogOk
+                    } else {
+                        Msg::JsDialogCancel
+                    }),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                        ..
+                    }) if crate::js_dialog::is_open() && !crate::js_dialog::is_prompt() => {
+                        Some(Msg::JsDialogOk)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if URL_BAR_FOCUSED.load(Ordering::Relaxed)
+                            && !FIND_OPEN.load(Ordering::Relaxed)
+                            && !crate::js_dialog::is_open() =>
+                    {
+                        omnibox_key(&key, &modifiers)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    }) if FIND_OPEN.load(Ordering::Relaxed)
+                        || GROUP_RENAMING.load(Ordering::Relaxed)
                         || status == event::Status::Ignored =>
                     {
                         Some(Msg::NavStop)
@@ -5275,6 +6131,36 @@ impl<E: Engine> App<E> {
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
 /// Group-name field is up — Escape must cancel even when the input captured it.
 static GROUP_RENAMING: AtomicBool = AtomicBool::new(false);
+static FIND_OPEN: AtomicBool = AtomicBool::new(false);
+static URL_BAR_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+fn omnibox_key(key: &keyboard::Key, modifiers: &keyboard::Modifiers) -> Option<Msg> {
+    use keyboard::key::Named;
+    if modifiers.logo() {
+        return None;
+    }
+    match key {
+        keyboard::Key::Named(Named::ArrowDown) => Some(Msg::OmniboxSelectNext),
+        keyboard::Key::Named(Named::ArrowUp) => Some(Msg::OmniboxSelectPrev),
+        keyboard::Key::Named(Named::Enter) if modifiers.shift() => Some(Msg::UrlSearchResults),
+        keyboard::Key::Named(Named::Enter) => Some(Msg::UrlSubmit),
+        keyboard::Key::Character(c)
+            if modifiers.control()
+                && !modifiers.alt()
+                && c.eq_ignore_ascii_case("n") =>
+        {
+            Some(Msg::OmniboxSelectNext)
+        }
+        keyboard::Key::Character(c)
+            if modifiers.control()
+                && !modifiers.alt()
+                && c.eq_ignore_ascii_case("p") =>
+        {
+            Some(Msg::OmniboxSelectPrev)
+        }
+        _ => None,
+    }
+}
 
 fn chrome_drain_subscription() -> Subscription<Msg> {
     Subscription::run(chrome_drain_stream)
@@ -5612,6 +6498,16 @@ fn nav_icon_copy_done() -> iced::widget::svg::Handle {
     H.get_or_init(|| icon_handle("lucide/copy-check")).clone()
 }
 
+fn nav_icon_find_prev() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/chevron-up")).clone()
+}
+
+fn nav_icon_find_next() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/chevron-down")).clone()
+}
+
 #[cfg(feature = "bitwarden")]
 fn vault_password_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-password")
@@ -5661,6 +6557,14 @@ impl<E: Engine> Drop for App<E> {
 /// over a URL the user just committed.
 fn is_transient_nav_url(url: &str) -> bool {
     url.is_empty() || url == BLANK_URL
+}
+
+/// Fresh ⌘T tab: blank URL and no real session history.
+fn tab_is_scratch_blank(t: &TabInfo) -> bool {
+    is_transient_nav_url(&t.url)
+        && t.history
+            .iter()
+            .all(|e| is_transient_nav_url(&e.url))
 }
 
 /// Apply an engine URL to the omnibar. Never blanks a committed field, and
@@ -5809,6 +6713,19 @@ mod tests {
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
         TabInfo::chrome(TabId(id), url, title)
+    }
+
+    #[test]
+    fn scratch_blank_is_unused_new_tab() {
+        assert!(tab_is_scratch_blank(&tab(1, BLANK_URL, "New Tab")));
+        assert!(!tab_is_scratch_blank(&tab(1, "https://example.com/", "Ex")));
+        let mut used = tab(1, BLANK_URL, "New Tab");
+        used.history = vec![crate::engine::HistoryEntry {
+            index: 0,
+            url: "https://example.com/".into(),
+            title: "Ex".into(),
+        }];
+        assert!(!tab_is_scratch_blank(&used));
     }
 
     #[test]

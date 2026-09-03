@@ -36,6 +36,31 @@ impl Skipped {
     }
 }
 
+/// Liked Songs URIs, so likes survive a 429 on the shared Web API app.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Liked {
+    #[serde(default)]
+    pub uris: HashSet<String>,
+}
+
+impl Liked {
+    pub fn load(dirs: &AppDirs) -> Self {
+        read_json(&dirs.liked_file()).unwrap_or_default()
+    }
+
+    pub fn save(&self, dirs: &AppDirs) {
+        write_json(&dirs.liked_file(), self);
+    }
+
+    pub fn set(&mut self, uri: String, saved: bool) {
+        if saved {
+            self.uris.insert(uri);
+        } else {
+            self.uris.remove(&uri);
+        }
+    }
+}
+
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()

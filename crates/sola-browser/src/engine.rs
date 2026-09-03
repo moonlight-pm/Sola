@@ -200,7 +200,23 @@ pub enum Cmd<E: Engine> {
         req_id: u64,
         granted: bool,
     },
-    /// Open Chromium DevTools for the active tab as a chrome tab.
+    /// Complete a CEF `OnJSDialog` / `OnBeforeUnloadDialog`.
+    JsDialog {
+        id: u64,
+        success: bool,
+        input: String,
+    },
+    /// CEF `BrowserHost::find` on the active tab.
+    Find {
+        text: String,
+        forward: bool,
+        next: bool,
+    },
+    /// CEF `BrowserHost::stop_finding`.
+    StopFind {
+        clear: bool,
+    },
+    /// Open or toggle Chromium DevTools for the active tab (docked panel).
     /// `panel` is `console` or `elements`. `inspect_*` selects the node
     /// under that view point (Inspect element).
     ShowDevTools {
@@ -208,6 +224,18 @@ pub enum Cmd<E: Engine> {
         inspect_x: Option<i32>,
         inspect_y: Option<i32>,
     },
+    /// Physical pixel size of the docked inspector shader.
+    ResizeDevTools {
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    /// Pointer / key events for the inspector (not the page).
+    DevToolsInput(E::Input),
+    /// Inspector widget gained (`true`) or lost iced focus.
+    DevToolsFocus(bool),
+    /// Close the inspector attached to the active tab (menu toggle).
+    CloseDevTools,
     /// Helper IPC died — router respawns and restores tabs.
     HelperDied {
         profile_id: String,
@@ -223,11 +251,12 @@ pub struct TaggedFrame<F> {
 
 /// Latest-wins handoff from the engine worker to iced.
 ///
-/// A capacity-1 queue that *dropped the newer frame* under load (blackouts
-/// while scrolling). This mailbox always keeps the **newest** frame and
-/// drops the older (older `Drop` → WPE release), then pings the consumer.
+/// One slot **per tab id** so the page and a docked inspector can both
+/// paint. A capacity-1 notify that *dropped the newer frame* under load
+/// caused blackouts while scrolling; this keeps the newest buffer per
+/// id and drops the older (older `Drop` → recycle), then pings.
 pub struct FrameMailbox<F: Send> {
-    latest: Mutex<Option<TaggedFrame<F>>>,
+    latest: Mutex<HashMap<u64, TaggedFrame<F>>>,
     /// Capacity 1: `Full` means a wakeup is already queued.
     notify_tx: SyncSender<()>,
     notify_rx: Mutex<Receiver<()>>,
@@ -237,20 +266,19 @@ impl<F: Send> FrameMailbox<F> {
     pub fn new() -> Arc<Self> {
         let (notify_tx, notify_rx) = sync_channel(1);
         Arc::new(Self {
-            latest: Mutex::new(None),
+            latest: Mutex::new(HashMap::new()),
             notify_tx,
             notify_rx: Mutex::new(notify_rx),
         })
     }
 
-    /// Producer path (WPE worker). Never blocks; prefer newest frame.
+    /// Producer path. Never blocks; prefer newest frame per tab id.
     pub fn push(&self, frame: TaggedFrame<F>) -> bool {
         let old = {
             let mut g = self.latest.lock().unwrap();
-            g.replace(frame)
+            g.insert(frame.tab_id.0, frame)
         };
         let replaced = old.is_some();
-        // Release previous buffer outside the lock.
         drop(old);
         match self.notify_tx.try_send(()) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
@@ -262,9 +290,11 @@ impl<F: Send> FrameMailbox<F> {
     /// Consumer path (browser-frames thread). Blocks until a frame arrives.
     pub fn recv(&self) -> Result<TaggedFrame<F>, ()> {
         loop {
-            if let Some(f) = self.latest.lock().unwrap().take() {
-                // Drain coalesced pings; a concurrent push leaves its frame
-                // in `latest` for the next `recv`.
+            let taken = {
+                let mut g = self.latest.lock().unwrap();
+                g.keys().next().copied().and_then(|k| g.remove(&k))
+            };
+            if let Some(f) = taken {
                 if let Ok(rx) = self.notify_rx.lock() {
                     while rx.try_recv().is_ok() {}
                 }
@@ -281,6 +311,34 @@ impl<F: Send> FrameMailbox<F> {
     }
 }
 
+#[cfg(test)]
+mod frame_mailbox_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_latest_per_tab() {
+        let box_ = FrameMailbox::new();
+        assert!(!box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: 1u8,
+        }));
+        assert!(box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: 2u8,
+        }));
+        assert!(!box_.push(TaggedFrame {
+            tab_id: TabId(2),
+            frame: 3u8,
+        }));
+        let mut got = [box_.recv().unwrap(), box_.recv().unwrap()];
+        got.sort_by_key(|t| t.tab_id.0);
+        assert_eq!(got[0].tab_id.0, 1);
+        assert_eq!(got[0].frame, 2);
+        assert_eq!(got[1].tab_id.0, 2);
+        assert_eq!(got[1].frame, 3);
+    }
+}
+
 /// Worker → chrome frame path (latest-wins mailbox).
 pub type FrameReceiver<F> = Arc<FrameMailbox<F>>;
 
@@ -289,6 +347,13 @@ pub type FrameReceiver<F> = Arc<FrameMailbox<F>>;
 pub struct PendingFrame<E: Engine> {
     pub tab_id: TabId,
     pub frame: E::Frame,
+}
+
+/// Which iced shader a CEF frame / resize / key belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaintSurface {
+    Page,
+    DevTools,
 }
 
 /// Shared between `App` (fills `pending`) and the engine's shader Program
@@ -302,6 +367,16 @@ pub struct FrameSlot<E: Engine> {
     pub cursor: Arc<AtomicU32>,
     /// Tab the chrome wants painted (`TabId.0`). Written by chrome on tab switch.
     pub paint_tab: AtomicU64,
+    /// Inspector paint id (`TabId.0`). `u64::MAX` when the panel is closed.
+    pub devtools_tab: AtomicU64,
+    /// Latest inspector frame (docked panel). Separate from `pending` so
+    /// the page shader does not steal it.
+    pub devtools_pending: Mutex<Option<PendingFrame<E>>>,
+    pub devtools_last_size: Mutex<(u32, u32)>,
+    pub devtools_blank: AtomicBool,
+    /// Keyboard target: inspector vs page. Pointer still goes to the
+    /// shader under the cursor.
+    pub input_devtools: AtomicBool,
     /// Tab ids that still need a background snapshot for park-on-first-switch.
     /// Cleared when a frame for that tab is accepted into pending.
     pub need_park_prime: Mutex<std::collections::HashSet<u64>>,
@@ -331,6 +406,85 @@ pub struct FrameSlot<E: Engine> {
 }
 
 impl<E: Engine> FrameSlot<E> {
+    pub fn new(
+        cmd_tx: Sender<Cmd<E>>,
+        cursor: CursorHandle,
+        ime: ImeHandle,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let dt_h = height.max(3) / 3;
+        Self {
+            pending: Mutex::new(None),
+            cmd_tx,
+            last_size: Mutex::new((width, height)),
+            cursor,
+            paint_tab: AtomicU64::new(u64::MAX),
+            devtools_tab: AtomicU64::new(u64::MAX),
+            devtools_pending: Mutex::new(None),
+            devtools_last_size: Mutex::new((width, dt_h.max(1))),
+            devtools_blank: AtomicBool::new(false),
+            input_devtools: AtomicBool::new(false),
+            need_park_prime: Mutex::new(std::collections::HashSet::new()),
+            drop_paint_tabs: Mutex::new(Vec::new()),
+            parked_frames: Mutex::new(HashMap::new()),
+            blank_content: AtomicBool::new(false),
+            redraw_queued: AtomicBool::new(false),
+            pumping: AtomicBool::new(false),
+            last_frame_ms: AtomicU64::new(0),
+            ime,
+        }
+    }
+
+    pub fn last_size_of(&self, surface: PaintSurface) -> (u32, u32) {
+        match surface {
+            PaintSurface::Page => *self.last_size.lock().unwrap(),
+            PaintSurface::DevTools => *self.devtools_last_size.lock().unwrap(),
+        }
+    }
+
+    /// Returns true when the stored size changed (caller should Resize).
+    pub fn store_last_size(&self, surface: PaintSurface, size: (u32, u32)) -> bool {
+        let mut slot = match surface {
+            PaintSurface::Page => self.last_size.lock().unwrap(),
+            PaintSurface::DevTools => self.devtools_last_size.lock().unwrap(),
+        };
+        if *slot == size {
+            false
+        } else {
+            *slot = size;
+            true
+        }
+    }
+
+    pub fn take_pending_of(&self, surface: PaintSurface) -> Option<PendingFrame<E>> {
+        match surface {
+            PaintSurface::Page => self.pending.lock().unwrap().take(),
+            PaintSurface::DevTools => self.devtools_pending.lock().unwrap().take(),
+        }
+    }
+
+    pub fn paint_id(&self, surface: PaintSurface) -> u64 {
+        match surface {
+            PaintSurface::Page => self.paint_tab.load(Ordering::Relaxed),
+            PaintSurface::DevTools => self.devtools_tab.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn blank_of(&self, surface: PaintSurface) -> bool {
+        match surface {
+            PaintSurface::Page => self.blank_content.swap(false, Ordering::Relaxed),
+            PaintSurface::DevTools => self.devtools_blank.swap(false, Ordering::Relaxed),
+        }
+    }
+
+    pub fn clear_blank(&self, surface: PaintSurface) {
+        match surface {
+            PaintSurface::Page => self.blank_content.store(false, Ordering::Relaxed),
+            PaintSurface::DevTools => self.devtools_blank.store(false, Ordering::Relaxed),
+        }
+    }
+
     /// Front `id` in chrome. Same-size parked frame → pending this
     /// frame (instant). Otherwise blank until CEF paints.
     pub fn present_tab(&self, id: TabId) {
@@ -443,8 +597,34 @@ pub struct ChromeTabRequest {
 pub type BackgroundTabsHandle = Arc<Mutex<Vec<ChromeTabRequest>>>;
 /// Helper → chrome: Web Notification show / permission.
 pub type NotificationsHandle = Arc<Mutex<Vec<crate::notify::Ipc>>>;
+/// Helper → chrome: `alert` / `confirm` / `prompt` / leave-page.
+pub type JsDialogsHandle = Arc<Mutex<Vec<crate::js_dialog::Event>>>;
 /// Helper → chrome: tab favicon PNG (empty bytes = clear).
 pub type FaviconsHandle = Arc<Mutex<Vec<FaviconIpc>>>;
+/// Helper → chrome: in-page find match count.
+pub type FindResultsHandle = Arc<Mutex<Vec<FindResult>>>;
+/// Helper → chrome: docked inspector opened / closed.
+pub type DevToolsHandle = Arc<Mutex<Vec<DevToolsEvent>>>;
+
+/// Inspector attached to a page tab (not a strip tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DevToolsEvent {
+    Opened {
+        /// Page tab being inspected.
+        tab_id: TabId,
+        /// Frame-tag id for inspector paints (not in the tab strip).
+        paint_id: TabId,
+    },
+    Closed {
+        tab_id: TabId,
+    },
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct FindResult {
+    pub count: i32,
+    pub ordinal: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct FaviconIpc {
@@ -489,9 +669,17 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn page_menus_handle(&self) -> PageMenusHandle;
     fn background_tabs_handle(&self) -> BackgroundTabsHandle;
     fn notifications_handle(&self) -> NotificationsHandle;
+    fn js_dialogs_handle(&self) -> JsDialogsHandle;
     fn favicons_handle(&self) -> FaviconsHandle;
+    fn find_results_handle(&self) -> FindResultsHandle;
+    fn devtools_handle(&self) -> DevToolsHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
+    /// Second shader for a docked inspector. Default is the page program
+    /// (engines without a panel).
+    fn make_devtools_program(slot: Arc<FrameSlot<Self>>) -> Self::Program {
+        Self::make_program(slot)
+    }
     /// Orderly engine teardown: send Quit, join the worker. Called from
     /// `App` drop so iced exit flushes the engine cleanly.
     fn shutdown(&mut self);

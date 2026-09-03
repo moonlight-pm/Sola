@@ -9154,6 +9154,7 @@ dependencies = [
  "iced",
  "iced_core",
  "iced_graphics",
+ "iced_wgpu",
  "png 0.18.1",
  "rustix 1.1.4",
  "serde_json",
@@ -10348,7 +10349,6 @@ dependencies = [
 ]
 
 [[package]]
-
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -53,7 +53,7 @@ rows for feature-level progress.
 
 **Remaining:** Workspaces dogfood + rename/recolor/reorder; browser chrome
 completeness; mail polish; kvm input ACL permanence; preview
-zoom; paint clipboard; spotify polish (podcasts, tray, playlist edit).
+zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
 
 ---
 

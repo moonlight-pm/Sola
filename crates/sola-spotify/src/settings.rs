@@ -4,6 +4,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::AppDirs;
 
+/// One Back/Forward history entry (`page` is `Page::encode`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedNavEntry {
+    pub page: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub search: String,
+}
+
+/// Page history for in-app Back/Forward. Empty means just `last_page`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedNav {
+    #[serde(default)]
+    pub entries: Vec<SavedNavEntry>,
+    #[serde(default)]
+    pub index: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     pub device_name: String,
@@ -17,6 +34,15 @@ pub struct Settings {
     /// Encoded `Page` (`home`, `playlist:<id>`, …). Empty means Home.
     #[serde(default)]
     pub last_page: String,
+    /// Last track URI on the restored page (selected row after restart).
+    #[serde(default)]
+    pub last_track: String,
+    /// Playlist last added to (add-to picker pins it first).
+    #[serde(default)]
+    pub last_playlist: String,
+    /// Back/Forward stack (max 20 back steps). Restored on launch.
+    #[serde(default)]
+    pub nav: SavedNav,
 }
 
 fn default_true() -> bool {
@@ -32,6 +58,9 @@ impl Default for Settings {
             autoplay: true,
             gapless: true,
             last_page: String::new(),
+            last_track: String::new(),
+            last_playlist: String::new(),
+            nav: SavedNav::default(),
         }
     }
 }
@@ -52,5 +81,19 @@ impl Settings {
         if let Ok(text) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(dirs.settings_file(), text);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_without_nav_deserialize() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"device_name":"Sola","bitrate_kbps":320}"#).unwrap();
+        assert!(settings.nav.entries.is_empty());
+        assert_eq!(settings.nav.index, 0);
+        assert!(settings.last_page.is_empty());
     }
 }

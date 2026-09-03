@@ -627,6 +627,48 @@ impl ApiClient {
         .await
     }
 
+    /// Followed and created playlists, a few pages.
+    pub async fn my_playlists_all(&self, max: u32) -> Vec<Playlist> {
+        let mut items = Vec::new();
+        let mut offset = 0_u32;
+        while offset < max {
+            match self.my_playlists(offset, 50).await {
+                Ok(page) => {
+                    let n = page.items.len() as u32;
+                    items.extend(page.items);
+                    offset += 50;
+                    if n < 50 || page.next.is_none() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!("my playlists: {error}");
+                    break;
+                }
+            }
+        }
+        items
+    }
+
+    /// Spotify's "Made For You" category (Daily Mix, mixes, …).
+    /// Empty when the shared app cannot read Spotify-owned lists.
+    pub async fn made_for_you(&self) -> Vec<Playlist> {
+        const CATEGORY: &str = "0JQ5DAt0tbjZptfcdMSKl3";
+        match self
+            .get::<CategoryPlaylists>(
+                &format!("/browse/categories/{CATEGORY}/playlists"),
+                &[("limit", "50".into())],
+            )
+            .await
+        {
+            Ok(wrap) => wrap.playlists.items,
+            Err(error) => {
+                tracing::debug!("made for you: {error}");
+                Vec::new()
+            }
+        }
+    }
+
     pub async fn playlist(&self, id: &str) -> Result<Playlist> {
         self.get(&format!("/playlists/{id}"), &[]).await
     }
@@ -869,17 +911,50 @@ impl ApiClient {
 
     /// Saves tracks, albums, artists, shows, episodes, or playlists.
     pub async fn save(&self, uris: &[String]) -> Result<()> {
-        self.library_write(Method::PUT, uris).await
+        self.tracks_library(Method::PUT, uris).await
     }
 
     pub async fn unsave(&self, uris: &[String]) -> Result<()> {
-        self.library_write(Method::DELETE, uris).await
+        self.tracks_library(Method::DELETE, uris).await
     }
 
-    /// Whether each URI is in the library, in the same order as `uris`.
+    async fn tracks_library(&self, method: Method, uris: &[String]) -> Result<()> {
+        let ids: Vec<String> = uris
+            .iter()
+            .filter_map(|uri| spotify_id(uri, "track").map(str::to_string))
+            .collect();
+        if ids.is_empty() {
+            return self.library_write(method, uris).await;
+        }
+        self.write(method, "/me/tracks", &[("ids", ids.join(","))], None)
+            .await?;
+        Ok(())
+    }
+
+    /// Whether each URI is in Liked Songs, in the same order as `uris`.
+    ///
+    /// Official likes live at `/me/tracks/contains` (50 ids). The unified
+    /// `/me/library/contains` path is capped at 40 and 400s a 50-track page.
     pub async fn contains(&self, uris: &[String]) -> Result<Vec<bool>> {
-        self.get("/me/library/contains", &[("uris", uris.join(","))])
-            .await
+        let mut flags = vec![false; uris.len()];
+        let mut slots = Vec::new();
+        let mut ids = Vec::new();
+        for (index, uri) in uris.iter().enumerate() {
+            if let Some(id) = spotify_id(uri, "track") {
+                slots.push(index);
+                ids.push(id.to_string());
+            }
+        }
+        if ids.is_empty() {
+            return Ok(flags);
+        }
+        let got: Vec<bool> = self
+            .get("/me/tracks/contains", &[("ids", ids.join(","))])
+            .await?;
+        for (slot, flag) in slots.into_iter().zip(got) {
+            flags[slot] = flag;
+        }
+        Ok(flags)
     }
 
     // ---- catalog -----------------------------------------------------------

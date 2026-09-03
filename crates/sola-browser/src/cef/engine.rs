@@ -141,7 +141,10 @@ pub struct CefEngine {
     page_menus: PageMenusHandle,
     background_tabs: crate::engine::BackgroundTabsHandle,
     notifications: NotificationsHandle,
+    js_dialogs: crate::engine::JsDialogsHandle,
     favicons: crate::engine::FaviconsHandle,
+    find_results: crate::engine::FindResultsHandle,
+    devtools: crate::engine::DevToolsHandle,
 }
 
 impl Engine for CefEngine {
@@ -165,7 +168,7 @@ impl Engine for CefEngine {
         }
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
-        let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
+        let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new(), 0);
         let result = cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
         if result >= 0 {
             Some(ExitCode::from(result.clamp(0, 255) as u8))
@@ -211,7 +214,10 @@ impl Engine for CefEngine {
             page_menus: handles.page_menus,
             background_tabs: handles.background_tabs,
             notifications: handles.notifications,
+            js_dialogs: handles.js_dialogs,
             favicons: handles.favicons,
+            find_results: handles.find_results,
+            devtools: handles.devtools,
         }
     }
 
@@ -266,8 +272,20 @@ impl Engine for CefEngine {
         self.notifications.clone()
     }
 
+    fn js_dialogs_handle(&self) -> crate::engine::JsDialogsHandle {
+        self.js_dialogs.clone()
+    }
+
     fn favicons_handle(&self) -> crate::engine::FaviconsHandle {
         self.favicons.clone()
+    }
+
+    fn find_results_handle(&self) -> crate::engine::FindResultsHandle {
+        self.find_results.clone()
+    }
+
+    fn devtools_handle(&self) -> crate::engine::DevToolsHandle {
+        self.devtools.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -275,7 +293,17 @@ impl Engine for CefEngine {
     }
 
     fn make_program(slot: std::sync::Arc<FrameSlot<Self>>) -> Self::Program {
-        crate::cef::frame::CefProgram { slot }
+        crate::cef::frame::CefProgram {
+            slot,
+            surface: crate::engine::PaintSurface::Page,
+        }
+    }
+
+    fn make_devtools_program(slot: std::sync::Arc<FrameSlot<Self>>) -> Self::Program {
+        crate::cef::frame::CefProgram {
+            slot,
+            surface: crate::engine::PaintSurface::DevTools,
+        }
     }
 
     fn shutdown(&mut self) {
@@ -296,10 +324,20 @@ impl Engine for CefEngine {
 
 struct CefThreadState {
     /// Most recent viewport size requested by iced. Reported back
-    /// from `RenderHandler::view_rect` for every browser (all
-    /// tabs share the iced widget's bounds). Updated by
+    /// from `RenderHandler::view_rect` for page browsers (all
+    /// tabs share the iced page widget's bounds). Updated by
     /// `Cmd::Resize` and consulted on tab switch.
     size: Mutex<(u32, u32)>,
+    /// Docked inspector widget size (physical px).
+    devtools_size: Mutex<(u32, u32)>,
+    /// Live inspector (not a chrome tab).
+    devtools: RefCell<Option<DevToolsSession>>,
+    /// Next `on_after_created` is the inspector for this page tab.
+    pending_devtools_for: Cell<Option<TabId>>,
+    /// Inspector iced widget has keyboard focus.
+    devtools_focused: Cell<bool>,
+    /// Off-thread `/json/list` results waiting to become an OSR inspector.
+    devtools_jobs: Arc<Mutex<Vec<DevToolsOpenJob>>>,
     frames: FrameReceiver<CefFrame>,
     cmd_rx: RefCell<Option<Receiver<Cmd<CefEngine>>>>,
     /// Live tabs. Ordering is presentation order in the tab strip
@@ -350,6 +388,9 @@ struct CefThreadState {
     /// In-flight `OnRequestMediaAccessPermission` callbacks (getUserMedia).
     pending_media: RefCell<std::collections::HashMap<u64, (cef::MediaAccessCallback, u32)>>,
     next_media_id: Cell<u64>,
+    /// In-flight `OnJSDialog` / `OnBeforeUnloadDialog` callbacks.
+    pending_js_dialog: RefCell<std::collections::HashMap<u64, (cef::JsdialogCallback, i32)>>,
+    next_js_dialog_id: Cell<u64>,
     /// `open_tab` sets this so `on_after_created` can adopt the browser
     /// with the chrome-chosen id. `None` means a `window.open` popup.
     pending_created_id: Cell<Option<TabId>>,
@@ -368,7 +409,7 @@ struct CefThreadState {
     osr_drag: RefCell<Option<OsrDrag>>,
     /// Remote-debugging port for DevTools-as-a-tab.
     debug_port: Cell<u16>,
-    /// Inspect-element coords to run once the frontend tab has loaded.
+    /// Inspect-element coords to run once the inspector frontend has loaded.
     pending_inspect: Cell<Option<(i32, i32, TabId)>>,
     /// In-flight `download_image` callbacks, keyed by tab id.
     pending_favicon: RefCell<std::collections::HashMap<u64, cef::DownloadImageCallback>>,
@@ -436,6 +477,19 @@ struct CefTabState {
     popup: RefCell<OsrPopup>,
 }
 
+/// Windowless DevTools browser, attached to one page tab.
+struct DevToolsSession {
+    inspected: TabId,
+    tab: CefTabState,
+}
+
+struct DevToolsOpenJob {
+    tab_id: TabId,
+    frontend: String,
+    inspect_x: Option<i32>,
+    inspect_y: Option<i32>,
+}
+
 #[derive(Default)]
 struct OsrPopup {
     visible: bool,
@@ -470,6 +524,11 @@ pub(super) fn run_worker(
 ) {
     let state = Rc::new(CefThreadState {
         size: Mutex::new((width, height)),
+        devtools_size: Mutex::new((width, height.max(3) / 3)),
+        devtools: RefCell::new(None),
+        pending_devtools_for: Cell::new(None),
+        devtools_focused: Cell::new(false),
+        devtools_jobs: Arc::new(Mutex::new(Vec::new())),
         frames,
         cmd_rx: RefCell::new(Some(cmd_rx)),
         tabs: RefCell::new(Vec::new()),
@@ -493,6 +552,8 @@ pub(super) fn run_worker(
         pending_permission: RefCell::new(std::collections::HashMap::new()),
         pending_media: RefCell::new(std::collections::HashMap::new()),
         next_media_id: Cell::new(1),
+        pending_js_dialog: RefCell::new(std::collections::HashMap::new()),
+        next_js_dialog_id: Cell::new(1),
         pending_created_id: Cell::new(None),
         pending_created_url: RefCell::new(String::new()),
         pending_created_title: RefCell::new(String::new()),
@@ -553,6 +614,7 @@ pub(super) fn run_worker(
 
 fn teardown_all_browsers(state: &CefThreadState) {
     hide_all_tabs(state);
+    close_devtools_session(state);
     let live = std::mem::take(&mut *state.tabs.borrow_mut());
     for t in live {
         if let Some(host) = t.browser.host() {
@@ -589,6 +651,7 @@ cef::wrap_app! {
     pub struct BrowserCefApp {
         app_id: &'static str,
         render_process_handler: cef::RenderProcessHandler,
+        debug_port: u16,
     }
 
     impl App {
@@ -642,6 +705,14 @@ cef::wrap_app! {
                 let autoplay_key = CefString::from("autoplay-policy");
                 let autoplay_val = CefString::from("no-user-gesture-required");
                 cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
+
+                // Chrome-runtime CEF 147 often ignores Settings.remote_debugging_port
+                // unless the switch is also on the command line. Subprocesses get 0.
+                if self.debug_port != 0 {
+                    let port_key = CefString::from("remote-debugging-port");
+                    let port_val = CefString::from(self.debug_port.to_string().as_str());
+                    cmd.append_switch_with_value(Some(&port_key), Some(&port_val));
+                }
             }
         }
     }
@@ -655,11 +726,11 @@ cef::wrap_render_handler! {
     impl RenderHandler {
         fn view_rect(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             rect: Option<&mut cef::Rect>,
         ) {
             let state = cef_state();
-            let (w, h) = *state.size.lock().unwrap();
+            let (w, h) = osr_view_size(&state, browser.as_deref());
             if let Some(r) = rect {
                 r.x = 0;
                 r.y = 0;
@@ -674,11 +745,11 @@ cef::wrap_render_handler! {
         // comment for context).
         fn root_screen_rect(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             rect: Option<&mut cef::Rect>,
         ) -> ::std::os::raw::c_int {
             let state = cef_state();
-            let (w, h) = *state.size.lock().unwrap();
+            let (w, h) = osr_view_size(&state, browser.as_deref());
             if let Some(r) = rect {
                 r.x = 0;
                 r.y = 0;
@@ -703,11 +774,11 @@ cef::wrap_render_handler! {
 
         fn screen_info(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             screen_info: Option<&mut cef::ScreenInfo>,
         ) -> ::std::os::raw::c_int {
             let state = cef_state();
-            let (w, h) = *state.size.lock().unwrap();
+            let (w, h) = osr_view_size(&state, browser.as_deref());
             if let Some(si) = screen_info {
                 si.device_scale_factor = 1.0;
                 si.depth = 24;
@@ -726,24 +797,22 @@ cef::wrap_render_handler! {
         ) {
             let state = cef_state();
             let Some(browser) = browser else { return };
-            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
-                return;
-            };
-            let Some(tab) = tab_state_by_id(&state, tab_id) else {
-                return;
-            };
-            let mut popup = tab.popup.borrow_mut();
+            let bid = browser.identifier();
+            let _ = with_paint_tab(&state, bid, |tab| {
+                let mut popup = tab.popup.borrow_mut();
+                if show == 0 {
+                    popup.visible = false;
+                    popup.pixels.clear();
+                    popup.w = 0;
+                    popup.h = 0;
+                } else {
+                    popup.visible = true;
+                }
+            });
             if show == 0 {
-                popup.visible = false;
-                popup.pixels.clear();
-                popup.w = 0;
-                popup.h = 0;
-                drop(popup);
                 if let Some(host) = browser.host() {
                     host.invalidate(cef::PaintElementType::VIEW);
                 }
-            } else {
-                popup.visible = true;
             }
         }
 
@@ -755,17 +824,13 @@ cef::wrap_render_handler! {
             let Some(rect) = rect else { return };
             let state = cef_state();
             let Some(browser) = browser else { return };
-            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
-                return;
-            };
-            let Some(tab) = tab_state_by_id(&state, tab_id) else {
-                return;
-            };
-            let mut popup = tab.popup.borrow_mut();
-            popup.x = rect.x;
-            popup.y = rect.y;
-            popup.w = rect.width.max(0) as u32;
-            popup.h = rect.height.max(0) as u32;
+            let _ = with_paint_tab(&state, browser.identifier(), |tab| {
+                let mut popup = tab.popup.borrow_mut();
+                popup.x = rect.x;
+                popup.y = rect.y;
+                popup.w = rect.width.max(0) as u32;
+                popup.h = rect.height.max(0) as u32;
+            });
         }
 
         // CPU OSR. Fires when the browser was created with
@@ -795,17 +860,39 @@ cef::wrap_render_handler! {
                 return;
             }
             let Some(browser) = browser else { return };
-            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
-                return;
-            };
-            if state.active.get() != tab_id {
-                return;
-            }
+            let bid = browser.identifier();
             let w = width as u32;
             let h = height as u32;
             let len = (w as usize) * (h as usize) * 4;
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
             let dirty = dirty_from_cef(dirty_rects, w, h);
+            if let Some(dt) = state.devtools.borrow().as_ref() {
+                if dt.tab.browser_id == bid {
+                    if state.active.get() != dt.inspected {
+                        return;
+                    }
+                    if dt.tab.last_frame.borrow().is_none() {
+                        tracing::info!(
+                            w,
+                            h,
+                            paint_id = ?dt.tab.id,
+                            "DevTools first on_paint"
+                        );
+                    }
+                    if is_popup {
+                        publish_popup_paint(&state, &dt.tab, src, w, h, dirty);
+                    } else {
+                        publish_view_paint(&state, &dt.tab, src, w, h, dirty);
+                    }
+                    return;
+                }
+            }
+            let Some(tab_id) = tab_by_browser_id(&state, bid) else {
+                return;
+            };
+            if state.active.get() != tab_id {
+                return;
+            }
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
@@ -921,6 +1008,31 @@ cef::wrap_life_span_handler! {
             adopt_created_browser(browser);
         }
 
+        fn on_before_dev_tools_popup(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            window_info: Option<&mut cef::WindowInfo>,
+            client: Option<&mut Option<cef::Client>>,
+            settings: Option<&mut cef::BrowserSettings>,
+            _extra_info: Option<&mut Option<cef::DictionaryValue>>,
+            use_default_window: Option<&mut ::std::os::raw::c_int>,
+        ) {
+            // Chrome runtime ignores ShowDevTools WindowInfo unless we
+            // claim the popup here. Default window is a tab-target
+            // frontend (appspot remoteBase) that paints blank in OSR.
+            let state = cef_state();
+            if let Some(b) = browser {
+                if let Some(id) = tab_by_browser_id(&state, b.identifier()) {
+                    state.pending_devtools_for.set(Some(id));
+                }
+            }
+            configure_osr_devtools(window_info, client, settings);
+            if let Some(flag) = use_default_window {
+                *flag = 0;
+            }
+            tracing::info!("OnBeforeDevToolsPopup: alloy windowless OSR, no default window");
+        }
+
         fn on_before_close(&self, browser: Option<&mut cef::Browser>) {
             // CEF tells us this browser is going away. Drop it
             // from our tab list (idempotent — the cmd-side
@@ -931,6 +1043,9 @@ cef::wrap_life_span_handler! {
             let state = cef_state();
             if let Some(b) = browser {
                 let bid = b.identifier();
+                if close_devtools_browser(&state, bid) {
+                    return;
+                }
                 let removed = {
                     let mut tabs = state.tabs.borrow_mut();
                     if let Some(pos) = tabs.iter().position(|t| t.browser_id == bid) {
@@ -1001,8 +1116,18 @@ cef::wrap_life_span_handler! {
             tracing::info!(url = %url, ?action, "on_before_popup action");
             match action {
                 crate::popup::PopupAction::Osr => {
-                    tracing::info!(url = %url, "allowing OSR popup (window.open / huddle)");
                     let state = cef_state();
+                    if crate::popup::is_devtools_url(&url) {
+                        if let Some(b) = browser.as_ref() {
+                            if let Some(id) = tab_by_browser_id(&state, b.identifier()) {
+                                state.pending_devtools_for.set(Some(id));
+                            }
+                        }
+                        tracing::info!(url = %url, "allowing OSR DevTools popup");
+                        configure_osr_devtools(window_info, client, settings);
+                        return 0;
+                    }
+                    tracing::info!(url = %url, "allowing OSR popup (window.open / huddle)");
                     state.cmd_click_opened.set(true);
                     state.pending_new_tab_click.take();
                     configure_osr_popup(window_info, client, settings);
@@ -1046,23 +1171,58 @@ fn configure_osr_popup(
     settings: Option<&mut cef::BrowserSettings>,
 ) {
     let state = cef_state();
+    let (w, h) = *state.size.lock().unwrap();
+    configure_osr_window(window_info, client, settings, w, h);
+}
+
+fn configure_osr_devtools(
+    window_info: Option<&mut cef::WindowInfo>,
+    client: Option<&mut Option<cef::Client>>,
+    settings: Option<&mut cef::BrowserSettings>,
+) {
+    let state = cef_state();
+    let (w, h) = *state.devtools_size.lock().unwrap();
+    configure_osr_window(window_info, client, settings, w, h);
+}
+
+fn apply_osr_window_info(wi: &mut cef::WindowInfo, w: u32, h: u32) {
+    // Chrome-runtime DevTools defaults to Chrome style and creates a
+    // native Ozone window (blank duplicate `sola-browser` toplevel).
+    // Alloy + windowless is the OSR path; `SetAsWindowless` does this.
+    wi.windowless_rendering_enabled = 1;
+    wi.shared_texture_enabled = 0;
+    wi.external_begin_frame_enabled = 0;
+    wi.runtime_style = cef::RuntimeStyle::ALLOY;
+    wi.bounds = cef::Rect {
+        x: 0,
+        y: 0,
+        width: w.max(1) as i32,
+        height: h.max(1) as i32,
+    };
+    tracing::debug!(
+        style = ?wi.runtime_style,
+        windowless = wi.windowless_rendering_enabled,
+        w,
+        h,
+        "OSR WindowInfo alloy"
+    );
+}
+
+fn configure_osr_window(
+    window_info: Option<&mut cef::WindowInfo>,
+    client: Option<&mut Option<cef::Client>>,
+    settings: Option<&mut cef::BrowserSettings>,
+    w: u32,
+    h: u32,
+) {
     if let Some(wi) = window_info {
-        wi.windowless_rendering_enabled = 1;
-        wi.shared_texture_enabled = 0;
-        wi.external_begin_frame_enabled = 0;
-        let (w, h) = *state.size.lock().unwrap();
-        wi.bounds = cef::Rect {
-            x: 0,
-            y: 0,
-            width: w.max(1) as i32,
-            height: h.max(1) as i32,
-        };
+        apply_osr_window_info(wi, w, h);
     }
     if let Some(slot) = client {
         *slot = Some(make_osr_client());
     }
     if let Some(s) = settings {
-        s.background_color = 0xFFFF_FFFF;
+        s.background_color = 0xFF1E_1E1E;
         s.windowless_frame_rate = 60;
     }
 }
@@ -1076,6 +1236,8 @@ fn make_osr_client() -> cef::Client {
     let request_handler = BrowserRequestHandler::new();
     let context_menu_handler = BrowserContextMenuHandler::new();
     let permission_handler = BrowserPermissionHandler::new();
+    let jsdialog_handler = BrowserJsdialogHandler::new();
+    let find_handler = BrowserFindHandler::new();
     BrowserClient::new(
         render_handler,
         life_span_handler,
@@ -1085,6 +1247,8 @@ fn make_osr_client() -> cef::Client {
         request_handler,
         context_menu_handler,
         permission_handler,
+        jsdialog_handler,
+        find_handler,
     )
 }
 
@@ -1092,6 +1256,22 @@ fn adopt_created_browser(browser: &cef::Browser) {
     let state = cef_state();
     let bid = browser.identifier();
     if state.tabs.borrow().iter().any(|t| t.browser_id == bid) {
+        return;
+    }
+    if state
+        .devtools
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.tab.browser_id == bid)
+    {
+        return;
+    }
+    let url = browser
+        .main_frame()
+        .map(|f| cef_string_userfree_display(&f.url()))
+        .unwrap_or_default();
+    if state.pending_devtools_for.get().is_some() || crate::popup::is_devtools_url(&url) {
+        attach_devtools(&state, browser);
         return;
     }
     let (id, url, title, activate) = if let Some(id) = state.pending_created_id.get() {
@@ -1323,7 +1503,7 @@ cef::wrap_load_handler! {
             _http_status_code: ::std::os::raw::c_int,
         ) {
             let inspector = frame.as_ref().is_some_and(|f| {
-                cef_string_userfree_display(&f.url()).contains("/devtools/inspector.html")
+                crate::popup::is_devtools_url(&cef_string_userfree_display(&f.url()))
             });
             inject_page_scripts(frame);
             if !inspector {
@@ -1733,6 +1913,15 @@ cef::wrap_context_menu_handler! {
             _model: Option<&mut cef::MenuModel>,
             callback: Option<&mut cef::RunContextMenuCallback>,
         ) -> ::std::os::raw::c_int {
+            if let Some(b) = browser.as_ref() {
+                let state = cef_state();
+                if is_devtools_browser(&state, b.identifier()) {
+                    if let Some(cb) = callback {
+                        cb.cancel();
+                    }
+                    return 1;
+                }
+            }
             if let Some(cb) = callback {
                 cb.cancel();
             }
@@ -2042,6 +2231,183 @@ fn handle_media_access(
     1
 }
 
+cef::wrap_jsdialog_handler! {
+    pub struct BrowserJsdialogHandler {}
+
+    impl JsdialogHandler {
+        fn on_jsdialog(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            origin_url: Option<&cef::CefString>,
+            dialog_type: cef::JsdialogType,
+            message_text: Option<&cef::CefString>,
+            default_prompt_text: Option<&cef::CefString>,
+            callback: Option<&mut cef::JsdialogCallback>,
+            suppress_message: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            if let Some(flag) = suppress_message {
+                *flag = 0;
+            }
+            let kind = js_dialog_kind(dialog_type);
+            handle_js_dialog(
+                browser,
+                origin_url,
+                kind,
+                message_text,
+                default_prompt_text,
+                callback,
+            )
+        }
+
+        fn on_before_unload_dialog(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            message_text: Option<&cef::CefString>,
+            _is_reload: ::std::os::raw::c_int,
+            callback: Option<&mut cef::JsdialogCallback>,
+        ) -> ::std::os::raw::c_int {
+            handle_js_dialog(
+                browser,
+                None,
+                crate::js_dialog::Kind::BeforeUnload,
+                message_text,
+                None,
+                callback,
+            )
+        }
+
+        fn on_reset_dialog_state(&self, browser: Option<&mut cef::Browser>) {
+            let bid = browser.map(|b| b.identifier());
+            cancel_js_dialogs(bid);
+        }
+    }
+}
+
+fn js_dialog_kind(dialog_type: cef::JsdialogType) -> crate::js_dialog::Kind {
+    let raw = *dialog_type.as_ref();
+    if raw == cef::sys::cef_jsdialog_type_t::JSDIALOGTYPE_PROMPT {
+        crate::js_dialog::Kind::Prompt
+    } else if raw == cef::sys::cef_jsdialog_type_t::JSDIALOGTYPE_CONFIRM {
+        crate::js_dialog::Kind::Confirm
+    } else {
+        crate::js_dialog::Kind::Alert
+    }
+}
+
+fn continue_js_dialog(cb: &cef::JsdialogCallback, success: bool, input: &str) {
+    let text: cef::CefString = input.into();
+    cb.cont(i32::from(success), Some(&text));
+}
+
+fn emit_js_dialog(ev: crate::js_dialog::Event) {
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::JsDialog(ev));
+    }
+}
+
+fn handle_js_dialog(
+    browser: Option<&mut cef::Browser>,
+    origin_url: Option<&cef::CefString>,
+    kind: crate::js_dialog::Kind,
+    message_text: Option<&cef::CefString>,
+    default_prompt_text: Option<&cef::CefString>,
+    callback: Option<&mut cef::JsdialogCallback>,
+) -> ::std::os::raw::c_int {
+    let state = cef_state();
+    if !state.is_front.get() {
+        if let Some(cb) = callback {
+            continue_js_dialog(cb, false, "");
+        }
+        return 1;
+    }
+    let origin = origin_url
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            browser.as_ref().and_then(|b| {
+                b.main_frame()
+                    .map(|f| cef_string_userfree_display(&f.url()))
+            })
+        })
+        .unwrap_or_default();
+    let message = message_text.map(|s| s.to_string()).unwrap_or_default();
+    let default_prompt = default_prompt_text
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let bid = browser.as_ref().map(|b| b.identifier()).unwrap_or(0);
+    let tab_id = notify_tab_id(browser.as_ref().map(|b| &**b));
+    let id = state.next_js_dialog_id.get();
+    state.next_js_dialog_id.set(id.saturating_add(1));
+    if let Some(cb) = callback {
+        state
+            .pending_js_dialog
+            .borrow_mut()
+            .insert(id, (cb.clone(), bid));
+    }
+    tracing::info!(id, %origin, ?kind, "js dialog");
+    emit_js_dialog(crate::js_dialog::Event::Open(crate::js_dialog::Ipc {
+        id,
+        tab_id,
+        origin,
+        kind,
+        message,
+        default_prompt,
+    }));
+    1
+}
+
+cef::wrap_find_handler! {
+    pub struct BrowserFindHandler {}
+
+    impl FindHandler {
+        fn on_find_result(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _identifier: ::std::os::raw::c_int,
+            count: ::std::os::raw::c_int,
+            _selection_rect: Option<&cef::Rect>,
+            active_match_ordinal: ::std::os::raw::c_int,
+            final_update: ::std::os::raw::c_int,
+        ) {
+            if final_update == 0 {
+                return;
+            }
+            if let Some(tx) = &cef_state().ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::FindResult(
+                    crate::engine::FindResult {
+                        count,
+                        ordinal: active_match_ordinal,
+                    },
+                ));
+            }
+        }
+    }
+}
+
+fn cancel_js_dialogs(browser_id: Option<i32>) {
+    let state = cef_state();
+    let mut ids = Vec::new();
+    let mut cbs = Vec::new();
+    state
+        .pending_js_dialog
+        .borrow_mut()
+        .retain(|id, (cb, bid)| {
+            if browser_id.is_none_or(|want| *bid == want) {
+                ids.push(*id);
+                cbs.push(cb.clone());
+                false
+            } else {
+                true
+            }
+        });
+    for cb in cbs {
+        continue_js_dialog(&cb, false, "");
+    }
+    if !ids.is_empty() {
+        emit_js_dialog(crate::js_dialog::Event::Reset { ids });
+    }
+}
+
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
@@ -2052,6 +2418,8 @@ cef::wrap_client! {
         pub request_handler: cef::RequestHandler,
         pub context_menu_handler: cef::ContextMenuHandler,
         pub permission_handler: cef::PermissionHandler,
+        pub jsdialog_handler: cef::JsdialogHandler,
+        pub find_handler: cef::FindHandler,
     }
 
     impl Client {
@@ -2085,6 +2453,14 @@ cef::wrap_client! {
 
         fn permission_handler(&self) -> Option<cef::PermissionHandler> {
             Some(self.permission_handler.clone())
+        }
+
+        fn jsdialog_handler(&self) -> Option<cef::JsdialogHandler> {
+            Some(self.jsdialog_handler.clone())
+        }
+
+        fn find_handler(&self) -> Option<cef::FindHandler> {
+            Some(self.find_handler.clone())
         }
     }
 }
@@ -2304,6 +2680,20 @@ cef::wrap_task! {
 }
 
 cef::wrap_task! {
+    pub struct DevToolsOpenTask {}
+
+    impl Task {
+        fn execute(&self) {
+            let state = cef_state();
+            let jobs = std::mem::take(&mut *state.devtools_jobs.lock().unwrap());
+            for job in jobs {
+                create_devtools_browser(&state, job);
+            }
+        }
+    }
+}
+
+cef::wrap_task! {
     pub struct CookieFlushTask {}
 
     impl Task {
@@ -2369,6 +2759,14 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::Focus(focused) => {
+            if focused {
+                state.devtools_focused.set(false);
+                if let Some(dt) = state.devtools.borrow().as_ref() {
+                    if let Some(host) = dt.tab.browser.host() {
+                        host.set_focus(0);
+                    }
+                }
+            }
             if let Some(tab) = active_tab(state) {
                 if let Some(host) = tab.browser.host() {
                     host.set_focus(if focused { 1 } else { 0 });
@@ -2388,8 +2786,17 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             }
         }
         Cmd::Edit(edit) => {
-            if let Some(tab) = active_tab(state) {
-                if let Some(frame) = tab.browser.main_frame() {
+            let browser = if state.devtools_focused.get() {
+                state
+                    .devtools
+                    .borrow()
+                    .as_ref()
+                    .map(|d| d.tab.browser.clone())
+            } else {
+                active_tab(state).map(|t| t.browser.clone())
+            };
+            if let Some(browser) = browser {
+                if let Some(frame) = browser.main_frame() {
                     use crate::engine::EditCmd;
                     match edit {
                         EditCmd::Copy => frame.copy(),
@@ -2406,9 +2813,18 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             // Chrome already read the Wayland clipboard. Insert once in the
             // focused field — `eval_js_all_frames` would triple-paste when
             // main == focused == identifier list.
-            if let Some(tab) = active_tab(state) {
+            let browser = if state.devtools_focused.get() {
+                state
+                    .devtools
+                    .borrow()
+                    .as_ref()
+                    .map(|d| d.tab.browser.clone())
+            } else {
+                active_tab(state).map(|t| t.browser.clone())
+            };
+            if let Some(browser) = browser {
                 let script = crate::paste_js::paste_into_focused_script(&text);
-                eval_js_focused(&tab.browser, &script);
+                eval_js_focused(&browser, &script);
             }
         }
         Cmd::PasteImage {
@@ -2426,7 +2842,8 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             // Chromium MEDIASTREAM_* in lockstep so permissions.query
             // matches our Allow / Block.
             apply_stored_media_content_settings();
-            if let Some(cb) = state.pending_permission.borrow_mut().remove(&prompt_id) {
+            let cb = state.pending_permission.borrow_mut().remove(&prompt_id);
+            if let Some(cb) = cb {
                 cb.cont(if granted {
                     cef::PermissionRequestResult::ACCEPT
                 } else {
@@ -2436,11 +2853,42 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         }
         Cmd::MediaPermission { req_id, granted } => {
             apply_stored_media_content_settings();
-            if let Some((cb, bits)) = state.pending_media.borrow_mut().remove(&req_id) {
+            let pending = state.pending_media.borrow_mut().remove(&req_id);
+            if let Some((cb, bits)) = pending {
                 if granted {
                     cb.cont(bits);
                 } else {
                     cb.cancel();
+                }
+            }
+        }
+        Cmd::JsDialog { id, success, input } => {
+            // Drop the RefCell borrow before Continue — CEF re-enters
+            // OnResetDialogState, which also mutates this map.
+            let cb = state.pending_js_dialog.borrow_mut().remove(&id);
+            if let Some((cb, _)) = cb {
+                tracing::info!(id, success, "js dialog continue");
+                continue_js_dialog(&cb, success, &input);
+            } else {
+                tracing::warn!(id, success, "js dialog continue: no pending callback");
+            }
+        }
+        Cmd::Find {
+            text,
+            forward,
+            next,
+        } => {
+            if let Some(tab) = active_tab(state) {
+                if let Some(host) = tab.browser.host() {
+                    let needle: cef::CefString = text.as_str().into();
+                    host.find(Some(&needle), forward as _, 0, next as _);
+                }
+            }
+        }
+        Cmd::StopFind { clear } => {
+            if let Some(tab) = active_tab(state) {
+                if let Some(host) = tab.browser.host() {
+                    host.stop_finding(clear as _);
                 }
             }
         }
@@ -2475,7 +2923,53 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             inspect_x,
             inspect_y,
         } => {
-            open_dev_tools_tab(state, &panel, inspect_x, inspect_y);
+            open_dev_tools(state, &panel, inspect_x, inspect_y);
+        }
+        Cmd::ResizeDevTools {
+            width,
+            height,
+            scale: _,
+        } => {
+            let prev = *state.devtools_size.lock().unwrap();
+            if prev != (width, height) {
+                *state.devtools_size.lock().unwrap() = (width.max(1), height.max(1));
+                if state.is_front.get() {
+                    if let Some(dt) = state.devtools.borrow().as_ref() {
+                        if let Some(host) = dt.tab.browser.host() {
+                            host.was_resized();
+                            host.invalidate(cef::PaintElementType::VIEW);
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::DevToolsInput(ev) => {
+            if let Some(dt) = state.devtools.borrow().as_ref() {
+                if let Some(host) = dt.tab.browser.host() {
+                    dispatch_input(state, &host, ev);
+                }
+            }
+        }
+        Cmd::DevToolsFocus(focused) => {
+            state.devtools_focused.set(focused);
+            if let Some(dt) = state.devtools.borrow().as_ref() {
+                if let Some(host) = dt.tab.browser.host() {
+                    host.set_focus(if focused { 1 } else { 0 });
+                    if focused {
+                        host.invalidate(cef::PaintElementType::VIEW);
+                    }
+                }
+            }
+            if focused {
+                if let Some(tab) = active_tab(state) {
+                    if let Some(host) = tab.browser.host() {
+                        host.set_focus(0);
+                    }
+                }
+            }
+        }
+        Cmd::CloseDevTools => {
+            close_devtools_session(state);
         }
         Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
@@ -2658,6 +3152,141 @@ cef::wrap_download_image_callback! {
             }
         }
     }
+}
+
+fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32, u32) {
+    if let Some(b) = browser {
+        if is_devtools_browser(state, b.identifier()) {
+            return *state.devtools_size.lock().unwrap();
+        }
+    }
+    *state.size.lock().unwrap()
+}
+
+fn is_devtools_browser(state: &CefThreadState, browser_id: i32) -> bool {
+    state
+        .devtools
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.tab.browser_id == browser_id)
+}
+
+fn with_paint_tab<R>(
+    state: &CefThreadState,
+    browser_id: i32,
+    f: impl FnOnce(&CefTabState) -> R,
+) -> Option<R> {
+    {
+        let tabs = state.tabs.borrow();
+        if let Some(t) = tabs.iter().find(|t| t.browser_id == browser_id) {
+            return Some(f(t));
+        }
+    }
+    let dt = state.devtools.borrow();
+    dt.as_ref()
+        .filter(|d| d.tab.browser_id == browser_id)
+        .map(|d| f(&d.tab))
+}
+
+fn emit_devtools(ev: crate::engine::DevToolsEvent) {
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::DevTools(ev));
+    }
+}
+
+fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
+    let bid = browser.identifier();
+    let inspected = state
+        .pending_devtools_for
+        .take()
+        .or_else(|| Some(state.active.get()))
+        .filter(|id| id.0 != u64::MAX)
+        .unwrap_or_else(|| state.active.get());
+    if inspected.0 == u64::MAX {
+        tracing::warn!("ShowDevTools: inspector created with no inspected tab");
+        if let Some(host) = browser.host() {
+            host.close_browser(1);
+        }
+        return;
+    }
+    if let Some(old) = state.devtools.borrow_mut().take() {
+        if old.tab.browser_id != bid {
+            if let Some(host) = old.tab.browser.host() {
+                host.close_browser(1);
+            }
+            emit_devtools(crate::engine::DevToolsEvent::Closed {
+                tab_id: old.inspected,
+            });
+        }
+    }
+    let paint_id = mint_engine_tab_id(state);
+    let tab = CefTabState {
+        id: paint_id,
+        browser_id: bid,
+        browser: browser.clone(),
+        url: Arc::new(Mutex::new(String::from("devtools://devtools"))),
+        title: Arc::new(Mutex::new(String::from("DevTools"))),
+        is_loading: Cell::new(false),
+        can_go_back: Cell::new(false),
+        can_go_forward: Cell::new(false),
+        load_progress: Cell::new(0.0),
+        last_frame: RefCell::new(None),
+        paint_bufs: RefCell::new(PixelRing::default()),
+        popup: RefCell::new(OsrPopup::default()),
+    };
+    if let Some(host) = tab.browser.host() {
+        let show = inspected == state.active.get() && state.is_front.get();
+        set_host_hidden(&host, !show);
+        if show {
+            host.was_resized();
+            host.invalidate(cef::PaintElementType::VIEW);
+        }
+    }
+    *state.devtools.borrow_mut() = Some(DevToolsSession { inspected, tab });
+    emit_devtools(crate::engine::DevToolsEvent::Opened {
+        tab_id: inspected,
+        paint_id,
+    });
+    tracing::info!(
+        ?inspected,
+        ?paint_id,
+        browser_id = bid,
+        "DevTools attached (docked, not a tab)"
+    );
+}
+
+fn close_devtools_session(state: &CefThreadState) {
+    let Some(dt) = state.devtools.borrow_mut().take() else {
+        return;
+    };
+    state.devtools_focused.set(false);
+    state.pending_devtools_for.set(None);
+    let inspected = dt.inspected;
+    if let Some(host) = dt.tab.browser.host() {
+        host.close_browser(1);
+    }
+    emit_devtools(crate::engine::DevToolsEvent::Closed { tab_id: inspected });
+    tracing::info!(?inspected, "DevTools closed");
+}
+
+fn close_devtools_browser(state: &CefThreadState, browser_id: i32) -> bool {
+    let matches = state
+        .devtools
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.tab.browser_id == browser_id);
+    if !matches {
+        return false;
+    }
+    let Some(dt) = state.devtools.borrow_mut().take() else {
+        return true;
+    };
+    state.devtools_focused.set(false);
+    emit_devtools(crate::engine::DevToolsEvent::Closed {
+        tab_id: dt.inspected,
+    });
+    tracing::info!(inspected = ?dt.inspected, "DevTools browser closed");
+    true
 }
 
 fn tab_state_by_id(state: &CefThreadState, id: TabId) -> Option<std::cell::Ref<'_, CefTabState>> {
@@ -2970,41 +3599,288 @@ fn blit_ghost(dst: &mut [u8], dw: u32, dh: u32, ghost: &DragGhost, cx: i32, cy: 
     }
 }
 
-/// DevTools as a chrome tab. The helper is headless — a windowed
-/// `show_dev_tools` has no Wayland surface. Remote-debugging frontend
-/// loads in a normal OSR tab instead.
-fn open_dev_tools_tab(
+/// Docked inspector: a **normal OSR browser** loading the bundled frontend
+/// over the helper's remote-debugging websocket.
+///
+/// Chrome-runtime CEF 147 `ShowDevTools` **cannot** be windowless
+/// (`chrome_browser_delegate.cc`: "Windowless rendering is not supported
+/// for this DevTools window") and instead maps a native Ozone toplevel
+/// (`targetType=tab` + appspot `remoteBase`) that never `on_paint`s.
+fn open_dev_tools(
     state: &CefThreadState,
     panel: &str,
     inspect_x: Option<i32>,
     inspect_y: Option<i32>,
 ) {
-    let port = state.debug_port.get();
-    if port == 0 {
-        tracing::warn!("ShowDevTools: remote debugging port not set");
-        return;
-    }
-    let page_id = state.active.get();
-    let page_url = tab_state_by_id(state, page_id).map(|t| t.url.lock().unwrap().clone());
-    let Some(frontend) = devtools_frontend_url(port, page_url.as_deref(), panel) else {
-        tracing::warn!(port, url = ?page_url, "ShowDevTools: no inspectable page on /json");
+    let Some(tab) = active_tab(state) else {
+        tracing::warn!("ShowDevTools: no active tab");
         return;
     };
-    if let (Some(x), Some(y)) = (inspect_x, inspect_y) {
-        state.pending_inspect.set(Some((x, y, page_id)));
-        if let Some(tab) = tab_state_by_id(state, page_id) {
-            if let Some(host) = tab.browser.host() {
-                inspect_element_via_cdp(&host, x, y);
+    let tab_id = tab.id;
+    let page_url = tab.url.lock().unwrap().clone();
+    drop(tab);
+
+    let inspect = matches!((inspect_x, inspect_y), (Some(_), Some(_)));
+    let attached = state.devtools.borrow().as_ref().map(|d| d.inspected);
+    match attached {
+        Some(id) if id == tab_id && !inspect => {
+            close_devtools_session(state);
+            return;
+        }
+        Some(id) if id != tab_id => close_devtools_session(state),
+        _ => {}
+    }
+
+    let port = state.debug_port.get();
+    if port == 0 {
+        tracing::warn!("ShowDevTools: no remote-debugging-port");
+        return;
+    }
+    // Chromium serves /json on this process. A blocking GET on the CEF
+    // UI thread deadlocks (empty body / timeout). Fetch off-thread.
+    let jobs = state.devtools_jobs.clone();
+    let panel = panel.to_string();
+    let _ = std::thread::Builder::new()
+        .name("devtools-json".into())
+        .spawn(move || {
+            let Some(frontend) = inspect_frontend_url_retry(port, &page_url, &panel) else {
+                return;
+            };
+            jobs.lock().unwrap().push(DevToolsOpenJob {
+                tab_id,
+                frontend,
+                inspect_x,
+                inspect_y,
+            });
+            let mut task = DevToolsOpenTask::new();
+            let _ = cef::post_task(
+                cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+                Some(&mut task),
+            );
+        });
+}
+
+fn create_devtools_browser(state: &CefThreadState, job: DevToolsOpenJob) {
+    if state.shutting_down.get() {
+        return;
+    }
+    if let (Some(x), Some(y)) = (job.inspect_x, job.inspect_y) {
+        state.pending_inspect.set(Some((x, y, job.tab_id)));
+    }
+    let mut window_info = cef::WindowInfo::default();
+    let (w, h) = *state.devtools_size.lock().unwrap();
+    apply_osr_window_info(&mut window_info, w, h);
+
+    let mut browser_settings = cef::BrowserSettings::default();
+    browser_settings.background_color = 0xFF1E_1E1E;
+    browser_settings.windowless_frame_rate = 60;
+
+    let mut client = make_osr_client();
+    state.pending_created_id.set(None);
+    state.pending_devtools_for.set(Some(job.tab_id));
+    let url_c = cef::CefString::from(job.frontend.as_str());
+    let created = cef::browser_host_create_browser_sync(
+        Some(&window_info),
+        Some(&mut client),
+        Some(&url_c),
+        Some(&browser_settings),
+        None,
+        None,
+    );
+    if created.is_none() {
+        state.pending_devtools_for.set(None);
+        tracing::warn!(
+            frontend = %job.frontend,
+            "ShowDevTools: create_browser_sync returned None"
+        );
+        return;
+    }
+    tracing::info!(
+        inspect = job.inspect_x.is_some(),
+        tab_id = ?job.tab_id,
+        frontend = %job.frontend,
+        "ShowDevTools: OSR frontend over debug websocket"
+    );
+}
+
+fn inspect_frontend_url_retry(port: u16, page_url: &str, panel: &str) -> Option<String> {
+    let mut last_err = String::new();
+    for attempt in 0..8 {
+        match http_get_local(port, "/json/list") {
+            Ok(body) => {
+                if let Some(url) = frontend_url_from_json_list(&body, page_url, panel) {
+                    return Some(url);
+                }
+                last_err = format!(
+                    "no matching page in {} bytes: {}",
+                    body.len(),
+                    body.chars().take(180).collect::<String>()
+                );
             }
+            Err(e) => last_err = e,
+        }
+        if attempt + 1 < 8 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
-    if let Some(tx) = &state.ipc_events {
-        let _ = tx.send(crate::cef::ipc::FromEngine::OpenBackgroundTab {
-            url: frontend.clone(),
-            activate: true,
-        });
+    tracing::warn!(port, %page_url, error = %last_err, "ShowDevTools: /json/list failed");
+    None
+}
+
+fn http_get_local(port: u16, path: &str) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::{Duration, Instant};
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // Off-thread: blocking connect. `connect_timeout` can leave the fd
+    // non-blocking; Chromium's debug socket then returns EAGAIN on the
+    // first read (same error as a receive timeout on Linux).
+    let mut s = TcpStream::connect(addr).map_err(|e| format!("connect: {e}"))?;
+    let _ = s.set_nonblocking(false);
+    let _ = s.set_nodelay(true);
+    let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(req.as_bytes())
+        .map_err(|e| format!("write: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    loop {
+        match s.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if json_array_slice(&String::from_utf8_lossy(&buf)).is_some() {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    if buf.is_empty() {
+                        return Err(format!("read: {e}"));
+                    }
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(format!("read: {e}")),
+        }
     }
-    tracing::info!(%frontend, panel, "DevTools frontend requested");
+    let text = String::from_utf8_lossy(&buf);
+    let raw = text
+        .split_once("\r\n\r\n")
+        .or_else(|| text.split_once("\n\n"))
+        .map(|(_, b)| b)
+        .unwrap_or(&text);
+    if raw.trim().is_empty() {
+        return Err(format!("no http body ({} bytes)", buf.len()));
+    }
+    Ok(decode_http_body(raw))
+}
+
+/// Strip Transfer-Encoding: chunked framing if present.
+fn decode_http_body(raw: &str) -> String {
+    if let Some(json) = json_array_slice(raw) {
+        return json.to_string();
+    }
+    if let Some(decoded) = decode_chunked(raw) {
+        if json_array_slice(&decoded).is_some() {
+            return decoded;
+        }
+    }
+    raw.to_string()
+}
+
+fn json_array_slice(s: &str) -> Option<&str> {
+    let start = s.find('[')?;
+    let end = s.rfind(']')?;
+    (end > start).then(|| &s[start..=end])
+}
+
+fn decode_chunked(raw: &str) -> Option<String> {
+    let mut rest = raw;
+    let mut out = String::new();
+    loop {
+        let (hex, after) = rest.split_once("\r\n")?;
+        let n = usize::from_str_radix(hex.trim(), 16).ok()?;
+        if n == 0 {
+            return Some(out);
+        }
+        if after.len() < n {
+            return None;
+        }
+        out.push_str(&after[..n]);
+        rest = after.get(n..)?;
+        rest = rest.strip_prefix("\r\n").unwrap_or(rest);
+    }
+}
+
+/// Pick the inspectable page websocket and point the **bundled** frontend
+/// at it (never appspot `remoteBase` / `targetType=tab`).
+fn frontend_url_from_json_list(body: &str, page_url: &str, panel: &str) -> Option<String> {
+    let json = json_array_slice(body).unwrap_or(body.trim());
+    let list: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let page_url = page_url.trim();
+    let mut fallback = None;
+    let mut ws = None;
+    for t in &list {
+        let ty = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let url = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        if crate::popup::is_devtools_url(url) {
+            continue;
+        }
+        let Some(w) = t.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !page_url.is_empty() && (url == page_url || url.starts_with(page_url)) {
+            ws = Some(w);
+            break;
+        }
+        if fallback.is_none() && (ty.is_empty() || ty == "page" || ty == "tab" || ty == "webview")
+        {
+            fallback = Some(w);
+        }
+    }
+    let ws = ws.or(fallback)?;
+    let ws = ws
+        .strip_prefix("ws://")
+        .or_else(|| ws.strip_prefix("wss://"))
+        .unwrap_or(ws);
+    let mut url = format!("devtools://devtools/bundled/devtools_app.html?ws={ws}");
+    if !panel.is_empty() {
+        url.push_str("&panel=");
+        url.push_str(panel);
+    }
+    Some(url)
+}
+
+#[cfg(test)]
+mod devtools_frontend_tests {
+    use super::frontend_url_from_json_list;
+
+    #[test]
+    fn picks_matching_page_and_uses_bundled_ws() {
+        let json = r#"[{"description":"","devtoolsFrontendUrl":"https://chrome-devtools-frontend.appspot.com/serve_file/@abc/inspector.html?panel=elements","id":"A","title":"Pay","type":"page","url":"https://example.com/pay","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/A"},{"id":"B","type":"page","url":"devtools://devtools/bundled/devtools_app.html","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/B"}]"#;
+        let u = frontend_url_from_json_list(json, "https://example.com/pay", "console").unwrap();
+        assert!(u.starts_with("devtools://devtools/bundled/devtools_app.html?ws=127.0.0.1:9222/devtools/page/A"));
+        assert!(u.contains("&panel=console"));
+        assert!(!u.contains("appspot"));
+        assert!(!u.contains("targetType=tab"));
+    }
+
+    #[test]
+    fn extracts_json_from_chunked_body() {
+        let chunked = "3e8\r\n[{\"type\":\"page\",\"url\":\"https://example.com/pay\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1:9/devtools/page/A\"}]\r\n0\r\n\r\n";
+        let u = frontend_url_from_json_list(chunked, "https://example.com/pay", "console").unwrap();
+        assert!(u.contains("devtools/page/A"));
+    }
 }
 
 fn inspect_element_via_cdp(host: &cef::BrowserHost, x: i32, y: i32) {
@@ -3027,69 +3903,6 @@ fn pick_debug_port() -> u16 {
         .and_then(|l| l.local_addr().ok())
         .map(|a| a.port())
         .unwrap_or(9222)
-}
-
-fn http_get_local(port: u16, path: &str) -> Option<String> {
-    use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-        .ok()?;
-    // Connection: close so Chromium ends the body (HTTP/1.1 keep-alive
-    // left us hanging until the 400ms timeout with a truncated /json).
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    )
-    .ok()?;
-    let mut buf = Vec::new();
-    if let Err(e) = stream.read_to_end(&mut buf) {
-        if buf.is_empty() {
-            tracing::warn!(error = %e, port, "ShowDevTools: /json read failed");
-            return None;
-        }
-    }
-    let text = String::from_utf8_lossy(&buf);
-    let body = text.split("\r\n\r\n").nth(1)?.to_string();
-    if body.trim().is_empty() {
-        tracing::warn!(port, bytes = buf.len(), "ShowDevTools: empty /json body");
-        return None;
-    }
-    Some(body)
-}
-
-fn devtools_frontend_url(port: u16, want_url: Option<&str>, panel: &str) -> Option<String> {
-    let body = http_get_local(port, "/json")?;
-    let targets: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
-    let page = targets
-        .iter()
-        .find(|t| {
-            t.get("type").and_then(|v| v.as_str()) == Some("page")
-                && t.get("url")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|u| !u.contains("/devtools/inspector.html"))
-                && want_url.is_none_or(|want| {
-                    t.get("url")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|u| u == want || u.starts_with(want) || want.starts_with(u))
-                })
-        })
-        .or_else(|| {
-            targets.iter().find(|t| {
-                t.get("type").and_then(|v| v.as_str()) == Some("page")
-                    && t.get("url")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|u| !u.contains("/devtools/inspector.html"))
-            })
-        })?;
-    let ws = page.get("webSocketDebuggerUrl")?.as_str()?;
-    let ws_path = ws
-        .strip_prefix("ws://")
-        .or_else(|| ws.strip_prefix("ws:"))
-        .unwrap_or(ws);
-    Some(format!(
-        "http://127.0.0.1:{port}/devtools/inspector.html?ws={ws_path}&panel={panel}"
-    ))
 }
 
 fn activate_tab(state: &CefThreadState, id: TabId) {
@@ -3139,6 +3952,16 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
                 host.was_resized();
             }
             host.invalidate(cef::PaintElementType::VIEW);
+        }
+    }
+    if let Some(dt) = state.devtools.borrow().as_ref() {
+        if let Some(host) = dt.tab.browser.host() {
+            let show = dt.inspected == id && state.is_front.get();
+            set_host_hidden(&host, !show);
+            if show {
+                host.was_resized();
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
         }
     }
     tracing::debug!(?id, prev = ?prev, "CEF active tab");
@@ -3222,12 +4045,18 @@ fn hide_all_tabs(state: &CefThreadState) {
             set_host_hidden(&host, true);
         }
     }
+    if let Some(dt) = state.devtools.borrow().as_ref() {
+        if let Some(host) = dt.tab.browser.host() {
+            set_host_hidden(&host, true);
+        }
+    }
 }
 
 fn set_front(state: &CefThreadState, front: bool) {
     let was = state.is_front.get();
     state.is_front.set(front);
     if !front {
+        cancel_js_dialogs(None);
         hide_all_tabs(state);
         tracing::debug!("helper parked (not front)");
         return;
@@ -3325,9 +4154,8 @@ fn cef_evict_parks(state: &CefThreadState) {
 
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {
     let mut window_info = cef::WindowInfo::default();
-    window_info.windowless_rendering_enabled = 1;
-    window_info.external_begin_frame_enabled = 0;
-    window_info.shared_texture_enabled = 0;
+    let (w, h) = *state.size.lock().unwrap();
+    apply_osr_window_info(&mut window_info, w, h);
 
     let mut browser_settings = cef::BrowserSettings::default();
     browser_settings.background_color = 0xFFFF_FFFF;
@@ -3412,6 +4240,14 @@ fn push_tab(
 }
 
 fn close_tab(state: &CefThreadState, id: TabId) {
+    if state
+        .devtools
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.inspected == id)
+    {
+        close_devtools_session(state);
+    }
     let removed = {
         let mut tabs = state.tabs.borrow_mut();
         let Some(pos) = tabs.iter().position(|t| t.id == id) else {
@@ -3509,13 +4345,20 @@ fn request_chrome_tab(state: &CefThreadState, url: String, activate: bool) {
 /// Helper-minted ids must not collide with chrome session tabs. `next_id`
 /// is bumped on `OpenTab`, but skip any leftover that is still live.
 fn mint_engine_tab_id(state: &CefThreadState) -> TabId {
-    let max_existing = state
+    let max_tabs = state
         .tabs
         .borrow()
         .iter()
         .map(|t| t.id.0)
         .max()
         .unwrap_or(0);
+    let max_dt = state
+        .devtools
+        .borrow()
+        .as_ref()
+        .map(|d| d.tab.id.0)
+        .unwrap_or(0);
+    let max_existing = max_tabs.max(max_dt);
     loop {
         let id = state
             .next_id
@@ -3775,6 +4618,10 @@ fn initialize_cef(app_id: &'static str) {
         "CEF root_cache_path + cache_path (active profile)"
     );
 
+    let port = pick_debug_port();
+    cef_state().debug_port.set(port);
+    tracing::info!(port, "CEF remote debugging");
+
     // Leak CEF Settings so CefString UTF-16 buffers for paths stay valid for
     // the whole process (cef-rs shallow-copies string structs on into()).
     let settings = Box::leak(Box::new({
@@ -3795,16 +4642,13 @@ fn initialize_cef(app_id: &'static str) {
         // Silence Chromium's WARNING/ERROR stderr noise (UPower probe,
         // first-run warnings, etc.). FATAL still surfaces.
         settings.log_severity = cef::LogSeverity::DISABLE;
-        let port = pick_debug_port();
         settings.remote_debugging_port = port as _;
-        cef_state().debug_port.set(port);
-        tracing::info!(port, "CEF remote debugging");
         settings
     }));
 
     let args = cef::args::Args::new();
     let main_args = args.as_main_args();
-    let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new());
+    let mut app = BrowserCefApp::new(app_id, BrowserRenderProcessHandler::new(), port);
 
     let rc = cef::initialize(
         Some(main_args),

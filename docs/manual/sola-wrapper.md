@@ -39,6 +39,11 @@ Starting the huddle then asks for the mic (and camera if you turn it on) with an
 
 USB cameras show up through V4L2 (`/dev/video*`). The seat user can open those nodes (logind `uaccess`). Add your user to the `video` group if a non-seat tool cannot. The LifeCam (or similar) built-in microphone is a normal PipeWire source — the shell volume chip lists it.
 
+## JavaScript dialogs
+
+`alert()`, `confirm()`, and `prompt()` show as a kit dialog over the page
+(same overlay as Allow / Block). Leave-page confirms use Leave / Stay.
+
 ## Notifications
 
 A page that calls `Notification.requestPermission()` gets an Allow / Block dialog in the wrapper window. The choice is stored at `~/.config/sola/wrapper/<id>/notifications.json`. After **Allow**, `new Notification(title, { body })` is a Sola desk card (top-right under the menubar), not a banner over the page. Click the card to raise this wrapper. Sites you have not allowed cannot notify.

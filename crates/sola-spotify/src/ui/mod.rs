@@ -1,51 +1,60 @@
 //! Kit UI: library rail, pages, player bar.
 
+mod nav;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::mouse;
 use iced::widget::image::Handle as ImageHandle;
 use iced::widget::{
-    Space, button, column, container, image as iced_image, row, scrollable, slider,
+    Space, button, column, container, image as iced_image, operation, rich_text, row, scrollable,
+    slider, span, stack,
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Event as IcedEvent, Length, Padding, Subscription,
-    Task, Theme,
+    Alignment, Background, Border, Color, Element, Event as IcedEvent, Length, Padding,
+    Subscription, Task, Theme,
 };
 use sola_bus::Message;
 use sola_bus::topics::Topic;
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::icon::{icon_handle, icon_svg};
+use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+use sola_kit::components::popover::{Placement, popover, popover_anchored};
 use sola_kit::components::style::{
-    CHROME_SURFACE, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
-    hairline, mix_white,
+    CHROME_SURFACE, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, hairline,
+    mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
-use sola_kit::components::popover::{Placement, popover, popover_anchored};
 use sola_kit::components::{SidebarItem, SidebarSection, button as kit_btn, sidebar};
+use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-use crate::api::models::{Album, Artist, Device, Playlist, Track, pick_image};
 use crate::api::PlayRequest as ApiPlay;
+use crate::api::models::{
+    Album, Artist, Device, Playlist, Track, format_added_at, generated_sort_key, pick_image,
+    playlists_for_add,
+};
 use crate::bridge;
-use crate::cache::{self, Skipped};
+use crate::cache::{self, Liked, Skipped};
 use crate::paths::AppDirs;
 use crate::player::Playback;
 use crate::settings::Settings;
-use crate::worker::{
-    AuthStatus, Cmd, Event, LocalPlayback, NowPlaying, Page, PageBody,
-};
+use crate::worker::{AuthStatus, Cmd, Event, LocalPlayback, NowPlaying, Page, PageBody};
+
+use self::nav::{NavEntry, NavHistory};
 
 const APP_ID: &str = "sola-spotify";
 const SIDEBAR_W: f32 = 220.0;
-const PLAYER_H: f32 = 76.0;
+const PLAYER_H: f32 = 84.0;
 const COVER_ROW: f32 = 40.0;
 const COVER_TILE: f32 = 148.0;
 const COVER_PLAYER: f32 = 56.0;
+const MADE_SHELF: usize = 8;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -56,6 +65,8 @@ pub enum Msg {
     SignOut,
     PlayHere,
     Open(Page),
+    Back,
+    Forward,
     SearchChanged(String),
     SearchSubmit,
     PlayTrack {
@@ -75,11 +86,23 @@ pub enum Msg {
     Repeat,
     Like,
     SaveTrack(String),
-    SkipTrack { uri: String },
+    SkipTrack {
+        uri: String,
+    },
+    ToggleAddTo(String),
+    AddToFilter(String),
+    AddToPlaylist {
+        id: String,
+        name: String,
+    },
+    AddToSubmit,
+    CreatePlaylist,
+    CloseAddTo,
     Transfer(String),
     ToggleDevices,
     LoadMore,
     DismissError,
+    DismissNotice,
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -98,6 +121,8 @@ struct Icons {
     pause: iced::widget::svg::Handle,
     next: iced::widget::svg::Handle,
     prev: iced::widget::svg::Handle,
+    back: iced::widget::svg::Handle,
+    forward: iced::widget::svg::Handle,
     shuffle: iced::widget::svg::Handle,
     repeat: iced::widget::svg::Handle,
     speaker: iced::widget::svg::Handle,
@@ -105,6 +130,7 @@ struct Icons {
     settings: iced::widget::svg::Handle,
     plus: iced::widget::svg::Handle,
     minus: iced::widget::svg::Handle,
+    list_plus: iced::widget::svg::Handle,
     check: iced::widget::svg::Handle,
 }
 
@@ -121,6 +147,8 @@ impl Icons {
             pause: icon_handle("lucide/pause"),
             next: icon_handle("lucide/skip-forward"),
             prev: icon_handle("lucide/skip-back"),
+            back: icon_handle("lucide/chevron-left"),
+            forward: icon_handle("lucide/chevron-right"),
             shuffle: icon_handle("lucide/shuffle"),
             repeat: icon_handle("lucide/repeat"),
             speaker: icon_handle("lucide/speaker"),
@@ -128,6 +156,7 @@ impl Icons {
             settings: icon_handle("lucide/settings"),
             plus: icon_handle("lucide/circle-plus"),
             minus: icon_handle("lucide/circle-minus"),
+            list_plus: icon_handle("lucide/list-plus"),
             check: icon_handle("lucide/circle-check"),
         }
     }
@@ -143,6 +172,7 @@ pub struct App {
     premium: Option<bool>,
     local: LocalPlayback,
     page: Page,
+    nav: NavHistory,
     body: Option<PageBody>,
     page_cache: HashMap<Page, PageBody>,
     now: NowPlaying,
@@ -160,6 +190,20 @@ pub struct App {
     player_art_hold: Option<ImageHandle>,
     skipped: Skipped,
     dirs: AppDirs,
+    /// Last focused/played track — graphite lift, independent of live playback.
+    selected_uri: Option<String>,
+    add_to: Option<AddTo>,
+    notice: Option<Notice>,
+}
+
+struct AddTo {
+    uri: String,
+    query: String,
+}
+
+struct Notice {
+    text: String,
+    until: std::time::Instant,
 }
 
 impl Default for App {
@@ -173,7 +217,11 @@ impl App {
         let dirs = AppDirs::discover();
         let settings = Settings::load(&dirs);
         let skipped = Skipped::load(&dirs);
-        let page = Page::decode(&settings.last_page).unwrap_or(Page::Home);
+        let fallback = Page::decode(&settings.last_page).unwrap_or(Page::Home);
+        let nav = NavHistory::from_saved(&settings.nav, fallback);
+        let current = nav.current().clone();
+        let page = current.page.clone();
+        let last_track = settings.last_track.clone();
         let mut app = Self {
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
@@ -184,6 +232,7 @@ impl App {
             premium: None,
             local: LocalPlayback::Unavailable,
             page: page.clone(),
+            nav,
             body: None,
             page_cache: HashMap::new(),
             now: NowPlaying::default(),
@@ -192,7 +241,7 @@ impl App {
             art: HashMap::new(),
             art_inflight: HashSet::new(),
             saved: HashMap::new(),
-            search: String::new(),
+            search: current.search,
             devices_open: false,
             error: None,
             settings,
@@ -201,7 +250,13 @@ impl App {
             player_art_hold: None,
             skipped,
             dirs,
+            selected_uri: (!last_track.is_empty()).then_some(last_track),
+            add_to: None,
+            notice: None,
         };
+        for uri in Liked::load(&app.dirs).uris {
+            app.saved.insert(uri, true);
+        }
         if let Some(home) = app.read_page_disk(&Page::Home) {
             if let PageBody::Home { playlists, .. } = &home {
                 app.playlists = playlists.clone();
@@ -235,7 +290,10 @@ impl App {
     }
 
     pub fn boot() -> (Self, Task<Msg>) {
-        (Self::from_disk(), sola_kit::window_ready_task(Msg::WindowReady))
+        (
+            Self::from_disk(),
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
     }
 
     pub fn title(&self) -> String {
@@ -257,9 +315,13 @@ impl App {
             IcedEvent::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 key_msg(key, modifiers)
             }
+            IcedEvent::Mouse(mouse::Event::ButtonPressed(mouse::Button::Back)) => Some(Msg::Back),
+            IcedEvent::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => {
+                Some(Msg::Forward)
+            }
             _ => None,
         });
-        let tick = if self.now.playback == Playback::Playing {
+        let tick = if self.now.playback == Playback::Playing || self.notice.is_some() {
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick)
         } else {
             Subscription::none()
@@ -290,6 +352,14 @@ impl App {
             }
             Msg::Open(page) => {
                 self.navigate(page);
+                Task::none()
+            }
+            Msg::Back => {
+                self.go_back();
+                Task::none()
+            }
+            Msg::Forward => {
+                self.go_forward();
                 Task::none()
             }
             Msg::SearchChanged(s) => {
@@ -354,8 +424,8 @@ impl App {
                         position_ms: pos,
                     }));
                     self.now.position_ms = pos;
-                    self.playing_since = (self.now.playback == Playback::Playing)
-                        .then(std::time::Instant::now);
+                    self.playing_since =
+                        (self.now.playback == Playback::Playing).then(std::time::Instant::now);
                 }
                 Task::none()
             }
@@ -392,6 +462,30 @@ impl App {
                 self.toggle_skip(uri);
                 Task::none()
             }
+            Msg::ToggleAddTo(uri) => self.toggle_add_to(uri),
+            Msg::AddToFilter(query) => {
+                if let Some(add_to) = &mut self.add_to {
+                    add_to.query = query;
+                }
+                Task::none()
+            }
+            Msg::AddToPlaylist { id, name } => {
+                self.commit_add_to(id, name);
+                Task::none()
+            }
+            Msg::AddToSubmit => {
+                self.submit_add_to();
+                Task::none()
+            }
+            Msg::CreatePlaylist => {
+                self.create_playlist_from_picker();
+                Task::none()
+            }
+            Msg::CloseAddTo => {
+                self.add_to = None;
+                self.devices_open = false;
+                Task::none()
+            }
             Msg::Transfer(id) => {
                 self.devices_open = false;
                 if matches!(&self.local, LocalPlayback::Ready { device_id } if *device_id == id)
@@ -414,6 +508,7 @@ impl App {
                 Task::none()
             }
             Msg::ToggleDevices => {
+                self.add_to = None;
                 self.devices_open = !self.devices_open;
                 if self.devices_open {
                     bridge::send(Cmd::RefreshDevices);
@@ -428,9 +523,13 @@ impl App {
                 self.error = None;
                 Task::none()
             }
+            Msg::DismissNotice => {
+                self.notice = None;
+                Task::none()
+            }
             Msg::WindowReady(id) => {
                 self.window_id = id;
-                Task::none()
+                self.snap_selected()
             }
             Msg::TitleDrag => sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
@@ -438,16 +537,53 @@ impl App {
                 bridge::send(Cmd::Shutdown);
                 iced::exit()
             }
-            Msg::Tick => Task::none(),
+            Msg::Tick => {
+                if let Some(notice) = &self.notice
+                    && notice.until <= std::time::Instant::now()
+                {
+                    self.notice = None;
+                }
+                Task::none()
+            }
         }
     }
 
     fn navigate(&mut self, page: Page) {
+        self.nav.push(page.clone(), self.search.clone());
+        self.show(page);
+    }
+
+    fn go_back(&mut self) {
+        if let Some(entry) = self.nav.back() {
+            self.restore(entry);
+        }
+    }
+
+    fn go_forward(&mut self) {
+        if let Some(entry) = self.nav.forward() {
+            self.restore(entry);
+        }
+    }
+
+    fn restore(&mut self, entry: NavEntry) {
+        if entry.page == Page::Search {
+            self.search = entry.search;
+        }
+        self.show(entry.page);
+    }
+
+    fn persist_settings(&mut self) {
+        self.settings.nav = self.nav.to_saved();
+        self.settings.save(&self.dirs);
+    }
+
+    fn show(&mut self, page: Page) {
+        self.add_to = None;
         self.page = page.clone();
         if page.persist_as_last() {
             self.settings.last_page = page.encode();
-            self.settings.save(&self.dirs);
         }
+        self.persist_settings();
         if let Some(cached) = self.page_cache.get(&page).cloned() {
             self.body = Some(cached);
         } else if let Some(cached) = self.read_page_disk(&page) {
@@ -469,6 +605,7 @@ impl App {
     fn body_matches(&self, page: &Page) -> bool {
         match (page, &self.body) {
             (Page::Home, Some(PageBody::Home { .. })) => true,
+            (Page::MadeForYou, Some(PageBody::Playlists { .. })) => true,
             (Page::Search, Some(PageBody::Search(_))) => true,
             (Page::Settings, Some(PageBody::Settings)) => true,
             (Page::Liked, Some(PageBody::Tracks { context_uri, .. })) => {
@@ -511,17 +648,22 @@ impl App {
     }
 
     fn play_now(&mut self, uri: &str, context: Option<String>) {
-        let snapshot = self.current_tracks().iter().find(|t| t.uri == uri).map(|t| {
-            (
-                t.name.clone(),
-                t.artist_names(),
-                t.album.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
-                t.image(300).map(str::to_string),
-                t.duration_ms,
-                t.uri.clone(),
-            )
-        });
+        let snapshot = self
+            .current_tracks()
+            .iter()
+            .find(|t| t.uri == uri)
+            .map(|t| {
+                (
+                    t.name.clone(),
+                    t.artist_names(),
+                    t.album.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+                    t.image(300).map(str::to_string),
+                    t.duration_ms,
+                    t.uri.clone(),
+                )
+            });
         if let Some((title, artists, album, art_url, duration_ms, track_uri)) = snapshot {
+            self.remember_track(&track_uri);
             self.pending_uri = Some(track_uri.clone());
             self.now.title = title;
             self.now.artists = artists;
@@ -575,7 +717,18 @@ impl App {
         if uri.is_empty() {
             return false;
         }
-        self.saved.get(uri).copied().unwrap_or(false)
+        if self.saved.get(uri).copied().unwrap_or(false) {
+            return true;
+        }
+        let Some(id) = uri.rsplit(':').next() else {
+            return false;
+        };
+        self.saved.get(id).copied().unwrap_or(false)
+            || self
+                .saved
+                .get(&format!("spotify:track:{id}"))
+                .copied()
+                .unwrap_or(false)
     }
 
     fn toggle_saved(&mut self, uri: &str) {
@@ -583,13 +736,177 @@ impl App {
             return;
         }
         let saved = !self.is_saved(uri);
-        self.saved.insert(uri.to_string(), saved);
-        if self.now.uri == uri {
-            self.now.saved = Some(saved);
-        }
+        self.remember_saved(uri, saved);
         bridge::send(Cmd::SetSaved {
             uri: uri.to_string(),
             saved,
+        });
+    }
+
+    fn toggle_add_to(&mut self, uri: String) -> Task<Msg> {
+        if uri.is_empty() {
+            return Task::none();
+        }
+        self.devices_open = false;
+        if self.add_to.as_ref().is_some_and(|open| open.uri == uri) {
+            self.add_to = None;
+            return Task::none();
+        }
+        self.add_to = Some(AddTo {
+            uri,
+            query: String::new(),
+        });
+        operation::focus(add_filter_id())
+    }
+
+    fn ranked_add_playlists(&self) -> Vec<&Playlist> {
+        let query = self
+            .add_to
+            .as_ref()
+            .map(|open| open.query.as_str())
+            .unwrap_or("");
+        playlists_for_add(
+            &self.playlists,
+            self.user.as_ref().map(|u| u.id.as_str()),
+            query,
+            Some(self.settings.last_playlist.as_str()),
+        )
+    }
+
+    fn submit_add_to(&mut self) {
+        if self.add_to.is_none() {
+            return;
+        }
+        if let Some(playlist) = self.ranked_add_playlists().first() {
+            let id = playlist.id.clone();
+            let name = playlist.name.clone();
+            self.commit_add_to(id, name);
+            return;
+        }
+        if self
+            .add_to
+            .as_ref()
+            .is_some_and(|open| open.query.trim().is_empty())
+        {
+            self.create_playlist_from_picker();
+        }
+    }
+
+    fn create_playlist_from_picker(&mut self) {
+        let Some(open) = self.add_to.take() else {
+            return;
+        };
+        if open.uri.is_empty() {
+            return;
+        }
+        self.show_notice("Added to New playlist");
+        bridge::send(Cmd::CreatePlaylist {
+            name: "New playlist".into(),
+            uris: vec![open.uri],
+        });
+    }
+
+    fn commit_add_to(&mut self, playlist_id: String, name: String) {
+        let Some(open) = self.add_to.take() else {
+            return;
+        };
+        if open.uri.is_empty() || playlist_id.is_empty() {
+            return;
+        }
+        self.apply_added(&playlist_id, &name, &[open.uri.clone()]);
+        bridge::send(Cmd::AddToPlaylist {
+            playlist_id,
+            name,
+            uris: vec![open.uri],
+        });
+    }
+
+    fn apply_added(&mut self, playlist_id: &str, name: &str, uris: &[String]) {
+        if playlist_id.is_empty() {
+            return;
+        }
+        self.settings.last_playlist = playlist_id.to_string();
+        self.persist_settings();
+        self.show_notice(format!("Added to {name}"));
+        let n = uris.len() as u32;
+        if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+            playlist.bump_track_total(n);
+        }
+        if self.page == Page::Playlist(playlist_id.to_string()) {
+            let snapshots: Vec<Track> = uris
+                .iter()
+                .filter_map(|uri| self.track_snapshot(uri))
+                .collect();
+            if let Some(PageBody::Tracks { items, total, .. }) = &mut self.body {
+                for track in snapshots {
+                    items.push(track);
+                    *total = total.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    fn finish_added(&mut self, playlist_id: &str, name: &str, uris: &[String]) {
+        if self.settings.last_playlist != playlist_id {
+            self.settings.last_playlist = playlist_id.to_string();
+            self.persist_settings();
+        }
+        if self.notice.as_ref().is_none_or(|n| !n.text.contains(name)) {
+            self.show_notice(format!("Added to {name}"));
+        }
+        let n = uris.len() as u32;
+        if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+            // create path: the new list may already have the count from a Playlists event
+            if playlist.track_total() == 0 {
+                playlist.bump_track_total(n);
+            }
+        }
+    }
+
+    fn track_snapshot(&self, uri: &str) -> Option<Track> {
+        if let Some(track) = self
+            .current_tracks()
+            .iter()
+            .find(|t| same_track_uri(&t.uri, uri))
+        {
+            return Some(track.clone());
+        }
+        if same_track_uri(&self.now.uri, uri) && !self.now.title.is_empty() {
+            return Some(Track {
+                name: self.now.title.clone(),
+                uri: self.now.uri.clone(),
+                duration_ms: self.now.duration_ms,
+                artists: vec![crate::api::models::ArtistRef {
+                    name: self.now.artists.clone(),
+                    ..Default::default()
+                }],
+                album: (!self.now.album.is_empty()).then(|| crate::api::models::Album {
+                    name: self.now.album.clone(),
+                    images: self
+                        .now
+                        .art_url
+                        .as_ref()
+                        .map(|url| {
+                            vec![crate::api::models::Image {
+                                url: url.clone(),
+                                width: None,
+                                height: None,
+                            }]
+                        })
+                        .unwrap_or_default(),
+                    ..Default::default()
+                }),
+                ..Track::default()
+            });
+        }
+        None
+    }
+
+    fn show_notice(&mut self, text: impl Into<String>) {
+        self.error = None;
+        self.notice = Some(Notice {
+            text: text.into(),
+            until: std::time::Instant::now() + Duration::from_secs(4),
         });
     }
 
@@ -601,11 +918,10 @@ impl App {
             skipped,
         });
         if skipped
-            && self.now.uri == uri
+            && same_track_uri(&self.now.uri, &uri)
             && matches!(self.now.playback, Playback::Playing | Playback::Loading)
         {
             self.pending_uri = None;
-            bridge::send(Cmd::Media(crate::media::MediaCommand::Next));
         }
     }
 
@@ -637,6 +953,8 @@ impl App {
             "prev" => self.update(Msg::Prev),
             "shuffle" => self.update(Msg::Shuffle),
             "repeat" => self.update(Msg::Repeat),
+            "back" => self.update(Msg::Back),
+            "forward" => self.update(Msg::Forward),
             "home" => self.update(Msg::Open(Page::Home)),
             "search" => self.update(Msg::Open(Page::Search)),
             "liked" => self.update(Msg::Open(Page::Liked)),
@@ -648,13 +966,26 @@ impl App {
 
     fn on_worker(&mut self, ev: Event) -> Task<Msg> {
         match ev {
-            Event::Auth(status) => self.auth = status,
+            Event::Auth(status) => {
+                let just_connected = matches!(status, AuthStatus::Connected { .. })
+                    && !matches!(self.auth, AuthStatus::Connected { .. });
+                self.auth = status;
+                if just_connected && !self.page.persist_as_last() {
+                    self.show(self.page.clone());
+                }
+            }
             Event::User(user) => self.user = Some(user),
             Event::Premium(p) => self.premium = p,
             Event::LocalPlayback(local) => self.local = local,
             Event::Page { page, body } => {
-                if let PageBody::Home { playlists, .. } = &body {
-                    self.playlists = playlists.clone();
+                match &body {
+                    PageBody::Home { playlists, .. }
+                    | PageBody::Playlists {
+                        items: playlists, ..
+                    } => {
+                        self.playlists = playlists.clone();
+                    }
+                    _ => {}
                 }
                 self.want_page_art(&body);
                 let for_us = page == self.page;
@@ -686,6 +1017,7 @@ impl App {
                         self.write_page_disk(&page, &body);
                         if for_us {
                             self.body = Some(body);
+                            return self.snap_selected();
                         }
                     }
                 }
@@ -711,6 +1043,9 @@ impl App {
                 if let Some(saved) = now.saved {
                     self.saved.insert(now.uri.clone(), saved);
                 }
+                if !now.uri.is_empty() {
+                    self.remember_track(&now.uri);
+                }
                 self.now = now;
             }
             Event::Devices(devices) => self.devices = devices,
@@ -723,13 +1058,48 @@ impl App {
                 self.art.insert(url, handle);
             }
             Event::Saved { uri, saved } => {
-                self.saved.insert(uri.clone(), saved);
-                if self.now.uri == uri {
-                    self.now.saved = Some(saved);
+                self.remember_saved(&uri, saved);
+            }
+            Event::Liked(uris) => {
+                self.saved.retain(|_, saved| !*saved);
+                for uri in uris {
+                    self.remember_saved(&uri, true);
                 }
             }
-            Event::Settings(settings) => self.settings = settings,
-            Event::Error(err) => self.error = Some(err),
+            Event::Playlists(items) => {
+                self.playlists = items.clone();
+                match &mut self.body {
+                    Some(PageBody::Home { playlists, .. }) => *playlists = items,
+                    Some(PageBody::Playlists { items: dest, .. }) => *dest = items,
+                    _ => {}
+                }
+            }
+            Event::AddedToPlaylist {
+                playlist_id,
+                name,
+                uris,
+            } => {
+                self.finish_added(&playlist_id, &name, &uris);
+            }
+            Event::Settings(mut settings) => {
+                if settings.last_track.is_empty() {
+                    settings.last_track = self.settings.last_track.clone();
+                }
+                if settings.last_page.is_empty() {
+                    settings.last_page = self.settings.last_page.clone();
+                }
+                if settings.last_playlist.is_empty() {
+                    settings.last_playlist = self.settings.last_playlist.clone();
+                }
+                if !self.settings.nav.entries.is_empty() {
+                    settings.nav = self.settings.nav.clone();
+                }
+                self.settings = settings;
+            }
+            Event::Error(err) => {
+                self.notice = None;
+                self.error = Some(err);
+            }
             Event::Raise => {
                 if let Some(id) = self.window_id {
                     return iced::window::gain_focus(id);
@@ -810,7 +1180,11 @@ impl App {
                     self.want_art(pick_image(&a.images, 200));
                 }
             }
-            PageBody::Artist { artist, top, albums } => {
+            PageBody::Artist {
+                artist,
+                top,
+                albums,
+            } => {
                 self.want_art(pick_image(&artist.images, 300));
                 for t in top {
                     self.want_art(t.image(64));
@@ -822,6 +1196,11 @@ impl App {
             PageBody::Queue { items } => {
                 for i in items {
                     self.want_art(i.image(64));
+                }
+            }
+            PageBody::Playlists { items, .. } => {
+                for p in items {
+                    self.want_art(pick_image(&p.images, 200));
                 }
             }
             PageBody::Settings => {}
@@ -843,9 +1222,9 @@ impl App {
 
     pub fn view(&self) -> Element<'_, Msg> {
         let body: Element<'_, Msg> = match &self.auth {
-            AuthStatus::SignedOut | AuthStatus::Failed(_) | AuthStatus::WaitingForBrowser { .. } => {
-                self.view_login()
-            }
+            AuthStatus::SignedOut
+            | AuthStatus::Failed(_)
+            | AuthStatus::WaitingForBrowser { .. } => self.view_login(),
             AuthStatus::Starting | AuthStatus::Connecting => self.view_connecting(),
             AuthStatus::Connected { .. } => self.view_app(),
         };
@@ -863,6 +1242,24 @@ impl App {
                 .padding(Padding::from([SPACE_SM, SPACE_LG]))
                 .width(Length::Fill)
                 .style(error_bar_style),
+                body,
+            ]
+            .height(Length::Fill)
+            .into()
+        } else if let Some(notice) = &self.notice {
+            column![
+                container(
+                    row![
+                        kit_text::caption(notice.text.clone()).style(kit_text::success),
+                        Space::new().width(Length::Fill),
+                        kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissNotice),
+                    ]
+                    .spacing(SPACE_MD)
+                    .align_y(Alignment::Center),
+                )
+                .padding(Padding::from([SPACE_SM, SPACE_LG]))
+                .width(Length::Fill)
+                .style(notice_bar_style),
                 body,
             ]
             .height(Length::Fill)
@@ -903,7 +1300,9 @@ impl App {
                 "A browser tab is open. Approve Sola, then come back here."
             }
             AuthStatus::Failed(err) => err.as_str(),
-            _ => "Sign in with Spotify to browse your library. Playing on this computer needs Premium.",
+            _ => {
+                "Sign in with Spotify to browse your library. Playing on this computer needs Premium."
+            }
         };
         let action = match &self.auth {
             AuthStatus::WaitingForBrowser { .. } => {
@@ -935,7 +1334,7 @@ impl App {
         let content = row![
             self.view_library(),
             v_hairline(),
-            column![self.view_page(), self.view_player()]
+            column![self.view_nav(), self.view_page(), self.view_player()]
                 .width(Length::Fill)
                 .height(Length::Fill),
         ]
@@ -951,10 +1350,15 @@ impl App {
     fn view_library(&self) -> Element<'_, Msg> {
         let mut browse = vec![
             SidebarItem::new("Home", Msg::Open(Page::Home)).active(self.page == Page::Home),
-            SidebarItem::new("Search", Msg::Open(Page::Search)).active(matches!(self.page, Page::Search)),
-            SidebarItem::new("Liked Songs", Msg::Open(Page::Liked)).active(self.page == Page::Liked),
+            SidebarItem::new("Search", Msg::Open(Page::Search))
+                .active(matches!(self.page, Page::Search)),
+            SidebarItem::new("Liked Songs", Msg::Open(Page::Liked))
+                .active(self.page == Page::Liked),
+            SidebarItem::new("Made for you", Msg::Open(Page::MadeForYou))
+                .active(self.page == Page::MadeForYou),
             SidebarItem::new("Albums", Msg::Open(Page::Albums)).active(self.page == Page::Albums),
-            SidebarItem::new("Artists", Msg::Open(Page::Artists)).active(self.page == Page::Artists),
+            SidebarItem::new("Artists", Msg::Open(Page::Artists))
+                .active(self.page == Page::Artists),
             SidebarItem::new("Queue", Msg::Open(Page::Queue)).active(self.page == Page::Queue),
         ];
         let _ = (
@@ -965,19 +1369,19 @@ impl App {
             &self.icons.users,
             &self.icons.list,
         );
-        browse.push(SidebarItem::new("Settings", Msg::Open(Page::Settings)).active(self.page == Page::Settings));
+        browse.push(
+            SidebarItem::new("Settings", Msg::Open(Page::Settings))
+                .active(self.page == Page::Settings),
+        );
 
         let mut sections = vec![SidebarSection::new("Library", browse)];
-        if !self.playlists.is_empty() {
-            let items: Vec<_> = self
-                .playlists
+        let (_, yours) = split_playlists(&self.playlists);
+        if !yours.is_empty() {
+            let items: Vec<_> = yours
                 .iter()
                 .map(|p| {
-                    SidebarItem::new(
-                        p.name.clone(),
-                        Msg::OpenPlaylist(p.id.clone()),
-                    )
-                    .active(self.page == Page::Playlist(p.id.clone()))
+                    SidebarItem::new(p.name.clone(), Msg::OpenPlaylist(p.id.clone()))
+                        .active(self.page == Page::Playlist(p.id.clone()))
                 })
                 .collect();
             sections.push(SidebarSection::new("Playlists", items).fill());
@@ -989,10 +1393,38 @@ impl App {
             .into()
     }
 
+    fn view_nav(&self) -> Element<'_, Msg> {
+        container(
+            row![
+                toolbar_icon_tip(
+                    self.icons.back.clone(),
+                    "Back",
+                    self.nav.can_back().then_some(Msg::Back),
+                ),
+                toolbar_icon_tip(
+                    self.icons.forward.clone(),
+                    "Forward",
+                    self.nav.can_forward().then_some(Msg::Forward),
+                ),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding {
+            top: SPACE_LG,
+            right: SPACE_XL,
+            bottom: SPACE_SM,
+            left: SPACE_XL,
+        })
+        .width(Length::Fill)
+        .into()
+    }
+
     fn view_page(&self) -> Element<'_, Msg> {
         let inner: Element<'_, Msg> = if self.body_matches(&self.page) {
             match &self.page {
                 Page::Home => self.view_home(),
+                Page::MadeForYou => self.view_made_for_you(),
                 Page::Search => self.view_search(),
                 Page::Liked | Page::Playlist(_) | Page::Album(_) => self.view_tracks(),
                 Page::Albums => self.view_albums(),
@@ -1006,6 +1438,7 @@ impl App {
                 Page::Search => self.view_search(),
                 Page::Settings => self.view_settings(),
                 Page::Home => self.view_ghost("Home", "Loading your library…", None),
+                Page::MadeForYou => self.view_ghost("Made for you", "Loading mixes…", None),
                 Page::Liked => self.view_ghost("Liked Songs", "Loading…", None),
                 Page::Albums => self.view_ghost("Albums", "Loading…", None),
                 Page::Artists => self.view_ghost("Artists", "Loading…", None),
@@ -1029,7 +1462,7 @@ impl App {
     }
 
     fn view_ghost(&self, title: &str, subtitle: &str, art: Option<&str>) -> Element<'_, Msg> {
-        let mut header = row![self.cover(art, 96.0)]
+        let mut header = row![self.cover(art, 96.0, false)]
             .spacing(SPACE_LG)
             .align_y(Alignment::Center);
         header = header.push(
@@ -1041,27 +1474,29 @@ impl App {
         );
         let rows: Vec<Element<'_, Msg>> = (0..8)
             .map(|_| {
-                container(row![
-                    container(Space::new())
-                        .width(Length::Fixed(COVER_ROW))
-                        .height(Length::Fixed(COVER_ROW))
-                        .style(ghost_block_style),
-                    column![
+                container(
+                    row![
                         container(Space::new())
-                            .width(Length::FillPortion(3))
-                            .height(Length::Fixed(10.0))
+                            .width(Length::Fixed(COVER_ROW))
+                            .height(Length::Fixed(COVER_ROW))
                             .style(ghost_block_style),
-                        container(Space::new())
-                            .width(Length::FillPortion(2))
-                            .height(Length::Fixed(8.0))
-                            .style(ghost_block_style),
+                        column![
+                            container(Space::new())
+                                .width(Length::FillPortion(3))
+                                .height(Length::Fixed(10.0))
+                                .style(ghost_block_style),
+                            container(Space::new())
+                                .width(Length::FillPortion(2))
+                                .height(Length::Fixed(8.0))
+                                .style(ghost_block_style),
+                        ]
+                        .spacing(SPACE_SM)
+                        .width(Length::Fill),
                     ]
-                    .spacing(SPACE_SM)
-                    .width(Length::Fill),
-                ]
-                .spacing(SPACE_MD)
-                .align_y(Alignment::Center)
-                .padding(Padding::from([SPACE_SM, SPACE_MD])))
+                    .spacing(SPACE_MD)
+                    .align_y(Alignment::Center)
+                    .padding(Padding::from([SPACE_SM, SPACE_MD])),
+                )
                 .width(Length::Fill)
                 .into()
             })
@@ -1096,15 +1531,59 @@ impl App {
             col = col.push(kit_text::subheading("Top songs"));
             col = col.push(self.track_list(top_tracks, None));
         }
-        if !playlists.is_empty() {
+        let (made, yours) = split_playlists(playlists);
+        if !made.is_empty() {
+            let total = made.len();
+            let shelf: Vec<&Playlist> = made.iter().copied().take(MADE_SHELF).collect();
+            let header: Element<'_, Msg> = if total > MADE_SHELF {
+                row![
+                    kit_text::subheading("Made for you").width(Length::Fill),
+                    kit_btn::labeled_sm("See all", kit_btn::ghost)
+                        .on_press(Msg::Open(Page::MadeForYou)),
+                ]
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                kit_text::subheading("Made for you").into()
+            };
+            col = col.push(header);
+            col = col.push(self.playlist_tiles(shelf));
+        }
+        if !yours.is_empty() {
             col = col.push(kit_text::subheading("Playlists"));
-            col = col.push(self.playlist_tiles(playlists));
+            col = col.push(self.playlist_tiles(yours));
         }
         if !top_artists.is_empty() {
             col = col.push(kit_text::subheading("Top artists"));
             col = col.push(self.artist_tiles(top_artists));
         }
         scrollable(col.padding(SPACE_XL).width(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn view_made_for_you(&self) -> Element<'_, Msg> {
+        let items = match &self.body {
+            Some(PageBody::Playlists { items, .. }) => items.as_slice(),
+            _ => self.playlists.as_slice(),
+        };
+        let mut made: Vec<&Playlist> = items.iter().filter(|p| p.is_generated()).collect();
+        made.sort_by_key(|p| generated_sort_key(&p.name));
+        let mut col = column![
+            kit_text::heading("Made for you"),
+            kit_text::caption(format!("{} mixes", made.len())).style(kit_text::muted),
+        ]
+        .spacing(SPACE_SM);
+        if made.is_empty() {
+            col = col.push(
+                kit_text::body("No mixes yet. Follow Discover Weekly in Spotify, or play more — these appear as Spotify builds them.")
+                    .style(kit_text::muted),
+            );
+        } else {
+            col = col.push(self.playlist_grid(made));
+        }
+        scrollable(col.spacing(SPACE_XL).padding(SPACE_XL).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1164,7 +1643,7 @@ impl App {
             return Space::new().into();
         };
         let play_all = context_uri.clone().map(Msg::PlayContext);
-        let mut header = row![self.cover(art.as_deref(), 96.0)]
+        let mut header = row![self.cover(art.as_deref(), 96.0, false)]
             .spacing(SPACE_LG)
             .align_y(Alignment::Center);
         let mut titles = column![
@@ -1179,9 +1658,11 @@ impl App {
         let list = self.track_list(items, context_uri.clone());
         let mut col = column![header, list].spacing(SPACE_XL).padding(SPACE_XL);
         if items.len() < *total as usize {
-            col = col.push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
+            col = col
+                .push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
         }
         scrollable(col.width(Length::Fill))
+            .id(tracks_scroll_id())
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1191,11 +1672,12 @@ impl App {
         let Some(PageBody::Albums { items, total, .. }) = &self.body else {
             return Space::new().into();
         };
-        let mut col = column![kit_text::heading("Albums"), self.album_tiles(items)]
+        let mut col = column![kit_text::heading("Albums"), self.album_grid(items)]
             .spacing(SPACE_XL)
             .padding(SPACE_XL);
         if items.len() < *total as usize {
-            col = col.push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
+            col = col
+                .push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
         }
         scrollable(col.width(Length::Fill))
             .width(Length::Fill)
@@ -1208,7 +1690,7 @@ impl App {
             return Space::new().into();
         };
         scrollable(
-            column![kit_text::heading("Artists"), self.artist_tiles(items)]
+            column![kit_text::heading("Artists"), self.artist_grid(items)]
                 .spacing(SPACE_XL)
                 .padding(SPACE_XL)
                 .width(Length::Fill),
@@ -1228,7 +1710,7 @@ impl App {
             return Space::new().into();
         };
         let header = row![
-            self.cover(pick_image(&artist.images, 300), 120.0),
+            self.cover(pick_image(&artist.images, 300), 120.0, false),
             column![
                 kit_text::heading(artist.name.clone()),
                 kit_text::caption(format!(
@@ -1264,27 +1746,40 @@ impl App {
             .iter()
             .map(|item| {
                 let uri = item.uri().to_string();
-                button(
+                let play = button(
                     row![
-                        self.cover(item.image(64), COVER_ROW),
+                        self.cover(item.image(64), COVER_ROW, false),
                         column![
                             kit_text::body(item.name().to_string()),
                             kit_text::caption(item.subtitle()).style(kit_text::muted),
                         ]
                         .spacing(SPACE_XS)
                         .width(Length::Fill),
-                        kit_text::caption(format_ms(item.duration_ms())).style(kit_text::muted),
                     ]
                     .spacing(SPACE_MD)
-                    .align_y(Alignment::Center)
-                    .padding(Padding::from([SPACE_SM, SPACE_MD])),
+                    .align_y(Alignment::Center),
                 )
                 .style(kit_btn::list_item(false))
                 .on_press(Msg::PlayTrack {
-                    uri,
+                    uri: uri.clone(),
                     context: None,
                 })
-                .width(Length::Fill)
+                .width(Length::Fill);
+                let add = if item.is_track() {
+                    self.add_mark(&uri)
+                } else {
+                    Space::new().into()
+                };
+                row![
+                    play,
+                    add,
+                    kit_text::caption(format_ms(item.duration_ms()))
+                        .style(kit_text::muted)
+                        .width(Length::Fixed(40.0)),
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center)
+                .padding(Padding::from([SPACE_SM, SPACE_MD]))
                 .into()
             })
             .collect();
@@ -1348,76 +1843,114 @@ impl App {
     }
 
     fn track_list<'a>(&'a self, tracks: &'a [Track], context: Option<String>) -> Element<'a, Msg> {
+        let accent = self.theme.extended_palette().primary.base.color;
         let rows: Vec<Element<'a, Msg>> = tracks
             .iter()
             .enumerate()
             .map(|(i, track)| {
                 let uri = track.uri.clone();
                 let ctx = context.clone();
-                let playing = same_track_uri(&self.now.uri, &uri);
+                let live = same_track_uri(&self.now.uri, &uri)
+                    && matches!(self.now.playback, Playback::Playing | Playback::Loading);
+                let selected = self
+                    .selected_uri
+                    .as_deref()
+                    .is_some_and(|sel| same_track_uri(sel, &uri));
                 let saved = self.is_saved(&uri);
                 let skipped = self.skipped.contains(&uri);
+                let withdrawn = skipped && !live;
                 let artist_id = track.artists.first().and_then(|a| a.id.clone());
                 let album_id = track.album.as_ref().map(|a| a.id.clone());
                 let mut meta = row![].spacing(SPACE_SM);
+                let artist_cap = kit_text::caption(track.artist_names());
+                let artist_cap = if selected {
+                    artist_cap
+                } else {
+                    artist_cap.style(kit_text::muted)
+                };
                 if let Some(id) = artist_id {
                     meta = meta.push(
-                        button(kit_text::caption(track.artist_names()).style(kit_text::muted))
+                        button(artist_cap)
                             .style(kit_btn::ghost)
                             .on_press(Msg::OpenArtist(id))
                             .padding(0),
                     );
                 } else {
-                    meta = meta.push(kit_text::caption(track.artist_names()).style(kit_text::muted));
+                    meta = meta.push(artist_cap);
                 }
                 if let Some(id) = album_id.filter(|s| !s.is_empty())
                     && let Some(album) = track.album.as_ref()
                 {
-                    meta = meta.push(kit_text::caption("·").style(kit_text::muted));
+                    let sep = kit_text::caption("·");
+                    let alb = kit_text::caption(album.name.clone());
+                    meta = meta.push(if selected {
+                        sep
+                    } else {
+                        sep.style(kit_text::muted)
+                    });
                     meta = meta.push(
-                        button(kit_text::caption(album.name.clone()).style(kit_text::muted))
-                            .style(kit_btn::ghost)
-                            .on_press(Msg::OpenAlbum(id))
-                            .padding(0),
+                        button(if selected {
+                            alb
+                        } else {
+                            alb.style(kit_text::muted)
+                        })
+                        .style(kit_btn::ghost)
+                        .on_press(Msg::OpenAlbum(id))
+                        .padding(0),
                     );
                 }
+                let title: Element<'a, Msg> = if live {
+                    kit_text::body(track.name.clone())
+                        .style(kit_text::accent)
+                        .into()
+                } else if withdrawn {
+                    let mute = self.theme.extended_palette().secondary.base.text;
+                    rich_text![
+                        span::<(), iced::Font>(track.name.clone())
+                            .strikethrough(true)
+                            .color(mute)
+                    ]
+                    .size(13)
+                    .font(fonts::ui())
+                    .into()
+                } else {
+                    kit_text::body(track.name.clone()).into()
+                };
+                let index: Element<'a, Msg> = if live {
+                    container(icon_svg_colored(self.icons.play.clone(), 14, accent))
+                        .width(Length::Fixed(24.0))
+                        .height(Length::Fixed(COVER_ROW))
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .align_y(iced::alignment::Vertical::Center)
+                        .into()
+                } else {
+                    kit_text::caption(format!("{}", i + 1))
+                        .style(kit_text::muted)
+                        .width(Length::Fixed(24.0))
+                        .into()
+                };
                 let play = button(
                     row![
-                        kit_text::caption(format!("{}", i + 1))
-                            .style(kit_text::muted)
-                            .width(Length::Fixed(24.0)),
-                        self.cover(track.image(64), COVER_ROW),
-                        column![
-                            {
-                                let title = kit_text::body(track.name.clone());
-                                if skipped && !playing {
-                                    title.style(kit_text::muted)
-                                } else if playing {
-                                    title.style(kit_text::accent)
-                                } else {
-                                    title
-                                }
-                            },
-                            meta,
-                        ]
-                        .spacing(SPACE_XS)
-                        .width(Length::Fill),
+                        index,
+                        self.cover(track.image(64), COVER_ROW, withdrawn),
+                        column![title, meta].spacing(SPACE_XS).width(Length::Fill),
                     ]
                     .spacing(SPACE_MD)
-                    .align_y(Alignment::Center),
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
                 )
-                .style(kit_btn::list_item(playing))
+                .style(kit_btn::list_item(selected))
                 .on_press(Msg::PlayTrack {
                     uri: uri.clone(),
                     context: ctx,
                 })
                 .width(Length::Fill);
 
-                let plus = if saved {
-                    toolbar_icon_tip(self.icons.check.clone(), "Unlike", Some(Msg::SaveTrack(uri.clone())))
-                } else {
-                    toolbar_icon_tip(self.icons.plus.clone(), "Like", Some(Msg::SaveTrack(uri.clone())))
-                };
+                let plus = self.like_mark(
+                    saved,
+                    Msg::SaveTrack(uri.clone()),
+                    if saved { "Unlike" } else { "Like" },
+                );
                 let skip_tip = if skipped {
                     "Play this again"
                 } else {
@@ -1425,6 +1958,7 @@ impl App {
                 };
                 let marks = row![
                     plus,
+                    self.add_mark(&uri),
                     toolbar_icon_tip(
                         self.icons.minus.clone(),
                         skip_tip,
@@ -1433,75 +1967,116 @@ impl App {
                 ]
                 .spacing(SPACE_XS)
                 .align_y(Alignment::Center);
-                row![
-                    play,
-                    marks,
-                    kit_text::caption(format_ms(track.duration_ms)).style(kit_text::muted),
-                ]
-                .spacing(SPACE_SM)
-                .align_y(Alignment::Center)
-                .padding(Padding::from([SPACE_SM, SPACE_MD]))
-                .into()
+                let mut tail = row![marks].spacing(SPACE_SM).align_y(Alignment::Center);
+                if let Some(added) = track.added_at.as_deref().and_then(format_added_at) {
+                    tail = tail.push(
+                        kit_text::caption(added)
+                            .style(kit_text::muted)
+                            .width(Length::Fixed(88.0)),
+                    );
+                }
+                tail = tail.push(
+                    kit_text::caption(format_ms(track.duration_ms))
+                        .style(kit_text::muted)
+                        .width(Length::Fixed(40.0)),
+                );
+                row![play, tail]
+                    .spacing(SPACE_SM)
+                    .align_y(Alignment::Center)
+                    .padding(Padding::from([SPACE_SM, SPACE_MD]))
+                    .into()
             })
             .collect();
         column(rows).spacing(1.0).width(Length::Fill).into()
     }
 
-    fn playlist_tiles<'a>(&'a self, playlists: &'a [Playlist]) -> Element<'a, Msg> {
-        self.tile_row(
-            playlists
-                .iter()
-                .map(|p| {
-                    (
-                        p.name.clone(),
-                        p.owner_name().to_string(),
-                        pick_image(&p.images, 200).map(str::to_string),
-                        Msg::OpenPlaylist(p.id.clone()),
-                    )
-                })
-                .collect(),
-        )
+    fn playlist_tiles<'a>(
+        &'a self,
+        playlists: impl IntoIterator<Item = &'a Playlist>,
+    ) -> Element<'a, Msg> {
+        let items = self.playlist_tile_widgets(playlists);
+        scrollable(row(items).spacing(SPACE_MD))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new(),
+            ))
+            .width(Length::Fill)
+            .into()
     }
 
     fn album_tiles<'a>(&'a self, albums: &'a [Album]) -> Element<'a, Msg> {
-        self.tile_row(
-            albums
-                .iter()
-                .map(|a| {
-                    (
-                        a.name.clone(),
-                        crate::api::models::join_names(a.artists.iter().map(|x| x.name.as_str())),
-                        pick_image(&a.images, 200).map(str::to_string),
-                        Msg::OpenAlbum(a.id.clone()),
-                    )
-                })
-                .collect(),
-        )
+        self.tile_row(Self::album_tile_data(albums))
+    }
+
+    fn album_grid<'a>(&'a self, albums: &'a [Album]) -> Element<'a, Msg> {
+        self.catalog_grid(Self::album_tile_data(albums))
+    }
+
+    fn album_tile_data(albums: &[Album]) -> Vec<(String, String, Option<String>, Msg)> {
+        albums
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    crate::api::models::join_names(a.artists.iter().map(|x| x.name.as_str())),
+                    pick_image(&a.images, 200).map(str::to_string),
+                    Msg::OpenAlbum(a.id.clone()),
+                )
+            })
+            .collect()
     }
 
     fn artist_tiles<'a>(&'a self, artists: &'a [Artist]) -> Element<'a, Msg> {
-        self.tile_row(
-            artists
-                .iter()
-                .map(|a| {
-                    (
-                        a.name.clone(),
-                        "Artist".to_string(),
-                        pick_image(&a.images, 200).map(str::to_string),
-                        Msg::OpenArtist(a.id.clone()),
-                    )
-                })
-                .collect(),
-        )
+        self.tile_row(Self::artist_tile_data(artists))
     }
 
-    fn tile_row<'a>(&'a self, tiles: Vec<(String, String, Option<String>, Msg)>) -> Element<'a, Msg> {
-        let items: Vec<Element<'a, Msg>> = tiles
+    fn artist_grid<'a>(&'a self, artists: &'a [Artist]) -> Element<'a, Msg> {
+        self.catalog_grid(Self::artist_tile_data(artists))
+    }
+
+    fn artist_tile_data(artists: &[Artist]) -> Vec<(String, String, Option<String>, Msg)> {
+        artists
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    "Artist".to_string(),
+                    pick_image(&a.images, 200).map(str::to_string),
+                    Msg::OpenArtist(a.id.clone()),
+                )
+            })
+            .collect()
+    }
+
+    fn playlist_grid<'a>(&'a self, playlists: Vec<&'a Playlist>) -> Element<'a, Msg> {
+        self.wrap_tiles(self.playlist_tile_widgets(playlists))
+    }
+
+    fn catalog_grid<'a>(
+        &'a self,
+        tiles: Vec<(String, String, Option<String>, Msg)>,
+    ) -> Element<'a, Msg> {
+        self.wrap_tiles(self.tile_widgets(tiles))
+    }
+
+    fn wrap_tiles<'a>(&'a self, items: Vec<Element<'a, Msg>>) -> Element<'a, Msg> {
+        row(items)
+            .spacing(SPACE_MD)
+            .width(Length::Fill)
+            .wrap()
+            .vertical_spacing(SPACE_MD)
+            .into()
+    }
+
+    fn tile_widgets<'a>(
+        &'a self,
+        tiles: Vec<(String, String, Option<String>, Msg)>,
+    ) -> Vec<Element<'a, Msg>> {
+        tiles
             .into_iter()
             .map(|(title, sub, art, msg)| {
                 button(
                     column![
-                        self.cover(art.as_deref(), COVER_TILE),
+                        self.cover(art.as_deref(), COVER_TILE, false),
                         kit_text::body(title),
                         kit_text::caption(sub).style(kit_text::muted),
                     ]
@@ -1513,7 +2088,50 @@ impl App {
                 .padding(SPACE_SM)
                 .into()
             })
-            .collect();
+            .collect()
+    }
+
+    fn playlist_tile_widgets<'a>(
+        &'a self,
+        playlists: impl IntoIterator<Item = &'a Playlist>,
+    ) -> Vec<Element<'a, Msg>> {
+        playlists
+            .into_iter()
+            .map(|p| {
+                let n = p.track_total();
+                let sub = if p.is_generated() {
+                    if n > 0 {
+                        format!("Made for you · {n} songs")
+                    } else {
+                        "Made for you".into()
+                    }
+                } else if n > 0 {
+                    format!("{} · {n} songs", p.owner_name())
+                } else {
+                    p.owner_name().to_string()
+                };
+                button(
+                    column![
+                        self.cover(pick_image(&p.images, 200), COVER_TILE, false),
+                        kit_text::body(p.name.clone()),
+                        kit_text::caption(sub).style(kit_text::muted),
+                    ]
+                    .spacing(SPACE_SM)
+                    .width(Length::Fixed(COVER_TILE)),
+                )
+                .style(kit_btn::list_item(false))
+                .on_press(Msg::OpenPlaylist(p.id.clone()))
+                .padding(SPACE_SM)
+                .into()
+            })
+            .collect()
+    }
+
+    fn tile_row<'a>(
+        &'a self,
+        tiles: Vec<(String, String, Option<String>, Msg)>,
+    ) -> Element<'a, Msg> {
+        let items = self.tile_widgets(tiles);
         scrollable(row(items).spacing(SPACE_MD))
             .direction(scrollable::Direction::Horizontal(
                 scrollable::Scrollbar::new(),
@@ -1535,12 +2153,12 @@ impl App {
         } else {
             pos as f32 / self.now.duration_ms as f32
         };
-        let like_icon = if self.now_saved() {
-            self.icons.check.clone()
-        } else {
-            self.icons.plus.clone()
-        };
-        let like_tip = if self.now_saved() { "Unlike" } else { "Like" };
+        let like_btn = self.like_mark(
+            self.now_saved(),
+            Msg::Like,
+            if self.now_saved() { "Unlike" } else { "Like" },
+        );
+        let add_btn = self.add_mark(&self.now.uri);
 
         let now = if matches!(
             self.local,
@@ -1555,21 +2173,26 @@ impl App {
                 kit_text::caption(line).style(kit_text::muted),
             ]
             .spacing(SPACE_XS)
-            .width(Length::Fill)
+            .width(Length::FillPortion(2))
         } else if self.now.title.is_empty() {
+            let caption = match &self.local {
+                LocalPlayback::Ready { .. } => "Pick a song",
+                LocalPlayback::Failed(_) => "Playback needs setup",
+                _ => "Play a song to set up this computer",
+            };
             column![
-                kit_text::body("Nothing playing").style(kit_text::muted),
-                kit_text::caption("Play a song to use this computer — one-time setup in the browser.").style(kit_text::muted),
+                kit_text::body("Nothing playing"),
+                kit_text::caption(caption).style(kit_text::muted),
             ]
             .spacing(SPACE_XS)
-            .width(Length::Fill)
+            .width(Length::FillPortion(2))
         } else {
             column![
                 kit_text::body(self.now.title.clone()),
                 kit_text::caption(self.now.artists.clone()).style(kit_text::muted),
             ]
             .spacing(SPACE_XS)
-            .width(Length::Fill)
+            .width(Length::FillPortion(2))
         };
 
         let transport = row![
@@ -1583,7 +2206,9 @@ impl App {
         .align_y(Alignment::Center);
 
         let seek = row![
-            kit_text::caption(format_ms(pos)).style(kit_text::muted).width(Length::Fixed(36.0)),
+            kit_text::caption(format_ms(pos))
+                .style(kit_text::muted)
+                .width(Length::Fixed(36.0)),
             slider(0.0..=1.0, frac, Msg::SeekFrac).width(Length::FillPortion(3)),
             kit_text::caption(format_ms(self.now.duration_ms))
                 .style(kit_text::muted)
@@ -1596,7 +2221,8 @@ impl App {
         let devices = self.view_device_picker();
 
         let right = row![
-            toolbar_icon_tip(like_icon, like_tip, Some(Msg::Like)),
+            like_btn,
+            add_btn,
             devices,
             icon_svg(self.icons.volume.clone(), 14),
             slider(0.0..=100.0, self.now.volume_percent as f32, |v| {
@@ -1608,12 +2234,12 @@ impl App {
         .align_y(Alignment::Center);
 
         let bar = row![
-            self.cover(self.now.art_url.as_deref(), COVER_PLAYER),
+            self.cover(self.now.art_url.as_deref(), COVER_PLAYER, false),
             now,
             column![transport, seek]
                 .spacing(SPACE_XS)
                 .align_x(Alignment::Center)
-                .width(Length::FillPortion(4)),
+                .width(Length::FillPortion(3)),
             right,
         ]
         .spacing(SPACE_LG)
@@ -1720,7 +2346,187 @@ impl App {
             .into()
     }
 
-    fn cover<'a>(&'a self, url: Option<&str>, size: f32) -> Element<'a, Msg> {
+    fn remember_saved(&mut self, uri: &str, saved: bool) {
+        if uri.is_empty() {
+            return;
+        }
+        self.saved.insert(uri.to_string(), saved);
+        if let Some(id) = uri.rsplit(':').next()
+            && id != uri
+        {
+            self.saved.insert(id.to_string(), saved);
+            self.saved.insert(format!("spotify:track:{id}"), saved);
+        }
+        if same_track_uri(&self.now.uri, uri) {
+            self.now.saved = Some(saved);
+        }
+    }
+
+    fn add_mark(&self, uri: &str) -> Element<'_, Msg> {
+        let open = self.add_to.as_ref().is_some_and(|state| state.uri == uri);
+        let p = self.theme.extended_palette();
+        let color = if open {
+            p.primary.base.color
+        } else {
+            p.secondary.base.text
+        };
+        let icon = icon_svg_colored(self.icons.list_plus.clone(), 16, color);
+        let mut btn = button(icon)
+            .padding(sola_kit::components::style::PAD_CONTROL_SM)
+            .style(kit_btn::ghost);
+        if !uri.is_empty() {
+            btn = btn.on_press(Msg::ToggleAddTo(uri.to_string()));
+        }
+        let trigger: Element<'_, Msg> = if uri.is_empty() {
+            btn.into()
+        } else {
+            let tip = container(kit_text::caption("Add to playlist")).padding(Padding {
+                top: 5.0,
+                right: 8.0,
+                bottom: 5.0,
+                left: 8.0,
+            });
+            iced::widget::tooltip(btn, tip, iced::widget::tooltip::Position::Bottom)
+                .gap(6)
+                .into()
+        };
+        if !open {
+            return trigger;
+        }
+        popover_anchored(trigger, self.view_add_picker(), Msg::CloseAddTo)
+            .placement(Placement::Below)
+            .into()
+    }
+
+    fn view_add_picker(&self) -> Element<'_, Msg> {
+        let query = self
+            .add_to
+            .as_ref()
+            .map(|state| state.query.as_str())
+            .unwrap_or("");
+        let field = text_input("Find a playlist", query)
+            .id(add_filter_id())
+            .on_input(Msg::AddToFilter)
+            .on_submit(Msg::AddToSubmit)
+            .width(Length::Fill);
+        let ranked = self.ranked_add_playlists();
+        let needle = query.trim().to_lowercase();
+        let show_new = needle.is_empty() || "new playlist".contains(&needle);
+        let new_row = button(
+            column![
+                kit_text::body("New playlist"),
+                kit_text::caption("Create and add").style(kit_text::muted),
+            ]
+            .spacing(SPACE_XS)
+            .width(Length::Fill)
+            .padding(Padding::from([SPACE_SM, SPACE_MD])),
+        )
+        .style(kit_btn::list_item(false))
+        .on_press(Msg::CreatePlaylist)
+        .width(Length::Fill);
+        let count = ranked.len();
+        let rows: Vec<Element<'_, Msg>> = ranked
+            .into_iter()
+            .map(|playlist| {
+                let n = playlist.track_total();
+                let sub = if n == 1 {
+                    "1 song".to_string()
+                } else {
+                    format!("{n} songs")
+                };
+                button(
+                    column![
+                        kit_text::body(playlist.name.clone()),
+                        kit_text::caption(sub).style(kit_text::muted),
+                    ]
+                    .spacing(SPACE_XS)
+                    .width(Length::Fill)
+                    .padding(Padding::from([SPACE_SM, SPACE_MD])),
+                )
+                .style(kit_btn::list_item(false))
+                .on_press(Msg::AddToPlaylist {
+                    id: playlist.id.clone(),
+                    name: playlist.name.clone(),
+                })
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+        let mut list = column![field]
+            .spacing(SPACE_SM)
+            .padding(SPACE_MD)
+            .width(Length::Fixed(260.0));
+        if show_new {
+            list = list.push(new_row);
+        }
+        if rows.is_empty() && !show_new {
+            list = list.push(kit_text::caption("No matching playlists").style(kit_text::muted));
+        } else if !rows.is_empty() {
+            let height = (count as f32 * 48.0).clamp(48.0, 240.0);
+            list = list.push(
+                scrollable(column(rows).spacing(SPACE_XS).width(Length::Fill))
+                    .height(Length::Fixed(height))
+                    .width(Length::Fill),
+            );
+        }
+        popover(list).into()
+    }
+
+    fn like_mark(&self, saved: bool, msg: Msg, tip: &'static str) -> Element<'_, Msg> {
+        let p = self.theme.extended_palette();
+        let color = if saved {
+            p.primary.base.color
+        } else {
+            p.secondary.base.text
+        };
+        let icon = icon_svg_colored(self.icons.plus.clone(), 16, color);
+        let btn = button(icon)
+            .padding(sola_kit::components::style::PAD_CONTROL_SM)
+            .style(kit_btn::ghost)
+            .on_press(msg);
+        let tip = container(kit_text::caption(tip)).padding(Padding {
+            top: 5.0,
+            right: 8.0,
+            bottom: 5.0,
+            left: 8.0,
+        });
+        iced::widget::tooltip(btn, tip, iced::widget::tooltip::Position::Bottom)
+            .gap(6)
+            .into()
+    }
+
+    fn remember_track(&mut self, uri: &str) {
+        if uri.is_empty() {
+            return;
+        }
+        self.selected_uri = Some(uri.to_string());
+        if self.settings.last_track != uri {
+            self.settings.last_track = uri.to_string();
+            self.persist_settings();
+        }
+    }
+
+    fn snap_selected(&self) -> Task<Msg> {
+        let Some(PageBody::Tracks { items, .. }) = &self.body else {
+            return Task::none();
+        };
+        let Some(sel) = &self.selected_uri else {
+            return Task::none();
+        };
+        let Some(idx) = items.iter().position(|t| same_track_uri(&t.uri, sel)) else {
+            return Task::none();
+        };
+        let denom = (items.len().saturating_sub(1)).max(1) as f32;
+        operation::snap_to(
+            tracks_scroll_id(),
+            iced::widget::scrollable::RelativeOffset {
+                x: 0.0,
+                y: idx as f32 / denom,
+            },
+        )
+    }
+
+    fn cover<'a>(&'a self, url: Option<&str>, size: f32, dim: bool) -> Element<'a, Msg> {
         let held = (size - COVER_PLAYER).abs() < f32::EPSILON;
         let inner: Element<'a, Msg> = if let Some(url) = url
             && let Some(handle) = self.art.get(url)
@@ -1730,9 +2536,7 @@ impl App {
                 .height(Length::Fixed(size))
                 .content_fit(iced::ContentFit::Cover)
                 .into()
-        } else if held
-            && let Some(handle) = &self.player_art_hold
-        {
+        } else if held && let Some(handle) = &self.player_art_hold {
             iced_image(handle.clone())
                 .width(Length::Fixed(size))
                 .height(Length::Fixed(size))
@@ -1747,19 +2551,42 @@ impl App {
                 .style(cover_ph_style)
                 .into()
         };
-        container(inner)
+        let framed: Element<'a, Msg> = container(inner)
             .width(Length::Fixed(size))
             .height(Length::Fixed(size))
             .style(cover_frame_style)
-            .into()
+            .into();
+        if !dim {
+            return framed;
+        }
+        stack![
+            framed,
+            container(Space::new())
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .style(cover_dim_style)
+        ]
+        .into()
     }
+}
+
+fn tracks_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("spotify-tracks")
 }
 
 fn key_msg(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
     match key {
         keyboard::Key::Named(NamedKey::Space) if !modifiers.command() => Some(Msg::Toggle),
+        keyboard::Key::Named(NamedKey::ArrowLeft) if modifiers.alt() && !modifiers.command() => {
+            Some(Msg::Back)
+        }
+        keyboard::Key::Named(NamedKey::ArrowRight) if modifiers.alt() && !modifiers.command() => {
+            Some(Msg::Forward)
+        }
         keyboard::Key::Named(NamedKey::ArrowRight) if modifiers.command() => Some(Msg::Next),
         keyboard::Key::Named(NamedKey::ArrowLeft) if modifiers.command() => Some(Msg::Prev),
+        keyboard::Key::Character(c) if modifiers.command() && c == "[" => Some(Msg::Back),
+        keyboard::Key::Character(c) if modifiers.command() && c == "]" => Some(Msg::Forward),
         keyboard::Key::Character(c) if modifiers.command() && c.eq_ignore_ascii_case("f") => {
             Some(Msg::Open(Page::Search))
         }
@@ -1769,8 +2596,23 @@ fn key_msg(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
         keyboard::Key::Character(c) if modifiers.command() && c.eq_ignore_ascii_case("l") => {
             Some(Msg::Open(Page::Liked))
         }
+        keyboard::Key::Named(NamedKey::Escape) => Some(Msg::CloseAddTo),
         _ => None,
     }
+}
+
+fn split_playlists(playlists: &[Playlist]) -> (Vec<&Playlist>, Vec<&Playlist>) {
+    let mut made = Vec::new();
+    let mut yours = Vec::new();
+    for playlist in playlists {
+        if playlist.is_generated() {
+            made.push(playlist);
+        } else {
+            yours.push(playlist);
+        }
+    }
+    made.sort_by_key(|p| generated_sort_key(&p.name));
+    (made, yours)
 }
 
 fn same_track_uri(a: &str, b: &str) -> bool {
@@ -1833,10 +2675,25 @@ fn error_bar_style(theme: &Theme) -> container::Style {
     }
 }
 
+fn notice_bar_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.success.weak.color)),
+        ..Default::default()
+    }
+}
+
+fn add_filter_id() -> iced::widget::Id {
+    iced::widget::Id::new("spotify-add-to-filter")
+}
+
 fn ghost_block_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(mix_white(p.background.strong.color, 0.04))),
+        background: Some(Background::Color(mix_white(
+            p.background.strong.color,
+            0.04,
+        ))),
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
@@ -1858,6 +2715,17 @@ fn cover_ph_style(theme: &Theme) -> container::Style {
 fn cover_frame_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
+        border: hairline(p, RADIUS_SM),
+        ..Default::default()
+    }
+}
+
+fn cover_dim_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let mut wash = p.background.base.color;
+    wash.a = 0.62;
+    container::Style {
+        background: Some(Background::Color(wash)),
         border: hairline(p, RADIUS_SM),
         ..Default::default()
     }

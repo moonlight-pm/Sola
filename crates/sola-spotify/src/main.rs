@@ -63,6 +63,9 @@ fn main() -> iced::Result {
         .app_menu_definition(MenuDefinition {
             label: "View".into(),
             items: vec![
+                item("back", "Back", Some(KeyCode::LEFT.alt())),
+                item("forward", "Forward", Some(KeyCode::RIGHT.alt())),
+                MenuItem::Divider,
                 item("home", "Home", Some(KeyCode::H.meta())),
                 item("search", "Search", Some(KeyCode::F.meta())),
                 item("liked", "Liked Songs", Some(KeyCode::L.meta())),

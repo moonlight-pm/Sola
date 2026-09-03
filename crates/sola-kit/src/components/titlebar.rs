@@ -44,6 +44,11 @@ const CORNER_PAD_A: f32 = 0.02;
 /// paint over the hairline (same trick as kit `card`).
 const FRAME_BORDER: f32 = 1.0;
 
+/// Inner face corner radius (outer [`WINDOW_RADIUS`] minus the 1px pad).
+pub(crate) fn face_radius() -> f32 {
+    (WINDOW_RADIUS - FRAME_BORDER).max(0.0)
+}
+
 /// Traffic-light close disc diameter.
 const CLOSE_DOT: f32 = 12.0;
 
@@ -78,7 +83,9 @@ where
 ///
 /// Structure mirrors kit [`crate::components::card`]: a 1px outer pad keeps
 /// the hairline border outside the content layout box so the full-bleed
-/// titlebar cannot paint over the top/side edges.
+/// titlebar cannot paint over the top/side edges. The inner face is clipped
+/// to a rounded rect (iced's `clip(true)` is AABB-only, so overflowing
+/// children would otherwise square the bottom corners).
 ///
 /// The host window should be `transparent: true` and (while floating) use
 /// [`crate::theme::overlay`] so the corners outside this frame stay see-through.
@@ -101,6 +108,10 @@ where
     ]
     .width(Length::Fill)
     .height(Length::Fill);
+
+    // iced `clip(true)` is AABB-only. Punch the rounded-rect ears so
+    // full-bleed children cannot square the bottom corners.
+    let body = super::float_clip::wrap(body, face_radius());
 
     // Inner face: solid fill + rounded corners. No border — the outer
     // frame owns the continuous hairline.
@@ -300,50 +311,54 @@ where
         // Paint nearly-invisible square pads in the four AABB corners so the
         // transparent "ears" outside the rounded chrome still own pointer
         // hits (and visually obscure apps below in that tiny square).
+        // Own layer so this runs *after* the face's rounded punch (a later
+        // layer than the child content).
         let b = layout.bounds();
-        let c = self.corner;
-        let pad = Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: CORNER_PAD_A,
-        };
-        let corners = [
-            Rectangle {
-                x: b.x,
-                y: b.y,
-                width: c,
-                height: c,
-            },
-            Rectangle {
-                x: b.x + b.width - c,
-                y: b.y,
-                width: c,
-                height: c,
-            },
-            Rectangle {
-                x: b.x,
-                y: b.y + b.height - c,
-                width: c,
-                height: c,
-            },
-            Rectangle {
-                x: b.x + b.width - c,
-                y: b.y + b.height - c,
-                width: c,
-                height: c,
-            },
-        ];
-        for rect in corners {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: rect,
-                    border: Border::default(),
-                    ..renderer::Quad::default()
+        renderer.with_layer(b, |renderer| {
+            let c = self.corner;
+            let pad = Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: CORNER_PAD_A,
+            };
+            let corners = [
+                Rectangle {
+                    x: b.x,
+                    y: b.y,
+                    width: c,
+                    height: c,
                 },
-                Background::Color(pad),
-            );
-        }
+                Rectangle {
+                    x: b.x + b.width - c,
+                    y: b.y,
+                    width: c,
+                    height: c,
+                },
+                Rectangle {
+                    x: b.x,
+                    y: b.y + b.height - c,
+                    width: c,
+                    height: c,
+                },
+                Rectangle {
+                    x: b.x + b.width - c,
+                    y: b.y + b.height - c,
+                    width: c,
+                    height: c,
+                },
+            ];
+            for rect in corners {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: rect,
+                        border: Border::default(),
+                        ..renderer::Quad::default()
+                    },
+                    Background::Color(pad),
+                );
+            }
+        });
     }
 }
 
@@ -430,6 +445,21 @@ mod resize_zone_tests {
                 c
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn aabb_corner_hits_resize_but_sits_outside_the_face_curve() {
+        let b = bounds();
+        let corner = Point::new(b.x + b.width - 1.0, b.y + b.height - 1.0);
+        assert!(matches!(
+            resize_zone(b, corner, 12.0, 18.0),
+            Some(Direction::SouthEast)
+        ));
+        let dist = super::super::float_clip::rounded_rect_dist(corner, b, face_radius());
+        assert!(
+            dist >= 0.5,
+            "visual clip must treat the AABB corner as an ear (dist={dist})"
         );
     }
 }
@@ -552,7 +582,7 @@ fn bar_style(theme: &Theme, round_top: bool) -> container::Style {
     let fill = p.background.weaker.color;
     // Face sits inside a 1px pad — shave the top radius so the bar meets
     // the outer rounded border cleanly.
-    let r = (WINDOW_RADIUS - FRAME_BORDER).max(0.0);
+    let r = face_radius();
     let radius = if round_top {
         Radius {
             top_left: r,
@@ -584,7 +614,7 @@ fn face_style(theme: &Theme) -> container::Style {
     } else {
         fill
     };
-    let r = (WINDOW_RADIUS - FRAME_BORDER).max(0.0);
+    let r = face_radius();
     container::Style {
         background: Some(fill.into()),
         border: Border {
