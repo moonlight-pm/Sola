@@ -2,15 +2,18 @@
 //!
 //! Discovers installed titles from Steam manifests (no Settings catalog).
 //! Launch: `gamescope -W/-H -- steam -applaunch <id>` (never host `-f`).
+mod instance;
 mod launch;
 mod nest;
+mod prefs;
 mod steam;
+mod watch;
 mod x11_nest;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iced::widget::Id as ScrollId;
 use iced::widget::image::Handle as ImageHandle;
@@ -26,8 +29,8 @@ use iced::{
 
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppMenuPayload, Application, LaunchAppPayload, MenuDefinition, Topic, TopicKind, Window,
-    WindowGeometry,
+    AppMenuPayload, Application, FocusTarget, LaunchAppPayload, MenuDefinition, Topic, TopicKind,
+    Window, WindowGeometry,
 };
 use sola_core::KeyCode;
 use sola_core::config::JsonConfig;
@@ -47,8 +50,11 @@ use sola_kit::components::text_input::{self as kit_input, text_input};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-use launch::{game_session_app_id, launch_command, session_alive, stop_nest_local};
+use launch::{
+    STEAM_ALREADY_RUNNING_MSG, game_session_app_id, launch_command, session_alive, stop_nest_local,
+};
 use nest::{NestChoice, NestFile};
+use prefs::ArcadePrefs;
 use steam::{
     SortMode, SteamGame, load_library_cache, save_library_cache, scan_library_games, sort_games,
 };
@@ -112,6 +118,14 @@ fn main() -> iced::Result {
         launch::run_game_blocking(run.steam_app_id, run.width, run.height, run.fit);
     }
 
+    if instance::claim() == instance::Claim::Handoff {
+        if let Err(e) = instance::handoff() {
+            eprintln!("sola-arcade: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
@@ -125,6 +139,8 @@ fn main() -> iced::Result {
             ],
         )
         .install();
+
+    watch::start();
 
     let app = iced::application(App::boot, App::update, App::view)
         .title(App::title)
@@ -143,13 +159,13 @@ struct ActiveSession {
     session_id: String,
     /// True after we observe a live process / LaunchResult ok.
     running: bool,
-    started: Instant,
 }
 
 struct App {
     games: Vec<SteamGame>,
     filter: String,
-    sort: SortMode,
+    /// Gallery chrome (`arcade-prefs.json`) — sort survives restart.
+    prefs: ArcadePrefs,
     /// When true (default), only fully-installed / ready-to-play titles —
     /// Steam-style “Ready to Play” filter.
     ready_to_play_only: bool,
@@ -165,6 +181,8 @@ struct App {
     host_geom: HashMap<u32, (u32, u32)>,
     /// Last nest size we successfully poked (Fit). Skip identical.
     last_fit: Option<(u32, u32)>,
+    /// Fit debounce generation — ignore stale sleep tasks.
+    fit_gen: u64,
     status: Option<String>,
     status_tone: StatusTone,
     gamescope_ok: bool,
@@ -172,6 +190,8 @@ struct App {
     active: Option<ActiveSession>,
     /// True while a background Steam library scan is running.
     library_scanning: bool,
+    /// Watch fired while a scan was already running — rescan when it finishes.
+    library_dirty: bool,
     /// False until the first successful cache load or completed scan.
     /// Used to show “initial scan” copy instead of a blank window.
     has_library_data: bool,
@@ -209,11 +229,13 @@ impl Default for App {
         // Cache (if any) paints immediately; a background scan always runs.
         let cached = load_library_cache();
         let has_library_data = cached.is_some();
-        let games = cached.unwrap_or_default();
+        let prefs = ArcadePrefs::load();
+        let mut games = cached.unwrap_or_default();
+        sort_games(&mut games, prefs.sort);
         Self {
             games,
             filter: String::new(),
-            sort: SortMode::Alphabetical,
+            prefs,
             ready_to_play_only: true,
             nest: NestFile::load(),
             nest_menu: None,
@@ -221,12 +243,14 @@ impl Default for App {
             host_window_id: None,
             host_geom: HashMap::new(),
             last_fit: None,
+            fit_gen: 0,
             status: None,
             status_tone: StatusTone::Info,
             gamescope_ok,
             steam_ok,
             active: None,
             library_scanning: true,
+            library_dirty: false,
             has_library_data,
             scroll_y: 0.0,
             viewport_h: DEFAULT_VIEWPORT_H,
@@ -265,7 +289,6 @@ enum Msg {
     StopGame,
     OpenStore(u32),
     Uninstall(u32),
-    Tick,
     GalleryScrolled(Viewport),
     /// Re-apply [`App::scroll_y`] after a view rebuild (launch/stop).
     RestoreScroll,
@@ -273,6 +296,14 @@ enum Msg {
     BannersReady(BannerBatch),
     /// Background Steam library scan finished (or failed empty).
     LibraryScanned(Vec<SteamGame>),
+    /// `steamapps/` watcher (debounced) saw an ACF / libraryfolders change.
+    LibraryDirtied,
+    /// Second `sola-arcade` asked this process to raise.
+    Activate,
+    /// Fit debounce elapsed for this generation.
+    FitDebounced(u64),
+    /// Nested DISPLAY not ready yet — retry Fit poke.
+    FitRetry,
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -353,6 +384,12 @@ impl App {
         self.games = games;
         self.apply_sort();
         save_library_cache(&self.games);
+        watch::refresh_dirs();
+        if self.library_dirty {
+            self.library_dirty = false;
+            self.library_scanning = true;
+            return Task::batch([self.ensure_visible_banners(), scan_library_task()]);
+        }
         // Keep decoded banners for app_ids that still exist; drop orphans.
         let live: HashSet<u32> = self.games.iter().map(|g| g.app_id).collect();
         self.banners.retain(|id, _| live.contains(id));
@@ -382,7 +419,6 @@ impl App {
                     name: name.clone(),
                     session_id: game_session_app_id(steam_app_id),
                     running: true,
-                    started: Instant::now(),
                 });
                 // Re-publish host label so menubar/switcher show the game name.
                 publish_gamescope_host_label(steam_app_id, &name);
@@ -460,7 +496,7 @@ impl App {
     }
 
     fn apply_sort(&mut self) {
-        sort_games(&mut self.games, self.sort);
+        sort_games(&mut self.games, self.prefs.sort);
     }
 
     fn launch_game(&mut self, steam_app_id: u32) -> Task<Msg> {
@@ -471,6 +507,12 @@ impl App {
                 active.name
             ));
             self.status_tone = StatusTone::Warn;
+            return Task::none();
+        }
+        if launch::steam_running() {
+            self.status = Some(STEAM_ALREADY_RUNNING_MSG.into());
+            self.status_tone = StatusTone::Warn;
+            tracing::warn!(steam_app_id, "arcade play refused — desktop Steam is open");
             return Task::none();
         }
 
@@ -510,7 +552,6 @@ impl App {
             name: name.clone(),
             session_id: session_id.clone(),
             running: false,
-            started: Instant::now(),
         });
         // Shell menubar/switcher key off gamescope's host app_id — publish
         // the game title as Application label + app-menu name.
@@ -552,7 +593,7 @@ impl App {
         restore_gallery_scroll(self.scroll_y)
     }
 
-    fn on_bus_topic(&mut self, topic: Topic) {
+    fn on_bus_topic(&mut self, topic: Topic) -> Task<Msg> {
         match topic {
             Topic::LaunchResult(r)
                 if self
@@ -566,6 +607,7 @@ impl App {
                     }
                     self.status = None;
                     self.publish_host_label_for_active();
+                    self.schedule_fit_if_needed()
                 } else {
                     let err = r.error.unwrap_or_else(|| "spawn failed".into());
                     self.status = Some(format!("Launch failed: {err}"));
@@ -573,36 +615,37 @@ impl App {
                     self.active = None;
                     self.clear_fit_follow();
                     self.clear_host_label();
+                    Task::none()
                 }
             }
             Topic::OutputGeometry(g) if g.width > 0 && g.height > 0 => {
                 self.output_size = Some((g.width as u32, g.height as u32));
+                Task::none()
             }
-            Topic::Windows(list) => self.on_windows(list),
-            Topic::WindowGeometry(g) => self.on_window_geometry(g),
+            Topic::Windows(list) => {
+                self.on_windows(list);
+                self.schedule_fit_if_needed()
+            }
+            Topic::WindowGeometry(g) => {
+                self.on_window_geometry(g);
+                self.schedule_fit_if_needed()
+            }
             Topic::UserAppExited(e)
                 if self
                     .active
                     .as_ref()
                     .is_some_and(|a| a.session_id == e.app_id) =>
             {
-                // `--run` can exit early on bare applaunch while the game
-                // still lives under Steam/gamescope — only clear when dead.
-                let steam_id = self.active.as_ref().map(|a| a.steam_app_id);
-                if steam_id.is_some_and(session_alive) {
-                    if let Some(a) = self.active.as_mut() {
-                        a.running = true;
-                    }
-                    self.publish_host_label_for_active();
-                    return;
-                }
+                // `--run` waits on gamescope for the nest lifetime. Its exit
+                // is the session end — no /proc poll.
                 self.active = None;
                 self.clear_fit_follow();
                 self.clear_host_label();
                 self.status = None;
                 self.set_boot_status();
+                Task::none()
             }
-            _ => {}
+            _ => Task::none(),
         }
     }
 
@@ -611,8 +654,8 @@ impl App {
         self.host_geom.retain(|id, _| live.contains(id));
         let steam_id = self.active.as_ref().map(|a| a.steam_app_id);
         self.host_window_id = steam_id.and_then(|id| pick_gamescope_host(&list, id));
-        // Poke from Tick only — first WindowGeometry is often gamescope's
-        // 1920×1080 hint; a live mode-control then aborts the wayland backend.
+        // Fit poke is debounced (`schedule_fit_if_needed`) so the first
+        // 1920×1080 hint does not mode-control abort the wayland backend.
     }
 
     fn on_window_geometry(&mut self, g: WindowGeometry) {
@@ -626,6 +669,38 @@ impl App {
     fn clear_fit_follow(&mut self) {
         self.host_window_id = None;
         self.last_fit = None;
+        self.fit_gen = self.fit_gen.wrapping_add(1);
+    }
+
+    fn wants_fit_follow(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|a| self.nest.get(a.steam_app_id) == NestChoice::Fit)
+    }
+
+    fn schedule_fit_if_needed(&mut self) -> Task<Msg> {
+        if !self.wants_fit_follow() {
+            return Task::none();
+        }
+        self.fit_gen = self.fit_gen.wrapping_add(1);
+        let generation = self.fit_gen;
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                generation
+            },
+            Msg::FitDebounced,
+        )
+    }
+
+    fn raise_self(&self) {
+        let Some(window_id) = self.float.any_window_id() else {
+            return;
+        };
+        if let Ok(mut b) = bus().lock() {
+            let _ = b.emit(Topic::Focus(FocusTarget { window_id }));
+        }
+        tracing::info!(window_id, "arcade raised existing window");
     }
 
     /// When the active title is Fit, retarget nested mode to the host frame.
@@ -667,31 +742,6 @@ impl App {
         }
     }
 
-    /// Drop active session if the nest/process is gone (poll).
-    fn reconcile_active(&mut self) {
-        let Some(active) = &self.active else {
-            return;
-        };
-        if session_alive(active.steam_app_id) {
-            if let Some(a) = self.active.as_mut() {
-                a.running = true;
-            }
-            return;
-        }
-        // Grace for cold spawn + Steam prepare (shader cache / updates can
-        // take minutes on first launch of a Proton title). After that, no
-        // process ⇒ clear Stop state.
-        let grace = Duration::from_secs(180);
-        if !active.running && active.started.elapsed() < grace {
-            return;
-        }
-        self.active = None;
-        self.clear_fit_follow();
-        self.clear_host_label();
-        self.status = None;
-        self.set_boot_status();
-    }
-
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(message) => {
@@ -713,7 +763,7 @@ impl App {
                             }
                         }
                     }
-                    self.on_bus_topic(topic);
+                    return self.on_bus_topic(topic);
                 }
             }
             Msg::Filter(s) => {
@@ -721,7 +771,7 @@ impl App {
                 return self.ensure_visible_banners();
             }
             Msg::SetSort(mode) => {
-                self.sort = mode;
+                self.prefs.set_sort(mode);
                 self.apply_sort();
                 return self.ensure_visible_banners();
             }
@@ -751,6 +801,26 @@ impl App {
             }
             Msg::LibraryScanned(games) => {
                 return self.apply_scanned_library(games);
+            }
+            Msg::LibraryDirtied => {
+                if self.library_scanning {
+                    self.library_dirty = true;
+                    return Task::none();
+                }
+                self.library_scanning = true;
+                tracing::info!("steamapps changed — rescanning library");
+                return scan_library_task();
+            }
+            Msg::Activate => {
+                self.raise_self();
+            }
+            Msg::FitDebounced(generation) => {
+                if generation == self.fit_gen {
+                    self.follow_fit_if_needed();
+                }
+            }
+            Msg::FitRetry => {
+                self.follow_fit_if_needed();
             }
             Msg::Launch(id) => return self.launch_game(id),
             Msg::ToggleNestMenu(id) => {
@@ -818,11 +888,6 @@ impl App {
                 self.status = Some(format!("Opened Steam uninstall for app {id}."));
                 self.status_tone = StatusTone::Info;
             }
-            Msg::Tick => {
-                self.reconcile_active();
-                // Nested DISPLAY appears after Steam/game start; retry Fit.
-                self.follow_fit_if_needed();
-            }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
@@ -848,13 +913,13 @@ impl App {
         let sort_alpha = icon_tool_btn(
             "lucide/arrow-down-a-z",
             "Sort A–Z",
-            self.sort == SortMode::Alphabetical,
+            self.prefs.sort == SortMode::Alphabetical,
             Msg::SetSort(SortMode::Alphabetical),
         );
         let sort_recent = icon_tool_btn(
             "lucide/history",
             "Sort by recent activity",
-            self.sort == SortMode::Recency,
+            self.prefs.sort == SortMode::Recency,
             Msg::SetSort(SortMode::Recency),
         );
         let ready_only = icon_tool_btn(
@@ -969,13 +1034,17 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        let bus = bus_subscription().map(Msg::Bus);
-        if self.active.is_some() {
-            // Poll nest lifetime so Stop/Play state stays honest.
-            let tick = iced::time::every(Duration::from_secs(1)).map(|_| Msg::Tick);
-            return Subscription::batch([bus, tick]);
+        let mut subs = vec![
+            bus_subscription().map(Msg::Bus),
+            watch::subscription().map(|_| Msg::LibraryDirtied),
+            instance::subscription().map(|_| Msg::Activate),
+        ];
+        if self.wants_fit_follow() && self.last_fit.is_none() {
+            // Nested DISPLAY appears after Steam/game start; retry Fit poke.
+            // Not a /proc walk.
+            subs.push(iced::time::every(Duration::from_millis(400)).map(|_| Msg::FitRetry));
         }
-        bus
+        Subscription::batch(subs)
     }
 }
 

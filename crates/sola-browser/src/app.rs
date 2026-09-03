@@ -3,30 +3,34 @@
 //! `Msg` and the consts were stubbed out in Task 1 and are kept here. Task 2
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
+    Shader, Space, button, column, container, image, mouse_area, row, scrollable, stack, text,
 };
 use iced::{
-    Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse,
+    Alignment, ContentFit, Element, Event, Length, Padding, Subscription, Task, event, keyboard,
+    mouse,
 };
+use sola_kit::components::badge::{self, Tone as BadgeTone};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
 use sola_kit::components::divider::DIVIDER_HIT_PX;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+
+use sola_kit::components::color_picker;
 use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::sidebar::{self, Event as SidebarEvent};
 use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{
-    DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel, SidebarSection,
-    SidebarState, field, horizontal_divider, menu_at,
+    ColorPicker, DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel,
+    SidebarSection, SidebarState, field, group_well_fill, horizontal_divider, menu_at,
 };
 
 use crate::engine::{
@@ -38,10 +42,10 @@ use crate::page_menu::{self, PageMenuKind};
 use crate::session::{self, SessionGroup, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
-    CardSummary, MatchSummary, PasskeyCandidate, PasskeyPageRequest, TotpSummary, TwoFactorKind,
-    VaultCmd, VaultEvent, VaultHandle, VaultStatus, apex_domain, create_account_hint,
-    fill_card_script, fill_credentials_script, fill_credentials_script_ex, fill_totp_script,
-    generate_password, totp_remaining_secs,
+    ItemFilter, ItemKind, ItemRecord, ItemSummary, MatchSummary, PasskeyCandidate,
+    PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle, VaultStatus, apex_domain,
+    create_account_hint, fill_card_script, fill_credentials_script, fill_credentials_script_ex,
+    fill_identity_script, fill_totp_script, filter_items, generate_password, totp_remaining_secs,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -55,6 +59,23 @@ pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 46.0;
 const NAV_BTN_W: f32 = 34.0;
+
+/// Left/right padding so the history tray matches the location field.
+/// Mirrors `view_chrome_bar`: pad + profile + divider + 4 nav buttons
+/// before the omnibox, vault + downloads after.
+fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
+    use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+    let pad = SPACE_MD;
+    let gap = SPACE_SM;
+    let left = pad + sidebar_w + DIVIDER_HIT_PX + NAV_BTN_W * 4.0 + gap * 6.0;
+    let vault = if cfg!(feature = "bitwarden") {
+        NAV_BTN_W
+    } else {
+        0.0
+    };
+    let right = pad + vault + NAV_BTN_W + gap * 2.0;
+    (left, right)
+}
 /// How long the copy-URL glyph stays on the check after a successful copy.
 const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 /// Tab sidebar width (logical px) — the value the draggable divider
@@ -82,7 +103,14 @@ pub enum Msg {
     NavStop,
     UrlInput(String),
     UrlSubmit,
+    /// Shift+Enter: always the Kagi results page for the typed query.
+    UrlSearchResults,
+    OmniboxSelectNext,
+    OmniboxSelectPrev,
+    OmniboxPick(usize),
     CloseTab(TabId),
+    /// ⌘⇧T — pop the recently-closed stack.
+    ReopenClosedTab,
     ActivateTab(TabId),
     /// Drain helper queues (tabs, downloads, copy, menus, vault). Fired
     /// by [`crate::chrome_wake`] or a short-lived 250 ms timer (copy-URL
@@ -100,23 +128,28 @@ pub enum Msg {
     /// Global left-button released — ends a nav-hold, not a sidebar drag.
     CursorReleased,
     ToggleGroup(String),
-    TabContext(TabId),
-    GroupContext(String),
     MenuDismiss,
-    NewGroup(TabId),
-    AddToGroup {
-        tab: TabId,
-        group: String,
-    },
-    UngroupTab(TabId),
-    UngroupGroup(String),
-    RenameStart(String),
+    /// ⌘G: wrap the selected loose tab in a group and start renaming.
+    NewGroup,
+    /// Hover pencil on a group header.
+    RenameGroup(String),
+    /// Second tick after the rename field is mounted: select the name.
+    RenameSelectAll,
     RenameInput(String),
     RenameCommit,
-    RenameCancel,
+    /// Toggle the edit-mode group color picker.
+    GroupColor(String),
+    GroupColorMsg(color_picker::Message),
+    GroupColorDismiss,
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
+    /// Inspector pane took the click.
+    DevToolsFocused,
+    /// Docked inspector divider pressed.
+    DevToolsSplitDrag,
+    /// Window height (logical) for inspector divider math.
+    WindowResized(f32),
     /// A global left press — triggers a URL-bar focus query so we can
     /// select-all when the field has just gained focus (browser behavior).
     LeftPressed,
@@ -133,6 +166,8 @@ pub enum Msg {
     UrlPasted(Option<String>),
     /// Result of an `iced::clipboard::read` for paste into page content.
     PagePasted(Option<String>),
+    /// Compositor clipboard probe for page paste (image or text).
+    PageOffer(sola_kit::clipboard::Offer),
     /// Clipboard paste targeted at the open vault form (⌘V via Edit menu).
     #[cfg(feature = "bitwarden")]
     VaultClipboardPaste(Option<String>),
@@ -141,22 +176,32 @@ pub enum Msg {
     TitleResize(iced::window::Direction),
     TitleClose,
     // —— Bitwarden vault (feature `bitwarden`) ——
-    /// Toolbar lock: open login / status panel.
+    /// Toolbar vault: one panel for unlock, browse, fill, TOTP, cards, identities.
     VaultToggle,
-    /// Toolbar credit-card: open the cards panel (unlock first if needed).
     #[cfg(feature = "bitwarden")]
-    CardsToggle,
+    VaultSearch(String),
     #[cfg(feature = "bitwarden")]
-    CardsFill(String),
+    VaultFilter(ItemFilter),
+    /// Open the full record for a vault item.
     #[cfg(feature = "bitwarden")]
-    CardsRefresh,
-    /// Toolbar authenticator: TOTP codes (unlock first if needed).
+    VaultOpenItem(String),
     #[cfg(feature = "bitwarden")]
-    TotpToggle,
+    VaultItemBack,
+    /// Toggle reveal for a hidden record field (`RecordField.key`).
     #[cfg(feature = "bitwarden")]
-    TotpFill(String),
+    VaultReveal(String),
+    /// Copy a secret/value to the clipboard.
     #[cfg(feature = "bitwarden")]
-    TotpRefresh,
+    VaultCopy {
+        key: String,
+        value: String,
+    },
+    /// Fill the page from a vault item (login / card / identity).
+    #[cfg(feature = "bitwarden")]
+    VaultFillItem(String),
+    /// Copy + fill the current TOTP for a login.
+    #[cfg(feature = "bitwarden")]
+    VaultTotpCopy(String),
     VaultEmail(String),
     VaultPassword(String),
     VaultOtp(String),
@@ -225,6 +270,24 @@ pub enum Msg {
     /// Site Notification.requestPermission — Allow / Block.
     NotifyAllow,
     NotifyBlock,
+    /// getUserMedia / huddle mic (and camera) — Allow / Block.
+    MediaAllow,
+    MediaBlock,
+    /// Page `alert` / `confirm` / `prompt` / leave-page.
+    JsDialogOk,
+    JsDialogCancel,
+    JsDialogInput(String),
+    /// Clicked the idle omnibox label — become an edit field.
+    UrlBarActivate,
+    FindOpen,
+    FindNext,
+    FindPrev,
+    FindInput(String),
+    FindClose,
+    FindResult {
+        count: i32,
+        ordinal: i32,
+    },
     /// Page context-menu action (after CEF cancelled the native OSR menu).
     PageMenu(PageMenuAction),
 }
@@ -251,8 +314,6 @@ pub enum PageMenuAction {
 
 #[derive(Debug, Clone)]
 enum CtxTarget {
-    Tab(TabId),
-    Group(String),
     Page(PageContext),
     History { forward: bool },
 }
@@ -271,16 +332,6 @@ pub enum ProfileDialog {
     New,
     Rename,
     DeleteConfirm,
-}
-
-/// After unlock, which chrome panel to show.
-#[cfg(feature = "bitwarden")]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum VaultResume {
-    #[default]
-    Logins,
-    Cards,
-    Totp,
 }
 
 /// Which form the vault panel shows.
@@ -302,6 +353,8 @@ enum VaultPanelPhase {
     CreateLogin,
     /// Cipher saved; page had no fields to fill.
     CreateSaved,
+    /// Full record for one vault item.
+    ItemDetail,
 }
 
 /// In-flight WebAuthn get() / create() waiting for the user.
@@ -374,6 +427,8 @@ pub struct App<E: Engine> {
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
     closed_tabs: HashSet<TabId>,
+    /// LIFO recently-closed tabs (⌘⇧T). Persisted in `session.json`.
+    recently_closed: Vec<crate::session::ClosedTab>,
     /// Editable contents of the URL bar.
     pub url_field: String,
     /// The URL we last copied from the engine into `url_field`,
@@ -391,6 +446,8 @@ pub struct App<E: Engine> {
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     renaming: Option<(String, String)>,
+    /// Color picker anchored to the edit-mode group swatch.
+    group_color: Option<(String, ColorPicker)>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -402,6 +459,16 @@ pub struct App<E: Engine> {
     /// typing in the bar; cleared when a press lands in the web view.
     /// Best-effort heuristic — see the design spec's documented edge case.
     pub url_bar_focused: bool,
+    /// Ignore the LeftPressed focus query from the click that entered edit.
+    url_bar_activating: bool,
+    visits: crate::visit_history::VisitHistory,
+    /// Highlight in the omnibox history list (`None` = none yet).
+    omnibox_sel: Option<usize>,
+    find_open: bool,
+    find_query: String,
+    find_count: i32,
+    find_ordinal: i32,
+    find_field_focused: bool,
     /// Last written session fingerprint — skip disk when unchanged.
     session_fp: String,
     /// Tabs to open after the iced Wayland window exists (session restore).
@@ -411,14 +478,6 @@ pub struct App<E: Engine> {
     vault: VaultHandle,
     #[cfg(feature = "bitwarden")]
     vault_panel_open: bool,
-    /// Separate cards panel (mutually exclusive with the login panel).
-    #[cfg(feature = "bitwarden")]
-    cards_panel_open: bool,
-    /// Authenticator / TOTP panel.
-    #[cfg(feature = "bitwarden")]
-    totp_panel_open: bool,
-    #[cfg(feature = "bitwarden")]
-    vault_resume: VaultResume,
     #[cfg(feature = "bitwarden")]
     vault_phase: VaultPanelPhase,
     #[cfg(feature = "bitwarden")]
@@ -439,7 +498,7 @@ pub struct App<E: Engine> {
     vault_busy: bool,
     #[cfg(feature = "bitwarden")]
     vault_status: VaultStatus,
-    /// URI matches for the active tab (unlocked panel).
+    /// URI matches for passkey attach (unlocked panel).
     #[cfg(feature = "bitwarden")]
     vault_matches: Vec<MatchSummary>,
     #[cfg(feature = "bitwarden")]
@@ -451,28 +510,32 @@ pub struct App<E: Engine> {
     vault_icon_locked: iced::widget::svg::Handle,
     #[cfg(feature = "bitwarden")]
     vault_icon_unlocked: iced::widget::svg::Handle,
+    /// All vault items for the unified panel.
     #[cfg(feature = "bitwarden")]
-    cards_icon: iced::widget::svg::Handle,
+    vault_items: Vec<ItemSummary>,
     #[cfg(feature = "bitwarden")]
-    vault_cards: Vec<CardSummary>,
+    vault_items_loading: bool,
     #[cfg(feature = "bitwarden")]
-    vault_cards_loading: bool,
+    vault_items_url: String,
     #[cfg(feature = "bitwarden")]
-    totp_icon: iced::widget::svg::Handle,
+    vault_search: String,
     #[cfg(feature = "bitwarden")]
-    vault_totp: Vec<TotpSummary>,
+    vault_filter: ItemFilter,
     #[cfg(feature = "bitwarden")]
-    vault_totp_loading: bool,
-    /// Fill the MRU authenticator once the list arrives.
+    vault_item: Option<ItemRecord>,
     #[cfg(feature = "bitwarden")]
-    totp_autofill_pending: bool,
-    /// Next `TotpFillReady` came from a row click — copy the code.
+    vault_item_loading: bool,
+    #[cfg(feature = "bitwarden")]
+    vault_item_id: Option<String>,
+    #[cfg(feature = "bitwarden")]
+    vault_revealed: HashSet<String>,
+    #[cfg(feature = "bitwarden")]
+    vault_copy_flash: Option<(String, Instant)>,
+    /// Next TOTP fill also copies the code.
     #[cfg(feature = "bitwarden")]
     totp_copy_next: bool,
     #[cfg(feature = "bitwarden")]
     pending_totp_clipboard: Option<String>,
-    #[cfg(feature = "bitwarden")]
-    totp_last_refresh_secs: u64,
     /// Page WebAuthn get() waiting for passkey selection.
     #[cfg(feature = "bitwarden")]
     pending_passkey: Option<PendingPasskey>,
@@ -506,8 +569,26 @@ pub struct App<E: Engine> {
     download_icon: iced::widget::svg::Handle,
     /// In-chrome Notification.requestPermission prompt.
     pending_notify: Option<crate::notify::IpcPerm>,
+    /// In-chrome getUserMedia / huddle permission prompt.
+    pending_media: Option<crate::media::IpcMedia>,
+    /// In-chrome `alert` / `confirm` / `prompt` / leave-page.
+    pending_js_dialog: Option<crate::js_dialog::Ipc>,
+    js_dialog_queue: VecDeque<crate::js_dialog::Ipc>,
+    js_dialog_prompt: String,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
+    /// Page tab the docked inspector is attached to (`None` = closed).
+    devtools: Option<TabId>,
+    /// Fraction of the page column given to the page (inspector below).
+    devtools_ratio: f32,
+    devtools_dragging: bool,
+    /// Logical window height for divider drag.
+    window_h: f32,
+    /// Live tab favicons (CEF PNG → iced handle).
+    favicons: HashMap<TabId, iced::widget::image::Handle>,
+    /// Parked favicons per profile so a switch does not wait for CEF.
+    favicon_park: HashMap<String, HashMap<TabId, iced::widget::image::Handle>>,
+    globe: iced::widget::svg::Handle,
 }
 
 impl<E: Engine> App<E> {
@@ -527,6 +608,7 @@ impl<E: Engine> App<E> {
         active_index: usize,
         sidebar_w: f32,
         session_groups: Vec<SessionGroup>,
+        recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
         let mut app = Self {
@@ -538,6 +620,7 @@ impl<E: Engine> App<E> {
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
             closed_tabs: HashSet::new(),
+            recently_closed,
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
@@ -548,22 +631,25 @@ impl<E: Engine> App<E> {
             nav_hold: None,
             page_menus,
             renaming: None,
+            group_color: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
             app_id,
             url_bar_focused: false,
+            url_bar_activating: false,
+            visits: crate::visit_history::VisitHistory::load(),
+            omnibox_sel: None,
+            find_open: false,
+            find_query: String::new(),
+            find_count: 0,
+            find_ordinal: 0,
+            find_field_focused: false,
             session_fp: String::new(),
             pending_session: Some((tabs, active_index, session_groups)),
             #[cfg(feature = "bitwarden")]
             vault: VaultHandle::spawn(),
             #[cfg(feature = "bitwarden")]
             vault_panel_open: false,
-            #[cfg(feature = "bitwarden")]
-            cards_panel_open: false,
-            #[cfg(feature = "bitwarden")]
-            totp_panel_open: false,
-            #[cfg(feature = "bitwarden")]
-            vault_resume: VaultResume::Logins,
             #[cfg(feature = "bitwarden")]
             vault_phase: VaultPanelPhase::Credentials,
             #[cfg(feature = "bitwarden")]
@@ -594,25 +680,29 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             vault_icon_unlocked: icon_handle("lucide/key-round"),
             #[cfg(feature = "bitwarden")]
-            cards_icon: icon_handle("lucide/credit-card"),
+            vault_items: Vec::new(),
             #[cfg(feature = "bitwarden")]
-            totp_icon: icon_handle("lucide/shield"),
+            vault_items_loading: false,
             #[cfg(feature = "bitwarden")]
-            vault_totp: Vec::new(),
+            vault_items_url: String::new(),
             #[cfg(feature = "bitwarden")]
-            vault_totp_loading: false,
+            vault_search: String::new(),
             #[cfg(feature = "bitwarden")]
-            totp_autofill_pending: false,
+            vault_filter: ItemFilter::All,
+            #[cfg(feature = "bitwarden")]
+            vault_item: None,
+            #[cfg(feature = "bitwarden")]
+            vault_item_loading: false,
+            #[cfg(feature = "bitwarden")]
+            vault_item_id: None,
+            #[cfg(feature = "bitwarden")]
+            vault_revealed: HashSet::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_copy_flash: None,
             #[cfg(feature = "bitwarden")]
             totp_copy_next: false,
             #[cfg(feature = "bitwarden")]
             pending_totp_clipboard: None,
-            #[cfg(feature = "bitwarden")]
-            totp_last_refresh_secs: 0,
-            #[cfg(feature = "bitwarden")]
-            vault_cards: Vec::new(),
-            #[cfg(feature = "bitwarden")]
-            vault_cards_loading: false,
             #[cfg(feature = "bitwarden")]
             pending_passkey: None,
             #[cfg(feature = "bitwarden")]
@@ -635,7 +725,18 @@ impl<E: Engine> App<E> {
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
             pending_notify: None,
+            pending_media: None,
+            pending_js_dialog: None,
+            js_dialog_queue: VecDeque::new(),
+            js_dialog_prompt: String::new(),
             copy_url_flash: None,
+            devtools: None,
+            devtools_ratio: 0.62,
+            devtools_dragging: false,
+            window_h: VIEW_H as f32,
+            favicons: HashMap::new(),
+            favicon_park: HashMap::new(),
+            globe: icon_handle("lucide/globe"),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -644,7 +745,152 @@ impl<E: Engine> App<E> {
                 app.vault_paste_target = VaultPasteTarget::Password;
             }
         }
+        let seed: Vec<(String, String)> = app
+            .pending_session
+            .as_ref()
+            .map(|(tabs, _, _)| {
+                let mut v = Vec::new();
+                for tab in tabs {
+                    for h in tab.history.iter().rev() {
+                        v.push((h.url.clone(), h.title.clone()));
+                    }
+                    v.push((tab.url.clone(), tab.title.clone()));
+                }
+                v
+            })
+            .unwrap_or_default();
+        let mut dirty = false;
+        for (url, title) in &seed {
+            dirty |= app.visits.ingest(url, title);
+        }
+        if dirty {
+            app.visits.save();
+        }
         app
+    }
+
+    pub(crate) fn set_url_bar_focused(&mut self, on: bool) {
+        self.url_bar_focused = on;
+        URL_BAR_FOCUSED.store(on, Ordering::Relaxed);
+        if !on {
+            self.omnibox_sel = None;
+        }
+    }
+
+    fn omnibox_hits(&self) -> Vec<crate::visit_history::Visit> {
+        if !self.url_bar_focused {
+            return Vec::new();
+        }
+        self.visits.search(&self.url_field)
+    }
+
+    fn note_visit(&mut self, url: &str, title: &str) {
+        self.visits.record(url, title);
+    }
+
+    fn tab_already_at(&self, url: &str) -> Option<TabId> {
+        let want = crate::util::normalize_url(url);
+        if let Some(t) = self
+            .cached_tabs
+            .iter()
+            .find(|t| crate::util::normalize_url(&t.url) == want)
+        {
+            return Some(t.id);
+        }
+        // Lucky / SERP URLs share kagi.com with any previous search — switching
+        // would skip the new query.
+        if crate::util::is_kagi_search_url(&want) {
+            return None;
+        }
+        let on_site: Vec<TabId> = self
+            .cached_tabs
+            .iter()
+            .filter(|t| crate::util::same_site(&t.url, url))
+            .map(|t| t.id)
+            .collect();
+        if on_site.iter().any(|id| *id == self.cached_active) {
+            return Some(self.cached_active);
+        }
+        on_site.first().copied()
+    }
+
+    fn open_omnibox_url(&mut self, url: String) -> Task<Msg> {
+        if url.is_empty() {
+            return Task::none();
+        }
+        if let Some(id) = self.tab_already_at(&url) {
+            let leaving = self.cached_active;
+            if id != leaving {
+                self.switch_active_tab(id);
+                // New-tab (⌘T) + jump to an already-open site must not
+                // leave the unused about:blank behind.
+                self.discard_scratch_tab(leaving);
+            }
+            self.omnibox_sel = None;
+            self.set_url_bar_focused(false);
+            self.persist_session();
+            return crate::integration::unfocus_chrome();
+        }
+        self.navigate_to(url)
+    }
+
+    /// Drop an unused `about:blank` we just left. Not pushed onto ⌘⇧T.
+    fn discard_scratch_tab(&mut self, id: TabId) {
+        if id == self.cached_active || self.cached_tabs.len() <= 1 {
+            return;
+        }
+        let scratch = self
+            .cached_tabs
+            .iter()
+            .find(|t| t.id == id)
+            .is_some_and(tab_is_scratch_blank);
+        if !scratch {
+            return;
+        }
+        self.slot.forget_tab(id);
+        self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
+        self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+        let _ = self.cmd_tx.send(Cmd::CloseTab(id));
+        self.closed_tabs.insert(id);
+        self.cached_tabs.retain(|t| t.id != id);
+        self.groups.on_tab_closed(id);
+        self.favicons.remove(&id);
+    }
+
+    fn navigate_to(&mut self, url: String) -> Task<Msg> {
+        if url.is_empty() {
+            return Task::none();
+        }
+        self.url_field = url.clone();
+        self.last_seen_url = url.clone();
+        self.set_url_bar_focused(false);
+        if let Some(t) = self
+            .cached_tabs
+            .iter_mut()
+            .find(|t| t.id == self.cached_active)
+        {
+            t.url = url.clone();
+            t.is_loading = true;
+            t.load_progress = 0.0;
+        }
+        let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+        let _ = self.cmd_tx.send(Cmd::Focus(true));
+        self.persist_session();
+        crate::integration::unfocus_chrome()
+    }
+
+    fn submit_omnibox(&mut self, search_results: bool) -> Task<Msg> {
+        let typed = self.url_field.trim().to_string();
+        if typed.is_empty() {
+            return Task::none();
+        }
+        let hits = self.visits.search(&typed);
+        let highlighted = self
+            .omnibox_sel
+            .and_then(|i| hits.get(i).map(|v| v.url.as_str()));
+        let url = crate::util::omnibox_submit_url(&typed, highlighted, search_results);
+        self.omnibox_sel = None;
+        self.open_omnibox_url(url)
     }
 
     #[cfg(feature = "bitwarden")]
@@ -656,8 +902,8 @@ impl<E: Engine> App<E> {
         // close must restore the same state when the lock icon is clicked again.
         if open {
             self.set_downloads_panel_open(false);
-            self.cards_panel_open = false;
-            self.totp_panel_open = false;
+        } else {
+            self.clear_vault_item();
         }
     }
 
@@ -669,8 +915,7 @@ impl<E: Engine> App<E> {
             {
                 self.vault_panel_open = false;
                 VAULT_PANEL_OPEN.store(false, Ordering::Relaxed);
-                self.cards_panel_open = false;
-                self.totp_panel_open = false;
+                self.clear_vault_item();
             }
         }
     }
@@ -697,50 +942,77 @@ impl<E: Engine> App<E> {
         self.vault.send(VaultCmd::Matches { url });
     }
 
+    /// All vault items for the unified panel (and the contextual toolbar icon).
     #[cfg(feature = "bitwarden")]
-    fn request_vault_cards(&mut self) {
+    fn request_vault_items(&mut self) {
         if !self.vault_status.unlocked {
-            self.vault_cards.clear();
-            self.vault_cards_loading = false;
-            return;
-        }
-        self.vault_cards_loading = true;
-        self.vault.send(VaultCmd::ListCards);
-    }
-
-    #[cfg(feature = "bitwarden")]
-    fn set_cards_panel_open(&mut self, open: bool) {
-        self.cards_panel_open = open;
-        if open {
-            self.set_downloads_panel_open(false);
-            self.set_vault_panel_open(false);
-            self.totp_panel_open = false;
-        }
-    }
-
-    #[cfg(feature = "bitwarden")]
-    fn set_totp_panel_open(&mut self, open: bool) {
-        self.totp_panel_open = open;
-        if open {
-            self.set_downloads_panel_open(false);
-            self.set_vault_panel_open(false);
-            self.cards_panel_open = false;
-        }
-    }
-
-    #[cfg(feature = "bitwarden")]
-    fn request_vault_totp(&mut self) {
-        if !self.vault_status.unlocked {
-            self.vault_totp.clear();
-            self.vault_totp_loading = false;
+            self.vault_items.clear();
+            self.vault_items_loading = false;
             return;
         }
         let url = self
             .active_tab_info()
             .map(|t| t.url.clone())
             .unwrap_or_default();
-        self.vault_totp_loading = true;
-        self.vault.send(VaultCmd::ListTotp { url });
+        self.vault_items_url = url.clone();
+        self.vault_items_loading = true;
+        self.vault.send(VaultCmd::ListItems { url });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn clear_vault_item(&mut self) {
+        self.vault_item = None;
+        self.vault_item_loading = false;
+        self.vault_item_id = None;
+        self.vault_revealed.clear();
+        if matches!(self.vault_phase, VaultPanelPhase::ItemDetail) {
+            self.vault_phase = VaultPanelPhase::Credentials;
+        }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn open_vault_item(&mut self, id: String) {
+        self.vault_phase = VaultPanelPhase::ItemDetail;
+        self.vault_item = None;
+        self.vault_item_loading = true;
+        self.vault_item_id = Some(id.clone());
+        self.vault_revealed.clear();
+        self.vault_error = None;
+        self.vault.send(VaultCmd::GetItem { id });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn fill_vault_item(&mut self, id: String) -> Task<Msg> {
+        if self.vault_busy || !self.vault_status.unlocked {
+            return Task::none();
+        }
+        let kind = self
+            .vault_item
+            .as_ref()
+            .filter(|r| r.id == id)
+            .map(|r| r.kind)
+            .or_else(|| self.vault_items.iter().find(|i| i.id == id).map(|i| i.kind));
+        match kind {
+            Some(ItemKind::Login) => {
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::Fill { id });
+            }
+            Some(ItemKind::Card) => {
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::FillCard { id });
+            }
+            Some(ItemKind::Identity) => {
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::FillIdentity { id });
+            }
+            _ => {
+                self.open_vault_item(id);
+            }
+        }
+        Task::none()
     }
 
     #[cfg(feature = "bitwarden")]
@@ -964,9 +1236,17 @@ impl<E: Engine> App<E> {
                     sidebar_w: self.sidebar_w,
                     last_used: Instant::now(),
                     groups: self.groups.clone(),
+                    recently_closed: self.recently_closed.clone(),
                 },
             );
+            let parked = std::mem::take(&mut self.favicons);
+            self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
+
+        self.devtools = None;
+        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
+        self.slot.devtools_pending.lock().unwrap().take();
+        self.slot.input_devtools.store(false, Ordering::Relaxed);
 
         let profile = crate::profiles::active();
         let resume_id = profile.id.clone();
@@ -979,6 +1259,8 @@ impl<E: Engine> App<E> {
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
                 self.groups = snap.groups;
+                self.recently_closed = snap.recently_closed;
+                self.favicons = self.favicon_park.remove(&resume_id).unwrap_or_default();
                 self.apply_workspace_chrome_focus();
                 // Helper already has these browsers. Pass the parked list
                 // only as a fallback if the helper was evicted/died.
@@ -1008,6 +1290,7 @@ impl<E: Engine> App<E> {
             }
         }
 
+        self.favicons.clear();
         let (create_tabs, active) = self.cold_workspace_from_session();
         let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
@@ -1026,6 +1309,7 @@ impl<E: Engine> App<E> {
     fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
         let session = crate::session::BrowserSession::load();
         let session_groups = session.groups.clone();
+        self.recently_closed = session.closed.clone();
         let (tabs, active_index, sidebar_w) = session.bootstrap(None, BLANK_URL);
         self.sidebar_w = sidebar_w;
 
@@ -1106,6 +1390,7 @@ impl<E: Engine> App<E> {
                     self.slot.forget_tab(t.id);
                 }
             }
+            self.favicon_park.remove(&id);
             let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
                 profile_id: id.clone(),
             });
@@ -1189,7 +1474,13 @@ impl<E: Engine> App<E> {
         } else {
             tabs[0].id
         };
-        let session = session::session_from_tabs(&tabs, active, self.sidebar_w, &self.groups);
+        let session = session::session_from_tabs(
+            &tabs,
+            active,
+            self.sidebar_w,
+            &self.groups,
+            &self.recently_closed,
+        );
         let fp = session::fingerprint(&session);
         if fp == self.session_fp {
             return;
@@ -1245,18 +1536,24 @@ impl<E: Engine> App<E> {
             Msg::VaultToggle => {
                 #[cfg(feature = "bitwarden")]
                 {
-                    self.vault_resume = VaultResume::Logins;
-                    self.cards_panel_open = false;
-                    self.totp_panel_open = false;
                     let open = !self.vault_panel_open;
                     self.set_vault_panel_open(open);
                     if open {
                         self.vault_error = None;
                         if self.vault_status.unlocked {
-                            self.request_vault_matches();
-                            return Task::none();
+                            if !matches!(
+                                self.vault_phase,
+                                VaultPanelPhase::PasskeyPick
+                                    | VaultPanelPhase::PasskeyCreate
+                                    | VaultPanelPhase::CreateLogin
+                                    | VaultPanelPhase::CreateSaved
+                                    | VaultPanelPhase::ItemDetail
+                            ) {
+                                self.vault_phase = VaultPanelPhase::Credentials;
+                            }
+                            self.request_vault_items();
+                            return iced::widget::operation::focus(vault_search_id());
                         }
-                        // Prefill email when remembered; land caret on password.
                         if !self.vault_email.trim().is_empty() {
                             self.vault_paste_target = VaultPasteTarget::Password;
                             return iced::widget::operation::focus(vault_password_id());
@@ -1266,64 +1563,41 @@ impl<E: Engine> App<E> {
                 }
             }
             #[cfg(feature = "bitwarden")]
-            Msg::CardsToggle => {
-                if self.cards_panel_open {
-                    self.set_cards_panel_open(false);
-                    return Task::none();
-                }
-                self.vault_error = None;
-                self.vault_resume = VaultResume::Cards;
-                if self.vault_status.unlocked {
-                    self.set_cards_panel_open(true);
-                    self.request_vault_cards();
-                    return Task::none();
-                }
-                // Unlock first (same form as the key button), then open cards.
-                self.cards_panel_open = false;
-                self.set_vault_panel_open(true);
-                if !self.vault_email.trim().is_empty() {
-                    self.vault_paste_target = VaultPasteTarget::Password;
-                    return iced::widget::operation::focus(vault_password_id());
-                }
-                return iced::widget::operation::focus(vault_email_id());
+            Msg::VaultSearch(s) => {
+                self.vault_search = s;
             }
             #[cfg(feature = "bitwarden")]
-            Msg::CardsFill(id) => {
-                if self.vault_busy || !self.vault_status.unlocked {
-                    return Task::none();
-                }
-                self.vault_busy = true;
-                self.vault_error = None;
-                self.vault.send(VaultCmd::FillCard { id });
+            Msg::VaultFilter(f) => {
+                self.vault_filter = f;
             }
             #[cfg(feature = "bitwarden")]
-            Msg::CardsRefresh => {
-                self.request_vault_cards();
-            }
-            #[cfg(feature = "bitwarden")]
-            Msg::TotpToggle => {
-                if self.totp_panel_open {
-                    self.set_totp_panel_open(false);
+            Msg::VaultOpenItem(id) => {
+                if !self.vault_status.unlocked {
                     return Task::none();
                 }
-                self.vault_error = None;
-                self.vault_resume = VaultResume::Totp;
-                if self.vault_status.unlocked {
-                    self.totp_autofill_pending = true;
-                    self.set_totp_panel_open(true);
-                    self.request_vault_totp();
-                    return Task::none();
-                }
-                self.totp_panel_open = false;
-                self.set_vault_panel_open(true);
-                if !self.vault_email.trim().is_empty() {
-                    self.vault_paste_target = VaultPasteTarget::Password;
-                    return iced::widget::operation::focus(vault_password_id());
-                }
-                return iced::widget::operation::focus(vault_email_id());
+                self.open_vault_item(id);
             }
             #[cfg(feature = "bitwarden")]
-            Msg::TotpFill(id) => {
+            Msg::VaultItemBack => {
+                self.clear_vault_item();
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultReveal(key) => {
+                if !self.vault_revealed.remove(&key) {
+                    self.vault_revealed.insert(key);
+                }
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultCopy { key, value } => {
+                self.vault_copy_flash = Some((key, Instant::now()));
+                return iced::clipboard::write(value);
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultFillItem(id) => {
+                return self.fill_vault_item(id);
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultTotpCopy(id) => {
                 if self.vault_busy || !self.vault_status.unlocked {
                     return Task::none();
                 }
@@ -1333,17 +1607,8 @@ impl<E: Engine> App<E> {
                 self.vault.send(VaultCmd::FillTotp { id });
             }
             #[cfg(feature = "bitwarden")]
-            Msg::TotpRefresh => {
-                self.request_vault_totp();
-            }
-            #[cfg(feature = "bitwarden")]
             Msg::VaultFill(id) => {
-                if self.vault_busy || !self.vault_status.unlocked {
-                    return Task::none();
-                }
-                self.vault_busy = true;
-                self.vault_error = None;
-                self.vault.send(VaultCmd::Fill { id });
+                return self.fill_vault_item(id);
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyPick(cipher_id) => {
@@ -1363,7 +1628,7 @@ impl<E: Engine> App<E> {
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultRefreshMatches => {
-                self.request_vault_matches();
+                self.request_vault_items();
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreateOpen => {
@@ -1387,7 +1652,7 @@ impl<E: Engine> App<E> {
                 self.vault_busy = false;
                 self.vault_error = None;
                 self.vault_phase = VaultPanelPhase::Credentials;
-                self.request_vault_matches();
+                self.request_vault_items();
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreateSubmit => {
@@ -1483,7 +1748,8 @@ impl<E: Engine> App<E> {
                         | VaultPanelPhase::PasskeyPick
                         | VaultPanelPhase::PasskeyCreate
                         | VaultPanelPhase::CreateLogin
-                        | VaultPanelPhase::CreateSaved => {
+                        | VaultPanelPhase::CreateSaved
+                        | VaultPanelPhase::ItemDetail => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -1518,7 +1784,8 @@ impl<E: Engine> App<E> {
                         | VaultPanelPhase::PasskeyPick
                         | VaultPanelPhase::PasskeyCreate
                         | VaultPanelPhase::CreateLogin
-                        | VaultPanelPhase::CreateSaved => {
+                        | VaultPanelPhase::CreateSaved
+                        | VaultPanelPhase::ItemDetail => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -1544,8 +1811,6 @@ impl<E: Engine> App<E> {
                         }
                         self.vault_awaiting_fill = false;
                         self.set_vault_panel_open(false);
-                        self.set_cards_panel_open(false);
-                        self.set_totp_panel_open(false);
                     }
                 }
             }
@@ -1608,6 +1873,37 @@ impl<E: Engine> App<E> {
             }
             Msg::NotifyAllow => self.resolve_notify_permission("granted"),
             Msg::NotifyBlock => self.resolve_notify_permission("denied"),
+            Msg::MediaAllow => self.resolve_media_permission("granted"),
+            Msg::MediaBlock => self.resolve_media_permission("denied"),
+            Msg::JsDialogOk => return self.resolve_js_dialog(true),
+            Msg::JsDialogCancel => return self.resolve_js_dialog(false),
+            Msg::JsDialogInput(s) => {
+                self.js_dialog_prompt = s;
+            }
+            Msg::UrlBarActivate => {
+                self.set_url_bar_focused(true);
+                self.url_bar_activating = true;
+                let _ = self.cmd_tx.send(Cmd::Focus(false));
+                return Task::batch([
+                    crate::integration::focus_url_bar(),
+                    crate::integration::select_url_bar(),
+                ]);
+            }
+            Msg::FindOpen => return self.open_find(),
+            Msg::FindNext => return self.find_step(true),
+            Msg::FindPrev => return self.find_step(false),
+            Msg::FindInput(s) => {
+                self.find_query = s;
+                self.find_field_focused = true;
+                self.send_find(true, false);
+            }
+            Msg::FindClose => {
+                self.close_find();
+            }
+            Msg::FindResult { count, ordinal } => {
+                self.find_count = count;
+                self.find_ordinal = ordinal;
+            }
             Msg::DownloadRemove(id) => {
                 self.downloads.remove(&id);
             }
@@ -1703,9 +1999,22 @@ impl<E: Engine> App<E> {
                 return iced::clipboard::write(url);
             }
             Msg::NavStop => {
+                if self.find_open {
+                    self.close_find();
+                    return crate::integration::unfocus_chrome();
+                }
+                if self.url_bar_focused {
+                    self.set_url_bar_focused(false);
+                    self.url_field = if self.last_seen_url == BLANK_URL {
+                        String::new()
+                    } else {
+                        self.last_seen_url.clone()
+                    };
+                    return crate::integration::unfocus_chrome();
+                }
                 if self.renaming.is_some() {
-                    self.renaming = None;
-                    return Task::none();
+                    self.clear_group_rename();
+                    return crate::integration::unfocus_chrome();
                 }
                 if self.context_menu.is_some() {
                     self.context_menu = None;
@@ -1729,11 +2038,9 @@ impl<E: Engine> App<E> {
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
-                if self.vault_panel_open || self.cards_panel_open || self.totp_panel_open {
+                if self.vault_panel_open {
                     // Dismiss panel only — keep login / 2FA state for re-open.
                     self.set_vault_panel_open(false);
-                    self.set_cards_panel_open(false);
-                    self.set_totp_panel_open(false);
                     return Task::none();
                 }
                 self.set_active_loading(false);
@@ -1741,33 +2048,40 @@ impl<E: Engine> App<E> {
             }
             Msg::UrlInput(s) => {
                 self.url_field = s;
-                self.url_bar_focused = true;
+                self.set_url_bar_focused(true);
+                self.omnibox_sel = None;
+                return crate::integration::focus_url_bar();
             }
             Msg::UrlSubmit => {
-                // A URL navigates directly; anything else is searched on Kagi.
-                let url = crate::util::resolve_query(&self.url_field);
-                if url.is_empty() {
-                    return Task::none();
+                return self.submit_omnibox(false);
+            }
+            Msg::UrlSearchResults => {
+                return self.submit_omnibox(true);
+            }
+            Msg::OmniboxSelectNext => {
+                let n = self.omnibox_hits().len();
+                if n == 0 {
+                    return crate::integration::focus_url_bar();
                 }
-                // Instant typed → resolved, then drop the caret so the field
-                // is not an editable well while CEF settles the canonical URL.
-                self.url_field = url.clone();
-                self.last_seen_url = url.clone();
-                self.url_bar_focused = false;
-                // Optimistic: update cached tab url so session persists immediately.
-                if let Some(t) = self
-                    .cached_tabs
-                    .iter_mut()
-                    .find(|t| t.id == self.cached_active)
-                {
-                    t.url = url.clone();
-                    t.is_loading = true;
-                    t.load_progress = 0.0;
+                self.omnibox_sel = Some(match self.omnibox_sel {
+                    None => 0,
+                    Some(i) => (i + 1).min(n - 1),
+                });
+                return crate::integration::focus_url_bar();
+            }
+            Msg::OmniboxSelectPrev => {
+                self.omnibox_sel = match self.omnibox_sel {
+                    None | Some(0) => None,
+                    Some(i) => Some(i - 1),
+                };
+                return crate::integration::focus_url_bar();
+            }
+            Msg::OmniboxPick(i) => {
+                let n = self.omnibox_hits().len();
+                if i < n {
+                    self.omnibox_sel = Some(i);
                 }
-                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
-                let _ = self.cmd_tx.send(Cmd::Focus(true));
-                self.persist_session();
-                return crate::integration::unfocus_chrome();
+                return crate::integration::focus_url_bar();
             }
             Msg::CloseTab(id) => {
                 // Never drop below one tab: open a blank replacement first.
@@ -1775,6 +2089,7 @@ impl<E: Engine> App<E> {
                 if self.cached_tabs.len() <= 1 {
                     self.open_tab(BLANK_URL.to_string(), true);
                 }
+                self.remember_closed(id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -1793,7 +2108,11 @@ impl<E: Engine> App<E> {
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
                 self.groups.on_tab_closed(id);
+                self.favicons.remove(&id);
                 self.persist_session();
+            }
+            Msg::ReopenClosedTab => {
+                self.reopen_closed_tab();
             }
             Msg::ActivateTab(id) => {
                 self.switch_active_tab(id);
@@ -1806,6 +2125,14 @@ impl<E: Engine> App<E> {
                     .is_some_and(|t| t.elapsed() >= COPY_URL_FLASH)
                 {
                     self.copy_url_flash = None;
+                }
+                #[cfg(feature = "bitwarden")]
+                if self
+                    .vault_copy_flash
+                    .as_ref()
+                    .is_some_and(|(_, t)| t.elapsed() >= COPY_URL_FLASH)
+                {
+                    self.vault_copy_flash = None;
                 }
                 while let Some(h) = crate::instance::try_recv_handoff() {
                     match h {
@@ -1846,14 +2173,10 @@ impl<E: Engine> App<E> {
                             }
                         }
                     }
-                    if self.totp_panel_open && self.vault_status.unlocked {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        if now != self.totp_last_refresh_secs {
-                            self.totp_last_refresh_secs = now;
-                            self.request_vault_totp();
+                    if self.vault_status.unlocked {
+                        let url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
+                        if url != self.vault_items_url {
+                            self.request_vault_items();
                         }
                     }
                 }
@@ -1864,10 +2187,28 @@ impl<E: Engine> App<E> {
                 // not blank out after session restore.
                 let live = self.tabs_handle.lock().unwrap().clone();
                 if !live.is_empty() {
+                    let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
+                    let opener = self.cached_active;
                     self.cached_tabs =
                         merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs);
                     self.closed_tabs
                         .retain(|id| live.iter().any(|t| t.id == *id));
+                    let new_popups = place_engine_popup_tabs(
+                        &mut self.groups,
+                        &mut self.cached_tabs,
+                        &prev_ids,
+                        opener,
+                    );
+                    if !new_popups.is_empty() {
+                        self.groups.normalize(&mut self.cached_tabs);
+                        let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
+                        let focus = new_popups
+                            .iter()
+                            .copied()
+                            .find(|id| *id == engine_active)
+                            .unwrap_or(*new_popups.last().unwrap());
+                        self.switch_active_tab(focus);
+                    }
                 }
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
@@ -1894,6 +2235,13 @@ impl<E: Engine> App<E> {
                     );
                     self.url_field = field;
                     self.last_seen_url = seen;
+                    if let Some(info) = self.active_tab_info() {
+                        if !is_transient_nav_url(&info.url) {
+                            let url = info.url.clone();
+                            let title = info.title.clone();
+                            self.note_visit(&url, &title);
+                        }
+                    }
                 }
                 self.persist_session();
                 self.profile_options = crate::profiles::list();
@@ -1929,8 +2277,8 @@ impl<E: Engine> App<E> {
                         });
                     }
                 }
-                // ⌘-click / popup: helper found a URL; chrome owns the tab id.
-                let bg: Vec<String> = self
+                // ⌘-click / target=_blank: helper found a URL; chrome owns the id.
+                let bg: Vec<crate::engine::ChromeTabRequest> = self
                     .engine
                     .background_tabs_handle()
                     .lock()
@@ -1938,13 +2286,19 @@ impl<E: Engine> App<E> {
                     .drain(..)
                     .collect();
                 self.drain_notify_ipc();
-                for url in bg {
-                    if url.contains("/devtools/inspector.html") {
-                        tracing::info!(%url, "DevTools frontend tab");
-                        self.open_tab(url, true);
+                let js_dlg = self.drain_js_dialogs();
+                self.drain_find_results();
+                self.drain_favicons();
+                self.drain_devtools();
+                for req in bg {
+                    if crate::popup::is_devtools_url(&req.url) {
+                        tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
+                    } else if req.activate {
+                        tracing::info!(url = %req.url, "popup / target=_blank → tab");
+                        self.open_tab_beside(req.url, true);
                     } else {
-                        tracing::info!(%url, "cmd-click → background tab");
-                        self.open_tab_beside(url, false);
+                        tracing::info!(url = %req.url, "cmd-click → background tab");
+                        self.open_tab_beside(req.url, false);
                     }
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
@@ -1961,13 +2315,14 @@ impl<E: Engine> App<E> {
                     return Task::batch([
                         clip,
                         totp_clip,
+                        js_dlg,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip]);
+                return Task::batch([clip, totp_clip, js_dlg]);
                 #[cfg(not(feature = "bitwarden"))]
-                return clip;
+                return Task::batch([clip, js_dlg]);
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -1979,64 +2334,46 @@ impl<E: Engine> App<E> {
                 DIVIDER_DRAGGING.store(self.sidebar.resizing(), Ordering::Relaxed);
                 REORDER_TRACKING.store(self.sidebar.capturing(), Ordering::Relaxed);
             }
-            Msg::CursorMoved(_x, _y) => {}
+            Msg::CursorMoved(_x, y) => {
+                if self.devtools_dragging {
+                    let h = (self.window_h - CHROME_HEIGHT).max(120.0);
+                    self.devtools_ratio = ((y - CHROME_HEIGHT) / h).clamp(0.25, 0.82);
+                }
+            }
             Msg::CursorReleased => {
+                if self.devtools_dragging {
+                    self.devtools_dragging = false;
+                    if !self.sidebar.resizing() {
+                        DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
+                    }
+                }
                 return self.finish_nav_hold();
             }
             Msg::ToggleGroup(id) => {
                 self.groups.toggle(&id);
                 self.persist_session();
             }
-            Msg::TabContext(id) => {
-                self.context_menu = Some((last_cursor_point(), CtxTarget::Tab(id)));
-            }
-            Msg::GroupContext(id) => {
-                self.context_menu = Some((last_cursor_point(), CtxTarget::Group(id)));
-            }
             Msg::MenuDismiss => {
                 self.context_menu = None;
                 self.nav_hold = None;
             }
-            Msg::NewGroup(id) => {
+            Msg::NewGroup => {
                 self.context_menu = None;
-                self.groups.new_group(id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
+                return self.new_group_from_active();
             }
-            Msg::AddToGroup { tab, group } => {
+            Msg::RenameGroup(id) => {
                 self.context_menu = None;
-                self.groups.add_to(tab, &group);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
+                return self.begin_group_rename(id);
             }
-            Msg::UngroupTab(id) => {
-                self.context_menu = None;
-                self.groups.ungroup_tab(id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
-            }
-            Msg::UngroupGroup(id) => {
-                self.context_menu = None;
-                self.groups.ungroup_all(&id);
-                self.groups.normalize(&mut self.cached_tabs);
-                self.persist_session();
-            }
-            Msg::RenameStart(id) => {
-                self.context_menu = None;
-                let name = self
-                    .groups
-                    .group(&id)
-                    .map(|g| g.name.clone())
-                    .unwrap_or_default();
-                self.renaming = Some((id, name));
-                return Task::batch([
-                    iced::widget::operation::focus(group_rename_id()),
-                    iced::advanced::widget::operate(
-                        iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                            group_rename_id(),
-                        ),
+            Msg::RenameSelectAll => {
+                if self.renaming.is_none() {
+                    return Task::none();
+                }
+                return iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        group_rename_id(),
                     ),
-                ]);
+                );
             }
             Msg::RenameInput(s) => {
                 if let Some((_, draft)) = &mut self.renaming {
@@ -2044,19 +2381,60 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::RenameCommit => {
-                if let Some((id, name)) = self.renaming.take() {
+                if let Some((id, name)) = self.take_group_rename() {
                     self.groups.rename(&id, name);
+                    self.persist_session();
+                    return crate::integration::unfocus_chrome();
+                }
+            }
+            Msg::GroupColor(id) => {
+                if self.group_color.as_ref().is_some_and(|(gid, _)| gid == &id) {
+                    self.group_color = None;
+                } else {
+                    let seed = self
+                        .groups
+                        .group(&id)
+                        .and_then(|g| g.color.as_deref())
+                        .and_then(sola_kit::theme::try_parse)
+                        .unwrap_or_else(group_well_fill);
+                    self.group_color = Some((id, ColorPicker::new(seed)));
+                }
+            }
+            Msg::GroupColorMsg(m) => {
+                if let Some((gid, picker)) = &mut self.group_color {
+                    picker.update(m);
+                    let hex = persist_group_color(picker.color());
+                    let gid = gid.clone();
+                    self.groups.set_color(&gid, hex);
                     self.persist_session();
                 }
             }
-            Msg::RenameCancel => self.renaming = None,
+            Msg::GroupColorDismiss => {
+                self.group_color = None;
+            }
             Msg::WebViewFocused => {
                 // Page took the click: drop iced chrome focus so keys go to
                 // the shader → CEF, and tell the host it is the focused OSR
                 // widget (caret blink / IME require SetFocus).
-                self.url_bar_focused = false;
+                self.set_url_bar_focused(false);
+                self.find_field_focused = false;
+                self.slot.input_devtools.store(false, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::Focus(true));
                 return crate::integration::unfocus_chrome();
+            }
+            Msg::DevToolsFocused => {
+                self.set_url_bar_focused(false);
+                self.find_field_focused = false;
+                self.slot.input_devtools.store(true, Ordering::Relaxed);
+                let _ = self.cmd_tx.send(Cmd::DevToolsFocus(true));
+                return crate::integration::unfocus_chrome();
+            }
+            Msg::DevToolsSplitDrag => {
+                self.devtools_dragging = true;
+                DIVIDER_DRAGGING.store(true, Ordering::Relaxed);
+            }
+            Msg::WindowResized(h) => {
+                self.window_h = h.max(1.0);
             }
             Msg::LeftPressed => {
                 // A press landed somewhere. Resolve, against the real widget
@@ -2065,10 +2443,22 @@ impl<E: Engine> App<E> {
                 return crate::integration::url_bar_is_focused(Msg::UrlBarFocusSync);
             }
             Msg::UrlBarFocusSync(now) => {
+                if self.url_bar_activating {
+                    self.url_bar_activating = false;
+                    if now {
+                        return crate::integration::select_url_bar();
+                    }
+                    // The activating click's global press query often lands
+                    // before the field is focused — keep edit mode.
+                    return Task::none();
+                }
                 // Select-all only on the false→true edge, so a second click in
                 // an already-focused field can place the caret normally.
+                if !now && self.url_bar_focused && !self.visits.search(&self.url_field).is_empty() {
+                    return crate::integration::focus_url_bar();
+                }
                 let gained = now && !self.url_bar_focused;
-                self.url_bar_focused = now;
+                self.set_url_bar_focused(now);
                 if gained {
                     // Omnibox owns keys; CEF must not keep the OSR caret.
                     let _ = self.cmd_tx.send(Cmd::Focus(false));
@@ -2146,14 +2536,11 @@ impl<E: Engine> App<E> {
                     };
                 }
                 tracing::debug!(?cmd, "edit → engine (web content)");
-                // ⌘V: chrome reads (it has seat focus), restores the offer,
-                // then injects into the focused page field. CEF `paste()`
-                // after a chrome read hits an empty clipboard and can *set*
-                // that empty selection as the new source.
+                // ⌘V: data-control read (image or text). Iced text receive
+                // can drop the offer; CEF `paste()` is empty on OSR and can
+                // *set* that empty selection as the new source.
                 if cmd == EditCmd::Paste {
-                    // Focused-frame JS insert via PasteText — not EvaluateJs
-                    // (that runs in every frame and triple-pastes).
-                    return iced::clipboard::read().map(Msg::PagePasted);
+                    return crate::page_paste::read_task().map(Msg::PageOffer);
                 }
                 if cmd == EditCmd::Copy || cmd == EditCmd::Cut {
                     // frame.copy() only fills Chromium's clipboard. Extract
@@ -2172,11 +2559,21 @@ impl<E: Engine> App<E> {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                // Best-effort: iced exposes no caret/selection, so append
-                // at the end (cursor-at-end assumption).
-                self.url_field.push_str(&s);
+                // Omnibox paste replaces: ⌘L / click select-all, and iced
+                // does not expose the caret to Edit-menu routing.
+                self.url_field = s.clone();
                 // Restore: smithay receive can drop the original offer.
                 return iced::clipboard::write(s);
+            }
+            Msg::PageOffer(offer) => {
+                use sola_kit::clipboard::Offer;
+                return match offer {
+                    Offer::Empty => iced::clipboard::read().map(Msg::PagePasted),
+                    other => {
+                        crate::page_paste::send(&self.cmd_tx, other);
+                        Task::none()
+                    }
+                };
             }
             Msg::PagePasted(text) => {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {
@@ -2224,7 +2621,8 @@ impl<E: Engine> App<E> {
                     },
                     VaultPanelPhase::PasskeyPick
                     | VaultPanelPhase::PasskeyCreate
-                    | VaultPanelPhase::CreateSaved => {
+                    | VaultPanelPhase::CreateSaved
+                    | VaultPanelPhase::ItemDetail => {
                         return Task::none();
                     }
                 }
@@ -2232,6 +2630,125 @@ impl<E: Engine> App<E> {
             }
         }
         Task::none()
+    }
+
+    fn remember_closed(&mut self, id: TabId) {
+        let Some(index) = self.cached_tabs.iter().position(|t| t.id == id) else {
+            return;
+        };
+        let tab = &self.cached_tabs[index];
+        let entry = crate::session::ClosedTab {
+            url: if tab.url.is_empty() {
+                BLANK_URL.to_string()
+            } else {
+                tab.url.clone()
+            },
+            title: tab.title.clone(),
+            group_id: self.groups.of_tab(id).map(str::to_string),
+            index,
+            history: tab
+                .history
+                .iter()
+                .map(|e| crate::session::SessionHistory {
+                    url: e.url.clone(),
+                    title: e.title.clone(),
+                })
+                .collect(),
+            history_index: tab.history_index,
+        };
+        crate::session::push_closed(&mut self.recently_closed, entry);
+    }
+
+    fn reopen_closed_tab(&mut self) {
+        let Some(closed) = self.recently_closed.pop() else {
+            tracing::debug!("reopen closed tab: stack empty");
+            return;
+        };
+        let url = crate::util::normalize_url(&closed.url);
+        let url = if url.is_empty() {
+            BLANK_URL.to_string()
+        } else {
+            url
+        };
+        let id = self.engine.alloc_tab_id();
+        let title = if url == BLANK_URL && closed.title.is_empty() {
+            "New Tab".to_string()
+        } else {
+            closed.title.clone()
+        };
+        let session_tab = crate::session::SessionTab {
+            url: url.clone(),
+            title: title.clone(),
+            group_id: closed.group_id.clone(),
+            history: closed.history,
+            history_index: closed.history_index,
+        };
+        let (history, history_index) = session::history_from_session(&session_tab);
+        let info = TabInfo {
+            is_loading: url != BLANK_URL && !url.is_empty(),
+            history,
+            history_index,
+            ..TabInfo::chrome(id, url.clone(), title.clone())
+        };
+        let idx = closed.index.min(self.cached_tabs.len());
+        self.cached_tabs.insert(idx, info);
+        if let Some(gid) = closed.group_id.as_deref() {
+            self.groups.add_to(id, gid);
+        }
+        self.groups.normalize(&mut self.cached_tabs);
+        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
+        self.switch_active_tab(id);
+        self.persist_session();
+        tracing::info!(id = id.0, "reopened closed tab");
+    }
+
+    /// ⌘G: wrap the selected tab if it is loose. No-op when the current
+    /// tab is already in a group (or the strip is empty).
+    fn new_group_from_active(&mut self) -> Task<Msg> {
+        let id = self.cached_active;
+        if self.groups.of_tab(id).is_some() {
+            return Task::none();
+        }
+        if !self.cached_tabs.iter().any(|t| t.id == id) {
+            return Task::none();
+        }
+        let gid = self.groups.new_group(id);
+        self.groups.normalize(&mut self.cached_tabs);
+        self.persist_session();
+        self.begin_group_rename(gid)
+    }
+
+    fn begin_group_rename(&mut self, id: String) -> Task<Msg> {
+        let name = self
+            .groups
+            .group(&id)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        self.renaming = Some((id, name));
+        self.group_color = None;
+        GROUP_RENAMING.store(true, Ordering::Relaxed);
+        self.set_url_bar_focused(false);
+        // Drop CEF host focus so keys land in iced, not the page.
+        let _ = self.cmd_tx.send(Cmd::Focus(false));
+        // `State::focus` parks the caret at the end; select-all on the
+        // next tick (after the field is mounted and focused).
+        Task::batch([
+            iced::widget::operation::focus(group_rename_id()),
+            Task::done(Msg::RenameSelectAll),
+        ])
+    }
+
+    fn clear_group_rename(&mut self) {
+        self.renaming = None;
+        self.group_color = None;
+        GROUP_RENAMING.store(false, Ordering::Relaxed);
+    }
+
+    fn take_group_rename(&mut self) -> Option<(String, String)> {
+        let value = self.renaming.take();
+        self.group_color = None;
+        GROUP_RENAMING.store(false, Ordering::Relaxed);
+        value
     }
 
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
@@ -2310,6 +2827,9 @@ impl<E: Engine> App<E> {
         // keep sampling the previous tab until CEF answers).
         self.slot.present_tab(id);
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
+        if self.find_open && !self.find_query.trim().is_empty() {
+            self.send_find(true, false);
+        }
         // Omnibox follows chrome optimistically — don't wait for Tick
         // (250ms) or the worker URI notify, which feels laggy on tab click.
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == id) {
@@ -2350,26 +2870,55 @@ impl<E: Engine> App<E> {
         let webview = Shader::new(E::make_program(self.slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
-        let page_owns_keys = !self.url_bar_focused
+        let chrome_keys = !self.url_bar_focused
+            && !self.find_field_focused
             && self.profile_dialog.is_none()
+            && self.pending_js_dialog.is_none()
             && !self.downloads_panel_open
             && {
                 #[cfg(feature = "bitwarden")]
                 {
-                    !self.vault_panel_open && !self.cards_panel_open && !self.totp_panel_open
+                    !self.vault_panel_open
                 }
                 #[cfg(not(feature = "bitwarden"))]
                 {
                     true
                 }
             };
+        let dt_keys = self.slot.input_devtools.load(Ordering::Relaxed);
+        let page_owns_keys = chrome_keys && !dt_keys;
         let webview = crate::cef::page_ime::page_ime(webview, self.slot.clone(), page_owns_keys);
 
-        // Full-width chrome (profile + nav + omnibox), then tabs | page.
-        // SidebarPanel owns the kit divider + drag overlay.
+        let page: Element<'_, Msg> = if self.find_open {
+            stack![webview, self.view_find_bar()].into()
+        } else {
+            webview.into()
+        };
+        let page: Element<'_, Msg> = if self.devtools == Some(self.cached_active) {
+            let inspector = Shader::new(E::make_devtools_program(self.slot.clone()))
+                .width(Length::Fill)
+                .height(Length::Fill);
+            let inspector = crate::cef::page_ime::page_ime(
+                inspector,
+                self.slot.clone(),
+                chrome_keys && dt_keys,
+            );
+            let canvas = self.theme.extended_palette().background.base.color;
+            let border = self.theme.extended_palette().background.strong.color;
+            sola_kit::components::split_with(
+                sola_bus::topics::SplitDir::Horizontal,
+                page,
+                self.devtools_ratio,
+                Msg::DevToolsSplitDrag,
+                inspector,
+                DividerColors::uniform(canvas, border),
+            )
+        } else {
+            page
+        };
         let lower = row![
             self.view_tab_sidebar(),
-            container(webview).width(Length::Fill).height(Length::Fill),
+            container(page).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill);
         let main = column![self.view_chrome_bar(), horizontal_divider(), lower]
@@ -2391,6 +2940,10 @@ impl<E: Engine> App<E> {
             })
             .into();
 
+        // Always stack so the location bar widget path is stable — wrapping
+        // only when hits appear remounts the field and drops focus.
+        let content: Element<'_, Msg> = stack![content, self.view_omnibox_hits()].into();
+
         let content: Element<'_, Msg> = if self.downloads_panel_open {
             stack![content, self.view_downloads_panel()].into()
         } else {
@@ -2398,11 +2951,7 @@ impl<E: Engine> App<E> {
         };
 
         #[cfg(feature = "bitwarden")]
-        let content: Element<'_, Msg> = if self.totp_panel_open {
-            stack![content, self.view_totp_panel()].into()
-        } else if self.cards_panel_open {
-            stack![content, self.view_cards_panel()].into()
-        } else if self.vault_panel_open {
+        let content: Element<'_, Msg> = if self.vault_panel_open {
             stack![content, self.view_vault_panel()].into()
         } else {
             content
@@ -2410,6 +2959,10 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
+        } else if self.pending_js_dialog.is_some() {
+            stack![content, self.view_js_dialog()].into()
+        } else if self.pending_media.is_some() {
+            stack![content, self.view_media_permission()].into()
         } else if self.pending_notify.is_some() {
             stack![content, self.view_notify_permission()].into()
         } else {
@@ -2438,30 +2991,6 @@ impl<E: Engine> App<E> {
 
     fn menu_items(&self, target: &CtxTarget) -> Vec<MenuItem<Msg>> {
         match target {
-            CtxTarget::Tab(id) => {
-                let mut items = vec![MenuItem::action("New group", Msg::NewGroup(*id))];
-                let current = self.groups.of_tab(*id);
-                for g in &self.groups.groups {
-                    if current == Some(g.id.as_str()) {
-                        continue;
-                    }
-                    items.push(MenuItem::action(
-                        format!("Add to {}", g.name),
-                        Msg::AddToGroup {
-                            tab: *id,
-                            group: g.id.clone(),
-                        },
-                    ));
-                }
-                if current.is_some() {
-                    items.push(MenuItem::action("Ungroup", Msg::UngroupTab(*id)));
-                }
-                items
-            }
-            CtxTarget::Group(gid) => vec![
-                MenuItem::action("Rename", Msg::RenameStart(gid.clone())),
-                MenuItem::action("Ungroup", Msg::UngroupGroup(gid.clone())),
-            ],
             CtxTarget::Page(ctx) => page_menu_items(ctx),
             CtxTarget::History { forward } => {
                 let (entries, current) = self
@@ -2485,6 +3014,80 @@ impl<E: Engine> App<E> {
         }
     }
 
+    fn drain_devtools(&mut self) {
+        let evs: Vec<crate::engine::DevToolsEvent> = self
+            .engine
+            .devtools_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ev in evs {
+            match ev {
+                crate::engine::DevToolsEvent::Opened { tab_id, paint_id } => {
+                    self.devtools = Some(tab_id);
+                    self.slot.devtools_tab.store(paint_id.0, Ordering::Relaxed);
+                    self.slot.devtools_blank.store(true, Ordering::Relaxed);
+                    self.slot.input_devtools.store(true, Ordering::Relaxed);
+                    if let Some(frame) = self.slot.parked_frames.lock().unwrap().get(&paint_id.0) {
+                        *self.slot.devtools_pending.lock().unwrap() =
+                            Some(crate::engine::PendingFrame {
+                                tab_id: paint_id,
+                                frame: frame.clone(),
+                            });
+                        self.slot.devtools_blank.store(false, Ordering::Relaxed);
+                    }
+                    tracing::info!(?tab_id, ?paint_id, "DevTools panel open");
+                }
+                crate::engine::DevToolsEvent::Closed { tab_id } => {
+                    if self.devtools == Some(tab_id) || self.devtools.is_some() {
+                        self.devtools = None;
+                        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
+                        self.slot.devtools_pending.lock().unwrap().take();
+                        self.slot.input_devtools.store(false, Ordering::Relaxed);
+                        tracing::info!(?tab_id, "DevTools panel closed");
+                    }
+                }
+            }
+        }
+    }
+
+    fn drain_favicons(&mut self) {
+        let evs: Vec<crate::engine::FaviconIpc> = self
+            .engine
+            .favicons_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ev in evs {
+            if ev.png.is_empty() {
+                self.favicons.remove(&ev.tab_id);
+            } else {
+                self.favicons
+                    .insert(ev.tab_id, iced::widget::image::Handle::from_bytes(ev.png));
+            }
+        }
+    }
+
+    fn tab_leading(&self, tab: &TabInfo) -> Element<'_, Msg> {
+        if let Some(handle) = self.favicons.get(&tab.id) {
+            image(handle.clone())
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0))
+                .content_fit(ContentFit::Contain)
+                .border_radius(2.0)
+                .into()
+        } else if crate::util::tab_url_has_site_icon(&tab.url) {
+            icon_svg_colored(self.globe.clone(), 14, {
+                let t = self.theme.extended_palette().background.base.text;
+                iced::Color { a: 0.42, ..t }
+            })
+        } else {
+            Space::new().width(16).height(16).into()
+        }
+    }
+
     /// Left vertical tab column. Profile switch lives in the full-width
     /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
     pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
@@ -2501,8 +3104,8 @@ impl<E: Engine> App<E> {
             SidebarItem::new(label, Msg::ActivateTab(t.id))
                 .active(t.id == active_id)
                 .on_close(Msg::CloseTab(t.id))
-                .on_context(Msg::TabContext(t.id))
                 .id(t.id.0.to_string())
+                .leading(self.tab_leading(t))
         };
         let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
         let mut i = 0usize;
@@ -2528,21 +3131,39 @@ impl<E: Engine> App<E> {
                     .id(g.id.clone())
                     .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
                     .header_active(header_active)
-                    .header_context(Msg::GroupContext(g.id.clone()))
-                    .header_count(n);
-                if let Some((rid, draft)) = &self.renaming {
-                    if rid == &g.id {
-                        let field = text_input("Group name", draft)
-                            .id(group_rename_id())
-                            .size(12)
-                            .font(sola_kit::fonts::ui_medium())
-                            .line_height(iced::widget::text::LineHeight::Relative(1.2))
-                            .on_input(Msg::RenameInput)
-                            .on_submit(Msg::RenameCommit)
-                            .style(sola_kit::components::text_input::style)
-                            .padding(Padding::from([1, 4]));
-                        section = section.header_content(field);
+                    .header_count(n)
+                    .color(g.color.as_deref().and_then(sola_kit::theme::try_parse));
+                let renaming_this = self.renaming.as_ref().is_some_and(|(rid, _)| rid == &g.id);
+                if renaming_this {
+                    let draft = self
+                        .renaming
+                        .as_ref()
+                        .map(|(_, d)| d.as_str())
+                        .unwrap_or("");
+                    let field = text_input("Group name", draft)
+                        .id(group_rename_id())
+                        .size(12)
+                        .font(sola_kit::fonts::ui_medium())
+                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
+                        .on_input(Msg::RenameInput)
+                        .on_submit(Msg::RenameCommit)
+                        .style(sola_kit::components::text_input::style)
+                        .padding(Padding::from([1, 4]))
+                        .width(Length::Fill);
+                    section = section
+                        .header_content(field)
+                        .header_color(Msg::GroupColor(g.id.clone()))
+                        .header_commit(Msg::RenameCommit);
+                    if let Some((pid, picker)) = &self.group_color {
+                        if pid == &g.id {
+                            section = section.header_color_picker(
+                                picker.view().map(Msg::GroupColorMsg),
+                                Msg::GroupColorDismiss,
+                            );
+                        }
                     }
+                } else {
+                    section = section.header_edit(Msg::RenameGroup(g.id.clone()));
                 }
                 sections.push(section);
                 while i < tabs.len() && self.groups.of_tab(tabs[i].id) == Some(gid.as_str()) {
@@ -2645,41 +3266,16 @@ impl<E: Engine> App<E> {
         #[cfg(feature = "bitwarden")]
         let vault_btn = {
             let unlocked = self.vault_status.unlocked;
-            let handle = if unlocked {
-                self.vault_icon_unlocked.clone()
-            } else {
-                self.vault_icon_locked.clone()
-            };
             self.vault_tool_btn(
-                handle,
+                self.vault_toolbar_handle(),
                 unlocked,
                 self.vault_panel_open,
                 muted,
                 Msg::VaultToggle,
             )
         };
-        #[cfg(feature = "bitwarden")]
-        let cards_btn = self.vault_tool_btn(
-            self.cards_icon.clone(),
-            self.vault_status.unlocked,
-            self.cards_panel_open,
-            muted,
-            Msg::CardsToggle,
-        );
-        #[cfg(feature = "bitwarden")]
-        let totp_btn = self.vault_tool_btn(
-            self.totp_icon.clone(),
-            self.vault_status.unlocked,
-            self.totp_panel_open,
-            muted,
-            Msg::TotpToggle,
-        );
         #[cfg(not(feature = "bitwarden"))]
         let vault_btn = Space::new().width(Length::Fixed(0.0));
-        #[cfg(not(feature = "bitwarden"))]
-        let cards_btn = Space::new().width(Length::Fixed(0.0));
-        #[cfg(not(feature = "bitwarden"))]
-        let totp_btn = Space::new().width(Length::Fixed(0.0));
 
         let downloads_btn = self.downloads_tool_btn(muted);
 
@@ -2697,8 +3293,6 @@ impl<E: Engine> App<E> {
             copy_url,
             self.view_omnibox(),
             vault_btn,
-            totp_btn,
-            cards_btn,
             downloads_btn,
         ]
         .spacing(SPACE_SM)
@@ -2716,17 +3310,141 @@ impl<E: Engine> App<E> {
     }
 
     fn view_omnibox(&self) -> Element<'_, Msg> {
-        let field = text_input("Search or enter URL", &self.url_field)
-            .id(crate::integration::url_input_id())
-            .on_input(Msg::UrlInput)
-            .on_submit(Msg::UrlSubmit)
-            .size(13)
-            .style(sola_kit::components::text_input::style)
-            .width(Length::Fill);
+        let field: Element<'_, Msg> = if self.url_bar_focused {
+            text_input("Search or enter URL", &self.url_field)
+                .id(crate::integration::url_input_id())
+                .on_input(Msg::UrlInput)
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill)
+                .into()
+        } else {
+            let shown = crate::util::idle_display_url(&self.url_field);
+            let idle = if shown.is_empty() {
+                text("Search or enter URL")
+                    .size(13)
+                    .font(sola_kit::fonts::ui())
+                    .style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().secondary.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.55, ..t }),
+                        }
+                    })
+            } else {
+                text(shown)
+                    .size(13)
+                    .font(sola_kit::fonts::ui())
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.base.text),
+                    })
+            };
+            mouse_area(
+                container(idle)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(sola_kit::components::text_input::DEFAULT_PADDING)
+                    .align_y(Alignment::Center)
+                    .clip(true),
+            )
+            .on_press(Msg::UrlBarActivate)
+            .into()
+        };
+        let field = container(field).width(Length::Fill).clip(true);
         match self.active_load_frac() {
             Some(frac) => stack![field, omnibox_progress_overlay(frac)].into(),
             None => field.into(),
         }
+    }
+
+    fn view_omnibox_hits(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{HAIRLINE_A, RADIUS_MD, SPACE_XS, mix_white};
+        let hits = self.omnibox_hits();
+        if hits.is_empty() {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        }
+        let mut list = column![].spacing(SPACE_XS).width(Length::Fill);
+        for (i, hit) in hits.iter().enumerate() {
+            let selected = self.omnibox_sel == Some(i);
+            let title = if hit.title.trim().is_empty() {
+                crate::util::compact_history_url(&hit.url)
+            } else {
+                crate::util::truncate(hit.title.trim(), 56)
+            };
+            let url_line = crate::util::compact_history_url(&hit.url);
+            let body = column![
+                text(title)
+                    .size(13)
+                    .font(sola_kit::fonts::ui_medium())
+                    .wrapping(iced::widget::text::Wrapping::None),
+                text(url_line).size(11).style(|theme: &iced::Theme| {
+                    let t = theme.extended_palette().background.base.text;
+                    iced::widget::text::Style {
+                        color: Some(iced::Color { a: 0.62, ..t }),
+                    }
+                }),
+            ]
+            .spacing(1)
+            .width(Length::Fill);
+            let row = container(body)
+                .padding(Padding::from([8, 14]))
+                .width(Length::Fill)
+                .style(move |theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    let bg = if selected {
+                        p.background.strong.color
+                    } else {
+                        iced::Color::TRANSPARENT
+                    };
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        border: iced::Border {
+                            color: iced::Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: RADIUS_MD.into(),
+                        },
+                        ..Default::default()
+                    }
+                });
+            list = list.push(mouse_area(row).on_press(Msg::OmniboxPick(i)));
+        }
+        let tray = container(list)
+            .width(Length::Fill)
+            .padding(Padding::from([6, 8]))
+            .style(move |_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                border: iced::Border {
+                    color: mix_white(CHROME_SURFACE, HAIRLINE_A),
+                    width: 1.0,
+                    radius: iced::border::Radius {
+                        top_left: 0.0,
+                        top_right: 0.0,
+                        bottom_right: RADIUS_MD,
+                        bottom_left: RADIUS_MD,
+                    },
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: iced::Vector::new(0.0, 8.0),
+                    blur_radius: 20.0,
+                },
+                ..Default::default()
+            });
+        let (left, right) = omnibox_tray_insets(self.sidebar_w);
+        container(tray)
+            .width(Length::Fill)
+            .padding(Padding {
+                top: CHROME_HEIGHT,
+                right,
+                bottom: 0.0,
+                left,
+            })
+            .align_x(Alignment::Start)
+            .align_y(Alignment::Start)
+            .into()
     }
 
     /// Determinate load fraction for the omnibox hairline, if the active tab
@@ -2766,11 +3484,26 @@ impl<E: Engine> App<E> {
         }
     }
 
-    /// Shared lock / card toolbar control.
+    /// One vault glyph: lock while locked, shield when this page has a TOTP
+    /// login, fingerprint during a passkey ceremony, otherwise the key.
+    #[cfg(feature = "bitwarden")]
+    fn vault_toolbar_handle(&self) -> iced::widget::svg::Handle {
+        if !self.vault_status.unlocked {
+            return self.vault_icon_locked.clone();
+        }
+        if self.pending_passkey.is_some() {
+            return vault_icon_passkey();
+        }
+        if self.vault_items.iter().any(|i| i.uri_match && i.has_totp) {
+            return vault_icon_totp();
+        }
+        self.vault_icon_unlocked.clone()
+    }
+
+    /// Shared lock / vault toolbar control.
     ///
-    /// Locked: muted glyph (looks idle). Unlocked: full chrome foreground
-    /// on *both* so the pair reads ready — accent is reserved for the
-    /// panel that is actually open (not a second “I’m unlocked” blue).
+    /// Locked: muted glyph (looks idle). Unlocked: full chrome foreground.
+    /// Accent is reserved for the open panel.
     #[cfg(feature = "bitwarden")]
     fn vault_tool_btn(
         &self,
@@ -2973,7 +3706,7 @@ impl<E: Engine> App<E> {
                 let _ = self.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
                 Task::none()
             }
-            PageMenuAction::Paste => iced::clipboard::read().map(Msg::PagePasted),
+            PageMenuAction::Paste => crate::page_paste::read_task().map(Msg::PageOffer),
             PageMenuAction::Back => self.update(Msg::NavBack),
             PageMenuAction::Forward => self.update(Msg::NavForward),
             PageMenuAction::Reload => self.update(Msg::NavReloadOrStop),
@@ -3006,8 +3739,8 @@ impl<E: Engine> App<E> {
                 self.vault_email = email;
                 self.persist_vault_email();
                 self.reset_vault_form_keep_email();
-                // Passkey ceremony mid-unlock → stay on picker. Cards button
-                // unlocks then opens the cards panel. Otherwise fill-login.
+                // Passkey ceremony mid-unlock → stay on picker. Otherwise browse.
+                self.request_vault_items();
                 if self.pending_passkey.as_ref().is_some_and(|p| p.is_create()) {
                     self.vault_phase = VaultPanelPhase::PasskeyCreate;
                     self.set_vault_panel_open(true);
@@ -3016,19 +3749,9 @@ impl<E: Engine> App<E> {
                     self.vault_phase = VaultPanelPhase::PasskeyPick;
                     self.set_vault_panel_open(true);
                     self.request_passkey_candidates();
-                } else if self.vault_resume == VaultResume::Cards {
-                    self.vault_phase = VaultPanelPhase::Credentials;
-                    self.set_cards_panel_open(true);
-                    self.request_vault_cards();
-                } else if self.vault_resume == VaultResume::Totp {
-                    self.vault_phase = VaultPanelPhase::Credentials;
-                    self.totp_autofill_pending = true;
-                    self.set_totp_panel_open(true);
-                    self.request_vault_totp();
                 } else {
                     self.vault_phase = VaultPanelPhase::Credentials;
                     self.set_vault_panel_open(true);
-                    self.request_vault_matches();
                 }
             }
             VaultEvent::LoginNeedsTwoFactor {
@@ -3070,22 +3793,21 @@ impl<E: Engine> App<E> {
             }
             VaultEvent::SyncOk { full } => {
                 tracing::info!(full, "vault: sync ok");
-                // Only refresh matches if the user has the fill panel open.
-                if self.vault_panel_open && self.vault_status.unlocked {
-                    self.request_vault_matches();
-                }
-                if self.cards_panel_open && self.vault_status.unlocked {
-                    self.request_vault_cards();
-                }
-                if self.totp_panel_open && self.vault_status.unlocked {
-                    self.request_vault_totp();
+                if self.vault_status.unlocked {
+                    self.request_vault_items();
+                    if self.vault_panel_open
+                        && matches!(self.vault_phase, VaultPanelPhase::PasskeyCreate)
+                    {
+                        self.request_vault_matches();
+                    }
+                    if let Some(id) = self.vault_item_id.clone() {
+                        self.vault.send(VaultCmd::GetItem { id });
+                    }
                 }
             }
             VaultEvent::SyncFailed { message } => {
                 tracing::warn!(%message, "vault: sync failed");
-                if (self.vault_panel_open || self.cards_panel_open || self.totp_panel_open)
-                    && self.vault_status.unlocked
-                {
+                if self.vault_panel_open && self.vault_status.unlocked {
                     self.vault_error = Some(format!("Signed in, but sync failed: {message}"));
                 }
             }
@@ -3094,21 +3816,23 @@ impl<E: Engine> App<E> {
                 tracing::info!(n = list.len(), url = %self.vault_matches_url, "vault: matches");
                 self.vault_matches = list;
             }
-            VaultEvent::Totp(list) => {
-                self.vault_totp_loading = false;
-                tracing::info!(n = list.len(), "vault: totp");
-                self.vault_totp = list;
-                if self.totp_autofill_pending {
-                    self.totp_autofill_pending = false;
-                    if let Some(first) = self.vault_totp.first() {
-                        if !self.vault_busy {
-                            self.vault_busy = true;
-                            self.vault.send(VaultCmd::FillTotp {
-                                id: first.id.clone(),
-                            });
-                        }
-                    }
+            VaultEvent::Items(list) => {
+                self.vault_items_loading = false;
+                tracing::info!(n = list.len(), url = %self.vault_items_url, "vault: items");
+                self.vault_items = list;
+            }
+            VaultEvent::ItemReady(item) => {
+                self.vault_item_loading = false;
+                if self.vault_item_id.as_deref() == Some(item.id.as_str()) {
+                    self.vault_item = Some(item);
+                    self.vault_phase = VaultPanelPhase::ItemDetail;
                 }
+            }
+            VaultEvent::Totp(list) => {
+                let _ = list;
+            }
+            VaultEvent::Cards(list) => {
+                let _ = list;
             }
             VaultEvent::TotpFillReady { code } => {
                 self.vault_busy = false;
@@ -3121,12 +3845,6 @@ impl<E: Engine> App<E> {
                 } else {
                     tracing::info!("vault: totp fill injected");
                 }
-                // Keep the panel open so the user can see the timeout / pick another.
-            }
-            VaultEvent::Cards(list) => {
-                self.vault_cards_loading = false;
-                tracing::info!(n = list.len(), "vault: cards");
-                self.vault_cards = list;
             }
             VaultEvent::FillReady {
                 mut username,
@@ -3170,7 +3888,42 @@ impl<E: Engine> App<E> {
                 }
                 let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
                 tracing::info!("vault: card fill injected into active page");
-                self.set_cards_panel_open(false);
+                self.set_vault_panel_open(false);
+            }
+            VaultEvent::IdentityFillReady(mut material) => {
+                self.vault_busy = false;
+                let script = fill_identity_script(
+                    material.title.as_deref(),
+                    material.first_name.as_deref(),
+                    material.middle_name.as_deref(),
+                    material.last_name.as_deref(),
+                    material.address1.as_deref(),
+                    material.address2.as_deref(),
+                    material.address3.as_deref(),
+                    material.city.as_deref(),
+                    material.state.as_deref(),
+                    material.postal_code.as_deref(),
+                    material.country.as_deref(),
+                    material.company.as_deref(),
+                    material.email.as_deref(),
+                    material.phone.as_deref(),
+                    material.ssn.as_deref(),
+                    material.username.as_deref(),
+                    material.passport_number.as_deref(),
+                    material.license_number.as_deref(),
+                );
+                if let Some(ref mut s) = material.ssn {
+                    s.zeroize();
+                }
+                if let Some(ref mut s) = material.passport_number {
+                    s.zeroize();
+                }
+                if let Some(ref mut s) = material.license_number {
+                    s.zeroize();
+                }
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                tracing::info!("vault: identity fill injected into active page");
+                self.set_vault_panel_open(false);
             }
             VaultEvent::Created {
                 id: _,
@@ -3262,9 +4015,9 @@ impl<E: Engine> App<E> {
                 tracing::warn!(%message, "vault: error");
                 self.vault_busy = false;
                 self.vault_matches_loading = false;
-                self.vault_cards_loading = false;
-                self.vault_totp_loading = false;
-                if self.vault_panel_open || self.cards_panel_open || self.totp_panel_open {
+                self.vault_items_loading = false;
+                self.vault_item_loading = false;
+                if self.vault_panel_open {
                     self.vault_error = Some(message);
                 }
             }
@@ -3449,10 +4202,8 @@ impl<E: Engine> App<E> {
         for ev in evs {
             match ev {
                 crate::notify::Ipc::Show(show) => {
-                    let perm = crate::notify::permission_for(
-                        &crate::profiles::active().id,
-                        &show.origin,
-                    );
+                    let perm =
+                        crate::notify::permission_for(&crate::profiles::active().id, &show.origin);
                     if perm != "granted" {
                         tracing::info!(
                             origin = %show.origin,
@@ -3478,15 +4229,14 @@ impl<E: Engine> App<E> {
                         prompt_id = perm.req_id,
                         "notification permission request"
                     );
-                    let known = crate::notify::permission_for(
-                        &crate::profiles::active().id,
-                        &perm.origin,
-                    );
+                    let known =
+                        crate::notify::permission_for(&crate::profiles::active().id, &perm.origin);
                     if known != "default" {
                         let _ = self
                             .cmd_tx
                             .send(Cmd::EvaluateJs(crate::notify::resolve_script(
-                                perm.req_id, &known,
+                                perm.req_id,
+                                &known,
                             )));
                         continue;
                     }
@@ -3494,8 +4244,333 @@ impl<E: Engine> App<E> {
                         self.pending_notify = Some(perm);
                     }
                 }
+                crate::notify::Ipc::Media(m) => self.on_media_ipc(m),
             }
         }
+    }
+
+    fn drain_js_dialogs(&mut self) -> Task<Msg> {
+        let evs: Vec<crate::js_dialog::Event> = self
+            .engine
+            .js_dialogs_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        let mut focus = Task::none();
+        for ev in evs {
+            match ev {
+                crate::js_dialog::Event::Open(dlg) => {
+                    tracing::info!(
+                        id = dlg.id,
+                        origin = %dlg.origin,
+                        kind = ?dlg.kind,
+                        "js dialog"
+                    );
+                    if self.pending_js_dialog.is_none() {
+                        focus = self.show_js_dialog(dlg);
+                    } else {
+                        self.js_dialog_queue.push_back(dlg);
+                    }
+                }
+                crate::js_dialog::Event::Reset { ids } => {
+                    let drop = |d: &crate::js_dialog::Ipc| ids.contains(&d.id);
+                    self.js_dialog_queue.retain(|d| !drop(d));
+                    if self.pending_js_dialog.as_ref().is_some_and(drop) {
+                        self.pending_js_dialog = None;
+                        self.js_dialog_prompt.clear();
+                        if let Some(next) = self.js_dialog_queue.pop_front() {
+                            focus = self.show_js_dialog(next);
+                        } else {
+                            crate::js_dialog::set_open(false);
+                        }
+                    }
+                }
+            }
+        }
+        focus
+    }
+
+    fn show_js_dialog(&mut self, dlg: crate::js_dialog::Ipc) -> Task<Msg> {
+        crate::js_dialog::set_kind(Some(dlg.kind));
+        self.js_dialog_prompt = dlg.default_prompt.clone();
+        if dlg.tab_id != 0 && self.cached_active.0 != dlg.tab_id {
+            if self.cached_tabs.iter().any(|t| t.id.0 == dlg.tab_id) {
+                self.switch_active_tab(TabId(dlg.tab_id));
+            }
+        }
+        let prompt = dlg.kind == crate::js_dialog::Kind::Prompt;
+        self.pending_js_dialog = Some(dlg);
+        if prompt {
+            Task::batch([
+                iced::widget::operation::focus(crate::js_dialog::prompt_input_id()),
+                iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        crate::js_dialog::prompt_input_id(),
+                    ),
+                ),
+            ])
+        } else {
+            crate::integration::unfocus_chrome()
+        }
+    }
+
+    fn resolve_js_dialog(&mut self, success: bool) -> Task<Msg> {
+        let Some(dlg) = self.pending_js_dialog.take() else {
+            crate::js_dialog::set_open(false);
+            return Task::none();
+        };
+        let input = if dlg.kind == crate::js_dialog::Kind::Prompt {
+            std::mem::take(&mut self.js_dialog_prompt)
+        } else {
+            String::new()
+        };
+        let _ = self.cmd_tx.send(Cmd::JsDialog {
+            id: dlg.id,
+            success,
+            input,
+        });
+        if let Some(next) = self.js_dialog_queue.pop_front() {
+            self.show_js_dialog(next)
+        } else {
+            crate::js_dialog::set_open(false);
+            Task::none()
+        }
+    }
+
+    fn drain_find_results(&mut self) {
+        let evs: Vec<crate::engine::FindResult> = self
+            .engine
+            .find_results_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        if let Some(last) = evs.last().copied() {
+            self.find_count = last.count;
+            self.find_ordinal = last.ordinal;
+        }
+    }
+
+    fn begin_find(&mut self) {
+        self.find_open = true;
+        self.find_field_focused = true;
+        FIND_OPEN.store(true, Ordering::Relaxed);
+    }
+
+    fn focus_find(&self) -> Task<Msg> {
+        Task::batch([
+            iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<
+                Msg,
+            >(crate::integration::find_input_id())),
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                    crate::integration::find_input_id(),
+                ),
+            ),
+        ])
+    }
+
+    fn open_find(&mut self) -> Task<Msg> {
+        self.begin_find();
+        if !self.find_query.is_empty() {
+            self.send_find(true, false);
+        }
+        self.focus_find()
+    }
+
+    fn close_find(&mut self) {
+        self.find_open = false;
+        self.find_field_focused = false;
+        self.find_count = 0;
+        self.find_ordinal = 0;
+        FIND_OPEN.store(false, Ordering::Relaxed);
+        let _ = self.cmd_tx.send(Cmd::StopFind { clear: true });
+    }
+
+    fn find_step(&mut self, forward: bool) -> Task<Msg> {
+        if !self.find_open {
+            self.begin_find();
+            if !self.find_query.is_empty() {
+                self.send_find(forward, false);
+            }
+            return self.focus_find();
+        }
+        if self.find_query.is_empty() {
+            return self.focus_find();
+        }
+        self.send_find(forward, true);
+        Task::none()
+    }
+
+    fn send_find(&mut self, forward: bool, next: bool) {
+        let text = self.find_query.trim();
+        if text.is_empty() {
+            let _ = self.cmd_tx.send(Cmd::StopFind { clear: true });
+            self.find_count = 0;
+            self.find_ordinal = 0;
+            return;
+        }
+        let _ = self.cmd_tx.send(Cmd::Find {
+            text: text.to_string(),
+            forward,
+            next,
+        });
+    }
+
+    fn view_find_bar(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{
+            CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD, SPACE_MD, SPACE_SM, hairline_on,
+        };
+
+        let field = text_input("Find in page", &self.find_query)
+            .id(crate::integration::find_input_id())
+            .on_input(Msg::FindInput)
+            .on_submit(Msg::FindNext)
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fixed(180.0));
+        let count = if self.find_query.trim().is_empty() {
+            String::new()
+        } else if self.find_count <= 0 {
+            "No results".into()
+        } else {
+            format!("{} of {}", self.find_ordinal.max(1), self.find_count)
+        };
+        let count_el = text(count).size(11).style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().secondary.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.8, ..t }),
+            }
+        });
+        let prev =
+            kit_toolbar::toolbar_icon_tip(nav_icon_find_prev(), "Previous", Some(Msg::FindPrev));
+        let next = kit_toolbar::toolbar_icon_tip(nav_icon_find_next(), "Next", Some(Msg::FindNext));
+        let close = kit_toolbar::toolbar_icon_tip(nav_icon_stop(), "Close", Some(Msg::FindClose));
+        let row = row![field, count_el, prev, next, close]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+        let panel = container(row)
+            .padding([SPACE_SM, SPACE_MD])
+            .style(move |_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                border: hairline_on(CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD),
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            });
+        row![Space::new().width(Length::Fill), panel]
+            .padding(Padding {
+                top: SPACE_MD,
+                right: SPACE_MD,
+                bottom: 0.0,
+                left: 0.0,
+            })
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn view_js_dialog(&self) -> Element<'_, Msg> {
+        let Some(dlg) = self.pending_js_dialog.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        crate::js_dialog::overlay(
+            dlg,
+            &self.js_dialog_prompt,
+            Msg::JsDialogOk,
+            Msg::JsDialogCancel,
+            Msg::JsDialogInput,
+        )
+    }
+
+    fn on_media_ipc(&mut self, m: crate::media::IpcMedia) {
+        let profile = crate::profiles::active().id;
+        let known = crate::media::permission_for(&profile, &m.origin);
+        if known != "default" {
+            crate::media::send_resolve(&self.cmd_tx, &m, known == "granted");
+            return;
+        }
+        if let Some(pending) = self.pending_media.as_mut() {
+            if crate::notify::canon_origin(&pending.origin)
+                == crate::notify::canon_origin(&m.origin)
+            {
+                crate::media::merge(pending, &m);
+                return;
+            }
+            crate::media::send_resolve(&self.cmd_tx, &m, false);
+            return;
+        }
+        tracing::info!(
+            origin = %m.origin,
+            audio = m.audio,
+            video = m.video,
+            "media permission request"
+        );
+        self.pending_media = Some(m);
+    }
+
+    fn resolve_media_permission(&mut self, result: &str) {
+        let Some(perm) = self.pending_media.take() else {
+            return;
+        };
+        let profile = crate::profiles::active().id;
+        if let Err(e) = crate::media::set_permission(&profile, &perm.origin, result) {
+            tracing::warn!(error = %e, "media: persist permission failed");
+        }
+        crate::media::send_resolve(&self.cmd_tx, &perm, result == "granted");
+    }
+
+    fn view_media_permission(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let Some(perm) = self.pending_media.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        let (title_s, hint_s) = crate::media::copy(perm);
+        let title = text(title_s).size(15).font(sola_kit::fonts::ui_medium());
+        let hint = text(hint_s).size(12).style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().background.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.72, ..t }),
+            }
+        });
+        let actions = row![
+            kit_button::labeled("Allow", kit_button::primary).on_press(Msg::MediaAllow),
+            kit_button::labeled("Block", kit_button::ghost).on_press(Msg::MediaBlock),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center);
+        let body = column![title, hint, actions]
+            .spacing(SPACE_SM)
+            .width(Length::Fixed(300.0));
+        let panel =
+            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(340.0));
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.22,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::MediaBlock);
+        let centered = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        stack![backdrop, centered].into()
     }
 
     fn resolve_notify_permission(&mut self, result: &str) {
@@ -3514,7 +4589,8 @@ impl<E: Engine> App<E> {
         let _ = self
             .cmd_tx
             .send(Cmd::EvaluateJs(crate::notify::resolve_script(
-                perm.req_id, result,
+                perm.req_id,
+                result,
             )));
     }
 
@@ -3701,9 +4777,213 @@ impl<E: Engine> App<E> {
         stack![backdrop, centered].into()
     }
 
-    /// Authenticator panel — current TOTP + countdown; click fills the page.
     #[cfg(feature = "bitwarden")]
-    fn view_totp_panel(&self) -> Element<'_, Msg> {
+    fn view_vault_browse(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_SM, SPACE_XS};
+
+        let soft = |s: String| {
+            text(s).size(12).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.72, ..t }),
+                }
+            })
+        };
+        let soft_sm = |s: String| {
+            text(s).size(11).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.62, ..t }),
+                }
+            })
+        };
+
+        let page_url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
+        let host_hint = page_host_hint(page_url);
+        let filtered = filter_items(&self.vault_items, &self.vault_search, self.vault_filter);
+        let q = self.vault_search.trim();
+        let suggestions: Vec<&ItemSummary> =
+            if q.is_empty() && matches!(self.vault_filter, ItemFilter::All | ItemFilter::Login) {
+                filtered
+                    .iter()
+                    .copied()
+                    .filter(|i| i.uri_match && i.kind == ItemKind::Login)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        let mut search = text_input("Search vault", &self.vault_search)
+            .id(vault_search_id())
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fill);
+        if !self.vault_busy {
+            search = search.on_input(Msg::VaultSearch);
+        }
+        let mut plus = button(icon_svg(vault_icon_plus(), 16))
+            .padding(PAD_CONTROL_SM)
+            .style(kit_button::ghost);
+        if !self.vault_busy {
+            plus = plus.on_press(Msg::VaultCreateOpen);
+        }
+
+        let mut chips = row![].spacing(SPACE_XS).align_y(Alignment::Center);
+        for f in ItemFilter::all() {
+            let on = self.vault_filter == f;
+            let mut chip = button(text(f.label()).size(11).font(sola_kit::fonts::ui_medium()))
+                .padding(Padding::from([4, 8]))
+                .style(kit_button::list_item(on));
+            if !on {
+                chip = chip.on_press(Msg::VaultFilter(f));
+            }
+            chips = chips.push(chip);
+        }
+
+        let mut col = column![
+            row![search, plus]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+            chips,
+        ]
+        .spacing(SPACE_SM)
+        .width(Length::Fill);
+
+        if !host_hint.is_empty() && q.is_empty() {
+            col = col.push(soft(host_hint));
+        }
+        if let Some(err) = self.vault_error.as_ref() {
+            col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                iced::widget::text::Style {
+                    color: Some(theme.extended_palette().danger.base.color),
+                }
+            }));
+        }
+
+        // Autofill sits *above* the scroll rail so Fill is never under the
+        // overlay scrollbar (iced draws the thumb on the right of the
+        // scrollable, on top of the last child in the row).
+        const SUGGEST_CAP: usize = 3;
+        const SCROLL_GUTTER: f32 = 14.0;
+        let suggest: Vec<&ItemSummary> = suggestions.into_iter().take(SUGGEST_CAP).collect();
+        if !suggest.is_empty() {
+            let mut autofill = column![soft_sm("Autofill".into())]
+                .spacing(2.0)
+                .width(Length::Fill);
+            for item in &suggest {
+                autofill = autofill.push(self.view_vault_item_row(item, true));
+            }
+            col = col.push(autofill);
+        }
+
+        const LIST_H: f32 = 360.0;
+        let mut list = column![].spacing(2.0).width(Length::Fill);
+
+        if self.vault_items_loading && self.vault_items.is_empty() {
+            list = list.push(text("Looking up vault…").size(13));
+        } else {
+            let rest_label = if q.is_empty() { "All items" } else { "Results" };
+            if filtered.is_empty() {
+                if q.is_empty() && self.vault_filter == ItemFilter::All {
+                    list = list.push(text("Vault is empty.").size(13));
+                    list = list.push(soft_sm("Create a login, or add items in Bitwarden.".into()));
+                } else {
+                    list = list.push(text("No items match.").size(13));
+                }
+            } else {
+                if !suggest.is_empty() {
+                    list = list.push(soft_sm(rest_label.into()));
+                }
+                for item in &filtered {
+                    list = list.push(self.view_vault_item_row(item, false));
+                }
+            }
+        }
+
+        let list_h = if suggest.is_empty() { 400.0 } else { LIST_H };
+        col = col.push(
+            scrollable(container(list).width(Length::Fill).padding(Padding {
+                top: 0.0,
+                right: SCROLL_GUTTER,
+                bottom: 0.0,
+                left: 0.0,
+            }))
+            .height(Length::Fixed(list_h))
+            .width(Length::Fill),
+        );
+
+        let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
+        if !self.vault_busy && !self.vault_items_loading {
+            refresh = refresh.on_press(Msg::VaultRefreshMatches);
+        }
+        let close =
+            kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
+        col = col.push(
+            row![refresh, close]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+        );
+        col.into()
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn view_vault_item_row(&self, item: &ItemSummary, suggestion: bool) -> Element<'_, Msg> {
+        use sola_kit::components::style::SPACE_SM;
+        let icon = icon_svg_colored(vault_kind_icon(item.kind), 14, {
+            let t = self.theme.extended_palette().background.base.text;
+            iced::Color { a: 0.72, ..t }
+        });
+        let title = text(if item.name.is_empty() {
+            item.kind.label().to_string()
+        } else {
+            item.name.clone()
+        })
+        .size(13)
+        .font(sola_kit::fonts::ui_medium());
+        let mut title_row = row![icon, title]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+        if item.has_passkey {
+            title_row = title_row.push(badge::badge("passkey", BadgeTone::Accent));
+        }
+        if item.has_totp {
+            title_row = title_row.push(badge::badge("code", BadgeTone::Neutral));
+        }
+        let sub = if item.subtitle.is_empty() {
+            item.kind.label().to_string()
+        } else {
+            item.subtitle.clone()
+        };
+        let sub_el = text(sub).size(11).style(|theme: &iced::Theme| {
+            let t = theme.extended_palette().background.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.62, ..t }),
+            }
+        });
+        let body = column![title_row, sub_el].spacing(2);
+        let id = item.id.clone();
+        let open = button(body)
+            .padding(Padding::from([8, 10]))
+            .width(Length::Fill)
+            .style(kit_button::list_item(false))
+            .on_press(Msg::VaultOpenItem(id.clone()));
+        if suggestion && item.kind.can_fill() && !self.vault_busy {
+            row![
+                open,
+                kit_button::labeled_sm("Fill", kit_button::primary)
+                    .on_press(Msg::VaultFillItem(id)),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .into()
+        } else {
+            open.into()
+        }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn view_vault_item_detail(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
 
         let now = std::time::SystemTime::now()
@@ -3711,40 +4991,76 @@ impl<E: Engine> App<E> {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let soft = |s: String| {
-            text(s).size(12).style(|theme: &iced::Theme| {
-                let t = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(iced::Color { a: 0.72, ..t }),
-                }
-            })
-        };
-        let soft_sm = |s: String| {
-            text(s).size(11).style(|theme: &iced::Theme| {
-                let t = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(iced::Color { a: 0.62, ..t }),
-                }
-            })
-        };
+        let back = button(icon_svg(vault_icon_back(), 16))
+            .padding(PAD_CONTROL_SM)
+            .style(kit_button::ghost)
+            .on_press(Msg::VaultItemBack);
 
-        let title = text("Authenticator")
-            .size(15)
-            .font(sola_kit::fonts::ui_medium());
-        const MATCH_LIST_H: f32 = 420.0;
-        let page_url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
-        let host_hint = page_host_hint(page_url);
-        let mut col = column![
-            title,
-            soft("Last-used fills the page. Click a code to copy it.".into()),
-        ]
-        .spacing(SPACE_SM)
-        .width(Length::Fixed(340.0));
+        let mut col = column![].spacing(SPACE_SM).width(Length::Fill);
 
-        if !host_hint.is_empty() {
-            col = col.push(soft(host_hint));
+        if self.vault_item_loading && self.vault_item.is_none() {
+            col = col.push(
+                row![
+                    back,
+                    text("Opening…").size(15).font(sola_kit::fonts::ui_medium())
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+            );
+            if let Some(err) = self.vault_error.as_ref() {
+                col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                    iced::widget::text::Style {
+                        color: Some(theme.extended_palette().danger.base.color),
+                    }
+                }));
+            }
+            return col.into();
         }
 
+        let Some(item) = self.vault_item.as_ref() else {
+            col = col.push(
+                row![
+                    back,
+                    text("Item").size(15).font(sola_kit::fonts::ui_medium())
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+            );
+            col = col.push(text("Could not open this item.").size(13));
+            if let Some(err) = self.vault_error.as_ref() {
+                col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                    iced::widget::text::Style {
+                        color: Some(theme.extended_palette().danger.base.color),
+                    }
+                }));
+            }
+            return col.into();
+        };
+
+        let title = text(item.name.clone())
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+        let mut head = row![back, title]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+        if item.can_fill() && !self.vault_busy {
+            head = head.push(Space::new().width(Length::Fill));
+            head = head.push(
+                kit_button::labeled_sm("Fill", kit_button::primary)
+                    .on_press(Msg::VaultFillItem(item.id.clone())),
+            );
+        }
+        col = col.push(head);
+        col = col.push(
+            text(item.kind.label())
+                .size(11)
+                .style(|theme: &iced::Theme| {
+                    let t = theme.extended_palette().background.base.text;
+                    iced::widget::text::Style {
+                        color: Some(iced::Color { a: 0.62, ..t }),
+                    }
+                }),
+        );
         if let Some(err) = self.vault_error.as_ref() {
             col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
                 iced::widget::text::Style {
@@ -3753,259 +5069,167 @@ impl<E: Engine> App<E> {
             }));
         }
 
-        if self.vault_totp_loading && self.vault_totp.is_empty() {
-            col = col.push(text("Looking up authenticators…").size(13));
-        } else if page_url.is_empty() || page_url == BLANK_URL {
-            col = col.push(text("Open a website to fill a code.").size(13));
-        } else if self.vault_totp.is_empty() {
-            col = col.push(text("No authenticator codes for this site.").size(13));
-            col = col.push(soft_sm(
-                "Add a TOTP secret on a login for this site in Bitwarden, then Refresh.".into(),
-            ));
-        } else {
-            let mut list = column![].spacing(4.0);
-            for t in &self.vault_totp {
-                let title_line = if t.name.is_empty() {
-                    t.username
-                        .clone()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| "Authenticator".into())
-                } else {
-                    t.name.clone()
-                };
-                let remaining = totp_remaining_secs(t.period, now);
-                let pretty = pretty_totp_code(&t.code);
-                let sub = if let Some(u) = t.username.as_deref().filter(|s| !s.is_empty()) {
-                    format!("{u} · {remaining}s")
-                } else {
-                    format!("{remaining}s")
-                };
-                let code_line = text(pretty).size(18).font(sola_kit::fonts::mono());
-                let row_body = column![
-                    text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
-                    code_line,
-                    soft_sm(sub),
-                ]
-                .spacing(2);
-                let id = t.id.clone();
-                let mut btn = button(row_body)
-                    .padding(Padding::from([8, 10]))
-                    .width(Length::Fill)
-                    .style(|theme: &iced::Theme, status| {
-                        let p = theme.extended_palette();
-                        let bg = match status {
-                            iced::widget::button::Status::Hovered
-                            | iced::widget::button::Status::Pressed => p.background.strong.color,
-                            _ => p.background.weak.color,
-                        };
-                        iced::widget::button::Style {
-                            background: Some(iced::Background::Color(bg)),
-                            text_color: p.background.base.text,
-                            border: iced::Border {
-                                color: p.background.strong.color,
-                                width: 1.0,
-                                radius: 8.0.into(),
-                            },
-                            ..Default::default()
+        let mut fields = column![].spacing(SPACE_MD);
+        for f in &item.fields {
+            fields = fields.push(self.view_vault_record_field(f));
+        }
+        if let Some((code, period)) = item.totp_code_at(now) {
+            let remaining = totp_remaining_secs(period, now);
+            let pretty = pretty_totp_code(&code);
+            let copied = self
+                .vault_copy_flash
+                .as_ref()
+                .is_some_and(|(k, t)| k == "totp" && t.elapsed() < COPY_URL_FLASH);
+            let copy_h = if copied {
+                nav_icon_copy_done()
+            } else {
+                nav_icon_copy()
+            };
+            let totp_row = row![
+                column![
+                    text("Authenticator").size(11).style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().background.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.62, ..t }),
                         }
-                    });
-                if !self.vault_busy {
-                    btn = btn.on_press(Msg::TotpFill(id));
-                }
-                list = list.push(btn);
-            }
-            col = col.push(
-                scrollable(list)
-                    .height(Length::Fixed(MATCH_LIST_H))
-                    .width(Length::Fill),
+                    }),
+                    text(format!("{pretty}  ·  {remaining}s"))
+                        .size(16)
+                        .font(sola_kit::fonts::mono()),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                button(icon_svg(copy_h, 14))
+                    .padding(PAD_CONTROL_SM)
+                    .style(kit_button::ghost)
+                    .on_press(Msg::VaultCopy {
+                        key: "totp".into(),
+                        value: code.clone(),
+                    }),
+                kit_button::labeled_sm("Fill", kit_button::ghost)
+                    .on_press(Msg::VaultTotpCopy(item.id.clone())),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+            fields = fields.push(totp_row);
+        }
+        if item.has_passkey {
+            fields = fields.push(badge::badge("passkey", BadgeTone::Accent));
+        }
+        if let Some(notes) = item.notes.as_deref() {
+            let copied = self
+                .vault_copy_flash
+                .as_ref()
+                .is_some_and(|(k, t)| k == "notes" && t.elapsed() < COPY_URL_FLASH);
+            let copy_h = if copied {
+                nav_icon_copy_done()
+            } else {
+                nav_icon_copy()
+            };
+            fields = fields.push(
+                column![
+                    row![
+                        text("Notes").size(11).style(|theme: &iced::Theme| {
+                            let t = theme.extended_palette().background.base.text;
+                            iced::widget::text::Style {
+                                color: Some(iced::Color { a: 0.62, ..t }),
+                            }
+                        }),
+                        Space::new().width(Length::Fill),
+                        button(icon_svg(copy_h, 14))
+                            .padding(PAD_CONTROL_SM)
+                            .style(kit_button::ghost)
+                            .on_press(Msg::VaultCopy {
+                                key: "notes".into(),
+                                value: notes.to_string(),
+                            }),
+                    ]
+                    .align_y(Alignment::Center),
+                    text(notes.to_string())
+                        .size(13)
+                        .wrapping(iced::widget::text::Wrapping::Word),
+                ]
+                .spacing(2),
             );
         }
 
-        let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
-        if !self.vault_busy && !self.vault_totp_loading {
-            refresh = refresh.on_press(Msg::TotpRefresh);
-        }
-        let close =
-            kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
         col = col.push(
-            row![refresh, close]
-                .spacing(SPACE_SM)
-                .align_y(Alignment::Center),
-        );
-
-        let panel =
-            card::modal(container(col).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(360.0));
-        let backdrop = mouse_area(
-            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
-                container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.12,
-                    ))),
-                    ..container::Style::default()
-                }
-            }),
-        )
-        .on_press(Msg::VaultPanelClose);
-
-        let anchored = container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::End)
-            .align_y(Alignment::Start)
-            .padding(Padding {
-                top: CHROME_HEIGHT + 4.0,
-                right: 10.0,
+            scrollable(container(fields).width(Length::Fill).padding(Padding {
+                top: 0.0,
+                right: 14.0,
                 bottom: 0.0,
                 left: 0.0,
-            });
-
-        stack![backdrop, anchored].into()
+            }))
+            .height(Length::Fixed(360.0))
+            .width(Length::Fill),
+        );
+        col.into()
     }
 
-    /// Cards panel — list every Bitwarden card; click fills the page.
     #[cfg(feature = "bitwarden")]
-    fn view_cards_panel(&self) -> Element<'_, Msg> {
-        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
-
-        let soft = |s: String| {
-            text(s).size(12).style(|theme: &iced::Theme| {
-                let t = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(iced::Color { a: 0.72, ..t }),
-                }
-            })
-        };
-        let soft_sm = |s: String| {
-            text(s).size(11).style(|theme: &iced::Theme| {
-                let t = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(iced::Color { a: 0.62, ..t }),
-                }
-            })
-        };
-
-        let title = text("Fill card")
-            .size(15)
-            .font(sola_kit::fonts::ui_medium());
-        const MATCH_LIST_H: f32 = 420.0;
-        let mut col = column![title, soft("Cards from your Bitwarden vault.".into())]
-            .spacing(SPACE_SM)
-            .width(Length::Fixed(340.0));
-
-        if let Some(err) = self.vault_error.as_ref() {
-            col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
-                iced::widget::text::Style {
-                    color: Some(theme.extended_palette().danger.base.color),
-                }
-            }));
-        }
-
-        if self.vault_cards_loading {
-            col = col.push(text("Looking up cards…").size(13));
-        } else if self.vault_cards.is_empty() {
-            col = col.push(text("No cards saved in Bitwarden.").size(13));
-            col = col.push(soft_sm("Add a card in Bitwarden, then Refresh.".into()));
+    fn view_vault_record_field(&self, field: &crate::vault::RecordField) -> Element<'_, Msg> {
+        use sola_kit::components::style::SPACE_SM;
+        let revealed = self.vault_revealed.contains(&field.key);
+        let display = if field.hidden && !revealed {
+            "••••••••".to_string()
         } else {
-            let mut list = column![].spacing(4.0);
-            for c in &self.vault_cards {
-                let title_line = if c.name.is_empty() {
-                    c.brand.clone().unwrap_or_else(|| "Card".into())
-                } else {
-                    c.name.clone()
-                };
-                let sub = {
-                    let mut s = c.subtitle();
-                    if let Some(ref exp) = c.exp {
-                        if s.is_empty() {
-                            s = exp.clone();
-                        } else {
-                            s.push_str(" · ");
-                            s.push_str(exp);
-                        }
-                    }
-                    if s.is_empty() {
-                        s = "—".into();
-                    }
-                    s
-                };
-                let row_body = column![
-                    text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
-                    soft_sm(sub),
-                ]
-                .spacing(2);
-                let id = c.id.clone();
-                let mut btn = button(row_body)
-                    .padding(Padding::from([8, 10]))
-                    .width(Length::Fill)
-                    .style(|theme: &iced::Theme, status| {
-                        let p = theme.extended_palette();
-                        let bg = match status {
-                            iced::widget::button::Status::Hovered
-                            | iced::widget::button::Status::Pressed => p.background.strong.color,
-                            _ => p.background.weak.color,
-                        };
-                        iced::widget::button::Style {
-                            background: Some(iced::Background::Color(bg)),
-                            text_color: p.background.base.text,
-                            border: iced::Border {
-                                color: p.background.strong.color,
-                                width: 1.0,
-                                radius: 8.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    });
-                if !self.vault_busy {
-                    btn = btn.on_press(Msg::CardsFill(id));
-                }
-                list = list.push(btn);
-            }
-            col = col.push(
-                scrollable(list)
-                    .height(Length::Fixed(MATCH_LIST_H))
-                    .width(Length::Fill),
+            field.value.clone()
+        };
+        let mut value = text(display).size(13);
+        if field.mono {
+            value = value.font(sola_kit::fonts::mono());
+        }
+        let copied = self
+            .vault_copy_flash
+            .as_ref()
+            .is_some_and(|(k, t)| k == &field.key && t.elapsed() < COPY_URL_FLASH);
+        let copy_h = if copied {
+            nav_icon_copy_done()
+        } else {
+            nav_icon_copy()
+        };
+        let mut actions = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+        if field.hidden {
+            let eye = if revealed {
+                vault_icon_eye_off()
+            } else {
+                vault_icon_eye()
+            };
+            actions = actions.push(
+                button(icon_svg(eye, 14))
+                    .padding(PAD_CONTROL_SM)
+                    .style(kit_button::ghost)
+                    .on_press(Msg::VaultReveal(field.key.clone())),
             );
         }
-
-        let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
-        if !self.vault_busy && !self.vault_cards_loading {
-            refresh = refresh.on_press(Msg::CardsRefresh);
-        }
-        let close =
-            kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
-        col = col.push(
-            row![refresh, close]
-                .spacing(SPACE_SM)
-                .align_y(Alignment::Center),
+        actions = actions.push(
+            button(icon_svg(copy_h, 14))
+                .padding(PAD_CONTROL_SM)
+                .style(kit_button::ghost)
+                .on_press(Msg::VaultCopy {
+                    key: field.key.clone(),
+                    value: field.value.clone(),
+                }),
         );
-
-        let panel =
-            card::modal(container(col).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(360.0));
-        let backdrop = mouse_area(
-            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
-                container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.12,
-                    ))),
-                    ..container::Style::default()
-                }
-            }),
-        )
-        .on_press(Msg::VaultPanelClose);
-
-        let anchored = container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::End)
-            .align_y(Alignment::Start)
-            .padding(Padding {
-                top: CHROME_HEIGHT + 4.0,
-                right: 10.0,
-                bottom: 0.0,
-                left: 0.0,
-            });
-
-        stack![backdrop, anchored].into()
+        row![
+            column![
+                text(field.label.clone())
+                    .size(11)
+                    .style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().background.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.62, ..t }),
+                        }
+                    }),
+                value.wrapping(iced::widget::text::Wrapping::Word),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            actions,
+        ]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Start)
+        .into()
     }
 
     /// Bitwarden panel anchored top-right under the toolbar vault icon.
@@ -4271,6 +5495,11 @@ impl<E: Engine> App<E> {
             col = col.push(cancel);
             col.into()
         } else if self.vault_status.unlocked
+            && (matches!(self.vault_phase, VaultPanelPhase::ItemDetail)
+                || self.vault_item_id.is_some())
+        {
+            self.view_vault_item_detail()
+        } else if self.vault_status.unlocked
             && matches!(self.vault_phase, VaultPanelPhase::CreateSaved)
         {
             let title = text("Saved to vault")
@@ -4352,129 +5581,7 @@ impl<E: Engine> App<E> {
                 );
             col.into()
         } else if self.vault_status.unlocked {
-            // Fill picker only — not a status card. Unlock already closed the panel.
-            let title = text("Fill login")
-                .size(15)
-                .font(sola_kit::fonts::ui_medium());
-
-            let page_url = if self.vault_matches_url.is_empty() {
-                self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("")
-            } else {
-                self.vault_matches_url.as_str()
-            };
-            let host_hint = page_host_hint(page_url);
-
-            // Wide enough for emails; tall enough that ~10–12 logins rarely scroll.
-            const MATCH_LIST_H: f32 = 420.0;
-            let mut col = column![title].spacing(SPACE_SM).width(Length::Fixed(340.0));
-
-            if !host_hint.is_empty() {
-                col = col.push(soft(host_hint));
-            }
-
-            if let Some(err) = err_line {
-                col = col.push(err);
-            }
-
-            if self.vault_matches_loading {
-                col = col.push(text("Looking up logins…").size(13));
-            } else if page_url.is_empty() || page_url == BLANK_URL {
-                col = col.push(text("Open a website to fill a login.").size(13));
-            } else if self.vault_matches.is_empty() {
-                col = col.push(text("No saved login for this site.").size(13));
-            } else {
-                let mut list = column![].spacing(4.0);
-                for m in &self.vault_matches {
-                    let title_line = if m.name.is_empty() {
-                        "Login".to_string()
-                    } else {
-                        m.name.clone()
-                    };
-                    let sub = m
-                        .username
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("—");
-                    let title_row: Element<'_, Msg> = if m.has_passkey {
-                        row![
-                            text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
-                            text("passkey")
-                                .size(10)
-                                .font(sola_kit::fonts::ui_medium())
-                                .style(|theme: &iced::Theme| iced::widget::text::Style {
-                                    color: Some(theme.extended_palette().primary.base.color),
-                                }),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .into()
-                    } else {
-                        text(title_line)
-                            .size(13)
-                            .font(sola_kit::fonts::ui_medium())
-                            .into()
-                    };
-                    let row_body = column![title_row, soft_sm(sub.to_string())].spacing(2);
-                    let id = m.id.clone();
-                    let mut btn = button(row_body)
-                        .padding(Padding::from([8, 10]))
-                        .width(Length::Fill)
-                        .style(|theme: &iced::Theme, status| {
-                            let p = theme.extended_palette();
-                            let bg = match status {
-                                iced::widget::button::Status::Hovered
-                                | iced::widget::button::Status::Pressed => {
-                                    p.background.strong.color
-                                }
-                                _ => p.background.weak.color,
-                            };
-                            iced::widget::button::Style {
-                                background: Some(iced::Background::Color(bg)),
-                                text_color: p.background.base.text,
-                                border: iced::Border {
-                                    color: p.background.strong.color,
-                                    width: 1.0,
-                                    radius: 8.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        });
-                    if !self.vault_busy {
-                        btn = btn.on_press(Msg::VaultFill(id));
-                    }
-                    list = list.push(btn);
-                }
-                col = col.push(
-                    scrollable(list)
-                        .height(Length::Fixed(MATCH_LIST_H))
-                        .width(Length::Fill),
-                );
-            }
-
-            let empty = self.vault_matches.is_empty() && !self.vault_matches_loading;
-            let mut create = kit_button::labeled(
-                "Create login",
-                if empty {
-                    kit_button::primary
-                } else {
-                    kit_button::ghost
-                },
-            );
-            if !self.vault_busy {
-                create = create.on_press(Msg::VaultCreateOpen);
-            }
-            let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
-            if !self.vault_busy && !self.vault_matches_loading {
-                refresh = refresh.on_press(Msg::VaultRefreshMatches);
-            }
-            let close =
-                kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
-            col = col.push(
-                row![create, refresh, close]
-                    .spacing(SPACE_SM)
-                    .align_y(Alignment::Center),
-            );
-            col.into()
+            self.view_vault_browse()
         } else {
             match &self.vault_phase {
                 VaultPanelPhase::PasskeyPick | VaultPanelPhase::PasskeyCreate => {
@@ -4483,6 +5590,9 @@ impl<E: Engine> App<E> {
                 }
                 VaultPanelPhase::CreateLogin | VaultPanelPhase::CreateSaved => {
                     text("Unlock the vault to create a login.").size(13).into()
+                }
+                VaultPanelPhase::ItemDetail => {
+                    text("Unlock the vault to view this item.").size(13).into()
                 }
                 VaultPanelPhase::Credentials => {
                     // While a request is in flight, freeze the form (no on_input
@@ -4624,7 +5734,7 @@ impl<E: Engine> App<E> {
         // Fixed-width card — do not let modal face stretch to the window.
         // Slightly wider than the old 320 so fill list + passkey badge fit.
         let panel =
-            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(360.0));
+            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(400.0));
 
         // Light click-away (no full dim wash — popover by the icon).
         let backdrop = mouse_area(
@@ -4864,6 +5974,9 @@ impl<E: Engine> App<E> {
                     // A left press anywhere: resolve whether it focused the URL bar
                     // (for click-to-select-all). Received regardless of which widget
                     // captures it, unlike a wrapping `mouse_area`.
+                    Event::Window(iced::window::Event::Resized(size)) => {
+                        Some(Msg::WindowResized(size.height))
+                    }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                         Some(Msg::LeftPressed)
                     }
@@ -4874,15 +5987,60 @@ impl<E: Engine> App<E> {
                     // not already capture the key (e.g. a focused text field that
                     // wants Escape for its own cancel).
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
-                        if crate::input::chrome_nav_shortcut(&key, modifiers)
-                            == Some('r') =>
+                        if crate::input::is_reopen_closed_shortcut(&key, modifiers) =>
+                    {
+                        Some(Msg::ReopenClosedTab)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('r') =>
                     {
                         Some(Msg::NavReloadOrStop)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('g') =>
+                    {
+                        Some(Msg::FindNext)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('f') =>
+                    {
+                        Some(Msg::FindOpen)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::is_find_prev_shortcut(&key, modifiers) =>
+                    {
+                        Some(Msg::FindPrev)
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if status == event::Status::Ignored => Some(Msg::NavStop),
+                    }) if crate::js_dialog::is_open() => Some(if crate::js_dialog::is_alert() {
+                        Msg::JsDialogOk
+                    } else {
+                        Msg::JsDialogCancel
+                    }),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                        ..
+                    }) if crate::js_dialog::is_open() && !crate::js_dialog::is_prompt() => {
+                        Some(Msg::JsDialogOk)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if URL_BAR_FOCUSED.load(Ordering::Relaxed)
+                            && !FIND_OPEN.load(Ordering::Relaxed)
+                            && !crate::js_dialog::is_open() =>
+                    {
+                        omnibox_key(&key, &modifiers)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    }) if FIND_OPEN.load(Ordering::Relaxed)
+                        || GROUP_RENAMING.load(Ordering::Relaxed)
+                        || status == event::Status::Ignored =>
+                    {
+                        Some(Msg::NavStop)
+                    }
                     // Tab between vault form fields while the panel is open.
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Tab),
@@ -4919,7 +6077,18 @@ impl<E: Engine> App<E> {
         }
         #[cfg(feature = "bitwarden")]
         {
-            if self.totp_panel_open || self.vault_awaiting_fill {
+            if self.vault_awaiting_fill {
+                return true;
+            }
+            if self.vault_copy_flash.is_some() {
+                return true;
+            }
+            if self.vault_panel_open
+                && self
+                    .vault_item
+                    .as_ref()
+                    .is_some_and(|i| i.totp_secret.is_some())
+            {
                 return true;
             }
         }
@@ -4929,6 +6098,34 @@ impl<E: Engine> App<E> {
 
 /// Divider drag: `listen_with` is a fn pointer and cannot close over App.
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
+/// Group-name field is up — Escape must cancel even when the input captured it.
+static GROUP_RENAMING: AtomicBool = AtomicBool::new(false);
+static FIND_OPEN: AtomicBool = AtomicBool::new(false);
+static URL_BAR_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+fn omnibox_key(key: &keyboard::Key, modifiers: &keyboard::Modifiers) -> Option<Msg> {
+    use keyboard::key::Named;
+    if modifiers.logo() {
+        return None;
+    }
+    match key {
+        keyboard::Key::Named(Named::ArrowDown) => Some(Msg::OmniboxSelectNext),
+        keyboard::Key::Named(Named::ArrowUp) => Some(Msg::OmniboxSelectPrev),
+        keyboard::Key::Named(Named::Enter) if modifiers.shift() => Some(Msg::UrlSearchResults),
+        keyboard::Key::Named(Named::Enter) => Some(Msg::UrlSubmit),
+        keyboard::Key::Character(c)
+            if modifiers.control() && !modifiers.alt() && c.eq_ignore_ascii_case("n") =>
+        {
+            Some(Msg::OmniboxSelectNext)
+        }
+        keyboard::Key::Character(c)
+            if modifiers.control() && !modifiers.alt() && c.eq_ignore_ascii_case("p") =>
+        {
+            Some(Msg::OmniboxSelectPrev)
+        }
+        _ => None,
+    }
+}
 
 fn chrome_drain_subscription() -> Subscription<Msg> {
     Subscription::run(chrome_drain_stream)
@@ -5146,8 +6343,94 @@ fn vault_email_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-email")
 }
 
+#[cfg(feature = "bitwarden")]
+fn vault_search_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-search")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_passkey() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/fingerprint-pattern"))
+        .clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_totp() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/shield")).clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_plus() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/plus")).clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_back() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/chevron-left")).clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_eye() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/eye")).clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_icon_eye_off() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/eye-off")).clone()
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_kind_icon(kind: ItemKind) -> iced::widget::svg::Handle {
+    match kind {
+        ItemKind::Login => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/key-round")).clone()
+        }
+        ItemKind::Card => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/credit-card")).clone()
+        }
+        ItemKind::Identity => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/user")).clone()
+        }
+        ItemKind::SecureNote => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/sticky-note")).clone()
+        }
+        ItemKind::SshKey => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/file-key")).clone()
+        }
+        ItemKind::BankAccount => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/wallet")).clone()
+        }
+        ItemKind::DriversLicense | ItemKind::Passport => {
+            static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+            H.get_or_init(|| icon_handle("lucide/id-card")).clone()
+        }
+    }
+}
+
 fn group_rename_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-group-rename")
+}
+
+/// Persist a pocket fill; omit when it matches the kit default well.
+fn persist_group_color(color: iced::Color) -> Option<String> {
+    let hex = sola_kit::theme::color_to_hex(color);
+    if hex == sola_kit::theme::color_to_hex(group_well_fill()) {
+        None
+    } else {
+        Some(hex)
+    }
 }
 
 fn nav_icon_back() -> iced::widget::svg::Handle {
@@ -5178,6 +6461,16 @@ fn nav_icon_copy() -> iced::widget::svg::Handle {
 fn nav_icon_copy_done() -> iced::widget::svg::Handle {
     static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
     H.get_or_init(|| icon_handle("lucide/copy-check")).clone()
+}
+
+fn nav_icon_find_prev() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/chevron-up")).clone()
+}
+
+fn nav_icon_find_next() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/chevron-down")).clone()
 }
 
 #[cfg(feature = "bitwarden")]
@@ -5229,6 +6522,11 @@ impl<E: Engine> Drop for App<E> {
 /// over a URL the user just committed.
 fn is_transient_nav_url(url: &str) -> bool {
     url.is_empty() || url == BLANK_URL
+}
+
+/// Fresh ⌘T tab: blank URL and no real session history.
+fn tab_is_scratch_blank(t: &TabInfo) -> bool {
+    is_transient_nav_url(&t.url) && t.history.iter().all(|e| is_transient_nav_url(&e.url))
 }
 
 /// Apply an engine URL to the omnibar. Never blanks a committed field, and
@@ -5283,6 +6581,31 @@ fn omnibox_progress_overlay<'a>(frac: f32) -> Element<'a, Msg> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+/// Engine-created browsers (`window.open` / NEW_POPUP) appear in the live
+/// snapshot with ids chrome did not mint. Move each beside `after` (same
+/// group as the opener) and return those ids.
+fn place_engine_popup_tabs(
+    groups: &mut Groups,
+    tabs: &mut Vec<TabInfo>,
+    prev_ids: &HashSet<TabId>,
+    after: TabId,
+) -> Vec<TabId> {
+    let new: Vec<TabId> = tabs
+        .iter()
+        .map(|t| t.id)
+        .filter(|id| !prev_ids.contains(id))
+        .collect();
+    let mut after = after;
+    for id in &new {
+        if let Some(pos) = tabs.iter().position(|t| t.id == *id) {
+            let info = tabs.remove(pos);
+            groups.insert_beside(tabs, after, info);
+            after = *id;
+        }
+    }
+    new
 }
 
 /// Chrome owns which tabs exist and their order. Engine owns field updates
@@ -5352,6 +6675,19 @@ mod tests {
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
         TabInfo::chrome(TabId(id), url, title)
+    }
+
+    #[test]
+    fn scratch_blank_is_unused_new_tab() {
+        assert!(tab_is_scratch_blank(&tab(1, BLANK_URL, "New Tab")));
+        assert!(!tab_is_scratch_blank(&tab(1, "https://example.com/", "Ex")));
+        let mut used = tab(1, BLANK_URL, "New Tab");
+        used.history = vec![crate::engine::HistoryEntry {
+            index: 0,
+            url: "https://example.com/".into(),
+            title: "Ex".into(),
+        }];
+        assert!(!tab_is_scratch_blank(&used));
     }
 
     #[test]
@@ -5433,6 +6769,49 @@ mod tests {
         let out = merge_tab_snapshot(&prev, &live, &HashSet::new());
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].id, TabId(3));
+    }
+
+    #[test]
+    fn engine_popup_sits_beside_the_opener() {
+        let mut tabs = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, "https://b.example/", "B"),
+            tab(9, "https://popup.example/", "Popup"),
+        ];
+        let prev = HashSet::from([TabId(1), TabId(2)]);
+        let mut groups = Groups::default();
+        let new = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
+        assert_eq!(new, vec![TabId(9)]);
+        assert_eq!(
+            tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![TabId(1), TabId(9), TabId(2)]
+        );
+    }
+
+    #[test]
+    fn engine_popup_joins_the_opener_group() {
+        let mut tabs = vec![
+            tab(1, "https://a.example/", "A"),
+            tab(2, "https://a.example/b", "B"),
+            tab(9, "https://popup.example/", "Popup"),
+        ];
+        let prev = HashSet::from([TabId(1), TabId(2)]);
+        let mut groups = Groups::default();
+        groups.groups.push(crate::groups::TabGroup {
+            id: "g1".into(),
+            name: "Work".into(),
+            collapsed: false,
+            color: None,
+        });
+        groups.member.insert(TabId(1), "g1".into());
+        groups.member.insert(TabId(2), "g1".into());
+        let _ = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
+        assert_eq!(groups.of_tab(TabId(9)), Some("g1"));
+        groups.normalize(&mut tabs);
+        assert_eq!(
+            tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![TabId(1), TabId(9), TabId(2)]
+        );
     }
 
     #[test]

@@ -67,13 +67,16 @@ windows are actually restarted.
 | Mitigation | Where | Status |
 |------------|--------|--------|
 | No 16 ms chrome timer | `sola-browser` `subscription` | **Dogfooded.** Copy / context menu wake via `chrome_wake::wake`. |
-| Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, TOTP, vault fill-wait. Helpers wake Tick. |
+| Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, vault TOTP on the open item, vault fill-wait. Helpers wake Tick. |
 | Working ring `At` ~20 Hz | `sola-kit` `status_mark` | **In code.** `RedrawRequest::At(50ms)`, not `NextFrame`. |
+| Volume spectrum `At` ~20 Hz | `sola-shell` audio meter | **Installed** `shell` release 2026-09-02. `pw-cat` tap → FFT → 12 warped-log bands + pink weight; canvas `RedrawRequest::At(50ms)` only while bands are live. No iced `time::every`. |
 | Workspaces pointer gated | `sola-workspaces` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
 | Morph2 drag-only vsync | `sola-kit` `sidebar/strip.rs` | **Dogfooded** for tab reorder (stutter fixed by re-enabling vsync *during* drag). Idle must not leave `request_redraw` on. |
 | Overlay first-show at live output | `sola-shell` `overlay_open_rect` | **Dogfooded.** No 1920-wide placeholder / default-center jump. |
 | River hide until Composition | `sola-river` `last_composition` | **Dogfooded** with overlay park (no center flash of hidden surfaces). |
 | Shell overlays parked 2×2 off-output | `sola-shell` `zoning::overlay_frame` | **Dogfooded** (position, then flash, then iced `Resized` gate). Show is Frame while hidden, Composition after live `Resized` + one tick. **Never park at 1×1** (winit min 2×1 + `resizable=false` → `xdg_toplevel` invalid_size panic-loop). |
+| Menu overlay is card-sized | `sola-shell` `zoning::menu_overlay_frame` | **In code (2026-08-31).** Dropdown / calendar / stat / BT / volume / pile Frame to the card, not the full usable area. Full-output wgpu on software GL (llvmpipe) pegged a core on first click. Launcher / switcher / selection still full-output. |
+| Super+K overlay is card-sized | `sola-shell` `zoning::card_overlay_frame` | **Installed** `shell` release 2026-09-02. Cheatsheet Frames to the card + shadow pad (~584×575 at 1920×1080, ~0.3M px vs ~2.0M usable). Same leftover-pad dismiss as menus; desk clicks pass through. Park stays 2×2 off-output. Launcher / switcher still full-output (their dim / click-outside *is* the usable area). |
 | Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | **In code, not fully smoked.** ARGB kept for float CSD. Tiled `theme_for(false)` → full opaque-region. Float / overlay theme → region cleared. |
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`

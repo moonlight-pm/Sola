@@ -61,6 +61,49 @@ pub mod wlr_virtual_pointer_unstable_v1 {
     wayland_scanner::generate_client_code!("protocols/wlr-virtual-pointer-unstable-v1.xml");
 }
 
+pub mod ext_foreign_toplevel_list_v1 {
+    use wayland_client;
+
+    pub mod __interfaces {
+        wayland_scanner::generate_interfaces!("protocols/ext-foreign-toplevel-list-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/ext-foreign-toplevel-list-v1.xml");
+}
+
+pub mod ext_image_capture_source_v1 {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    use crate::protocol::ext_foreign_toplevel_list_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::ext_foreign_toplevel_list_v1::__interfaces::*;
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/ext-image-capture-source-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/ext-image-capture-source-v1.xml");
+}
+
+pub mod ext_image_copy_capture_v1 {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    use crate::protocol::ext_image_capture_source_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::ext_image_capture_source_v1::__interfaces::*;
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/ext-image-copy-capture-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/ext-image-copy-capture-v1.xml");
+}
+
 pub mod wlr_screencopy_unstable_v1 {
     use wayland_client;
     use wayland_client::protocol::*;
@@ -113,6 +156,21 @@ pub mod river_libinput_config_v1 {
     use self::__interfaces::*;
 
     wayland_scanner::generate_client_code!("protocols/river-libinput-config-v1.xml");
+}
+
+pub mod river_xkb_config_v1 {
+    use wayland_client;
+
+    // `river_xkb_keyboard_v1.input_device` references this type.
+    use crate::protocol::river_input_management_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::river_input_management_v1::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/river-xkb-config-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/river-xkb-config-v1.xml");
 }
 
 /// Enables standard `wlr-layer-shell-unstable-v1` for non-WM clients.

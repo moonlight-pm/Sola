@@ -72,7 +72,7 @@ pub fn run() -> iced::Result {
             "Edit",
             [
                 ("undo", "Undo", KeyCode::Z.meta()),
-                ("crop", "Crop", KeyCode::K.meta()),
+                ("crop", "Crop", KeyCode::K.meta_shift()),
                 ("rotate_cw", "Rotate Right", KeyCode::R.meta()),
                 ("rotate_ccw", "Rotate Left", KeyCode::R.meta().shift()),
             ],
@@ -733,7 +733,7 @@ impl App {
                 Task::none()
             }
             keyboard::Key::Character("z") => self.update(Msg::Undo),
-            keyboard::Key::Character("k") => self.update(Msg::ToggleCrop),
+            keyboard::Key::Character("k") if mods.shift() => self.update(Msg::ToggleCrop),
             keyboard::Key::Character("r") if mods.shift() => self.update(Msg::RotateCcw),
             keyboard::Key::Character("r") => self.update(Msg::RotateCw),
             keyboard::Key::Character("0") => self.update(Msg::ZoomFit),
@@ -877,7 +877,7 @@ impl App {
                 tool_btn(&self.icons.folder, "Open · ⌘O", Some(Msg::OpenDialog)),
                 tool_btn(
                     &self.icons.crop,
-                    "Crop · ⌘K",
+                    "Crop · ⌘⇧K",
                     has_doc.then_some(Msg::ToggleCrop),
                 ),
                 tool_btn(

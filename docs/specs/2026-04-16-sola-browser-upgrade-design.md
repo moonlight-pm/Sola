@@ -253,7 +253,7 @@ any bootstrap. `Topic::Shutdown` is intercepted by `sola-app` before
 - `Topic::OpenUrl` opens a new tab from other apps.
 - `Topic::Shutdown` triggers final flush and clean exit.
 - `Topic::SetWindowPolicy` sticky is now auto-emitted (new — was missing).
-- `cargo make build` succeeds; `cargo make deploy browser --canto` deploys.
+- `cargo make build` succeeds; `cargo make install browser` installs.
 
 ## Out of scope (noted for future work)
 

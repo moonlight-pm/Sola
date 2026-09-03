@@ -22,7 +22,7 @@ use iced::widget::{column, row};
 use iced::{Color, Element, Length, Theme};
 
 use crate::components::spectrum::{alpha_strip, hue_strip, sv_square};
-use crate::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
+use crate::components::style::{SPACE_MD, SPACE_SM};
 use crate::components::swatch::swatch_sized;
 use crate::components::text::{caption, muted};
 use crate::components::text_input as kit_text_input;
@@ -282,38 +282,37 @@ impl ColorPicker {
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
         let hue_color = hsv_to_rgb(self.h, 1.0, 1.0, 1.0);
-        let surface = column![
+        let stage = column![
             sv_square(hue_color, self.s, self.v, Message::Sv),
             hue_strip(self.h, Message::Hue),
             alpha_strip(self.color(), self.a, Message::Alpha),
-            swatch_sized::<Message>(self.color(), 28.0),
         ]
-        .spacing(SPACE_MD);
+        .spacing(SPACE_SM);
 
-        let inputs = column![
-            hex_row(&self.hex),
+        let numbers = column![
+            hex_row(self.color(), &self.hex),
             triple_row("RGB", &self.rgb, Message::Rgb),
             triple_row("HSL", &self.hsl, Message::Hsl),
         ]
-        .spacing(SPACE_MD);
+        .spacing(SPACE_SM);
 
-        row![surface, inputs].spacing(SPACE_LG).into()
+        column![stage, numbers].spacing(SPACE_MD).into()
     }
 }
 
-/// The hex field: a wider input that adopts on a full `#rrggbb` and
-/// canonicalises on Enter.
-fn hex_row(hex: &str) -> Element<'_, Message, Theme> {
+/// Hex field with a live preview chip — one row, uses the square width.
+fn hex_row(color: Color, hex: &str) -> Element<'_, Message, Theme> {
     row![
-        caption("HEX").style(muted).width(Length::Fixed(34.0)),
+        swatch_sized::<Message>(color, 18.0),
         kit_text_input::text_input("#rrggbb", hex)
             .on_input(Message::Hex)
             .on_submit(Message::HexSubmit)
             .style(kit_text_input::style)
-            .width(Length::Fixed(120.0)),
+            .width(Length::Fill),
     ]
-    .spacing(SPACE_MD)
+    .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center)
+    .width(Length::Fixed(196.0))
     .into()
 }
 
@@ -327,16 +326,17 @@ fn triple_row<'a>(
         kit_text_input::text_input("", value)
             .on_input(move |s| on_change(ch, s))
             .style(kit_text_input::style)
-            .width(Length::Fixed(52.0))
+            .width(Length::Fill)
     };
     row![
-        caption(label).style(muted).width(Length::Fixed(34.0)),
+        caption(label).style(muted).width(Length::Fixed(28.0)),
         cell(Channel::One, &values[0]),
         cell(Channel::Two, &values[1]),
         cell(Channel::Three, &values[2]),
     ]
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center)
+    .width(Length::Fixed(196.0))
     .into()
 }
 

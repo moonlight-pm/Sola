@@ -1,0 +1,686 @@
+//! Local Spotify Connect playback through librespot.
+//!
+//! Adapted from Fastpotify (MIT), https://github.com/crmne/fastpotify
+//! — visualiser tap, equalizer, and the custom rodio sink are omitted.
+//! Linux uses librespot's PulseAudio backend (PipeWire-compatible) with
+//! a rodio fallback.
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, anyhow};
+use librespot_connect::{
+    ConnectConfig, LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack,
+    Spirc,
+};
+use librespot_core::{
+    authentication::Credentials,
+    cache::Cache,
+    config::{DeviceType, SessionConfig},
+    session::Session,
+};
+use librespot_metadata::audio::{AudioItem, UniqueFields};
+use librespot_playback::{
+    audio_backend,
+    config::{AudioFormat, Bitrate, NormalisationType, PlayerConfig, VolumeCtrl},
+    mixer::{self, Mixer, MixerConfig},
+    player::{Player, PlayerEvent},
+};
+use sha1::{Digest, Sha1};
+
+#[derive(Clone, Debug)]
+pub struct EngineConfig {
+    pub device_name: String,
+    pub bitrate_kbps: u16,
+    pub normalisation: bool,
+    pub autoplay: bool,
+    pub gapless: bool,
+    pub backend: Option<String>,
+    pub audio_device: Option<String>,
+    pub initial_volume: u16,
+    pub credentials_dir: PathBuf,
+    pub volume_dir: PathBuf,
+    pub audio_cache_dir: Option<PathBuf>,
+    pub audio_cache_limit: Option<u64>,
+}
+
+impl EngineConfig {
+    pub fn device_id(&self) -> String {
+        hex(&Sha1::digest(self.device_name.as_bytes()))
+    }
+
+    pub fn open_cache(&self) -> Result<Cache> {
+        Cache::new(
+            Some(self.credentials_dir.as_path()),
+            Some(self.volume_dir.as_path()),
+            self.audio_cache_dir.as_deref(),
+            self.audio_cache_limit,
+        )
+        .context("unable to open the playback cache")
+    }
+
+    fn bitrate(&self) -> Bitrate {
+        match self.bitrate_kbps {
+            96 => Bitrate::Bitrate96,
+            160 => Bitrate::Bitrate160,
+            _ => Bitrate::Bitrate320,
+        }
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Playback {
+    #[default]
+    Stopped,
+    Loading,
+    Playing,
+    Paused,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    Context,
+    Track,
+}
+
+impl RepeatMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Context,
+            Self::Context => Self::Track,
+            Self::Track => Self::Off,
+        }
+    }
+
+    pub fn api_name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Context => "context",
+            Self::Track => "track",
+        }
+    }
+
+    pub fn from_api(name: &str) -> Self {
+        match name {
+            "context" => Self::Context,
+            "track" => Self::Track,
+            _ => Self::Off,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalTrack {
+    pub uri: String,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: String,
+    pub art_url: Option<String>,
+    pub art_small_url: Option<String>,
+    pub duration_ms: u32,
+    pub is_episode: bool,
+}
+
+impl LocalTrack {
+    pub fn artist_names(&self) -> String {
+        self.artists.join(", ")
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalState {
+    pub playback: Playback,
+    pub track: Option<LocalTrack>,
+    pub position_ms: u32,
+    pub position_at: Option<Instant>,
+    pub volume: u16,
+    pub shuffle: bool,
+    pub repeat: RepeatMode,
+    pub connected: bool,
+    pub username: String,
+    pub active_client: String,
+    pub error: Option<String>,
+    pub seek_sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Interrupted {
+    pub uri: String,
+    pub position_ms: u32,
+    pub playing: bool,
+}
+
+impl LocalState {
+    pub fn interrupted(&self) -> Option<Interrupted> {
+        let track = self.track.as_ref()?;
+        if self.playback == Playback::Stopped {
+            return None;
+        }
+        Some(Interrupted {
+            uri: track.uri.clone(),
+            position_ms: self.position_now(),
+            playing: matches!(self.playback, Playback::Playing | Playback::Loading),
+        })
+    }
+
+    pub fn position_now(&self) -> u32 {
+        match (self.playback, self.position_at) {
+            (Playback::Playing, Some(at)) => {
+                let elapsed = at.elapsed().as_millis() as u32;
+                let limit = self
+                    .track
+                    .as_ref()
+                    .map_or(u32::MAX, |track| track.duration_ms.max(self.position_ms));
+                self.position_ms.saturating_add(elapsed).min(limit)
+            }
+            _ => self.position_ms,
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.track.is_some() && self.playback != Playback::Stopped
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LoadSpec {
+    pub context_uri: Option<String>,
+    pub uris: Vec<String>,
+    pub offset_uri: Option<String>,
+    pub offset_index: Option<u32>,
+    pub position_ms: u32,
+    pub play: bool,
+    pub shuffle: Option<bool>,
+    pub autoplay: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlayerCommand {
+    Toggle,
+    Play,
+    Pause,
+    Next,
+    Previous,
+    AddToQueue(String),
+    Seek(u32),
+    Volume(u16),
+    Shuffle(bool),
+    Repeat(RepeatMode),
+    Load(LoadSpec),
+    Activate,
+}
+
+#[allow(clippy::large_enum_variant)]
+pub enum EngineEvent {
+    State(LocalState),
+    SessionEnded,
+}
+
+pub type Notify = Arc<dyn Fn(EngineEvent) + Send + Sync>;
+
+pub struct Engine {
+    player: Arc<Player>,
+    spirc: Arc<Spirc>,
+    mixer: Arc<dyn Mixer>,
+    device_id: String,
+    state: Arc<Mutex<LocalState>>,
+    interrupted: Arc<Mutex<Option<Interrupted>>>,
+    shutting_down: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Engine {
+    pub async fn connect(
+        config: &EngineConfig,
+        credentials: Credentials,
+        cache: Cache,
+        notify: Notify,
+    ) -> Result<Self> {
+        let device_id = config.device_id();
+        let session_config = SessionConfig {
+            device_id: device_id.clone(),
+            autoplay: Some(config.autoplay),
+            ..SessionConfig::default()
+        };
+        let player_config = PlayerConfig {
+            bitrate: config.bitrate(),
+            gapless: config.gapless,
+            normalisation: config.normalisation,
+            normalisation_type: NormalisationType::Auto,
+            position_update_interval: Some(Duration::from_secs(1)),
+            ..PlayerConfig::default()
+        };
+
+        let mixer_builder =
+            mixer::find(Some("softvol")).ok_or_else(|| anyhow!("soft volume mixer missing"))?;
+        let mixer = mixer_builder(MixerConfig {
+            volume_ctrl: VolumeCtrl::Cubic(VolumeCtrl::DEFAULT_DB_RANGE),
+            ..MixerConfig::default()
+        })
+        .context("unable to create the mixer")?;
+
+        let state = Arc::new(Mutex::new(LocalState {
+            volume: config.initial_volume,
+            ..LocalState::default()
+        }));
+        let session = Session::new(session_config, Some(cache));
+        let (sink_builder, volume) = sink_builder(config, &mixer);
+        let player = Player::new(player_config, session.clone(), volume, sink_builder);
+        let events = player.get_player_event_channel();
+        tokio::spawn(run_events(events, Arc::clone(&state), Arc::clone(&notify)));
+
+        let connect_config = ConnectConfig {
+            name: config.device_name.clone(),
+            device_type: DeviceType::Computer,
+            initial_volume: config.initial_volume,
+            disable_volume: false,
+            volume_steps: 64,
+            ..ConnectConfig::default()
+        };
+        let (spirc, spirc_task) = Spirc::new(
+            connect_config,
+            session.clone(),
+            credentials,
+            Arc::clone(&player),
+            Arc::clone(&mixer),
+        )
+        .await
+        .context("unable to connect to Spotify")?;
+
+        {
+            let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
+            current.connected = true;
+            current.username = session.username();
+            notify(EngineEvent::State(current.clone()));
+        }
+
+        let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let interrupted: Arc<Mutex<Option<Interrupted>>> = Arc::default();
+        let ended_flag = Arc::clone(&shutting_down);
+        let ended_notify = Arc::clone(&notify);
+        let ended_state = Arc::clone(&state);
+        let ended_interrupted = Arc::clone(&interrupted);
+        tokio::spawn(async move {
+            spirc_task.await;
+            {
+                let mut current = ended_state.lock().unwrap_or_else(|p| p.into_inner());
+                *ended_interrupted.lock().unwrap_or_else(|p| p.into_inner()) =
+                    current.interrupted();
+                current.connected = false;
+                current.playback = Playback::Stopped;
+                current.position_at = None;
+                ended_notify(EngineEvent::State(current.clone()));
+            }
+            if !ended_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                ended_notify(EngineEvent::SessionEnded);
+            }
+        });
+
+        Ok(Self {
+            player,
+            spirc: Arc::new(spirc),
+            mixer,
+            device_id,
+            state,
+            interrupted,
+            shutting_down,
+        })
+    }
+
+    pub fn interrupted(&self) -> Option<Interrupted> {
+        let ended = self
+            .interrupted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        ended.or_else(|| {
+            self.state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .interrupted()
+        })
+    }
+
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    pub fn shutdown(&self) {
+        self.shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.spirc.shutdown();
+        self.player.stop();
+    }
+
+    pub fn command(&self, command: PlayerCommand) -> Result<()> {
+        let spirc = &self.spirc;
+        match command {
+            PlayerCommand::Toggle => spirc.play_pause()?,
+            PlayerCommand::Play => spirc.play()?,
+            PlayerCommand::Pause => spirc.pause()?,
+            PlayerCommand::Next => spirc.next()?,
+            PlayerCommand::Previous => spirc.prev()?,
+            PlayerCommand::AddToQueue(uri) => spirc.add_to_queue(uri)?,
+            PlayerCommand::Seek(position_ms) => spirc.set_position_ms(position_ms)?,
+            PlayerCommand::Volume(volume) => {
+                self.mixer.set_volume(volume);
+                spirc.set_volume(volume)?;
+            }
+            PlayerCommand::Shuffle(enabled) => spirc.shuffle(enabled)?,
+            PlayerCommand::Repeat(mode) => match mode {
+                RepeatMode::Off => {
+                    spirc.repeat_track(false)?;
+                    spirc.repeat(false)?;
+                }
+                RepeatMode::Context => {
+                    spirc.repeat_track(false)?;
+                    spirc.repeat(true)?;
+                }
+                RepeatMode::Track => {
+                    spirc.repeat(false)?;
+                    spirc.repeat_track(true)?;
+                }
+            },
+            PlayerCommand::Activate => spirc.activate()?,
+            PlayerCommand::Load(spec) => {
+                let playing_track = spec
+                    .offset_uri
+                    .clone()
+                    .map(PlayingTrack::Uri)
+                    .or_else(|| spec.offset_index.map(PlayingTrack::Index));
+                let context_options = if spec.autoplay {
+                    Some(LoadContextOptions::Autoplay)
+                } else {
+                    Some(LoadContextOptions::Options(Options {
+                        shuffle: spec.shuffle.unwrap_or(false),
+                        ..Options::default()
+                    }))
+                };
+                let options = LoadRequestOptions {
+                    start_playing: spec.play,
+                    seek_to: spec.position_ms,
+                    playing_track,
+                    context_options,
+                };
+                // Prefer a Spotify context URI so clicking another row in the
+                // same playlist does not rebuild the queue (that gap is the
+                // audible jerk). A bare track list is only for Home/Search.
+                let request = if let Some(context) = spec.context_uri.as_ref().filter(|uri| {
+                    !uri.is_empty() && !uri.contains(":track:")
+                }) {
+                    LoadRequest::from_context_uri(context.clone(), options)
+                } else if spec.uris.len() >= 2 {
+                    LoadRequest::from_tracks(spec.uris, options)
+                } else if spec.uris.len() == 1 {
+                    LoadRequest::from_context_uri(spec.uris[0].clone(), options)
+                } else if let Some(context) = spec.context_uri.filter(|uri| !uri.is_empty()) {
+                    LoadRequest::from_context_uri(context, options)
+                } else {
+                    anyhow::bail!("nothing to play");
+                };
+                // Spirc::load activates if needed; a second activate hitch
+                // on every row click is the other half of the audio jerk.
+                spirc.load(request)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+type SinkAndVolume = (
+    Box<dyn FnOnce() -> Box<dyn librespot_playback::audio_backend::Sink> + Send>,
+    Box<dyn librespot_playback::mixer::VolumeGetter + Send>,
+);
+
+fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> SinkAndVolume {
+    let device = config.audio_device.clone();
+    let preferred = config
+        .backend
+        .clone()
+        .unwrap_or_else(|| "pulseaudio".to_string());
+    let names = [preferred.as_str(), "pulseaudio", "rodio", "alsa"];
+    for name in names {
+        if let Some(builder) = audio_backend::find(Some(name.to_string())) {
+            tracing::info!(backend = name, "audio backend");
+            let volume = mixer.get_soft_volume();
+            let device = device.clone();
+            return (
+                Box::new(move || builder(device, AudioFormat::S16)),
+                volume,
+            );
+        }
+    }
+    panic!("no librespot audio backend available (tried pulseaudio, rodio, alsa)");
+}
+
+async fn run_events(
+    mut events: tokio::sync::mpsc::UnboundedReceiver<PlayerEvent>,
+    state: Arc<Mutex<LocalState>>,
+    notify: Notify,
+) {
+    let mut play_request_id = None;
+    while let Some(event) = events.recv().await {
+        if let PlayerEvent::PlayRequestIdChanged {
+            play_request_id: next,
+        } = &event
+        {
+            play_request_id = Some(*next);
+            continue;
+        }
+        if let Some(incoming) = event.get_play_request_id() {
+            match play_request_id {
+                Some(current) if incoming < current => continue,
+                Some(current) if incoming == current => {}
+                _ => play_request_id = Some(incoming),
+            }
+        }
+        let snapshot = {
+            let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
+            if apply_event(&mut current, event) {
+                Some(current.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(snapshot) = snapshot {
+            notify(EngineEvent::State(snapshot));
+        }
+    }
+}
+
+fn set<T: PartialEq>(target: &mut T, value: T) -> bool {
+    if *target == value {
+        false
+    } else {
+        *target = value;
+        true
+    }
+}
+
+fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
+    match event {
+        PlayerEvent::Stopped { .. } => {
+            let mut changed = set(&mut state.playback, Playback::Stopped);
+            changed |= set(&mut state.position_ms, 0);
+            changed |= set(&mut state.position_at, None);
+            changed
+        }
+        PlayerEvent::Loading { position_ms, .. } => {
+            let mut changed = if state.playback == Playback::Stopped {
+                set(&mut state.playback, Playback::Loading)
+            } else {
+                false
+            };
+            changed |= set(&mut state.position_ms, position_ms);
+            changed |= set(&mut state.position_at, None);
+            changed |= set(&mut state.error, None);
+            changed
+        }
+        PlayerEvent::Playing { position_ms, .. } => {
+            let mut changed = set(&mut state.playback, Playback::Playing);
+            changed |= set(&mut state.position_ms, position_ms);
+            state.position_at = Some(Instant::now());
+            changed || true
+        }
+        PlayerEvent::Paused { position_ms, .. } => {
+            let mut changed = set(&mut state.playback, Playback::Paused);
+            changed |= set(&mut state.position_ms, position_ms);
+            changed |= set(&mut state.position_at, None);
+            changed
+        }
+        PlayerEvent::PositionCorrection { position_ms, .. }
+        | PlayerEvent::PositionChanged { position_ms, .. } => {
+            state.position_ms = position_ms;
+            if state.playback == Playback::Playing {
+                state.position_at = Some(Instant::now());
+            }
+            true
+        }
+        PlayerEvent::Seeked { position_ms, .. } => {
+            state.position_ms = position_ms;
+            if state.playback == Playback::Playing {
+                state.position_at = Some(Instant::now());
+            }
+            state.seek_sequence = state.seek_sequence.wrapping_add(1);
+            true
+        }
+        PlayerEvent::TrackChanged { audio_item } => {
+            let mut changed = set(&mut state.track, Some(local_track(&audio_item)));
+            changed |= set(&mut state.error, None);
+            changed
+        }
+        PlayerEvent::Unavailable { track_id, .. } => set(
+            &mut state.error,
+            Some(format!(
+                "This item isn't available: {}",
+                track_id.to_uri().unwrap_or_default()
+            )),
+        ),
+        PlayerEvent::VolumeChanged { volume } => set(&mut state.volume, volume),
+        PlayerEvent::SessionConnected { user_name, .. } => {
+            let mut changed = set(&mut state.connected, true);
+            changed |= set(&mut state.username, user_name);
+            changed
+        }
+        PlayerEvent::SessionDisconnected { .. } => {
+            let mut changed = set(&mut state.connected, false);
+            changed |= set(&mut state.active_client, String::new());
+            changed
+        }
+        PlayerEvent::SessionClientChanged { client_name, .. } => {
+            set(&mut state.active_client, client_name)
+        }
+        PlayerEvent::ShuffleChanged { shuffle } => set(&mut state.shuffle, shuffle),
+        PlayerEvent::RepeatChanged { context, track } => {
+            let mode = if track {
+                RepeatMode::Track
+            } else if context {
+                RepeatMode::Context
+            } else {
+                RepeatMode::Off
+            };
+            set(&mut state.repeat, mode)
+        }
+        PlayerEvent::Preloading { .. }
+        | PlayerEvent::TimeToPreloadNextTrack { .. }
+        | PlayerEvent::EndOfTrack { .. }
+        | PlayerEvent::PlayRequestIdChanged { .. }
+        | PlayerEvent::AutoPlayChanged { .. }
+        | PlayerEvent::FilterExplicitContentChanged { .. } => false,
+    }
+}
+
+fn local_track(item: &AudioItem) -> LocalTrack {
+    let (artists, album, is_episode) = match &item.unique_fields {
+        UniqueFields::Track { artists, album, .. } => (
+            artists.iter().map(|artist| artist.name.clone()).collect(),
+            album.clone(),
+            false,
+        ),
+        UniqueFields::Episode { show_name, .. } => {
+            (vec![show_name.clone()], show_name.clone(), true)
+        }
+        UniqueFields::Local { artists, album, .. } => (
+            artists.iter().cloned().collect(),
+            album.clone().unwrap_or_default(),
+            false,
+        ),
+    };
+    let mut covers: Vec<_> = item.covers.iter().collect();
+    covers.sort_by_key(|cover| std::cmp::Reverse(cover.width));
+    let art_url = covers.first().map(|cover| cover.url.clone());
+    let art_small_url = covers
+        .iter()
+        .rev()
+        .find(|cover| cover.width >= 64)
+        .or(covers.last())
+        .map(|cover| cover.url.clone());
+    LocalTrack {
+        uri: item.uri.clone(),
+        title: item.name.clone(),
+        artists,
+        album,
+        art_url,
+        art_small_url,
+        duration_ms: item.duration_ms,
+        is_episode,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_interpolates_only_while_playing() {
+        let mut state = LocalState {
+            playback: Playback::Paused,
+            position_ms: 5_000,
+            position_at: Some(Instant::now() - Duration::from_secs(2)),
+            ..LocalState::default()
+        };
+        assert_eq!(state.position_now(), 5_000);
+        state.playback = Playback::Playing;
+        assert!(state.position_now() >= 7_000);
+    }
+
+    #[test]
+    fn repeat_cycles_and_maps() {
+        assert_eq!(RepeatMode::Off.next(), RepeatMode::Context);
+        assert_eq!(RepeatMode::Track.next(), RepeatMode::Off);
+        assert_eq!(RepeatMode::from_api("track"), RepeatMode::Track);
+        assert_eq!(RepeatMode::Context.api_name(), "context");
+    }
+
+    #[test]
+    fn device_id_is_stable_hex() {
+        let config = EngineConfig {
+            device_name: "Sola".into(),
+            bitrate_kbps: 320,
+            normalisation: false,
+            autoplay: true,
+            gapless: true,
+            backend: None,
+            audio_device: None,
+            initial_volume: 1,
+            credentials_dir: PathBuf::new(),
+            volume_dir: PathBuf::new(),
+            audio_cache_dir: None,
+            audio_cache_limit: None,
+        };
+        let id = config.device_id();
+        assert_eq!(id.len(), 40);
+        assert_eq!(id, config.device_id());
+    }
+}

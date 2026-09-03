@@ -53,7 +53,11 @@ impl ActiveProfile {
 /// Does **not** read or write `profiles.json` / [`browser_data_root`].
 /// After this, [`list`] returns only `id`, and engine sockets live under
 /// `data_dir` so Slack and the product browser cannot share a CEF lock.
-pub fn bind_external(id: &str, data_dir: PathBuf, cache_dir: PathBuf) -> Result<ActiveProfile, String> {
+pub fn bind_external(
+    id: &str,
+    data_dir: PathBuf,
+    cache_dir: PathBuf,
+) -> Result<ActiveProfile, String> {
     if id.is_empty() {
         return Err("empty profile id".into());
     }
@@ -517,7 +521,7 @@ pub fn browser_data_root() -> PathBuf {
     xdg_data_home().join("sola/browser")
 }
 
-/// Browser-wide durable data (downloads index, later history).
+/// Browser-wide durable data (downloads index, visit history).
 pub fn shared_dir() -> PathBuf {
     let dir = browser_data_root().join("shared");
     let _ = std::fs::create_dir_all(&dir);
@@ -541,7 +545,9 @@ pub fn session_path_for(id: &str) -> PathBuf {
     profile_data_dir(id).join("session.json")
 }
 
-fn data_dir_for(id: &str) -> PathBuf {
+/// Durable data dir for `id`. After [`bind_external`], the bound wrapper
+/// directory — not `browser_data_root()/profiles/<id>`.
+pub fn data_dir_for(id: &str) -> PathBuf {
     if let Some(p) = active_if_bound() {
         if p.id == id {
             return p.data_dir;

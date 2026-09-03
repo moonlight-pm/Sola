@@ -441,11 +441,20 @@ pub fn ensure_server_running() {
     // command via the user's login shell — which can't find `sleep` in
     // an empty PATH. Without this, the pane exits 127 immediately, tmux
     // sees an empty session, and (with default `exit-empty=on`) the
-    // server self-terminates within milliseconds of starting.
+    // server self-terminates within milliseconds of starting. Direct
+    // spawn (no user systemd) uses the same path so the keepalive
+    // pane does not depend on `$PATH`.
     let sleep_path = sola_core::applications::resolve_in_path("sleep")
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "sleep".to_string());
 
+    if sola_core::env::user_systemd_available() && start_server_via_systemd(&sleep_path) {
+        return;
+    }
+    start_server_direct(&sleep_path);
+}
+
+fn start_server_via_systemd(sleep_path: &str) -> bool {
     let status = std::process::Command::new("systemd-run")
         .args([
             "--user",
@@ -464,7 +473,7 @@ pub fn ensure_server_running() {
             "-d",
             "-s",
             "_keepalive",
-            &sleep_path,
+            sleep_path,
             "infinity",
         ])
         .status();
@@ -472,6 +481,7 @@ pub fn ensure_server_running() {
     match status {
         Ok(s) if s.success() => {
             tracing::info!(unit = identity().unit, "started tmux systemd unit");
+            true
         }
         Ok(s) => {
             tracing::warn!(
@@ -479,9 +489,37 @@ pub fn ensure_server_running() {
                 "systemd-run exited with {:?}",
                 s.code()
             );
+            false
         }
         Err(e) => {
             tracing::warn!(unit = identity().unit, "failed to start tmux unit: {e}");
+            false
+        }
+    }
+}
+
+/// Keepalive session argv (`tmux new-session -d -s _keepalive <sleep> infinity`).
+fn keepalive_args(sleep_path: &str) -> [&str; 6] {
+    [
+        "new-session",
+        "-d",
+        "-s",
+        "_keepalive",
+        sleep_path,
+        "infinity",
+    ]
+}
+
+fn start_server_direct(sleep_path: &str) {
+    match tmux_cmd().args(keepalive_args(sleep_path)).status() {
+        Ok(s) if s.success() => {
+            tracing::info!("started tmux server (direct)");
+        }
+        Ok(s) => {
+            tracing::warn!(code = ?s.code(), "tmux new-session -d failed");
+        }
+        Err(e) => {
+            tracing::warn!("failed to spawn tmux: {e}");
         }
     }
 }
@@ -628,5 +666,21 @@ mod tests {
         assert!(TMUX_CONF.contains("extended-keys always"));
         assert!(TMUX_CONF.contains("extended-keys-format csi-u"));
         assert!(TMUX_CONF.contains("xterm*:extkeys"));
+    }
+
+    #[test]
+    fn keepalive_session_is_detached_sleep_infinity() {
+        let args = keepalive_args("/bin/sleep");
+        assert_eq!(
+            args,
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "_keepalive",
+                "/bin/sleep",
+                "infinity",
+            ]
+        );
     }
 }

@@ -90,6 +90,7 @@ pub fn terminal_menu(tabs: &[TabView]) -> AppMenuPayload {
                     },
                 ],
             },
+            sola_kit::window_menu(),
             MenuDefinition {
                 label: "Tabs".into(),
                 items: tabs
@@ -224,6 +225,19 @@ mod tests {
                 assert!(sc.meta && sc.shift, "pane shortcuts are meta+shift");
             }
         }
+    }
+
+    #[test]
+    fn includes_kit_window_menu() {
+        let menu = terminal_menu(&tabs(0));
+        let window = menu
+            .menus
+            .iter()
+            .find(|m| m.label == sola_kit::WINDOW_MENU_LABEL)
+            .expect("Window menu");
+        assert!(window.items.iter().any(
+            |i| matches!(i, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_FLOAT)
+        ));
     }
 
     #[test]

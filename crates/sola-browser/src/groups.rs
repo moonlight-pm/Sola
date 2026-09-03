@@ -14,6 +14,8 @@ pub struct TabGroup {
     pub id: String,
     pub name: String,
     pub collapsed: bool,
+    /// Pocket fill as `#rrggbb` / `#rrggbbaa`. `None` = kit default well.
+    pub color: Option<String>,
 }
 
 /// Groups in strip order + per-tab membership.
@@ -44,6 +46,10 @@ impl Groups {
                 id: m.id.clone(),
                 name: m.name.clone(),
                 collapsed: m.collapsed,
+                color: m
+                    .color
+                    .clone()
+                    .filter(|c| sola_kit::theme::try_parse(c).is_some()),
             });
         }
         bump_id_counter(&g.groups);
@@ -66,6 +72,7 @@ impl Groups {
                 id: g.id.clone(),
                 name: g.name.clone(),
                 collapsed: g.collapsed,
+                color: g.color.clone(),
             })
             .collect()
     }
@@ -227,17 +234,22 @@ impl Groups {
         }
     }
 
-    /// New group at the end of the groups region. Tab leaves any old group.
-    pub fn new_group(&mut self, tab: TabId) {
+    /// Wrap `tab` in a new expanded group (default name `Group`, then
+    /// `Group 2`, …). Membership is in place; [`Self::normalize`] clusters
+    /// the header with its member. Tab leaves any old group first.
+    /// Returns the new group id.
+    pub fn new_group(&mut self, tab: TabId) -> String {
         self.leave(tab);
         let id = new_group_id(&self.groups);
         self.groups.push(TabGroup {
             id: id.clone(),
             name: self.next_name(),
             collapsed: false,
+            color: None,
         });
-        self.member.insert(tab, id);
+        self.member.insert(tab, id.clone());
         self.dissolve_empty();
+        id
     }
 
     pub fn add_to(&mut self, tab: TabId, group_id: &str) {
@@ -272,17 +284,6 @@ impl Groups {
         }
     }
 
-    pub fn ungroup_tab(&mut self, tab: TabId) {
-        self.leave(tab);
-        self.dissolve_empty();
-    }
-
-    /// Dissolve the group; members become loose (order kept by normalize).
-    pub fn ungroup_all(&mut self, group_id: &str) {
-        self.member.retain(|_, gid| gid != group_id);
-        self.groups.retain(|g| g.id != group_id);
-    }
-
     pub fn toggle(&mut self, group_id: &str) {
         if let Some(g) = self.group_mut(group_id) {
             g.collapsed = !g.collapsed;
@@ -296,6 +297,13 @@ impl Groups {
         }
         if let Some(g) = self.group_mut(group_id) {
             g.name = name;
+        }
+    }
+
+    /// Pocket fill. `None` restores the kit default well.
+    pub fn set_color(&mut self, group_id: &str, color: Option<String>) {
+        if let Some(g) = self.group_mut(group_id) {
+            g.color = color;
         }
     }
 
@@ -490,11 +498,13 @@ mod tests {
             id: "work".into(),
             name: "Work".into(),
             collapsed: false,
+            color: None,
         });
         g.groups.push(TabGroup {
             id: "research".into(),
             name: "Research".into(),
             collapsed: false,
+            color: None,
         });
         g.member.insert(TabId(1), "work".into());
         g.member.insert(TabId(2), "work".into());
@@ -551,14 +561,12 @@ mod tests {
     #[test]
     fn new_group_lifts_tab() {
         let (mut g, mut tabs) = setup();
-        g.new_group(TabId(5));
+        let id = g.new_group(TabId(5));
         g.normalize(&mut tabs);
         assert_eq!(g.groups.len(), 3);
         assert_eq!(g.groups[2].name, "Group");
-        assert_eq!(
-            g.of_tab(TabId(5)).map(str::to_string),
-            Some(g.groups[2].id.clone())
-        );
+        assert_eq!(g.groups[2].id, id);
+        assert_eq!(g.of_tab(TabId(5)), Some(id.as_str()));
         assert_eq!(tabs.last().map(|t| t.id.0), Some(5));
     }
 
@@ -603,6 +611,7 @@ mod tests {
                 id: "g1".into(),
                 name: "Research".into(),
                 collapsed: false,
+                color: None,
             }],
         );
         let mut g = g;
@@ -663,6 +672,7 @@ mod tests {
             id: "work".into(),
             name: "Work".into(),
             collapsed: true,
+            color: None,
         }];
         let g = Groups::restore(&session_tabs, &ids, &meta);
         assert_eq!(g.groups.len(), 1);
@@ -775,5 +785,54 @@ mod tests {
         g.insert_beside(&mut tabs, TabId(2), tab(9, "new"));
         assert!(!g.group("work").unwrap().collapsed);
         assert_eq!(g.of_tab(TabId(9)), Some("work"));
+    }
+
+    #[test]
+    fn restore_keeps_valid_color_drops_junk() {
+        let session_tabs = vec![SessionTab {
+            url: "https://a/".into(),
+            title: "a".into(),
+            group_id: Some("work".into()),
+            ..SessionTab::default()
+        }];
+        let g = Groups::restore(
+            &session_tabs,
+            &[TabId(1)],
+            &[SessionGroup {
+                id: "work".into(),
+                name: "Work".into(),
+                collapsed: false,
+                color: Some("#3dd6f5".into()),
+            }],
+        );
+        assert_eq!(g.groups[0].color.as_deref(), Some("#3dd6f5"));
+
+        let junk = Groups::restore(
+            &session_tabs,
+            &[TabId(1)],
+            &[SessionGroup {
+                id: "work".into(),
+                name: "Work".into(),
+                collapsed: false,
+                color: Some("not-a-color".into()),
+            }],
+        );
+        assert_eq!(junk.groups[0].color, None);
+    }
+
+    #[test]
+    fn new_group_starts_with_default_color() {
+        let (mut g, _) = setup();
+        let id = g.new_group(TabId(5));
+        assert_eq!(g.group(&id).unwrap().color, None);
+    }
+
+    #[test]
+    fn set_color_roundtrips_to_session() {
+        let (mut g, _) = setup();
+        g.set_color("work", Some("#224466".into()));
+        let session = g.to_session();
+        let work = session.iter().find(|s| s.id == "work").unwrap();
+        assert_eq!(work.color.as_deref(), Some("#224466"));
     }
 }

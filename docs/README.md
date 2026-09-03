@@ -43,7 +43,7 @@ ask the human.
 | [`specs/`](specs/) | Target freezes (dated) | **Target** |
 | [`plans/`](plans/) | Implementation checklists (active + historical) | Build |
 | [`ideas/`](ideas/) | Parked thoughts | Idea |
-| [`manual/`](manual/) | Operator truth (fonts, kvm, **arcade**, **browser**, **paint**, **monitor**, **wrapper**, **scope**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
+| [`manual/`](manual/) | Operator truth (fonts, kvm, **shell**, **arcade**, **browser**, **paint**, **preview**, **monitor**, **wrapper**, **scope**, **spotify**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
 | [`specs/2026-08-05-distribution-image-design.md`](specs/2026-08-05-distribution-image-design.md) | Dist installer freeze | **Target** |
 | [`vault/`](vault/) | Early Obsidian notes — reference only | History |
 | [`notes/`](notes/) | One-off investigations — not living handoff | History |
@@ -57,6 +57,7 @@ ask the human.
 | `CURRENT.md` | Only living session handoff |
 | `PERFORMANCE.md` | GPU / idle program log (not a second CURRENT) |
 | `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
+| `CONTRIBUTING.md` | From-source NixOS setup (`services.sola.installRelease = false`) |
 | `nix/` | NixOS module + `nix/image/` ISO/qcow sources |
 | `crates/sola-install` | Installer wizard binary |
 | `var/images/` | Local ISO/qcow products (gitignored) |

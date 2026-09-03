@@ -6,7 +6,7 @@ the **bus** only for `emit`.
 ## Call plane (needs `sola-call` + the owner process)
 
 ```text
-solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE]
+solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
 solactl compositor sample [--size N]
 solactl compositor windows
 solactl compositor input click|move|scroll|key …
@@ -16,6 +16,12 @@ solactl session close  <app_id>
 
 If `sola-call` or the owner is down, the command fails. It does **not**
 launch a window.
+
+`compositor screenshot --app` copies that window’s own buffer
+(`ext-image-copy-capture`). The window does not need to be on top and
+is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
+shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
+copy to the clipboard instead of writing this file.
 
 `workspaces` is a first-class subcommand (`solactl` / `solactl --help`).
 Other running apps that have advertised methods: `solactl <app-id>` lists
@@ -83,9 +89,16 @@ add / wait use a longer call deadline than the default 8s.
 ```text
 solactl emit <Topic> '<json>'   # bus poke
 solactl logs [app] [-f]         # /opt/sola/log
-solactl open <url|path>         # sola-browser (http/https) or sola-paint (image path)
+solactl open <url|path>         # sola-browser (URL / HTML) or sola-paint (image path)
 solactl media <action>          # MPRIS / wpctl (shell key handler)
 ```
+
+`solactl open` calls `sola_core::open_url` (or `open_image` for a raster
+path). It does not go through MIME. In a Sola terminal, `open` is an alias
+for `xdg-open`; that path uses `sola-browser.desktop` (http(s), HTML,
+XHTML, `about:`, unknown schemes). Both land in sola-browser. A local HTML
+path is resolved to an absolute `file://` URL before handoff. There is no
+Helium fallback.
 
 `eval` is gone (WebView stack retired). Screenshot and synthetic input
 are calls, not bus topics.

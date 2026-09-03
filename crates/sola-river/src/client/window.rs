@@ -144,42 +144,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::Closed => {
                 info!(window_id, "window closed");
-                // River asserts in Window.destroy() that no seat is still
-                // focused on the window. The closed event is followed by a
-                // manage_start, so queue clear_focus now and it'll be sent
-                // before river internally tears the Window down.
-                if state.focused_window == Some(window_id) {
-                    state.pending.set_focus(crate::pending::FocusAction::None);
-                    state.focused_window = None;
-                }
-                state.registry.remove(window_id);
-                state.windows_by_object.retain(|_, v| *v != window_id);
-                state.windows_by_id.remove(&window_id);
-                state.nodes_by_window.remove(&window_id);
-                state.placed.remove(&window_id);
-                state.currently_fullscreen.remove(&window_id);
-                state.first_dimensions.remove(&window_id);
-                state.deferred_size.remove(&window_id);
-                state.last_proposed.remove(&window_id);
-                state.gamescope_first_dim_at.remove(&window_id);
-                state.gamescope_last_size_at.remove(&window_id);
-                state.last_position.remove(&window_id);
-                state.floating.remove(&window_id);
-                crate::client::shadow::destroy_for(state, window_id);
-                if state.pointer_window == Some(window_id) {
-                    state.pointer_window = None;
-                }
-                // Drop the window's sticky geometry so a late subscriber can't
-                // resurrect a closed window's rectangle. Retract keys on
-                // window_id; the other fields are ignored.
-                let _ = state.bus.retract(Topic::WindowGeometry(WindowGeometry {
-                    window_id,
-                    x: 0,
-                    y: 0,
-                    width: 0,
-                    height: 0,
-                }));
-                window.destroy();
+                drop_window(state, window_id);
                 apps_dirty = true;
             }
             Event::DimensionsHint {
@@ -277,4 +242,66 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             crate::translator::emit_windows(state);
         }
     }
+}
+
+/// Tear down a window the same way `closed` does. Used for the protocol
+/// event and for pid-gone pruning after a hard client kill (no `closed`).
+pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
+    // River asserts in Window.destroy() that no seat is still focused
+    // on the window. Queue clear_focus so the next manage_start sends
+    // it before we destroy the proxy.
+    if state.focused_window == Some(window_id) {
+        state.pending.set_focus(crate::pending::FocusAction::None);
+        state.focused_window = None;
+    }
+    state.registry.remove(window_id);
+    state.windows_by_object.retain(|_, v| *v != window_id);
+    let proxy = state.windows_by_id.remove(&window_id);
+    state.nodes_by_window.remove(&window_id);
+    state.placed.remove(&window_id);
+    state.currently_fullscreen.remove(&window_id);
+    state.first_dimensions.remove(&window_id);
+    state.deferred_size.remove(&window_id);
+    state.last_proposed.remove(&window_id);
+    state.gamescope_first_dim_at.remove(&window_id);
+    state.gamescope_last_size_at.remove(&window_id);
+    state.last_position.remove(&window_id);
+    state.floating.remove(&window_id);
+    state.last_composition.retain(|&id| id != window_id);
+    state.pending.manage.remove(&window_id);
+    state.pending.render_positions.remove(&window_id);
+    state.pending.close_windows.retain(|&id| id != window_id);
+    if let Some(order) = state.pending.composition.as_mut() {
+        order.retain(|&id| id != window_id);
+    }
+    crate::client::shadow::destroy_for(state, window_id);
+    if state.pointer_window == Some(window_id) {
+        state.pointer_window = None;
+    }
+    let _ = state.bus.retract(Topic::WindowGeometry(WindowGeometry {
+        window_id,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+    }));
+    if let Some(window) = proxy {
+        window.destroy();
+    }
+}
+
+/// Drop compositor entries whose process is gone. A SIGKILL'd sola-shell
+/// can leave six parked surfaces in the registry (no `closed`); the
+/// replacement process then never maps and the menubar stays invisible.
+pub(crate) fn prune_dead_pid_windows(state: &mut AppData) -> usize {
+    let dead = state.registry.dead_pid_ids();
+    for window_id in &dead {
+        warn!(
+            window_id,
+            pid = state.registry.pid_for(*window_id),
+            "pruning window whose process is gone"
+        );
+        drop_window(state, *window_id);
+    }
+    dead.len()
 }

@@ -24,12 +24,13 @@ use iced::advanced::{Clipboard, Shell, Widget, mouse, renderer};
 use iced::gradient::Linear;
 use iced::{Background, Border, Color, Element, Event, Length, Radians, Rectangle, Size};
 
-/// Side of the saturation/value field, logical px.
-const SQUARE_W: f32 = 224.0;
-const SQUARE_H: f32 = 168.0;
-/// Long edge / thickness of the 1D strips.
-const STRIP_LEN: f32 = 224.0;
-const STRIP_THICK: f32 = 16.0;
+/// Side of the saturation/value field, logical px. Sized to a compact
+/// popover, not a storybook stage.
+const SQUARE_W: f32 = 196.0;
+const SQUARE_H: f32 = 140.0;
+/// Long edge / thickness of the 1D strips (match the square width).
+const STRIP_LEN: f32 = 196.0;
+const STRIP_THICK: f32 = 12.0;
 /// Thumb radius on the SV field.
 const THUMB_R: f32 = 7.0;
 

@@ -16,7 +16,7 @@ open **Preview**, not Paint.
 
 Left tabs are open images. Hover a tab for ×. Tabs (file paths) come back after quit; missing files are dropped. Unsaved edits are not saved across restart.
 
-Toolbar: Open, Crop, rotate, flip, Undo, Save. Hover an icon for the name and shortcut. **Crop** — drag on the picture, **Apply crop** or Enter; Esc cancels.
+Toolbar: Open, Crop, rotate, flip, Undo, Save. Hover an icon for the name and shortcut. **Crop** (⌘⇧K) — drag on the picture, **Apply crop** or Enter; Esc cancels. (⌘K is the shell shortcuts overlay.)
 
 Scroll to zoom toward the pointer; drag to pan when zoomed in. ⌘+ / ⌘− / ⌘0
 (fit). Header shows the zoom next to the pixel size.
@@ -27,4 +27,4 @@ Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
 ## Not in this pass
 
-Clipboard image, color adjust, filters, layers.
+Clipboard image (Preview **Copy** is the screenshot path), color adjust, filters, layers.

@@ -7,7 +7,7 @@
 
 | | |
 |--|--|
-| **Implementation** | Kit `SidebarDensity` + etch list chrome; **kit-owned gesture** (`sidebar::State` + `Event`); browser/terminal/agent/workspaces on `SidebarPanel`; `vertical_tabs*` deleted |
+| **Implementation** | Kit `SidebarDensity` + etch list chrome; **kit-owned gesture** (`sidebar::State` + `Event`); browser/terminal/agent/workspaces on `SidebarPanel`; `SidebarItem::leading` 16px slot (browser favicons); `vertical_tabs*` deleted |
 | **Dogfood** | Gesture rewrite on `browser-polish` (2026-08-21) — **not installed**. Overflow chips require `section_scroll` + a measured viewport |
 | **Gaps** | Monitor sticky list still custom; etch tokens not on the bus |
 
@@ -34,7 +34,7 @@ Three parallel looks, two public APIs, one module:
 
 | Surface | API | Selection material | Used by |
 |---------|-----|--------------------|---------|
-| **Etched tabs** | `vertical_tabs` / `vertical_tabs_sized` + `TabDescriptor` + `TabSize` | Idle: transparent + muted type; active: lip + inset well on `CHROME_SURFACE`; hover `×` floats | **sola-browser** |
+| **Etched tabs** | `vertical_tabs` / `vertical_tabs_sized` + `TabDescriptor` + `TabSize` | Idle: transparent + muted type; active: 1px lip + hue-preserving lift of `CHROME_SURFACE` (same recipe as group pockets); hover `×` floats | **sola-browser** |
 | **Row** | `SidebarItem` default / `sidebar()` / `SidebarPanel` | Quiet `theme::selection()` wash, packed pad, optional always-on close sibling | **terminal**, **settings**, **mail**, **preview**, storybook nav |
 | **Card** | `SidebarItem::card()` + custom `content` on `SidebarPanel` | OD graphite raised cards, surface-only select | **sola-agent** sessions |
 

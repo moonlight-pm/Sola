@@ -29,6 +29,7 @@ pub struct WorkspaceSnapshot {
     pub sidebar_w: f32,
     pub last_used: Instant,
     pub groups: crate::groups::Groups,
+    pub recently_closed: Vec<crate::session::ClosedTab>,
 }
 
 impl WorkspaceSnapshot {
@@ -101,6 +102,7 @@ mod tests {
             sidebar_w: 200.0,
             last_used,
             groups: crate::groups::Groups::default(),
+            recently_closed: Vec::new(),
         }
     }
 

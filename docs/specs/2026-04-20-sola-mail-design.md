@@ -400,8 +400,8 @@ Cogsworth had test coverage in `config.rs`; port those tests unchanged.
 
 ## Build / deploy
 
-- `cargo make build mail` and `cargo make deploy mail --canto` (short-name
-  convention per global memory).
+- `cargo make build mail` and `cargo make install mail` (short-name
+  convention).
 - Register the new app in `sola-make` if the crate requires explicit listing.
   Confirm during step 1 of the plan by reading `crates/sola-make/src`.
 
@@ -414,7 +414,7 @@ Unit tests:
   `from` / `subject`).
 - IMAP client and IDLE have no unit coverage in Cogsworth; skip.
 
-Manual smoke test on canto (required before claiming done):
+Manual smoke test on a TTY (required before claiming done):
 
 1. Launch sola-mail with valid `mail.toml`.
 2. Verify: startup spinner → folder list + INBOX messages.
@@ -439,7 +439,7 @@ The implementation plan will expand on this; these are the milestones.
    event bridge. `cargo check` passes.
 5. Menu (`Quit Mail` only); `on_menu_action`.
 6. Frontend skeleton: `index.html`, `main.ts`, `app.ts` with state + connect
-   flow + loading/error UI. Smoke test on canto: connects, shows folder list.
+   flow + loading/error UI. Smoke test on a TTY: connects, shows folder list.
 7. `folder-list.ts` component. Verify folder selection.
 8. `message-list.ts` component (search, infinite scroll, bulk actions).
 9. `message-view.ts` component (body render, reply / delete / compose buttons,
@@ -448,7 +448,7 @@ The implementation plan will expand on this; these are the milestones.
     send).
 11. `toast.ts` component; keyboard shortcuts; IDLE `mail:new` handler.
 12. Styling pass. Feature-complete smoke test (section above).
-13. Deploy to canto.
+13. Install locally.
 
 ## File-by-file Cogsworth → Sola map
 

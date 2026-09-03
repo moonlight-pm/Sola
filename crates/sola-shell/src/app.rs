@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sola_bus::topics::{
-    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload, MenuItem,
-    RegisteredChord, Topic, Window,
+    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
+    MenuActionPayload, MenuItem, RegisteredChord, Topic, Window, Zone,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -18,10 +18,22 @@ use crate::menu::state::MenuCache;
 use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
 use crate::selection::state::SelectionState;
+use crate::shortcuts::state::ShortcutsState;
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
 pub mod bus;
+
+/// Emit/retract on the kit bus if it is installed. No-op in unit tests.
+fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
+    let Some(slot) = sola_kit::app::try_bus() else {
+        return;
+    };
+    match slot.lock() {
+        Ok(mut bus) => f(&mut bus),
+        Err(poisoned) => f(&mut poisoned.into_inner()),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
@@ -31,7 +43,11 @@ pub enum WindowKind {
     Switcher,
     Selection,
     Notify,
+    Shortcuts,
 }
+
+/// Live-swapchain slots: menu, launcher, switcher, selection, notify, shortcuts.
+const OVERLAY_LIVE_SLOTS: usize = 6;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -103,8 +119,16 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
-    /// Menubar chip: unhide a composition-hidden app (AppHidden retract) and raise it.
-    UnhideApp(String),
+    /// Super+K / flower menu: show the keyboard-shortcuts overlay.
+    OpenShortcuts,
+    /// Dismiss the shortcuts overlay and restore prior focus.
+    CloseShortcuts,
+    /// Filter text in the shortcuts overlay.
+    ShortcutsQuery(String),
+    /// Activate the selected shortcuts row (Enter).
+    ShortcutsActivate,
+    /// Activate a visible shortcuts row by filtered index (click).
+    ShortcutsPick(usize),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
     /// Expire a live notification banner (`NotifyState` generation).
@@ -115,10 +139,24 @@ pub enum Msg {
     NotifyActivate(String),
     /// × without raising.
     NotifyDismiss(String),
+    /// Expand / collapse a pile group.
+    NotifyToggleGroup(String),
+    /// Dismiss every missed item for an app (group ×). Live cards stay.
+    NotifyDismissApp(String),
     /// Open / close the missed-pile panel.
     ToggleNotifyPile,
-    /// Empty the missed pile.
-    NotifyClearPile,
+    /// Open / close the volume popover.
+    ToggleAudio,
+    /// Snapshot from the PipeWire worker.
+    Audio(crate::audio::Event),
+    /// Volume / mute / default-device controls.
+    AudioUi(crate::audio::UiMsg),
+    /// Open / close the Bluetooth popover.
+    ToggleBluetooth,
+    /// Snapshot / agent events from the BlueZ worker.
+    Bluetooth(crate::bluetooth::Event),
+    /// Panel controls (power, add, pair, disconnect, agent reply).
+    BluetoothUi(crate::bluetooth::UiMsg),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
@@ -140,8 +178,16 @@ pub enum Msg {
     },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
-    /// Super+Shift+4: open the selection marquee overlay.
+    /// Super+Shift+4: freeze the output, then open the selection marquee.
     OpenSelection,
+    /// RGBA freeze for Super+Shift+4 finished (call plane). Overlay opens
+    /// only after this so menus/selections stay in the still.
+    SelectionFreeze {
+        generation: u64,
+        result: Result<FreezeImage, String>,
+    },
+    /// Freeze texture is on the GPU; overlay may join composition.
+    SelectionTextureReady,
     /// Escape / cancel selection without capturing.
     CloseSelection,
     /// Pointer down on the selection overlay (compositor-space coords).
@@ -160,8 +206,26 @@ pub enum Msg {
         y: f32,
     },
     /// `compositor.screenshot` finished (call plane, not the bus).
-    ScreenshotDone(Result<std::path::PathBuf, String>),
+    ScreenshotDone(Result<(), String>),
     Noop,
+}
+
+/// Frozen full-output RGBA for the selection overlay. Handle clone is cheap
+/// (refcount); Debug omits the pixel buffer.
+#[derive(Clone)]
+pub struct FreezeImage {
+    pub handle: iced::widget::image::Handle,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl std::fmt::Debug for FreezeImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreezeImage")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish()
+    }
 }
 
 /// Which non-menu panel the Menu window is hosting.
@@ -170,6 +234,8 @@ pub enum Panel {
     Calendar,
     Stat(crate::stats::Metric),
     NotifyPile,
+    Bluetooth,
+    Audio,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -207,6 +273,7 @@ pub struct Shell {
     pub switcher_window_id: Option<iced::window::Id>,
     pub selection_window_id: Option<iced::window::Id>,
     pub notify_window_id: Option<iced::window::Id>,
+    pub shortcuts_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -241,8 +308,8 @@ pub struct Shell {
     pub applications: ApplicationsConfig,
 
     /// Apps omitted from composition (River `hide`). Keyed lowercased for
-    /// case-insensitive match; value is the original app_id for menubar labels
-    /// and AppHidden retract. Filled from sticky `Topic::AppHidden`.
+    /// case-insensitive match; value is the original app_id for AppHidden
+    /// retract. Filled from sticky `Topic::AppHidden`.
     pub hidden_apps: HashMap<String, String>,
 
     // Menu cache (built up from Topic::SetAppMenu replays)
@@ -268,14 +335,15 @@ pub struct Shell {
     pub calendar_month: chrono::NaiveDate,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
+    pub shortcuts: ShortcutsState,
     pub selection: SelectionState,
     pub notify: crate::notify::NotifyState,
-    /// When true, the next `Msg::ScreenshotDone` Ok should open/raise
-    /// sola-preview. Set only by shell hotkey / selection paths.
-    pub open_preview_on_next: bool,
+    /// Menubar Bluetooth chip + popover (in-process BlueZ).
+    pub bluetooth: crate::bluetooth::Ui,
+    /// Menubar volume chip + popover (PipeWire / wpctl).
+    pub audio: crate::audio::Ui,
     /// Window that should keep keyboard after a shell-initiated capture
-    /// finishes (preview is raised without stealing focus). Set when a
-    /// Super+Shift+3/4/5 capture starts; applied after open/raise preview.
+    /// finishes. Set when a Super+Shift+3/4/5 capture starts.
     pub screenshot_return_focus: Option<u32>,
     /// When `Some(app_id)`, the next `on_windows` "new app mapped" focus
     /// steal for that app is skipped (screenshot cold-launch of preview
@@ -301,9 +369,9 @@ pub struct Shell {
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
     /// Iced-reported live swapchain for menu / launcher / switcher /
-    /// selection / notify. Composition waits on this so River does not
-    /// show a stretched 2×2.
-    overlay_iced_live: [bool; 5],
+    /// selection / notify / shortcuts. Composition waits on this so River
+    /// does not show a stretched 2×2.
+    overlay_iced_live: [bool; OVERLAY_LIVE_SLOTS],
 }
 
 impl Shell {
@@ -345,6 +413,7 @@ impl Shell {
             switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
+            shortcuts_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -369,9 +438,11 @@ impl Shell {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
-            open_preview_on_next: false,
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -384,7 +455,7 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 5],
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
         (state, task)
@@ -397,6 +468,16 @@ impl Shell {
     /// Look up a window_id by (app_id, title). sola-river includes shell surfaces
     /// in Topic::Windows with the title set by the iced `title()` callback.
     pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
+        if app_id == Self::APP_ID {
+            let me = std::process::id();
+            if let Some(w) = self
+                .known_windows
+                .iter()
+                .find(|w| w.app_id == app_id && w.title == title && w.pid == Some(me))
+            {
+                return Some(w.window_id);
+            }
+        }
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
@@ -407,41 +488,215 @@ impl Shell {
         self.hidden_apps.contains_key(&app_id.to_ascii_lowercase())
     }
 
-    /// Menubar labels for hidden apps (original app_id casing), sorted.
-    pub fn hidden_app_labels(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.hidden_apps.values().cloned().collect();
-        v.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
-        v
+    /// Retract sticky AppHidden without raising. Used when the app's last
+    /// surface is gone so a later map of the same app_id is not stuck hidden.
+    pub fn retract_app_hidden(&mut self, app_id: &str) {
+        let key = app_id.to_ascii_lowercase();
+        let Some(original) = self.hidden_apps.remove(&key) else {
+            return;
+        };
+        with_bus(|bus| {
+            let _ = bus.retract(Topic::AppHidden(sola_bus::topics::AppHidden {
+                app_id: original,
+            }));
+        });
     }
 
-    /// Retract AppHidden, optionally focus a live window of that app, recompose.
+    /// Retract AppHidden and raise a live window of that app (composition +
+    /// seat). No-op raise when no surface exists; the sticky is still cleared.
     pub fn unhide_app(&mut self, app_id: &str) {
         let key = app_id.to_ascii_lowercase();
         let original = self
             .hidden_apps
             .remove(&key)
             .unwrap_or_else(|| app_id.to_string());
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.retract(Topic::AppHidden(sola_bus::topics::AppHidden {
                 app_id: original.clone(),
             }));
-        }
-        // Raise / focus if a surface exists.
-        if let Some(wid) = self.mru_window_by_app.get(&original).copied().or_else(|| {
-            self.known_windows
-                .iter()
-                .find(|w| w.app_id.eq_ignore_ascii_case(&original))
-                .map(|w| w.window_id)
-        }) {
-            self.mru_apps
-                .retain(|id| !id.eq_ignore_ascii_case(&original));
-            self.mru_apps.insert(0, original.clone());
-            self.mru_window_by_app.insert(original.clone(), wid);
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        });
+        let raise_id = self
+            .known_windows
+            .iter()
+            .find(|w| w.app_id.eq_ignore_ascii_case(&original))
+            .map(|w| w.app_id.clone())
+            .unwrap_or(original);
+        self.raise_app(&raise_id);
+    }
+
+    /// Focused app menus plus a Window menu if the app did not publish one.
+    pub fn effective_app_menu(&self, app_id: &str) -> AppMenuPayload {
+        let label = self
+            .applications
+            .get_for_window(app_id)
+            .map(|a| a.label.clone())
+            .unwrap_or_else(|| app_id.to_string());
+        crate::menu::state::effective_app_menu(&self.menus, app_id, &label)
+    }
+
+    /// Snap the focused window to `zone` (numpad, Window menu, Super+K).
+    pub fn snap_focused_zone(&mut self, zone: Zone) -> iced::Task<Msg> {
+        let Some(frame) = self.zoning.apply_zone(zone, self.focused_window_id) else {
+            return iced::Task::none();
+        };
+        let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
+            (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
+                self.zoning.float_geometry.get(&app_id).cloned()
+            }
+            _ => None,
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Frame(frame));
+            if let Some(zones) = self.zoning.take_zones_update() {
+                let _ = bus.emit(Topic::Zones(zones));
+            }
+            if let Some(fg) = float_fg {
+                let _ = bus.emit(Topic::FloatGeometry(fg));
             }
         }
+        self.sync_window_floating();
+        iced::Task::none()
+    }
+
+    fn handle_window_action(&mut self, action: sola_kit::WindowAction) -> iced::Task<Msg> {
+        match action {
+            sola_kit::WindowAction::Hide => {
+                self.hide_focused_app();
+                iced::Task::none()
+            }
+            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
+        }
+    }
+
+    fn activate_selected_shortcut(&mut self) -> iced::Task<Msg> {
+        use crate::shortcuts::state::ShortcutAction;
+        let Some(row) = self.shortcuts.selected_row().cloned() else {
+            return iced::Task::none();
+        };
+        self.shortcuts.active = false;
         self.emit_composition();
+        self.emit_registered_chords();
+        match row.action {
+            ShortcutAction::OpenShortcuts => iced::Task::none(),
+            ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
+            ShortcutAction::OpenSwitcher => {
+                if let Some(id) = self.focused_app_id.clone() {
+                    self.ack_notify_badge(&id);
+                }
+                crate::switcher::state::rebuild_apps(
+                    &mut self.switcher,
+                    &self.mru_apps.clone(),
+                    &self.known_windows.clone(),
+                );
+                self.switcher.active = true;
+                self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+                self.emit_registered_chords();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            ShortcutAction::Hide => {
+                self.hide_focused_app();
+                iced::Task::none()
+            }
+            ShortcutAction::CloseApp => {
+                if let Some(ref focused) = self.focused_app_id.clone() {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::CloseApp(focused.clone()));
+                    }
+                }
+                iced::Task::none()
+            }
+            ShortcutAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            ShortcutAction::ScreenshotFull => {
+                self.arm_screenshot_handoff();
+                crate::screenshot::full()
+            }
+            ShortcutAction::ScreenshotRegion => iced::Task::done(Msg::OpenSelection),
+            ShortcutAction::ScreenshotWindow => {
+                let Some(app_id) = self.focused_app_id.clone() else {
+                    self.menubar
+                        .push_toast("Screenshot failed: no focused window");
+                    let toast_gen = self.menubar.toast_generation;
+                    return iced::Task::perform(
+                        tokio::time::sleep(Duration::from_secs(5)),
+                        move |_| Msg::ToastExpire(toast_gen),
+                    );
+                };
+                let title = self.focused_window_id.and_then(|wid| {
+                    self.known_windows
+                        .iter()
+                        .find(|w| w.window_id == wid)
+                        .map(|w| w.title.clone())
+                });
+                self.arm_screenshot_handoff();
+                crate::screenshot::window(app_id, title)
+            }
+            ShortcutAction::Zone(zone) => self.snap_focused_zone(zone),
+            ShortcutAction::Menu { app_id, action_id } => {
+                iced::Task::done(Msg::MenuAction { app_id, action_id })
+            }
+        }
+    }
+
+    /// Super+H: omit the focused app from composition (River `hide`).
+    /// Focuses the next visible MRU app. Does not hide the shell.
+    pub fn hide_focused_app(&mut self) {
+        let Some(app_id) = self.focused_app_id.clone() else {
+            return;
+        };
+        if app_id == Self::APP_ID || self.is_app_hidden(&app_id) {
+            return;
+        }
+        tracing::info!(app_id = %app_id, "Super+H — hide focused app");
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        self.hidden_apps
+            .insert(app_id.to_ascii_lowercase(), app_id.clone());
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::AppHidden(sola_bus::topics::AppHidden {
+                app_id: app_id.clone(),
+            }));
+        });
+        if self.pointer_window_id.is_some_and(|wid| {
+            self.known_windows
+                .iter()
+                .any(|w| w.window_id == wid && w.app_id.eq_ignore_ascii_case(&app_id))
+        }) {
+            self.pointer_window_id = None;
+        }
+        let next = self
+            .mru_apps
+            .iter()
+            .find(|id| id.as_str() != Self::APP_ID && !self.is_app_hidden(id))
+            .cloned();
+        if let Some(next) = next {
+            self.raise_app(&next);
+        } else {
+            self.focused_app_id = None;
+            self.focused_window_id = None;
+            self.emit_registered_chords();
+            self.emit_composition();
+        }
+    }
+
+    /// Catalog / window app_id of a composition-hidden mapped app matching
+    /// `catalog_id`, if any. Launcher uses this to unhide instead of spawn.
+    pub fn mapped_hidden_app_id(&self, catalog_id: &str) -> Option<String> {
+        if self.is_app_hidden(catalog_id) {
+            return Some(
+                self.hidden_apps
+                    .get(&catalog_id.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| catalog_id.to_string()),
+            );
+        }
+        self.known_windows.iter().find_map(|w| {
+            if self.matches_pending_app(&w.app_id, catalog_id) && self.is_app_hidden(&w.app_id) {
+                Some(w.app_id.clone())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn mail_is_mapped(&self) -> bool {
@@ -454,6 +709,20 @@ impl Shell {
     pub fn mail_unread_badge(&self) -> Option<u32> {
         let n = self.inbox_unread.filter(|n| *n > 0)?;
         if self.mail_is_mapped() { Some(n) } else { None }
+    }
+
+    /// Super+Tab numeral: Mail uses inbox unread; everyone else unseen
+    /// live + pile. Visiting the app or opening the pile marks items seen.
+    pub fn switcher_badge(&self, app_id: &str) -> Option<u32> {
+        if app_id.eq_ignore_ascii_case("sola-mail") {
+            return self.mail_unread_badge();
+        }
+        let n = self.notify.attention_count(app_id);
+        (n > 0).then_some(n)
+    }
+
+    fn ack_notify_badge(&mut self, app_id: &str) {
+        self.notify.ack_app(app_id);
     }
 
     /// Raise sola-mail (unhide first if it is composition-hidden).
@@ -482,9 +751,8 @@ impl Shell {
                 },
             ));
         }
-        if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
-            self.menu_open = false;
-            self.open_panel = None;
+        if self.open_panel == Some(Panel::NotifyPile) {
+            let _ = self.dismiss_open_menu();
         }
         self.emit_overlay_frames();
         self.emit_composition();
@@ -492,6 +760,9 @@ impl Shell {
     }
 
     fn notify_followup(&mut self, now: std::time::Instant) -> iced::Task<Msg> {
+        if self.open_panel == Some(Panel::NotifyPile) {
+            self.notify.acknowledge();
+        }
         self.emit_overlay_frames();
         self.emit_composition();
         if self.notify.needs_tick(now) {
@@ -501,57 +772,124 @@ impl Shell {
         }
     }
 
-    fn push_notification(
-        &mut self,
-        n: sola_bus::topics::AppNotification,
-    ) -> iced::Task<Msg> {
+    fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
+        let app_id = n.app_id.clone();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
+        if self
+            .focused_app_id
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(&app_id))
+        {
+            self.ack_notify_badge(&app_id);
+        }
         let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
             Msg::NotifyExpire(generation)
         });
         iced::Task::batch([expire, self.notify_followup(now)])
     }
 
-    /// Dismiss transient shell overlays so a capture doesn't leave the
-    /// switcher/launcher/selection holding the scene (and keyboard routing).
-    pub fn dismiss_transient_overlays(&mut self) {
-        let mut changed = false;
+    /// Close the menubar dropdown / chip panel. Chip highlight is
+    /// `menu_open && open_panel`, so skipping `set_open_panel` leaves the
+    /// volume (and other) chips filled after a chord or focus change.
+    pub(crate) fn dismiss_open_menu(&mut self) -> bool {
+        if !self.menu_open && self.open_panel.is_none() && self.current_open_index.is_none() {
+            return false;
+        }
+        self.menu_open = false;
+        self.current_open_index = None;
+        self.current_open_is_system = false;
+        self.set_open_panel(None);
+        true
+    }
+
+    /// Dismiss launcher / switcher / shortcuts / menubar panels.
+    /// Does not touch the selection overlay (Super+Shift+4 freeze).
+    pub(crate) fn dismiss_chrome_overlays(&mut self) -> bool {
+        let mut changed = self.dismiss_open_menu();
         if self.launcher.active {
             self.launcher.active = false;
+            changed = true;
+        }
+        if self.shortcuts.active {
+            self.shortcuts.active = false;
             changed = true;
         }
         if self.switcher.active {
             self.switcher.active = false;
             changed = true;
         }
-        if self.menu_open {
-            self.menu_open = false;
-            self.open_panel = None;
-            self.current_open_index = None;
-            changed = true;
-        }
-        if self.selection.active {
+        changed
+    }
+
+    /// Dismiss transient shell overlays so a capture doesn't leave the
+    /// switcher/launcher/selection holding the scene (and keyboard routing).
+    pub fn dismiss_transient_overlays(&mut self) {
+        let mut changed = self.dismiss_chrome_overlays();
+        if self.selection.active || self.selection.pending {
             let _ = self.selection.cancel();
             changed = true;
         }
         if changed {
+            self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
         }
     }
 
-    /// Mark the next Screenshot result as shell-initiated (preview handoff)
-    /// and remember which app window should keep the keyboard afterward.
+    /// Remember which app window should keep the keyboard after capture.
+    /// Does **not** dismiss menus — the compositor copies the live scene,
+    /// including an open notifications panel.
     pub fn arm_screenshot_handoff(&mut self) {
-        self.dismiss_transient_overlays();
-        self.open_preview_on_next = true;
         // Prefer the app that currently has keyboard focus; never the shell.
         self.screenshot_return_focus = self.focused_window_id.filter(|wid| {
             self.known_windows
                 .iter()
                 .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
         });
+    }
+
+    fn on_selection_freeze(
+        &mut self,
+        generation: u64,
+        result: Result<FreezeImage, String>,
+    ) -> iced::Task<Msg> {
+        if generation != self.selection.freeze_generation || !self.selection.pending {
+            return iced::Task::none();
+        }
+        match result {
+            Err(e) => {
+                let prior = self.selection.cancel();
+                self.emit_registered_chords();
+                let keep = prior.or(self.screenshot_return_focus.take());
+                self.restore_app_focus(keep);
+                tracing::warn!(%e, "selection freeze failed");
+                self.menubar.push_toast(format!("Screenshot failed: {e}"));
+                let toast_gen = self.menubar.toast_generation;
+                iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                    Msg::ToastExpire(toast_gen)
+                })
+            }
+            Ok(img) => {
+                // Keep live chrome composed until the freeze texture is on
+                // the GPU (SelectionTextureReady). Dismissing here would
+                // drop the notifications panel from the desk before the
+                // still can replace it.
+                if !self.selection.apply_freeze(generation, img.handle) {
+                    return iced::Task::none();
+                }
+                tracing::info!(
+                    width = img.width,
+                    height = img.height,
+                    "selection freeze ready"
+                );
+                // Frame the overlay to the output while still hidden. It
+                // joins composition on SelectionTextureReady (after GPU
+                // upload) so the first visible frame is the still.
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+        }
     }
 
     /// Put keyboard focus on `window_id` if it is still a live non-shell
@@ -579,9 +917,11 @@ impl Shell {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
         if let Some(w) = self.known_windows.iter().find(|w| w.window_id == window_id) {
+            let app_id = w.app_id.clone();
             self.focused_window_id = Some(window_id);
-            self.focused_app_id = Some(w.app_id.clone());
-            self.mru_window_by_app.insert(w.app_id.clone(), window_id);
+            self.focused_app_id = Some(app_id.clone());
+            self.mru_window_by_app.insert(app_id.clone(), window_id);
+            self.ack_notify_badge(&app_id);
         }
     }
 
@@ -610,9 +950,17 @@ impl Shell {
     }
 
     /// Emit LaunchApp for `app_id`, show opening toast, close launcher.
+    /// A composition-hidden running app is unhidden and raised instead of
+    /// spawned again.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
+            if let Some(hidden) = self.mapped_hidden_app_id(id) {
+                self.launcher.active = false;
+                self.unhide_app(&hidden);
+                self.emit_registered_chords();
+                return iced::Task::none();
+            }
             if let Some(app) = self.applications.get(id) {
                 let command = app.command.clone();
                 let label = app.label.clone();
@@ -783,7 +1131,15 @@ impl Shell {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
-        if self.overlay_should_compose("selection", self.selection.active) {
+        if self.overlay_should_compose("shortcuts", self.shortcuts.active) {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "shortcuts") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
+        if self.overlay_should_compose(
+            "selection",
+            self.selection.active && self.selection.presentable,
+        ) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
                 entries.push(CompositionEntry { window_id: wid });
             }
@@ -815,16 +1171,16 @@ impl Shell {
             return;
         }
         self.last_composition = order;
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.emit(Topic::Composition(entries));
-        }
+        });
     }
 
     /// Which top-level menu of `app_id` contains `action_id`, as a position
     /// in its menu list (0 = the app-name slot shown as the title). `None`
     /// if the app has no cached menu or the action isn't found.
     fn menu_index_for_action(&self, app_id: &str, action_id: &str) -> Option<usize> {
-        let payload = self.menus.get_menu(app_id)?;
+        let payload = self.effective_app_menu(app_id);
         payload.menus.iter().position(|menu| {
             menu.items
                 .iter()
@@ -887,7 +1243,13 @@ impl Shell {
         // While any overlay is active, grab Escape so the user can dismiss it
         // regardless of which surface owns input focus. Deregistered as soon as
         // the overlay closes so terminal apps keep their Escape.
-        if self.launcher.active || self.switcher.active || self.menu_open || self.selection.active {
+        if self.launcher.active
+            || self.shortcuts.active
+            || self.switcher.active
+            || self.menu_open
+            || self.selection.active
+            || self.selection.pending
+        {
             chords.push(RegisteredChord {
                 keysym: keys::KEYSYM_ESCAPE,
                 modifiers: 0,
@@ -907,7 +1269,7 @@ impl Shell {
 
     /// Emit Topic::RegisteredChords based on current overlay state and focused app.
     ///
-    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
+    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+H, Meta+Grave,
     /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
     /// always registered so ChordReleased fires for switcher confirm. Escape
     /// registered only while an overlay is active. Meta+Left/Right registered
@@ -928,9 +1290,9 @@ impl Shell {
             switcher = self.switcher.active,
             "emitting RegisteredChords"
         );
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        with_bus(|bus| {
             let _ = bus.emit(Topic::RegisteredChords(chords));
-        }
+        });
     }
 
     /// Build the list of chords the shell wants River to grab.
@@ -960,7 +1322,9 @@ impl Shell {
         bindings.push(KeyCode::TAB.meta()); // Meta+Tab → switcher
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
+        bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
+        bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
@@ -982,8 +1346,10 @@ impl Shell {
     /// Emit Topic::Frame for mapped shell windows and zoned app windows.
     ///
     /// Overlays stay mapped: live size while visible, 2×2 while dismissed
-    /// (see [`crate::zoning::overlay_frame`]). Lookup misses until River
-    /// publishes the surface — a later `Windows` / `WindowOpened` fills in.
+    /// (menu/shortcuts/notify are card-sized; launcher/switcher/selection
+    /// still use [`crate::zoning::overlay_frame`]). Lookup misses until
+    /// River publishes the surface — a later `Windows` / `WindowOpened`
+    /// fills in.
     pub fn emit_all_frames(&self) {
         let mut frames: Vec<FrameUpdate> = Vec::new();
 
@@ -1014,9 +1380,28 @@ impl Shell {
 
     fn collect_overlay_frames(&self, frames: &mut Vec<FrameUpdate>) {
         let output = self.zoning.output_size;
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+            if let Some(f) = crate::zoning::menu_overlay_frame(
+                wid,
+                self.menu_open,
+                output,
+                self.menu_overlay_spec(),
+            ) {
+                frames.push(f);
+            }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "shortcuts") {
+            if let Some(f) = crate::zoning::card_overlay_frame(
+                wid,
+                self.shortcuts.active,
+                output,
+                self.shortcuts_overlay_spec(),
+            ) {
+                frames.push(f);
+            }
+        }
         for (title, visible, cover_menubar) in [
             ("launcher", self.launcher.active, false),
-            ("menu", self.menu_open, false),
             ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
         ] {
@@ -1056,6 +1441,7 @@ impl Shell {
             WindowKind::Switcher => Some(2),
             WindowKind::Selection => Some(3),
             WindowKind::Notify => Some(4),
+            WindowKind::Shortcuts => Some(5),
             WindowKind::Menubar => None,
         }
     }
@@ -1067,6 +1453,7 @@ impl Shell {
             WindowKind::Switcher,
             WindowKind::Selection,
             WindowKind::Notify,
+            WindowKind::Shortcuts,
         ]
         .into_iter()
         .find(|&kind| self.overlay_id(kind) == Some(id))
@@ -1079,6 +1466,7 @@ impl Shell {
             "switcher" => 2,
             "selection" => 3,
             "notify" => 4,
+            "shortcuts" => 5,
             _ => return false,
         };
         self.overlay_iced_live[idx]
@@ -1098,11 +1486,21 @@ impl Shell {
     }
 
     fn commit_overlay_show(&mut self) {
+        // Super+Shift+4: drop live chrome in the same Composition as the
+        // freeze overlay joining, so an open notifications panel is in the
+        // still and never parks as a 2×2 flash on the desk.
+        if self.selection.active && self.selection.presentable {
+            let _ = self.dismiss_chrome_overlays();
+        }
         self.emit_composition();
         for (title, want) in [
             ("launcher", self.launcher.active),
             ("switcher", self.switcher.active),
-            ("selection", self.selection.active),
+            (
+                "selection",
+                self.selection.active && self.selection.presentable,
+            ),
+            ("shortcuts", self.shortcuts.active),
         ] {
             if !self.overlay_should_compose(title, want) {
                 continue;
@@ -1152,6 +1550,9 @@ impl Shell {
         if Some(window) == self.notify_window_id {
             return "notify".to_string();
         }
+        if Some(window) == self.shortcuts_window_id {
+            return "shortcuts".to_string();
+        }
         Self::APP_ID.to_string()
     }
 
@@ -1169,6 +1570,17 @@ impl Shell {
         theme::overlay(&self.theme)
     }
 
+    /// Laid-out left edge of a menubar title, if measured.
+    fn menu_anchor(positions: &[f32], index: usize, is_system: bool) -> Option<f32> {
+        if is_system {
+            return Some(0.0);
+        }
+        positions
+            .get(index)
+            .copied()
+            .filter(|x| x.is_finite() && *x > 0.0)
+    }
+
     /// Estimate the left-edge X of the menubar element identified by
     /// `(index, is_system)`.
     ///
@@ -1183,9 +1595,10 @@ impl Shell {
     /// - `index=0`         → SYSTEM_BTN_W (left edge of app title)
     /// - `index=n` (n≥1)   → after app title and labels [1..n]
     pub fn estimate_label_x(&self, index: usize, is_system: bool) -> f32 {
-        const CHAR_WIDTH: f32 = 7.5;
-        const PAD_H: f32 = 16.0; // 2×8px horizontal padding
-        const SYSTEM_BTN_W: f32 = 34.0;
+        const CHAR_WIDTH: f32 = 6.5;
+        const PAD_H: f32 = crate::menubar::MENU_PAD_H * 2.0;
+        const SYSTEM_BTN_W: f32 =
+            crate::menubar::ICON_SIZE as f32 + crate::menubar::MENU_PAD_H * 2.0;
 
         if is_system {
             return 0.0;
@@ -1206,11 +1619,16 @@ impl Shell {
         let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
 
         let app_id = self.focused_app_id.as_deref().unwrap_or("");
-        let payload = self.menus.get_menu(app_id);
+        let owned = if app_id.is_empty() {
+            None
+        } else {
+            Some(self.effective_app_menu(app_id))
+        };
 
         let mut x = SYSTEM_BTN_W + title_w;
         for i in 1..index {
-            let label_len = payload
+            let label_len = owned
+                .as_ref()
                 .and_then(|p| p.menus.get(i))
                 .map(|m| m.label.len())
                 .unwrap_or(6); // fallback 6 chars
@@ -1228,28 +1646,26 @@ impl Shell {
     pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
         use crate::stats::Metric;
 
-        // Indicator button widths (content + ITEM_PAD [2,9] = 18px).
-        // Keep roughly in sync with STAT_VALUE_W / RATE_VALUE_W / CLUSTER_SPACING
-        // in menubar/view.rs (chrome type, not mono).
-        const STAT_W: f32 = 80.0; // CPU/GPU/MEM: label + 36px fixed value + pad
-        const RATE_W: f32 = 115.0; // TX/RX: label + 78px fixed rate + pad
-        const CLOCK_W: f32 = 166.0; // clock: "%H:%M %a %Y-%m-%d" + pad
-        const GAP: f32 = 4.0; // cluster spacing (menubar CLUSTER_SPACING)
+        // Keep in sync with menubar cluster phrases (pad lives inside chip_w).
+        const CLOCK_W: f32 = 166.0; // "%H:%M %a %Y-%m-%d" + MENU_PAD_H
+        let stat_w = crate::menubar::percent_chip_w();
+        let rate_w = crate::menubar::rate_chip_w();
+        let phrase = crate::menubar::PHRASE_GAP;
 
         let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
         let has_gpu = self.stats.gpu.is_some();
 
         // Cluster right edge sits at the screen edge; subtract leftward.
-        // Order L→R: … MEM · RX · TX · clock
+        // Phrases L→R: extras · percents · rates · clock
         let clock_left = output_w - CLOCK_W;
-        let tx_left = clock_left - GAP - RATE_W;
-        let rx_left = tx_left - GAP - RATE_W;
-        let mem_left = rx_left - GAP - STAT_W;
+        let tx_left = clock_left - phrase - rate_w;
+        let rx_left = tx_left - rate_w;
+        let mem_left = rx_left - phrase - stat_w;
         let (gpu_left, cpu_left) = if has_gpu {
-            let g = mem_left - GAP - STAT_W;
-            (g, g - GAP - STAT_W)
+            let g = mem_left - stat_w;
+            (g, g - stat_w)
         } else {
-            (mem_left, mem_left - GAP - STAT_W)
+            (mem_left, mem_left - stat_w)
         };
 
         match metric {
@@ -1258,6 +1674,121 @@ impl Shell {
             Metric::Mem => mem_left,
             Metric::Rx => rx_left,
             Metric::Tx => tx_left,
+        }
+    }
+
+    /// Left edge of the Bluetooth chip (left of the spectrum when that
+    /// chip is shown, otherwise immediately left of CPU). Spectrum is its
+    /// own phrase, so a PHRASE_GAP sits between Bluetooth and the bars.
+    pub fn estimate_bluetooth_x(&self) -> f32 {
+        let chip = crate::menubar::extra_chip_w();
+        if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
+            self.estimate_audio_x() - crate::menubar::PHRASE_GAP - chip
+        } else {
+            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
+        }
+    }
+
+    /// Card-sized live frame for Super+K (not the full usable area).
+    fn shortcuts_overlay_spec(&self) -> crate::zoning::CardOverlaySpec {
+        let (ow, oh) = self.zoning.output_size.unwrap_or((0, 0));
+        crate::zoning::centered_card_spec(
+            ow,
+            oh,
+            crate::shortcuts::view::CARD_WIDTH.round() as i32,
+            crate::shortcuts::view::CARD_HEIGHT.round() as i32,
+        )
+    }
+
+    /// Card-sized live frame for the menu overlay (not the full output).
+    fn menu_overlay_spec(&self) -> crate::zoning::MenuOverlaySpec {
+        const GUTTER: f32 = 8.0;
+        let ow = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
+        let clamp_x = |x: f32, w: f32| x.min((ow - w - GUTTER).max(0.0)).max(0.0);
+        let (x, width, height) = match self.open_panel {
+            Some(Panel::Calendar) => {
+                let w = crate::calendar::CARD_WIDTH;
+                (clamp_x(ow - w - GUTTER, w), w, crate::calendar::CARD_HEIGHT)
+            }
+            Some(Panel::Stat(m)) => {
+                let w = crate::stats::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_stat_x(m), w),
+                    w,
+                    crate::stats::view::CARD_HEIGHT,
+                )
+            }
+            Some(Panel::NotifyPile) => {
+                let w = crate::notify::view::PILE_WIDTH;
+                let usable = self
+                    .output_size
+                    .map(|(_, h)| {
+                        (h - crate::zoning::MENUBAR_HEIGHT - crate::zoning::MENU_SHADOW_PAD) as f32
+                    })
+                    .unwrap_or(720.0);
+                let height = self.notify.overlay_height(usable);
+                (clamp_x(ow - w - GUTTER, w), w, height)
+            }
+            Some(Panel::Bluetooth) => {
+                let w = crate::bluetooth::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_bluetooth_x(), w),
+                    w,
+                    crate::bluetooth::view::CARD_HEIGHT,
+                )
+            }
+            Some(Panel::Audio) => {
+                let w = crate::audio::view::CARD_WIDTH;
+                (
+                    clamp_x(self.estimate_audio_x(), w),
+                    w,
+                    crate::audio::view::CARD_HEIGHT,
+                )
+            }
+            None => {
+                let w = crate::menu::view::MENU_WIDTH;
+                (
+                    clamp_x(self.menu_anchor_x, w),
+                    w,
+                    crate::menu::view::MENU_HEIGHT,
+                )
+            }
+        };
+        crate::zoning::MenuOverlaySpec {
+            x: x.round() as i32,
+            width: width.round() as i32,
+            height: height.round() as i32,
+        }
+    }
+
+    /// Left edge of the spectrum phrase (immediately left of CPU).
+    pub fn estimate_audio_x(&self) -> f32 {
+        self.estimate_stat_x(crate::stats::Metric::Cpu)
+            - crate::menubar::PHRASE_GAP
+            - crate::menubar::audio_chip_w()
+    }
+
+    /// Change `open_panel`, stopping Bluetooth discovery and clearing the
+    /// stats sampler when leaving those surfaces.
+    pub(crate) fn set_open_panel(&mut self, panel: Option<Panel>) {
+        let was_bt = self.open_panel == Some(Panel::Bluetooth);
+        let now_bt = panel == Some(Panel::Bluetooth);
+        let was_audio = self.open_panel == Some(Panel::Audio);
+        let now_audio = panel == Some(Panel::Audio);
+        if was_bt && !now_bt {
+            self.bluetooth.on_close();
+            crate::bluetooth::send(crate::bluetooth::Command::SetDiscovering(false));
+        }
+        match panel {
+            Some(Panel::Stat(m)) => crate::stats::set_active_metric(Some(m)),
+            _ => crate::stats::set_active_metric(None),
+        }
+        self.open_panel = panel;
+        if now_bt && !was_bt {
+            crate::bluetooth::send(crate::bluetooth::Command::Refresh);
+        }
+        if now_audio && !was_audio {
+            crate::audio::send(crate::audio::Command::Refresh);
         }
     }
 
@@ -1298,6 +1829,8 @@ impl Shell {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
             crate::stats::subscription().map(Msg::StatsTick),
+            crate::bluetooth::subscription().map(Msg::Bluetooth),
+            crate::audio::subscription().map(Msg::Audio),
             iced::window::resize_events().map(|(id, size)| Msg::OverlayIcedResized { id, size }),
             kb,
         ])
@@ -1312,6 +1845,7 @@ impl Shell {
             self.open_overlay(WindowKind::Switcher),
             self.open_overlay(WindowKind::Selection),
             self.open_overlay(WindowKind::Notify),
+            self.open_overlay(WindowKind::Shortcuts),
         ])
     }
 
@@ -1323,6 +1857,7 @@ impl Shell {
             WindowKind::Switcher => self.switcher_window_id,
             WindowKind::Selection => self.selection_window_id,
             WindowKind::Notify => self.notify_window_id,
+            WindowKind::Shortcuts => self.shortcuts_window_id,
         }
     }
 
@@ -1334,6 +1869,7 @@ impl Shell {
             WindowKind::Switcher => &mut self.switcher_window_id,
             WindowKind::Selection => &mut self.selection_window_id,
             WindowKind::Notify => &mut self.notify_window_id,
+            WindowKind::Shortcuts => &mut self.shortcuts_window_id,
         }
     }
 
@@ -1345,16 +1881,18 @@ impl Shell {
             WindowKind::Switcher => self.switcher.active,
             WindowKind::Selection => self.selection.active,
             WindowKind::Notify => self.notify.visible(),
+            WindowKind::Shortcuts => self.shortcuts.active,
         }
     }
 
-    fn overlay_visibility(&self) -> [bool; 5] {
+    fn overlay_visibility(&self) -> [bool; OVERLAY_LIVE_SLOTS] {
         [
             self.menu_open,
             self.launcher.active,
             self.switcher.active,
             self.selection.active,
             self.notify.visible(),
+            self.shortcuts.active,
         ]
     }
 
@@ -1368,6 +1906,7 @@ impl Shell {
             WindowKind::Switcher => crate::switcher::open_window(),
             WindowKind::Selection => crate::selection::open_window(),
             WindowKind::Notify => crate::notify::open_window(),
+            WindowKind::Shortcuts => crate::shortcuts::open_window(),
             WindowKind::Menubar => return iced::Task::none(),
         };
         *self.overlay_id_mut(kind) = Some(id);
@@ -1385,6 +1924,11 @@ impl Shell {
                 crate::launcher::view::QUERY_INPUT_ID,
             ));
         }
+        if kind == WindowKind::Shortcuts && self.shortcuts.active {
+            return iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                crate::shortcuts::view::QUERY_INPUT_ID,
+            ));
+        }
         iced::Task::none()
     }
 
@@ -1398,12 +1942,13 @@ impl Shell {
                 || self.launcher_window_id.is_none()
                 || self.switcher_window_id.is_none()
                 || self.selection_window_id.is_none()
-                || self.notify_window_id.is_none())
+                || self.notify_window_id.is_none()
+                || self.shortcuts_window_id.is_none())
         {
             tasks.push(self.ensure_overlay_windows());
         }
         if before != after {
-            for i in 0..5 {
+            for i in 0..OVERLAY_LIVE_SLOTS {
                 if before[i] && !after[i] {
                     self.overlay_iced_live[i] = false;
                 }
@@ -1426,6 +1971,19 @@ impl Shell {
                 };
                 let live = self.note_overlay_iced_size(kind, size);
                 if live && self.overlay_want(kind) {
+                    if kind == WindowKind::Selection && !self.selection.presentable {
+                        return iced::Task::none();
+                    }
+                    return iced::Task::done(Msg::CommitOverlayShow);
+                }
+                iced::Task::none()
+            }
+            Msg::SelectionTextureReady => {
+                if !self.selection.active || self.selection.presentable {
+                    return iced::Task::none();
+                }
+                self.selection.presentable = true;
+                if self.overlay_iced_live_for_title("selection") {
                     return iced::Task::done(Msg::CommitOverlayShow);
                 }
                 iced::Task::none()
@@ -1452,35 +2010,32 @@ impl Shell {
             Msg::ToggleCalendar => {
                 if self.menu_open && self.open_panel == Some(Panel::Calendar) {
                     // Already showing the calendar — dismiss it.
-                    self.menu_open = false;
-                    self.open_panel = None;
+                    let _ = self.dismiss_open_menu();
                 } else {
                     // Open (or switch an app menu over to) the calendar,
                     // always starting on the current month.
                     self.menu_open = true;
-                    self.open_panel = Some(Panel::Calendar);
+                    self.set_open_panel(Some(Panel::Calendar));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(None);
                     self.calendar_month =
                         crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::ToggleStatPanel(m) => {
                 if self.menu_open && self.open_panel == Some(crate::app::Panel::Stat(m)) {
-                    self.menu_open = false;
-                    self.open_panel = None;
-                    crate::stats::set_active_metric(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
-                    self.open_panel = Some(crate::app::Panel::Stat(m));
+                    self.set_open_panel(Some(crate::app::Panel::Stat(m)));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(Some(m));
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1520,26 +2075,21 @@ impl Shell {
                     && self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if same_trigger {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::none();
                 }
 
-                self.menu_anchor_x = self
-                    .menubar
-                    .label_positions
-                    .get(index)
-                    .copied()
-                    .filter(|x| *x > 0.0)
-                    .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                self.menu_anchor_x =
+                    Self::menu_anchor(&self.menubar.label_positions, index, is_system)
+                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
-                self.open_panel = None;
-                crate::stats::set_active_metric(None);
+                self.set_open_panel(None);
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1551,26 +2101,19 @@ impl Shell {
                 let same = self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if self.menu_open && !same {
-                    self.menu_anchor_x = self
-                        .menubar
-                        .label_positions
-                        .get(index)
-                        .copied()
-                        .filter(|x| *x > 0.0)
-                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                    self.menu_anchor_x =
+                        Self::menu_anchor(&self.menubar.label_positions, index, is_system)
+                            .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
-                    self.open_panel = None;
-                    crate::stats::set_active_metric(None);
+                    self.set_open_panel(None);
+                    self.emit_overlay_frames();
                 }
                 iced::Task::none()
             }
             Msg::CloseMenu => {
-                self.menu_open = false;
-                self.current_open_index = None;
-                self.current_open_is_system = false;
-                self.open_panel = None;
-                crate::stats::set_active_metric(None);
+                let _ = self.dismiss_open_menu();
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1585,12 +2128,25 @@ impl Shell {
                 }
                 // Flower menu: open the app launcher (close menu first).
                 if app_id == Self::APP_ID && action_id == "launch" {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenLauncher);
+                }
+                if app_id == Self::APP_ID && action_id == "shortcuts" {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return iced::Task::done(Msg::OpenShortcuts);
+                }
+                if let Some(action) = sola_kit::parse_window_action(&action_id) {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return self.handle_window_action(action);
                 }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
@@ -1604,9 +2160,8 @@ impl Shell {
                             bus.emit(Topic::MenuAction(MenuActionPayload { app_id, action_id }));
                     }
                 }
-                self.menu_open = false;
-                self.current_open_index = None;
-                self.current_open_is_system = false;
+                let _ = self.dismiss_open_menu();
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -1616,10 +2171,78 @@ impl Shell {
                     self.menubar.label_positions.resize(index + 1, 0.0);
                 }
                 self.menubar.label_positions[index] = x;
+                if self.menu_open
+                    && !self.current_open_is_system
+                    && self.current_open_index == Some(index)
+                    && (self.menu_anchor_x - x).abs() >= 0.5
+                {
+                    self.menu_anchor_x = x;
+                    self.emit_overlay_frames();
+                }
                 iced::Task::none()
             }
             // --- Launcher ---
+            Msg::OpenShortcuts => {
+                if self.launcher.active {
+                    self.launcher.active = false;
+                }
+                if self.switcher.active {
+                    self.switcher.active = false;
+                }
+                let _ = self.dismiss_open_menu();
+                self.shortcuts.prior_focus = self.focused_window_id;
+                let menu = self
+                    .focused_app_id
+                    .as_deref()
+                    .map(|id| self.effective_app_menu(id));
+                self.shortcuts.rebuild(menu.as_ref());
+                self.shortcuts.active = true;
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                    crate::shortcuts::view::QUERY_INPUT_ID,
+                ))
+            }
+            Msg::CloseShortcuts => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.shortcuts.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                if let Some(wid) = self.shortcuts.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                iced::Task::none()
+            }
+            Msg::ShortcutsQuery(text) => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.shortcuts.apply_query(&text);
+                iced::Task::none()
+            }
+            Msg::ShortcutsActivate => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                self.activate_selected_shortcut()
+            }
+            Msg::ShortcutsPick(index) => {
+                if !self.shortcuts.active {
+                    return iced::Task::none();
+                }
+                if index < self.shortcuts.filtered.len() {
+                    self.shortcuts.selected = index;
+                }
+                self.activate_selected_shortcut()
+            }
             Msg::OpenLauncher => {
+                if self.shortcuts.active {
+                    self.shortcuts.active = false;
+                }
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
                 let apps = self.applications.clone();
@@ -1634,6 +2257,9 @@ impl Shell {
                 ))
             }
             Msg::CloseLauncher => {
+                if self.shortcuts.active {
+                    return iced::Task::done(Msg::CloseShortcuts);
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -1655,7 +2281,11 @@ impl Shell {
             }
             Msg::LauncherNav { up } => {
                 // Keyboard sub is always live (stable subscription recipe);
-                // ignore nav when the launcher is closed.
+                // ignore nav when neither overlay is up.
+                if self.shortcuts.active {
+                    self.shortcuts.nav(up);
+                    return iced::Task::none();
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -1671,6 +2301,9 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::Launch => {
+                if self.shortcuts.active {
+                    return self.activate_selected_shortcut();
+                }
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
@@ -1696,10 +2329,6 @@ impl Shell {
                 }
                 self.launch_from_launcher(Some(&app_id))
             }
-            Msg::UnhideApp(app_id) => {
-                self.unhide_app(&app_id);
-                iced::Task::none()
-            }
             Msg::RaiseMail => {
                 self.activate_mail();
                 iced::Task::none()
@@ -1721,35 +2350,107 @@ impl Shell {
             Msg::NotifyActivate(id) => self.activate_notification(&id),
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
-                if self.notify.pile.is_empty()
-                    && self.open_panel == Some(Panel::NotifyPile)
-                {
-                    self.menu_open = false;
-                    self.open_panel = None;
+                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
+                    let _ = self.dismiss_open_menu();
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::NotifyToggleGroup(app_id) => {
+                self.notify.toggle_group(&app_id);
+                self.emit_overlay_frames();
+                iced::Task::none()
+            }
+            Msg::NotifyDismissApp(app_id) => {
+                self.notify.dismiss_app(&app_id);
+                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
+                    let _ = self.dismiss_open_menu();
                 }
                 self.emit_overlay_frames();
                 self.emit_composition();
                 iced::Task::none()
             }
             Msg::ToggleNotifyPile => {
+                self.notify.acknowledge();
                 if self.menu_open && self.open_panel == Some(Panel::NotifyPile) {
-                    self.menu_open = false;
-                    self.open_panel = None;
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
-                    self.open_panel = Some(Panel::NotifyPile);
+                    self.set_open_panel(Some(Panel::NotifyPile));
                     self.current_open_index = None;
                     self.current_open_is_system = false;
-                    crate::stats::set_active_metric(None);
                 }
+                self.emit_overlay_frames();
                 self.emit_composition();
                 iced::Task::none()
             }
-            Msg::NotifyClearPile => {
-                self.notify.clear_pile();
-                self.menu_open = false;
-                self.open_panel = None;
+            Msg::ToggleAudio => {
+                if !self.audio.snapshot.available {
+                    return iced::Task::none();
+                }
+                if self.menu_open && self.open_panel == Some(Panel::Audio) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Audio));
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                }
+                self.emit_overlay_frames();
                 self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::Audio(ev) => {
+                self.audio.on_event(ev);
+                if !self.audio.snapshot.available && self.open_panel == Some(Panel::Audio) {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                }
+                iced::Task::none()
+            }
+            Msg::AudioUi(m) => {
+                if let Some(cmd) = self.audio.update(m) {
+                    crate::audio::send(cmd);
+                }
+                iced::Task::none()
+            }
+            Msg::ToggleBluetooth => {
+                if self.bluetooth.snapshot.adapter.is_none() {
+                    return iced::Task::none();
+                }
+                if self.menu_open && self.open_panel == Some(Panel::Bluetooth) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Bluetooth));
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::Bluetooth(ev) => {
+                self.bluetooth.on_event(ev);
+                if self.bluetooth.snapshot.adapter.is_none()
+                    && self.open_panel == Some(Panel::Bluetooth)
+                {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                }
+                iced::Task::none()
+            }
+            Msg::BluetoothUi(m) => {
+                if let Some(cmd) = self.bluetooth.update(m) {
+                    crate::bluetooth::send(cmd);
+                }
                 iced::Task::none()
             }
             // --- Switcher ---
@@ -1770,20 +2471,8 @@ impl Shell {
                 self.switcher.active = false;
 
                 if let Some(ref app_id) = app_id {
-                    // Update focus and MRU.
-                    self.bus_set_focus(app_id);
-                    let wid = self
-                        .mru_window_by_app
-                        .get(app_id)
-                        .copied()
-                        .or_else(|| self.lookup_any_window_id(app_id));
-                    if let Some(wid) = wid {
-                        self.focused_window_id = Some(wid);
-                        self.mru_window_by_app.insert(app_id.clone(), wid);
-                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                        }
-                    }
+                    // Unhide if Super+H parked this app, then raise (MRU + seat).
+                    self.raise_app(app_id);
                 }
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -1823,25 +2512,24 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenSelection => {
-                // Snapshot the live app under the keyboard *before* overlays
-                // are dismissed / marquee steals focus.
+                if self.selection.active || self.selection.pending {
+                    return iced::Task::none();
+                }
+                // Snapshot the live app under the keyboard *before* the
+                // freeze capture. Do not dismiss overlays or steal focus
+                // yet — that would drop menus/text selections from the still.
                 let prior = self.focused_window_id.filter(|wid| {
                     self.known_windows
                         .iter()
                         .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
                 });
-                self.dismiss_transient_overlays();
-                self.selection.begin(prior);
+                let generation = self.selection.start_freeze(prior);
                 self.screenshot_return_focus = prior;
-                self.emit_composition();
                 self.emit_registered_chords();
-                // Focus the selection surface so canvas gets pointer/keyboard.
-                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
-                iced::Task::none()
+                crate::screenshot::freeze(generation)
+            }
+            Msg::SelectionFreeze { generation, result } => {
+                self.on_selection_freeze(generation, result)
             }
             Msg::CloseSelection => {
                 let prior = self.selection.cancel();
@@ -1849,7 +2537,6 @@ impl Shell {
                 self.emit_registered_chords();
                 self.restore_app_focus(prior.or(self.screenshot_return_focus));
                 self.screenshot_return_focus = None;
-                self.open_preview_on_next = false;
                 iced::Task::none()
             }
             Msg::SelectionPress { x, y } => {
@@ -1862,9 +2549,10 @@ impl Shell {
             }
             Msg::SelectionRelease { x, y } => {
                 self.selection.move_to(x, y);
+                let freeze = self.selection.freeze.clone();
                 let (region, prior) = self.selection.finish_region();
-                // Hide overlay before capture so the marquee/scrim is not
-                // in the PNG (Composition precedes the screenshot call).
+                // Hide overlay; crop the freeze in-process (no second capture,
+                // so the still keeps menus/selections the live screen lost).
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Always return keyboard to the pre-marquee window — even on
@@ -1876,12 +2564,21 @@ impl Shell {
                 let Some((rx, ry, rw, rh)) = region else {
                     tracing::info!("selection cancelled (too small or empty)");
                     self.screenshot_return_focus = None;
-                    self.open_preview_on_next = false;
                     return iced::Task::none();
                 };
-                tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection capture");
-                self.open_preview_on_next = true;
-                crate::screenshot::region(rx, ry, rw, rh)
+                let Some(handle) = freeze else {
+                    tracing::warn!("selection capture missing freeze frame");
+                    self.screenshot_return_focus = None;
+                    self.menubar
+                        .push_toast("Screenshot failed: no freeze frame");
+                    let toast_gen = self.menubar.toast_generation;
+                    return iced::Task::perform(
+                        tokio::time::sleep(Duration::from_secs(5)),
+                        move |_| Msg::ToastExpire(toast_gen),
+                    );
+                };
+                tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection crop from freeze");
+                crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
             Msg::CycleAppWindows => {
@@ -1948,6 +2645,9 @@ impl Shell {
         if Some(window) == self.notify_window_id {
             return crate::notify::view::view(self);
         }
+        if Some(window) == self.shortcuts_window_id {
+            return crate::shortcuts::view::view(self);
+        }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
             .width(iced::Length::Fill)
@@ -1985,6 +2685,7 @@ mod pending_launch_tests {
             switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
+            shortcuts_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -2014,9 +2715,11 @@ mod pending_launch_tests {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
             notify: crate::notify::NotifyState::default(),
-            open_preview_on_next: false,
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -2033,7 +2736,7 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
-            overlay_iced_live: [false; 5],
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         shell.menubar.toast_generation = 1;
         shell.menubar.toast = Some("Opening Terminal…".into());
@@ -2053,5 +2756,295 @@ mod pending_launch_tests {
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_none());
         assert!(shell.menubar.toast.is_none());
+    }
+}
+
+#[cfg(test)]
+mod hide_tests {
+    use super::*;
+
+    fn win(id: u32, app: &str, title: &str) -> Window {
+        Window {
+            window_id: id,
+            app_id: app.into(),
+            title: title.into(),
+            pid: None,
+        }
+    }
+
+    fn test_shell(windows: Vec<Window>, focused: Option<&str>, mru: &[&str]) -> Shell {
+        let mut window_id_by_key = HashMap::new();
+        let mut mru_window_by_app = HashMap::new();
+        for w in &windows {
+            window_id_by_key.insert((w.app_id.clone(), w.title.clone()), w.window_id);
+            if w.app_id != Shell::APP_ID {
+                mru_window_by_app
+                    .entry(w.app_id.clone())
+                    .or_insert(w.window_id);
+            }
+        }
+        let focused_window_id = focused.and_then(|app| {
+            windows
+                .iter()
+                .find(|w| w.app_id == app)
+                .map(|w| w.window_id)
+        });
+        Shell {
+            theme: theme::default_theme(),
+            style: theme::ShellStyle::default(),
+            menubar_window_id: None,
+            menu_window_id: None,
+            launcher_window_id: None,
+            switcher_window_id: None,
+            selection_window_id: None,
+            notify_window_id: None,
+            shortcuts_window_id: None,
+            focused_app_id: focused.map(str::to_string),
+            focused_window_id,
+            pointer_window_id: focused_window_id,
+            pending_focus_generation: 0,
+            mru_apps: mru.iter().map(|s| s.to_string()).collect(),
+            mru_window_by_app,
+            known_windows: windows,
+            window_id_by_key,
+            last_composition: Vec::new(),
+            last_registered_chords: Vec::new(),
+            applications: ApplicationsConfig {
+                apps: crate::builtins::builtin_apps(),
+            },
+            hidden_apps: HashMap::new(),
+            menus: MenuCache::new(),
+            output_size: None,
+            menu_open: false,
+            menu_anchor_x: 0.0,
+            current_open_index: None,
+            current_open_is_system: false,
+            open_panel: None,
+            calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
+            switcher: SwitcherState::default(),
+            launcher: LauncherState::default(),
+            shortcuts: ShortcutsState::default(),
+            selection: SelectionState::default(),
+            notify: crate::notify::NotifyState::default(),
+            bluetooth: crate::bluetooth::Ui::default(),
+            audio: crate::audio::Ui::default(),
+            screenshot_return_focus: None,
+            suppress_map_focus_for: None,
+            zoning: ZoningState::new(),
+            menubar: MenubarState::new(),
+            pending_launch: None,
+            stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
+            cpu_hist: crate::stats::History::new(60),
+            mem_hist: crate::stats::History::new(60),
+            net_down_hist: crate::stats::History::new(60),
+            net_up_hist: crate::stats::History::new(60),
+            gpu_hist: crate::stats::History::new(60),
+            inbox_unread: None,
+            overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+        }
+    }
+
+    fn desktop() -> Shell {
+        test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-terminal", "Terminal"),
+                win(3, "sola-browser", "Browser"),
+            ],
+            Some("sola-terminal"),
+            &["sola-terminal", "sola-browser"],
+        )
+    }
+
+    fn composed_apps(shell: &Shell) -> Vec<u32> {
+        shell
+            .build_composition_entries()
+            .into_iter()
+            .map(|e| e.window_id)
+            .collect()
+    }
+
+    #[test]
+    fn shell_key_chords_include_super_h() {
+        let shell = desktop();
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::H && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+H must be a registered shell chord"
+        );
+    }
+
+    #[test]
+    fn shell_key_chords_include_super_k() {
+        let shell = desktop();
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::K && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+K must be a registered shell chord (Omarchy cheatsheet)"
+        );
+    }
+
+    #[test]
+    fn effective_app_menu_injects_window_when_missing() {
+        let shell = desktop();
+        let payload = shell.effective_app_menu("sola-terminal");
+        assert!(
+            payload
+                .menus
+                .iter()
+                .any(|m| m.label == sola_kit::WINDOW_MENU_LABEL),
+            "Window menu is injected for apps that did not publish one"
+        );
+        assert!(payload.menus.iter().any(|m| m.items.iter().any(|item| {
+            matches!(item, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_FLOAT)
+        })));
+    }
+
+    #[test]
+    fn effective_app_menu_keeps_published_window_menu() {
+        let mut shell = desktop();
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-terminal".into(),
+            menus: vec![
+                sola_bus::topics::MenuDefinition {
+                    label: "Terminal".into(),
+                    items: vec![],
+                },
+                sola_bus::topics::MenuDefinition {
+                    label: sola_kit::WINDOW_MENU_LABEL.into(),
+                    items: vec![MenuItem::Action {
+                        id: "window.new".into(),
+                        label: "New Window".into(),
+                        shortcut: None,
+                        disabled: false,
+                        checked: false,
+                    }],
+                },
+            ],
+        });
+        let payload = shell.effective_app_menu("sola-terminal");
+        let window = payload
+            .menus
+            .iter()
+            .find(|m| m.label == sola_kit::WINDOW_MENU_LABEL)
+            .expect("Window menu");
+        match &window.items[0] {
+            MenuItem::Action { id, .. } => assert_eq!(id, "window.new"),
+            other => panic!("expected Action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hide_omits_app_from_composition_and_focuses_next() {
+        let mut shell = desktop();
+        assert_eq!(composed_apps(&shell), vec![1, 3, 2]); // menubar, browser, terminal (MRU top)
+
+        shell.hide_focused_app();
+
+        assert!(shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-browser"));
+        assert_eq!(shell.focused_window_id, Some(3));
+        assert_eq!(composed_apps(&shell), vec![1, 3]); // terminal omitted
+        assert_eq!(
+            shell.mapped_hidden_app_id("sola-terminal").as_deref(),
+            Some("sola-terminal")
+        );
+    }
+
+    #[test]
+    fn hide_does_not_hide_shell() {
+        let mut shell = test_shell(
+            vec![win(1, Shell::APP_ID, "menubar")],
+            Some(Shell::APP_ID),
+            &[],
+        );
+        shell.hide_focused_app();
+        assert!(!shell.is_app_hidden(Shell::APP_ID));
+        assert_eq!(shell.focused_app_id.as_deref(), Some(Shell::APP_ID));
+        assert_eq!(composed_apps(&shell), vec![1]);
+    }
+
+    #[test]
+    fn hide_last_app_clears_focus() {
+        let mut shell = test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-terminal", "Terminal"),
+            ],
+            Some("sola-terminal"),
+            &["sola-terminal"],
+        );
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+        assert!(shell.focused_app_id.is_none());
+        assert!(shell.focused_window_id.is_none());
+        assert_eq!(composed_apps(&shell), vec![1]);
+    }
+
+    #[test]
+    fn unhide_restores_composition_and_focus() {
+        let mut shell = desktop();
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+
+        shell.unhide_app("sola-terminal");
+
+        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+        let composed = composed_apps(&shell);
+        assert!(composed.contains(&2), "terminal must be in composition");
+        assert_eq!(*composed.last().unwrap(), 2, "unhide raises to top");
+    }
+
+    #[test]
+    fn raise_app_unhides() {
+        let mut shell = desktop();
+        shell.hide_focused_app();
+        assert!(shell.is_app_hidden("sola-terminal"));
+
+        shell.raise_app("sola-terminal");
+
+        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+    }
+
+    #[test]
+    fn dismiss_open_menu_clears_audio_panel() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::Audio);
+        assert!(shell.dismiss_open_menu());
+        assert!(!shell.menu_open);
+        assert_eq!(shell.open_panel, None);
+    }
+
+    #[test]
+    fn arm_screenshot_keeps_open_notifications() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::NotifyPile);
+        shell.focused_window_id = Some(2);
+        shell.arm_screenshot_handoff();
+        assert!(shell.menu_open);
+        assert_eq!(shell.open_panel, Some(Panel::NotifyPile));
+        assert_eq!(shell.screenshot_return_focus, Some(2));
+    }
+
+    #[test]
+    fn dismiss_chrome_leaves_selection_armed() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::NotifyPile);
+        let _ = shell.selection.start_freeze(Some(2));
+        assert!(shell.selection.pending);
+        assert!(shell.dismiss_chrome_overlays());
+        assert!(!shell.menu_open);
+        assert_eq!(shell.open_panel, None);
+        assert!(shell.selection.pending);
+        assert_eq!(shell.selection.prior_focus, Some(2));
     }
 }

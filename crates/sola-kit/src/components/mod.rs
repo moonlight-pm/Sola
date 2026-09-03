@@ -42,6 +42,7 @@ pub mod context_menu;
 pub mod divider;
 pub mod field;
 pub mod file_picker;
+mod float_clip;
 pub mod form;
 pub mod icon;
 pub mod json;
@@ -61,7 +62,7 @@ pub mod text_input;
 pub mod titlebar;
 pub mod toolbar;
 
-pub use badge::{Tone, badge};
+pub use badge::{COUNT_MARK_H, Tone, badge, count_label, count_mark};
 pub use button::confirm_button;
 pub use card::{accent_backplate, backplate, card, modal, plain};
 pub use color_picker::ColorPicker;
@@ -83,11 +84,11 @@ pub use prose::{ProseBlock, ProseRun, flatten as flatten_prose, parse_plain, pro
 pub use readable::readable;
 pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use sidebar::{
-    Dest, Drop, Event as SidebarEvent, Msg as SidebarMsg, PANEL_HEADER_H, PANEL_REORDER_ANIM_MS,
-    PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, SIDEBAR_WIDTH,
-    SectionCollapse, SectionScroll, SidebarDensity, SidebarHoverAction, SidebarItem,
-    SidebarItemChrome, SidebarPanel, SidebarSection, State as SidebarState,
-    panel_etch_row_height, section_overflow_counts, sidebar, sidebar_with_header,
+    Dest, Drop, Event as SidebarEvent, LEADING_SLOT, Msg as SidebarMsg, PANEL_HEADER_H,
+    PANEL_REORDER_ANIM_MS, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_W_DEFAULT, PANEL_W_MAX,
+    PANEL_W_MIN, SIDEBAR_WIDTH, SectionCollapse, SectionScroll, SidebarDensity, SidebarHoverAction,
+    SidebarItem, SidebarItemChrome, SidebarPanel, SidebarSection, State as SidebarState,
+    group_well_fill, panel_etch_row_height, section_overflow_counts, sidebar, sidebar_with_header,
 };
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};

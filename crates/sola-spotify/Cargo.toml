@@ -1,0 +1,51 @@
+[package]
+name = "sola-spotify"
+version.workspace = true
+edition.workspace = true
+description = "Kit-native Spotify client for Sola (library, Connect, local playback)"
+license = "MIT"
+
+[[bin]]
+name = "sola-spotify"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image", "svg"] }
+
+anyhow = "1"
+thiserror = "2"
+rustls = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2"] }
+sha1 = "0.10"
+sha2 = "0.10"
+base64 = { workspace = true }
+rand = "0.9"
+urlencoding = "2"
+percent-encoding = "2"
+
+# Spotify playback and Connect. rustls so we share one TLS stack with the
+# Web API client. Playback needs Spotify Premium; the Web API grant is
+# separate (see src/auth.rs).
+#
+# crates.io 0.8.0's build.rs does not compile against current vergen
+# (duplicate vergen_lib). Same git pin Fastpotify uses.
+librespot-core = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false, features = ["rodio-backend", "pulseaudio-backend", "rustls-tls-native-roots"] }
+librespot-connect = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false }
+librespot-metadata = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false }
+
+mpris-server = { version = "0.10", features = ["tokio"] }
+
+# librespot-core 0.8 build.rs + vergen 9.1.0 + vergen-gitcl 1.0.8 disagree
+# on vergen-lib (0.1 vs 9.1). Fastpotify locks 9.0.6; keep the workspace
+# there so `cargo update` does not break the playback crate.
+[build-dependencies]
+vergen = { version = "=9.0.6", default-features = false }

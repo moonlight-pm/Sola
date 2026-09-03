@@ -13,11 +13,12 @@ humans — by implementing `wlr-screencopy` capture in `sola-river`.
 shell invoke `compositor.screenshot`. No grim binary.
 
 **Tech stack:** Wayland client (`wayland-client` 0.31), vendored
-`wlr-screencopy-unstable-v1`, `wl_shm` memfd buffers, `png` crate encode,
-existing bus topics.
+`wlr-screencopy-unstable-v1` (full output / explicit region),
+`ext-image-copy-capture-v1` + foreign-toplevel source (window `--app`,
+no raise), `wl_shm` memfd buffers, `png` crate encode.
 
 **Date:** 2026-07-20  
-**Status:** **Superseded (request path)** — capture still lives in sola-river; request/reply is `compositor.screenshot` on sola-call (2026-08-13 call-plane freeze). `CaptureScreen` / `Screenshot` bus topics are gone.  
+**Status:** **Superseded (request path)** — capture still lives in sola-river; request/reply is `compositor.screenshot` on sola-call (2026-08-13 call-plane freeze). `CaptureScreen` / `Screenshot` bus topics are gone. Window `--app` is toplevel scene copy (2026-08-31), not output-region crop.  
 **Roadmap:** `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` (P0)  
 **Prior art:** stub + plan comments in
 `crates/sola-river/src/client/screenshot.rs`; older notes in
@@ -106,11 +107,13 @@ Create parent dirs (`create_dir_all`) before write.
 
 ### Window target
 
-1. `registry.find_by_app_title(app_id, title)`  
-2. Read `entry.frame` as `(x, y, w, h)`  
-3. If missing frame → `Err("window has no frame yet")`  
-4. `capture_output_region` with those coords on the chosen output  
-5. Note (document in code + solactl help if needed): region is **screen content at that rect**, including overlaps — same as existing CLI comment.
+1. Match `ext_foreign_toplevel_list_v1` by `app_id` / optional title.  
+2. `ext_foreign_toplevel_image_capture_source_manager_v1.create_source` +
+   `ext_image_copy_capture_manager_v1.create_session` (no cursor paint).  
+3. One-shot SHM frame of that toplevel's scene (River `createWithSceneNode`).  
+4. **Does not raise or focus** the window. Works when occluded or
+   composition-hidden (still mapped).  
+5. Explicit `--x/--y/--width/--height` region stays output-crop (`zwlr_screencopy`).
 
 ### Shell hotkeys (P0b)
 

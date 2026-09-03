@@ -34,15 +34,20 @@
 
 pub mod app;
 pub mod call;
+pub mod clipboard;
 pub mod components;
 pub mod float;
 pub mod fonts;
+pub mod menu;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
 pub use call::{CallSetup, call_subscription, install_observer, observe_subscription};
 pub use float::{
     FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating,
+};
+pub use menu::{
+    WINDOW_MENU_LABEL, WindowAction, ensure_window_menu, parse_window_action, window_menu,
 };
 pub use theme::default_theme;
 

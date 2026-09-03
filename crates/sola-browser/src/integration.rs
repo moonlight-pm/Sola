@@ -35,6 +35,8 @@ use crate::profiles;
 // two never drift.
 pub const ACTION_NEW_TAB: &str = "new-tab";
 pub const ACTION_CLOSE_TAB: &str = "close-tab";
+pub const ACTION_REOPEN_TAB: &str = "reopen-tab";
+pub const ACTION_NEW_GROUP: &str = "new-group";
 pub const ACTION_RELOAD: &str = "reload";
 pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
@@ -45,6 +47,9 @@ pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
 pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
+pub const ACTION_FIND: &str = "find";
+pub const ACTION_FIND_NEXT: &str = "find-next";
+pub const ACTION_FIND_PREV: &str = "find-prev";
 pub const ACTION_PROFILE_NEW: &str = "profile-new";
 pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
 pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
@@ -74,9 +79,15 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 8] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
+    (
+        ACTION_REOPEN_TAB,
+        "Reopen Closed Tab",
+        KeyCode::T.meta_shift(),
+    ),
+    (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta().alt()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
@@ -91,11 +102,14 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 8] = [
 /// Undo/Redo are intentionally omitted — in a browser they only act on the
 /// editable text field that currently has focus, which is too narrow to earn
 /// a top-level menu slot here.
-pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 4] = [
+pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
     (ACTION_EDIT_CUT, "Cut", KeyCode::X.meta()),
     (ACTION_EDIT_COPY, "Copy", KeyCode::C.meta()),
     (ACTION_EDIT_PASTE, "Paste", KeyCode::V.meta()),
     (ACTION_EDIT_SELECT_ALL, "Select All", KeyCode::A.meta()),
+    (ACTION_FIND, "Find", KeyCode::F.meta()),
+    (ACTION_FIND_NEXT, "Find Next", KeyCode::G.meta()),
+    (ACTION_FIND_PREV, "Find Previous", KeyCode::G.meta_shift()),
 ];
 
 /// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
@@ -195,6 +209,10 @@ pub fn profile_name_input_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("browser-profile-name")
 }
 
+pub fn find_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("browser-find")
+}
+
 /// What the browser should do in response to a bus event. A plain enum keeps
 /// the mapping pure and unit-testable without a bus.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +226,9 @@ pub enum BrowserIntent {
     /// URL bar ready for typing (⌘T).
     NewBlankTab,
     CloseActiveTab,
+    ReopenClosedTab,
+    /// Wrap the selected loose tab in a group and start renaming it (⌘⌥G).
+    NewGroup,
     Reload,
     Back,
     Forward,
@@ -226,6 +247,9 @@ pub enum BrowserIntent {
     DeleteProfile,
     /// Open DevTools (console) for the active tab.
     ShowDevTools,
+    Find,
+    FindNext,
+    FindPrev,
     Quit,
     None,
 }
@@ -265,6 +289,11 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
     match action_id {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
+        ACTION_REOPEN_TAB => BrowserIntent::ReopenClosedTab,
+        ACTION_NEW_GROUP => BrowserIntent::NewGroup,
+        ACTION_FIND => BrowserIntent::Find,
+        ACTION_FIND_NEXT => BrowserIntent::FindNext,
+        ACTION_FIND_PREV => BrowserIntent::FindPrev,
         ACTION_RELOAD => BrowserIntent::Reload,
         ACTION_FOCUS_URL => BrowserIntent::FocusUrl,
         ACTION_BACK => BrowserIntent::Back,
@@ -359,32 +388,36 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // Prefer URL-bar focus for a blank tab so typing starts immediately.
             app.url_field.clear();
             app.last_seen_url = BLANK_URL.to_string();
-            app.url_bar_focused = true;
+            app.set_url_bar_focused(true);
             Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::CloseActiveTab => {
             let id = app.cached_active;
             app.update(Msg::CloseTab(id))
         }
+        BrowserIntent::ReopenClosedTab => app.update(Msg::ReopenClosedTab),
+        BrowserIntent::NewGroup => app.update(Msg::NewGroup),
+        BrowserIntent::Find => app.update(Msg::FindOpen),
+        BrowserIntent::FindNext => app.update(Msg::FindNext),
+        BrowserIntent::FindPrev => app.update(Msg::FindPrev),
         BrowserIntent::Reload => app.update(Msg::NavReloadOrStop),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => {
             // ⌘L: focus the URL bar and select its contents (browser-standard)
             // so the next keystroke replaces the whole URL.
-            app.url_bar_focused = true;
+            app.set_url_bar_focused(true);
             Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::Edit(cmd) => {
-            // Route by the URL bar's *live* focus. iced doesn't surface focus
-            // as state, and a click into the field is captured by `text_input`
-            // before any wrapper widget can observe it — so a tracked bool
-            // can't be kept honest. Query the real focus via an operation and
-            // finish the routing in `Msg::EditRouted`.
-            tracing::debug!(?cmd, "edit intent — querying live URL-bar focus");
-            url_bar_is_focused(move |url_bar_focused| Msg::EditRouted {
+            // Idle omnibox unmounts the field, so `is_focused(url_input_id)`
+            // yields Outcome::None and ⌘V would vanish. The tracked flag is
+            // set on click / ⌘L / typing and cleared when the page takes
+            // the press.
+            tracing::debug!(?cmd, url_bar = app.url_bar_focused, "edit intent");
+            app.update(Msg::EditRouted {
                 cmd,
-                url_bar_focused,
+                url_bar_focused: app.url_bar_focused,
             })
         }
         BrowserIntent::SwitchProfile { id } => app.switch_profile(&id),
@@ -414,7 +447,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
 }
 
 /// Move keyboard focus to the chrome URL field.
-fn focus_url_bar() -> Task<Msg> {
+pub(crate) fn focus_url_bar() -> Task<Msg> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
         url_input_id(),
     ))
@@ -439,10 +472,11 @@ pub(crate) fn select_url_bar() -> Task<Msg> {
     >(url_input_id()))
 }
 
-/// Query the chrome URL field's live focus state. Used to route Edit
-/// actions (⌘C/⌘X/⌘V/⌘A) to the field vs. the page, and to decide whether a
-/// click just *gained* focus (→ select-all). The result arrives as a message
-/// the caller chooses.
+/// Query the chrome URL field's live focus state. Used to decide whether a
+/// click just *gained* focus (→ select-all). Edit chords use the tracked
+/// `url_bar_focused` flag — this query is `Outcome::None` while the idle
+/// label is showing (the field is unmounted). The result arrives as a
+/// message the caller chooses.
 pub(crate) fn url_bar_is_focused<F>(to_msg: F) -> Task<Msg>
 where
     F: Fn(bool) -> Msg + Send + 'static,
@@ -471,6 +505,14 @@ mod tests {
             intent_for_menu_action(ACTION_CLOSE_TAB),
             BrowserIntent::CloseActiveTab
         );
+        assert_eq!(
+            intent_for_menu_action(ACTION_REOPEN_TAB),
+            BrowserIntent::ReopenClosedTab
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_NEW_GROUP),
+            BrowserIntent::NewGroup
+        );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
         assert_eq!(
             intent_for_menu_action(ACTION_FORWARD),
@@ -479,6 +521,15 @@ mod tests {
         assert_eq!(
             intent_for_menu_action(ACTION_FOCUS_URL),
             BrowserIntent::FocusUrl
+        );
+        assert_eq!(intent_for_menu_action(ACTION_FIND), BrowserIntent::Find);
+        assert_eq!(
+            intent_for_menu_action(ACTION_FIND_NEXT),
+            BrowserIntent::FindNext
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_FIND_PREV),
+            BrowserIntent::FindPrev
         );
         assert_eq!(intent_for_menu_action(ACTION_QUIT), BrowserIntent::Quit);
         assert_eq!(
@@ -493,6 +544,15 @@ mod tests {
             intent_for_menu_action(ACTION_NEW_TAB),
             BrowserIntent::NewBlankTab
         );
+    }
+
+    #[test]
+    fn reopen_closed_is_on_the_browser_menu() {
+        let ids: Vec<&str> = MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
+        assert!(ids.contains(&ACTION_REOPEN_TAB));
+        assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
+        assert!(ids.contains(&ACTION_NEW_GROUP));
+        assert_eq!(MENU_ITEMS[3].0, ACTION_NEW_GROUP);
     }
 
     #[test]
@@ -527,6 +587,9 @@ mod tests {
                 ACTION_EDIT_COPY,
                 ACTION_EDIT_PASTE,
                 ACTION_EDIT_SELECT_ALL,
+                ACTION_FIND,
+                ACTION_FIND_NEXT,
+                ACTION_FIND_PREV,
             ]
         );
     }

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Get a working Smithay-based Wayland compositor that renders a solid color to a real display on canto via DRM/KMS.
+**Goal:** Get a working Smithay-based Wayland compositor that renders a solid color to a real display via DRM/KMS.
 
 **Architecture:** Smithay owns the full display pipeline — DRM/KMS backend with GBM buffer allocation, OpenGL ES rendering, libseat for session management, libinput for input, udev for device discovery. The compositor runs directly on a TTY with no host compositor.
 
@@ -50,7 +50,7 @@ Sola/
 │   │           └── render.rs                  # Frame rendering and VBlank handling
 │   └── sola-make/
 │       ├── Cargo.toml
-│       └── src/main.rs                        # Build/deploy CLI
+│       └── src/main.rs                        # Build/install CLI
 ```
 
 ---
@@ -125,9 +125,9 @@ Sola/
 
 ---
 
-### Task 8: Integration Verification on Canto
+### Task 8: Integration Verification on Hardware
 
-Manual testing on real hardware.
+Manual testing on a real TTY.
 
 ---
 
@@ -140,9 +140,9 @@ Task 6 (output/rendering) is the most type-complex. The DrmCompositor has deeply
 ### NVIDIA Considerations
 
 - Overlay planes MUST be disabled for NVIDIA GPUs (causes atomic commit failures)
-- GBM fully supported on driver 495+ (canto has 590.48.01)
+- GBM fully supported on driver 495+ (desk GPU was 590.48.01)
 - Prefer ARGB8888 format
 
 ### Testing Strategy
 
-Hardware-dependent code — unit tests are not practical for DRM/KMS. Verification is: compiles, runs on canto, solid color on screen, clean shutdown.
+Hardware-dependent code — unit tests are not practical for DRM/KMS. Verification is: compiles, runs on a TTY, solid color on screen, clean shutdown.

@@ -198,7 +198,7 @@ An earlier draft of this spec specified swapping xkb keymaps on focus transition
 5. Terminal: remove the Edit menu entries and the MenuAction `"copy"` / `"paste"` arms; leave JS-side handlers in place.
 6. `sola-river`: add `zwp_virtual_keyboard_unstable_v1` protocol module; bind `zwp_virtual_keyboard_manager_v1`; create a per-seat virtual keyboard and upload a standard xkb keymap via sealed memfd.
 7. `sola-river`: also subscribe to `Topic::Copy` / `Topic::Paste`; look up `window_id → app_id` in the existing `WindowRegistry`; if the app_id doesn't start with `"sola-"`, synthesize Ctrl+KEY_C / Ctrl+KEY_V via `modifiers(CTRL)` → `key(press)` → `key(release)` → `modifiers(0)`.
-8. `cargo check --workspace`; deploy to canto; verify:
+8. `cargo check --workspace`; `cargo make install`; verify:
    - Meta+C / Meta+V copy/paste inside the terminal (xterm.js selection).
    - Meta+C / Meta+V copy/paste inside a generic WebView app with a `<textarea>` (default handler path).
    - Meta+C in Brave triggers Brave's native copy (via synthesized Ctrl+C).

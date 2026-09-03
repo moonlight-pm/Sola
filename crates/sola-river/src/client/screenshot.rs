@@ -1,6 +1,7 @@
 //! Screenshot + live pixel sample via `wlr-screencopy-unstable-v1`.
 //!
-//! Call-plane screenshot (`compositor.screenshot`) writes a PNG.
+//! Call-plane screenshot (`compositor.screenshot`) writes a PNG, or
+//! packed RGBA8 when `format=rgba` (selection freeze — no PNG encode).
 //! Call-plane sample (`compositor.sample`) returns a small RGBA patch
 //! around the current pointer — no disk, no PNG — for sola-scope.
 //!
@@ -13,7 +14,9 @@
 //! ## Flow
 //!
 //! 1. Resolve path (default `/tmp/sola/screenshots/<ms>.png`) and region.
-//! 2. `manager.capture_output[_region](…)` on the first `wl_output`.
+//! 2. Full/region: `zwlr_screencopy` `capture_output[_region]` on the first
+//!    `wl_output`. Window (`--app`): `ext-image-copy-capture` of that
+//!    toplevel's scene — no raise, works when occluded or composition-hidden.
 //! 3. On `Buffer` + `BufferDone`: allocate SHM (`memfd` + event stride),
 //!    `frame.copy(buffer)`.
 //! 4. On `Ready`: **copy** SHM bytes off the mmap, destroy Wayland
@@ -23,11 +26,12 @@
 //!
 //! ## Why off-thread encode?
 //!
-//! A 5120×2160 capture is ~44 MB RGBA. Convert + `png` encode can take
-//! multiple seconds on the CPU. River disconnects the window-management
-//! client if it is unresponsive for **>3 s** (`window manager unresponsive
-//! … disconnecting`). Doing encode on the calloop/Wayland thread froze the
-//! desktop and broke clients (terminals lost input / Broken pipe).
+//! A 5120×2160 capture is ~44 MB RGBA. Default (`Balanced`) PNG encode
+//! was ~10 s on the desk. Shell hotkeys skip this file and Fast-encode
+//! in sola-shell. `solactl` PNG still encodes here with
+//! `Compression::Fast` on a worker thread. River disconnects the
+//! window-management client if it is unresponsive for **>3 s**. Doing
+//! encode on the calloop/Wayland thread froze the desktop.
 //!
 //! V1 concurrency: one screenshot (Wayland flight **or** encode worker)
 //! and one live sample may run at once. A second screenshot while one
@@ -45,7 +49,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
-use sola_bus::topics::{CaptureScreenPayload, CaptureTarget};
+use sola_bus::topics::{CaptureFormat, CaptureScreenPayload, CaptureTarget};
 use tracing::{debug, info, warn};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
@@ -70,16 +74,37 @@ pub struct ScreenshotState {
     pub sample: Option<CaptureFlight>,
     /// Encode-worker result channel. While `Some`, a capture is still in
     /// progress even if `flight` is already cleared.
-    result_rx: Option<Receiver<Result<PathBuf, String>>>,
+    result_rx: Option<Receiver<Result<ShotDone, String>>>,
     /// When the request came from sola-call, complete this after encode.
     pending_reply: Option<sola_call::ReplyTx>,
     /// Sample call reply, completed on the Wayland thread (tiny buffer).
     sample_reply: Option<sola_call::ReplyTx>,
+    /// Keep the foreign-toplevel list proxy alive so events keep flowing.
+    pub foreign_list: Option<
+        crate::protocol::ext_foreign_toplevel_list_v1::ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
+    >,
+    /// `ext_image_copy_capture_manager_v1` — window (toplevel) capture.
+    pub copy_manager: Option<
+        crate::protocol::ext_image_copy_capture_v1::ext_image_copy_capture_manager_v1::ExtImageCopyCaptureManagerV1,
+    >,
+    /// `ext_foreign_toplevel_image_capture_source_manager_v1`.
+    pub toplevel_source_manager: Option<
+        crate::protocol::ext_image_capture_source_v1::ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
+    >,
+    /// Mapped toplevels from `ext_foreign_toplevel_list_v1`.
+    pub toplevels: Vec<crate::client::screenshot_window::ForeignToplevel>,
+    /// In-flight window capture (ext-image-copy-capture), not screencopy.
+    pub window_flight: Option<crate::client::screenshot_window::WindowFlight>,
 }
 
 /// Why this screencopy frame exists.
-enum CaptureKind {
+#[derive(Clone)]
+pub(crate) enum CaptureKind {
     Png {
+        path: PathBuf,
+    },
+    /// Packed RGBA8 dump (no PNG). Selection freeze / fast picker.
+    Rgba {
         path: PathBuf,
     },
     Sample {
@@ -88,6 +113,14 @@ enum CaptureKind {
         hot_x: i32,
         hot_y: i32,
     },
+}
+
+/// Finished screenshot (PNG or RGBA dump) from the worker thread.
+struct ShotDone {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    format: CaptureFormat,
 }
 
 #[derive(Clone, Copy)]
@@ -122,8 +155,10 @@ pub struct CaptureFlight {
 unsafe impl Send for CaptureFlight {}
 
 /// True while either the Wayland screencopy or the encode worker is active.
-fn in_progress(state: &AppData) -> bool {
-    state.screenshot.flight.is_some() || state.screenshot.result_rx.is_some()
+pub(crate) fn in_progress(state: &AppData) -> bool {
+    state.screenshot.flight.is_some()
+        || state.screenshot.window_flight.is_some()
+        || state.screenshot.result_rx.is_some()
 }
 
 /// Poll the encode worker from `bus_tick` (must not run on the worker thread).
@@ -132,9 +167,9 @@ pub fn poll_results(state: &mut AppData) {
         return;
     };
     match rx.try_recv() {
-        Ok(Ok(path)) => {
+        Ok(Ok(done)) => {
             state.screenshot.result_rx = None;
-            emit_ok(state, path);
+            emit_ok(state, done);
         }
         Ok(Err(msg)) => {
             state.screenshot.result_rx = None;
@@ -328,7 +363,11 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
         return;
     };
 
-    let path = match resolve_path(req.path) {
+    let path = match req.format {
+        CaptureFormat::Png => resolve_path(req.path),
+        CaptureFormat::Rgba => resolve_rgba_path(req.path),
+    };
+    let path = match path {
         Ok(p) => p,
         Err(e) => {
             emit_err(state, Slot::Shot, e);
@@ -342,42 +381,14 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
             manager.capture_output(0, &output, &qh, ())
         }
         CaptureTarget::Window { app_id, title } => {
-            let Some(entry) = state.registry.find_by_app_title(app_id, title.as_deref()) else {
-                emit_err(
-                    state,
-                    Slot::Shot,
-                    format!("window not found: app_id={app_id} title={title:?}"),
-                );
-                return;
-            };
-            // Prefer live size+position (what River actually placed) over the
-            // shell's last `Topic::Frame`. Floating windows are intentionally
-            // not re-framed after move/resize, and a poisoned 0×0 Frame
-            // (Float zone rect / bad FloatGeometry restore) would otherwise
-            // make region capture fail while the window is still visible.
-            let Some((x, y, w, h)) = capture_rect(entry) else {
-                emit_err(
-                    state,
-                    Slot::Shot,
-                    "window has no usable geometry yet (no live size/position and no frame)",
-                );
-                return;
-            };
-            // Region is screen content at that rect, including overlaps.
-            info!(
-                path = %path.display(),
-                %app_id,
-                ?title,
-                x,
-                y,
-                w,
-                h,
-                frame = ?entry.frame,
-                size = ?entry.size,
-                position = ?entry.position,
-                "screenshot: window region (screen content at rect)"
+            crate::client::screenshot_window::start(
+                state,
+                path,
+                req.format,
+                app_id,
+                title.as_deref(),
             );
-            manager.capture_output_region(0, &output, x, y, w, h, &qh, ())
+            return;
         }
         CaptureTarget::Region {
             x,
@@ -406,8 +417,12 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
         }
     };
 
+    let kind = match req.format {
+        CaptureFormat::Png => CaptureKind::Png { path },
+        CaptureFormat::Rgba => CaptureKind::Rgba { path },
+    };
     state.screenshot.flight = Some(CaptureFlight {
-        kind: CaptureKind::Png { path },
+        kind,
         frame,
         format: None,
         width: 0,
@@ -429,13 +444,15 @@ fn start_capture(state: &mut AppData, req: CaptureScreenPayload) {
     }
 }
 
-/// Pick a capture rectangle for a window.
+/// Pick a capture rectangle for a window (output-region crop).
+///
+/// Kept for unit tests. Product window shots copy the toplevel scene
+/// (`ext-image-copy-capture`) instead.
 ///
 /// Live River placement (`position` + `size`) wins when both are known and
-/// positive — that is what the compositor actually drew. The shell's last
-/// `Topic::Frame` is a fallback for windows that have been framed but not
-/// yet reported dimensions (first paint). A non-positive frame is ignored so
-/// a poisoned 0×0 float restore cannot block capture of a live window.
+/// positive. The shell's last `Topic::Frame` is a fallback. A non-positive
+/// frame is ignored so a poisoned 0×0 float restore cannot block capture.
+#[allow(dead_code)]
 fn capture_rect(entry: &Entry) -> Option<(i32, i32, i32, i32)> {
     if let (Some((x, y)), Some((w, h))) = (entry.position, entry.size) {
         if w > 0 && h > 0 {
@@ -459,17 +476,142 @@ fn resolve_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
             PathBuf::from(format!("/tmp/sola/screenshots/{ms}.png"))
         }
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
-    }
+    ensure_parent(&path)?;
     Ok(path)
 }
 
-fn emit_ok(state: &mut AppData, path: PathBuf) {
-    info!(path = %path.display(), "screenshot saved");
+/// RGBA freeze dump: tmpfs first so Super+Shift+4 does not wait on disk.
+fn resolve_rgba_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
+    let path = match path {
+        Some(p) => p,
+        None => {
+            let ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let shm = PathBuf::from(format!("/dev/shm/sola-freeze-{ms}.rgba"));
+            if std::path::Path::new("/dev/shm").is_dir() {
+                shm
+            } else {
+                PathBuf::from(format!("/tmp/sola/screenshots/{ms}.rgba"))
+            }
+        }
+    };
+    ensure_parent(&path)?;
+    Ok(path)
+}
+
+fn ensure_parent(path: &PathBuf) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy SHM pixels off the Wayland thread and encode PNG/RGBA.
+pub(crate) fn complete_shot(
+    state: &mut AppData,
+    raw: Vec<u8>,
+    format: wl_shm::Format,
+    width: u32,
+    height: u32,
+    stride: u32,
+    y_invert: bool,
+    kind: CaptureKind,
+) {
+    let rgba_only = matches!(&kind, CaptureKind::Rgba { .. });
+    let path = match kind {
+        CaptureKind::Png { path } | CaptureKind::Rgba { path } => path,
+        CaptureKind::Sample { .. } => {
+            emit_shot_err(state, "internal: sample passed to complete_shot");
+            return;
+        }
+    };
+    info!(
+        width,
+        height,
+        stride,
+        bytes = raw.len(),
+        rgba_only,
+        "screenshot: SHM copied; convert offloaded to worker"
+    );
+    let (tx, rx) = mpsc::channel();
+    state.screenshot.result_rx = Some(rx);
+    let thread_name = if rgba_only {
+        "sola-screenshot-rgba"
+    } else {
+        "sola-screenshot-encode"
+    };
+    if let Err(e) = std::thread::Builder::new()
+        .name(thread_name.into())
+        .spawn(move || {
+            let t0 = Instant::now();
+            let result = (|| {
+                let rgba = pixels_to_rgba8(&raw, format, width, height, stride, y_invert)?;
+                let convert_ms = t0.elapsed().as_millis();
+                let t1 = Instant::now();
+                if rgba_only {
+                    write_rgba(&path, &rgba)?;
+                } else {
+                    write_png(&path, width, height, &rgba)?;
+                }
+                let write_ms = t1.elapsed().as_millis();
+                info!(
+                    path = %path.display(),
+                    convert_ms,
+                    write_ms,
+                    rgba_only,
+                    total_ms = t0.elapsed().as_millis(),
+                    "screenshot: worker finished"
+                );
+                Ok(ShotDone {
+                    path,
+                    width,
+                    height,
+                    format: if rgba_only {
+                        CaptureFormat::Rgba
+                    } else {
+                        CaptureFormat::Png
+                    },
+                })
+            })();
+            let _ = tx.send(result);
+        })
+    {
+        state.screenshot.result_rx = None;
+        emit_shot_err(state, format!("failed to spawn screenshot worker: {e}"));
+    }
+}
+
+pub(crate) fn emit_shot_err(state: &mut AppData, msg: impl Into<String>) {
+    emit_err(state, Slot::Shot, msg);
+}
+
+fn emit_ok(state: &mut AppData, done: ShotDone) {
+    info!(
+        path = %done.path.display(),
+        width = done.width,
+        height = done.height,
+        ?done.format,
+        "screenshot saved"
+    );
     if let Some(reply) = state.screenshot.pending_reply.take() {
-        reply.ok(serde_json::json!({ "path": path }));
+        match done.format {
+            CaptureFormat::Png => {
+                reply.ok(serde_json::json!({ "path": done.path }));
+            }
+            CaptureFormat::Rgba => {
+                reply.ok(serde_json::json!({
+                    "path": done.path,
+                    "width": done.width,
+                    "height": done.height,
+                    "format": "rgba8",
+                }));
+            }
+        }
     }
 }
 
@@ -675,6 +817,7 @@ fn ready_snap(state: &AppData, slot: Slot) -> Option<ReadySnap> {
         y_invert: flight.y_invert,
         kind: match &flight.kind {
             CaptureKind::Png { path } => CaptureKind::Png { path: path.clone() },
+            CaptureKind::Rgba { path } => CaptureKind::Rgba { path: path.clone() },
             CaptureKind::Sample {
                 pointer,
                 origin,
@@ -709,6 +852,7 @@ fn finalize_ready(state: &mut AppData, slot: Slot) {
     let format = snap.format;
     let y_invert = snap.y_invert;
 
+    let rgba_only = matches!(&snap.kind, CaptureKind::Rgba { .. });
     match snap.kind {
         CaptureKind::Sample {
             pointer,
@@ -739,52 +883,28 @@ fn finalize_ready(state: &mut AppData, slot: Slot) {
                 Err(e) => emit_err(state, Slot::Sample, e),
             }
         }
-        CaptureKind::Png { path } => {
-            let copy_ms = Instant::now();
-            info!(
+        CaptureKind::Png { path } | CaptureKind::Rgba { path } => {
+            clear_flight(state, Slot::Shot);
+            complete_shot(
+                state,
+                raw,
+                format,
                 width,
                 height,
                 stride,
-                bytes = raw.len(),
-                copy_ms = copy_ms.elapsed().as_millis(),
-                "screenshot: SHM copied; encode offloaded to worker"
+                y_invert,
+                if rgba_only {
+                    CaptureKind::Rgba { path }
+                } else {
+                    CaptureKind::Png { path }
+                },
             );
-            clear_flight(state, Slot::Shot);
-
-            let (tx, rx) = mpsc::channel();
-            state.screenshot.result_rx = Some(rx);
-
-            if let Err(e) = std::thread::Builder::new()
-                .name("sola-screenshot-encode".into())
-                .spawn(move || {
-                    let t0 = Instant::now();
-                    let result = (|| {
-                        let rgba = pixels_to_rgba8(&raw, format, width, height, stride, y_invert)?;
-                        let convert_ms = t0.elapsed().as_millis();
-                        let t1 = Instant::now();
-                        write_png(&path, width, height, &rgba)?;
-                        let encode_ms = t1.elapsed().as_millis();
-                        info!(
-                            path = %path.display(),
-                            convert_ms,
-                            encode_ms,
-                            total_ms = t0.elapsed().as_millis(),
-                            "screenshot: encode worker finished"
-                        );
-                        Ok(path)
-                    })();
-                    let _ = tx.send(result);
-                })
-            {
-                state.screenshot.result_rx = None;
-                emit_err(
-                    state,
-                    Slot::Shot,
-                    format!("failed to spawn screenshot encode thread: {e}"),
-                );
-            }
         }
     }
+}
+
+fn write_rgba(path: &PathBuf, rgba: &[u8]) -> Result<(), String> {
+    fs::write(path, rgba).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
@@ -793,6 +913,9 @@ fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(),
     let mut encoder = png::Encoder::new(w, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // Fast still uses Adaptive filters (~2s on 5K debug). Fastest is
+    // fdeflate + Up filter.
+    encoder.set_compression(png::Compression::Fastest);
     let mut writer = encoder
         .write_header()
         .map_err(|e| format!("png header: {e}"))?;
@@ -805,7 +928,8 @@ fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(),
 /// Convert compositor SHM pixels to tightly-packed RGBA8.
 ///
 /// Uses the event's `stride` (not `width * bpp`) so 3-bpp formats like
-/// `Bgr888` work correctly.
+/// `Bgr888` work correctly. Large frames (selection freeze, 5K PNG) split
+/// rows across threads so Super+Shift+4 is not stuck on a single core.
 fn pixels_to_rgba8(
     src: &[u8],
     format: wl_shm::Format,
@@ -818,7 +942,54 @@ fn pixels_to_rgba8(
     let h = height as usize;
     let stride = stride as usize;
     let mut out = vec![0u8; w * h * 4];
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8);
+    if h < 64 || threads == 1 {
+        convert_rows(&mut out, src, format, w, h, stride, y_invert, 0, h)?;
+        return Ok(out);
+    }
 
+    let band = h.div_ceil(threads);
+    let row_bytes = w * 4;
+    std::thread::scope(|scope| {
+        let mut rest = out.as_mut_slice();
+        let mut y0 = 0;
+        let mut joins = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            if y0 >= h {
+                break;
+            }
+            let y1 = (y0 + band).min(h);
+            let (chunk, tail) = rest.split_at_mut((y1 - y0) * row_bytes);
+            rest = tail;
+            let start = y0;
+            joins.push(scope.spawn(move || {
+                convert_rows(chunk, src, format, w, h, stride, y_invert, start, y1)
+            }));
+            y0 = y1;
+        }
+        for join in joins {
+            join.join()
+                .map_err(|_| "screenshot convert thread panicked".to_string())??;
+        }
+        Ok::<(), String>(())
+    })?;
+    Ok(out)
+}
+
+fn convert_rows(
+    dest: &mut [u8],
+    src: &[u8],
+    format: wl_shm::Format,
+    w: usize,
+    h: usize,
+    stride: usize,
+    y_invert: bool,
+    y0: usize,
+    y1: usize,
+) -> Result<(), String> {
     let row_src = |y: usize| -> Result<&[u8], String> {
         let src_y = if y_invert { h - 1 - y } else { y };
         let start = src_y
@@ -839,7 +1010,7 @@ fn pixels_to_rgba8(
     match format {
         // Memory LE: B, G, R, A/X
         wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888 => {
-            for y in 0..h {
+            for y in y0..y1 {
                 let row = row_src(y)?;
                 for x in 0..w {
                     let i = x * 4;
@@ -854,17 +1025,17 @@ fn pixels_to_rgba8(
                     } else {
                         row[i + 3]
                     };
-                    let o = (y * w + x) * 4;
-                    out[o] = r;
-                    out[o + 1] = g;
-                    out[o + 2] = b;
-                    out[o + 3] = a;
+                    let o = ((y - y0) * w + x) * 4;
+                    dest[o] = r;
+                    dest[o + 1] = g;
+                    dest[o + 2] = b;
+                    dest[o + 3] = a;
                 }
             }
         }
         // Memory LE: R, G, B, A/X
         wl_shm::Format::Abgr8888 | wl_shm::Format::Xbgr8888 => {
-            for y in 0..h {
+            for y in y0..y1 {
                 let row = row_src(y)?;
                 for x in 0..w {
                     let i = x * 4;
@@ -879,11 +1050,11 @@ fn pixels_to_rgba8(
                     } else {
                         row[i + 3]
                     };
-                    let o = (y * w + x) * 4;
-                    out[o] = r;
-                    out[o + 1] = g;
-                    out[o + 2] = b;
-                    out[o + 3] = a;
+                    let o = ((y - y0) * w + x) * 4;
+                    dest[o] = r;
+                    dest[o + 1] = g;
+                    dest[o + 2] = b;
+                    dest[o + 3] = a;
                 }
             }
         }
@@ -893,7 +1064,7 @@ fn pixels_to_rgba8(
         // (seed cyan `#00d4ff` became yellow `#ffd400`, slate `#161b22` → brown).
         // Use event stride; pack α=255.
         wl_shm::Format::Bgr888 => {
-            for y in 0..h {
+            for y in y0..y1 {
                 let row = row_src(y)?;
                 for x in 0..w {
                     let i = x * 3;
@@ -903,11 +1074,11 @@ fn pixels_to_rgba8(
                     let r = row[i];
                     let g = row[i + 1];
                     let b = row[i + 2];
-                    let o = (y * w + x) * 4;
-                    out[o] = r;
-                    out[o + 1] = g;
-                    out[o + 2] = b;
-                    out[o + 3] = 255;
+                    let o = ((y - y0) * w + x) * 4;
+                    dest[o] = r;
+                    dest[o + 1] = g;
+                    dest[o + 2] = b;
+                    dest[o + 3] = 255;
                 }
             }
         }
@@ -915,8 +1086,7 @@ fn pixels_to_rgba8(
             return Err(format!("unsupported wl_shm format: {other:?}"));
         }
     }
-
-    Ok(out)
+    Ok(())
 }
 
 // ---------- Wayland Dispatch ----------
@@ -1126,6 +1296,23 @@ mod tests {
         // After invert: first out row is former last → R=2
         assert_eq!(&out[0..4], &[2, 0, 0, 255]);
         assert_eq!(&out[4..8], &[0, 0, 1, 255]);
+    }
+
+    #[test]
+    fn tall_xrgb_hits_parallel_bands() {
+        // h>=64 takes the threaded convert path when more than one CPU is
+        // available. One unique R per row so a band split cannot swap rows.
+        let h = 80u32;
+        let mut src = vec![0u8; 4 * h as usize];
+        for y in 0..h as usize {
+            src[y * 4 + 2] = y as u8; // memory B,G,R,X → R = y
+        }
+        let out = pixels_to_rgba8(&src, wl_shm::Format::Xrgb8888, 1, h, 4, false).unwrap();
+        assert_eq!(out.len(), 4 * h as usize);
+        for y in 0..h as usize {
+            assert_eq!(out[y * 4], y as u8, "row {y}");
+            assert_eq!(&out[y * 4 + 1..y * 4 + 4], &[0, 0, 255]);
+        }
     }
 
     #[test]

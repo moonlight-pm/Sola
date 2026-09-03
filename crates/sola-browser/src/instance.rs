@@ -156,7 +156,11 @@ pub fn handoff(url: Option<&str>) -> Result<(), String> {
     let mut stream =
         UnixStream::connect(&sock).map_err(|e| format!("connect {}: {e}", sock.display()))?;
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let line = match url.map(str::trim).filter(|s| !s.is_empty()) {
+    let normalized = url
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::util::normalize_url);
+    let line = match normalized.as_deref() {
         Some(u) => format!("{u}\n"),
         None => format!("{ACTIVATE}\n"),
     };
@@ -164,7 +168,7 @@ pub fn handoff(url: Option<&str>) -> Result<(), String> {
         .write_all(line.as_bytes())
         .map_err(|e| format!("write handoff: {e}"))?;
     tracing::info!(
-        url = url.unwrap_or(ACTIVATE),
+        url = normalized.as_deref().unwrap_or(ACTIVATE),
         "handed off to existing chrome"
     );
     Ok(())

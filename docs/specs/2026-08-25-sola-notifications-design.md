@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented (shell HUD + browser wrap + Workspaces cards). KenHerbert desk card confirmed 2026-08-27.  
+**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (count on the bell / no Clear / unseen accent) **installed** `shell` release 2026-09-03. Grouped pile (no cap 20; ≤4 list as rows; tag replace) + Super+Tab unseen count marks (bell/focus ack) **installed** `kit`+`shell` release 2026-09-03.  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -33,9 +33,11 @@ process exit. Notifications: Workspaces done-while-unfocused, web
 | × | Dismiss without raising. Not missed. |
 | Expire | ~6s with no interaction → retract into the bar → missed pile. |
 | Stack | Max 3 live cards; older live overflow goes straight to the pile. |
-| Pile | Menubar `lucide/bell` + count in the right cluster (same family as mail unread). Hidden at 0. Click opens a list under the chip (menu overlay). Session-only; cap 30. |
-| Pile click | Same as card click (raise source). Pile × / Clear removes. |
-| Replace | Same `app_id` + `tag` replaces an in-flight banner. |
+| Pile | Menubar `lucide/bell` + pile count in the right cluster (same glyph+numeral rhythm as the mail unread chip). Hidden at 0. Accent only while the pile is unseen; **clicking the bell returns it to normal chrome** (panel may stay open). Click opens a list under the chip (menu overlay). Session-only; **no item cap**. Overlay sizes to **visible groups**, up to the usable area under the menubar; the list scrolls if it still overflows. |
+| Pile grouping | Missed items group by `app_id`. Up to 4 from one app list as rows (bell count matches). Five or more collapse to an app header + count; click to expand (newest 30; “N more”). Header × dismisses that app’s pile, not a global Clear. Same (`app_id`, `tag`) replaces in the pile too. Super+Tab does **not** drain the pile. |
+| Pile click | Same as card click (raise source) and closes the panel. Pile × dismisses one row. No Clear. |
+| Switcher mark | Super+Tab shows a kit `count_mark` on the app icon: **unseen** live + pile for that `app_id`. Opening the pile or raising/focusing the app (not FFM hover) marks those items seen — the pile stays until × / activate. A later notification badges again. Mail uses `MailStatus` inbox unread (not the pile). Hidden at 0; `99+` at 100. Super+Tab does **not** drain the pile. |
+| Replace | Same `app_id` + `tag` replaces an in-flight banner **and** a missed pile row. |
 | Keyboard | Overlay does **not** steal focus. Pile is a menu panel (Escape dismisses). |
 | Sound | Not this slice. |
 | Actions | `Notification.actions` not this slice. |
@@ -85,14 +87,17 @@ Sola is the DE — Chromium’s Linux libnotify path has no daemon here.
   screen top-right under the menubar).
 - `NotificationActivate` with `tab_id` → `SetActiveTab`.
 
+**Wrapper** (`sola-wrapper <id>`): same CEF inject and helper IPC. Chrome drains the queue, shows the Allow / Block overlay, and emits `AppNotification` with `app_id` = the wrapper id (so click raises Slack, not Browser). Grants live in `~/.config/sola/wrapper/<id>/notifications.json`.
+
 Denied / default: constructor is a no-op. Permission `"default"` until
 the user chooses.
 
 ## Out of scope
 
-Do Not Disturb, grouping, persistence across session, action buttons,
-sound, image/icon from the page, `org.freedesktop.Notifications`,
-promoting remaining `AppToast` senders (launch fail / exit).
+Do Not Disturb, persistence across session, action buttons, sound,
+image/icon from the page, `org.freedesktop.Notifications`, promoting
+remaining `AppToast` senders (launch fail / exit). Pile grouping by
+`app_id` is in.
 
 ## Implementation status
 
@@ -100,10 +105,11 @@ promoting remaining `AppToast` senders (launch fail / exit).
 |------|--------|
 | Freeze | **this document** |
 | Bus topics | **done** (`AppNotification`, `NotificationActivate`) |
-| Shell HUD + pile | **done** |
-| Browser intercept + permission | **done** (no Native ctor / no `Notification.prototype`; origin keys canonical) |
+| Shell HUD + pile | **done** (grouped; ≤4 list as rows; 5+ collapse; tag replace; Super+Tab unseen count mark) |
+| Browser intercept + permission | **done** (no Native ctor; dummy must not inherit `Notification.prototype`; origin keys canonicalized) |
+| Wrapper intercept + permission | **smoked** 2026-08-29 (same inject; emit with wrapper `app_id`; grants under wrapper data dir) |
 | Workspaces done → notification | **done** (title `{project} · {tab}`, body `grok is done`; waiting is `needs attention`) |
-| Dogfood | KenHerbert: pending → displayed, graphite card top-right (browser install 2026-08-27 second). Workspaces cards installed on this branch. |
+| Dogfood | KenHerbert Allow → displayed + top-right desk card (`install browser` 2026-08-27). Workspaces cards on this merge. |
 
 ## Decision log
 
@@ -113,3 +119,9 @@ promoting remaining `AppToast` senders (launch fail / exit).
 | 2026-08-25 | Drop-from-bar + missed-pile chip; click raises source |
 | 2026-08-25 | Browser via JS intercept, not a D-Bus notification server |
 | 2026-08-25 | No action buttons / sound in v1 |
+| 2026-09-02 | Pile cap 20 (drop oldest); no Clear; chip highlight returns on click; panel grows to usable height |
+| 2026-09-03 | Count on the bell (same glyph+numeral rhythm as mail unread) |
+| 2026-09-02 | Bell accent is unseen-only; click acknowledges (normal menubar fg) |
+| 2026-09-03 | Drop pile cap 20. Group by app; overlay height follows collapsed groups. Super+Tab count mark (live+pile; Mail unread). Raise does not drain. |
+| 2026-09-03 | Switcher mark is unseen attention, not pile length. Bell open or raise-focus acks the badge; pile stays. FFM does not ack. |
+| 2026-09-03 | Bell vs list: ≤4 from one app list as rows; 5+ collapse. Same tag replaces in the pile. |

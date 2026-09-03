@@ -95,5 +95,12 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/scan".into(),
             ..Default::default()
         },
+        Application {
+            app_id: "sola-spotify".into(),
+            label: "Spotify".into(),
+            command: "/opt/sola/bin/sola-spotify".into(),
+            icon: "lucide/disc".into(),
+            ..Default::default()
+        },
     ]
 }

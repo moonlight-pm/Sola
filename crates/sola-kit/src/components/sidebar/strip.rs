@@ -5,23 +5,27 @@
 
 use std::collections::HashMap;
 
+use iced::advanced::Renderer as _;
 use iced::advanced::layout::{self, Layout};
+use iced::advanced::overlay;
 use iced::advanced::renderer;
-use iced::advanced::widget::{tree, Tree};
+use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget};
 use iced::mouse;
 use iced::time::Instant;
 use iced::window;
-use iced::advanced::Renderer as _;
 use iced::{
-    animation::Easing, Animation, Background, Color, Element, Event, Length, Point, Rectangle,
-    Shadow, Size, Transformation, Vector,
+    Animation, Background, Color, Element, Event, Length, Point, Rectangle, Shadow, Size,
+    Transformation, Vector, animation::Easing,
 };
 
 use crate::components::style::{CHROME_SURFACE, alpha};
 
 use super::gesture::{Dest, Drop, Event as SidebarEvent, Msg};
-use super::{px, PANEL_REORDER_ANIM_MS, PANEL_REORDER_THRESHOLD, group_well_style};
+use super::{
+    PANEL_REORDER_ANIM_MS, PANEL_REORDER_THRESHOLD, group_well_style, pocket_fill, px,
+    well_select_plate,
+};
 
 const WELL_PAD: i32 = 3;
 const ROW_GAP: i32 = 3;
@@ -49,6 +53,7 @@ pub struct LeafMeta {
     pub id: String,
     pub kind: LeafKind,
     pub group: Option<String>,
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,11 +232,7 @@ fn slot_at_group(y: i32, empty_at: usize, rects: &[Rest], view: &[ViewRow]) -> S
         .position(|b| b.start != empty_at && y >= b.y && y < b.y + b.h);
     let mut to = if let Some(hi) = hit {
         let b = &blocks[hi];
-        if y < b.y + b.h / 2 {
-            b.start
-        } else {
-            b.end
-        }
+        if y < b.y + b.h / 2 { b.start } else { b.end }
     } else {
         blocks
             .iter()
@@ -269,11 +270,7 @@ fn slot_at(y: i32, origin: usize, rects: &[Rest], view: &[ViewRow], as_group: bo
         if (is_first_after_group(view, hit) || is_last_member(view, hit)) && hit < origin {
             hit
         } else if is_last_member(view, hit) || is_first_after_group(view, hit) {
-            if top_half {
-                hit
-            } else {
-                hit + 1
-            }
+            if top_half { hit } else { hit + 1 }
         } else if hit < origin {
             hit
         } else {
@@ -343,6 +340,12 @@ fn group_spans(view: &[ViewRow], absorb: Option<&str>) -> Vec<(usize, usize)> {
     spans
 }
 
+fn well_color(meta: &[LeafMeta], gid: Option<&str>) -> Option<Color> {
+    meta.iter()
+        .find(|m| m.kind == LeafKind::Header && m.group.as_deref() == gid)
+        .and_then(|m| m.color)
+}
+
 fn group_end(view: &[ViewRow], i: usize) -> bool {
     let spans = group_spans(view, None);
     for &(start, end) in &spans {
@@ -372,9 +375,7 @@ fn span_of(meta: &[LeafMeta], origin: usize) -> (usize, usize) {
     }
     let gid = meta[origin].group.as_deref();
     let mut end = origin + 1;
-    while end < meta.len()
-        && meta[end].kind == LeafKind::Item
-        && meta[end].group.as_deref() == gid
+    while end < meta.len() && meta[end].kind == LeafKind::Item && meta[end].group.as_deref() == gid
     {
         end += 1;
     }
@@ -425,13 +426,7 @@ fn apply_dest(st: &mut StripState) -> bool {
     if st.rest.len() != st.view.len() {
         return false;
     }
-    let next = slot_at(
-        st.pointer,
-        st.hole_at,
-        &st.rest,
-        &st.view,
-        held.as_group,
-    );
+    let next = slot_at(st.pointer, st.hole_at, &st.rest, &st.view, held.as_group);
     st.absorb = next.absorb;
     let Some(new_at) = move_hole(st.hole_at, next.slot) else {
         return false;
@@ -575,10 +570,7 @@ fn drop_of(held: &Held, view: &[ViewRow], hole_at: usize, absorb: Option<String>
         });
         return Some(Drop {
             id,
-            dest: Dest::Join {
-                section: g,
-                before,
-            },
+            dest: Dest::Join { section: g, before },
         });
     }
     let next = view.iter().skip(hole_at + 1).find(|r| !r.hole);
@@ -717,10 +709,11 @@ where
                 ROW_INSET
             };
             let child_limits = limits.loose().max_width((width - inset * 2.0).max(0.0));
-            let child =
-                self.leaves[i]
-                    .as_widget_mut()
-                    .layout(&mut tree.children[i], renderer, &child_limits);
+            let child = self.leaves[i].as_widget_mut().layout(
+                &mut tree.children[i],
+                renderer,
+                &child_limits,
+            );
             let h = px(child.size().height).max(1.0) as i32;
             rest.push(Rest { y, h });
             pos[i] = Some((y, h, inset));
@@ -733,10 +726,7 @@ where
             let ghost_y = if st.dragging {
                 st.pointer - held.grab - if held.as_group { WELL_PAD } else { 0 }
             } else {
-                st.rest
-                    .get(st.hole_at)
-                    .map(|r| r.y)
-                    .unwrap_or(PAD_TOP)
+                st.rest.get(st.hole_at).map(|r| r.y).unwrap_or(PAD_TOP)
             };
             let mut gy = ghost_y;
             for i in held.start..held.end {
@@ -746,10 +736,11 @@ where
                     ROW_INSET
                 };
                 let child_limits = limits.loose().max_width((width - inset * 2.0).max(0.0));
-                let child =
-                    self.leaves[i]
-                        .as_widget_mut()
-                        .layout(&mut tree.children[i], renderer, &child_limits);
+                let child = self.leaves[i].as_widget_mut().layout(
+                    &mut tree.children[i],
+                    renderer,
+                    &child_limits,
+                );
                 let h = px(child.size().height).max(1.0) as i32;
                 pos[i] = Some((gy, h, inset));
                 nodes[i] = child;
@@ -771,12 +762,7 @@ where
                     if old == ny {
                         None
                     } else {
-                        Some(
-                            old_visual
-                                .get(&row.id)
-                                .copied()
-                                .unwrap_or(old as f32),
-                        )
+                        Some(old_visual.get(&row.id).copied().unwrap_or(old as f32))
                     }
                 });
             if let Some(y0) = y0 {
@@ -909,7 +895,10 @@ where
                         start,
                         end,
                         ids,
-                        as_group: self.meta.get(origin).is_some_and(|m| m.kind == LeafKind::Header),
+                        as_group: self
+                            .meta
+                            .get(origin)
+                            .is_some_and(|m| m.kind == LeafKind::Header),
                         h: h.max(1),
                         grab,
                     });
@@ -960,12 +949,9 @@ where
                         st.absorb = None;
                     } else {
                         st.settling = true;
-                        st.ids_at_release =
-                            self.meta.iter().map(|m| m.id.clone()).collect();
+                        st.ids_at_release = self.meta.iter().map(|m| m.id.clone()).collect();
                         if let Some(drop) = dest {
-                            shell.publish((self.on_action)(Msg::Outcome(
-                                SidebarEvent::Drop(drop),
-                            )));
+                            shell.publish((self.on_action)(Msg::Outcome(SidebarEvent::Drop(drop))));
                         }
                     }
                 }
@@ -1005,7 +991,6 @@ where
         let st = tree.state.downcast_ref::<StripState>();
         let now = Instant::now();
         let children: Vec<Layout<'_>> = layout.children().collect();
-        let well = group_well_style();
         for (start, end) in group_spans(&st.view, st.absorb.as_deref()) {
             if start >= st.rest.len() || end == 0 || end - 1 >= st.rest.len() {
                 continue;
@@ -1025,6 +1010,10 @@ where
                 width: (layout.bounds().width - 4.0).max(0.0),
                 height: (bottom - top).max(0.0),
             };
+            let well = group_well_style(well_color(
+                &self.meta,
+                st.view.get(start).and_then(|r| r.group.as_deref()),
+            ));
             if let Some(bg) = well.background {
                 renderer.fill_quad(
                     renderer::Quad {
@@ -1083,126 +1072,186 @@ where
         if let Some(held) = held {
             if st.dragging || st.settling {
                 renderer.with_layer(*viewport, |renderer| {
-                let mut plate: Option<Rectangle> = None;
-                let show_plate = st.dragging;
-                for i in held.start..held.end {
-                    if let Some(child_layout) = children.get(i) {
-                        let b = child_layout.bounds();
-                        plate = Some(match plate {
-                            None => b,
-                            Some(p) => {
-                                let x = p.x.min(b.x);
-                                let y = p.y.min(b.y);
-                                let r = (p.x + p.width).max(b.x + b.width);
-                                let bot = (p.y + p.height).max(b.y + b.height);
-                                Rectangle {
-                                    x,
-                                    y,
-                                    width: r - x,
-                                    height: bot - y,
+                    let mut plate: Option<Rectangle> = None;
+                    let show_plate = st.dragging;
+                    for i in held.start..held.end {
+                        if let Some(child_layout) = children.get(i) {
+                            let b = child_layout.bounds();
+                            plate = Some(match plate {
+                                None => b,
+                                Some(p) => {
+                                    let x = p.x.min(b.x);
+                                    let y = p.y.min(b.y);
+                                    let r = (p.x + p.width).max(b.x + b.width);
+                                    let bot = (p.y + p.height).max(b.y + b.height);
+                                    Rectangle {
+                                        x,
+                                        y,
+                                        width: r - x,
+                                        height: bot - y,
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
-                }
-                if show_plate {
-                if let Some(b) = plate {
-                    if held.as_group {
-                        let bounds = Rectangle {
-                            x: layout.bounds().x + 2.0,
-                            y: b.y - WELL_PAD as f32,
-                            width: (layout.bounds().width - 4.0).max(0.0),
-                            height: b.height + 2.0 * WELL_PAD as f32,
-                        };
-                        if let Some(bg) = well.background {
-                            let bg = match bg {
-                                Background::Color(c) => {
-                                    Background::Color(alpha(c, 0.8))
+                    if show_plate {
+                        if let Some(b) = plate {
+                            if held.as_group {
+                                let bounds = Rectangle {
+                                    x: layout.bounds().x + 2.0,
+                                    y: b.y - WELL_PAD as f32,
+                                    width: (layout.bounds().width - 4.0).max(0.0),
+                                    height: b.height + 2.0 * WELL_PAD as f32,
+                                };
+                                let well = group_well_style(
+                                    self.meta.get(held.start).and_then(|m| m.color),
+                                );
+                                if let Some(bg) = well.background {
+                                    let bg = match bg {
+                                        Background::Color(c) => Background::Color(alpha(c, 0.8)),
+                                        other => other,
+                                    };
+                                    let mut border = well.border;
+                                    border.color = alpha(border.color, 0.8);
+                                    renderer.fill_quad(
+                                        renderer::Quad {
+                                            bounds,
+                                            border,
+                                            shadow: Shadow {
+                                                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                                                offset: Vector::new(0.0, 2.0),
+                                                blur_radius: 8.0,
+                                            },
+                                            snap: well.snap,
+                                        },
+                                        bg,
+                                    );
                                 }
-                                other => other,
-                            };
-                            let mut border = well.border;
-                            border.color = alpha(border.color, 0.8);
-                            renderer.fill_quad(
-                                renderer::Quad {
-                                    bounds,
-                                    border,
-                                    shadow: Shadow {
-                                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                                        offset: Vector::new(0.0, 2.0),
-                                        blur_radius: 8.0,
+                            } else {
+                                renderer.fill_quad(
+                                    renderer::Quad {
+                                        bounds: Rectangle {
+                                            x: layout.bounds().x + 1.0,
+                                            y: b.y,
+                                            width: (layout.bounds().width - 2.0).max(0.0),
+                                            height: b.height,
+                                        },
+                                        border: iced::Border {
+                                            radius: 4.0.into(),
+                                            color: Color::TRANSPARENT,
+                                            width: 0.0,
+                                        },
+                                        shadow: Shadow {
+                                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                                            offset: Vector::new(0.0, 2.0),
+                                            blur_radius: 8.0,
+                                        },
+                                        snap: true,
                                     },
-                                    snap: well.snap,
-                                },
-                                bg,
+                                    Background::Color(
+                                        self.meta
+                                            .get(held.start)
+                                            .and_then(|m| {
+                                                m.group.as_ref().map(|_| pocket_fill(m.color))
+                                            })
+                                            .map(well_select_plate)
+                                            .unwrap_or_else(|| well_select_plate(CHROME_SURFACE)),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    for i in held.start..held.end {
+                        if let (Some(child_layout), Some(child_tree), Some(child)) =
+                            (children.get(i), tree.children.get(i), self.leaves.get(i))
+                        {
+                            child.as_widget().draw(
+                                child_tree,
+                                renderer,
+                                theme,
+                                style,
+                                *child_layout,
+                                cursor,
+                                viewport,
                             );
                         }
-                    } else {
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: layout.bounds().x + 1.0,
-                                    y: b.y,
-                                    width: (layout.bounds().width - 2.0).max(0.0),
-                                    height: b.height,
-                                },
-                                border: iced::Border {
-                                    radius: 4.0.into(),
-                                    color: Color::TRANSPARENT,
-                                    width: 0.0,
-                                },
-                                shadow: Shadow {
-                                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                                    offset: Vector::new(0.0, 2.0),
-                                    blur_radius: 8.0,
-                                },
-                                snap: true,
-                            },
-                            Background::Color(Color {
-                                a: 0.5,
-                                ..CHROME_SURFACE
-                            }),
-                        );
                     }
-                }
-                }
-                for i in held.start..held.end {
-                    if let (Some(child_layout), Some(child_tree), Some(child)) = (
-                        children.get(i),
-                        tree.children.get(i),
-                        self.leaves.get(i),
-                    ) {
-                        child.as_widget().draw(
-                            child_tree,
-                            renderer,
-                            theme,
-                            style,
-                            *child_layout,
-                            cursor,
-                            viewport,
-                        );
-                    }
-                }
                 });
             }
         }
         let _ = style;
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        // Without this, focus / select-all never reach an inline header
+        // field (the default Widget::operate is a no-op).
+        if tree.children.len() != self.leaves.len() {
+            tree.diff_children(&self.leaves);
+        }
+        for ((child, child_tree), child_layout) in self
+            .leaves
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(layout.children())
+        {
+            child
+                .as_widget_mut()
+                .operate(child_tree, child_layout, renderer, operation);
+        }
+    }
+
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-        _renderer: &iced::Renderer,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
     ) -> mouse::Interaction {
         let st = tree.state.downcast_ref::<StripState>();
         if st.dragging {
-            mouse::Interaction::Grabbing
-        } else {
-            mouse::Interaction::None
+            return mouse::Interaction::Grabbing;
         }
+        self.leaves
+            .iter()
+            .zip(tree.children.iter())
+            .zip(layout.children())
+            .map(|((child, child_tree), child_layout)| {
+                child.as_widget().mouse_interaction(
+                    child_tree,
+                    child_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            })
+            .max()
+            .unwrap_or(mouse::Interaction::None)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        // Header color pickers (and any future overlay) live on a leaf.
+        overlay::from_children(
+            &mut self.leaves,
+            tree,
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 

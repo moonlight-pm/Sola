@@ -169,8 +169,8 @@ This is the main intentional break from macOS chrome.
 
 - **New windows without a zone assignment float** at the **client-requested size** (centered by the compositor). The shell emits `Topic::WindowFloating` so kit apps know to draw CSD (titlebar / drag / close).
 - **Zoning is opt-in** (Meta+numpad snaps). A saved zone assignment still restores on relaunch; explicit float (`Meta`+numpad `*`) persists `Zone::Float` + float geometry.
-- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients.
-- **Floating windows draw client decorations** (kit `titlebar` / `floating_frame` when floating). Mental model: **float = CSD + app size; zoned = no title bar + zone frame**.
+- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients. The menubar **Window** menu (zones, float, hide, cycle) is the mouse path for those compositor actions.
+- **Floating windows draw client decorations** (kit `titlebar` / `floating_frame` when floating). The chrome is a **rounded rectangle on all four corners**; content is clipped to that curve. Mental model: **float = CSD + app size; zoned = no title bar + zone frame**.
 
 ### Implications for visual design
 
@@ -190,11 +190,13 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Menubar | Menu bar | Left: system + app menus. Right: status (stats, clock). Compact, quiet, high scanability. |
 | App menus | Menu bar menus | Standard hierarchy, separators, key equivalents. |
 | Launcher | Spotlight | Single focused field + results list; dimmed backdrop; not a dashboard. |
-| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. |
-| Stat indicators | Menu bar extras | Separate items (CPU, GPU, MEM, RX, TX) like other status items — not stacked dual-line widgets. |
+| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. Count mark on the icon is pending attention (live + pile; Mail unread). |
+| Stat indicators | Menu bar extras | Right cluster is four phrases (icon extras, percents, rates, clock). CPU / GPU / MEM / RX / TX show a muted label plus a fixed btop-style dithered pixel graph (numbers live in the dropdown). |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
+| Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph **left of volume**; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
+| Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum **right of Bluetooth**, with the same phrase gap as CPU on its other side; click the bars for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
 | Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
-| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile in the right cluster. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
+| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile is a bell + count in the right cluster, grouped by app (no Clear; no cap). Super+Tab carries a count mark on the icon. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 
 ---
 

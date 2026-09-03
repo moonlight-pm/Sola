@@ -61,9 +61,11 @@ pub fn is_present() -> bool {
 use std::fs;
 use std::io;
 
-/// URL for the official Spotify-hosted CEF tarball matching `CEF_VERSION`.
-/// Variant is `_linux64_minimal` (drops the C++ wrapper static lib and the
-/// example binaries we don't ship).
+/// URL for the official CEF tarball matching `CEF_VERSION` (hosted on
+/// cef-builds.spotifycdn.com). Variant is `_linux64_minimal` (drops the
+/// C++ wrapper static lib and the example binaries we don't ship).
+/// These builds are `proprietary_codecs=false` (no H.264/AAC). Same pin
+/// with codecs: `scripts/cef-codecs/`.
 fn tarball_url() -> String {
     // Spotify URL-encodes the '+' in the version as '%2B'.
     let encoded = CEF_VERSION.replace('+', "%2B");

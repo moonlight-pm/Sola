@@ -25,6 +25,7 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    - **A–Z** (`arrow-down-a-z`) — alphabetical sort  
    - **Recent** (`history`) — most recent player activity first
      (`LastPlayed` / install `LastUpdated`)  
+     Sort mode persists in `~/.config/sola/arcade-prefs.json`.  
    - **Ready to play only** (`circle-check`, toggle, **on by default**) —
      Steam-style filter: only fully installed titles. Turn **off** to also
      list uninstalled games from activity history (faded banner + **Install**).
@@ -35,6 +36,9 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    Steam **in the background** and updates the cache. The first launch (no
    cache yet) shows an **initial scan** status until the first scan finishes;
    later opens use the cache and stay quiet while the background refresh runs.
+   Arcade also **watches** each library’s `steamapps/` (install manifests and
+   `libraryfolders.vdf`); Install/Uninstall in Steam updates the list after a
+   short debounce without Meta+R.
 4. Each row uses Steam **`library_hero`** art (when cached on disk) as a faded
    full-width background. Banners are **decoded lazily** for rows in the
    scroll viewport (plus a small overscan), so first paint is not blocked by
@@ -54,7 +58,9 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    - All other rows’ Play is disabled
    - List **scroll position is preserved** (Play→Stop does not jump to top)
 6. **Stop** (on the active row, or menu Meta+Shift+S) ends the session via
-   `CloseApp` on `steam-game-<id>`.
+   `CloseApp` on `steam-game-<id>`, then Arcade-owned nest processes only
+   (`--run` / `--nested-steam` / that gamescope). It does not `pkill` a
+   Steam `AppId=` you started outside Arcade.
 7. **Quit from the game’s own menu** ends the game process; Arcade then
    stops the **nested** Steam client so the gamescope host closes (does not
    touch a Steam you started outside Arcade).
@@ -76,11 +82,18 @@ which aborted the Wayland backend).
 Nest rules:
 
 - **Steam not running** →  
-  `gamescope … -- sola-arcade --nested-steam <id>`  
+  `gamescope … --cursor-scale-height <H> -- sola-arcade --nested-steam <id>`  
   which rewrites desktop identity and runs `steam -nofriendsui -applaunch <id>`  
-  (never host `-f`; **no `-e`**).
-- **Steam already open** → bare `steam -applaunch` only (no nest). Arcade
-  **will not** force-kill Steam. Quit Steam yourself for a nest on the next Play.
+  (never host `-f`; **no `-e`**). Nested X cursors are downsampled so the
+  pointer over the game stays desktop-sized (gamescope would otherwise hand
+  the fake-monitor cursor to River 1:1).
+- **Steam already open** → Play is **refused** (status: quit Steam first).
+  Arcade **will not** force-kill Steam and **will not** `-applaunch` into the
+  live client (that often takes exclusive fullscreen on Sola). Quit Steam,
+  then Play nests.
+
+A second Arcade from the launcher **raises** the existing window (no second
+Fit driver). `--run` / `--nested-steam` helpers are not that singleton.
 
 ### Steam prepare (shaders / updates) — automatic
 
@@ -110,6 +123,7 @@ closes. **Stop** in Arcade does the same path via `CloseApp` + local pkill.
 | **Nest size** | Per title, next to Play: **Fit to window** or a resolution (720p / 1080p / 1440p / 4K / native, dropping sizes above the display). Default **1080p**. Persisted in `~/.config/sola/arcade-nest.json`. Fit uses the display size **at Play**, then follows the host frame (zone/float): Arcade writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` on the nested X root and moves the focused game to `0,0`. Locked resolutions stay put. Arcade must stay running for live follow. |
 | **In-game resolution** | Titles with a picker can still choose a lower internal res than the nest. Titles without one (Factorio) use the nest as their display — keep **fullscreen on** for Fit. Windowed-in-game ignores the nest resize and can leave clicks dead. |
 | **Scaler** | gamescope `-S fit` letterbox-scales nested content into the host when the two sizes differ (aspect preserved, black bars). Fit aims for 1:1 so the letterbox goes away after the host settles. |
+| **Pointer** | Host cursor is gamescope’s nested X cursor, scaled to ~36px via `--cursor-scale-height` (same as initial `-H`). Without that, Factorio-class titles look like a giant pointer over the nest. |
 
 While a nest is up, Arcade publishes a catalog/menu label so the **menubar and
 app switcher show the game title**. River rewrites empty gamescope `app_id` →

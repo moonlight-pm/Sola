@@ -12,24 +12,31 @@ pub mod groups;
 pub mod input;
 pub mod instance;
 pub mod integration;
+pub mod js_dialog;
+pub mod media;
 pub mod notify;
 pub mod page_menu;
+pub mod page_paste;
 pub mod paste_js;
+pub mod popup;
 pub mod profiles;
 pub mod run;
 pub mod session;
 pub mod shader;
 pub mod tab_cache;
 pub mod util;
+pub mod visit_history;
 #[cfg(feature = "bitwarden")]
 pub mod vault;
 
 pub use app::Msg;
 pub use cef::CefEngine;
 pub use engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, EditCmd, Engine,
-    FrameReceiver, FrameSlot, HistoryEntry, ImeCaret, ImeHandle, NavCmd, PageContext,
-    PageMenusHandle, PasskeysHandle, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ChromeTabRequest, ClipboardHandle, Cmd, CursorHandle, DevToolsEvent,
+    DevToolsHandle, DownloadsHandle, EditCmd, Engine, FindResult, FindResultsHandle, FrameReceiver,
+    FrameSlot, HistoryEntry, ImeCaret, ImeHandle, JsDialogsHandle, NavCmd, PageContext,
+    PageMenusHandle, PaintSurface, PasskeysHandle, PendingFrame, TabId, TabInfo, TabsHandle,
+    TaggedFrame,
 };
 pub use input::CursorKind;
 pub use run::run;

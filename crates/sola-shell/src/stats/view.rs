@@ -1,7 +1,7 @@
 //! Stat detail dropdown panels, rendered in the Menu window.
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, mouse_area, row, stack, text};
+use iced::widget::{column, container, row, text};
 use iced::{Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse};
 
 use crate::app::{Msg, Shell};
@@ -10,6 +10,8 @@ use crate::stats::cpu::Proc;
 use sola_kit::components::popover;
 
 pub const CARD_WIDTH: f32 = 320.0;
+/// Live overlay height (header + graph + process list). Caps at usable area.
+pub const CARD_HEIGHT: f32 = 420.0;
 
 /// Lower-contrast label text. We deliberately do NOT use
 /// `sola_kit::components::text::muted` here — on the dropdown card it resolves
@@ -34,36 +36,7 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
         Metric::Rx => rx_card(shell),
         Metric::Tx => tx_card(shell),
     };
-
-    // Anchor the card's left edge under the indicator, clamped so it never
-    // runs off the right screen edge (leaving an 8px gutter like the calendar).
-    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    let left = shell
-        .estimate_stat_x(metric)
-        .min((output_w - CARD_WIDTH - 8.0).max(0.0))
-        .max(0.0);
-
-    let positioned: Element<'_, Msg> = container(card)
-        .padding(Padding {
-            top: 0.0,
-            left,
-            right: 0.0,
-            bottom: 0.0,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Top)
-        .into();
-
-    let backdrop: Element<'_, Msg> =
-        mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-            .on_press(Msg::CloseMenu)
-            .into();
-
-    stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    crate::menu::host_card(card)
 }
 
 // ---------------------------------------------------------------------------

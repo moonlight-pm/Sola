@@ -1,34 +1,46 @@
 # Contributing to Sola
 
-This is the dev-setup guide for working on Sola from a NixOS box. If
-all you want is the prebuilt binaries, see `INSTALL.md` — this doc is
-for people who want to compile from source and iterate.
+Dev-setup for compiling Sola from source on a **NixOS** box and iterating.
+If you only want prebuilt binaries, see `INSTALL.md` — that path installs a
+GitHub release tarball (currently **404** for v0.1.1; recut needed).
 
-The Sola binaries hardcode several `/opt/sola/*` paths (`/opt/sola/bin`,
-`/opt/sola/share`, `/opt/sola/log`, the per-app CEF cache under
-`~/.cache/sola/cef-…`). The dev flow leans into that: `cargo make
-install` populates `/opt/sola/bin` and `/opt/sola/share` directly,
-mirroring what the released binaries expect.
+Sola is **NixOS-only**. Nix on another distro is not a supported host: every
+workspace binary bakes RUNPATH to `/run/current-system/sw/lib` and
+`/run/opengl-driver/lib`.
+
+The binaries hardcode `/opt/sola/bin`, `/opt/sola/share`, and `/opt/sola/log`.
+The CEF engine tree lives at `~/.cache/sola/cef-<version>/` (populated by
+`cargo make install-cef`). `cargo make install` writes `/opt/sola/{bin,share}`
+directly.
+
+There is no GNU Makefile. `cargo make` is a Cargo alias for `sola-make`
+(see `.cargo/config.toml`).
 
 ## Prerequisites
 
-- **NixOS.** Tested on `nixos-unstable` against the pinned nixpkgs in
-  `flake.lock`. Should also work on `nixos-25.05`+.
-- **Working GPU stack** — Mesa-only (Intel/AMD) or NVIDIA proprietary.
-- **A user with sudo** — `cargo make install` runs `sudo cp` to write
-  binaries to `/opt/sola/bin/`.
-- **Read access to the repo** — your SSH key registered with GitHub
-  and your account added as a collaborator on `moonlight-pm/Sola`.
+- **NixOS** x86_64 (`nixos-unstable` or `nixos-25.05`+).
+- **Working GPU stack** — Mesa (Intel/AMD) or NVIDIA proprietary.
+- **sudo** — first install creates `/opt/sola/` as root if needed.
+- **Repo access** — SSH key on GitHub, collaborator on `moonlight-pm/Sola`.
+- **Rust** — `rustc` **1.85+** / `cargo` (workspace edition 2024). rustup
+  stable is fine. Skip the rustup snippet below if `rustc --version` already
+  qualifies.
+
+## Two layers
+
+1. **Host (once)** — NixOS module: patched River 0.4.5, nix-ld for CEF,
+   GPU, fonts, kvm udev. Does **not** have to install Sola binaries.
+2. **Tree** — `cargo make install-cef` then `cargo make install` from a
+   clone. This is what you re-run when you change code.
+
+A clone plus `cargo make install` on a stock NixOS desktop, with no module,
+will not produce a working session (no patched `river` on PATH, no nix-ld
+set for `libcef.so`).
 
 ## 1. NixOS configuration
 
-The easiest path is to import the same `nixosModules.default` that
-release-installs use. It gives you everything Sola needs at runtime
-(patched River, nix-ld libraries for CEF's transitive deps, GStreamer
-plugins for the legacy WebKit stack, env vars, `hardware.graphics`),
-plus the FHS shim for `/opt/sola/`.
-
-In your `/etc/nixos/flake.nix`:
+Add Sola as a flake input and enable the module **without** the release
+tarball:
 
 ```nix
 {
@@ -43,180 +55,232 @@ In your `/etc/nixos/flake.nix`:
       modules = [
         ./configuration.nix
         sola.nixosModules.default
-        { services.sola.enable = true; }
+        {
+          services.sola.enable = true;
+          # Host runtime only. cargo make install owns /opt/sola.
+          # Leave this true (INSTALL.md) only when the GitHub tarball exists.
+          services.sola.installRelease = false;
+        }
       ];
     };
   };
 }
 ```
 
-> **Do not add `inputs.sola.inputs.nixpkgs.follows = "nixpkgs"`** — Sola
-> pins its own nixpkgs to a revision where `pkgs.river` (0.4.5, the
-> zig rewrite) and our carried Xwayland-destroy-state patch are known
-> to build cleanly. See `INSTALL.md`'s warning for the longer story.
+> **Do not add `inputs.sola.inputs.nixpkgs.follows = "nixpkgs"`.**
+> Sola pins its own nixpkgs to a revision where `pkgs.river` (0.4.5, the
+> zig rewrite) and the carried River/wlroots patches build cleanly. See
+> `INSTALL.md` for the failure mode if you follow.
 
-Then add Rust + a few dev tools to your `configuration.nix`:
+Camera / V4L2: systemd `uaccess` already grants the seat user RW on
+`/dev/video*`. Add `video` to the graphical user's `extraGroups` so
+tools that ignore logind ACLs (`ffmpeg`, some Electron apps) still
+open the node:
 
 ```nix
+users.users.<you>.extraGroups = [ "video" /* wheel, input, … */ ];
+```
+
+In `configuration.nix`, add **compile** tools the module does not ship
+(the module already has `patchelf`, `wayland`, `libxkbcommon`, `xwayland`,
+`alsa-lib`, `libpulseaudio`, Inter, and JetBrains Mono):
+
+```nix
+environment.extraOutputsToInstall = [ "dev" "lib" ];
+environment.sessionVariables.PKG_CONFIG_PATH =
+  "/run/current-system/sw/lib/pkgconfig:/run/current-system/sw/share/pkgconfig";
 environment.systemPackages = with pkgs; [
-  rustup
   pkg-config
   gcc
   git
-  zstd
+  curl
 ];
 ```
 
-`nixos-rebuild switch --flake /etc/nixos`, then:
+`extraOutputsToInstall` + `PKG_CONFIG_PATH` is how smithay-client-toolkit
+finds `xkbcommon.pc` on NixOS. Without it, the first iced crate build dies
+in pkg-config.
 
-```sh
-rustup default stable           # one-time
-rustup component add rust-src   # for rust-analyzer goto-definition into stdlib
+If you do **not** already have a new enough `rustc`:
+
+```nix
+environment.systemPackages = with pkgs; [ rustup /* …plus the list above */ ];
 ```
 
-## 2. Reclaim `/opt/sola/` from the module
+```sh
+rustup default stable
+rustup component add rust-src   # optional; rust-analyzer into stdlib
+```
 
-The module installs the *released* binaries and symlinks
-`/opt/sola/bin` → `${package}/bin`, `/opt/sola/share` →
-`${package}/share` so a Nix-only install works out of the box. For
-dev, you want your own `cargo make install` builds at those paths, so
-remove the symlinks first:
+Then:
+
+```sh
+sudo nixos-rebuild switch --flake /etc/nixos
+```
+
+Sanity checks after the rebuild:
+
+```sh
+river -version                  # 0.4.5 +xwayland
+which river
+ls /run/current-system/sw/share/nix-ld/lib | head
+fc-list : family | grep -E '^Inter$|^JetBrains Mono$'
+pkg-config --exists xkbcommon && echo xkbcommon-ok
+pkg-config --exists alsa && echo alsa-ok
+pkg-config --exists libpulse && echo pulse-ok
+```
+
+`installRelease = false` creates real directories at `/opt/sola/{bin,share,log}`
+and will replace leftover **symlinks** from a previous tarball install. It
+does not delete a real directory that already has your builds.
+
+If you previously enabled the module with `installRelease = true` (or the
+old default) and `/opt/sola/bin` is still a store symlink after rebuild:
 
 ```sh
 sudo rm -f /opt/sola/bin /opt/sola/share
+sudo mkdir -p /opt/sola/bin /opt/sola/share /opt/sola/log
 ```
 
-The activation script intentionally refuses to clobber a real
-directory at either path, so once you've populated `/opt/sola/bin`
-and `/opt/sola/share` via `cargo make install` (next step), future
-`nixos-rebuild` runs will leave your dev installs alone.
-
-If you ever want to switch back to the released binaries, delete the
-real directories and re-run `nixos-rebuild switch` — the activation
-will recreate the symlinks.
-
-## 3. First-time build
+## 2. First-time build
 
 ```sh
 git clone git@github.com:moonlight-pm/Sola
 cd Sola
-cargo make install-cef    # ~/.cache/sola/cef-<version>/ — ~1.5GB download, once
-cargo make build          # full debug build of the workspace — ~10 minutes first time
-cargo make install        # copies binaries to /opt/sola/bin (sudo)
-                          # also: `cargo make assets sync` runs automatically
-                          # whenever a declared pack is missing from /opt/sola/share/
+cargo make install-cef    # required: ~/.cache/sola/cef-<version>/  (~1.5GB, once)
+cargo make install        # builds the workspace, copies to /opt/sola/bin
 ```
 
-`cargo make install-cef` populates `~/.cache/sola/cef-<version>/Release/`
-with the patched libcef.so (the `patchelf` step that points its
-`DT_RUNPATH` at the nix-ld dispatch dir runs automatically). The CEF
-tarball is ~500MB compressed; this is the slow step on a fresh box.
+`cargo make install` already builds. You do not need a separate
+`cargo make build` first.
 
-`cargo make build` defaults to debug. For release-mode builds (much
-smaller, more optimized, slower to compile), pass `--release`:
+**`install-cef` is not optional.** `sola-browser` and `sola-wrapper` `build.rs`
+fail with “run `cargo make install-cef`” if `libcef.so` is missing. That
+command downloads the public CEF tarball (~500MB compressed), extracts it,
+runs `patchelf` so libcef’s RUNPATH hits nix-ld + `/run/opengl-driver/lib`,
+and symlinks `Resources/*` next to `libcef.so`. Needs network, `curl`,
+`tar`, and `patchelf`. That tarball has **no H.264/AAC** (AV1/VP9/Opus/MP3
+only). Steam store DASH and typical MP4 need `scripts/cef-codecs/` (same
+pin, hours). MPEG-LA if that `libcef.so` is redistributed.
+
+The first `cargo make …` compiles `sola-make` itself; the first full
+`install` is a long **release** workspace build. `install` also runs
+`cargo make assets sync` when icon/cursor packs are missing under
+`/opt/sola/share/` (GitHub clones of Lucide, Simple Icons, McMojave).
+
+Release is the default (optimized; needed for Bitwarden KDF and fast
+screenshot PNG). For an unoptimized debug build:
 
 ```sh
-cargo make build --release
+cargo make install --debug
+# or one app:
+cargo make install browser --debug
 ```
 
-## 4. Run it
+## 3. Run it
 
-Sola is a full desktop session — it owns the display and input. **Do
-not run it from inside another desktop session.**
+Sola is a full desktop session — it owns the display and input. **Do not
+run it from inside another desktop session.**
 
 1. Log out of any graphical session.
 2. Switch to a TTY (`Ctrl+Alt+F2` or similar).
 3. Log in.
-4. Run from the repo or from anywhere — your installed binary is at
-   `/opt/sola/bin/sola`:
+4. Launch the installed binary (not on `PATH` unless you add `/opt/sola/bin`):
    ```sh
    /opt/sola/bin/sola
    ```
-   Or with debug logging mirrored to a file:
+   Debug logging to the log dir:
    ```sh
    RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
    ```
-5. Quit via the menubar's "Quit Sola" or `pkill sola` from another TTY.
+5. Quit via the menubar’s “Quit Sola”, or `pkill sola` from another TTY.
 
-## 5. Day-to-day workflow
+## 4. Day-to-day workflow
 
 ```sh
 cargo make build                       # full workspace
 cargo make build <crate>               # one crate (e.g. `cargo make build shell`)
 cargo make install                     # install all rebuilt binaries
-cargo make install <app>               # install one
-cargo make install <app> --watch       # watch + reinstall on change (frontend dev)
+cargo make install <app>               # install one (short name: `shell` → sola-shell)
+cargo make install <app> --watch       # watch + reinstall on change (frontend)
 ```
 
-The `install` step `sudo cp`s into `/opt/sola/bin`. Sola's parent
-process watches `/opt/sola/bin/` and restarts any child whose binary
-changes — so for most apps you don't have to manually re-launch them.
+`install` writes `/opt/sola/bin`. Prefer a user-owned copy; falls back to
+`sudo cp` when the tree is root-owned. The process manager watches that
+directory and restarts a child whose binary changes — most apps do not
+need a manual relaunch.
 
-For sola's core (the process manager itself, the shell, the
-compositor bridge), restart by killing sola and re-launching from
-the TTY.
+Replacing `sola` itself tears down the session (the installer asks). For
+the process manager, the shell, or the compositor bridge, kill sola and
+re-launch from the TTY.
 
-## 6. Repository layout
+## 5. Repository layout
 
-See `AGENTS.md` at the repo root for the canonical workspace structure
-and project conventions. The headline pieces:
+Canonical map: `AGENTS.md` and `docs/architecture.md`. Headline pieces:
 
-- `crates/sola/` — process manager (the binary you actually launch).
-- `crates/sola-bus/` — the IPC bus everything talks over.
+- `crates/sola/` — process manager (the binary you launch).
+- `crates/sola-bus/` — IPC bus.
+- `crates/sola-call/` — request/reply host (`solactl` talks here).
 - `crates/sola-shell/` — menubar, launcher, switcher, zoning.
-- `crates/sola-river/` — bridges River (the underlying Wayland compositor)
-  events onto the bus.
-- `crates/sola-kit/` — Iced app kit + storybook (production UI path).
-- `crates/sola-*` — individual apps (settings, monitor, browser, terminal,
-  agent, …).
-- `crates/sola-make/` — the `cargo make ...` build system.
-- `crates/sola-assets/` — third-party asset pulls (icons, fonts, cursors).
-- `apocrypha/` — frozen legacy WebView stack (reference only; not built).
-- `docs/manual/` — long-form architecture & reference docs.
-- `docs/specs/` — design docs and implementation plans (date-prefixed).
-- `docs/vault/` — Obsidian vault; the canonical one to skim is
-  `Distribution.md`.
+- `crates/sola-river/` — River ↔ bus bridge.
+- `crates/sola-kit/` — Iced app kit + storybook.
+- `crates/sola-*` — apps (browser, terminal, mail, workspaces, settings, …).
+- `crates/sola-make/` — `cargo make …`.
+- `crates/sola-assets/` — third-party icon/cursor pulls (fonts are **not**
+  bundled; see `docs/manual/distribution.md`).
+- `apocrypha/` — frozen WebView stack (reference only; not built).
+- `docs/manual/` — operator docs for **shipped** behavior.
+- `docs/specs/` — target freezes. `docs/plans/` — implementation checklists.
+- `docs/vault/` — historical Obsidian notes; not living truth.
 
-## 7. Debugging
+## 6. Debugging
 
-- Logs at `/opt/sola/log/<process>.log` plus `/opt/sola/log/sola.log`
-  (aggregate). `tail -F /opt/sola/log/sola.log` from a second TTY
-  while iterating.
-- `RUST_LOG` accepts the standard env-filter syntax:
-  `RUST_LOG=info,sola_kit=trace,cef=warn`.
-- `solactl compositor windows` lists running apps + window IDs.
-- `solactl logs <app>` tails one app's log.
-- `solactl compositor screenshot` / `session launch` talk to `sola-call`
-  (not the bus). Owner down → fail.
-- `solactl emit <Topic> '<json-payload>'` injects bus events from
-  the command line.
-- For River-side issues, look at `/opt/sola/log/river.log`.
+- Logs: `/opt/sola/log/<process>.log` and `/opt/sola/log/sola.log`.
+  `tail -F /opt/sola/log/sola.log` from a second TTY.
+- `RUST_LOG=info,sola_kit=trace,cef=warn`.
+- `solactl compositor windows` — running apps + window IDs.
+- `solactl logs <app>` — tail one app.
+- `solactl compositor screenshot` / `solactl session launch` talk to
+  `sola-call` (not the bus). Owner down → fail.
+- `solactl emit <Topic> '<json-payload>'` — bus poke from the CLI.
+- River: `/opt/sola/log/river.log`.
 
-If a CEF subprocess GPU init fails (`Unable to initialize SkSurface`),
-check `__EGL_VENDOR_LIBRARY_DIRS` and `VK_ICD_FILENAMES` —
-`docs/vault/Distribution.md` has the deep dive.
+CEF GPU init failure (`Unable to initialize SkSurface`): check
+`__EGL_VENDOR_LIBRARY_DIRS` and `VK_ICD_FILENAMES`, and that
+`hardware.graphics` populated `/run/opengl-driver/`. Deep dive:
+`docs/vault/Distribution.md`.
 
-## 8. Commit conventions
+### Common first-run failures
 
-Match the existing log style — `git log --oneline -20` is the
-reference. Common prefixes: `feat`, `fix`, `refactor`, `docs`,
-`test`, `chore`. Subject in imperative present (`add foo`, `fix
-bar`), body explains the *why* and any non-obvious gotchas.
+| Symptom | Likely cause |
+|---|---|
+| `error: CEF binary distribution not found` | Forgot `cargo make install-cef`. |
+| `river not found in PATH` | Module not enabled / rebuild not switched. |
+| `hash mismatch` / tarball 404 during `nixos-rebuild` | `installRelease` still true; v0.1.1 URL 404s. Set it false. |
+| `'river' has been renamed to/replaced by 'river-classic'` | `inputs.sola.inputs.nixpkgs.follows = "nixpkgs"`. Remove it. |
+| pkg-config / `xkbcommon` at compile | Missing `extraOutputsToInstall` or `PKG_CONFIG_PATH`. |
+| Blank iced window, `Unable to initialize SkSurface` | GPU / nix-ld / CEF RUNPATH. See GPU notes in `INSTALL.md`. |
+| sola exits immediately with a Wayland error | You launched from inside another desktop session. Use a bare TTY. |
+| Ugly UI type | Inter / JetBrains Mono not in fontconfig; module should have installed them. |
 
-Commits include a `Co-Authored-By` trailer when AI tools are part
-of the loop; otherwise just normal commits.
+## 7. Commit conventions
 
-## 9. Cutting a release (maintainers)
+Match `git log --oneline -20`. Common prefixes: `feat`, `fix`, `refactor`,
+`docs`, `test`, `chore`. Subject in imperative present (`add foo`, `fix bar`).
+Body is the *why* and non-obvious gotchas.
 
-`cargo make publish` bundles `/opt/sola/bin` + the CEF Release tree
-+ `/opt/sola/share`, pre-patches RUNPATHs for the consumer side,
-zstd-compresses, computes the SRI hash, rewrites `nix/release.nix`,
-commits, tags, pushes, and runs `gh release create`. See INSTALL.md's
-"For maintainers" section for the full pipeline.
+Include a `Co-Authored-By` trailer when AI tools are part of the loop.
 
-## 10. Getting help
+## 8. Cutting a release (maintainers)
 
-- File issues at `https://github.com/moonlight-pm/Sola/issues`.
-- Architecture and "why does it work this way" questions: look in
-  `docs/vault/` and `docs/specs/` first — the design docs are
-  fairly comprehensive.
+`cargo make publish` bundles `/opt/sola/bin` + the CEF Release tree +
+`/opt/sola/share`, pre-patches RUNPATHs, zstd-compresses, rewrites
+`nix/release.nix`, commits, tags, pushes, and runs `gh release create`.
+See `INSTALL.md` → “For maintainers”. That recut is what unblocks
+`installRelease = true` / the colleague tarball path.
+
+## 9. Getting help
+
+- Issues: `https://github.com/moonlight-pm/Sola/issues`.
+- Architecture: `docs/architecture.md`. Design freezes: `docs/specs/`.
+- `docs/vault/` is history (WebView-era notes mixed in).

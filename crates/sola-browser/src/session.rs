@@ -38,7 +38,30 @@ pub struct SessionGroup {
     pub name: String,
     #[serde(default)]
     pub collapsed: bool,
+    /// Pocket fill (`#rrggbb` / `#rrggbbaa`). Absent = kit default well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
+
+/// A tab closed this session, restored LIFO by ⌘⇧T.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ClosedTab {
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    /// Strip index at close; restore inserts here (clamped).
+    #[serde(default)]
+    pub index: usize,
+    #[serde(default)]
+    pub history: Vec<SessionHistory>,
+    #[serde(default)]
+    pub history_index: i32,
+}
+
+/// Cap for [`BrowserSession::closed`] (Chrome-like). Oldest drop first.
+pub const CLOSED_TAB_CAP: usize = 25;
 
 /// Full session snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +77,9 @@ pub struct BrowserSession {
     /// Group metadata (name / collapsed). Membership is on each tab.
     #[serde(default)]
     pub groups: Vec<SessionGroup>,
+    /// Most recently closed last. Survives chrome restart / profile switch.
+    #[serde(default)]
+    pub closed: Vec<ClosedTab>,
 }
 
 fn default_sidebar_w() -> f32 {
@@ -67,7 +93,17 @@ impl Default for BrowserSession {
             active_index: 0,
             sidebar_w: default_sidebar_w(),
             groups: Vec::new(),
+            closed: Vec::new(),
         }
+    }
+}
+
+/// Keep the newest [`CLOSED_TAB_CAP`] entries (append = most recent).
+pub fn push_closed(stack: &mut Vec<ClosedTab>, tab: ClosedTab) {
+    stack.push(tab);
+    let extra = stack.len().saturating_sub(CLOSED_TAB_CAP);
+    if extra > 0 {
+        stack.drain(0..extra);
     }
 }
 
@@ -208,6 +244,7 @@ pub fn session_from_tabs(
     active: crate::engine::TabId,
     sidebar_w: f32,
     groups: &crate::groups::Groups,
+    closed: &[ClosedTab],
 ) -> BrowserSession {
     let session_tabs: Vec<SessionTab> = tabs
         .iter()
@@ -240,6 +277,7 @@ pub fn session_from_tabs(
         active_index,
         sidebar_w: sidebar_w.clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX),
         groups: groups.to_session(),
+        closed: closed.to_vec(),
     }
 }
 
@@ -273,6 +311,16 @@ pub fn fingerprint(session: &BrowserSession) -> String {
         s.push_str(&g.name);
         s.push('\x1e');
         s.push(if g.collapsed { '1' } else { '0' });
+        s.push('\x1e');
+        if let Some(c) = &g.color {
+            s.push_str(c);
+        }
+        s.push('\x1f');
+    }
+    for c in &session.closed {
+        s.push_str(&c.url);
+        s.push('\x1e');
+        s.push_str(&format!("{}", c.index));
         s.push('\x1f');
     }
     s
@@ -308,6 +356,7 @@ mod tests {
             active_index: 1,
             sidebar_w: 200.0,
             groups: Vec::new(),
+            closed: Vec::new(),
         };
         let (tabs, active, _) =
             session.bootstrap(Some("https://c.example/".into()), "https://fallback/");
@@ -334,6 +383,7 @@ mod tests {
             active_index: 1,
             sidebar_w: 200.0,
             groups: Vec::new(),
+            closed: Vec::new(),
         };
         let (tabs, active, _) =
             session.bootstrap(Some("--password-store=basic".into()), "about:blank");
@@ -367,6 +417,7 @@ mod tests {
             crate::engine::TabId(1),
             200.0,
             &crate::groups::Groups::default(),
+            &[],
         );
         assert_eq!(session.tabs[0].history.len(), 2);
         assert_eq!(session.tabs[0].history_index, 1);
@@ -386,9 +437,76 @@ mod tests {
             active_index: 0,
             sidebar_w: 200.0,
             groups: Vec::new(),
+            closed: Vec::new(),
         };
         let mut b = a.clone();
         b.tabs[0].url = "https://b/".into();
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+    }
+
+    #[test]
+    fn closed_stack_is_lifo_and_capped() {
+        let mut stack = Vec::new();
+        for i in 0..(CLOSED_TAB_CAP + 3) {
+            push_closed(
+                &mut stack,
+                ClosedTab {
+                    url: format!("https://n/{i}"),
+                    index: i,
+                    ..ClosedTab::default()
+                },
+            );
+        }
+        assert_eq!(stack.len(), CLOSED_TAB_CAP);
+        assert_eq!(stack[0].url, "https://n/3");
+        assert_eq!(
+            stack.last().unwrap().url,
+            format!("https://n/{}", CLOSED_TAB_CAP + 2)
+        );
+        let last = stack.pop().unwrap();
+        assert_eq!(last.url, format!("https://n/{}", CLOSED_TAB_CAP + 2));
+    }
+
+    #[test]
+    fn fingerprint_changes_with_closed_stack() {
+        let a = BrowserSession {
+            tabs: vec![SessionTab {
+                url: "https://a/".into(),
+                ..SessionTab::default()
+            }],
+            active_index: 0,
+            sidebar_w: 200.0,
+            groups: Vec::new(),
+            closed: Vec::new(),
+        };
+        let mut b = a.clone();
+        b.closed.push(ClosedTab {
+            url: "https://gone/".into(),
+            ..ClosedTab::default()
+        });
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+    }
+
+    #[test]
+    fn fingerprint_changes_with_group_color() {
+        let a = BrowserSession {
+            tabs: vec![SessionTab {
+                url: "https://a/".into(),
+                group_id: Some("work".into()),
+                ..SessionTab::default()
+            }],
+            active_index: 0,
+            sidebar_w: 200.0,
+            groups: vec![SessionGroup {
+                id: "work".into(),
+                name: "Work".into(),
+                collapsed: false,
+                color: None,
+            }],
+            closed: Vec::new(),
+        };
+        let mut b = a.clone();
+        b.groups[0].color = Some("#3dd6f5".into());
         assert_ne!(fingerprint(&a), fingerprint(&b));
     }
 }

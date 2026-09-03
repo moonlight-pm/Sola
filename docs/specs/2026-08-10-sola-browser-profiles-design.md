@@ -154,7 +154,7 @@ Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 |------|--------|
 | Registry + Primary + UUID | **done** (`src/profiles.rs`) |
 | Data/cache under `profiles/<uuid>/` | **done** |
-| Session `session.json` under profile | **done** |
+| Session `session.json` under profile | **done** (tabs + groups + `closed[]` for ⌘⇧T) |
 | Vault `~/.config/sola/browser/vault.json` | **done** |
 | First-run wipe of flat/legacy paths | **done** |
 | CEF user data under profile | **done** (`…/cef/`) |

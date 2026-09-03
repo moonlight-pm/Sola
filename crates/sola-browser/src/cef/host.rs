@@ -275,6 +275,15 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         ToEngine::Nav(n) => Cmd::Nav(n),
         ToEngine::Edit(e) => Cmd::Edit(e),
         ToEngine::PasteText(s) => Cmd::PasteText(s),
+        ToEngine::PasteImage {
+            mime,
+            filename,
+            bytes,
+        } => Cmd::PasteImage {
+            mime,
+            filename,
+            bytes,
+        },
         ToEngine::EvaluateJs(s) => Cmd::EvaluateJs(s),
         ToEngine::OpenTab { id, url, title } => Cmd::OpenTab {
             id: TabId(id),
@@ -296,13 +305,33 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             inspect_x,
             inspect_y,
         },
-        ToEngine::NotifyPermission {
-            prompt_id,
-            granted,
-        } => Cmd::NotifyPermission {
-            prompt_id,
-            granted,
+        ToEngine::ResizeDevTools {
+            width,
+            height,
+            scale,
+        } => Cmd::ResizeDevTools {
+            width,
+            height,
+            scale,
         },
+        ToEngine::DevToolsInput(ev) => Cmd::DevToolsInput(ev),
+        ToEngine::DevToolsFocus(f) => Cmd::DevToolsFocus(f),
+        ToEngine::CloseDevTools => Cmd::CloseDevTools,
+        ToEngine::NotifyPermission { prompt_id, granted } => {
+            Cmd::NotifyPermission { prompt_id, granted }
+        }
+        ToEngine::MediaPermission { req_id, granted } => Cmd::MediaPermission { req_id, granted },
+        ToEngine::JsDialog { id, success, input } => Cmd::JsDialog { id, success, input },
+        ToEngine::Find {
+            text,
+            forward,
+            next,
+        } => Cmd::Find {
+            text,
+            forward,
+            next,
+        },
+        ToEngine::StopFind { clear } => Cmd::StopFind { clear },
         ToEngine::Shutdown => return None,
     })
 }

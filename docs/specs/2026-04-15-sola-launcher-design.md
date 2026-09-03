@@ -273,7 +273,7 @@ Unit tests:
 - `shell::applications`: `ApplicationsConfig` round-trips the canonical example JSON.
 - `sola-app::config`: `JsonConfigIn` resolves path to `<config>/sola/<APP_DIR>/<FILE_NAME>`.
 
-Manual (canto):
+Manual (TTY):
 - Meta+Space opens launcher, keyboard lands in input.
 - Typing filters; selection moves with arrows.
 - Enter launches a configured app; launcher closes; focus restored.
@@ -289,11 +289,11 @@ Each step is an independent commit that keeps the tree buildable.
 1. Extend `sola-app::config` with `JsonConfigIn`. Unit test. No other callers yet.
 2. Scaffold `sola-assets` crate (Cargo.toml, lib.rs, icons.rs, empty `assets/icons/{lucide,simpleicons}/.gitkeep`). No consumers yet.
 3. Add `cargo make assets pull` to `sola-make`; write `upstream.toml`; pin initial revs; run it to populate `assets/icons/`; commit the SVGs.
-4. Wire `cargo make deploy` to rsync `crates/sola-assets/assets/` → `canto:/opt/sola/share/`. Add `sola-assets://` URI scheme registration to `sola-app`'s `WebContext` setup.
+4. Wire `cargo make install` to copy `crates/sola-assets/assets/` → `/opt/sola/share/`. Add `sola-assets://` URI scheme registration to `sola-app`'s `WebContext` setup.
 5. Add `Application` / `ApplicationsConfig` to the shell; `ShellApp::application()`, `icon_for()`; load in `ShellApp::new()`.
 6. Switch the switcher to use `icon_for()` + `sola-assets://` — validates the icon pipeline end-to-end before the launcher depends on it.
 7. Add `Topic::LaunchApp` to `sola-bus`; `sola` subscribes and spawns with SIGCHLD reap. No shell consumer yet.
-8. Launcher window + HTML/TS + `LauncherState`; Meta+Space handling in `keys.rs`; open/close/filter/launch flow. End-to-end manual test on canto.
+8. Launcher window + HTML/TS + `LauncherState`; Meta+Space handling in `keys.rs`; open/close/filter/launch flow. End-to-end manual test on a TTY.
 
 ## Future work (explicitly out of scope)
 

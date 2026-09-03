@@ -106,8 +106,9 @@ impl SteamGame {
     }
 }
 
-/// How the gallery orders rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// How the gallery orders rows. Persisted in [`crate::prefs::ArcadePrefs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SortMode {
     #[default]
     Alphabetical,
@@ -345,6 +346,28 @@ fn steam_library_roots() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+/// Non-recursive watch targets: each library's `steamapps/` (manifests +
+/// `libraryfolders.vdf`). Extra drives appear after that VDF changes and a
+/// rescan re-arms the watcher.
+pub fn steamapps_watch_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for root in steam_library_roots() {
+        let steamapps = root.join("steamapps");
+        let dir = if steamapps.is_dir() {
+            steamapps
+        } else if root.is_dir() {
+            root.clone()
+        } else {
+            continue;
+        };
+        if seen.insert(dir.clone()) {
+            out.push(dir);
+        }
+    }
+    out
 }
 
 fn scan_library(library_root: &Path) -> Vec<SteamGame> {
@@ -916,6 +939,29 @@ mod tests {
         assert_eq!(games[0].name, "Portal");
         assert!(games[0].installed);
         assert_eq!(games[0].last_activity, 1_700_000_000);
+    }
+
+    #[test]
+    fn steamapps_watch_dirs_include_library_steamapps() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path();
+        let apps = lib.join("steamapps");
+        fs::create_dir_all(&apps).unwrap();
+        let prev = std::env::var_os("STEAM_DIR");
+        unsafe {
+            std::env::set_var("STEAM_DIR", lib);
+        }
+        let dirs = steamapps_watch_dirs();
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("STEAM_DIR", v),
+                None => std::env::remove_var("STEAM_DIR"),
+            }
+        }
+        assert!(
+            dirs.iter().any(|p| p == &apps),
+            "expected {apps:?} in {dirs:?}"
+        );
     }
 
     #[test]

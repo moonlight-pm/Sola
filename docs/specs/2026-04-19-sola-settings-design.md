@@ -106,7 +106,7 @@ No reload-on-change file watching in v1 — only `sola-settings` writes this fil
 
 - New workspace member in top-level `Cargo.toml`: `apps/settings`.
 - New workspace member: `crates/sola-applications`.
-- `sola-make` already enumerates `apps/*` for deploy — verify that `cargo make deploy settings` works after adding the crate, and add it explicitly if required.
+- `sola-make` already enumerates `apps/*` for install — verify that `cargo make install settings` works after adding the crate, and add it explicitly if required.
 - Add `sola-settings` to the default `applications.json` entry list so it appears in the launcher.
 
 ## Non-goals and explicit deferrals
@@ -120,4 +120,4 @@ No reload-on-change file watching in v1 — only `sola-settings` writes this fil
 
 - Unit test in `sola-applications`: `ApplicationsConfig` round-trip already exists; keep it.
 - Rust handler tests for add/update/remove including duplicate-id rejection.
-- Manual verification on canto: deploy, open the launcher, launch `sola-settings`, add/edit/remove an entry, close and reopen the launcher, confirm the change is visible.
+- Manual verification on a TTY: install, open the launcher, launch `sola-settings`, add/edit/remove an entry, close and reopen the launcher, confirm the change is visible.

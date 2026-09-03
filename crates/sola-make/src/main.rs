@@ -43,8 +43,12 @@ enum Commands {
         /// Omit to build the entire workspace.
         target: Option<String>,
 
-        /// Build in release mode (optimized, slower compile).
+        /// Unoptimized debug build. Default is release.
         #[arg(long)]
+        debug: bool,
+
+        /// Ignored: release is the default. Kept so existing `--release` scripts work.
+        #[arg(long, hide = true)]
         release: bool,
     },
 
@@ -65,9 +69,12 @@ enum Commands {
         #[arg(long)]
         watch: bool,
 
-        /// Build and install release (optimized). Strongly preferred for
-        /// crypto-heavy apps (sola-browser Bitwarden KDF / unlock).
+        /// Unoptimized debug build. Default is release.
         #[arg(long)]
+        debug: bool,
+
+        /// Ignored: release is the default. Kept so existing `--release` scripts work.
+        #[arg(long, hide = true)]
         release: bool,
     },
 
@@ -185,25 +192,27 @@ enum AssetsAction {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Build { target, release } => build_exec(target, release),
+        Commands::Build {
+            target,
+            debug,
+            release: _,
+        } => build_exec(target, !debug),
         Commands::Assets { action } => match action {
             AssetsAction::Sync { refresh } => assets::sync(refresh),
         },
         Commands::Install {
             apps,
             watch,
-            release,
+            debug,
+            release: _,
         } => {
+            let release = !debug;
             if watch {
                 if apps.len() != 1 {
                     eprintln!("error: --watch requires exactly one app name");
                     exit(1);
                 }
-                if release {
-                    eprintln!("error: --watch does not support --release yet");
-                    exit(1);
-                }
-                watch::watch_and_install(&apps[0]);
+                watch::watch_and_install(&apps[0], release);
             } else {
                 install::install(&apps, release);
             }
@@ -500,6 +509,7 @@ mod tests {
             cli.command,
             Commands::Build {
                 target: None,
+                debug: false,
                 release: false
             }
         ));
@@ -510,18 +520,32 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "build", "sola"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Build { target: Some(ref t), release: false } if t == "sola"
+            Commands::Build { target: Some(ref t), debug: false, release: false } if t == "sola"
         ));
     }
 
     #[test]
-    fn cli_parses_build_release() {
+    fn cli_parses_build_release_flag_still_accepted() {
         let cli = Cli::try_parse_from(["sola-make", "build", "--release"]).unwrap();
         assert!(matches!(
             cli.command,
             Commands::Build {
                 target: None,
+                debug: false,
                 release: true
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_build_debug() {
+        let cli = Cli::try_parse_from(["sola-make", "build", "--debug"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Build {
+                target: None,
+                debug: true,
+                release: false
             }
         ));
     }
@@ -534,6 +558,7 @@ mod tests {
             Commands::Install {
                 ref apps,
                 watch: false,
+                debug: false,
                 release: false,
             } if apps.is_empty()
         ));
@@ -547,6 +572,7 @@ mod tests {
             Commands::Install {
                 ref apps,
                 watch: false,
+                debug: false,
                 release: false,
             } if apps == &["terminal".to_string()]
         ));
@@ -560,6 +586,7 @@ mod tests {
             Commands::Install {
                 ref apps,
                 watch: false,
+                debug: false,
                 release: false,
             } if apps == &["shell".to_string(), "kit".to_string()]
         ));
@@ -573,21 +600,37 @@ mod tests {
             Commands::Install {
                 ref apps,
                 watch: true,
+                debug: false,
                 release: false,
             } if apps == &["terminal".to_string()]
         ));
     }
 
     #[test]
-    fn cli_parses_install_release() {
+    fn cli_parses_install_release_flag_still_accepted() {
         let cli = Cli::try_parse_from(["sola-make", "install", "browser", "--release"]).unwrap();
         assert!(matches!(
             cli.command,
             Commands::Install {
                 ref apps,
                 watch: false,
+                debug: false,
                 release: true,
             } if apps == &["browser".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cli_parses_install_debug() {
+        let cli = Cli::try_parse_from(["sola-make", "install", "shell", "--debug"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install {
+                ref apps,
+                watch: false,
+                debug: true,
+                release: false,
+            } if apps == &["shell".to_string()]
         ));
     }
 
@@ -679,7 +722,6 @@ mod tests {
     /// discovered. This verifies the fix that allows a crate whose binary
     /// lives at a non-default path (e.g. src/app/main.rs) to be found by
     /// the all-apps install path.
-    #[test]
     #[test]
     fn bin_names_from_toml_collects_extra_bins() {
         let toml = "[package]\nname = \"demo-pkg\"\n\n[[bin]]\nname = \"demo-pkg\"\npath = \"src/main.rs\"\n\n[[bin]]\nname = \"demo-extra\"\npath = \"src/bin/extra.rs\"\n";

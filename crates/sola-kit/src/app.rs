@@ -43,9 +43,13 @@ static BUS_KINDS: std::sync::RwLock<Option<&'static [TopicKind]>> = std::sync::R
 /// has not been called yet — that's a setup-order bug, not a
 /// recoverable runtime condition.
 pub fn bus() -> &'static Mutex<BusClient> {
-    BUS.get()
-        .expect("sola_kit::bus: BUS not initialised")
-        .as_ref()
+    try_bus().expect("sola_kit::bus: BUS not initialised")
+}
+
+/// Borrow the process-wide bus if [`BusSetup::install`] has run.
+/// Unit tests and optional emit paths use this instead of panicking.
+pub fn try_bus() -> Option<&'static Mutex<BusClient>> {
+    BUS.get().map(|a| a.as_ref())
 }
 
 /// Remember the process's bus subscription kinds for reconnect.
@@ -155,6 +159,14 @@ impl BusSetup {
         self.app_menu(menu_label, items)
     }
 
+    /// Include the kit **Window** menu (zones, float, hide, cycle). The
+    /// shell handles these action ids; the app can replace the menu by
+    /// publishing its own `"Window"` definition instead. The shell also
+    /// injects this menu when an app omits it.
+    pub fn window_menu(self) -> Self {
+        self.app_menu_definition(crate::menu::window_menu())
+    }
+
     /// Advertise call-plane methods as CLI owner `owner` (e.g. `"workspaces"`).
     /// Starts the reconnecting provider when [`install`](Self::install) runs.
     /// Fold [`crate::call_subscription`] into iced to receive invokes.
@@ -249,7 +261,8 @@ pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settin
 /// 1. `sola_core::log::init(app_id)`
 /// 2. `sola_core::env::activate_wayland_session(20s)` — sets
 ///    `WAYLAND_DISPLAY` so winit's wayland client finds the river
-///    socket.
+///    socket, and `XDG_SESSION_TYPE=wayland` when the TTY launch
+///    left it as `tty` (Chromium camera / portal).
 /// 3. `sola_core::env::wait_for_wayland_socket(10s)` — blocks until
 ///    the socket file actually exists. river publishes the name file
 ///    a beat before the socket is bind-ready on cold boot; winit

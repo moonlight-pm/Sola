@@ -21,8 +21,9 @@
 //!
 //! Safe policy:
 //! - Steam **not** running → `gamescope -W/-H -- steam -applaunch <id>` (nest).
-//! - Steam **running** → bare `steam -applaunch <id>` only; UI warns that
-//!   windowed nest needs Steam quit first (user-initiated).
+//! - Steam **running** → **refuse Play**. Bare `-applaunch` pokes the live
+//!   client and the game often takes exclusive fullscreen on Sola. Never
+//!   auto-`steam -shutdown`. Quit Steam, then Play nests.
 
 use std::process::{Command, Stdio};
 
@@ -45,8 +46,8 @@ pub fn game_session_app_id(steam_app_id: u32) -> String {
 /// Whether a Steam *client* process appears to be running already.
 ///
 /// Matches the real Steam binary / srt launcher, not arbitrary paths that
-/// merely contain the word "steam". Used only to decide nest vs bare
-/// applaunch (never auto-`steam -shutdown`).
+/// merely contain the word "steam". Used to refuse Play while a desktop
+/// client is open (never auto-`steam -shutdown`).
 pub fn steam_running() -> bool {
     // Prefer the known Steam main binary path; fall back to a tighter pgrep.
     if process_cmdline_contains(b"ubuntu12_32/steam") {
@@ -145,36 +146,69 @@ pub fn game_process_alive(steam_app_id: u32) -> bool {
     process_cmdline_contains(needle.as_bytes())
 }
 
-/// Best-effort kill of a nest started by `sola-arcade --run <steam_app_id>`.
-/// Prefer `Topic::CloseApp(steam-game-<id>)` first so sola-session stops the
-/// scope cleanly; this is a fallback for leftover processes.
+/// Status / `--run` copy when a desktop Steam client is already open.
+pub const STEAM_ALREADY_RUNNING_MSG: &str =
+    "Quit Steam first. Arcade will not launch into exclusive fullscreen.";
+
+/// Best-effort kill of Arcade-owned nest helpers after `CloseApp`.
+///
+/// Only `--run`, `--nested-steam`, and a gamescope whose argv is that
+/// nested helper. Never `pkill -f AppId=` — that is any Steam launch of
+/// the title, including one the user started outside Arcade.
 pub fn stop_nest_local(steam_app_id: u32) {
+    for pid in arcade_owned_pids(steam_app_id) {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("pkill")
+            .args(["-P", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// True when `/proc` cmdline is an Arcade nest helper for this app id.
+///
+/// Gamescope host argv includes `-- sola-arcade --nested-steam <id>`; a
+/// Steam reaper `AppId=<id>` does not match.
+pub fn is_arcade_owned_cmdline(cmdline: &[u8], steam_app_id: u32) -> bool {
+    use crate::x11_nest::{argv0_is_arcade, argv0_is_gamescope};
+
     let run = format!("sola-arcade --run {steam_app_id}");
-    let _ = Command::new("pkill")
-        .args(["-f", &run])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
     let nested = format!("sola-arcade --nested-steam {steam_app_id}");
-    let _ = Command::new("pkill")
-        .args(["-f", &nested])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    // Also kill a leftover gamescope still holding this applaunch.
-    let gs = format!("-applaunch {steam_app_id}");
-    let _ = Command::new("pkill")
-        .args(["-f", &format!("gamescope.*{gs}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    // Nested Steam often survives the game process; reap its reaper too.
-    let app_id = format!("AppId={steam_app_id}");
-    let _ = Command::new("pkill")
-        .args(["-f", &app_id])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let has_run = cmdline.windows(run.len()).any(|w| w == run.as_bytes());
+    let has_nested = cmdline
+        .windows(nested.len())
+        .any(|w| w == nested.as_bytes());
+    if argv0_is_arcade(cmdline) && (has_run || has_nested) {
+        return true;
+    }
+    argv0_is_gamescope(cmdline) && has_nested
+}
+
+fn arcade_owned_pids(steam_app_id: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(pid) = name.parse::<u32>() else {
+            continue;
+        };
+        let cmdline = read_cmdline_spaced(&entry.path());
+        if is_arcade_owned_cmdline(&cmdline, steam_app_id) {
+            out.push(pid);
+        }
+    }
+    out
 }
 
 fn gamescope_bin() -> Option<std::path::PathBuf> {
@@ -182,6 +216,37 @@ fn gamescope_bin() -> Option<std::path::PathBuf> {
         let p = std::path::PathBuf::from("/opt/sola/bin/gamescope");
         p.is_file().then_some(p)
     })
+}
+
+/// gamescope flags before `--` and the nested helper.
+///
+/// Nested X cursors (Factorio menus, SDL titles, …) are often sized for the
+/// fake monitor. The Wayland backend then hands that bitmap to River 1:1 via
+/// `wl_pointer.set_cursor` — a 64–256px glyph over a zoned host looks huge
+/// next to Sola’s 24px McMojave. `--cursor-scale-height` is gamescope’s
+/// downsample: host cursor ≈ 36px × floor(output_h / this), clamped [36, 256].
+/// Matching initial `-H` keeps the pointer desktop-sized. SteamOS uses 720 so
+/// the cursor *grows* on a 4K panel — the opposite of a windowed nest.
+pub fn gamescope_nest_args(width: u32, height: u32) -> Vec<String> {
+    let w = width.to_string();
+    let h = height.to_string();
+    vec![
+        "--backend".into(),
+        "wayland".into(),
+        "-b".into(),
+        "-S".into(),
+        "fit".into(),
+        "-W".into(),
+        w.clone(),
+        "-H".into(),
+        h.clone(),
+        "-w".into(),
+        w,
+        "-h".into(),
+        h.clone(),
+        "--cursor-scale-height".into(),
+        h,
+    ]
 }
 
 /// LaunchApp argv for sola-session (whitespace-split, no shell):
@@ -278,11 +343,14 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) 
 
     let status = if steam_running() {
         // Do **not** steam -shutdown here — Xwayland teardown races River.
+        // Do **not** bare `-applaunch` either — the game leaves the nest and
+        // often takes exclusive fullscreen on Sola.
         eprintln!(
-            "sola-arcade: Steam already running — launching bare steam -applaunch \
-             (no gamescope nest; quit Steam first for windowed nest)"
+            "sola-arcade: Steam already running — refusing launch \
+             (would escape the nest into exclusive fullscreen). \
+             Quit Steam, then Play."
         );
-        Command::new(&steam).args(["-applaunch", &app]).status()
+        std::process::exit(2);
     } else if let Some(gs) = gamescope_bin() {
         // Cold Steam under windowed gamescope host (never host -f).
         //
@@ -303,6 +371,8 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) 
         // - host `-W`/`-H` initial (same as nested); River zone/float after pin
         // - `-w`/`-h` virtual monitor from Arcade nest dropdown
         // - `-S fit` — letterbox nested content into host when sizes differ
+        // - `--cursor-scale-height` = `-H` — keep the host pointer ~36px
+        //   (nested X cursors otherwise present 1:1 to River)
         // - Fit does **not** pass `--force-windows-fullscreen` (wayland
         //   backend aborted). Arcade sets `GAMESCOPE_FORCE_WINDOWS_FULLSCREEN`
         //   on the nested X root after the nest is up.
@@ -317,30 +387,14 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32, fit: bool) 
             .unwrap_or_else(|| "/opt/sola/bin/sola-arcade".into());
         eprintln!(
             "sola-arcade: nesting --nested-steam {app} under gamescope \
-             {w}x{h} (--backend wayland -b -S fit{}, no -e)",
+             {w}x{h} (--backend wayland -b -S fit --cursor-scale-height {h}{}, no -e)",
             if fit { ", fit-follow" } else { "" }
         );
+        let nest = gamescope_nest_args(width, height);
         let mut cmd = Command::new(gs);
-        cmd.args([
-            "--backend",
-            "wayland",
-            "-b",
-            "-S",
-            "fit",
-            "-W",
-            &w,
-            "-H",
-            &h,
-            "-w",
-            &w,
-            "-h",
-            &h,
-            "--",
-            &arcade,
-            "--nested-steam",
-            &app,
-        ])
-        .status()
+        cmd.args(&nest)
+            .args(["--", &arcade, "--nested-steam", &app])
+            .status()
     } else {
         eprintln!(
             "sola-arcade: gamescope not found — bare steam -applaunch \
@@ -533,5 +587,45 @@ mod tests {
         // launch_command only builds the session argv; the actual gamescope
         // child is assembled in run_game_blocking. Smoke the helper id path.
         assert_eq!(game_session_app_id(3527290), "steam-game-3527290");
+    }
+
+    #[test]
+    fn gamescope_nest_args_scale_host_cursor_to_desktop() {
+        let args = gamescope_nest_args(5120, 2160);
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--cursor-scale-height", "2160"]),
+            "host cursor downsample must match -H: {args:?}"
+        );
+        assert!(args.windows(2).any(|w| w == ["-H", "2160"]));
+        assert!(args.windows(2).any(|w| w == ["-h", "2160"]));
+        assert!(
+            !args
+                .iter()
+                .any(|t| t == "-f" || t == "--fullscreen" || t == "-e"),
+            "must not pass host fullscreen or -e: {args:?}"
+        );
+        let locked = gamescope_nest_args(1920, 1080);
+        assert!(
+            locked
+                .windows(2)
+                .any(|w| w == ["--cursor-scale-height", "1080"]),
+            "{locked:?}"
+        );
+    }
+
+    #[test]
+    fn stop_matches_arcade_helpers_not_steam_appid() {
+        let helper = b"/opt/sola/bin/sola-arcade --nested-steam 400";
+        let run = b"/opt/sola/bin/sola-arcade --run 400 1920 1080";
+        let gs = b"/opt/sola/bin/gamescope --backend wayland -b -- /opt/sola/bin/sola-arcade --nested-steam 400";
+        let reaper = b"/home/joshua/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=400";
+        let other = b"/opt/sola/bin/sola-arcade --nested-steam 427520";
+        assert!(is_arcade_owned_cmdline(helper, 400));
+        assert!(is_arcade_owned_cmdline(run, 400));
+        assert!(is_arcade_owned_cmdline(gs, 400));
+        assert!(!is_arcade_owned_cmdline(reaper, 400));
+        assert!(!is_arcade_owned_cmdline(other, 400));
+        assert!(!is_arcade_owned_cmdline(helper, 427520));
     }
 }

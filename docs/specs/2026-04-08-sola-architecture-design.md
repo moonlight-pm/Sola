@@ -21,7 +21,7 @@ Sola owns the entire display pipeline via Smithay:
 - **Surface management:** Compositor tracks and composites all client surfaces
 - **Renderer:** GlesRenderer (OpenGL ES) — composites Wayland client buffers to scanout
 
-No Winit/windowed development backend. All testing happens on real hardware (canto).
+No Winit/windowed development backend. All testing happens on real hardware.
 
 ### Shell UI: WebKit6 WebViews
 
@@ -45,7 +45,7 @@ Sola/
 │   ├── sola/                  # Binary entry point (clap CLI)
 │   ├── sola-compositor/       # Smithay compositor (DRM/KMS, input, surface mgmt)
 │   ├── sola-protocol/         # Shared types, wire format
-│   └── sola-make/             # Build/deploy orchestration (xtask)
+│   └── sola-make/             # Build/install orchestration (xtask)
 ├── apps/
 │   └── desktop/               # Shell UI (web tech, framework-agnostic)
 ├── docs/
@@ -65,16 +65,16 @@ Additional crates (sola-app, sola-mail, etc.) will be added as scope grows.
 ```
 cargo make build              # Build everything
 cargo make build <target>     # Build specific target
-cargo make deploy canto       # Deploy to canto
+cargo make install            # Install locally to /opt/sola/bin
 ```
 
-Build orchestration logic (frontend compilation, asset embedding, hash-based caching, deploy) is written in Rust with clap, not shell scripts.
+Build orchestration logic (frontend compilation, asset embedding, hash-based caching, install) is written in Rust with clap, not shell scripts.
 
-## Deploy
+## Install
 
-- **Target:** canto (physical machine, SSH access)
+- **Target:** the local machine (`/opt/sola/bin/`)
 - **Binary location:** `/opt/sola/bin/`
-- **Process:** `cargo make deploy canto` builds release, rsync's to canto
+- **Process:** `cargo make install` builds and copies binaries locally
 - **Launch:** User runs `/opt/sola/bin/sola` manually from a physical TTY
 
 ## Phase 1: Pixels on Screen
@@ -82,7 +82,7 @@ Build orchestration logic (frontend compilation, asset embedding, hash-based cac
 The immediate goal is a minimal working Wayland compositor:
 
 1. `sola` binary starts `sola-compositor`
-2. Compositor initializes DRM/KMS on canto's NVIDIA GPU
+2. Compositor initializes DRM/KMS on the NVIDIA GPU
 3. Compositor claims a Wayland display
 4. Presents frames — solid color on screen, proving the compositor owns the display
 
@@ -100,8 +100,8 @@ The immediate goal is a minimal working Wayland compositor:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Compositor library | Smithay | Pure Rust, full control, no C FFI wrappers |
-| Display backend | DRM/KMS only | Testing on real hardware (canto), no windowed dev mode |
+| Display backend | DRM/KMS only | Testing on real hardware, no windowed dev mode |
 | UI rendering | WebKit6 WebViews | Leverage web tech for all UI, framework-agnostic |
 | Build system | cargo make (xtask) | Rust-native, replaces fragile Makefile+scripts |
 | Web framework | None prescribed | Each app/component picks its own |
-| Development flow | Build local, deploy to canto | SSH + rsync, manual launch from TTY |
+| Development flow | Build and install locally | Copy to `/opt/sola/bin/`, manual launch from TTY |

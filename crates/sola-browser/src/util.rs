@@ -55,6 +55,39 @@ pub fn copyable_page_url(page_url: &str, last_seen: &str, url_field: &str) -> Op
     None
 }
 
+/// Idle omnibox label: drop `https://` (and a lone trailing slash on the
+/// origin). Keep `http://` so an insecure origin is still obvious.
+pub fn display_url(url: &str) -> String {
+    let t = url.trim();
+    if t.is_empty() || t == "about:blank" {
+        return String::new();
+    }
+    let (insecure, rest) = if let Some(rest) = t.strip_prefix("https://") {
+        (false, rest)
+    } else if let Some(rest) = t.strip_prefix("http://") {
+        (true, rest)
+    } else {
+        return t.to_string();
+    };
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let rest = match rest.strip_suffix('/') {
+        Some(s) if !s.contains('/') => s,
+        _ => rest,
+    };
+    if insecure {
+        format!("http://{rest}")
+    } else {
+        rest.to_string()
+    }
+}
+
+/// Idle location-bar text: [`display_url`] without query or fragment.
+/// The edit field still holds the full URL; this is display-only.
+pub fn idle_display_url(url: &str) -> String {
+    let shown = display_url(url);
+    shown.split(['?', '#']).next().unwrap_or(&shown).to_string()
+}
+
 /// Clipboard text that is safe to apply to a field. Drops `None`, empty,
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
@@ -89,8 +122,8 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// glyph run overruns. The old hard cap of 20 left a visible empty band
 /// at the default 200 px column.
 pub fn tab_title_chars(sidebar_w: f32) -> usize {
-    // Body pad 8+8, row pad 10+10, active lip 2, a hair of clip slack.
-    const INSET: f32 = 32.0;
+    // Body pad 8+8, row pad 10+10, active lip 2, favicon 16+4, a hair of clip slack.
+    const INSET: f32 = 52.0;
     // 12 px SF Pro mixed-case. Optimistic so we use the well, not sit short.
     const PX_PER: f32 = 5.5;
     let inner = (sidebar_w - INSET).max(48.0);
@@ -110,18 +143,88 @@ pub fn tab_strip_label(title: &str, url: &str, sidebar_w: f32) -> String {
     truncate(raw, tab_title_chars(sidebar_w))
 }
 
+/// True when the strip should show a globe until a favicon arrives.
+pub fn tab_url_has_site_icon(url: &str) -> bool {
+    let l = url.trim().to_ascii_lowercase();
+    (l.starts_with("https://") || l.starts_with("http://")) && !l.starts_with("http://127.0.0.1")
+}
+
+/// Pick one CEF favicon URL. Prefers raster (png/ico/gif) over svg.
+pub fn pick_favicon_url(urls: &[String]) -> Option<&str> {
+    let http: Vec<&str> = urls
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| {
+            let l = s.to_ascii_lowercase();
+            l.starts_with("https://") || l.starts_with("http://")
+        })
+        .collect();
+    if http.is_empty() {
+        return None;
+    }
+    let raster = http.iter().copied().rev().find(|s| {
+        let l = s.to_ascii_lowercase();
+        l.contains(".png")
+            || l.contains(".ico")
+            || l.contains(".gif")
+            || l.contains(".jpg")
+            || l.contains(".jpeg")
+            || l.contains(".webp")
+    });
+    raster.or_else(|| http.last().copied())
+}
+
+/// `https://host/path` → `https://host/favicon.ico` when CEF only lists
+/// `chrome://` or SVG icons that `download_image` will not decode.
+pub fn fallback_favicon_url(page: &str) -> Option<String> {
+    let t = page.trim();
+    let lower = t.to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &t[8..]
+    } else if lower.starts_with("http://") {
+        &t[7..]
+    } else {
+        return None;
+    };
+    let hostport = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|s| !s.is_empty())?;
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(hostport)
+    } else {
+        hostport.split(':').next().unwrap_or(hostport)
+    };
+    if host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+    let scheme = if lower.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    Some(format!("{scheme}://{hostport}/favicon.ico"))
+}
+
 /// Built-in scroll/tile stress page (fixed nav + tall image grid).
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
 /// Normalize input into a navigable URL. An explicit scheme (`https:`,
-/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. Everything else
-/// gets a scheme prefix: `http://` for localhost / loopback (local servers
-/// almost never present a trusted cert), `https://` otherwise. `host:port`
-/// (digits after the colon) counts as a bare host, not a scheme.
+/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. A local file
+/// path (xdg-open `%u` for HTML — absolute, `./`, `../`, or an existing
+/// relative path) becomes an absolute `file://` URL. Everything else gets
+/// a scheme prefix: `http://` for localhost / loopback (local servers almost
+/// never present a trusted cert), `https://` otherwise. `host:port` (digits
+/// after the colon) counts as a bare host, not a scheme.
 pub fn normalize_url(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return String::new();
+    }
+    // xdg-open `%u` for `text/html` is often a path, not a file:// URL.
+    // Resolve here (opener cwd) so chrome.sock handoff is not relative.
+    if let Some(file) = sola_core::open_url::file_url_from_local_path(trimmed) {
+        return file;
     }
     // Shortcuts → built-in stress page.
     let lower = trimmed.to_ascii_lowercase();
@@ -245,8 +348,73 @@ pub fn resolve_query(s: &str) -> String {
     if looks_like_url(t) {
         normalize_url(t)
     } else {
-        format!("{SEARCH_PREFIX}{}", encode_query(t))
+        kagi_search_url(t)
     }
+}
+
+/// Kagi results page for the typed query (Shift+Enter).
+pub fn kagi_search_url(q: &str) -> String {
+    format!("{SEARCH_PREFIX}{}", encode_query(q.trim()))
+}
+
+/// Kagi "I'm feeling lucky" (`\query`) — first result for the typed query.
+pub fn kagi_lucky_url(q: &str) -> String {
+    format!("{SEARCH_PREFIX}%5C{}", encode_query(q.trim()))
+}
+
+/// Kagi SERP / lucky URL — same-site tab switching must not steal these.
+pub fn is_kagi_search_url(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("kagi.com/search")
+}
+
+/// Enter / Shift+Enter target for the location bar.
+///
+/// Highlighted history row wins on Enter. Otherwise a URL-like token
+/// navigates, and a search query uses Kagi lucky (first result).
+/// Shift+Enter (`search_results`) always opens the Kagi results page.
+pub fn omnibox_submit_url(typed: &str, highlighted: Option<&str>, search_results: bool) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return String::new();
+    }
+    if search_results {
+        return kagi_search_url(typed);
+    }
+    if let Some(url) = highlighted.filter(|u| !u.is_empty()) {
+        return url.to_string();
+    }
+    if looks_like_url(typed) {
+        resolve_query(typed)
+    } else {
+        kagi_lucky_url(typed)
+    }
+}
+
+/// `scheme://host` of a URL (no path / query). Empty if it cannot be split.
+pub fn page_origin(url: &str) -> String {
+    let t = url.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if let Some((scheme, rest)) = t.split_once("://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        if host.is_empty() {
+            return String::new();
+        }
+        return format!("{scheme}://{host}").to_ascii_lowercase();
+    }
+    String::new()
+}
+
+/// Same site (scheme + host), ignoring path and query.
+pub fn same_site(a: &str, b: &str) -> bool {
+    let oa = page_origin(a);
+    !oa.is_empty() && oa == page_origin(b)
+}
+
+/// One-line history subtitle: no query string, middle-ellipsis if long.
+pub fn compact_history_url(url: &str) -> String {
+    truncate(&idle_display_url(url), 72)
 }
 
 /// Return the explicit URL scheme of `s` (the alphabetic run before the first
@@ -307,6 +475,37 @@ mod tests {
         assert!(!href_is_new_tab_target("   "));
         assert!(!href_is_new_tab_target("javascript:void(0)"));
         assert!(!href_is_new_tab_target("data:text/html,hi"));
+    }
+
+    #[test]
+    fn display_url_strips_https() {
+        assert_eq!(display_url("https://example.com/"), "example.com");
+        assert_eq!(
+            display_url("https://www.example.com/path"),
+            "example.com/path"
+        );
+        assert_eq!(display_url("http://example.com/x"), "http://example.com/x");
+        assert_eq!(display_url("about:blank"), "");
+        assert_eq!(display_url(""), "");
+    }
+
+    #[test]
+    fn idle_display_url_drops_query_and_fragment() {
+        assert_eq!(
+            idle_display_url(
+                "https://exitgroup.dev/authorize?response_type=code&client_id=wl-long"
+            ),
+            "exitgroup.dev/authorize"
+        );
+        assert_eq!(
+            idle_display_url("https://example.com/path#section"),
+            "example.com/path"
+        );
+        assert_eq!(idle_display_url("https://example.com/"), "example.com");
+        assert_eq!(
+            idle_display_url("http://example.com/login?next=/app"),
+            "http://example.com/login"
+        );
     }
 
     #[test]
@@ -399,6 +598,46 @@ mod tests {
     }
 
     #[test]
+    fn pick_favicon_url_prefers_raster() {
+        let urls = [
+            "https://example.com/favicon.svg".into(),
+            "https://example.com/favicon-32.png".into(),
+        ];
+        assert_eq!(
+            pick_favicon_url(&urls),
+            Some("https://example.com/favicon-32.png")
+        );
+    }
+
+    #[test]
+    fn pick_favicon_url_skips_non_http() {
+        let urls = [
+            "data:image/png;base64,xx".into(),
+            "https://a/favicon.ico".into(),
+        ];
+        assert_eq!(pick_favicon_url(&urls), Some("https://a/favicon.ico"));
+        assert_eq!(pick_favicon_url(&["chrome://theme/IDR".into()]), None);
+    }
+
+    #[test]
+    fn tab_url_has_site_icon_http_only() {
+        assert!(tab_url_has_site_icon("https://github.com/sola"));
+        assert!(!tab_url_has_site_icon("about:blank"));
+        assert!(!tab_url_has_site_icon(""));
+        assert!(!tab_url_has_site_icon("http://127.0.0.1:9222/devtools"));
+    }
+
+    #[test]
+    fn fallback_favicon_url_uses_origin() {
+        assert_eq!(
+            fallback_favicon_url("https://github.com/sola/sola"),
+            Some("https://github.com/favicon.ico".into())
+        );
+        assert_eq!(fallback_favicon_url("about:blank"), None);
+        assert_eq!(fallback_favicon_url("http://127.0.0.1:9222/"), None);
+    }
+
+    #[test]
     fn normalize_url_adds_scheme_to_bare_host() {
         assert_eq!(normalize_url("example.com"), "https://example.com");
     }
@@ -408,6 +647,42 @@ mod tests {
         assert_eq!(normalize_url("https://example.com"), "https://example.com");
         assert_eq!(normalize_url("about:blank"), "about:blank");
         assert_eq!(normalize_url("file:///home/x"), "file:///home/x");
+    }
+
+    #[test]
+    fn normalize_url_treats_absolute_path_as_file() {
+        assert_eq!(normalize_url("/tmp/index.html"), "file:///tmp/index.html");
+        assert_eq!(
+            normalize_url("  /home/me/page.html  "),
+            "file:///home/me/page.html"
+        );
+    }
+
+    #[test]
+    fn normalize_url_treats_relative_existing_file_as_file() {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = cwd.join("target");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("normalize-url-relative.html");
+        std::fs::write(&path, "<html></html>").unwrap();
+        let rel = path.strip_prefix(&cwd).unwrap().to_str().unwrap();
+        let url = normalize_url(rel);
+        let canon = path.canonicalize().unwrap();
+        assert_eq!(url, format!("file://{}", canon.display()));
+        assert!(
+            !url.starts_with("https://"),
+            "relative HTML must not become https://…: {url}"
+        );
+    }
+
+    #[test]
+    fn normalize_url_does_not_https_prefix_dot_slash_path() {
+        let url = normalize_url("./no-such-sola-page.html");
+        assert!(
+            url.starts_with("file://"),
+            "explicit relative path is a file URL, got {url}"
+        );
+        assert!(!url.starts_with("https://"));
     }
 
     #[test]
@@ -465,6 +740,18 @@ mod tests {
     }
 
     #[test]
+    fn same_site_ignores_path_and_query() {
+        assert!(same_site(
+            "https://ideogram.ai/login?utm=1",
+            "https://ideogram.ai/g/abc"
+        ));
+        assert!(!same_site(
+            "https://ideogram.ai/",
+            "https://kagi.com/search?q=a"
+        ));
+    }
+
+    #[test]
     fn resolve_query_navigates_to_urls() {
         assert_eq!(resolve_query("github.com"), "https://github.com");
         assert_eq!(resolve_query("https://slate.auto"), "https://slate.auto");
@@ -481,6 +768,10 @@ mod tests {
             resolve_query("weather"),
             "https://kagi.com/search?q=weather"
         );
+        assert_eq!(
+            kagi_lucky_url("weather"),
+            "https://kagi.com/search?q=%5Cweather"
+        );
     }
 
     #[test]
@@ -494,5 +785,32 @@ mod tests {
     #[test]
     fn resolve_query_empty_is_empty() {
         assert_eq!(resolve_query("   "), "");
+    }
+
+    #[test]
+    fn omnibox_enter_is_lucky_for_search() {
+        assert_eq!(
+            omnibox_submit_url("weather", None, false),
+            kagi_lucky_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", None, true),
+            kagi_search_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", Some("https://weather.gov/"), false),
+            "https://weather.gov/"
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", Some("https://weather.gov/"), true),
+            kagi_search_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("github.com", None, false),
+            "https://github.com"
+        );
+        assert!(is_kagi_search_url(&kagi_lucky_url("rust")));
+        assert!(is_kagi_search_url(&kagi_search_url("rust")));
+        assert!(!is_kagi_search_url("https://kagi.com/"));
     }
 }

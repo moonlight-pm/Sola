@@ -9,10 +9,8 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget,
-    LaunchAppPayload, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
-    OpenImageRequest, OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating,
-    WindowGeometry,
+    FocusTarget, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
+    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -161,6 +159,15 @@ impl Shell {
     /// and re-register chords, which made focus-follows-mouse feel like a
     /// double re-paint on chatty clients (e.g. Electron titles).
     fn on_windows(&mut self, windows: Vec<Window>) {
+        // River can keep `closed`-less entries after a hard kill. Drop
+        // those here so composition does not target a dead menubar id.
+        let windows: Vec<Window> = windows
+            .into_iter()
+            .filter(|w| match w.pid {
+                None => true,
+                Some(pid) => std::path::Path::new("/proc").join(pid.to_string()).is_dir(),
+            })
+            .collect();
         tracing::info!(count = windows.len(), "shell received Windows");
 
         // Same surfaces/apps, possibly new titles — skip the heavy path.
@@ -234,6 +241,11 @@ impl Shell {
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;
+            }
+            // Last surface gone — drop AppHidden so a later map of this
+            // app_id is not stuck hidden (Super+H / Arcade).
+            if self.is_app_hidden(id) {
+                self.retract_app_hidden(id);
             }
         }
 
@@ -375,9 +387,8 @@ impl Shell {
         }
 
         // Dismiss open menu if the focused window changed.
-        if self.menu_open && self.focused_window_id != prev_focused {
-            self.menu_open = false;
-            self.current_open_index = None;
+        if self.focused_window_id != prev_focused && self.dismiss_open_menu() {
+            self.emit_overlay_frames();
         }
 
         self.emit_composition();
@@ -386,7 +397,7 @@ impl Shell {
         // only the menubar (added/removed are empty after the
         // app_id filter), so the early-return paths that normally call
         // `emit_registered_chords` never fire — and sola-river never
-        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+Grave /
+        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+H / Meta+Grave /
         // Meta+Numpad{…}, so no keyboard chord ever reaches the shell.
         self.emit_registered_chords();
     }
@@ -438,21 +449,28 @@ impl Shell {
     /// never-raised external windows from living in the "not in MRU" bucket.
     /// It never moves an already-listed app forward (that is raise-only).
     fn apply_focus(&mut self, app_id: &str, bump_mru: bool) {
+        // Composition-hidden apps are not on screen; focusing them would
+        // route keys to a River-hidden surface. Unhide first (raise_app).
+        if self.is_app_hidden(app_id) {
+            tracing::debug!(%app_id, "apply_focus: skip hidden app");
+            return;
+        }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
         self.zoning.set_focused(app_id.to_string());
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
+            self.ack_notify_badge(app_id);
         } else if !self.mru_apps.iter().any(|m| m == app_id) {
             // Track without raising — least-recent = bottom of stack.
             self.mru_apps.push(app_id.to_string());
         }
 
-        // Close any open menu on focus change.
-        if self.menu_open && app_changed {
-            self.menu_open = false;
-            self.current_open_index = None;
+        // Close any open menu on focus change (clears chip highlight too).
+        if app_changed && self.dismiss_open_menu() {
+            self.emit_overlay_frames();
+            self.emit_composition();
         }
 
         // Per-app chord registrations change when the focused app changes.
@@ -472,9 +490,9 @@ impl Shell {
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
     fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
         tracing::debug!(window_id, ?prev_focused, "emit Focus");
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
-        }
+        });
     }
 
     /// Pointer focus (no raise, no stack change). Used after the FFM dwell
@@ -529,9 +547,19 @@ impl Shell {
     }
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
-    /// No-op when that app has no mapped window yet.
+    /// Unhides a Super+H / AppHidden app first. No-op when that app has no
+    /// mapped window yet.
     pub(crate) fn raise_app(&mut self, app_id: &str) {
-        let Some(window_id) = self.lookup_any_window_id(app_id) else {
+        if self.is_app_hidden(app_id) {
+            self.unhide_app(app_id);
+            return;
+        }
+        let Some(window_id) = self.lookup_any_window_id(app_id).or_else(|| {
+            self.known_windows
+                .iter()
+                .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
+                .map(|w| w.window_id)
+        }) else {
             tracing::debug!(%app_id, "raise_app: no mapped window");
             return;
         };
@@ -634,90 +662,22 @@ impl Shell {
         })
     }
 
-    /// Screenshot capture finished (`compositor.screenshot` reply).
-    /// When the capture was shell-initiated (`open_preview_on_next`), also
-    /// open/raise sola-preview with the image **without** stealing keyboard
-    /// (macOS-style: show the shot, keep typing in the previous app).
-    pub(crate) fn on_screenshot_done(
-        &mut self,
-        result: Result<std::path::PathBuf, String>,
-    ) -> Task<Msg> {
-        let open_preview = self.open_preview_on_next;
-        self.open_preview_on_next = false;
+    /// Screenshot capture finished: Fast PNG is on the compositor clipboard
+    /// (or the call failed). No file, no Preview.
+    pub(crate) fn on_screenshot_done(&mut self, result: Result<(), String>) -> Task<Msg> {
         let return_focus = self.screenshot_return_focus.take();
-
-        let msg = match &result {
-            Ok(path) => format!("Screenshot saved: {}", path.display()),
+        let msg = match result {
+            Ok(()) => "Screenshot copied".to_string(),
             Err(e) => format!("Screenshot failed: {e}"),
         };
         self.menubar.push_toast(msg);
         let toast_gen = self.menubar.toast_generation;
-        let toast_task = Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+        if let Some(wid) = return_focus {
+            self.restore_app_focus(Some(wid));
+        }
+        Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
             Msg::ToastExpire(toast_gen)
-        });
-
-        if open_preview {
-            if let Ok(path) = result {
-                self.open_or_raise_preview(&path);
-            }
-        }
-        // Always re-assert the pre-capture app focus after handoff so a
-        // warm OpenImage / composition raise cannot leave the seat on a
-        // shell surface or a non-interactive preview load freeze.
-        if open_preview {
-            self.restore_app_focus(return_focus);
-        }
-
-        toast_task
-    }
-
-    /// Open/raise sola-preview with `path`. Raises in the stack so the
-    /// shot is visible, but does **not** take keyboard focus — the caller
-    /// reasserts `screenshot_return_focus` afterward.
-    fn open_or_raise_preview(&mut self, path: &std::path::Path) {
-        const PREVIEW_ID: &str = "sola-preview";
-        let preview_wid = self
-            .known_windows
-            .iter()
-            .find(|w| w.app_id == PREVIEW_ID)
-            .map(|w| w.window_id);
-
-        if let Some(window_id) = preview_wid {
-            // activate:false — viewer should load the image but not
-            // demand seat focus (shell keeps keyboard on the prior app).
-            //
-            // IMPORTANT: do not call `emit_composition` (or any other
-            // helper that locks the bus) while holding `bus().lock()` —
-            // `std::sync::Mutex` is not reentrant and deadlocks the
-            // shell (frozen menubar / FFM / chords after screenshot).
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::OpenImage(OpenImageRequest {
-                    path: path.to_path_buf(),
-                    activate: false,
-                    app_id: Some(PREVIEW_ID.into()),
-                }));
-            }
-            // Raise via MRU so composition puts preview on top.
-            self.mru_apps.retain(|id| id != PREVIEW_ID);
-            self.mru_apps.insert(0, PREVIEW_ID.to_string());
-            self.mru_window_by_app
-                .insert(PREVIEW_ID.to_string(), window_id);
-            self.emit_composition();
-        } else {
-            // sola-session splits the command on whitespace (no shell).
-            // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
-            // no spaces — so a bare path is safe.
-            // Suppress the normal "new app maps → steal focus" path so
-            // the cold-start preview window doesn't yank the keyboard.
-            self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
-            let command = format!("/opt/sola/bin/sola-preview {}", path.display());
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
-                    app_id: PREVIEW_ID.to_string(),
-                    command,
-                }));
-            }
-        }
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -800,11 +760,14 @@ impl Shell {
         // while one is active (see `emit_registered_chords`), so we don't
         // steal Escape from terminal apps otherwise.
         if chord.keycode == sola_core::KeyCode::ESCAPE && bare {
-            if self.selection.active {
+            if self.selection.active || self.selection.pending {
                 return Task::done(Msg::CloseSelection);
             }
             if self.launcher.active {
                 return Task::done(Msg::CloseLauncher);
+            }
+            if self.shortcuts.active {
+                return Task::done(Msg::CloseShortcuts);
             }
             if self.menu_open {
                 return Task::done(Msg::CloseMenu);
@@ -815,13 +778,40 @@ impl Shell {
         }
 
         // Selection marquee is modal — Escape cancels; ignore other chords.
+        // Pending freeze is not modal (overlay is not up yet) but it owns the
+        // screenshot slot, so ignore competing Super+Shift+3/4/5.
         if self.selection.active {
             return Task::none();
         }
+        if self.selection.pending
+            && chord.meta
+            && chord.shift
+            && matches!(
+                chord.keycode,
+                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
+            )
+        {
+            return Task::none();
+        }
 
-        // Launcher is modal — it owns the keyboard while active, so eat
-        // every other chord. (Switcher has its own navigation branch below.)
-        if self.launcher.active {
+        // Super+K: keyboard-shortcuts overlay (Omarchy). Toggle even while
+        // the launcher is up so the cheatsheet is always one chord away.
+        if chord.meta
+            && !chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::K
+        {
+            if self.shortcuts.active {
+                return Task::done(Msg::CloseShortcuts);
+            }
+            return Task::done(Msg::OpenShortcuts);
+        }
+
+        // Launcher / shortcuts are modal — they own the keyboard while
+        // active, so eat every other chord. (Switcher has its own
+        // navigation branch below.)
+        if self.launcher.active || self.shortcuts.active {
             return Task::none();
         }
 
@@ -829,9 +819,20 @@ impl Shell {
         // dismiss it and then proceed normally (so Meta+Space still
         // opens the launcher, Meta+Tab still opens the switcher, etc.
         // even if the user left a menu hanging open).
-        if self.menu_open {
-            self.menu_open = false;
-            self.current_open_index = None;
+        // Screenshot chords are the exception: they must copy the live
+        // scene (open notifications panel, text selections) before chrome
+        // moves.
+        let screenshot = chord.meta
+            && chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && matches!(
+                chord.keycode,
+                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
+            );
+        if self.menu_open && !screenshot {
+            let _ = self.dismiss_open_menu();
+            self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
         }
@@ -846,6 +847,11 @@ impl Shell {
             }
             if chord.keycode == KeyCode::LEFT {
                 return Task::done(Msg::SwitcherNav { next: false });
+            }
+            // Super+H while the switcher is up would hide the focused app
+            // then Super-release would confirm and unhide it. Eat the chord.
+            if chord.meta && chord.keycode == KeyCode::H {
+                return Task::none();
             }
             if chord.meta && chord.keycode == KeyCode::Q {
                 if let Some(target) = self.switcher.apps.get(self.switcher.selected).cloned() {
@@ -899,6 +905,17 @@ impl Shell {
             return Task::none();
         }
 
+        // Meta+H: hide focused app (omit from composition; River hide).
+        if chord.meta
+            && !chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::H
+        {
+            self.hide_focused_app();
+            return Task::none();
+        }
+
         // Super+Shift+3: full-output screenshot (auto path) → toast + preview.
         if chord.meta
             && chord.shift
@@ -911,14 +928,15 @@ impl Shell {
             return crate::screenshot::full();
         }
 
-        // Super+Shift+4: interactive selection marquee (macOS order).
+        // Super+Shift+4: freeze live output (menus still composed), then
+        // selection marquee on that still.
         if chord.meta
             && chord.shift
             && !chord.ctrl
             && !chord.alt
             && chord.keycode == sola_core::KeyCode::KEY_4
         {
-            tracing::info!("Super+Shift+4 — selection capture");
+            tracing::info!("Super+Shift+4 — selection freeze");
             return Task::done(Msg::OpenSelection);
         }
 
@@ -967,6 +985,9 @@ impl Shell {
                 return Task::done(Msg::SwitcherNav { next: true });
             }
             tracing::info!("Meta+Tab — activating switcher");
+            if let Some(id) = self.focused_app_id.clone() {
+                self.ack_notify_badge(&id);
+            }
             crate::switcher::state::rebuild_apps(
                 &mut self.switcher,
                 &self.mru_apps.clone(),
@@ -984,31 +1005,8 @@ impl Shell {
         }
 
         // Zone snapping (Meta+Numpad).
-        if let Some(frame) = self
-            .zoning
-            .handle_key(chord.keycode.raw(), self.focused_window_id)
-        {
-            // If that snap floated the focused window, persist the rect
-            // handle_key just cached so the on-disk FloatGeometry isn't a
-            // stale rect a later restore would clobber with.
-            let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
-                (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
-                    self.zoning.float_geometry.get(&app_id).cloned()
-                }
-                _ => None,
-            };
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::Frame(frame));
-                if let Some(zones) = self.zoning.take_zones_update() {
-                    let _ = bus.emit(Topic::Zones(zones));
-                }
-                if let Some(fg) = float_fg {
-                    let _ = bus.emit(Topic::FloatGeometry(fg));
-                }
-            }
-            // Announce the float/unfloat to sola-river (gates move/resize).
-            self.sync_window_floating();
-            return Task::none();
+        if let Some(zone) = crate::zoning::zone_for_keycode(chord.keycode.raw()) {
+            return self.snap_focused_zone(zone);
         }
 
         // Shell system menu shortcuts (Quit Sola has none — Super+Q is CloseApp).
@@ -1090,6 +1088,14 @@ impl Shell {
             return Task::none();
         }
 
+        // Composition-hidden surfaces are River-hidden; ignore stray enter.
+        if self
+            .app_id_for_window(e.window_id)
+            .is_some_and(|id| self.is_app_hidden(&id))
+        {
+            return Task::none();
+        }
+
         // Already focused here — nothing to schedule.
         if self.focused_window_id == Some(e.window_id) {
             tracing::debug!(window_id = e.window_id, "FFM enter already focused");
@@ -1143,18 +1149,14 @@ impl Shell {
         // Outside-click dismiss for the menubar dropdown (before raise so
         // composition includes both the closed menu and the raised app).
         // Re-emit chords so Escape is unregistered once the overlay is gone.
-        let dismissed_menu = self.menu_open;
-        if dismissed_menu {
-            self.menu_open = false;
-            self.current_open_index = None;
-            self.open_panel = None;
-        }
+        let dismissed_menu = self.dismiss_open_menu();
 
         self.raise_window_from_click(e.window_id);
 
         if dismissed_menu {
             // raise may already have re-emitted chords on app change; always
             // re-emit here so Escape drops even when focus stays put.
+            self.emit_overlay_frames();
             self.emit_registered_chords();
         }
     }
@@ -1240,7 +1242,7 @@ impl Shell {
     /// since the last call, so sola-river can gate interactive move/resize on
     /// the window under the pointer. Called after every handler that can change
     /// a window's zone (float key, window appearance, zone-map replay).
-    fn sync_window_floating(&mut self) {
+    pub(super) fn sync_window_floating(&mut self) {
         let ids: Vec<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
         let changes = self.zoning.take_floating_changes(&ids);
         if changes.is_empty() {

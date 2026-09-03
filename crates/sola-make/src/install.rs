@@ -323,11 +323,7 @@ fn register_mime_defaults() {
             continue; // don't clobber unrelated handlers (e.g. firefox)
         }
         let Ok(content) = fs::read_to_string(&path) else { continue };
-        let mime_line = content
-            .lines()
-            .find_map(|l| l.strip_prefix("MimeType="))
-            .unwrap_or("");
-        for mime in mime_line.split(';').filter(|s| !s.is_empty()) {
+        for mime in claimed_mime_types(&content) {
             let status = Command::new("xdg-mime")
                 .args(["default", filename, mime])
                 .status();
@@ -349,6 +345,18 @@ fn register_mime_defaults() {
     if registered > 0 {
         println!("Registered {registered} MIME default(s)");
     }
+}
+
+/// MIME types listed on a `.desktop` `MimeType=` line (semicolon-separated).
+fn claimed_mime_types(desktop: &str) -> Vec<&str> {
+    desktop
+        .lines()
+        .find_map(|l| l.strip_prefix("MimeType="))
+        .unwrap_or("")
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Recursively mirror `src` onto `dest`. Files identical to the
@@ -443,9 +451,9 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// names like `shell` resolve to `sola-shell`). Otherwise builds and
 /// installs all workspace binaries.
 ///
-/// When `release` is true, builds with `--release` and copies from
-/// `target/release/` (optimized; much faster KDF / crypto paths for
-/// sola-browser Bitwarden unlock).
+/// Default is release (`target/release/`). Pass `--debug` for an
+/// unoptimized build. Release is much faster at runtime (Bitwarden KDF,
+/// screenshot PNG encode).
 pub fn install(apps: &[String], release: bool) {
     // Bootstrap third-party assets if any pack is missing.
     // /opt/sola/share is the single source of truth at runtime; install
@@ -669,5 +677,55 @@ mod restart_order_tests {
                 "sola-terminal".to_string(),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod desktop_mime_tests {
+    use super::claimed_mime_types;
+
+    /// In-tree desktop is the source of truth for `register_mime_defaults`.
+    const BROWSER_DESKTOP: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../sola-browser/dist/applications/sola-browser.desktop"
+    ));
+
+    #[test]
+    fn splits_mimetype_line() {
+        let desktop = "Name=X\nMimeType=text/html;x-scheme-handler/https;\n";
+        assert_eq!(
+            claimed_mime_types(desktop),
+            vec!["text/html", "x-scheme-handler/https"]
+        );
+    }
+
+    #[test]
+    fn sola_browser_desktop_owns_url_and_html_types() {
+        let exec = BROWSER_DESKTOP
+            .lines()
+            .find_map(|l| l.strip_prefix("Exec="))
+            .unwrap_or("");
+        assert!(
+            exec.contains("/opt/sola/bin/sola-browser"),
+            "desktop must exec sola-browser (chrome.sock handoff), not another opener: {exec}"
+        );
+        assert!(
+            !exec.to_ascii_lowercase().contains("helium"),
+            "desktop must not exec Helium: {exec}"
+        );
+        let mime = claimed_mime_types(BROWSER_DESKTOP);
+        for need in [
+            "x-scheme-handler/http",
+            "x-scheme-handler/https",
+            "text/html",
+            "application/xhtml+xml",
+            "x-scheme-handler/about",
+            "x-scheme-handler/unknown",
+        ] {
+            assert!(
+                mime.contains(&need),
+                "sola-browser.desktop must claim {need}, got {mime:?}"
+            );
+        }
     }
 }

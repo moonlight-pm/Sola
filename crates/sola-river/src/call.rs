@@ -2,7 +2,9 @@
 
 use std::sync::mpsc;
 
-use sola_bus::topics::{CaptureScreenPayload, CaptureTarget, PointerAction, PointerButton};
+use sola_bus::topics::{
+    CaptureFormat, CaptureScreenPayload, CaptureTarget, PointerAction, PointerButton,
+};
 use sola_call::methods::{self, OWNER_COMPOSITOR};
 use sola_call::{Incoming, ReplyTx};
 use sola_core::KeyChord;
@@ -114,7 +116,16 @@ fn screenshot_req(params: &serde_json::Value) -> Result<CaptureScreenPayload, St
     } else {
         CaptureTarget::FullOutput
     };
-    Ok(CaptureScreenPayload { path, target })
+    let format = match params.get("format").and_then(|v| v.as_str()) {
+        None | Some("") | Some("png") => CaptureFormat::Png,
+        Some("rgba") | Some("rgba8") => CaptureFormat::Rgba,
+        Some(other) => return Err(format!("unknown screenshot format {other} (png|rgba)")),
+    };
+    Ok(CaptureScreenPayload {
+        path,
+        target,
+        format,
+    })
 }
 
 fn windows_json(state: &AppData) -> serde_json::Value {
@@ -189,4 +200,30 @@ fn i32_param(params: &serde_json::Value, name: &str) -> Result<i32, String> {
         .and_then(|v| v.as_i64())
         .map(|n| n as i32)
         .ok_or_else(|| format!("missing {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_req_defaults_to_png_full_output() {
+        let req = screenshot_req(&serde_json::json!({})).unwrap();
+        assert!(matches!(req.target, CaptureTarget::FullOutput));
+        assert_eq!(req.format, CaptureFormat::Png);
+        assert!(req.path.is_none());
+    }
+
+    #[test]
+    fn screenshot_req_accepts_rgba_format() {
+        let req = screenshot_req(&serde_json::json!({ "format": "rgba" })).unwrap();
+        assert_eq!(req.format, CaptureFormat::Rgba);
+        assert!(matches!(req.target, CaptureTarget::FullOutput));
+    }
+
+    #[test]
+    fn screenshot_req_rejects_unknown_format() {
+        let err = screenshot_req(&serde_json::json!({ "format": "jpeg" })).unwrap_err();
+        assert!(err.contains("jpeg"));
+    }
 }

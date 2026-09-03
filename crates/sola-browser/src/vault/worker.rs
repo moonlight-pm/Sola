@@ -11,6 +11,7 @@ use super::client::{
     CardSummary, LoginOutcome, MatchSummary, TotpSummary, TwoFactorKind, VaultError, VaultService,
     VaultStatus,
 };
+use super::item::{IdentityFillMaterial, ItemRecord, ItemSummary};
 use super::passkey::PasskeyCandidate;
 
 /// Commands from chrome → vault worker.
@@ -52,6 +53,18 @@ pub enum VaultCmd {
     ListCards,
     /// Decrypt a card for page fill.
     FillCard {
+        id: String,
+    },
+    /// All vault items for the unified panel (page URL ranks URI matches).
+    ListItems {
+        url: String,
+    },
+    /// Full decrypted record for the item view.
+    GetItem {
+        id: String,
+    },
+    /// Decrypt an identity for page fill.
+    FillIdentity {
         id: String,
     },
     /// Persist a new login then return fill material.
@@ -120,6 +133,9 @@ pub enum VaultEvent {
     Matches(Vec<MatchSummary>),
     Cards(Vec<CardSummary>),
     Totp(Vec<TotpSummary>),
+    Items(Vec<ItemSummary>),
+    ItemReady(ItemRecord),
+    IdentityFillReady(IdentityFillMaterial),
     TotpFillReady {
         code: String,
     },
@@ -516,6 +532,36 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         },
                     );
                 }
+            },
+            VaultCmd::ListItems { url } => match svc.list_items(&url).await {
+                Ok(m) => emit(&event_tx, VaultEvent::Items(m)),
+                Err(e) => emit(
+                    &event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                ),
+            },
+            VaultCmd::GetItem { id } => match svc.get_item(&id).await {
+                Ok(item) => emit(&event_tx, VaultEvent::ItemReady(item)),
+                Err(e) => emit(
+                    &event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                ),
+            },
+            VaultCmd::FillIdentity { id } => match svc.fill_identity(&id).await {
+                Ok(material) => {
+                    crate::vault::VaultPrefs::touch_cipher(&id);
+                    emit(&event_tx, VaultEvent::IdentityFillReady(material));
+                }
+                Err(e) => emit(
+                    &event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                ),
             },
             VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
                 Ok(mut material) => {
