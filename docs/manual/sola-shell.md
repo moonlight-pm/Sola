@@ -58,7 +58,7 @@ Hiding the last visible app leaves the menubar and wallpaper.
 
 ## Notifications
 
-The missed-notifications bell (right cluster, no count) opens a list
+The missed-notifications bell (right cluster, with a count) opens a list
 that grows with the pile (cap 20; oldest drop off). Accent while unseen;
 clicking the bell returns it to normal chrome. There is no Clear. Click a
 row to raise the source. Super+Shift+4 with the panel open keeps it in

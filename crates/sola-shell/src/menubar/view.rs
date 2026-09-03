@@ -258,7 +258,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         } else {
             fg
         };
-        extras.push(notify_pile_chip(tint));
+        extras.push(notify_pile_chip(shell.notify.pile_count(), tint));
     }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         extras.push(bluetooth_chip(
@@ -489,10 +489,36 @@ fn stat_graph<'a>(
     .into()
 }
 
-/// Inbox unread: mail glyph + accent count. Hidden by the caller when
-/// mail is closed or the count is zero.
+/// Lucide extras: 14px glyph, optically lifted with the LED matrices.
 fn extra_icon(name: &str, color: Color) -> Element<'static, Msg> {
-    container(icon_colored(name, ICON_SIZE, color))
+    chrome_nudge(icon_colored(name, ICON_SIZE, color))
+}
+
+/// Glyph + chrome count, lifted as a pair so the numeral sits on the
+/// same band as CPU and the icon matches a lone extra (bell / bluetooth).
+fn extra_badge(name: &'static str, count: u32, color: Color) -> Element<'static, Msg> {
+    let label = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    chrome_nudge(
+        row![
+            icon_colored(name, ICON_SIZE, color),
+            text(label)
+                .font(fonts::chrome())
+                .size(CHROME_SIZE)
+                .style(move |_: &Theme| iced::widget::text::Style {
+                    color: Some(color)
+                }),
+        ]
+        .spacing(STAT_INNER_SPACING)
+        .align_y(Alignment::Center),
+    )
+}
+
+fn chrome_nudge<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+    container(content.into())
         .padding(Padding {
             top: 0.0,
             right: 0.0,
@@ -503,23 +529,8 @@ fn extra_icon(name: &str, color: Color) -> Element<'static, Msg> {
 }
 
 fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
-    let label = if unread > 99 {
-        "99+".to_string()
-    } else {
-        unread.to_string()
-    };
     bar_button(
-        row![
-            extra_icon("lucide/mail", accent),
-            text(label)
-                .font(fonts::chrome())
-                .size(CHROME_SIZE)
-                .style(move |_: &Theme| iced::widget::text::Style {
-                    color: Some(accent)
-                }),
-        ]
-        .spacing(STAT_INNER_SPACING)
-        .align_y(Alignment::Center),
+        extra_badge("lucide/mail", unread, accent),
         false,
         Msg::RaiseMail,
         extra_pad(),
@@ -558,9 +569,9 @@ fn bluetooth_chip(
     .into()
 }
 
-fn notify_pile_chip(accent: Color) -> Element<'static, Msg> {
+fn notify_pile_chip(count: u32, accent: Color) -> Element<'static, Msg> {
     bar_button(
-        extra_icon("lucide/bell", accent),
+        extra_badge("lucide/bell", count, accent),
         false,
         Msg::ToggleNotifyPile,
         extra_pad(),
