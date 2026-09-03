@@ -9154,6 +9154,7 @@ dependencies = [
  "iced",
  "iced_core",
  "iced_graphics",
+ "iced_wgpu",
  "png 0.18.1",
  "rustix 1.1.4",
  "serde_json",
