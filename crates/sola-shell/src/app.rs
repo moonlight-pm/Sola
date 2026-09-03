@@ -1635,13 +1635,15 @@ impl Shell {
         }
     }
 
-    /// Left edge of the Bluetooth chip (immediately left of CPU in the
-    /// right-aligned cluster). Hide-if-no-adapter does not affect this
-    /// estimate while the chip is shown.
+    /// Left edge of the Bluetooth chip (left of volume when that chip is
+    /// shown, otherwise immediately left of CPU).
     pub fn estimate_bluetooth_x(&self) -> f32 {
-        self.estimate_stat_x(crate::stats::Metric::Cpu)
-            - crate::menubar::PHRASE_GAP
-            - crate::menubar::extra_chip_w()
+        let chip = crate::menubar::extra_chip_w();
+        if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
+            self.estimate_audio_x() - chip
+        } else {
+            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
+        }
     }
 
     /// Card-sized live frame for the menu overlay (not the full output).
@@ -1706,15 +1708,12 @@ impl Shell {
         }
     }
 
-    /// Left edge of the volume chip (left of Bluetooth when that chip is
-    /// shown, otherwise immediately left of CPU).
+    /// Left edge of the volume chip (rightmost extra — immediately left
+    /// of CPU). Bluetooth sits to its left when that chip is shown.
     pub fn estimate_audio_x(&self) -> f32 {
-        let chip = crate::menubar::extra_chip_w();
-        if crate::bluetooth::bar_icon(&self.bluetooth.snapshot).is_some() {
-            self.estimate_bluetooth_x() - chip
-        } else {
-            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
-        }
+        self.estimate_stat_x(crate::stats::Metric::Cpu)
+            - crate::menubar::PHRASE_GAP
+            - crate::menubar::audio_chip_w()
     }
 
     /// Change `open_panel`, stopping Bluetooth discovery and clearing the

@@ -267,20 +267,20 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         };
         extras.push(notify_pile_chip(tint));
     }
-    if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
-        extras.push(audio_chip(
-            icon,
-            fg,
-            muted,
-            panel_active(shell, crate::app::Panel::Audio),
-        ));
-    }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         extras.push(bluetooth_chip(
             icon,
             fg,
             muted,
             panel_active(shell, crate::app::Panel::Bluetooth),
+        ));
+    }
+    if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
+        extras.push(audio_chip(
+            icon,
+            fg,
+            muted,
+            panel_active(shell, crate::app::Panel::Audio),
         ));
     }
 
@@ -528,7 +528,17 @@ fn audio_chip(
 ) -> Element<'static, Msg> {
     let tint = if icon.muted { muted } else { fg };
     bar_button(
-        icon_colored(icon.name, ICON_SIZE, tint),
+        row![
+            icon_colored(icon.name, ICON_SIZE, tint),
+            container(crate::audio::wave::visualizer(icon.muted)).padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: PIXEL_NUDGE_UP,
+                left: 0.0,
+            }),
+        ]
+        .spacing(STAT_INNER_SPACING)
+        .align_y(Alignment::Center),
         active,
         Msg::ToggleAudio,
         extra_pad(),

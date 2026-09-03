@@ -3,7 +3,7 @@
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
 //! - Right cluster: four phrases, tight within and a breath between —
-//!   extras (mail / bell / volume / bluetooth), percents (CPU / GPU / MEM),
+//!   extras (mail / bell / bluetooth / volume), percents (CPU / GPU / MEM),
 //!   rates (RX / TX), clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
@@ -40,6 +40,14 @@ const CHROME_CHAR_W: f32 = 7.5;
 /// Icon extra chip width (glyph + pad). Overlay anchors walk from this.
 pub fn extra_chip_w() -> f32 {
     ICON_SIZE as f32 + EXTRA_PAD_H * 2.0
+}
+
+/// Volume chip: lucide glyph + 12-band LED spectrum analyzer.
+pub fn audio_chip_w() -> f32 {
+    ICON_SIZE as f32
+        + STAT_INNER_SPACING
+        + crate::audio::wave::SPECTRUM_W
+        + EXTRA_PAD_H * 2.0
 }
 
 /// CPU / GPU / MEM chip width (3-letter label + fixed pixel graph).
@@ -190,5 +198,10 @@ mod tests {
         assert!(rate_chip_w() < 80.0);
         assert_eq!(percent_chip_w() - rate_chip_w(), CHROME_CHAR_W);
         assert!(PHRASE_GAP > EXTRA_PAD_H * 2.0);
+        assert_eq!(
+            audio_chip_w(),
+            extra_chip_w() + STAT_INNER_SPACING + crate::audio::wave::SPECTRUM_W
+        );
+        assert!(crate::audio::wave::SPECTRUM_W > crate::stats::pixel::GRAPH_W * 2.5);
     }
 }

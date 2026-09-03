@@ -193,8 +193,8 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. |
 | Stat indicators | Menu bar extras | Right cluster is four phrases (icon extras, percents, rates, clock). CPU / GPU / MEM / RX / TX show a muted label plus a fixed btop-style dithered pixel graph (numbers live in the dropdown). |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
-| Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph left of stats; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
-| Volume | Menu bar extras (Control Center-ish) | Lucide volume glyph left of Bluetooth; popover is `Panel::Audio` (slider, mute, output/input pick). Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
+| Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph **left of volume**; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
+| Volume | Menu bar extras (Control Center-ish) | Lucide volume glyph **right of Bluetooth** (closest extra to the stats), plus a 12-band LED spectrum analyzer (~3× the CPU graph, green→amber phosphor stack). Popover is `Panel::Audio` (slider, mute, output/input pick). Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
 | Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
 | Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile is a bell in the right cluster (no count, no Clear; cap 20). See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 

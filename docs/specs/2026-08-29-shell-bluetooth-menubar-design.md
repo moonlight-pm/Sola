@@ -15,7 +15,7 @@ A Bluetooth control in the **Mac-shaped** sola-shell menubar. The bar stays a me
 
 | Rule | Choice |
 |------|--------|
-| Icon | Right cluster, **left of the stats**, immediately **right of volume** when that chip is shown. Full-height hit (`bar_button`). `lucide/bluetooth` / `bluetooth-off` / `bluetooth-connected`. Theme `text` / muted — **no accent**, no view-local hex. |
+| Icon | Right cluster, **left of volume** (volume sits immediately left of the stats). Full-height hit (`bar_button`). `lucide/bluetooth` / `bluetooth-off` / `bluetooth-connected`. Theme `text` / muted — **no accent**, no view-local hex. |
 | Off vs on | Readable on the icon. Adapter powered-off → `bluetooth-off` + muted. Powered, nothing connected → `bluetooth`. Powered + ≥1 connected → `bluetooth-connected`, still quiet (same fg as on). |
 | No adapter | **Hide** the icon (same honesty as GPU hiding without NVML). Powered-off adapter still shows. |
 | Click | Existing **Menu** overlay, `Panel::Bluetooth`. Kit `popover`, card width 320 (stats / notify pile family). |
@@ -32,7 +32,7 @@ A Bluetooth control in the **Mac-shaped** sola-shell menubar. The bar stays a me
 Menubar right cluster, left → right:
 
 ```
-[mail?] [notify?] [bluetooth?]  CPU  GPU?  MEM  RX  TX  │  clock
+[mail?] [notify?] [bluetooth?] [volume?]  CPU  GPU?  MEM  RX  TX  │  clock
 ```
 
 Popover (Menu window, anchored under the icon, 8px gutter):
