@@ -51,7 +51,7 @@ rows for feature-level progress.
 - `sola-call` + `sola-workspaces` persist/spawn/call methods on master
 - `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the agent product)
 
-**Remaining:** Workspaces dogfood + rename/recolor/reorder; browser chrome
+**Remaining:** Workspaces dogfood + UI rename modal / recolor / reorder; browser chrome
 completeness; mail polish; kvm input ACL permanence; preview
 zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
 

@@ -48,6 +48,7 @@ pane. `--name` is the rail slug and `.worktrees/<name>`.
 | clean up this worktree / merge and clean up this worktree | Merge to master, then remove the git worktree **and** close the tab (below). |
 | remove this worktree, don't merge / toss this worktree | Do **not** merge. Remove the git worktree **and** close the tab. |
 | drop / close that workspace | `workspace.rm` only — leave the git worktree |
+| rename this worktree / promote to ticket *N* | `workspace.set --name SLUG` (moves `.worktrees/<name>`). Add `--title` and `--branch` for the ticket label / git branch. Do not `git worktree move` by hand. |
 
 ## Fan-out a ticket (stay here)
 
@@ -87,6 +88,17 @@ you mean submit — without it the text sits in the composer.
 
 A workspace name prefers the **Grok** leaf. Pass a pane id from `pane.list`
 to pin a split.
+
+## Promote an ad hoc tab
+
+`--name` is the rail slug **and** the `.worktrees/<name>` folder. The
+catalog id does not change. `--branch` is optional (`git branch -m`);
+omit it to keep the current branch.
+
+```bash
+solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
+    --title 'fix login' --branch joshua/sc-1234/fix
+```
 
 ## Jump (only if they asked)
 

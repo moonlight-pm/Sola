@@ -102,10 +102,20 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "workspace.set",
-            "Set workspace fields (title today)",
+            "Set workspace name, title, and/or branch",
             &[
                 req_s("workspace", Some('w'), "Workspace id or name"),
+                opt_s(
+                    "name",
+                    Some('n'),
+                    "Rail slug; also git worktree move to .worktrees/<name>",
+                ),
                 opt_s("title", None, "Rail subtitle; empty clears"),
+                opt_s(
+                    "branch",
+                    Some('b'),
+                    "Rename this checkout's git branch (does not move the folder)",
+                ),
             ],
         ),
         method_ms(
@@ -279,5 +289,9 @@ mod tests {
         let force = rm.args.iter().find(|a| a.name == "force").unwrap();
         assert!(matches!(force.ty, ArgType::Bool));
         assert!(!force.required);
+        let set = methods.iter().find(|m| m.name == "workspace.set").unwrap();
+        assert!(set.args.iter().any(|a| a.name == "name"));
+        assert!(set.args.iter().any(|a| a.name == "title"));
+        assert!(set.args.iter().any(|a| a.name == "branch"));
     }
 }

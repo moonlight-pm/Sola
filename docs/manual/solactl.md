@@ -45,6 +45,8 @@ solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
     [--agent grok] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
+solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
+    [--title 'fix login'] [--branch joshua/sc-1234/fix]
 solactl workspaces workspace.exec --workspace ticket-123 [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
 solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
@@ -60,6 +62,12 @@ defaults to that name; `--base-branch` defaults to HEAD. `--title` is a
 rail subtitle (`sc-1234 · fix login`). Spawn is background: the new
 row appears, the rail/grid stay on the caller. `--select` jumps
 (same as the UI + / ⌘T). `workspace.exec` does not select.
+`workspace.set --name` slugs the rail label and `git worktree move`s
+to `.worktrees/<name>` (id stays so tmux sessions keep working; live
+or dirty checkouts are forced). The project root cannot be renamed.
+`--branch` is `git branch -m` in that checkout and does not move the
+folder. Promote an ad hoc tab with both: `--name sc-1234 --branch
+joshua/sc-1234/fix --title '…'`. Target by id if the old slug is gone.
 
 Lists include `path`, `kind`, and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also

@@ -6,9 +6,9 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
 **Dogfood:** `solactl workspaces` still needs a desk smoke after install  
-**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4)
+**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); no UI rename modal / recolor / reorder
 
 ---
 
@@ -94,7 +94,7 @@ dedicated interrupt. Reply includes `selected: true|false`.
 | `project.add` | `--path` | `{id,name,root,workspace}` — same as the Add project dialog (`~` expanded) |
 | `project.startup` | `--project? [--script]` | `{project,name,script}` — omit `--script` to read; pass it (including empty) to set. Runs after each sibling worktree is created. Script env: `PROJECT` (folder on disk), `WORKTREE` (this tab), `NAME` (tab name). |
 | `workspace.select` | `--workspace` | `{id,selected:true}` — rail + attach |
-| `workspace.set` | `--workspace [--title]` | workspace JSON — `--title` empty clears |
+| `workspace.set` | `--workspace [--name] [--title] [--branch]` | workspace JSON — `--title` empty clears. `--name` slugs the rail label and `git worktree move --force`s to `.worktrees/<name>` (id stays; project root cannot rename). `--branch` is `git branch -m` in that checkout (does not move the folder). |
 | `workspace.exec` | `--workspace [--agent] [--prompt] [--prompt-file]` | `{workspace,pane,started,sent}` |
 | `pane.wait` | `[--pane] [--status] [--timeout] [--fresh]` | `{pane,status}` or error `timeout` |
 | `whoami` | `[--pane] [--path]` | `{pane,workspace,workspace_name,project,project_name,path,kind,status,agent}` |
@@ -130,7 +130,7 @@ dedicated interrupt. Reply includes `selected: true|false`.
 ## Non-goals (this freeze)
 
 Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
-`--agent`. Split-from-CLI. Rename / recolor / reorder.
+`--agent`. Split-from-CLI. UI rename modal / recolor / reorder.
 
 ---
 
@@ -146,3 +146,4 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout
 - `workspace.rm --worktree` / `--force`; gone worktree path reaps the tab
+- `workspace.set --name` moves `.worktrees/<slug>`; `--branch` renames HEAD; root cannot rename

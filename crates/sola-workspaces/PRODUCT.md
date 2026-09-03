@@ -55,7 +55,9 @@ first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws`, unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `needs attention`),
-`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab).
+`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
+`workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;
+`--branch` is `git branch -m`).
 
 **First-class CLI:** **Grok.** Implement and test Grok first whenever adding
 agent support. Other CLIs are presence-only until Grok status is trustworthy.

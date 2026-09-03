@@ -589,6 +589,25 @@ pub fn can_close(ws: &Workspace) -> bool {
     ws.kind == Kind::Worktree
 }
 
+/// Another workspace in this project already uses this rail slug or
+/// `.worktrees/<slug>` folder. `except_id` is the row being renamed.
+pub fn worktree_name_taken(
+    workspaces: &[Workspace],
+    project_id: &str,
+    slug: &str,
+    except_id: &str,
+) -> bool {
+    workspaces.iter().any(|w| {
+        w.id != except_id
+            && w.project_id == project_id
+            && (w.name.eq_ignore_ascii_case(slug)
+                || w.path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case(slug)))
+    })
+}
+
 /// Worktree tabs whose checkout is already gone. The rail should reap
 /// them — `git worktree remove` from inside the pane cannot call
 /// `workspace.rm` afterward (cwd vanished).
@@ -1171,5 +1190,41 @@ mod tests {
         ws.set_tree(PaneNode::Leaf("ws-main".into()), "ws-main".into());
         assert!(ws.layout.is_none());
         assert!(ws.active_pane.is_none());
+    }
+
+    #[test]
+    fn worktree_name_taken_matches_name_or_folder() {
+        let kid = Workspace {
+            id: "ws-kid".into(),
+            project_id: "p".into(),
+            name: "adhoc".into(),
+            title: None,
+            path: PathBuf::from("/r/.worktrees/adhoc"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let other = Workspace {
+            id: "ws-other".into(),
+            project_id: "p".into(),
+            name: "Fix Login".into(),
+            title: None,
+            path: PathBuf::from("/r/.worktrees/fix-login"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let all = [kid, other];
+        assert!(worktree_name_taken(&all, "p", "adhoc", "ws-new"));
+        assert!(worktree_name_taken(&all, "p", "fix-login", "ws-new"));
+        assert!(!worktree_name_taken(&all, "p", "adhoc", "ws-kid"));
+        assert!(!worktree_name_taken(&all, "p", "sc-1234", "ws-kid"));
+        assert!(!worktree_name_taken(&all, "other", "adhoc", "ws-new"));
     }
 }

@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
-use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard};
+use iced::{Element, Event, Length, Subscription, Task, Theme};
 
-use sola_bus::Message;
 use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
+use sola_bus::Message;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
-    window_settings_transparent,
+    apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings_transparent,
+    BusSetup,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
+use sola_kit::theme::{atoms_from_bus_theme, default_theme, Atoms};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
@@ -1268,7 +1268,12 @@ impl App {
                     return (Err("missing workspace".into()), Task::none());
                 };
                 (
-                    self.cli_set(&q, params.get("title").and_then(|v| v.as_str())),
+                    self.cli_set(
+                        &q,
+                        params.get("name").and_then(|v| v.as_str()),
+                        params.get("title").and_then(|v| v.as_str()),
+                        params.get("branch").and_then(|v| v.as_str()),
+                    ),
                     Task::none(),
                 )
             }
@@ -1458,24 +1463,99 @@ impl App {
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
     }
 
-    fn cli_set(&mut self, q: &str, title: Option<&str>) -> Result<serde_json::Value, String> {
+    fn cli_set(
+        &mut self,
+        q: &str,
+        name: Option<&str>,
+        title: Option<&str>,
+        branch: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
         let id = workspace::resolve_workspace(&self.workspaces, q)?
             .id
             .clone();
-        let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) else {
-            return Err(format!("unknown workspace '{q}'"));
-        };
+        let mut err = None;
+        if let Some(raw) = name {
+            if let Err(e) = self.rename_workspace(&id, raw) {
+                err = Some(e);
+            }
+        }
+        if err.is_none() {
+            if let Some(raw) = branch {
+                if let Err(e) = self.rename_workspace_branch(&id, raw) {
+                    err = Some(e);
+                }
+            }
+        }
         if let Some(raw) = title {
-            let t = raw.trim();
-            ws.title = if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            };
+            if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+                let t = raw.trim();
+                ws.title = if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                };
+            }
         }
         self.persist_catalog();
+        if let Some(e) = err {
+            return Err(e);
+        }
         let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
         Ok(cli::workspace_json(ws, Some(&self.selected)))
+    }
+
+    /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
+    fn rename_workspace(&mut self, id: &str, raw: &str) -> Result<(), String> {
+        let slug = spawn::slug(raw);
+        spawn::check_slug(&slug)?;
+        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
+        if ws.kind != workspace::Kind::Worktree {
+            return Err("cannot rename the project root".into());
+        }
+        let project_id = ws.project_id.clone();
+        let from = ws.path.clone();
+        if workspace::worktree_name_taken(&self.workspaces, &project_id, &slug, id) {
+            return Err(format!("workspace '{slug}' already exists"));
+        }
+        let root = workspace::resolve_project(&self.projects, &project_id)?
+            .root
+            .clone();
+        let dest = spawn::worktree_path(&root, &slug);
+        let path_changed = !workspace::path_same(&from, &dest);
+        if path_changed {
+            spawn::move_worktree(&root, &from, &slug)?;
+        }
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+            ws.name = slug;
+            ws.path = dest;
+        } else {
+            return Err(format!("unknown workspace '{id}'"));
+        }
+        if path_changed {
+            self.restamp_workspace_path(id);
+        }
+        Ok(())
+    }
+
+    fn rename_workspace_branch(&self, id: &str, raw: &str) -> Result<(), String> {
+        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
+        if ws.kind != workspace::Kind::Worktree {
+            return Err("cannot rename the project root branch".into());
+        }
+        spawn::rename_branch(&ws.path, raw)
+    }
+
+    fn restamp_workspace_path(&self, id: &str) {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+            return;
+        };
+        let cwd = ws.path.to_string_lossy();
+        for pane in ws.layout().leaves() {
+            let session = tmux::session_name(&pane);
+            if tmux::has_session(&session) {
+                tmux::set_environment(&session, workspace::SOLA_WS_PATH, cwd.as_ref());
+            }
+        }
     }
 
     fn cli_exec(
