@@ -47,6 +47,14 @@ pub enum ToEngine {
         inspect_x: Option<i32>,
         inspect_y: Option<i32>,
     },
+    ResizeDevTools {
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    DevToolsInput(crate::cef::engine::InputEvent),
+    DevToolsFocus(bool),
+    CloseDevTools,
     Shutdown,
     /// Chrome answered a notification permission prompt.
     NotifyPermission {
@@ -57,6 +65,20 @@ pub enum ToEngine {
     MediaPermission {
         req_id: u64,
         granted: bool,
+    },
+    /// Chrome answered `alert` / `confirm` / `prompt` / leave-page.
+    JsDialog {
+        id: u64,
+        success: bool,
+        input: String,
+    },
+    Find {
+        text: String,
+        forward: bool,
+        next: bool,
+    },
+    StopFind {
+        clear: bool,
     },
 }
 
@@ -94,6 +116,10 @@ pub enum FromEngine {
         tab_id: u64,
         png: Vec<u8>,
     },
+    /// Page `alert` / `confirm` / `prompt` / leave-page (or a reset).
+    JsDialog(crate::js_dialog::Event),
+    FindResult(crate::engine::FindResult),
+    DevTools(crate::engine::DevToolsEvent),
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
@@ -405,6 +431,92 @@ mod tests {
             FromEngine::Notify(crate::notify::Ipc::Media(m)) => {
                 assert_eq!(m.access_id, Some(7));
                 assert!(m.audio);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_js_dialog() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::JsDialog(crate::js_dialog::Event::Open(crate::js_dialog::Ipc {
+                id: 4,
+                tab_id: 2,
+                origin: "https://ex.com".into(),
+                kind: crate::js_dialog::Kind::Prompt,
+                message: "Name?".into(),
+                default_prompt: "Ada".into(),
+            })),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::JsDialog(crate::js_dialog::Event::Open(d)) => {
+                assert_eq!(d.id, 4);
+                assert_eq!(d.kind, crate::js_dialog::Kind::Prompt);
+                assert_eq!(d.default_prompt, "Ada");
+            }
+            other => panic!("{other:?}"),
+        }
+        write_msg(
+            &mut a,
+            &ToEngine::JsDialog {
+                id: 4,
+                success: true,
+                input: "Ada".into(),
+            },
+        )
+        .unwrap();
+        let back: ToEngine = read_msg(&mut b).unwrap();
+        match back {
+            ToEngine::JsDialog { id, success, input } => {
+                assert_eq!(id, 4);
+                assert!(success);
+                assert_eq!(input, "Ada");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_find() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &ToEngine::Find {
+                text: "sola".into(),
+                forward: true,
+                next: false,
+            },
+        )
+        .unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Find {
+                text,
+                forward,
+                next,
+            } => {
+                assert_eq!(text, "sola");
+                assert!(forward);
+                assert!(!next);
+            }
+            other => panic!("{other:?}"),
+        }
+        write_msg(
+            &mut a,
+            &FromEngine::FindResult(crate::engine::FindResult {
+                count: 3,
+                ordinal: 2,
+            }),
+        )
+        .unwrap();
+        let back: FromEngine = read_msg(&mut b).unwrap();
+        match back {
+            FromEngine::FindResult(r) => {
+                assert_eq!((r.count, r.ordinal), (3, 2));
             }
             other => panic!("{other:?}"),
         }

@@ -37,6 +37,11 @@ Slack huddles open with `window.open('about:blank')` and then write the huddle U
 
 Starting the huddle then asks for the mic (and camera if you turn it on) with an Allow / Block overlay. The choice is stored at `~/.config/sola/wrapper/<id>/media.json`. Playback of huddle audio does not need this prompt.
 
+## JavaScript dialogs
+
+`alert()`, `confirm()`, and `prompt()` show as a kit dialog over the page
+(same overlay as Allow / Block). Leave-page confirms use Leave / Stay.
+
 ## Notifications
 
 A page that calls `Notification.requestPermission()` gets an Allow / Block dialog in the wrapper window. The choice is stored at `~/.config/sola/wrapper/<id>/notifications.json`. After **Allow**, `new Notification(title, { body })` is a Sola desk card (top-right under the menubar), not a banner over the page. Click the card to raise this wrapper. Sites you have not allowed cannot notify.

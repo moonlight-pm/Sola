@@ -104,7 +104,8 @@ pub fn is_chrome_edit_shortcut(key: &Key, mods: Modifiers) -> bool {
 }
 
 /// Browser-menu chords that chrome should handle even if the bus
-/// `MenuAction` path is down: Super+R reload, Super+T/W/L, Super+G group.
+/// `MenuAction` path is down: Super+R reload, Super+T/W/L, Super+F find,
+/// Super+G find next.
 pub fn chrome_nav_shortcut(key: &Key, mods: Modifiers) -> Option<char> {
     if !mods.logo() || mods.alt() || mods.shift() || mods.control() {
         return None;
@@ -113,7 +114,7 @@ pub fn chrome_nav_shortcut(key: &Key, mods: Modifiers) -> Option<char> {
         return None;
     };
     match s.chars().next().map(|c| c.to_ascii_lowercase()) {
-        Some(c @ ('r' | 't' | 'w' | 'l' | 'g')) => Some(c),
+        Some(c @ ('r' | 't' | 'w' | 'l' | 'g' | 'f')) => Some(c),
         _ => None,
     }
 }
@@ -130,7 +131,20 @@ pub fn is_reopen_closed_shortcut(key: &Key, mods: Modifiers) -> bool {
 }
 
 pub fn is_chrome_nav_shortcut(key: &Key, mods: Modifiers) -> bool {
-    chrome_nav_shortcut(key, mods).is_some() || is_reopen_closed_shortcut(key, mods)
+    chrome_nav_shortcut(key, mods).is_some()
+        || is_reopen_closed_shortcut(key, mods)
+        || is_find_prev_shortcut(key, mods)
+}
+
+/// Super+Shift+G — find previous.
+pub fn is_find_prev_shortcut(key: &Key, mods: Modifiers) -> bool {
+    if !mods.logo() || !mods.shift() || mods.alt() || mods.control() {
+        return false;
+    }
+    let Key::Character(s) = key else {
+        return false;
+    };
+    s.eq_ignore_ascii_case("g")
 }
 
 /// Cursor shape carried across the worker→iced boundary as a plain `u32`
@@ -246,11 +260,19 @@ mod tests {
             chrome_nav_shortcut(&Key::Character("g".into()), Modifiers::LOGO),
             Some('g')
         );
+        assert_eq!(
+            chrome_nav_shortcut(&Key::Character("f".into()), Modifiers::LOGO),
+            Some('f')
+        );
+        assert!(is_find_prev_shortcut(
+            &Key::Character("g".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
         assert!(is_chrome_nav_shortcut(
             &Key::Character("G".into()),
             Modifiers::LOGO
         ));
-        assert!(!is_chrome_nav_shortcut(
+        assert!(is_chrome_nav_shortcut(
             &Key::Character("g".into()),
             Modifiers::LOGO | Modifiers::SHIFT
         ));

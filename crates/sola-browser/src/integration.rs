@@ -47,6 +47,9 @@ pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
 pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
+pub const ACTION_FIND: &str = "find";
+pub const ACTION_FIND_NEXT: &str = "find-next";
+pub const ACTION_FIND_PREV: &str = "find-prev";
 pub const ACTION_PROFILE_NEW: &str = "profile-new";
 pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
 pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
@@ -79,8 +82,12 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
-    (ACTION_REOPEN_TAB, "Reopen Closed Tab", KeyCode::T.meta_shift()),
-    (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta()),
+    (
+        ACTION_REOPEN_TAB,
+        "Reopen Closed Tab",
+        KeyCode::T.meta_shift(),
+    ),
+    (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta().alt()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
@@ -95,11 +102,14 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
 /// Undo/Redo are intentionally omitted — in a browser they only act on the
 /// editable text field that currently has focus, which is too narrow to earn
 /// a top-level menu slot here.
-pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 4] = [
+pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
     (ACTION_EDIT_CUT, "Cut", KeyCode::X.meta()),
     (ACTION_EDIT_COPY, "Copy", KeyCode::C.meta()),
     (ACTION_EDIT_PASTE, "Paste", KeyCode::V.meta()),
     (ACTION_EDIT_SELECT_ALL, "Select All", KeyCode::A.meta()),
+    (ACTION_FIND, "Find", KeyCode::F.meta()),
+    (ACTION_FIND_NEXT, "Find Next", KeyCode::G.meta()),
+    (ACTION_FIND_PREV, "Find Previous", KeyCode::G.meta_shift()),
 ];
 
 /// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
@@ -199,6 +209,10 @@ pub fn profile_name_input_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("browser-profile-name")
 }
 
+pub fn find_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("browser-find")
+}
+
 /// What the browser should do in response to a bus event. A plain enum keeps
 /// the mapping pure and unit-testable without a bus.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +227,7 @@ pub enum BrowserIntent {
     NewBlankTab,
     CloseActiveTab,
     ReopenClosedTab,
-    /// Wrap the selected loose tab in a group and start renaming it (⌘G).
+    /// Wrap the selected loose tab in a group and start renaming it (⌘⌥G).
     NewGroup,
     Reload,
     Back,
@@ -233,6 +247,9 @@ pub enum BrowserIntent {
     DeleteProfile,
     /// Open DevTools (console) for the active tab.
     ShowDevTools,
+    Find,
+    FindNext,
+    FindPrev,
     Quit,
     None,
 }
@@ -274,6 +291,9 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
         ACTION_REOPEN_TAB => BrowserIntent::ReopenClosedTab,
         ACTION_NEW_GROUP => BrowserIntent::NewGroup,
+        ACTION_FIND => BrowserIntent::Find,
+        ACTION_FIND_NEXT => BrowserIntent::FindNext,
+        ACTION_FIND_PREV => BrowserIntent::FindPrev,
         ACTION_RELOAD => BrowserIntent::Reload,
         ACTION_FOCUS_URL => BrowserIntent::FocusUrl,
         ACTION_BACK => BrowserIntent::Back,
@@ -368,7 +388,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // Prefer URL-bar focus for a blank tab so typing starts immediately.
             app.url_field.clear();
             app.last_seen_url = BLANK_URL.to_string();
-            app.url_bar_focused = true;
+            app.set_url_bar_focused(true);
             Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::CloseActiveTab => {
@@ -377,13 +397,16 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         }
         BrowserIntent::ReopenClosedTab => app.update(Msg::ReopenClosedTab),
         BrowserIntent::NewGroup => app.update(Msg::NewGroup),
+        BrowserIntent::Find => app.update(Msg::FindOpen),
+        BrowserIntent::FindNext => app.update(Msg::FindNext),
+        BrowserIntent::FindPrev => app.update(Msg::FindPrev),
         BrowserIntent::Reload => app.update(Msg::NavReloadOrStop),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => {
             // ⌘L: focus the URL bar and select its contents (browser-standard)
             // so the next keystroke replaces the whole URL.
-            app.url_bar_focused = true;
+            app.set_url_bar_focused(true);
             Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::Edit(cmd) => {
@@ -425,7 +448,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
 }
 
 /// Move keyboard focus to the chrome URL field.
-fn focus_url_bar() -> Task<Msg> {
+pub(crate) fn focus_url_bar() -> Task<Msg> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
         url_input_id(),
     ))
@@ -499,6 +522,15 @@ mod tests {
             intent_for_menu_action(ACTION_FOCUS_URL),
             BrowserIntent::FocusUrl
         );
+        assert_eq!(intent_for_menu_action(ACTION_FIND), BrowserIntent::Find);
+        assert_eq!(
+            intent_for_menu_action(ACTION_FIND_NEXT),
+            BrowserIntent::FindNext
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_FIND_PREV),
+            BrowserIntent::FindPrev
+        );
         assert_eq!(intent_for_menu_action(ACTION_QUIT), BrowserIntent::Quit);
         assert_eq!(
             intent_for_menu_action(ACTION_DEVTOOLS),
@@ -555,6 +587,9 @@ mod tests {
                 ACTION_EDIT_COPY,
                 ACTION_EDIT_PASTE,
                 ACTION_EDIT_SELECT_ALL,
+                ACTION_FIND,
+                ACTION_FIND_NEXT,
+                ACTION_FIND_PREV,
             ]
         );
     }

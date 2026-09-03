@@ -1,8 +1,7 @@
 //! Minimal kit chrome + CEF page. Not sola-browser.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced::event;
@@ -47,6 +46,9 @@ pub enum Msg {
     NotifyBlock,
     MediaAllow,
     MediaBlock,
+    JsDialogOk,
+    JsDialogCancel,
+    JsDialogInput(String),
     Ignore,
 }
 
@@ -62,21 +64,13 @@ pub fn run(app_id: &'static str, spec: Application) -> iced::Result {
     let cmd_tx = engine.cmd_sender();
     let cursor = engine.cursor_handle();
     let active = engine.active_tab_handle();
-    let slot = Arc::new(FrameSlot::<CefEngine> {
-        pending: Mutex::new(None),
-        cmd_tx: cmd_tx.clone(),
-        last_size: Mutex::new((VIEW_W, VIEW_H)),
+    let slot = Arc::new(FrameSlot::<CefEngine>::new(
+        cmd_tx.clone(),
         cursor,
-        paint_tab: AtomicU64::new(u64::MAX),
-        need_park_prime: Mutex::new(HashSet::new()),
-        drop_paint_tabs: Mutex::new(Vec::new()),
-        parked_frames: Mutex::new(HashMap::new()),
-        blank_content: AtomicBool::new(false),
-        redraw_queued: AtomicBool::new(false),
-        pumping: AtomicBool::new(false),
-        last_frame_ms: AtomicU64::new(0),
-        ime: engine.ime_handle(),
-    });
+        engine.ime_handle(),
+        VIEW_W,
+        VIEW_H,
+    ));
     let paint = TabId(active.load(Ordering::Relaxed));
     if paint.0 != 0 && paint.0 != u64::MAX {
         slot.present_tab(paint);
@@ -119,6 +113,9 @@ struct App {
     window_id: Option<iced::window::Id>,
     pending_notify: Option<sola_browser::notify::IpcPerm>,
     pending_media: Option<sola_browser::media::IpcMedia>,
+    pending_js_dialog: Option<sola_browser::js_dialog::Ipc>,
+    js_dialog_queue: std::collections::VecDeque<sola_browser::js_dialog::Ipc>,
+    js_dialog_prompt: String,
 }
 
 impl App {
@@ -139,6 +136,9 @@ impl App {
             window_id: None,
             pending_notify: None,
             pending_media: None,
+            pending_js_dialog: None,
+            js_dialog_queue: std::collections::VecDeque::new(),
+            js_dialog_prompt: String::new(),
         }
     }
 
@@ -161,25 +161,45 @@ impl App {
             bus_subscription().map(Msg::Bus),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             event::listen_with(|event, _status, _| {
-                match event {
+                match &event {
                     Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
-                        sola_browser::input::store_modifiers(m);
+                        sola_browser::input::store_modifiers(*m);
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                        sola_browser::input::store_modifiers(modifiers);
-                        if sola_browser::input::is_super_key(&key) {
+                        sola_browser::input::store_modifiers(*modifiers);
+                        if sola_browser::input::is_super_key(key) {
                             sola_browser::input::note_super_key(true);
                         }
                     }
                     Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
-                        sola_browser::input::store_modifiers(modifiers);
-                        if sola_browser::input::is_super_key(&key) {
+                        sola_browser::input::store_modifiers(*modifiers);
+                        if sola_browser::input::is_super_key(key) {
                             sola_browser::input::note_super_key(false);
                         }
                     }
                     _ => {}
                 }
-                None
+                match event {
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    }) if sola_browser::js_dialog::is_open() => {
+                        Some(if sola_browser::js_dialog::is_alert() {
+                            Msg::JsDialogOk
+                        } else {
+                            Msg::JsDialogCancel
+                        })
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                        ..
+                    }) if sola_browser::js_dialog::is_open()
+                        && !sola_browser::js_dialog::is_prompt() =>
+                    {
+                        Some(Msg::JsDialogOk)
+                    }
+                    _ => None,
+                }
             }),
         ])
     }
@@ -219,12 +239,13 @@ impl App {
             Msg::Tick => {
                 self.sync_engine_tab();
                 self.drain_notify_ipc();
+                let js_dlg = self.drain_js_dialogs();
                 self.drain_outbound_links();
                 let clip = self.take_page_clipboard();
                 if instance::try_recv_activate() {
-                    return Task::batch([clip, self.raise()]);
+                    return Task::batch([clip, js_dlg, self.raise()]);
                 }
-                return clip;
+                return Task::batch([clip, js_dlg]);
             }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
@@ -243,6 +264,11 @@ impl App {
             Msg::NotifyBlock => self.resolve_notify_permission("denied"),
             Msg::MediaAllow => self.resolve_media_permission("granted"),
             Msg::MediaBlock => self.resolve_media_permission("denied"),
+            Msg::JsDialogOk => return self.resolve_js_dialog(true),
+            Msg::JsDialogCancel => return self.resolve_js_dialog(false),
+            Msg::JsDialogInput(s) => {
+                self.js_dialog_prompt = s;
+            }
             Msg::Ignore => {}
         }
         Task::none()
@@ -418,6 +444,111 @@ impl App {
         sola_browser::media::send_resolve(&self.slot.cmd_tx, &perm, result == "granted");
     }
 
+    fn drain_js_dialogs(&mut self) -> Task<Msg> {
+        let evs: Vec<sola_browser::js_dialog::Event> = self
+            .engine
+            .js_dialogs_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        let mut focus = Task::none();
+        for ev in evs {
+            match ev {
+                sola_browser::js_dialog::Event::Open(dlg) => {
+                    tracing::info!(
+                        id = dlg.id,
+                        origin = %dlg.origin,
+                        kind = ?dlg.kind,
+                        "js dialog"
+                    );
+                    if self.pending_js_dialog.is_none() {
+                        focus = self.show_js_dialog(dlg);
+                    } else {
+                        self.js_dialog_queue.push_back(dlg);
+                    }
+                }
+                sola_browser::js_dialog::Event::Reset { ids } => {
+                    let drop = |d: &sola_browser::js_dialog::Ipc| ids.contains(&d.id);
+                    self.js_dialog_queue.retain(|d| !drop(d));
+                    if self.pending_js_dialog.as_ref().is_some_and(drop) {
+                        self.pending_js_dialog = None;
+                        self.js_dialog_prompt.clear();
+                        if let Some(next) = self.js_dialog_queue.pop_front() {
+                            focus = self.show_js_dialog(next);
+                        } else {
+                            sola_browser::js_dialog::set_open(false);
+                        }
+                    }
+                }
+            }
+        }
+        focus
+    }
+
+    fn show_js_dialog(&mut self, dlg: sola_browser::js_dialog::Ipc) -> Task<Msg> {
+        sola_browser::js_dialog::set_kind(Some(dlg.kind));
+        self.js_dialog_prompt = dlg.default_prompt.clone();
+        let prompt = dlg.kind == sola_browser::js_dialog::Kind::Prompt;
+        if dlg.tab_id != 0 {
+            self.slot.present_tab(TabId(dlg.tab_id));
+        }
+        self.pending_js_dialog = Some(dlg);
+        if prompt {
+            Task::batch([
+                iced::widget::operation::focus(sola_browser::js_dialog::prompt_input_id()),
+                iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        sola_browser::js_dialog::prompt_input_id(),
+                    ),
+                ),
+            ])
+        } else {
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::focusable::unfocus::<Msg>(),
+            )
+        }
+    }
+
+    fn resolve_js_dialog(&mut self, success: bool) -> Task<Msg> {
+        let Some(dlg) = self.pending_js_dialog.take() else {
+            sola_browser::js_dialog::set_open(false);
+            return Task::none();
+        };
+        let input = if dlg.kind == sola_browser::js_dialog::Kind::Prompt {
+            std::mem::take(&mut self.js_dialog_prompt)
+        } else {
+            String::new()
+        };
+        let _ = self.slot.cmd_tx.send(Cmd::JsDialog {
+            id: dlg.id,
+            success,
+            input,
+        });
+        if let Some(next) = self.js_dialog_queue.pop_front() {
+            self.show_js_dialog(next)
+        } else {
+            sola_browser::js_dialog::set_open(false);
+            Task::none()
+        }
+    }
+
+    fn view_js_dialog(&self) -> Element<'_, Msg> {
+        let Some(dlg) = self.pending_js_dialog.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        sola_browser::js_dialog::overlay(
+            dlg,
+            &self.js_dialog_prompt,
+            Msg::JsDialogOk,
+            Msg::JsDialogCancel,
+            Msg::JsDialogInput,
+        )
+    }
+
     fn resolve_notify_permission(&mut self, result: &str) {
         let Some(perm) = self.pending_notify.take() else {
             return;
@@ -453,7 +584,7 @@ impl App {
         let webview = Shader::new(CefEngine::make_program(self.slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
-        let webview = page_ime(webview, self.slot.clone(), true);
+        let webview = page_ime(webview, self.slot.clone(), self.pending_js_dialog.is_none());
         let webview = Element::from(webview).map(map_browser_msg);
 
         let canvas = self.theme.extended_palette().background.base.color;
@@ -472,7 +603,9 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        let content: Element<'_, Msg> = if self.pending_media.is_some() {
+        let content: Element<'_, Msg> = if self.pending_js_dialog.is_some() {
+            stack![content, self.view_js_dialog()].into()
+        } else if self.pending_media.is_some() {
             stack![content, self.view_media_permission()].into()
         } else if self.pending_notify.is_some() {
             stack![content, self.view_notify_permission()].into()

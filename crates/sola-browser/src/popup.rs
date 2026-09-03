@@ -47,7 +47,7 @@ pub fn classify_popup(
     if wrapper && is_offsite_http(opener, url) {
         return PopupAction::ChromeTab { activate: true };
     }
-    if is_blank_popup_url(url) {
+    if is_blank_popup_url(url) || is_devtools_url(url) {
         return PopupAction::Osr;
     }
     // `window.open(url, name, 'width=…')` is NEW_POPUP. Cancelling it
@@ -65,6 +65,11 @@ pub fn classify_popup(
     PopupAction::ChromeTab {
         activate: !matches!(disposition, PopupDisposition::BackgroundTab),
     }
+}
+
+pub fn is_devtools_url(url: &str) -> bool {
+    let t = url.trim().to_ascii_lowercase();
+    t.starts_with("devtools:") || t.contains("/devtools/inspector.html")
 }
 
 pub fn is_blank_popup_url(url: &str) -> bool {
@@ -209,6 +214,22 @@ mod tests {
             ),
             PopupAction::ChromeTab { activate: true }
         );
+    }
+
+    #[test]
+    fn devtools_popup_is_osr() {
+        assert_eq!(
+            act(
+                "https://example.com/",
+                "devtools://devtools/bundled/inspector.html",
+                PopupDisposition::Window,
+                false,
+            ),
+            PopupAction::Osr
+        );
+        assert!(is_devtools_url(
+            "devtools://devtools/bundled/devtools_app.html?remoteBase=https://chrome-devtools-frontend.appspot.com/serve_file/@e46e70b7112e24cb0501b746c09f8228ff88850a/&targetType=tab"
+        ));
     }
 
     #[test]

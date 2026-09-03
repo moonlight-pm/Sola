@@ -7,7 +7,7 @@ use std::time::Instant;
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use crate::engine::{Cmd, FrameSlot};
+use crate::engine::{Cmd, FrameSlot, PaintSurface};
 use crate::shader::{ImportedTexture, SamplePipeline};
 
 use crate::cef::cpu_import::{self, UploadedFrame};
@@ -16,6 +16,7 @@ use crate::cef::input;
 
 pub struct CefProgram {
     pub slot: Arc<FrameSlot<CefEngine>>,
+    pub surface: PaintSurface,
 }
 
 impl std::fmt::Debug for CefProgram {
@@ -26,6 +27,7 @@ impl std::fmt::Debug for CefProgram {
 
 pub struct CefPrimitive {
     pub slot: Arc<FrameSlot<CefEngine>>,
+    pub surface: PaintSurface,
 }
 
 impl std::fmt::Debug for CefPrimitive {
@@ -62,6 +64,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
     ) -> Self::Primitive {
         CefPrimitive {
             slot: self.slot.clone(),
+            surface: self.surface,
         }
     }
 
@@ -72,7 +75,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<crate::app::Msg>> {
-        let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
+        let (req_w, _req_h) = self.slot.last_size_of(self.surface);
         let scale = crate::input::scale_from_last_size(bounds, req_w, state.last_scale);
         state.last_scale = scale;
         // Chrome subscription keeps this current even when the URL bar
@@ -87,12 +90,12 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                         state.pointer_in = false;
                         if let Some((x, y)) = state.last_pointer {
                             let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
-                            let _ = self.slot.cmd_tx.send(Cmd::Input(input::pointer_leave(
+                            self.send_input(input::pointer_leave(
                                 x,
                                 y,
                                 state.held_button_mods,
                                 kbd_mods,
-                            )));
+                            ));
                             return Some(iced::widget::shader::Action::capture());
                         }
                     }
@@ -169,14 +172,24 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 };
                 let is_left_press = matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
                 if let Some(e) = ev {
-                    let _ = self.slot.cmd_tx.send(Cmd::Input(e));
                     if is_left_press {
-                        return Some(
-                            iced::widget::shader::Action::publish(crate::app::Msg::WebViewFocused)
-                                .and_capture(),
-                        );
+                        let dt = self.surface == PaintSurface::DevTools;
+                        self.slot
+                            .input_devtools
+                            .store(dt, std::sync::atomic::Ordering::Relaxed);
+                        if dt {
+                            let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(true));
+                        }
                     }
-                    if should_pump(&self.slot) {
+                    self.send_input(e);
+                    if is_left_press {
+                        let msg = match self.surface {
+                            PaintSurface::Page => crate::app::Msg::WebViewFocused,
+                            PaintSurface::DevTools => crate::app::Msg::DevToolsFocused,
+                        };
+                        return Some(iced::widget::shader::Action::publish(msg).and_capture());
+                    }
+                    if should_pump(&self.slot, self.surface) {
                         return Some(iced::widget::shader::Action::request_redraw().and_capture());
                     }
                     return Some(iced::widget::shader::Action::capture());
@@ -205,7 +218,9 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     }
                 };
                 if let Some(e) = ev {
-                    let _ = self.slot.cmd_tx.send(Cmd::Input(e));
+                    if self.accepts_keys() {
+                        self.send_input(e);
+                    }
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
@@ -231,6 +246,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                             key,
                             crate::input::stored_modifiers(),
                         )
+                        || crate::js_dialog::is_open()
                     {
                         return Some(iced::widget::shader::Action::capture());
                     }
@@ -241,7 +257,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     if let keyboard::Event::KeyPressed { key, .. } = k {
                         if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
                             state.composing = false;
-                            let _ = self.slot.cmd_tx.send(Cmd::Input(input::ime_cancel()));
+                            self.send_input(input::ime_cancel());
                             return Some(iced::widget::shader::Action::capture());
                         }
                         if matches!(key, keyboard::Key::Character(_)) {
@@ -266,9 +282,12 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     }
                     keyboard::Event::ModifiersChanged(_) => None,
                 };
+                if !self.accepts_keys() {
+                    return None;
+                }
                 if let Some(e) = translated {
-                    let _ = self.slot.cmd_tx.send(Cmd::Input(e));
-                    if should_pump(&self.slot) {
+                    self.send_input(e);
+                    if should_pump(&self.slot, self.surface) {
                         return Some(iced::widget::shader::Action::request_redraw().and_capture());
                     }
                     return Some(iced::widget::shader::Action::capture());
@@ -277,14 +296,23 @@ impl shader::Program<crate::app::Msg> for CefProgram {
             iced::Event::Window(w) => {
                 use iced::window::Event as WE;
                 match w {
-                    WE::Focused => {
-                        let _ = self.slot.cmd_tx.send(Cmd::Focus(true));
+                    WE::Focused if self.surface == PaintSurface::Page => {
+                        if self
+                            .slot
+                            .input_devtools
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(true));
+                        } else {
+                            let _ = self.slot.cmd_tx.send(Cmd::Focus(true));
+                        }
                     }
-                    WE::Unfocused => {
+                    WE::Unfocused if self.surface == PaintSurface::Page => {
                         let _ = self.slot.cmd_tx.send(Cmd::Focus(false));
+                        let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(false));
                     }
                     WE::RedrawRequested(_) => {
-                        if should_pump(&self.slot) {
+                        if should_pump(&self.slot, self.surface) {
                             return Some(iced::widget::shader::Action::request_redraw());
                         }
                     }
@@ -304,6 +332,27 @@ impl shader::Program<crate::app::Msg> for CefProgram {
     ) -> mouse::Interaction {
         let raw = self.slot.cursor.load(std::sync::atomic::Ordering::Relaxed);
         crate::CursorKind::from_u32(raw).to_iced()
+    }
+}
+
+impl CefProgram {
+    fn accepts_keys(&self) -> bool {
+        let dt = self
+            .slot
+            .input_devtools
+            .load(std::sync::atomic::Ordering::Relaxed);
+        match self.surface {
+            PaintSurface::Page => !dt,
+            PaintSurface::DevTools => dt,
+        }
+    }
+
+    fn send_input(&self, ev: crate::cef::engine::InputEvent) {
+        let cmd = match self.surface {
+            PaintSurface::Page => Cmd::Input(ev),
+            PaintSurface::DevTools => Cmd::DevToolsInput(ev),
+        };
+        let _ = self.slot.cmd_tx.send(cmd);
     }
 }
 
@@ -379,9 +428,12 @@ fn note_ime_fallback(slot: &FrameSlot<CefEngine>, x: i32, y: i32) {
     }
 }
 
-fn should_pump(slot: &FrameSlot<CefEngine>) -> bool {
+fn should_pump(slot: &FrameSlot<CefEngine>, surface: PaintSurface) -> bool {
     use std::sync::atomic::Ordering;
-    let pending = slot.pending.lock().unwrap().is_some();
+    let pending = match surface {
+        PaintSurface::Page => slot.pending.lock().unwrap().is_some(),
+        PaintSurface::DevTools => slot.devtools_pending.lock().unwrap().is_some(),
+    };
     let last = slot.last_frame_ms.load(Ordering::Relaxed);
     let recent = last != 0
         && crate::engine::monotonic_ms().saturating_sub(last)
@@ -391,12 +443,7 @@ fn should_pump(slot: &FrameSlot<CefEngine>) -> bool {
         return true;
     }
     slot.pumping.store(false, Ordering::Relaxed);
-    if slot.pending.lock().unwrap().is_some() {
-        slot.pumping.store(true, Ordering::Relaxed);
-        true
-    } else {
-        false
-    }
+    false
 }
 
 impl shader::Primitive for CefPrimitive {
@@ -413,58 +460,48 @@ impl shader::Primitive for CefPrimitive {
         let scale = viewport.scale_factor() as f32;
         let req_w = (bounds.width * scale).round().max(1.0) as u32;
         let req_h = (bounds.height * scale).round().max(1.0) as u32;
-        let mut last = self.slot.last_size.lock().unwrap();
-        if *last != (req_w, req_h) {
-            *last = (req_w, req_h);
-            drop(last);
-            let _ = self.slot.cmd_tx.send(Cmd::Resize {
-                width: req_w,
-                height: req_h,
-                scale: scale as f64,
-            });
-        } else {
-            drop(last);
+        if self.slot.store_last_size(self.surface, (req_w, req_h)) {
+            let cmd = match self.surface {
+                PaintSurface::Page => Cmd::Resize {
+                    width: req_w,
+                    height: req_h,
+                    scale: scale as f64,
+                },
+                PaintSurface::DevTools => Cmd::ResizeDevTools {
+                    width: req_w,
+                    height: req_h,
+                    scale: scale as f64,
+                },
+            };
+            let _ = self.slot.cmd_tx.send(cmd);
         }
         let want = (req_w, req_h);
-        let paint_tab = self
-            .slot
-            .paint_tab
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let pending = {
-            let mut guard = self.slot.pending.lock().unwrap();
-            guard.take()
-        };
+        let paint_tab = self.slot.paint_id(self.surface);
+        let pipe = pipeline.surface_mut(self.surface);
+        let pending = self.slot.take_pending_of(self.surface);
         if let Some(pending) = pending {
             if pending.tab_id.0 == paint_tab
                 && crate::shader::size_matches((pending.frame.width, pending.frame.height), want)
             {
-                if let Some(imported) = pipeline.importer.import_into(
+                if let Some(imported) = pipe.importer.import_into(
                     device,
                     queue,
-                    &pipeline.sample.bind_group_layout,
-                    &pipeline.sample.sampler,
+                    &pipe.sample.bind_group_layout,
+                    &pipe.sample.sampler,
                     pending.frame,
                 ) {
-                    pipeline.sample.install(imported);
-                    pipeline.sample.note_frame();
-                    pipeline.painted_tab = paint_tab;
-                    self.slot
-                        .blank_content
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    pipe.sample.install(imported);
+                    pipe.sample.note_frame();
+                    pipe.painted_tab = paint_tab;
+                    self.slot.clear_blank(self.surface);
                     return;
                 }
             }
-            // Wrong tab, or a parked snapshot at the wrong size — drop.
         }
-        // Different tab than what's on the GPU, or chrome asked to blank:
-        // never keep the previous page up while we wait.
-        let blank = self
-            .slot
-            .blank_content
-            .swap(false, std::sync::atomic::Ordering::Relaxed);
-        if blank || pipeline.painted_tab != paint_tab {
-            pipeline.sample.clear();
-            pipeline.painted_tab = u64::MAX;
+        let blank = self.slot.blank_of(self.surface);
+        if blank || pipe.painted_tab != paint_tab {
+            pipe.sample.clear();
+            pipe.painted_tab = u64::MAX;
         }
     }
 
@@ -475,19 +512,51 @@ impl shader::Primitive for CefPrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let requested = *self.slot.last_size.lock().unwrap();
-        pipeline
-            .sample
-            .render(encoder, target, clip_bounds, requested, "cef sample pass");
+        let requested = self.slot.last_size_of(self.surface);
+        let pipe = pipeline.surface(self.surface);
+        let label = match self.surface {
+            PaintSurface::Page => "cef sample pass",
+            PaintSurface::DevTools => "cef devtools sample pass",
+        };
+        pipe.sample
+            .render(encoder, target, clip_bounds, requested, label);
+    }
+}
+
+struct SurfacePipe {
+    sample: SamplePipeline,
+    importer: CefImporter,
+    painted_tab: u64,
+}
+
+impl std::fmt::Debug for SurfacePipe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SurfacePipe")
+            .field("painted_tab", &self.painted_tab)
+            .finish_non_exhaustive()
     }
 }
 
 #[derive(Debug)]
 pub struct CefPipeline {
-    sample: SamplePipeline,
-    importer: CefImporter,
-    /// Tab id currently sampled (`u64::MAX` = fallback / none).
-    painted_tab: u64,
+    page: SurfacePipe,
+    devtools: SurfacePipe,
+}
+
+impl CefPipeline {
+    fn surface(&self, surface: PaintSurface) -> &SurfacePipe {
+        match surface {
+            PaintSurface::Page => &self.page,
+            PaintSurface::DevTools => &self.devtools,
+        }
+    }
+
+    fn surface_mut(&mut self, surface: PaintSurface) -> &mut SurfacePipe {
+        match surface {
+            PaintSurface::Page => &mut self.page,
+            PaintSurface::DevTools => &mut self.devtools,
+        }
+    }
 }
 
 impl std::fmt::Debug for CefImporter {
@@ -498,14 +567,18 @@ impl std::fmt::Debug for CefImporter {
 
 impl shader::Pipeline for CefPipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        Self {
-            sample: SamplePipeline::new(device, queue, format, "cef"),
+        let pipe = |label: &str| SurfacePipe {
+            sample: SamplePipeline::new(device, queue, format, label),
             importer: CefImporter {
                 texture: None,
                 bind_group: None,
                 staging: Vec::new(),
             },
             painted_tab: u64::MAX,
+        };
+        Self {
+            page: pipe("cef"),
+            devtools: pipe("cef-devtools"),
         }
     }
 }

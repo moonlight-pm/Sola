@@ -55,6 +55,32 @@ pub fn copyable_page_url(page_url: &str, last_seen: &str, url_field: &str) -> Op
     None
 }
 
+/// Idle omnibox label: drop `https://` (and a lone trailing slash on the
+/// origin). Keep `http://` so an insecure origin is still obvious.
+pub fn display_url(url: &str) -> String {
+    let t = url.trim();
+    if t.is_empty() || t == "about:blank" {
+        return String::new();
+    }
+    let (insecure, rest) = if let Some(rest) = t.strip_prefix("https://") {
+        (false, rest)
+    } else if let Some(rest) = t.strip_prefix("http://") {
+        (true, rest)
+    } else {
+        return t.to_string();
+    };
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let rest = match rest.strip_suffix('/') {
+        Some(s) if !s.contains('/') => s,
+        _ => rest,
+    };
+    if insecure {
+        format!("http://{rest}")
+    } else {
+        rest.to_string()
+    }
+}
+
 /// Clipboard text that is safe to apply to a field. Drops `None`, empty,
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
@@ -308,8 +334,47 @@ pub fn resolve_query(s: &str) -> String {
     if looks_like_url(t) {
         normalize_url(t)
     } else {
-        format!("{SEARCH_PREFIX}{}", encode_query(t))
+        kagi_search_url(t)
     }
+}
+
+/// Kagi results page for the typed query (Shift+Enter).
+pub fn kagi_search_url(q: &str) -> String {
+    format!("{SEARCH_PREFIX}{}", encode_query(q.trim()))
+}
+
+/// Kagi "I'm feeling lucky" (`\query`) — first result for the typed query.
+pub fn kagi_lucky_url(q: &str) -> String {
+    format!("{SEARCH_PREFIX}%5C{}", encode_query(q.trim()))
+}
+
+/// `scheme://host` of a URL (no path / query). Empty if it cannot be split.
+pub fn page_origin(url: &str) -> String {
+    let t = url.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if let Some((scheme, rest)) = t.split_once("://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        if host.is_empty() {
+            return String::new();
+        }
+        return format!("{scheme}://{host}").to_ascii_lowercase();
+    }
+    String::new()
+}
+
+/// Same site (scheme + host), ignoring path and query.
+pub fn same_site(a: &str, b: &str) -> bool {
+    let oa = page_origin(a);
+    !oa.is_empty() && oa == page_origin(b)
+}
+
+/// One-line history subtitle: no query string, middle-ellipsis if long.
+pub fn compact_history_url(url: &str) -> String {
+    let shown = display_url(url);
+    let stripped = shown.split(['?', '#']).next().unwrap_or(&shown);
+    truncate(stripped, 72)
 }
 
 /// Return the explicit URL scheme of `s` (the alphabetic run before the first
@@ -370,6 +435,18 @@ mod tests {
         assert!(!href_is_new_tab_target("   "));
         assert!(!href_is_new_tab_target("javascript:void(0)"));
         assert!(!href_is_new_tab_target("data:text/html,hi"));
+    }
+
+    #[test]
+    fn display_url_strips_https() {
+        assert_eq!(display_url("https://example.com/"), "example.com");
+        assert_eq!(
+            display_url("https://www.example.com/path"),
+            "example.com/path"
+        );
+        assert_eq!(display_url("http://example.com/x"), "http://example.com/x");
+        assert_eq!(display_url("about:blank"), "");
+        assert_eq!(display_url(""), "");
     }
 
     #[test]
@@ -568,6 +645,15 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn same_site_ignores_path_and_query() {
+        assert!(same_site(
+            "https://ideogram.ai/login?utm=1",
+            "https://ideogram.ai/g/abc"
+        ));
+        assert!(!same_site("https://ideogram.ai/", "https://kagi.com/search?q=a"));
+    }
+
     fn resolve_query_navigates_to_urls() {
         assert_eq!(resolve_query("github.com"), "https://github.com");
         assert_eq!(resolve_query("https://slate.auto"), "https://slate.auto");
@@ -583,6 +669,10 @@ mod tests {
         assert_eq!(
             resolve_query("weather"),
             "https://kagi.com/search?q=weather"
+        );
+        assert_eq!(
+            kagi_lucky_url("weather"),
+            "https://kagi.com/search?q=%5Cweather"
         );
     }
 

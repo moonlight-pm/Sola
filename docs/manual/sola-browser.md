@@ -9,6 +9,24 @@ background tab. A page `window.open` (database console, SSH terminal)
 opens as a new tab, not a popup window. Right-click the page for a small kit menu. Hold back or
 forward to jump in that tab’s session history. Site **notifications**
 leave the page and show as Sola desk cards (permission prompt first).
+`alert()`, `confirm()`, and `prompt()` are a kit dialog over the page
+(OK / Cancel; prompt has a field). Leave-page confirms use Leave / Stay.
+Escape cancels (OK on `alert`). A second dialog waits until the first is
+answered.
+**Developer Tools** (Browser menu, or the page menu) docks Chromium’s
+inspector under the page in the same tab. Choose the action again to
+close it. Right-click → Inspect Element opens it on that node.
+The location bar is **plain text** on the chrome until you click it (or
+`⌘L`); then it is an edit field. `https://` is omitted while idle.
+Typing searches **visit history** (top five matches as a list under the
+chrome — the field is not autocompleted and **keeps focus**). ↓ /
+`Ctrl+N` and ↑ / `Ctrl+P` (or a click) only highlight a row. Enter
+switches to a tab already on that site, or loads the URL; for a search
+with no highlight it uses the top match or Kagi’s first result.
+**Shift+Enter** always loads the Kagi results page. Further typing
+refines the list. Jumping from a new tab to a site already open closes
+the unused blank tab.
+`⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
 Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
 including Steam store trailers, plays on the codecs-enabled CEF used on
 this desk (`scripts/cef-codecs/`); the public `install-cef` tarball does
@@ -57,6 +75,7 @@ A **profile** is a separate web identity + tab workspace (D8).
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
 | Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
+| Visit history (omnibox) | `~/.local/share/sola/browser/shared/history.json` |
 | Notification permission | `~/.local/share/sola/browser/profiles/<uuid>/notifications.json` |
 | Microphone / camera | `~/.local/share/sola/browser/profiles/<uuid>/media.json` |
 
@@ -115,7 +134,7 @@ A hair of air between pockets stays put while you drag. Hovering members
 or the floor of a pocket grows that well by one row. Dropping on a
 group **title** is ignored (the tab returns). Dragging the **header**
 moves the whole pocket. Taking a tab out shrinks the well. Loose tabs
-stay in one run underneath. `⌘G` (Browser → **New Group**) wraps the
+stay in one run underneath. `⌘⌥G` (Browser → **New Group**) wraps the
 **selected loose tab** in a new group, focuses the name, and selects
 `Group` (then `Group 2`, …) so the next keystroke replaces it. Enter
 keeps it; Esc reverts. The chord does nothing when the current tab is
@@ -156,12 +175,15 @@ scheme is left as typed.
 
 ## Developer Tools
 
+The inspector docks **under the page** in the same tab (not a new tab
+or a separate window). Drag the hairline to resize. Open the action
+again to close it. Switching tabs hides the panel until you return to
+the inspected tab.
+
 Right-click the page:
 
-- **Open Developer Tools** — Chromium inspector in a new tab, on the
-  **console**
-- **Inspect Element** — same inspector on **elements**, with the node
-  under the pointer selected
+- **Open Developer Tools** — console, docked
+- **Inspect Element** — elements, with the node under the pointer selected
 
 **Menubar → Browser → Developer Tools** (⌘⌥I) is the console path.
 There is no F12 binding (media-key keyboards).
