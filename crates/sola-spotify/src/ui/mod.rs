@@ -217,7 +217,10 @@ impl App {
         let dirs = AppDirs::discover();
         let settings = Settings::load(&dirs);
         let skipped = Skipped::load(&dirs);
-        let page = Page::decode(&settings.last_page).unwrap_or(Page::Home);
+        let fallback = Page::decode(&settings.last_page).unwrap_or(Page::Home);
+        let nav = NavHistory::from_saved(&settings.nav, fallback);
+        let current = nav.current().clone();
+        let page = current.page.clone();
         let last_track = settings.last_track.clone();
         let mut app = Self {
             theme: default_theme(),
@@ -229,7 +232,7 @@ impl App {
             premium: None,
             local: LocalPlayback::Unavailable,
             page: page.clone(),
-            nav: NavHistory::new(page.clone()),
+            nav,
             body: None,
             page_cache: HashMap::new(),
             now: NowPlaying::default(),
@@ -238,7 +241,7 @@ impl App {
             art: HashMap::new(),
             art_inflight: HashSet::new(),
             saved: HashMap::new(),
-            search: String::new(),
+            search: current.search,
             devices_open: false,
             error: None,
             settings,
@@ -569,13 +572,18 @@ impl App {
         self.show(entry.page);
     }
 
+    fn persist_settings(&mut self) {
+        self.settings.nav = self.nav.to_saved();
+        self.settings.save(&self.dirs);
+    }
+
     fn show(&mut self, page: Page) {
         self.add_to = None;
         self.page = page.clone();
         if page.persist_as_last() {
             self.settings.last_page = page.encode();
-            self.settings.save(&self.dirs);
         }
+        self.persist_settings();
         if let Some(cached) = self.page_cache.get(&page).cloned() {
             self.body = Some(cached);
         } else if let Some(cached) = self.read_page_disk(&page) {
@@ -818,7 +826,7 @@ impl App {
             return;
         }
         self.settings.last_playlist = playlist_id.to_string();
-        self.settings.save(&self.dirs);
+        self.persist_settings();
         self.show_notice(format!("Added to {name}"));
         let n = uris.len() as u32;
         if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
@@ -841,7 +849,7 @@ impl App {
     fn finish_added(&mut self, playlist_id: &str, name: &str, uris: &[String]) {
         if self.settings.last_playlist != playlist_id {
             self.settings.last_playlist = playlist_id.to_string();
-            self.settings.save(&self.dirs);
+            self.persist_settings();
         }
         if self.notice.as_ref().is_none_or(|n| !n.text.contains(name)) {
             self.show_notice(format!("Added to {name}"));
@@ -958,7 +966,14 @@ impl App {
 
     fn on_worker(&mut self, ev: Event) -> Task<Msg> {
         match ev {
-            Event::Auth(status) => self.auth = status,
+            Event::Auth(status) => {
+                let just_connected = matches!(status, AuthStatus::Connected { .. })
+                    && !matches!(self.auth, AuthStatus::Connected { .. });
+                self.auth = status;
+                if just_connected && !self.page.persist_as_last() {
+                    self.show(self.page.clone());
+                }
+            }
             Event::User(user) => self.user = Some(user),
             Event::Premium(p) => self.premium = p,
             Event::LocalPlayback(local) => self.local = local,
@@ -1075,6 +1090,9 @@ impl App {
                 }
                 if settings.last_playlist.is_empty() {
                     settings.last_playlist = self.settings.last_playlist.clone();
+                }
+                if !self.settings.nav.entries.is_empty() {
+                    settings.nav = self.settings.nav.clone();
                 }
                 self.settings = settings;
             }
@@ -2484,7 +2502,7 @@ impl App {
         self.selected_uri = Some(uri.to_string());
         if self.settings.last_track != uri {
             self.settings.last_track = uri.to_string();
-            self.settings.save(&self.dirs);
+            self.persist_settings();
         }
     }
 

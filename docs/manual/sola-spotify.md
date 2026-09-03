@@ -2,7 +2,7 @@
 
 Kit-native Spotify client. Browse the library, search, control Spotify Connect devices, and (with Premium) play on this computer through librespot.
 
-**Partial.** **Installed** `spotify` (release, 2026-09-02). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
+**Partial.** **Installed** `spotify` (release, 2026-09-03). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
 
 ## Requirements
 
@@ -37,8 +37,9 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   Enter adds to the first match. **New playlist** creates a private
   list named “New playlist” and adds the song. A short **Added to …**
   notice confirms. Escape or a click outside closes the picker.
-- Reopen restores the last playlist and the last track (graphite lift =
-  selected; cyan play mark + accent title = playing).
+- Reopen restores the last playlist, the last track (graphite lift =
+  selected; cyan play mark + accent title = playing), and page
+  **Back / Forward** (up to 20 back steps, including Search queries).
 - Playlist pages show added dates on the header and on each row.
 - **Albums** and **Artists** are wrapping catalogs (same as Made for you).
 - Bottom bar: now playing on the left, transport in the center. Idle is
@@ -47,7 +48,7 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   add to playlist, volume, device picker. **This computer** is always the
   first device. Other Spotify Connect speakers sit under **Other devices**.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
-- **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go.
+- **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
 
 Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`. Play, pause, next, and previous apply as soon as the key is pressed.
 
@@ -55,7 +56,7 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
 
 | Path | What |
 |------|------|
-| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track, last playlist |
+| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track, last playlist, Back/Forward stack |
 | `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, `skipped.json`, `liked.json` |
 | `~/.cache/sola/spotify/` | Audio, album art, page JSON (safe to delete) |
 
