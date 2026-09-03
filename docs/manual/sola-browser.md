@@ -43,14 +43,22 @@ Launch from the shell launcher (**Browser**), or
 
 ## Default URL handler
 
-Sola routes http(s) opens to **sola-browser**:
+Sola routes web opens to **sola-browser**. There is no Helium (or other
+browser) fallback.
 
 | Path | Behavior |
 |------|----------|
 | Terminal / mail / arcade link click | `sola_core::open_url` → `chrome.sock` if chrome is up, else spawn |
 | `solactl open <url>` | same |
 | Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
-| `xdg-open` / MIME defaults | `sola-browser.desktop`; a second process hands off and exits |
+| Terminal `open` / `xdg-open` | `xdg-open`; MIME via `sola-browser.desktop`; a second process hands off and exits |
+
+`sola-browser.desktop` `Exec` is `/opt/sola/bin/sola-browser %u` (same
+chrome.sock handoff as `solactl open`). It claims `x-scheme-handler/http`,
+`https`, `about`, and `unknown`, plus `text/html` and `application/xhtml+xml`,
+so GIO / `xdg-open` do not pick another browser for those types. An HTML
+file path (absolute or relative to the calling process) is opened as
+`file://` — not `https://apocrypha/…`.
 
 If a Browser window is already open, an outside open **raises it**
 to the top (same as a click) and focuses the new tab. A second
@@ -59,7 +67,8 @@ to the top (same as a click) and focuses the new tab. A second
 Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
 hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
 
-Install re-registers MIME defaults from `~/.local/share/applications/sola-*.desktop`.
+Install copies the desktop file to `~/.local/share/applications/` and
+re-registers MIME defaults from every `sola-*.desktop` `MimeType=` line.
 Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
 fallback — if the binary is missing, open fails.
 
@@ -223,7 +232,8 @@ action buttons yet.
 
 A page that calls `getUserMedia` (WebRTC, huddles, camera) gets the same
 Allow / Block overlay as notifications. Grants live in
-`profiles/<uuid>/media.json`. Chromium has no permission bubble in this
+`profiles/<uuid>/media.json` and in Chromium camera/microphone site
+settings for that origin. Chromium has no permission bubble in this
 OSR path — without Allow, the request is denied. Screen share is the
 same dialog when the page asks for desktop capture.
 
@@ -273,14 +283,9 @@ passkey ceremony. The open panel’s icon is the accent wash.
 
 ### Unlock speed
 
-Bitwarden’s master-password KDF is expensive (~600k PBKDF2). Prefer:
-
-```bash
-cargo make install browser --release
-```
-
-Debug installs also compile crypto crates at opt-level 3 (faster than plain
-debug, still slower than full release).
+Bitwarden’s master-password KDF is expensive (~600k PBKDF2). `cargo make install browser` is **release** (needed for Bitwarden KDF).
+Debug (`--debug`) also compiles crypto crates at opt-level 3, still slower
+than full release.
 
 Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 (shared across profiles).
@@ -289,11 +294,14 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 
 ⌘C / ⌘V on the page go through chrome (River steals the chords). Copy
 extracts the selection in the engine helper and writes the system
-clipboard; paste inserts **once** into the focused field without emptying
-the clipboard. In-page **Copy** buttons (`navigator.clipboard.writeText`
-and `document.execCommand('copy')`) are hooked the same way — Chromium’s
-own clipboard never reaches Wayland. Newlines in the copied text are kept.
-Triple-click selects a line / field the way Chromium expects.
+clipboard; paste reads the compositor clipboard and inserts **once** into
+the focused field. An image offer (`image/png` and siblings) is a `File`
+paste event (so Slack and similar composers accept a screenshot); text
+is inserted as before. Chromium’s own clipboard never reaches Wayland.
+In-page **Copy** buttons (`navigator.clipboard.writeText` and
+`document.execCommand('copy')`) are hooked the same way. Newlines in the
+copied text are kept. Triple-click selects a line / field the way
+Chromium expects. The omnibox and vault fields stay text-only.
 
 ⌘-click (or Ctrl-click) a link opens it in a **background tab**
 just below the current tab (same group, if the current tab is in one). A

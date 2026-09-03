@@ -218,6 +218,10 @@ impl Session {
 
         if let Some(name) = env::wayland_socket() {
             cmd.env("WAYLAND_DISPLAY", name);
+            // TTY launch leaves XDG_SESSION_TYPE=tty on the tree.
+            // Chromium/Electron camera + xdg-desktop-portal treat that
+            // as not-Wayland. Nested gamescope sets x11 itself.
+            cmd.env("XDG_SESSION_TYPE", "wayland");
         } else {
             warn!("no WAYLAND_DISPLAY available");
         }

@@ -98,9 +98,9 @@ pub enum NavCmd {
 /// to the URL bar). Names map to WebKit editing-command strings via
 /// [`crate::util::editing_command_name`].
 ///
-/// Paste of system-clipboard text into page content uses
-/// [`Cmd::PasteText`] instead — headless WPE has no Wayland clipboard, so
-/// the chrome must read iced's clipboard and ship the string in.
+/// Paste of system-clipboard text/images into page content uses
+/// [`Cmd::PasteText`] / [`Cmd::PasteImage`] — windowless CEF has no
+/// Wayland seat clipboard, so chrome reads the compositor and injects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EditCmd {
     Copy,
@@ -150,9 +150,16 @@ pub enum Cmd<E: Engine> {
     SetActiveTab(TabId),
     /// Run an editing command against the active tab's web content.
     Edit(EditCmd),
-    /// Insert clipboard text into the page (chrome already read iced's
-    /// Wayland clipboard). Preferred path for paste-into-page on WPE.
+    /// Insert clipboard text into the page (chrome already read the
+    /// compositor clipboard). Focused frame only.
     PasteText(String),
+    /// Insert clipboard image bytes as a `File` paste event in the focused
+    /// frame (CEF has no Wayland seat clipboard).
+    PasteImage {
+        mime: String,
+        filename: String,
+        bytes: Vec<u8>,
+    },
     /// Run JavaScript in the active tab (password fill inject, etc.).
     /// Script is sourced from chrome; do not put untrusted page content here
     /// without escaping — vault fill embeds secrets via JSON string literals.

@@ -182,7 +182,10 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     // CEF switches as open-URL (they become `https://--…` tabs otherwise).
     let argv = std::env::args()
         .skip(1)
-        .find(|a| crate::session::is_cli_open_url(a));
+        .find(|a| crate::session::is_cli_open_url(a))
+        // Resolve relative HTML paths against *this* process cwd (xdg-open
+        // child) before chrome.sock handoff — the live chrome has another cwd.
+        .map(|a| crate::util::normalize_url(&a));
 
     // One iced window. A second process (MIME / solactl open / launcher)
     // used to reap the live CEF helpers and leave a blank parked frame.

@@ -2,10 +2,10 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; **installed** `mail` debug 2026-08-31  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing
+**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
 
 **Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
@@ -275,8 +275,9 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 ### IDLE & refresh
 
-- On connect: start IDLE + keepalive as in apocrypha.
-- On IDLE new mail: apply move rules; emit `MailEvent::NewMail`.
+- On connect: apply `action == "move"` rules to the newest 500 INBOX envelopes, then start IDLE + keepalive.
+- On IDLE new mail: apply move rules to the newest page (`max(20, arrivals)`); emit `MailEvent::NewMail`.
+- From/To `equals` (and `address`) match the envelope address inside `Name <addr>`, not only the raw header string.
 - UI on `NewMail` (and optional focus/time-based refresh): re-list folders + current folder messages; do not spam toasts on refresh failure.
 
 ## Data flow (happy paths)
@@ -285,7 +286,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 1. Bus delivers `MailConfig` (or app starts and waits for sticky replay).
 2. UI → `MailCmd::Connect` / `Reconfigure`.
-3. Worker connects IMAP, lists folders, fetches wicket addresses (fallback `[email]`), starts IDLE, returns `Connected`.
+3. Worker connects IMAP, applies move rules to the newest 500 INBOX messages, lists folders, fetches wicket addresses (fallback `[email]`), starts IDLE, returns `Connected`.
 4. UI selects INBOX, requests first page of messages.
 
 ### Open message

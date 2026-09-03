@@ -30,6 +30,9 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "image", "advanced", "canvas"] }
+# `floating_frame` punches rounded-rect ears via iced_wgpu custom primitives
+# (iced's `widget::shader` module does not re-export the Renderer trait).
+iced_wgpu = "0.14"
 # Direct dep so the kit's forked text-input widget (components/kit_input/) can
 # use iced's core widget machinery exactly as iced_widget does internally — the
 # vendored source was written against `iced_core` (iced_widget aliases it as
@@ -59,3 +62,13 @@ fontdb = "0.23"
 # actual font, not a hardcoded JetBrains Mono ratio. Pure-Rust, already
 # in the tree transitively via cosmic-text.
 ttf-parser = "0.25"
+# Compositor clipboard via wlr-data-control / ext-data-control (image/png
+# and MIME probe). Serves on a thread — do not fork inside iced/wgpu.
+wl-clipboard-rs = "0.9"
+# Fast PNG for screenshot → clipboard (level-6 default is multi-second on 5K).
+png = "0.18"
+# Pending image/png offer (advertise now, encode on Send). Same stack as
+# wl-clipboard-rs; River has wlr-data-control.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+rustix = { version = "1", features = ["fs"] }

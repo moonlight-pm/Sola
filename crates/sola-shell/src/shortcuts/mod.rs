@@ -10,7 +10,7 @@ pub mod view;
 use iced::window;
 use sola_kit::app::window_settings;
 
-/// Open parked at 2×2. Show is Frame + iced resize to the live output.
+/// Open parked at 2×2. Show Frames to the card, not the output.
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
     let p = crate::zoning::OVERLAY_PARK as f32;

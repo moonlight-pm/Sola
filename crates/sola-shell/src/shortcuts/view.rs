@@ -1,7 +1,13 @@
 //! Super+K overlay — searchable list of built-in chords.
 //!
-//! Same modal chrome as the launcher: dim backdrop, raised card, filter
-//! field, list_item rows. Group labels are quiet section heads.
+//! Layout: the overlay window is already placed at the card (see
+//! [`crate::zoning::card_overlay_frame`]). View is the card plus leftover
+//! window pixels (shadow pad) that dismiss on press. Clicks outside the
+//! surface hit whatever is under it — same as the menu overlay. A
+//! full-output dim on software GL fills ~2M pixels on every `CursorMoved`.
+//!
+//! Chrome matches the launcher card (raised modal, filter field,
+//! list_item rows). Group labels are quiet section heads.
 
 use iced::widget::{Id as WidgetId, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -26,7 +32,11 @@ const GROUP_SIZE: f32 = 11.0;
 const LIST_SPACING: f32 = 2.0;
 const LIST_MAX_H: f32 = 440.0;
 const LIST_INSET: f32 = 6.0;
-const CARD_WIDTH: f32 = 520.0;
+pub const CARD_WIDTH: f32 = 520.0;
+/// Query + divider + list + modal bevel. +16 slack for iced line-height.
+/// Live Frame adds [`crate::zoning::CARD_SHADOW_PAD`] on each edge.
+pub const CARD_HEIGHT: f32 =
+    QUERY_PAD * 2.0 + QUERY_SIZE + 16.0 + 1.0 + LIST_INSET * 2.0 + LIST_MAX_H + 2.0;
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.shortcuts.active {
@@ -152,26 +162,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let card: Element<'_, Msg> = modal(card_body).width(Length::Fixed(CARD_WIDTH)).into();
 
-    let positioned: Element<'_, Msg> = container(card)
+    let positioned = container(card)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into();
-
-    let dim = shell.style.backdrop_dim;
-    let backdrop: Element<'_, Msg> = mouse_area(
-        container(text(""))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(move |_theme: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(dim)),
-                ..Default::default()
-            }),
-    )
-    .on_press(Msg::CloseShortcuts)
-    .into();
-
+        .center_y(Length::Fill);
+    let backdrop = mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+        .on_press(Msg::CloseShortcuts);
     stack![backdrop, positioned]
         .width(Length::Fill)
         .height(Length::Fill)

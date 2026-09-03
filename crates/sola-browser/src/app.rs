@@ -170,6 +170,8 @@ pub enum Msg {
     UrlPasted(Option<String>),
     /// Result of an `iced::clipboard::read` for paste into page content.
     PagePasted(Option<String>),
+    /// Compositor clipboard probe for page paste (image or text).
+    PageOffer(sola_kit::clipboard::Offer),
     /// Clipboard paste targeted at the open vault form (⌘V via Edit menu).
     #[cfg(feature = "bitwarden")]
     VaultClipboardPaste(Option<String>),
@@ -2553,14 +2555,11 @@ impl<E: Engine> App<E> {
                     };
                 }
                 tracing::debug!(?cmd, "edit → engine (web content)");
-                // ⌘V: chrome reads (it has seat focus), restores the offer,
-                // then injects into the focused page field. CEF `paste()`
-                // after a chrome read hits an empty clipboard and can *set*
-                // that empty selection as the new source.
+                // ⌘V: data-control read (image or text). Iced text receive
+                // can drop the offer; CEF `paste()` is empty on OSR and can
+                // *set* that empty selection as the new source.
                 if cmd == EditCmd::Paste {
-                    // Focused-frame JS insert via PasteText — not EvaluateJs
-                    // (that runs in every frame and triple-pastes).
-                    return iced::clipboard::read().map(Msg::PagePasted);
+                    return crate::page_paste::read_task().map(Msg::PageOffer);
                 }
                 if cmd == EditCmd::Copy || cmd == EditCmd::Cut {
                     // frame.copy() only fills Chromium's clipboard. Extract
@@ -2584,6 +2583,16 @@ impl<E: Engine> App<E> {
                 self.url_field.push_str(&s);
                 // Restore: smithay receive can drop the original offer.
                 return iced::clipboard::write(s);
+            }
+            Msg::PageOffer(offer) => {
+                use sola_kit::clipboard::Offer;
+                return match offer {
+                    Offer::Empty => iced::clipboard::read().map(Msg::PagePasted),
+                    other => {
+                        crate::page_paste::send(&self.cmd_tx, other);
+                        Task::none()
+                    }
+                };
             }
             Msg::PagePasted(text) => {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {
@@ -3724,7 +3733,7 @@ impl<E: Engine> App<E> {
                 let _ = self.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
                 Task::none()
             }
-            PageMenuAction::Paste => iced::clipboard::read().map(Msg::PagePasted),
+            PageMenuAction::Paste => crate::page_paste::read_task().map(Msg::PageOffer),
             PageMenuAction::Back => self.update(Msg::NavBack),
             PageMenuAction::Forward => self.update(Msg::NavForward),
             PageMenuAction::Reload => self.update(Msg::NavReloadOrStop),

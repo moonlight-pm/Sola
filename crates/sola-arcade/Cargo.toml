@@ -19,8 +19,9 @@ iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio"
 # Decode/downscale Steam library_hero banners off the UI thread so list rows
 # paint immediately (iced's path handles load one-by-one on a worker).
 image = { version = "0.25", default-features = true, features = ["jpeg", "png"] }
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 tracing = "0.1"
+notify = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Nested X11 poke for live Fit (`GAMESCOPE_XWAYLAND_MODE_CONTROL`).

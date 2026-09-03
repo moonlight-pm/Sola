@@ -203,14 +203,21 @@ pub fn fallback_favicon_url(page: &str) -> Option<String> {
 pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 
 /// Normalize input into a navigable URL. An explicit scheme (`https:`,
-/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. Everything else
-/// gets a scheme prefix: `http://` for localhost / loopback (local servers
-/// almost never present a trusted cert), `https://` otherwise. `host:port`
-/// (digits after the colon) counts as a bare host, not a scheme.
+/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact. A local file
+/// path (xdg-open `%u` for HTML — absolute, `./`, `../`, or an existing
+/// relative path) becomes an absolute `file://` URL. Everything else gets
+/// a scheme prefix: `http://` for localhost / loopback (local servers almost
+/// never present a trusted cert), `https://` otherwise. `host:port` (digits
+/// after the colon) counts as a bare host, not a scheme.
 pub fn normalize_url(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return String::new();
+    }
+    // xdg-open `%u` for `text/html` is often a path, not a file:// URL.
+    // Resolve here (opener cwd) so chrome.sock handoff is not relative.
+    if let Some(file) = sola_core::open_url::file_url_from_local_path(trimmed) {
+        return file;
     }
     // Shortcuts → built-in stress page.
     let lower = trimmed.to_ascii_lowercase();
@@ -588,6 +595,42 @@ mod tests {
         assert_eq!(normalize_url("https://example.com"), "https://example.com");
         assert_eq!(normalize_url("about:blank"), "about:blank");
         assert_eq!(normalize_url("file:///home/x"), "file:///home/x");
+    }
+
+    #[test]
+    fn normalize_url_treats_absolute_path_as_file() {
+        assert_eq!(normalize_url("/tmp/index.html"), "file:///tmp/index.html");
+        assert_eq!(
+            normalize_url("  /home/me/page.html  "),
+            "file:///home/me/page.html"
+        );
+    }
+
+    #[test]
+    fn normalize_url_treats_relative_existing_file_as_file() {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = cwd.join("target");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("normalize-url-relative.html");
+        std::fs::write(&path, "<html></html>").unwrap();
+        let rel = path.strip_prefix(&cwd).unwrap().to_str().unwrap();
+        let url = normalize_url(rel);
+        let canon = path.canonicalize().unwrap();
+        assert_eq!(url, format!("file://{}", canon.display()));
+        assert!(
+            !url.starts_with("https://"),
+            "relative HTML must not become https://…: {url}"
+        );
+    }
+
+    #[test]
+    fn normalize_url_does_not_https_prefix_dot_slash_path() {
+        let url = normalize_url("./no-such-sola-page.html");
+        assert!(
+            url.starts_with("file://"),
+            "explicit relative path is a file URL, got {url}"
+        );
+        assert!(!url.starts_with("https://"));
     }
 
     #[test]

@@ -36,6 +36,9 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    Steam **in the background** and updates the cache. The first launch (no
    cache yet) shows an **initial scan** status until the first scan finishes;
    later opens use the cache and stay quiet while the background refresh runs.
+   Arcade also **watches** each library’s `steamapps/` (install manifests and
+   `libraryfolders.vdf`); Install/Uninstall in Steam updates the list after a
+   short debounce without Meta+R.
 4. Each row uses Steam **`library_hero`** art (when cached on disk) as a faded
    full-width background. Banners are **decoded lazily** for rows in the
    scroll viewport (plus a small overscan), so first paint is not blocked by
@@ -55,7 +58,9 @@ gamescope** so the game is one normal host window (float, zone, Meta+Tab).
    - All other rows’ Play is disabled
    - List **scroll position is preserved** (Play→Stop does not jump to top)
 6. **Stop** (on the active row, or menu Meta+Shift+S) ends the session via
-   `CloseApp` on `steam-game-<id>`.
+   `CloseApp` on `steam-game-<id>`, then Arcade-owned nest processes only
+   (`--run` / `--nested-steam` / that gamescope). It does not `pkill` a
+   Steam `AppId=` you started outside Arcade.
 7. **Quit from the game’s own menu** ends the game process; Arcade then
    stops the **nested** Steam client so the gamescope host closes (does not
    touch a Steam you started outside Arcade).
@@ -82,8 +87,13 @@ Nest rules:
   (never host `-f`; **no `-e`**). Nested X cursors are downsampled so the
   pointer over the game stays desktop-sized (gamescope would otherwise hand
   the fake-monitor cursor to River 1:1).
-- **Steam already open** → bare `steam -applaunch` only (no nest). Arcade
-  **will not** force-kill Steam. Quit Steam yourself for a nest on the next Play.
+- **Steam already open** → Play is **refused** (status: quit Steam first).
+  Arcade **will not** force-kill Steam and **will not** `-applaunch` into the
+  live client (that often takes exclusive fullscreen on Sola). Quit Steam,
+  then Play nests.
+
+A second Arcade from the launcher **raises** the existing window (no second
+Fit driver). `--run` / `--nested-steam` helpers are not that singleton.
 
 ### Steam prepare (shaders / updates) — automatic
 

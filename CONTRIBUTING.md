@@ -72,9 +72,18 @@ tarball:
 > zig rewrite) and the carried River/wlroots patches build cleanly. See
 > `INSTALL.md` for the failure mode if you follow.
 
+Camera / V4L2: systemd `uaccess` already grants the seat user RW on
+`/dev/video*`. Add `video` to the graphical user's `extraGroups` so
+tools that ignore logind ACLs (`ffmpeg`, some Electron apps) still
+open the node:
+
+```nix
+users.users.<you>.extraGroups = [ "video" /* wheel, input, … */ ];
+```
+
 In `configuration.nix`, add **compile** tools the module does not ship
 (the module already has `patchelf`, `wayland`, `libxkbcommon`, `xwayland`,
-Inter, and JetBrains Mono):
+`alsa-lib`, `libpulseaudio`, Inter, and JetBrains Mono):
 
 ```nix
 environment.extraOutputsToInstall = [ "dev" "lib" ];
@@ -117,6 +126,8 @@ which river
 ls /run/current-system/sw/share/nix-ld/lib | head
 fc-list : family | grep -E '^Inter$|^JetBrains Mono$'
 pkg-config --exists xkbcommon && echo xkbcommon-ok
+pkg-config --exists alsa && echo alsa-ok
+pkg-config --exists libpulse && echo pulse-ok
 ```
 
 `installRelease = false` creates real directories at `/opt/sola/{bin,share,log}`
@@ -153,17 +164,17 @@ only). Steam store DASH and typical MP4 need `scripts/cef-codecs/` (same
 pin, hours). MPEG-LA if that `libcef.so` is redistributed.
 
 The first `cargo make …` compiles `sola-make` itself; the first full
-`install` is a long debug workspace build. `install` also runs
+`install` is a long **release** workspace build. `install` also runs
 `cargo make assets sync` when icon/cursor packs are missing under
 `/opt/sola/share/` (GitHub clones of Lucide, Simple Icons, McMojave).
 
-Debug is the default. For release (smaller, slower to compile; strongly
-preferred for sola-browser Bitwarden KDF):
+Release is the default (optimized; needed for Bitwarden KDF and fast
+screenshot PNG). For an unoptimized debug build:
 
 ```sh
-cargo make install --release
+cargo make install --debug
 # or one app:
-cargo make install browser --release
+cargo make install browser --debug
 ```
 
 ## 3. Run it

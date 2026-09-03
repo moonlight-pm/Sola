@@ -25,7 +25,7 @@ A second launch raises the existing window. Cookies live under `~/.config/sola/w
 
 ## Edit
 
-Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The shell binds those chords globally and routes them back as menu actions — the page never sees Super, so the wrapper must handle the action (same pipe as sola-browser). Paste reads the Wayland clipboard in chrome and inserts once into the focused field.
+Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The shell binds those chords globally and routes them back as menu actions — the page never sees Super, so the wrapper must handle the action (same pipe as sola-browser). Paste reads the compositor clipboard in chrome: an image (`image/png` and siblings) is injected as a `File` paste into the focused field (Slack’s composer); otherwise the text is inserted once.
 
 ## Links
 
@@ -35,7 +35,9 @@ Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The s
 
 Slack huddles open with `window.open('about:blank')` and then write the huddle UI into that popup. The wrapper has no OS window for that, so CEF creates a windowless popup and this app paints it (replacing the channel view until the huddle closes).
 
-Starting the huddle then asks for the mic (and camera if you turn it on) with an Allow / Block overlay. The choice is stored at `~/.config/sola/wrapper/<id>/media.json`. Playback of huddle audio does not need this prompt.
+Starting the huddle then asks for the mic (and camera if you turn it on) with an Allow / Block overlay. The choice is stored at `~/.config/sola/wrapper/<id>/media.json` and applied to Chromium’s camera/microphone site settings. Playback of huddle audio does not need this prompt.
+
+USB cameras show up through V4L2 (`/dev/video*`). The seat user can open those nodes (logind `uaccess`). Add your user to the `video` group if a non-seat tool cannot. The LifeCam (or similar) built-in microphone is a normal PipeWire source — the shell volume chip lists it.
 
 ## JavaScript dialogs
 

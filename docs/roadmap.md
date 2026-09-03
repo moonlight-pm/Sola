@@ -47,13 +47,13 @@ rows for feature-level progress.
 **Status: partial**
 
 - Terminal iced, browser CEF, mail kit, preview, kvm,
-  paint (first pass), scope (first pass)  
+  paint (first pass), scope (first pass), spotify (first pass, on master)  
 - `sola-call` + `sola-workspaces` persist/spawn/call methods on master
 - `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the agent product)
 
 **Remaining:** Workspaces dogfood + rename/recolor/reorder; browser chrome
 completeness; mail polish; kvm input ACL permanence; preview
-zoom/clipboard; paint clipboard.
+zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
 
 ---
 
