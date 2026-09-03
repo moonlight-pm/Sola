@@ -2,8 +2,7 @@
 //! (menubar, menu, launcher, switcher, shortcuts, selection marquee,
 //! notifications).
 
-use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
-use sola_core::KeyCode;
+use sola_bus::topics::TopicKind;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
@@ -19,6 +18,7 @@ pub mod media;
 pub mod menu;
 pub mod menubar;
 pub mod notify;
+mod power;
 mod screenshot;
 pub mod selection;
 pub mod shortcuts;
@@ -34,47 +34,12 @@ fn main() -> iced::Result {
     // Flower / system menu (and the shell's own app menu when focused).
     // "Restart Shell" exits this process only — the process manager
     // respawns `/opt/sola/bin/sola-shell`. "Quit Sola" shuts the whole
-    // session down via `Topic::Shutdown`. "Launch Application…" opens
+    // session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
+    // ask logind to reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu_definition(MenuDefinition {
-            label: "Shell".into(),
-            items: vec![
-                MenuItem::Action {
-                    id: "launch".into(),
-                    label: "Launch Application…".into(),
-                    shortcut: None,
-                    disabled: false,
-                    checked: false,
-                },
-                MenuItem::Action {
-                    id: "shortcuts".into(),
-                    label: "Keyboard Shortcuts".into(),
-                    shortcut: Some(KeyCode::K.meta()),
-                    disabled: false,
-                    checked: false,
-                },
-                MenuItem::Divider,
-                MenuItem::Action {
-                    id: "restart".into(),
-                    label: "Restart Shell".into(),
-                    shortcut: None,
-                    disabled: false,
-                    checked: false,
-                },
-                MenuItem::Divider,
-                MenuItem::Action {
-                    id: "quit".into(),
-                    label: "Quit Sola".into(),
-                    // Super+Q closes the focused app (`CloseApp`). Binding it
-                    // here would advertise — and could fire — session shutdown.
-                    shortcut: None,
-                    disabled: false,
-                    checked: false,
-                },
-            ],
-        })
+        .app_menu_definition(menu::state::system_menu())
         .install();
 
     // Use iced::daemon so we can open multiple windows and dispatch view()

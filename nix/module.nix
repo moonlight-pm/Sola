@@ -144,6 +144,22 @@ in
     hardware.bluetooth.powerOnBoot = true;
     hardware.bluetooth.settings.General.Experimental = true;
 
+    # Flower menu Restart Computer / Shut Down talk to logind. Sola has no
+    # polkit agent, so a "challenge" would hang or fail. Wheel may reboot
+    # and power off without a password (including multiple sessions).
+    security.polkit.enable = true;
+    security.polkit.extraConfig = ''
+      polkit.addRule(function(action, subject) {
+        if ((action.id == "org.freedesktop.login1.reboot" ||
+             action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+             action.id == "org.freedesktop.login1.power-off" ||
+             action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
+            subject.isInGroup("wheel")) {
+          return polkit.Result.YES;
+        }
+      });
+    '';
+
     # sola-kvm (evdev backend) needs RW on /dev/input/event* for EVIOCGRAB
     # while remote. Re-plug creates *new* nodes that do not inherit old ACLs,
     # so a one-shot setfacl always rots. TAG+="uaccess" lets logind grant the

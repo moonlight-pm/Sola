@@ -789,6 +789,24 @@ impl Shell {
         iced::Task::batch([expire, self.notify_followup(now)])
     }
 
+    /// Flower-menu Restart Computer / Shut Down. Dismisses the menu, then
+    /// asks logind. Toast on failure; success means the machine is going
+    /// down (systemd SIGTERM is the same graceful path as Quit Sola).
+    fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
+        let _ = self.dismiss_open_menu();
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+        if let Err(msg) = crate::power::request(kind) {
+            self.menubar.push_toast(msg);
+            let toast_gen = self.menubar.toast_generation;
+            return iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                Msg::ToastExpire(toast_gen)
+            });
+        }
+        iced::Task::none()
+    }
+
     /// Close the menubar dropdown / chip panel. Chip highlight is
     /// `menu_open && open_panel`, so skipping `set_open_panel` leaves the
     /// volume (and other) chips filled after a chord or focus change.
@@ -2125,6 +2143,12 @@ impl Shell {
                 if app_id == Self::APP_ID && action_id == "restart" {
                     tracing::info!("restart shell requested via menu");
                     return iced::exit();
+                }
+                if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
+                    return self.request_machine_power(crate::power::Kind::Reboot);
+                }
+                if app_id == Self::APP_ID && action_id == crate::power::ACTION_SHUT_DOWN {
+                    return self.request_machine_power(crate::power::Kind::PowerOff);
                 }
                 // Flower menu: open the app launcher (close menu first).
                 if app_id == Self::APP_ID && action_id == "launch" {

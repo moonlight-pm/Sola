@@ -15,6 +15,38 @@ use sola_core::{KeyChord, KeyCode};
 /// hasn't shipped its own menu.
 pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
 
+/// Flower / system menu (and the shell's own application menu when focused).
+pub fn system_menu() -> MenuDefinition {
+    MenuDefinition {
+        label: "Shell".into(),
+        items: vec![
+            action("launch", "Launch Application…", None),
+            action("shortcuts", "Keyboard Shortcuts", Some(KeyCode::K.meta())),
+            MenuItem::Divider,
+            action("restart", "Restart Shell", None),
+            MenuItem::Divider,
+            action("quit", "Quit Sola", None),
+            MenuItem::Divider,
+            action(
+                crate::power::ACTION_RESTART_COMPUTER,
+                "Restart Computer",
+                None,
+            ),
+            action(crate::power::ACTION_SHUT_DOWN, "Shut Down", None),
+        ],
+    }
+}
+
+fn action(id: &str, label: &str, shortcut: Option<KeyChord>) -> MenuItem {
+    MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut,
+        disabled: false,
+        checked: false,
+    }
+}
+
 /// Focused-app menus with the kit Window menu injected when missing.
 pub fn effective_app_menu(cache: &MenuCache, app_id: &str, label: &str) -> AppMenuPayload {
     let base = cache
@@ -130,6 +162,66 @@ impl MenuCache {
 mod tests {
     use super::*;
     use sola_bus::topics::MenuItem;
+
+    fn system_menu_labels() -> Vec<String> {
+        system_menu()
+            .items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Action { label, .. } => label.clone(),
+                MenuItem::Divider => "---".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn system_menu_has_session_then_machine_power() {
+        assert_eq!(
+            system_menu_labels(),
+            [
+                "Launch Application…",
+                "Keyboard Shortcuts",
+                "---",
+                "Restart Shell",
+                "---",
+                "Quit Sola",
+                "---",
+                "Restart Computer",
+                "Shut Down",
+            ]
+        );
+        let menu = system_menu();
+        let ids: Vec<&str> = menu
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "launch",
+                "shortcuts",
+                "restart",
+                "quit",
+                crate::power::ACTION_RESTART_COMPUTER,
+                crate::power::ACTION_SHUT_DOWN,
+            ]
+        );
+        // Super+Q is CloseApp, not session or machine power.
+        for item in &menu.items {
+            if let MenuItem::Action { id, shortcut, .. } = item {
+                if id == "quit"
+                    || id == crate::power::ACTION_RESTART_COMPUTER
+                    || id == crate::power::ACTION_SHUT_DOWN
+                {
+                    assert!(shortcut.is_none(), "{id} must not steal Super+Q");
+                }
+            }
+        }
+    }
 
     #[test]
     fn synthesized_menu_has_single_quit_item() {

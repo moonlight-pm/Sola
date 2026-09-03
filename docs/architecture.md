@@ -60,7 +60,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
-| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`) |
+| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`). Flower menu: Restart Shell, Quit Sola, Restart Computer, Shut Down (logind). |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`, shared **Window** menu, compositor clipboard helper for images) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
@@ -81,7 +81,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-assets` | Vendored icons/assets |
 | `crates/iced_winit-patched` | iced 0.14 `iced_winit` + Wayland opaque-region from window-fill alpha (not a workspace member; `[patch.crates-io]`) |
 | `nix/patches/` | River + wlroots patches (Xwayland destroy heal; live `pointer_position`; screencopy omits software cursor) |
-| `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images |
+| `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images; wheel polkit YES for logind reboot/power-off (flower menu; no polkit agent) |
 | `nix/sola.nix` | Package from GitHub release tarball |
 | `nix/image/` | VM/image profile: quiet boot, Plymouth `sola`, installer kiosk, stage package |
 | `nix/image/plymouth/` | Flower splash theme (clockwise cyan petal gradient frames) |

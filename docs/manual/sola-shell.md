@@ -30,6 +30,29 @@ Clicking the pad around the card dismisses (same as a menu dropdown).
 Clicks on the desk pass through — the overlay is the card, not a
 full-output dim.
 
+## Flower menu
+
+The left-end flower (and the **Shell** application menu when the shell is
+focused) is the session menu:
+
+| Item | What it does |
+|------|----------------|
+| Launch Application… | Super+Space launcher |
+| Keyboard Shortcuts | Super+K overlay |
+| Restart Shell | Exits `sola-shell` only; the process manager respawns it |
+| Quit Sola | Ends the desktop session (`Topic::Shutdown`) |
+| Restart Computer | Reboots the machine (logind) |
+| Shut Down | Powers off the machine (logind) |
+
+Restart Computer and Shut Down have no confirmation and no shortcut.
+They are not in Super+K. A failure toasts **Could not restart the
+computer** / **Could not shut down**.
+
+Sola has no polkit password prompt. A local seat session is usually
+already allowed. Hosts with `services.sola.enable` also let the `wheel`
+group reboot and power off without a password (takes effect after
+`nixos-rebuild`).
+
 CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel
 graphs (last ~12 seconds). Exact numbers live in the click dropdown.
 The volume chip (right of Bluetooth, left of CPU, with the same gap

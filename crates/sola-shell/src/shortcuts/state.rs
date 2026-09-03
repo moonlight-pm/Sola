@@ -111,7 +111,7 @@ fn catalog(focused: Option<&AppMenuPayload>) -> Vec<ShortcutRow> {
                 if parse_window_action(id).is_some() {
                     continue;
                 }
-                if id == "quit" || id == "_close" {
+                if omit_from_cheatsheet(id) {
                     continue;
                 }
                 let group = if payload.menus.first().is_some_and(|m| m.label == menu.label) {
@@ -133,6 +133,15 @@ fn catalog(focused: Option<&AppMenuPayload>) -> Vec<ShortcutRow> {
     }
 
     rows
+}
+
+/// Session/machine power and synthesized close stay off Super+K so a
+/// filter + Enter cannot reboot or quit.
+fn omit_from_cheatsheet(id: &str) -> bool {
+    id == "quit"
+        || id == "_close"
+        || id == crate::power::ACTION_RESTART_COMPUTER
+        || id == crate::power::ACTION_SHUT_DOWN
 }
 
 fn menu_group(label: &str) -> &'static str {
@@ -272,13 +281,29 @@ mod tests {
             menus: vec![
                 MenuDefinition {
                     label: "Terminal".into(),
-                    items: vec![MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Terminal".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    }],
+                    items: vec![
+                        MenuItem::Action {
+                            id: "quit".into(),
+                            label: "Quit Terminal".into(),
+                            shortcut: Some(KeyCode::Q.meta()),
+                            disabled: false,
+                            checked: false,
+                        },
+                        MenuItem::Action {
+                            id: crate::power::ACTION_RESTART_COMPUTER.into(),
+                            label: "Restart Computer".into(),
+                            shortcut: None,
+                            disabled: false,
+                            checked: false,
+                        },
+                        MenuItem::Action {
+                            id: crate::power::ACTION_SHUT_DOWN.into(),
+                            label: "Shut Down".into(),
+                            shortcut: None,
+                            disabled: false,
+                            checked: false,
+                        },
+                    ],
                 },
                 sola_kit::menu::window_menu(),
                 MenuDefinition {
@@ -296,6 +321,8 @@ mod tests {
         let rows = catalog(Some(&payload));
         assert!(rows.iter().any(|r| r.label == "Copy" && r.group == "Edit"));
         assert!(!rows.iter().any(|r| r.label == "Quit Terminal"));
+        assert!(!rows.iter().any(|r| r.label == "Restart Computer"));
+        assert!(!rows.iter().any(|r| r.label == "Shut Down"));
         let float_hits = rows
             .iter()
             .filter(|r| matches!(r.action, ShortcutAction::Zone(Zone::Float)))
