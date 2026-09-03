@@ -5,6 +5,7 @@ pub mod cpu;
 pub mod gpu;
 pub mod mem;
 pub mod net;
+pub mod pixel;
 pub mod view;
 
 use iced::Color;

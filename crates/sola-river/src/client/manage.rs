@@ -387,6 +387,13 @@ pub fn handle_render_start(state: &mut AppData) {
         // re-`place_top` gamescope after the stack walk so the nest couldn't
         // be buried during early paint races — that locked the host on top of
         // every normal app and contributed to z-order thrash / flicker.
+        //
+        // Shell re-exec rebuilds MRU from window-id order and would shuffle
+        // apps. Keep last's relative order when only the menubar id changed.
+        let order = crate::pending::PendingUpdate::stabilize_composition(
+            &state.last_composition,
+            &order,
+        );
         state.last_composition = order.clone();
         apply_composition_visibility(state, &order, true);
     } else if !state.last_composition.is_empty() {

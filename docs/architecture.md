@@ -60,7 +60,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
-| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`) |
+| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`) |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`, shared **Window** menu, compositor clipboard helper for images) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
@@ -176,7 +176,7 @@ swapchains in the background (see
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, volume (hidden if no PipeWire), Bluetooth (hidden if no adapter), stats, whispers (`AppToast`) |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), 12-band LED spectrum (own phrase, hidden if no PipeWire; click opens volume), pixel-graph stats (CPU/GPU/MEM/RX/TX), whispers (`AppToast`) |
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |
@@ -194,6 +194,10 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 (unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
 unread, notification click). Last window of a hidden app retracts the sticky
 so a later map is not stuck hidden. No menubar chip.
+
+**Shell re-exec z-order:** sola-shell rebuilds MRU from window-id order, which
+would shuffle apps. River keeps the last relative stack when only the
+menubar id changed (click-raise still honors a new Composition).
 
 A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
 `closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn

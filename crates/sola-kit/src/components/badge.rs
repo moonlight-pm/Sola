@@ -4,12 +4,20 @@
 //! or inline run. Tones map to kit palette tiers so a `Success` badge
 //! reads against any `card`/`sidebar` surface without per-call style
 //! wiring.
+//!
+//! [`count_mark`] is the overlapping numeral on an app icon (switcher)
+//! or a group header (notification pile) — filled accent, not a status
+//! pill.
 
 use iced::widget::{container, text};
-use iced::{Background, Border, Color, Element, Padding, Theme};
+use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 
-use crate::components::style::{RADIUS_PILL, mix_white};
+use crate::components::style::{RADIUS_PILL, mix_white, primary_fill};
 use crate::fonts;
+
+/// Compact height of [`count_mark`] — sized to sit on a 72px switcher
+/// icon without covering the face.
+pub const COUNT_MARK_H: f32 = 18.0;
 
 /// Visual flavors of badge. Each maps to a palette tier in [`style`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -87,5 +95,73 @@ pub fn style(theme: &Theme, tone: Tone) -> container::Style {
             radius: RADIUS_PILL.into(),
         },
         ..container::Style::default()
+    }
+}
+
+/// `1`…`99` or `99+`. Shared by menubar chips and [`count_mark`].
+pub fn count_label(n: u32) -> String {
+    if n > 99 { "99+".into() } else { n.to_string() }
+}
+
+/// Filled accent disc/pill with a dark numeral. Hidden when `n == 0`.
+///
+/// Graphite halo so the mark punches off a full-color app icon; on a
+/// graphite plate the ring disappears into the face.
+pub fn count_mark<'a, Message: 'a>(n: u32) -> Element<'a, Message, Theme> {
+    if n == 0 {
+        return container(text(""))
+            .width(Length::Shrink)
+            .height(Length::Fixed(0.0))
+            .into();
+    }
+    let label = count_label(n);
+    let wide = n > 9;
+    let pad_x = if wide { 6.0 } else { 0.0 };
+    let width = if wide {
+        Length::Shrink
+    } else {
+        Length::Fixed(COUNT_MARK_H)
+    };
+    container(text(label).font(fonts::chrome()).size(10).line_height(1.0))
+        .padding(Padding {
+            top: 3.0,
+            right: pad_x,
+            bottom: 2.0,
+            left: pad_x,
+        })
+        .width(width)
+        .height(Length::Fixed(COUNT_MARK_H))
+        .center_x(width)
+        .center_y(Length::Fixed(COUNT_MARK_H))
+        .style(count_mark_style)
+        .into()
+}
+
+fn count_mark_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let accent = p.primary.base.color;
+    container::Style {
+        background: Some(primary_fill(accent)),
+        text_color: Some(p.primary.base.text),
+        border: Border {
+            // Opaque mix of the canvas so iced does not inflate an alpha edge.
+            color: mix_white(p.background.base.color, 0.14),
+            width: 1.0,
+            radius: RADIUS_PILL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_label;
+
+    #[test]
+    fn count_label_caps_at_99_plus() {
+        assert_eq!(count_label(1), "1");
+        assert_eq!(count_label(99), "99");
+        assert_eq!(count_label(100), "99+");
+        assert_eq!(count_label(1400), "99+");
     }
 }

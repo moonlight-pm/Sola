@@ -1,8 +1,10 @@
 //! Menubar volume: PipeWire graph + WirePlumber `wpctl`.
 //! See docs/specs/2026-08-29-shell-audio-menubar-design.md.
 
+mod meter;
 mod pw;
 pub mod view;
+pub mod wave;
 
 use iced::Subscription;
 use iced::futures::Stream;
@@ -74,6 +76,9 @@ pub enum Command {
 #[derive(Clone, Debug)]
 pub enum Event {
     Snapshot(Snapshot),
+    /// Meter went live — one present so the spectrum canvas can start its
+    /// `RedrawRequest::At` loop. Not a 16 ms iced timer.
+    Kick,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +100,7 @@ impl Ui {
     pub fn on_event(&mut self, ev: Event) {
         match ev {
             Event::Snapshot(s) => self.snapshot = s,
+            Event::Kick => {}
         }
     }
 
@@ -152,8 +158,12 @@ fn audio_stream() -> impl Stream<Item = Event> {
     }
     std::thread::Builder::new()
         .name("sola-audio".into())
-        .spawn(move || worker(tx, cmd_rx))
+        .spawn({
+            let tx = tx.clone();
+            move || worker(tx, cmd_rx)
+        })
         .ok();
+    meter::spawn(tx);
     rx
 }
 
@@ -208,7 +218,13 @@ fn apply(cmd: Command) {
 }
 
 fn push(event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>) {
-    let _ = event_tx.unbounded_send(Event::Snapshot(pw::snapshot()));
+    let snap = pw::snapshot();
+    meter::set_target(if snap.available {
+        snap.default_sink
+    } else {
+        None
+    });
+    let _ = event_tx.unbounded_send(Event::Snapshot(snap));
 }
 
 #[cfg(test)]
@@ -245,5 +261,15 @@ mod tests {
         let cmd = ui.update(UiMsg::OutputVolume(45.0));
         assert!(matches!(cmd, Some(Command::SetSinkVolume(v)) if (v - 0.45).abs() < 0.001));
         assert!((ui.snapshot.sink_volume - 0.45).abs() < 0.001);
+    }
+
+    #[test]
+    fn kick_does_not_clobber_snapshot() {
+        let mut ui = Ui::default();
+        ui.snapshot.available = true;
+        ui.snapshot.sink_volume = 0.5;
+        ui.on_event(Event::Kick);
+        assert!(ui.snapshot.available);
+        assert!((ui.snapshot.sink_volume - 0.5).abs() < 0.001);
     }
 }

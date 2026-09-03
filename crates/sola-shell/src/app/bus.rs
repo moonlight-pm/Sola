@@ -387,9 +387,8 @@ impl Shell {
         }
 
         // Dismiss open menu if the focused window changed.
-        if self.menu_open && self.focused_window_id != prev_focused {
-            self.menu_open = false;
-            self.current_open_index = None;
+        if self.focused_window_id != prev_focused && self.dismiss_open_menu() {
+            self.emit_overlay_frames();
         }
 
         self.emit_composition();
@@ -462,15 +461,16 @@ impl Shell {
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
+            self.ack_notify_badge(app_id);
         } else if !self.mru_apps.iter().any(|m| m == app_id) {
             // Track without raising — least-recent = bottom of stack.
             self.mru_apps.push(app_id.to_string());
         }
 
-        // Close any open menu on focus change.
-        if self.menu_open && app_changed {
-            self.menu_open = false;
-            self.current_open_index = None;
+        // Close any open menu on focus change (clears chip highlight too).
+        if app_changed && self.dismiss_open_menu() {
+            self.emit_overlay_frames();
+            self.emit_composition();
         }
 
         // Per-app chord registrations change when the focused app changes.
@@ -819,9 +819,20 @@ impl Shell {
         // dismiss it and then proceed normally (so Meta+Space still
         // opens the launcher, Meta+Tab still opens the switcher, etc.
         // even if the user left a menu hanging open).
-        if self.menu_open {
-            self.menu_open = false;
-            self.current_open_index = None;
+        // Screenshot chords are the exception: they must copy the live
+        // scene (open notifications panel, text selections) before chrome
+        // moves.
+        let screenshot = chord.meta
+            && chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && matches!(
+                chord.keycode,
+                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
+            );
+        if self.menu_open && !screenshot {
+            let _ = self.dismiss_open_menu();
+            self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
         }
@@ -917,7 +928,8 @@ impl Shell {
             return crate::screenshot::full();
         }
 
-        // Super+Shift+4: freeze live output, then selection marquee (macOS order).
+        // Super+Shift+4: freeze live output (menus still composed), then
+        // selection marquee on that still.
         if chord.meta
             && chord.shift
             && !chord.ctrl
@@ -973,6 +985,9 @@ impl Shell {
                 return Task::done(Msg::SwitcherNav { next: true });
             }
             tracing::info!("Meta+Tab — activating switcher");
+            if let Some(id) = self.focused_app_id.clone() {
+                self.ack_notify_badge(&id);
+            }
             crate::switcher::state::rebuild_apps(
                 &mut self.switcher,
                 &self.mru_apps.clone(),
@@ -1134,18 +1149,14 @@ impl Shell {
         // Outside-click dismiss for the menubar dropdown (before raise so
         // composition includes both the closed menu and the raised app).
         // Re-emit chords so Escape is unregistered once the overlay is gone.
-        let dismissed_menu = self.menu_open;
-        if dismissed_menu {
-            self.menu_open = false;
-            self.current_open_index = None;
-            self.set_open_panel(None);
-        }
+        let dismissed_menu = self.dismiss_open_menu();
 
         self.raise_window_from_click(e.window_id);
 
         if dismissed_menu {
             // raise may already have re-emitted chords on app change; always
             // re-emit here so Escape drops even when focus stays put.
+            self.emit_overlay_frames();
             self.emit_registered_chords();
         }
     }

@@ -1,6 +1,6 @@
 # Menubar System Monitors — Design
 
-**Status:** Design approved (brainstorm). Next: implementation plan.
+**Status:** Frozen — implemented; bar is pixel graphs as of 2026-09-02.
 **Date:** 2026-06-16
 **Visual reference:** paper.design "OS Stats" — <https://app.paper.design/file/01KV9H6Q3PQMG1GTAFADB88SZ3/1-0>
 
@@ -26,9 +26,9 @@ Four indicators, left → right, then the divider and clock:
 
 **Decisions made during brainstorming:**
 
-- **Bar style = "numbers only"** (Treatment A): a small muted label + a mono
-  value per metric; network is a two-line `↓ rate / ↑ rate` stack. No
-  sparklines in the bar itself — trend lives in the dropdown.
+- **Bar style = pixel graphs** (amended 2026-09-02): muted label + a fixed
+  btop-style dithered LED matrix (12×5, 2px dots). Numbers live in the
+  dropdown. Anti-reflow is the graph width, not a reserved text slot.
 - **Disk usage was dropped** from this iteration (was a fifth indicator). May
   return later.
 - **GPU is NVIDIA-only** (dev box is an RTX 3090 Ti). The indicator hides
@@ -44,20 +44,16 @@ cards `#161b22` with a `#30363d` hairline border and 12px radius, Inter for
 labels, **JetBrains Mono for all numeric readouts** (tabular — no jitter as
 values change), cyan `#00d4ff` accent, muted text `#8b949e`.
 
-### Bar indicators (numbers only)
+### Bar indicators (pixel graphs)
 
 Each indicator is a button (like the clock) with a small uppercase muted label
-and a mono value, e.g. `CPU 34%`. Network is a right-aligned two-line stack:
+and a **fixed-width dithered pixel graph** of the last ~12 seconds (CPU / GPU /
+MEM 0–100%; RX / TX auto-scaled to the window peak). Click still opens the
+dropdown, which keeps the large numeric readout.
 
-```
-↓ 2.4 MB/s
-↑ 0.1 MB/s
-```
-
-**Threshold coloring:** values are neutral (`#e6edf3`) until a metric crosses a
-threshold, then the value (not the whole indicator) tints — amber `#d29922`
-above ~75%, red `#f85149` above ~90%. Net has no threshold (rate, not a level).
-Thresholds are constants, tunable later.
+**Threshold coloring:** percent columns tint amber above ~75%, red above ~90%.
+RX uses accent, TX uses success. Empty cells stay a faint grid so the matrix
+is always the same size.
 
 ### Dropdown template
 
@@ -111,9 +107,9 @@ opens/closes; it includes that metric's tier-2 detail in the next snapshot.
 ### History
 
 Per-metric ring buffers (~60 `f32` samples ≈ 60s at the ~1s tick) live in shell
-state and feed the dropdown history graphs. The tier-1 aggregates fill the
-buffers continuously (open or not), so a graph has history the moment its panel
-opens. For NET the buffer holds `(down, up)` pairs.
+state and feed the menubar pixel graphs (last 12 samples) plus the dropdown
+history charts. The tier-1 aggregates fill the buffers continuously (open or
+not), so a graph has history the moment its panel opens.
 
 ### Data sources
 

@@ -30,6 +30,13 @@ Clicking the pad around the card dismisses (same as a menu dropdown).
 Clicks on the desk pass through — the overlay is the card, not a
 full-output dim.
 
+CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel
+graphs (last ~12 seconds). Exact numbers live in the click dropdown.
+The volume chip (right of Bluetooth, left of CPU, with the same gap
+on both sides) is a 12-band LED spectrum analyzer of what the default
+output is playing. Click the bars for the volume popover; there is no
+speaker glyph.
+
 ## Window menu
 
 Every focused app gets a **Window** menu (kit default; an app can replace
@@ -51,6 +58,19 @@ open (`solactl open` / `xdg-open`) also unhide when they raise the app.
 
 Hiding the last visible app leaves the menubar and wallpaper.
 
+## Notifications
+
+The missed-notifications bell (right cluster, with a count) opens a list
+grouped by app. A handful of items list as rows (the number on the bell
+matches). A flood from one app collapses to one row with a count; click
+to expand. Same-tag updates replace the missed row instead of stacking.
+Accent while unseen; clicking the bell returns it to normal chrome.
+There is no Clear-all; the group × dismisses that app’s missed items.
+Click a row to raise the source. Super+Tab shows a count on the app icon
+for notifications you have not opened in the pile or visited in that app
+(Mail uses inbox unread). Super+Shift+4 with the panel open keeps it in
+the freeze.
+
 ## Screenshots
 
 Super+Shift+3 / 4 / 5 copy a PNG onto the system clipboard and toast
@@ -60,8 +80,10 @@ write a file or open Preview.
 
 Super+Shift+4 freezes the live output first (menus, text selections, and
 other transient UI stay in the still), then opens a full-brightness
-marquee on that still (no dim). The crop is taken from the freeze — not
-a second live capture.
+marquee on that still (no dim). The chord does **not** dismiss an open
+notifications panel or other menubar popover before the copy — the
+freeze is the live pixels. The crop is taken from the freeze — not a
+second live capture.
 
 Super+Shift+5 and `solactl compositor screenshot --app` copy the
 window’s own buffer. They do not raise the app. The CLI still writes a

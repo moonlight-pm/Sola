@@ -139,10 +139,12 @@ pub enum Msg {
     NotifyActivate(String),
     /// × without raising.
     NotifyDismiss(String),
+    /// Expand / collapse a pile group.
+    NotifyToggleGroup(String),
+    /// Dismiss every missed item for an app (group ×). Live cards stay.
+    NotifyDismissApp(String),
     /// Open / close the missed-pile panel.
     ToggleNotifyPile,
-    /// Empty the missed pile.
-    NotifyClearPile,
     /// Open / close the volume popover.
     ToggleAudio,
     /// Snapshot from the PipeWire worker.
@@ -579,6 +581,9 @@ impl Shell {
             ShortcutAction::OpenShortcuts => iced::Task::none(),
             ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
             ShortcutAction::OpenSwitcher => {
+                if let Some(id) = self.focused_app_id.clone() {
+                    self.ack_notify_badge(&id);
+                }
                 crate::switcher::state::rebuild_apps(
                     &mut self.switcher,
                     &self.mru_apps.clone(),
@@ -706,6 +711,20 @@ impl Shell {
         if self.mail_is_mapped() { Some(n) } else { None }
     }
 
+    /// Super+Tab numeral: Mail uses inbox unread; everyone else unseen
+    /// live + pile. Visiting the app or opening the pile marks items seen.
+    pub fn switcher_badge(&self, app_id: &str) -> Option<u32> {
+        if app_id.eq_ignore_ascii_case("sola-mail") {
+            return self.mail_unread_badge();
+        }
+        let n = self.notify.attention_count(app_id);
+        (n > 0).then_some(n)
+    }
+
+    fn ack_notify_badge(&mut self, app_id: &str) {
+        self.notify.ack_app(app_id);
+    }
+
     /// Raise sola-mail (unhide first if it is composition-hidden).
     pub fn activate_mail(&mut self) {
         if self.is_app_hidden("sola-mail") {
@@ -732,9 +751,8 @@ impl Shell {
                 },
             ));
         }
-        if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
-            self.menu_open = false;
-            self.set_open_panel(None);
+        if self.open_panel == Some(Panel::NotifyPile) {
+            let _ = self.dismiss_open_menu();
         }
         self.emit_overlay_frames();
         self.emit_composition();
@@ -742,6 +760,9 @@ impl Shell {
     }
 
     fn notify_followup(&mut self, now: std::time::Instant) -> iced::Task<Msg> {
+        if self.open_panel == Some(Panel::NotifyPile) {
+            self.notify.acknowledge();
+        }
         self.emit_overlay_frames();
         self.emit_composition();
         if self.notify.needs_tick(now) {
@@ -752,18 +773,40 @@ impl Shell {
     }
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
+        let app_id = n.app_id.clone();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
+        if self
+            .focused_app_id
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(&app_id))
+        {
+            self.ack_notify_badge(&app_id);
+        }
         let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
             Msg::NotifyExpire(generation)
         });
         iced::Task::batch([expire, self.notify_followup(now)])
     }
 
-    /// Dismiss transient shell overlays so a capture doesn't leave the
-    /// switcher/launcher/selection holding the scene (and keyboard routing).
-    pub fn dismiss_transient_overlays(&mut self) {
-        let mut changed = false;
+    /// Close the menubar dropdown / chip panel. Chip highlight is
+    /// `menu_open && open_panel`, so skipping `set_open_panel` leaves the
+    /// volume (and other) chips filled after a chord or focus change.
+    pub(crate) fn dismiss_open_menu(&mut self) -> bool {
+        if !self.menu_open && self.open_panel.is_none() && self.current_open_index.is_none() {
+            return false;
+        }
+        self.menu_open = false;
+        self.current_open_index = None;
+        self.current_open_is_system = false;
+        self.set_open_panel(None);
+        true
+    }
+
+    /// Dismiss launcher / switcher / shortcuts / menubar panels.
+    /// Does not touch the selection overlay (Super+Shift+4 freeze).
+    pub(crate) fn dismiss_chrome_overlays(&mut self) -> bool {
+        let mut changed = self.dismiss_open_menu();
         if self.launcher.active {
             self.launcher.active = false;
             changed = true;
@@ -776,25 +819,28 @@ impl Shell {
             self.switcher.active = false;
             changed = true;
         }
-        if self.menu_open {
-            self.menu_open = false;
-            self.set_open_panel(None);
-            self.current_open_index = None;
-            changed = true;
-        }
-        if self.selection.active {
+        changed
+    }
+
+    /// Dismiss transient shell overlays so a capture doesn't leave the
+    /// switcher/launcher/selection holding the scene (and keyboard routing).
+    pub fn dismiss_transient_overlays(&mut self) {
+        let mut changed = self.dismiss_chrome_overlays();
+        if self.selection.active || self.selection.pending {
             let _ = self.selection.cancel();
             changed = true;
         }
         if changed {
+            self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
         }
     }
 
     /// Remember which app window should keep the keyboard after capture.
+    /// Does **not** dismiss menus — the compositor copies the live scene,
+    /// including an open notifications panel.
     pub fn arm_screenshot_handoff(&mut self) {
-        self.dismiss_transient_overlays();
         // Prefer the app that currently has keyboard focus; never the shell.
         self.screenshot_return_focus = self.focused_window_id.filter(|wid| {
             self.known_windows
@@ -825,10 +871,10 @@ impl Shell {
                 })
             }
             Ok(img) => {
-                // Dismiss shell menus *after* the still is in hand, and
-                // *before* `apply_freeze` marks the overlay active (dismiss
-                // would otherwise cancel the selection).
-                self.dismiss_transient_overlays();
+                // Keep live chrome composed until the freeze texture is on
+                // the GPU (SelectionTextureReady). Dismissing here would
+                // drop the notifications panel from the desk before the
+                // still can replace it.
                 if !self.selection.apply_freeze(generation, img.handle) {
                     return iced::Task::none();
                 }
@@ -871,9 +917,11 @@ impl Shell {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
         if let Some(w) = self.known_windows.iter().find(|w| w.window_id == window_id) {
+            let app_id = w.app_id.clone();
             self.focused_window_id = Some(window_id);
-            self.focused_app_id = Some(w.app_id.clone());
-            self.mru_window_by_app.insert(w.app_id.clone(), window_id);
+            self.focused_app_id = Some(app_id.clone());
+            self.mru_window_by_app.insert(app_id.clone(), window_id);
+            self.ack_notify_badge(&app_id);
         }
     }
 
@@ -1438,6 +1486,12 @@ impl Shell {
     }
 
     fn commit_overlay_show(&mut self) {
+        // Super+Shift+4: drop live chrome in the same Composition as the
+        // freeze overlay joining, so an open notifications panel is in the
+        // still and never parks as a 2×2 flash on the desk.
+        if self.selection.active && self.selection.presentable {
+            let _ = self.dismiss_chrome_overlays();
+        }
         self.emit_composition();
         for (title, want) in [
             ("launcher", self.launcher.active),
@@ -1516,6 +1570,17 @@ impl Shell {
         theme::overlay(&self.theme)
     }
 
+    /// Laid-out left edge of a menubar title, if measured.
+    fn menu_anchor(positions: &[f32], index: usize, is_system: bool) -> Option<f32> {
+        if is_system {
+            return Some(0.0);
+        }
+        positions
+            .get(index)
+            .copied()
+            .filter(|x| x.is_finite() && *x > 0.0)
+    }
+
     /// Estimate the left-edge X of the menubar element identified by
     /// `(index, is_system)`.
     ///
@@ -1530,9 +1595,10 @@ impl Shell {
     /// - `index=0`         → SYSTEM_BTN_W (left edge of app title)
     /// - `index=n` (n≥1)   → after app title and labels [1..n]
     pub fn estimate_label_x(&self, index: usize, is_system: bool) -> f32 {
-        const CHAR_WIDTH: f32 = 7.5;
-        const PAD_H: f32 = 16.0; // 2×8px horizontal padding
-        const SYSTEM_BTN_W: f32 = 34.0;
+        const CHAR_WIDTH: f32 = 6.5;
+        const PAD_H: f32 = crate::menubar::MENU_PAD_H * 2.0;
+        const SYSTEM_BTN_W: f32 =
+            crate::menubar::ICON_SIZE as f32 + crate::menubar::MENU_PAD_H * 2.0;
 
         if is_system {
             return 0.0;
@@ -1580,28 +1646,26 @@ impl Shell {
     pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
         use crate::stats::Metric;
 
-        // Indicator button widths (content + ITEM_PAD [2,9] = 18px).
-        // Keep roughly in sync with STAT_VALUE_W / RATE_VALUE_W / CLUSTER_SPACING
-        // in menubar/view.rs (chrome type, not mono).
-        const STAT_W: f32 = 80.0; // CPU/GPU/MEM: label + 36px fixed value + pad
-        const RATE_W: f32 = 115.0; // TX/RX: label + 78px fixed rate + pad
-        const CLOCK_W: f32 = 166.0; // clock: "%H:%M %a %Y-%m-%d" + pad
-        const GAP: f32 = 4.0; // cluster spacing (menubar CLUSTER_SPACING)
+        // Keep in sync with menubar cluster phrases (pad lives inside chip_w).
+        const CLOCK_W: f32 = 166.0; // "%H:%M %a %Y-%m-%d" + MENU_PAD_H
+        let stat_w = crate::menubar::percent_chip_w();
+        let rate_w = crate::menubar::rate_chip_w();
+        let phrase = crate::menubar::PHRASE_GAP;
 
         let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
         let has_gpu = self.stats.gpu.is_some();
 
         // Cluster right edge sits at the screen edge; subtract leftward.
-        // Order L→R: … MEM · RX · TX · clock
+        // Phrases L→R: extras · percents · rates · clock
         let clock_left = output_w - CLOCK_W;
-        let tx_left = clock_left - GAP - RATE_W;
-        let rx_left = tx_left - GAP - RATE_W;
-        let mem_left = rx_left - GAP - STAT_W;
+        let tx_left = clock_left - phrase - rate_w;
+        let rx_left = tx_left - rate_w;
+        let mem_left = rx_left - phrase - stat_w;
         let (gpu_left, cpu_left) = if has_gpu {
-            let g = mem_left - GAP - STAT_W;
-            (g, g - GAP - STAT_W)
+            let g = mem_left - stat_w;
+            (g, g - stat_w)
         } else {
-            (mem_left, mem_left - GAP - STAT_W)
+            (mem_left, mem_left - stat_w)
         };
 
         match metric {
@@ -1613,13 +1677,16 @@ impl Shell {
         }
     }
 
-    /// Left edge of the Bluetooth chip (immediately left of CPU in the
-    /// right-aligned cluster). Hide-if-no-adapter does not affect this
-    /// estimate while the chip is shown.
+    /// Left edge of the Bluetooth chip (left of the spectrum when that
+    /// chip is shown, otherwise immediately left of CPU). Spectrum is its
+    /// own phrase, so a PHRASE_GAP sits between Bluetooth and the bars.
     pub fn estimate_bluetooth_x(&self) -> f32 {
-        const BT_W: f32 = 32.0;
-        const GAP: f32 = 4.0;
-        self.estimate_stat_x(crate::stats::Metric::Cpu) - GAP - BT_W
+        let chip = crate::menubar::extra_chip_w();
+        if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
+            self.estimate_audio_x() - crate::menubar::PHRASE_GAP - chip
+        } else {
+            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
+        }
     }
 
     /// Card-sized live frame for Super+K (not the full usable area).
@@ -1653,11 +1720,14 @@ impl Shell {
             }
             Some(Panel::NotifyPile) => {
                 let w = crate::notify::view::PILE_WIDTH;
-                (
-                    clamp_x(ow - w - GUTTER, w),
-                    w,
-                    crate::notify::view::PILE_HEIGHT,
-                )
+                let usable = self
+                    .output_size
+                    .map(|(_, h)| {
+                        (h - crate::zoning::MENUBAR_HEIGHT - crate::zoning::MENU_SHADOW_PAD) as f32
+                    })
+                    .unwrap_or(720.0);
+                let height = self.notify.overlay_height(usable);
+                (clamp_x(ow - w - GUTTER, w), w, height)
             }
             Some(Panel::Bluetooth) => {
                 let w = crate::bluetooth::view::CARD_WIDTH;
@@ -1691,17 +1761,11 @@ impl Shell {
         }
     }
 
-    /// Left edge of the volume chip (left of Bluetooth when that chip is
-    /// shown, otherwise immediately left of CPU).
+    /// Left edge of the spectrum phrase (immediately left of CPU).
     pub fn estimate_audio_x(&self) -> f32 {
-        const CHIP_W: f32 = 32.0;
-        const GAP: f32 = 4.0;
-        let right = if crate::bluetooth::bar_icon(&self.bluetooth.snapshot).is_some() {
-            self.estimate_bluetooth_x()
-        } else {
-            self.estimate_stat_x(crate::stats::Metric::Cpu)
-        };
-        right - GAP - CHIP_W
+        self.estimate_stat_x(crate::stats::Metric::Cpu)
+            - crate::menubar::PHRASE_GAP
+            - crate::menubar::audio_chip_w()
     }
 
     /// Change `open_panel`, stopping Bluetooth discovery and clearing the
@@ -1946,8 +2010,7 @@ impl Shell {
             Msg::ToggleCalendar => {
                 if self.menu_open && self.open_panel == Some(Panel::Calendar) {
                     // Already showing the calendar — dismiss it.
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     // Open (or switch an app menu over to) the calendar,
                     // always starting on the current month.
@@ -1965,8 +2028,7 @@ impl Shell {
             }
             Msg::ToggleStatPanel(m) => {
                 if self.menu_open && self.open_panel == Some(crate::app::Panel::Stat(m)) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
                     self.set_open_panel(Some(crate::app::Panel::Stat(m)));
@@ -2013,22 +2075,16 @@ impl Shell {
                     && self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if same_trigger {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
                     self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::none();
                 }
 
-                self.menu_anchor_x = self
-                    .menubar
-                    .label_positions
-                    .get(index)
-                    .copied()
-                    .filter(|x| *x > 0.0)
-                    .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                self.menu_anchor_x =
+                    Self::menu_anchor(&self.menubar.label_positions, index, is_system)
+                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
@@ -2045,13 +2101,9 @@ impl Shell {
                 let same = self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if self.menu_open && !same {
-                    self.menu_anchor_x = self
-                        .menubar
-                        .label_positions
-                        .get(index)
-                        .copied()
-                        .filter(|x| *x > 0.0)
-                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                    self.menu_anchor_x =
+                        Self::menu_anchor(&self.menubar.label_positions, index, is_system)
+                            .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.set_open_panel(None);
@@ -2060,10 +2112,7 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::CloseMenu => {
-                self.menu_open = false;
-                self.current_open_index = None;
-                self.current_open_is_system = false;
-                self.set_open_panel(None);
+                let _ = self.dismiss_open_menu();
                 self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -2079,25 +2128,22 @@ impl Shell {
                 }
                 // Flower menu: open the app launcher (close menu first).
                 if app_id == Self::APP_ID && action_id == "launch" {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenLauncher);
                 }
                 if app_id == Self::APP_ID && action_id == "shortcuts" {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenShortcuts);
                 }
                 if let Some(action) = sola_kit::parse_window_action(&action_id) {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return self.handle_window_action(action);
@@ -2114,9 +2160,8 @@ impl Shell {
                             bus.emit(Topic::MenuAction(MenuActionPayload { app_id, action_id }));
                     }
                 }
-                self.menu_open = false;
-                self.current_open_index = None;
-                self.current_open_is_system = false;
+                let _ = self.dismiss_open_menu();
+                self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -2126,6 +2171,14 @@ impl Shell {
                     self.menubar.label_positions.resize(index + 1, 0.0);
                 }
                 self.menubar.label_positions[index] = x;
+                if self.menu_open
+                    && !self.current_open_is_system
+                    && self.current_open_index == Some(index)
+                    && (self.menu_anchor_x - x).abs() >= 0.5
+                {
+                    self.menu_anchor_x = x;
+                    self.emit_overlay_frames();
+                }
                 iced::Task::none()
             }
             // --- Launcher ---
@@ -2136,11 +2189,7 @@ impl Shell {
                 if self.switcher.active {
                     self.switcher.active = false;
                 }
-                if self.menu_open {
-                    self.menu_open = false;
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
-                }
+                let _ = self.dismiss_open_menu();
                 self.shortcuts.prior_focus = self.focused_window_id;
                 let menu = self
                     .focused_app_id
@@ -2302,17 +2351,30 @@ impl Shell {
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
                 if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::NotifyToggleGroup(app_id) => {
+                self.notify.toggle_group(&app_id);
+                self.emit_overlay_frames();
+                iced::Task::none()
+            }
+            Msg::NotifyDismissApp(app_id) => {
+                self.notify.dismiss_app(&app_id);
+                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
+                    let _ = self.dismiss_open_menu();
                 }
                 self.emit_overlay_frames();
                 self.emit_composition();
                 iced::Task::none()
             }
             Msg::ToggleNotifyPile => {
+                self.notify.acknowledge();
                 if self.menu_open && self.open_panel == Some(Panel::NotifyPile) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
                     self.set_open_panel(Some(Panel::NotifyPile));
@@ -2323,20 +2385,12 @@ impl Shell {
                 self.emit_composition();
                 iced::Task::none()
             }
-            Msg::NotifyClearPile => {
-                self.notify.clear_pile();
-                self.menu_open = false;
-                self.set_open_panel(None);
-                self.emit_composition();
-                iced::Task::none()
-            }
             Msg::ToggleAudio => {
                 if !self.audio.snapshot.available {
                     return iced::Task::none();
                 }
                 if self.menu_open && self.open_panel == Some(Panel::Audio) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
                     self.set_open_panel(Some(Panel::Audio));
@@ -2351,8 +2405,8 @@ impl Shell {
             Msg::Audio(ev) => {
                 self.audio.on_event(ev);
                 if !self.audio.snapshot.available && self.open_panel == Some(Panel::Audio) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                 }
@@ -2369,8 +2423,7 @@ impl Shell {
                     return iced::Task::none();
                 }
                 if self.menu_open && self.open_panel == Some(Panel::Bluetooth) {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
                 } else {
                     self.menu_open = true;
                     self.set_open_panel(Some(Panel::Bluetooth));
@@ -2387,8 +2440,8 @@ impl Shell {
                 if self.bluetooth.snapshot.adapter.is_none()
                     && self.open_panel == Some(Panel::Bluetooth)
                 {
-                    self.menu_open = false;
-                    self.set_open_panel(None);
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                 }
@@ -2957,5 +3010,41 @@ mod hide_tests {
 
         assert!(!shell.is_app_hidden("sola-terminal"));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+    }
+
+    #[test]
+    fn dismiss_open_menu_clears_audio_panel() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::Audio);
+        assert!(shell.dismiss_open_menu());
+        assert!(!shell.menu_open);
+        assert_eq!(shell.open_panel, None);
+    }
+
+    #[test]
+    fn arm_screenshot_keeps_open_notifications() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::NotifyPile);
+        shell.focused_window_id = Some(2);
+        shell.arm_screenshot_handoff();
+        assert!(shell.menu_open);
+        assert_eq!(shell.open_panel, Some(Panel::NotifyPile));
+        assert_eq!(shell.screenshot_return_focus, Some(2));
+    }
+
+    #[test]
+    fn dismiss_chrome_leaves_selection_armed() {
+        let mut shell = desktop();
+        shell.menu_open = true;
+        shell.open_panel = Some(Panel::NotifyPile);
+        let _ = shell.selection.start_freeze(Some(2));
+        assert!(shell.selection.pending);
+        assert!(shell.dismiss_chrome_overlays());
+        assert!(!shell.menu_open);
+        assert_eq!(shell.open_panel, None);
+        assert!(shell.selection.pending);
+        assert_eq!(shell.selection.prior_focus, Some(2));
     }
 }

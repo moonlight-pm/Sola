@@ -62,7 +62,7 @@ pub mod text_input;
 pub mod titlebar;
 pub mod toolbar;
 
-pub use badge::{Tone, badge};
+pub use badge::{COUNT_MARK_H, Tone, badge, count_label, count_mark};
 pub use button::confirm_button;
 pub use card::{accent_backplate, backplate, card, modal, plain};
 pub use color_picker::ColorPicker;
