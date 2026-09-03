@@ -73,7 +73,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
-| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Tokens + `skipped.json` + `liked.json` under `~/.local/state/sola/spotify/`; settings (last page + last track) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
+| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Tokens + `skipped.json` + `liked.json` under `~/.local/state/sola/spotify/`; settings (last page + last track + last playlist) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |

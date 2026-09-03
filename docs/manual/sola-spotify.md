@@ -32,15 +32,20 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   row from autoplay: struck title, dim cover, muted meta — does not
   delete from the playlist. Click − again to restore. **−** on the
   playing song skips to the next track (once).
+- **list-plus** (row or player bar) adds the song to a playlist you
+  own or collaborate on. Last destination is first; type to filter;
+  Enter adds to the first match. **New playlist** creates a private
+  list named “New playlist” and adds the song. A short **Added to …**
+  notice confirms. Escape or a click outside closes the picker.
 - Reopen restores the last playlist and the last track (graphite lift =
   selected; cyan play mark + accent title = playing).
 - Playlist pages show added dates on the header and on each row.
 - **Albums** and **Artists** are wrapping catalogs (same as Made for you).
 - Bottom bar: now playing on the left, transport in the center. Idle is
   “Nothing playing” / “Pick a song”; setup copy only if this computer is
-  not connected yet. Play/pause, skip, seek, shuffle, repeat, like, volume,
-  device picker. **This computer** is always the first device. Other Spotify
-  Connect speakers sit under **Other devices**.
+  not connected yet. Play/pause, skip, seek, shuffle, repeat, like,
+  add to playlist, volume, device picker. **This computer** is always the
+  first device. Other Spotify Connect speakers sit under **Other devices**.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
 - **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go.
 
@@ -50,13 +55,14 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
 
 | Path | What |
 |------|------|
-| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track |
+| `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track, last playlist |
 | `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, `skipped.json`, `liked.json` |
 | `~/.cache/sola/spotify/` | Audio, album art, page JSON (safe to delete) |
 
 ## Limits
 
-- No playlist create/reorder/delete in this pass.
+- No playlist reorder or delete. Add and **New playlist** live on the
+  list-plus picker.
 - No podcasts UI, lyrics, Winamp skin, MilkDrop, or equalizer (Fastpotify has those).
 - No tray / close-to-background; quit from the menu or ⌘Q.
 - No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player).

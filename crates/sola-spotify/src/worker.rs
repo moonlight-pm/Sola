@@ -10,7 +10,9 @@ use tokio::sync::{mpsc, watch};
 use crate::cache::{self, Liked, Skipped};
 
 use crate::api::models::*;
-use crate::api::{ApiClient, ApiError, ApiSource, NetActivity, PlayRequest, TokenProvider, WebTokens};
+use crate::api::{
+    ApiClient, ApiError, ApiSource, NetActivity, PlayRequest, TokenProvider, WebTokens,
+};
 use crate::auth::{self, Grant, StoredToken};
 use crate::bridge;
 use crate::images::ArtLoader;
@@ -211,6 +213,15 @@ pub enum Cmd {
         uri: String,
         skipped: bool,
     },
+    AddToPlaylist {
+        playlist_id: String,
+        name: String,
+        uris: Vec<String>,
+    },
+    CreatePlaylist {
+        name: String,
+        uris: Vec<String>,
+    },
     RefreshPlayback,
     RefreshDevices,
     SaveSettings(Settings),
@@ -242,6 +253,11 @@ pub enum Event {
     Liked(Vec<String>),
     /// Library playlists (sidebar + Home / Made for you), filled after first paint.
     Playlists(Vec<Playlist>),
+    AddedToPlaylist {
+        playlist_id: String,
+        name: String,
+        uris: Vec<String>,
+    },
     Settings(Settings),
     Error(String),
     Raise,
@@ -257,7 +273,10 @@ enum Internal {
     },
     Reconnect,
     EngineState(crate::player::LocalState),
-    MaybeAdvance { uri: String, generation: u64 },
+    MaybeAdvance {
+        uri: String,
+        generation: u64,
+    },
 }
 
 pub fn start() {
@@ -287,7 +306,13 @@ async fn run() {
         .build()
         .expect("http client");
     let activity = Arc::new(NetActivity::default());
-    let api = Arc::new(ApiClient::new(http.clone(), activity, 20, 50, ApiSource::Shared));
+    let api = Arc::new(ApiClient::new(
+        http.clone(),
+        activity,
+        20,
+        50,
+        ApiSource::Shared,
+    ));
     let art = ArtLoader::new(http.clone(), dirs.art_cache_dir());
 
     let (int_tx, mut int_rx) = mpsc::unbounded_channel::<Internal>();
@@ -450,7 +475,8 @@ impl Worker {
             self.dirs.shared_web_token_file(),
             ApiSource::Shared,
         );
-        self.api.set_token_provider(Some(TokenProvider::Web(tokens)));
+        self.api
+            .set_token_provider(Some(TokenProvider::Web(tokens)));
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             match api.me().await {
@@ -494,10 +520,7 @@ impl Worker {
             Cmd::SignOut => self.sign_out(),
             Cmd::AuthorizePlayback => self.authorize_playback(),
             Cmd::Player(command) => self.player(command),
-            Cmd::Play {
-                request,
-                device_id,
-            } => self.play(request, device_id).await,
+            Cmd::Play { request, device_id } => self.play(request, device_id).await,
             Cmd::Transfer { device_id, play } => self.transfer(device_id, play).await,
             Cmd::Open(page) => self.open(page),
             Cmd::Search(query) => {
@@ -508,6 +531,12 @@ impl Worker {
             Cmd::FetchArt(url) => self.fetch_art(url),
             Cmd::SetSaved { uri, saved } => self.set_saved(uri, saved),
             Cmd::SetSkipped { uri, skipped } => self.set_skipped(uri, skipped),
+            Cmd::AddToPlaylist {
+                playlist_id,
+                name,
+                uris,
+            } => self.add_to_playlist(playlist_id, name, uris),
+            Cmd::CreatePlaylist { name, uris } => self.create_playlist(name, uris),
             Cmd::RefreshPlayback => self.refresh_playback(),
             Cmd::RefreshDevices => self.refresh_devices(),
             Cmd::SaveSettings(settings) => {
@@ -962,9 +991,8 @@ impl Worker {
     }
 
     async fn library_playlists_fast(api: &ApiClient) -> Vec<Playlist> {
-        let (mine, extra) = tokio::join!(api.my_playlists(0, 50), async {
-            api.made_for_you().await
-        });
+        let (mine, extra) =
+            tokio::join!(api.my_playlists(0, 50), async { api.made_for_you().await });
         let mine = mine.map(|page| page.items).unwrap_or_default();
         Worker::merge_playlists(mine, extra)
     }
@@ -1162,7 +1190,8 @@ impl Worker {
                         .iter()
                         .filter_map(PlaylistItem::into_track)
                         .collect();
-                    let art = crate::api::models::pick_image(&playlist.images, 300).map(str::to_string);
+                    let art =
+                        crate::api::models::pick_image(&playlist.images, 300).map(str::to_string);
                     let title = playlist.name.clone();
                     let mut subtitle = format!(
                         "{} · {} songs",
@@ -1238,7 +1267,8 @@ impl Worker {
                             }
                         },
                     };
-                    let art = crate::api::models::pick_image(&album.images, 300).map(str::to_string);
+                    let art =
+                        crate::api::models::pick_image(&album.images, 300).map(str::to_string);
                     let year = album.year().unwrap_or("").to_string();
                     let artists = crate::api::models::join_names(
                         album.artists.iter().map(|a| a.name.as_str()),
@@ -1355,6 +1385,52 @@ impl Worker {
                 .last_engine_uri
                 .as_deref()
                 .is_some_and(|u| u == uri || uri_ids_match(u, uri))
+    }
+
+    fn add_to_playlist(&self, playlist_id: String, name: String, uris: Vec<String>) {
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            match api.add_playlist_items(&playlist_id, &uris, None).await {
+                Ok(_) => bridge::emit(Event::AddedToPlaylist {
+                    playlist_id,
+                    name,
+                    uris,
+                }),
+                Err(error) => bridge::emit(Event::Error(error.to_string())),
+            }
+        });
+    }
+
+    fn create_playlist(&self, name: String, uris: Vec<String>) {
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            match api.create_playlist(&name, false, "").await {
+                Ok(playlist) => {
+                    let playlist_id = playlist.id.clone();
+                    let playlist_name = if playlist.name.is_empty() {
+                        name
+                    } else {
+                        playlist.name
+                    };
+                    if !uris.is_empty()
+                        && let Err(error) = api.add_playlist_items(&playlist_id, &uris, None).await
+                    {
+                        bridge::emit(Event::Error(error.to_string()));
+                        return;
+                    }
+                    let lists = api.my_playlists_all(400).await;
+                    if !lists.is_empty() {
+                        bridge::emit(Event::Playlists(lists));
+                    }
+                    bridge::emit(Event::AddedToPlaylist {
+                        playlist_id,
+                        name: playlist_name,
+                        uris,
+                    });
+                }
+                Err(error) => bridge::emit(Event::Error(error.to_string())),
+            }
+        });
     }
 
     fn set_saved(&mut self, uri: String, saved: bool) {
@@ -1627,10 +1703,7 @@ impl Worker {
     }
 
     fn on_engine_state(&mut self, state: crate::player::LocalState) {
-        let was_going = matches!(
-            self.last_playback,
-            Playback::Playing | Playback::Loading
-        );
+        let was_going = matches!(self.last_playback, Playback::Playing | Playback::Loading);
         let now_stopped = state.playback == Playback::Stopped;
         let uri = state.track.as_ref().map(|t| t.uri.clone());
         if let Some(uri) = uri.as_ref() {
@@ -1902,11 +1975,9 @@ fn now_from_remote(state: &PlaybackState) -> NowPlaying {
                 .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_default(),
-            Some(PlayableItem::Episode(ep)) => ep
-                .show
-                .as_ref()
-                .map(|s| s.name.clone())
-                .unwrap_or_default(),
+            Some(PlayableItem::Episode(ep)) => {
+                ep.show.as_ref().map(|s| s.name.clone()).unwrap_or_default()
+            }
             None => String::new(),
         },
         uri: item.map(|i| i.uri().to_string()).unwrap_or_default(),
@@ -1948,7 +2019,10 @@ mod tests {
         }
     }
 
-    fn hold(want: Option<&str>, ignore: Option<&str>) -> std::sync::Arc<std::sync::Mutex<EngineHold>> {
+    fn hold(
+        want: Option<&str>,
+        ignore: Option<&str>,
+    ) -> std::sync::Arc<std::sync::Mutex<EngineHold>> {
         std::sync::Arc::new(std::sync::Mutex::new(EngineHold {
             want: want.map(str::to_string),
             ignore: ignore.map(str::to_string),
@@ -1958,26 +2032,56 @@ mod tests {
     #[test]
     fn hold_allows_context_advance_after_wanted_track_plays() {
         let h = hold(Some("spotify:track:a"), None);
-        assert!(hold_allows(&h, &state("spotify:track:a", Playback::Loading)));
-        assert!(hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Loading)
+        ));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Playing)
+        ));
         assert!(h.lock().unwrap().want.is_none());
-        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:b", Playback::Playing)
+        ));
     }
 
     #[test]
     fn hold_drops_previous_track_while_switching() {
         let h = hold(Some("spotify:track:b"), Some("spotify:track:a"));
-        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
-        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Stopped)));
-        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
-        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Playing)));
-        assert!(hold_allows(&h, &state("spotify:track:c", Playback::Playing)));
+        assert!(!hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Playing)
+        ));
+        assert!(!hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Stopped)
+        ));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:b", Playback::Playing)
+        ));
+        assert!(!hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Playing)
+        ));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:c", Playback::Playing)
+        ));
     }
 
     #[test]
     fn hold_without_want_still_ignores_left_track() {
         let h = hold(None, Some("spotify:track:a"));
-        assert!(!hold_allows(&h, &state("spotify:track:a", Playback::Stopped)));
-        assert!(hold_allows(&h, &state("spotify:track:b", Playback::Playing)));
+        assert!(!hold_allows(
+            &h,
+            &state("spotify:track:a", Playback::Stopped)
+        ));
+        assert!(hold_allows(
+            &h,
+            &state("spotify:track:b", Playback::Playing)
+        ));
     }
 }

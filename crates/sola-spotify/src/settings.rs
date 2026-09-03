@@ -20,6 +20,9 @@ pub struct Settings {
     /// Last track URI on the restored page (selected row after restart).
     #[serde(default)]
     pub last_track: String,
+    /// Playlist last added to (add-to picker pins it first).
+    #[serde(default)]
+    pub last_playlist: String,
 }
 
 fn default_true() -> bool {
@@ -36,6 +39,7 @@ impl Default for Settings {
             gapless: true,
             last_page: String::new(),
             last_track: String::new(),
+            last_playlist: String::new(),
         }
     }
 }

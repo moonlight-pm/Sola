@@ -413,6 +413,52 @@ impl Playlist {
     pub fn is_generated(&self) -> bool {
         self.id.starts_with("37i9dQ") || self.owner.id.as_deref() == Some("spotify")
     }
+
+    /// Whether this account can add tracks (owned or collaborative, not a mix).
+    pub fn can_add_tracks(&self, user_id: Option<&str>) -> bool {
+        if self.id.is_empty() || self.is_generated() {
+            return false;
+        }
+        match user_id {
+            Some(id) => self.owned_by(id) || self.collaborative,
+            None => true,
+        }
+    }
+
+    pub fn bump_track_total(&mut self, by: u32) {
+        if let Some(count) = &mut self.items_count {
+            count.total = count.total.saturating_add(by);
+        }
+        if let Some(count) = &mut self.tracks {
+            count.total = count.total.saturating_add(by);
+        } else if self.items_count.is_none() {
+            self.tracks = Some(TrackCount { total: by });
+        }
+    }
+}
+
+/// Writable playlists for the add-to picker: last-used first, then library order.
+pub fn playlists_for_add<'a>(
+    playlists: &'a [Playlist],
+    user_id: Option<&str>,
+    query: &str,
+    last_id: Option<&str>,
+) -> Vec<&'a Playlist> {
+    let mut out: Vec<&Playlist> = playlists
+        .iter()
+        .filter(|playlist| playlist.can_add_tracks(user_id))
+        .collect();
+    let needle = query.trim().to_lowercase();
+    if !needle.is_empty() {
+        out.retain(|playlist| playlist.name.to_lowercase().contains(&needle));
+    }
+    if let Some(id) = last_id.filter(|id| !id.is_empty())
+        && let Some(index) = out.iter().position(|playlist| playlist.id == id)
+    {
+        let last = out.remove(index);
+        out.insert(0, last);
+    }
+    out
 }
 
 /// Daily Mix / Discover first, then the rest of Made for you.
@@ -827,11 +873,47 @@ mod tests {
         assert!(playlist.owned_by("me"));
         assert_eq!(playlist.owner_name(), "Me");
         assert!(!playlist.is_generated());
+        assert!(playlist.can_add_tracks(Some("me")));
+        assert!(!playlist.can_add_tracks(Some("other")));
         let weekly: Playlist = serde_json::from_str(
             r#"{"id":"37i9dQZEVXcUTwyIdCrnO5","name":"Discover Weekly","owner":{"id":"spotify","display_name":"Spotify"}}"#,
         )
         .unwrap();
         assert!(weekly.is_generated());
+        assert!(!weekly.can_add_tracks(Some("me")));
+        let followed: Playlist = serde_json::from_str(
+            r#"{"id":"abc","name":"Someone's list","owner":{"id":"them","display_name":"Them"}}"#,
+        )
+        .unwrap();
+        assert!(!followed.can_add_tracks(Some("me")));
+        assert!(followed.can_add_tracks(None));
+        let collab: Playlist = serde_json::from_str(
+            r#"{"id":"c","name":"Collab","collaborative":true,"owner":{"id":"them"}}"#,
+        )
+        .unwrap();
+        assert!(collab.can_add_tracks(Some("me")));
+    }
+
+    #[test]
+    fn add_picker_puts_last_used_first_and_filters() {
+        let gym: Playlist =
+            serde_json::from_str(r#"{"id":"gym","name":"Gym","owner":{"id":"me"}}"#).unwrap();
+        let drive: Playlist =
+            serde_json::from_str(r#"{"id":"drive","name":"Evening Drive","owner":{"id":"me"}}"#)
+                .unwrap();
+        let weekly: Playlist = serde_json::from_str(
+            r#"{"id":"37i9dQZEVXcUTwyIdCrnO5","name":"Discover Weekly","owner":{"id":"spotify"}}"#,
+        )
+        .unwrap();
+        let lists = vec![gym, drive, weekly];
+        let ranked = playlists_for_add(&lists, Some("me"), "", Some("drive"));
+        assert_eq!(
+            ranked.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["drive", "gym"]
+        );
+        let filtered = playlists_for_add(&lists, Some("me"), "even", Some("gym"));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "drive");
     }
 
     #[test]
@@ -851,7 +933,10 @@ mod tests {
                 ..Track::default()
             },
         ];
-        assert_eq!(added_span(&tracks).as_deref(), Some("1 Jan 2024 – 15 Jun 2024"));
+        assert_eq!(
+            added_span(&tracks).as_deref(),
+            Some("1 Jan 2024 – 15 Jun 2024")
+        );
     }
 
     #[test]
