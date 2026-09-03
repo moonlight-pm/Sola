@@ -17,15 +17,15 @@ answered.
 inspector under the page in the same tab. Choose the action again to
 close it. Right-click → Inspect Element opens it on that node.
 The location bar is **plain text** on the chrome until you click it (or
-`⌘L`); then it is an edit field. `https://` is omitted while idle.
-Typing searches **visit history** (top five matches as a list under the
-chrome — the field is not autocompleted and **keeps focus**). ↓ /
-`Ctrl+N` and ↑ / `Ctrl+P` (or a click) only highlight a row. Enter
-switches to a tab already on that site, or loads the URL; for a search
-with no highlight it uses the top match or Kagi’s first result.
-**Shift+Enter** always loads the Kagi results page. Further typing
-refines the list. Jumping from a new tab to a site already open closes
-the unused blank tab.
+`⌘L`); then it is an edit field. While idle, `https://` and the query
+string are omitted (the path stays). Typing searches **visit history**
+(top five matches as a list under the chrome — the field is not
+autocompleted and **keeps focus**). ↓ / `Ctrl+N` and ↑ / `Ctrl+P` (or a
+click) only highlight a row. Enter loads the highlighted row, or a
+typed URL (switching to a tab already on that site), or Kagi’s first
+result for a search. **Shift+Enter** always loads the Kagi results
+page. Further typing refines the list. Jumping from a new tab to a
+site already open closes the unused blank tab.
 `⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
 Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
 including Steam store trailers, plays on the codecs-enabled CEF used on

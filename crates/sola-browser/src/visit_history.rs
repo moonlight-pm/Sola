@@ -134,7 +134,7 @@ fn keep_url(url: &str) -> bool {
         return false;
     }
     // Don't let Kagi SERP / lucky URLs crowd out real sites.
-    if lower.contains("kagi.com/search") {
+    if crate::util::is_kagi_search_url(&lower) {
         return false;
     }
     true
@@ -160,7 +160,11 @@ fn score(q: &str, v: &Visit) -> Option<u32> {
 }
 
 fn path_key(url: &str) -> String {
-    let mut s = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
+    let mut s = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
     while s.ends_with('/') && s.matches('/').count() > 2 {
         s.pop();
     }
@@ -168,10 +172,7 @@ fn path_key(url: &str) -> String {
 }
 
 fn host_of(url: &str) -> String {
-    let rest = url
-        .split_once("://")
-        .map(|(_, r)| r)
-        .unwrap_or(url);
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     rest.split('/').next().unwrap_or("").to_ascii_lowercase()
 }
 
@@ -276,10 +277,7 @@ mod tests {
     fn search_dedups_query_variants() {
         let h = VisitHistory {
             items: vec![
-                v(
-                    "https://ideogram.ai/login?utm_source=a",
-                    "Ideogram",
-                ),
+                v("https://ideogram.ai/login?utm_source=a", "Ideogram"),
                 v("https://ideogram.ai/login?utm_source=b", "Ideogram"),
                 v("https://ideogram.ai/login", "Ideogram"),
             ],

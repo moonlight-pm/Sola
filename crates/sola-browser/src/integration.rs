@@ -410,15 +410,14 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::Edit(cmd) => {
-            // Route by the URL bar's *live* focus. iced doesn't surface focus
-            // as state, and a click into the field is captured by `text_input`
-            // before any wrapper widget can observe it — so a tracked bool
-            // can't be kept honest. Query the real focus via an operation and
-            // finish the routing in `Msg::EditRouted`.
-            tracing::debug!(?cmd, "edit intent — querying live URL-bar focus");
-            url_bar_is_focused(move |url_bar_focused| Msg::EditRouted {
+            // Idle omnibox unmounts the field, so `is_focused(url_input_id)`
+            // yields Outcome::None and ⌘V would vanish. The tracked flag is
+            // set on click / ⌘L / typing and cleared when the page takes
+            // the press.
+            tracing::debug!(?cmd, url_bar = app.url_bar_focused, "edit intent");
+            app.update(Msg::EditRouted {
                 cmd,
-                url_bar_focused,
+                url_bar_focused: app.url_bar_focused,
             })
         }
         BrowserIntent::SwitchProfile { id } => app.switch_profile(&id),
@@ -473,10 +472,11 @@ pub(crate) fn select_url_bar() -> Task<Msg> {
     >(url_input_id()))
 }
 
-/// Query the chrome URL field's live focus state. Used to route Edit
-/// actions (⌘C/⌘X/⌘V/⌘A) to the field vs. the page, and to decide whether a
-/// click just *gained* focus (→ select-all). The result arrives as a message
-/// the caller chooses.
+/// Query the chrome URL field's live focus state. Used to decide whether a
+/// click just *gained* focus (→ select-all). Edit chords use the tracked
+/// `url_bar_focused` flag — this query is `Outcome::None` while the idle
+/// label is showing (the field is unmounted). The result arrives as a
+/// message the caller chooses.
 pub(crate) fn url_bar_is_focused<F>(to_msg: F) -> Task<Msg>
 where
     F: Fn(bool) -> Msg + Send + 'static,
