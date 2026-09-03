@@ -139,6 +139,10 @@ pub enum Msg {
     NotifyActivate(String),
     /// × without raising.
     NotifyDismiss(String),
+    /// Expand / collapse a pile group.
+    NotifyToggleGroup(String),
+    /// Dismiss every missed item for an app (group ×). Live cards stay.
+    NotifyDismissApp(String),
     /// Open / close the missed-pile panel.
     ToggleNotifyPile,
     /// Open / close the volume popover.
@@ -577,6 +581,9 @@ impl Shell {
             ShortcutAction::OpenShortcuts => iced::Task::none(),
             ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
             ShortcutAction::OpenSwitcher => {
+                if let Some(id) = self.focused_app_id.clone() {
+                    self.ack_notify_badge(&id);
+                }
                 crate::switcher::state::rebuild_apps(
                     &mut self.switcher,
                     &self.mru_apps.clone(),
@@ -704,6 +711,20 @@ impl Shell {
         if self.mail_is_mapped() { Some(n) } else { None }
     }
 
+    /// Super+Tab numeral: Mail uses inbox unread; everyone else unseen
+    /// live + pile. Visiting the app or opening the pile marks items seen.
+    pub fn switcher_badge(&self, app_id: &str) -> Option<u32> {
+        if app_id.eq_ignore_ascii_case("sola-mail") {
+            return self.mail_unread_badge();
+        }
+        let n = self.notify.attention_count(app_id);
+        (n > 0).then_some(n)
+    }
+
+    fn ack_notify_badge(&mut self, app_id: &str) {
+        self.notify.ack_app(app_id);
+    }
+
     /// Raise sola-mail (unhide first if it is composition-hidden).
     pub fn activate_mail(&mut self) {
         if self.is_app_hidden("sola-mail") {
@@ -752,8 +773,16 @@ impl Shell {
     }
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
+        let app_id = n.app_id.clone();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
+        if self
+            .focused_app_id
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(&app_id))
+        {
+            self.ack_notify_badge(&app_id);
+        }
         let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
             Msg::NotifyExpire(generation)
         });
@@ -888,9 +917,11 @@ impl Shell {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
         if let Some(w) = self.known_windows.iter().find(|w| w.window_id == window_id) {
+            let app_id = w.app_id.clone();
             self.focused_window_id = Some(window_id);
-            self.focused_app_id = Some(w.app_id.clone());
-            self.mru_window_by_app.insert(w.app_id.clone(), window_id);
+            self.focused_app_id = Some(app_id.clone());
+            self.mru_window_by_app.insert(app_id.clone(), window_id);
+            self.ack_notify_badge(&app_id);
         }
     }
 
@@ -1673,8 +1704,7 @@ impl Shell {
                         (h - crate::zoning::MENUBAR_HEIGHT - crate::zoning::MENU_SHADOW_PAD) as f32
                     })
                     .unwrap_or(720.0);
-                let height =
-                    crate::notify::NotifyState::pile_overlay_height(self.notify.pile.len(), usable);
+                let height = self.notify.overlay_height(usable);
                 (clamp_x(ow - w - GUTTER, w), w, height)
             }
             Some(Panel::Bluetooth) => {
@@ -2298,6 +2328,20 @@ impl Shell {
             Msg::NotifyActivate(id) => self.activate_notification(&id),
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
+                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
+                    let _ = self.dismiss_open_menu();
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                iced::Task::none()
+            }
+            Msg::NotifyToggleGroup(app_id) => {
+                self.notify.toggle_group(&app_id);
+                self.emit_overlay_frames();
+                iced::Task::none()
+            }
+            Msg::NotifyDismissApp(app_id) => {
+                self.notify.dismiss_app(&app_id);
                 if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
                     let _ = self.dismiss_open_menu();
                 }

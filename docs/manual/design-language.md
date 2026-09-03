@@ -190,13 +190,13 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Menubar | Menu bar | Left: system + app menus. Right: status (stats, clock). Compact, quiet, high scanability. |
 | App menus | Menu bar menus | Standard hierarchy, separators, key equivalents. |
 | Launcher | Spotlight | Single focused field + results list; dimmed backdrop; not a dashboard. |
-| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. |
+| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. Count mark on the icon is pending attention (live + pile; Mail unread). |
 | Stat indicators | Menu bar extras | Right cluster is four phrases (icon extras, percents, rates, clock). CPU / GPU / MEM / RX / TX show a muted label plus a fixed btop-style dithered pixel graph (numbers live in the dropdown). |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
 | Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph **left of volume**; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
 | Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum **right of Bluetooth**, with the same phrase gap as CPU on its other side; click the bars for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
 | Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
-| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile is a bell + count in the right cluster (no Clear; cap 20). See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
+| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile is a bell + count in the right cluster, grouped by app (no Clear; no cap). Super+Tab carries a count mark on the icon. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 
 ---
 

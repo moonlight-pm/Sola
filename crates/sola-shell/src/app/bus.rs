@@ -461,6 +461,7 @@ impl Shell {
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
+            self.ack_notify_badge(app_id);
         } else if !self.mru_apps.iter().any(|m| m == app_id) {
             // Track without raising — least-recent = bottom of stack.
             self.mru_apps.push(app_id.to_string());
@@ -984,6 +985,9 @@ impl Shell {
                 return Task::done(Msg::SwitcherNav { next: true });
             }
             tracing::info!("Meta+Tab — activating switcher");
+            if let Some(id) = self.focused_app_id.clone() {
+                self.ack_notify_badge(&id);
+            }
             crate::switcher::state::rebuild_apps(
                 &mut self.switcher,
                 &self.mru_apps.clone(),

@@ -6,6 +6,7 @@
 
 pub mod view;
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use iced::window;
@@ -16,12 +17,17 @@ use sola_kit::app::window_settings;
 pub const CARD_H: i32 = 76;
 pub const CARD_GAP: i32 = 8;
 pub const MAX_LIVE: usize = 3;
-/// Missed pile is a short session list; older rows drop off the bottom.
-pub const MAX_PILE: usize = 20;
 /// Compact empty-state overlay (title + one line + pad).
 pub const PILE_MIN_HEIGHT: f32 = 96.0;
-const PILE_ROW_H: f32 = 48.0;
-const PILE_CHROME_H: f32 = 52.0;
+const PILE_CHROME_H: f32 = 48.0;
+const GROUP_ROW_H: f32 = 56.0;
+const ITEM_ROW_H: f32 = 40.0;
+const REMAINDER_ROW_H: f32 = 28.0;
+/// Newest items shown when a group is expanded; the rest stay counted.
+pub const EXPAND_SHOW: usize = 30;
+/// Groups this small list every message (bell count matches rows).
+/// Bigger groups collapse to one app row.
+pub const COLLAPSE_AFTER: usize = 4;
 pub const HOLD: Duration = Duration::from_secs(6);
 pub const ENTER: Duration = Duration::from_millis(180);
 pub const LEAVE: Duration = Duration::from_millis(140);
@@ -37,12 +43,24 @@ pub struct Banner {
     pub leave_at: Option<Instant>,
 }
 
+/// One app's missed items, newest first. Built from [`NotifyState::pile`].
+#[derive(Debug, Clone)]
+pub struct PileGroup<'a> {
+    pub app_id: &'a str,
+    pub items: Vec<&'a AppNotification>,
+}
+
 #[derive(Debug, Clone)]
 pub struct NotifyState {
     pub live: Vec<Banner>,
     pub pile: Vec<AppNotification>,
     /// Accent on the menubar bell until the pile is opened (or emptied).
     pub unseen: bool,
+    /// App ids whose pile group is expanded in the panel.
+    expanded: HashSet<String>,
+    /// Notification ids that no longer count toward Super+Tab marks.
+    /// Pile history stays until × / activate; the badge is unseen attention.
+    badge_seen: HashSet<String>,
     generation: u64,
 }
 
@@ -52,6 +70,8 @@ impl Default for NotifyState {
             live: Vec::new(),
             pile: Vec::new(),
             unseen: false,
+            expanded: HashSet::new(),
+            badge_seen: HashSet::new(),
             generation: 0,
         }
     }
@@ -67,20 +87,162 @@ impl NotifyState {
     }
 
     /// Clicking the bell: icon returns to normal chrome (pile may still be there).
+    /// Also marks every current item seen for Super+Tab — looking at the
+    /// list is enough; visiting the app is the other path.
     pub fn acknowledge(&mut self) {
         self.unseen = false;
+        self.ack_all();
     }
 
-    /// Live overlay height for the missed pile: content-sized, capped at the
-    /// usable area under the menubar so a full pile (~20) is not clipped.
-    pub fn pile_overlay_height(count: usize, usable_h: f32) -> f32 {
-        let wanted = if count == 0 {
+    fn badge_unseen(&self, id: &str) -> bool {
+        !self.badge_seen.contains(id)
+    }
+
+    /// Pending Super+Tab attention: unseen live + pile for `app_id`.
+    pub fn attention_count(&self, app_id: &str) -> u32 {
+        let live = self
+            .live
+            .iter()
+            .filter(|b| b.n.app_id.eq_ignore_ascii_case(app_id) && self.badge_unseen(&b.n.id))
+            .count();
+        let piled = self
+            .pile
+            .iter()
+            .filter(|n| n.app_id.eq_ignore_ascii_case(app_id) && self.badge_unseen(&n.id))
+            .count();
+        (live + piled) as u32
+    }
+
+    /// Looking at `app_id` (raise / Super+Tab land) clears its mark.
+    pub fn ack_app(&mut self, app_id: &str) {
+        for b in &self.live {
+            if b.n.app_id.eq_ignore_ascii_case(app_id) {
+                self.badge_seen.insert(b.n.id.clone());
+            }
+        }
+        for n in &self.pile {
+            if n.app_id.eq_ignore_ascii_case(app_id) {
+                self.badge_seen.insert(n.id.clone());
+            }
+        }
+    }
+
+    pub fn ack_all(&mut self) {
+        for b in &self.live {
+            self.badge_seen.insert(b.n.id.clone());
+        }
+        for n in &self.pile {
+            self.badge_seen.insert(n.id.clone());
+        }
+    }
+
+    fn prune_badge_seen(&mut self) {
+        self.badge_seen.retain(|id| {
+            self.live.iter().any(|b| b.n.id == *id) || self.pile.iter().any(|n| n.id == *id)
+        });
+    }
+
+    /// Apps in recency order (newest item in the group first).
+    pub fn groups(&self) -> Vec<PileGroup<'_>> {
+        let mut groups: Vec<PileGroup<'_>> = Vec::new();
+        for n in &self.pile {
+            if let Some(g) = groups
+                .iter_mut()
+                .find(|g| g.app_id.eq_ignore_ascii_case(&n.app_id))
+            {
+                g.items.push(n);
+            } else {
+                groups.push(PileGroup {
+                    app_id: n.app_id.as_str(),
+                    items: vec![n],
+                });
+            }
+        }
+        groups
+    }
+
+    pub fn group_len(&self, app_id: &str) -> usize {
+        self.pile
+            .iter()
+            .filter(|p| p.app_id.eq_ignore_ascii_case(app_id))
+            .count()
+    }
+
+    pub fn group_collapsible(&self, app_id: &str) -> bool {
+        self.group_len(app_id) > COLLAPSE_AFTER
+    }
+
+    pub fn group_expanded(&self, app_id: &str) -> bool {
+        self.expanded
+            .iter()
+            .any(|id| id.eq_ignore_ascii_case(app_id))
+    }
+
+    /// Expand / collapse a noisy app group. Small groups always list.
+    pub fn toggle_group(&mut self, app_id: &str) {
+        if !self.group_collapsible(app_id) {
+            return;
+        }
+        if self.group_expanded(app_id) {
+            self.expanded.retain(|id| !id.eq_ignore_ascii_case(app_id));
+        } else {
+            self.expanded.insert(app_id.to_string());
+        }
+    }
+
+    /// Drop every missed item for `app_id` without raising. Live cards stay.
+    pub fn dismiss_app(&mut self, app_id: &str) -> usize {
+        let before = self.pile.len();
+        self.pile.retain(|n| !n.app_id.eq_ignore_ascii_case(app_id));
+        self.prune_expanded();
+        self.prune_badge_seen();
+        if self.pile.is_empty() {
+            self.unseen = false;
+        }
+        before - self.pile.len()
+    }
+
+    fn prune_expanded(&mut self) {
+        self.expanded.retain(|id| {
+            self.pile
+                .iter()
+                .filter(|n| n.app_id.eq_ignore_ascii_case(id))
+                .count()
+                > 1
+        });
+    }
+
+    /// Overlay height from *visible* rows (collapsed groups), not item count.
+    pub fn overlay_height(&self, usable_h: f32) -> f32 {
+        let wanted = if self.pile.is_empty() {
             PILE_MIN_HEIGHT
         } else {
-            PILE_CHROME_H + count as f32 * PILE_ROW_H
+            PILE_CHROME_H + self.visible_stack_h()
         };
         let cap = usable_h.max(PILE_MIN_HEIGHT);
         wanted.clamp(PILE_MIN_HEIGHT, cap)
+    }
+
+    fn visible_stack_h(&self) -> f32 {
+        let mut h = 0.0;
+        for (i, g) in self.groups().iter().enumerate() {
+            if i > 0 {
+                h += 8.0;
+            }
+            if g.items.len() <= COLLAPSE_AFTER {
+                h += g.items.len() as f32 * GROUP_ROW_H;
+                continue;
+            }
+            h += GROUP_ROW_H;
+            if self.group_expanded(g.app_id) {
+                let show = g.items.len().min(EXPAND_SHOW);
+                h += show as f32 * ITEM_ROW_H;
+                if g.items.len() > EXPAND_SHOW {
+                    h += REMAINDER_ROW_H;
+                }
+            }
+        }
+        h
     }
 
     pub fn stack_height(&self) -> i32 {
@@ -186,10 +348,14 @@ impl NotifyState {
     /// Click raise: drop from live and pile, return the payload.
     pub fn take(&mut self, id: &str) -> Option<AppNotification> {
         if let Some(pos) = self.live.iter().position(|b| b.n.id == id) {
-            return Some(self.live.remove(pos).n);
+            let n = self.live.remove(pos).n;
+            self.prune_badge_seen();
+            return Some(n);
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
             let n = self.pile.remove(pos);
+            self.prune_expanded();
+            self.prune_badge_seen();
             if self.pile.is_empty() {
                 self.unseen = false;
             }
@@ -202,10 +368,13 @@ impl NotifyState {
     pub fn dismiss(&mut self, id: &str) -> bool {
         if let Some(pos) = self.live.iter().position(|b| b.n.id == id) {
             self.live.remove(pos);
+            self.prune_badge_seen();
             return true;
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
             self.pile.remove(pos);
+            self.prune_expanded();
+            self.prune_badge_seen();
             if self.pile.is_empty() {
                 self.unseen = false;
             }
@@ -216,11 +385,14 @@ impl NotifyState {
 
     fn push_pile(&mut self, n: AppNotification) {
         self.pile.retain(|p| p.id != n.id);
+        if let Some(tag) = n.tag.as_deref() {
+            self.pile.retain(|p| {
+                !(p.app_id.eq_ignore_ascii_case(&n.app_id) && p.tag.as_deref() == Some(tag))
+            });
+        }
         self.pile.insert(0, n);
         self.unseen = true;
-        while self.pile.len() > MAX_PILE {
-            self.pile.pop();
-        }
+        self.prune_badge_seen();
     }
 }
 
@@ -328,27 +500,164 @@ mod tests {
         assert!(s.unseen);
     }
 
-    #[test]
-    fn pile_caps_at_twenty_drops_oldest() {
-        let mut s = NotifyState::default();
+    fn pile_into(s: &mut NotifyState, note: AppNotification) {
         let t0 = Instant::now();
-        for i in 0..(MAX_LIVE + MAX_PILE + 1) {
-            s.push(n(&format!("n{i}"), None), t0);
+        let g = s.push(note, t0);
+        assert!(s.begin_leave(g, t0));
+        s.finish_leave(t0 + LEAVE);
+    }
+
+    fn slack(id: &str) -> AppNotification {
+        AppNotification {
+            app_id: "slack".into(),
+            source: "Slack".into(),
+            title: id.into(),
+            ..n(id, None)
         }
-        assert_eq!(s.live.len(), MAX_LIVE);
-        assert_eq!(s.pile.len(), MAX_PILE);
-        assert_eq!(s.pile.last().map(|p| p.id.as_str()), Some("n1"));
-        assert!(s.pile.iter().all(|p| p.id != "n0"));
     }
 
     #[test]
-    fn pile_overlay_grows_then_caps() {
-        assert_eq!(NotifyState::pile_overlay_height(0, 1000.0), PILE_MIN_HEIGHT);
-        let twenty = NotifyState::pile_overlay_height(20, 2000.0);
-        assert!(twenty > 400.0);
+    fn pile_keeps_more_than_twenty() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        for i in 0..(MAX_LIVE + 40) {
+            s.push(n(&format!("n{i}"), None), t0);
+        }
+        assert_eq!(s.live.len(), MAX_LIVE);
+        assert_eq!(s.pile.len(), 40);
+        assert!(s.pile.iter().any(|p| p.id == "n0"));
+    }
+
+    #[test]
+    fn groups_by_app_newest_first() {
+        let mut s = NotifyState::default();
+        pile_into(&mut s, slack("a"));
+        pile_into(&mut s, slack("b"));
+        pile_into(
+            &mut s,
+            AppNotification {
+                app_id: "sola-browser".into(),
+                source: "news.ycombinator.com".into(),
+                title: "thread".into(),
+                ..n("c", None)
+            },
+        );
+        pile_into(&mut s, slack("d"));
+        let groups = s.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].app_id, "slack");
         assert_eq!(
-            NotifyState::pile_overlay_height(20, 300.0),
-            300.0_f32.max(PILE_MIN_HEIGHT)
+            groups[0]
+                .items
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d", "b", "a"]
+        );
+        assert_eq!(groups[1].app_id, "sola-browser");
+        assert_eq!(groups[1].items.len(), 1);
+    }
+
+    #[test]
+    fn overlay_height_follows_groups_not_items() {
+        let mut s = NotifyState::default();
+        for i in 0..20 {
+            pile_into(&mut s, slack(&format!("s{i}")));
+        }
+        let h = s.overlay_height(2000.0);
+        assert!(
+            h < 160.0,
+            "collapsed flood should be one group row, got {h}"
+        );
+        s.toggle_group("slack");
+        let open = s.overlay_height(2000.0);
+        assert!(open > h, "expand should grow the overlay");
+        let capped = s.overlay_height(180.0);
+        assert_eq!(capped, 180.0);
+        assert_eq!(
+            NotifyState::default().overlay_height(1000.0),
+            PILE_MIN_HEIGHT
+        );
+    }
+
+    #[test]
+    fn attention_counts_live_and_pile() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        s.push(slack("live"), t0);
+        pile_into(&mut s, slack("missed"));
+        assert_eq!(s.attention_count("slack"), 2);
+        assert_eq!(s.attention_count("sola-mail"), 0);
+    }
+
+    #[test]
+    fn badge_drops_on_ack_without_draining_pile() {
+        let mut s = NotifyState::default();
+        pile_into(&mut s, slack("a"));
+        pile_into(&mut s, slack("b"));
+        pile_into(&mut s, n("ws", None));
+        assert_eq!(s.attention_count("slack"), 2);
+        s.ack_app("slack");
+        assert_eq!(s.attention_count("slack"), 0);
+        assert_eq!(s.pile_count(), 3, "pile is history, not the badge");
+        assert_eq!(s.attention_count("sola-workspaces"), 1);
+        s.acknowledge();
+        assert_eq!(s.attention_count("sola-workspaces"), 0);
+        assert_eq!(s.pile_count(), 3);
+        pile_into(&mut s, slack("c"));
+        assert_eq!(s.attention_count("slack"), 1, "new item badges again");
+    }
+
+    #[test]
+    fn toggle_group_and_dismiss_app() {
+        let mut s = NotifyState::default();
+        for i in 0..(COLLAPSE_AFTER + 1) {
+            pile_into(&mut s, slack(&format!("s{i}")));
+        }
+        pile_into(&mut s, n("browser", None));
+        assert!(s.group_collapsible("slack"));
+        s.toggle_group("slack");
+        assert!(s.group_expanded("slack"));
+        assert_eq!(s.dismiss_app("slack"), COLLAPSE_AFTER + 1);
+        assert!(!s.group_expanded("slack"));
+        assert_eq!(s.pile_count(), 1);
+    }
+
+    #[test]
+    fn pile_tag_replaces_same_app() {
+        let mut s = NotifyState::default();
+        pile_into(
+            &mut s,
+            AppNotification {
+                title: "first".into(),
+                tag: Some("done-p1".into()),
+                ..slack("a")
+            },
+        );
+        pile_into(
+            &mut s,
+            AppNotification {
+                title: "again".into(),
+                tag: Some("done-p1".into()),
+                ..slack("b")
+            },
+        );
+        assert_eq!(s.pile_count(), 1);
+        assert_eq!(s.pile[0].title, "again");
+        assert_eq!(s.pile[0].id, "b");
+    }
+
+    #[test]
+    fn small_group_lists_every_row() {
+        let mut s = NotifyState::default();
+        pile_into(&mut s, slack("a"));
+        pile_into(&mut s, slack("b"));
+        pile_into(&mut s, slack("c"));
+        assert!(!s.group_collapsible("slack"));
+        let h = s.overlay_height(2000.0);
+        assert!(
+            h > 150.0,
+            "three listed rows, not one collapsed header: {h}"
         );
     }
 

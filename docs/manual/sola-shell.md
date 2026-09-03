@@ -59,9 +59,14 @@ Hiding the last visible app leaves the menubar and wallpaper.
 ## Notifications
 
 The missed-notifications bell (right cluster, with a count) opens a list
-that grows with the pile (cap 20; oldest drop off). Accent while unseen;
-clicking the bell returns it to normal chrome. There is no Clear. Click a
-row to raise the source. Super+Shift+4 with the panel open keeps it in
+grouped by app. A handful of items list as rows (the number on the bell
+matches). A flood from one app collapses to one row with a count; click
+to expand. Same-tag updates replace the missed row instead of stacking.
+Accent while unseen; clicking the bell returns it to normal chrome.
+There is no Clear-all; the group × dismisses that app’s missed items.
+Click a row to raise the source. Super+Tab shows a count on the app icon
+for notifications you have not opened in the pile or visited in that app
+(Mail uses inbox unread). Super+Shift+4 with the panel open keeps it in
 the freeze.
 
 ## Screenshots

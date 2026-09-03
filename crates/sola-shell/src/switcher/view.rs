@@ -9,9 +9,10 @@
 //! When `switcher.active` is false, returns an invisible placeholder so the
 //! surface stays mapped without drawing content.
 
-use iced::widget::{Space, column, container, mouse_area, row, text};
+use iced::alignment::{Horizontal, Vertical};
+use iced::widget::{Space, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
-use sola_kit::components::icon;
+use sola_kit::components::{count_mark, icon};
 use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
@@ -90,6 +91,21 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     shell.style.switcher_icon_fg,
                 ))
                 .into();
+
+            let plate: Element<'_, Msg> = if let Some(n) = shell.switcher_badge(&app.app_id) {
+                stack![
+                    plate,
+                    container(count_mark(n))
+                        .width(Length::Fixed(ICON_CELL))
+                        .height(Length::Fixed(ICON_CELL))
+                        .align_x(Horizontal::Right)
+                        .align_y(Vertical::Top)
+                        .padding(4),
+                ]
+                .into()
+            } else {
+                plate
+            };
 
             // Caption under *this* icon when selected; empty slot otherwise
             // so unselected icons don't jump when selection moves.

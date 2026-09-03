@@ -268,12 +268,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             panel_active(shell, crate::app::Panel::Bluetooth),
         ));
     }
-    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot).map(|icon| {
-        audio_chip(
-            icon.muted,
-            panel_active(shell, crate::app::Panel::Audio),
-        )
-    });
+    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot)
+        .map(|icon| audio_chip(icon.muted, panel_active(shell, crate::app::Panel::Audio)));
 
     let mut percents: Vec<Element<'_, Msg>> = vec![cpu_btn];
     if shell.stats.gpu.is_some() {
@@ -497,20 +493,14 @@ fn extra_icon(name: &str, color: Color) -> Element<'static, Msg> {
 /// Glyph + chrome count, lifted as a pair so the numeral sits on the
 /// same band as CPU and the icon matches a lone extra (bell / bluetooth).
 fn extra_badge(name: &'static str, count: u32, color: Color) -> Element<'static, Msg> {
-    let label = if count > 99 {
-        "99+".to_string()
-    } else {
-        count.to_string()
-    };
+    let label = sola_kit::components::count_label(count);
     chrome_nudge(
         row![
             icon_colored(name, ICON_SIZE, color),
             text(label)
                 .font(fonts::chrome())
                 .size(CHROME_SIZE)
-                .style(move |_: &Theme| iced::widget::text::Style {
-                    color: Some(color)
-                }),
+                .style(move |_: &Theme| iced::widget::text::Style { color: Some(color) }),
         ]
         .spacing(STAT_INNER_SPACING)
         .align_y(Alignment::Center),
