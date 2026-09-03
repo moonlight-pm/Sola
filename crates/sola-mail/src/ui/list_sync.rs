@@ -114,6 +114,7 @@ mod tests {
             date: String::new(),
             seen: true,
             forwarded_for: None,
+            has_attachment: false,
         }
     }
 

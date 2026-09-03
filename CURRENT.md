@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-02 (sola-spotify dogfood **on master**, **installed** `spotify` release, launcher row live; Super+K live Frame is **card-sized** like menus — software-GL mouse lag; number pad digits **smoked**; screenshot chords → clipboard **installed** `kit`+`shell` release; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-03 (mail attachments send/receive **installed** `mail` release; sola-spotify dogfood **on master**, **installed** `spotify` release, launcher row live; Super+K live Frame is **card-sized** like menus — software-GL mouse lag; number pad digits **smoked**; screenshot chords → clipboard **installed** `kit`+`shell` release; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -86,11 +86,12 @@ Do not invent product policy.
    Optimistic delete (row leaves immediately; rapid `d`/Trash does not
    wait on IMAP). A long scrolled list keeps its place (keyed rows +
    silent refresh of the loaded window).
-   **This slice:** move rules apply on connect (newest 500 INBOX) and
-   on IDLE. From/To **is** (`equals`) matches `Name <addr>` envelopes.
-   Settings Mail rules are list + one detail; move destination is a
-   mailbox select (Archive / Junk / Trash / Sent / Drafts).
-   **Install:** `mail` + `settings` (debug, 2026-09-01). Self-restarts.
+   **This slice:** attachments send + receive. List paperclip from IMAP
+   `BODYSTRUCTURE`. Reading pane Open (paint for images, browser else) /
+   Save (kit FilePicker). Compose Attach (toolbar paperclip, Message →
+   Attach Files… ⌘⇧A). MIME `multipart/mixed` on send. CID images are
+   files (no HTML engine). **Install:** `mail` release 2026-09-03.
+   Self-restarts.
 10. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload
@@ -213,7 +214,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Paint | Installed first-pass; singleton + zoom/pan need `install paint`. Shell hotkeys copy screenshots to the clipboard (not Preview). | — |
 | Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; parked last-frames; omnibox load line; **copy URL** (left of field; committed page URL; check flash — **installed**); outside open **raises** the window (**installed** browser+shell); scheme-less localhost / loopback uses http; instant tab close (hover × opaque chip; follows pointer after close); **drag-reorder tabs** + width-aware titles (dogfooded); **tab groups** (kit inset pocket, flush members, hairline rim; header drag moves the pocket; title drop ignored; **⌘G** new group on a loose tab, name focused+selected; hover pencil to rename; edit-mode color swatch + check; luminance ink; selected lift + 1px lip on pockets **and** loose tabs — persist hex, default well; **installed** `kit`+`browser --release` 2026-08-31; strip has no right-click); **⌘V once** (focused-frame JS, not all-frames); **⌘-click** dogfooded (IMDb): Super+drag bindings **removed** (CSD titlebar still moves floats); JS href → chrome background tab **below current** (same group); tab-strip favicons **smoked** 2026-09-01 (`browser` debug; SVG-only sites stay globe); `window.open` / `NEW_POPUP` → focused tab beside opener **smoked** (Cloudways DB/SSH); ⌘T / xdg-open / `solactl open` append **loose at the bottom**. Super+Tab untouched. **page context menu** (kit; cancels empty CEF OSR strip); **hold back/forward** for session history; YouTube persists after quit; Bitwarden **unified vault** (one toolbar icon — lock / key / shield when this page has TOTP / fingerprint on passkey; search + type chips + item records; **Create login** via **+**; fill/cards/identities/TOTP/passkeys decrypt **org vaults** too — **installed** `browser` --release 2026-08-28, desk smoke next; create still personal); **downloads** (auto-save `~/Downloads`; toolbar icon + progress; flat panel; persist `shared/downloads.json`; dogfooded); unlock lifts the vault icon, accent = open panel; page ⌘C/⌘V + triple-click; passkey **get** (Google + **Gemini Exchange 2FA**; all-frames intercept; same-site coalesce — dogfooded); passkey **create** (vault confirm; new login or attach — **smoked**); OSR IME + Shift+wheel + `<select>`; **default web open** via sola-browser (`sola-browser.desktop` claims http(s)+HTML+XHTML+about+unknown; no Helium fallback). Relative HTML `open` is absolute `file://` (not `https://apocrypha/…`) — **installed** `browser`+`solactl` 2026-09-02. This desk: `xdg-mime` for those types → `sola-browser.desktop`; **single iced chrome** (`chrome.sock` handoff; second process does not reap helpers); tab strip no phantom `↓ N` chip. **⌘⇧T** reopens the most recently closed tab (stack of 25, per profile; **installed** `browser` 2026-08-28). **Notifications:** KenHerbert Allow → displayed + top-right desk card (wrap fix installed 2026-08-27). Steam store autoplay: codecs CEF + `--autoplay-policy` **installed** 2026-08-30 (`canPlayType` AAC/H.264 `probably`; reload trailer). | — |
 | Monitor | **On master** (installed debug 2026-08-21): Bus/Call inspector, kit chrome, call observer. Desk smoke pending. GPU panel SM%/VRAM ranking lands with this merge | — |
-| Mail | **Installed** `mail` + `settings` (debug, 2026-09-01): move rules on connect + From/To equals vs display-name; settings rules list+detail + dest select. No HTML engine / attachments | — |
+| Mail | **Installed** `mail` release 2026-09-03 (attachments send/receive). Settings still debug 2026-09-01 (move rules). No HTML engine | — |
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). Image paste (Preview **Copy** → ⌘V) **installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01. | — |
 | Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |

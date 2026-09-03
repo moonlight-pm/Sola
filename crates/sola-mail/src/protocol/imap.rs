@@ -4,10 +4,15 @@ use imap::types::Fetch;
 use tracing::{debug, warn};
 
 use super::account::Account;
+use super::attachments::collect_attachments;
 use super::types::{Folder, MessageBody, MessageSummary};
 use sola_bus::topics::{MailRule, MailRuleCondition};
 
 type ImapSession = imap::Session<rustls_connector::TlsStream<std::net::TcpStream>>;
+
+/// Envelope + BODYSTRUCTURE (paperclip) + forwarded-for. No SEARCH.
+const SUMMARY_ITEMS: &str =
+    "(UID FLAGS ENVELOPE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])";
 
 pub struct ImapClient {
     session: ImapSession,
@@ -265,10 +270,7 @@ impl ImapClient {
                 .collect::<Vec<_>>()
                 .join(",");
 
-            let fetches = s.session.uid_fetch(
-                &uid_str,
-                "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
-            )?;
+            let fetches = s.session.uid_fetch(&uid_str, SUMMARY_ITEMS)?;
 
             let mut messages: Vec<MessageSummary> =
                 fetches.iter().filter_map(parse_summary).collect();
@@ -868,6 +870,49 @@ fn parse_summary(fetch: &Fetch) -> Option<MessageSummary> {
         date,
         seen,
         forwarded_for,
+        has_attachment: fetch.bodystructure().is_some_and(structure_has_attachment),
+    })
+}
+
+fn structure_has_attachment(bs: &imap_proto::types::BodyStructure<'_>) -> bool {
+    use imap_proto::types::BodyStructure::*;
+    match bs {
+        Multipart { bodies, .. } => bodies.iter().any(structure_has_attachment),
+        Message { .. } => true,
+        Text { common, .. } => leaf_is_file(common, true),
+        Basic { common, .. } => leaf_is_file(common, false),
+    }
+}
+
+fn leaf_is_file(common: &imap_proto::types::BodyContentCommon<'_>, is_text: bool) -> bool {
+    if let Some(disp) = &common.disposition {
+        if disp.ty.eq_ignore_ascii_case("attachment") {
+            return true;
+        }
+        if disp.ty.eq_ignore_ascii_case("inline") {
+            return false;
+        }
+    }
+    if has_structure_filename(common) {
+        return true;
+    }
+    !is_text
+}
+
+fn has_structure_filename(common: &imap_proto::types::BodyContentCommon<'_>) -> bool {
+    filename_in(
+        common
+            .disposition
+            .as_ref()
+            .and_then(|d| d.params.as_deref()),
+    ) || filename_in(common.ty.params.as_deref())
+}
+
+fn filename_in(params: Option<&[(&str, &str)]>) -> bool {
+    params.is_some_and(|ps| {
+        ps.iter().any(|(k, v)| {
+            !v.is_empty() && (k.eq_ignore_ascii_case("filename") || k.eq_ignore_ascii_case("name"))
+        })
     })
 }
 
@@ -923,6 +968,7 @@ fn parse_body(fetch: &Fetch, uid: u32) -> anyhow::Result<MessageBody> {
 
     let in_reply_to = parsed.in_reply_to().as_text().map(|s| s.to_string());
     let message_id = parsed.message_id().map(|s| s.to_string());
+    let attachments = collect_attachments(&parsed);
 
     Ok(MessageBody {
         uid,
@@ -935,6 +981,7 @@ fn parse_body(fetch: &Fetch, uid: u32) -> anyhow::Result<MessageBody> {
         text,
         in_reply_to,
         message_id,
+        attachments,
     })
 }
 
@@ -980,10 +1027,7 @@ fn fetch_page_by_seq(
         return Ok((Vec::new(), exists));
     }
     let start = end.saturating_sub(limit.saturating_sub(1)).max(1);
-    let fetches = session.fetch(
-        format!("{start}:{end}"),
-        "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
-    )?;
+    let fetches = session.fetch(format!("{start}:{end}"), SUMMARY_ITEMS)?;
     let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
     messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
     Ok((messages, exists))
@@ -1010,10 +1054,7 @@ fn fetch_envelopes(
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let fetches = session.uid_fetch(
-        &seq,
-        "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
-    )?;
+    let fetches = session.uid_fetch(&seq, SUMMARY_ITEMS)?;
     let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
     messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
     Ok((messages, total))

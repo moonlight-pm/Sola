@@ -3,6 +3,7 @@
 mod list_sync;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -19,7 +20,8 @@ use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscript
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::icon::icon_handle;
+use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
+use sola_kit::components::icon::{icon_handle, icon_svg};
 use sola_kit::components::prose::prose_selectable;
 use sola_kit::components::style::{
     HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, mix_white,
@@ -34,7 +36,10 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
-use crate::protocol::{Folder, MessageBody, MessageSummary, folder_count_badge, folder_label};
+use crate::protocol::attachments;
+use crate::protocol::{
+    Folder, MailAttachment, MessageBody, MessageSummary, folder_count_badge, folder_label,
+};
 use crate::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
@@ -109,6 +114,17 @@ pub enum Msg {
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
+    Attach,
+    RemoveAttach(usize),
+    OpenAttachment(usize),
+    SaveAttachment(usize),
+    Picker(PickerMsg),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PickerKind {
+    Attach,
+    Save { index: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +155,7 @@ struct ComposeDraft {
     subject: String,
     body: text_editor::Content,
     in_reply_to: Option<String>,
+    attachments: Vec<MailAttachment>,
 }
 
 pub struct App {
@@ -184,6 +201,8 @@ pub struct App {
     window_id: Option<iced::window::Id>,
     /// Last inbox unread we published on `Topic::MailStatus`.
     published_inbox_unread: Option<u32>,
+    picker: Option<(PickerKind, FilePicker)>,
+    last_picker_dir: Option<PathBuf>,
 }
 
 impl Default for App {
@@ -223,6 +242,8 @@ impl Default for App {
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
             published_inbox_unread: None,
+            picker: None,
+            last_picker_dir: None,
         }
     }
 }
@@ -235,6 +256,7 @@ fn empty_draft(from: &str) -> ComposeDraft {
         subject: String::new(),
         body: text_editor::Content::new(),
         in_reply_to: None,
+        attachments: Vec::new(),
     }
 }
 
@@ -253,6 +275,7 @@ fn draft_with_body(
         subject,
         body: text_editor::Content::with_text(&body),
         in_reply_to,
+        attachments: Vec::new(),
     }
 }
 
@@ -314,6 +337,7 @@ impl App {
                 self.body_selection = None;
                 self.reading_blocks.clear();
                 self.composing = false;
+                self.picker = None;
                 self.search_active = false;
                 self.search_query.clear();
                 self.select_gen = self.select_gen.saturating_add(1);
@@ -425,6 +449,7 @@ impl App {
             }
             Msg::CancelCompose => {
                 self.composing = false;
+                self.picker = None;
                 Task::none()
             }
             Msg::ComposeFrom(s) => {
@@ -480,9 +505,20 @@ impl App {
                     subject: self.draft.subject.clone(),
                     body: self.draft.body.text(),
                     in_reply_to: self.draft.in_reply_to.clone(),
+                    attachments: self.draft.attachments.clone(),
                 });
                 Task::none()
             }
+            Msg::Attach => self.begin_attach(),
+            Msg::RemoveAttach(i) => {
+                if i < self.draft.attachments.len() {
+                    self.draft.attachments.remove(i);
+                }
+                Task::none()
+            }
+            Msg::OpenAttachment(i) => self.open_attachment(i),
+            Msg::SaveAttachment(i) => self.begin_save_attachment(i),
+            Msg::Picker(m) => self.on_picker(m),
             Msg::MoveSelected(dest) => {
                 let Some(uid) = self.selected_uid else {
                     return Task::none();
@@ -568,6 +604,7 @@ impl App {
                 iced::exit()
             }
             "compose" => self.update(Msg::Compose),
+            "attach" => self.update(Msg::Attach),
             "reply" => self.update(Msg::Reply { all: false }),
             "reply_all" => self.update(Msg::Reply { all: true }),
             "archive" => self.update(Msg::MoveSelected("Archive".into())),
@@ -730,6 +767,7 @@ impl App {
                     n_blocks = blocks.len(),
                     text_len = plain.len(),
                     has_html = body.html.is_some(),
+                    n_attachments = body.attachments.len(),
                     "opened message body"
                 );
                 self.body_selection = None;
@@ -738,6 +776,7 @@ impl App {
             }
             MailEvent::Sent => {
                 self.composing = false;
+                self.picker = None;
                 mail_send(MailCmd::ListFolders);
                 return self.show_toast("Message sent", false);
             }
@@ -784,6 +823,12 @@ impl App {
     }
 
     fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
+        if self.picker.is_some() {
+            if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
+                self.picker = None;
+            }
+            return Task::none();
+        }
         if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
             if self.composing {
                 self.composing = false;
@@ -929,6 +974,7 @@ impl App {
         self.selected_uid = Some(uid);
         self.body_selection = None;
         self.composing = false;
+        self.picker = None;
         let folder = self.real_folder();
         mail_send(MailCmd::FetchBody {
             folder: folder.clone(),
@@ -1143,6 +1189,122 @@ impl App {
         self.toast_gen = self.toast_gen.saturating_add(1);
     }
 
+    fn picker_start_dir(&self) -> PathBuf {
+        self.last_picker_dir
+            .clone()
+            .unwrap_or_else(attachments::downloads_dir)
+    }
+
+    fn begin_attach(&mut self) -> Task<Msg> {
+        if !self.composing {
+            let from = self
+                .from_addresses
+                .first()
+                .cloned()
+                .unwrap_or_else(|| self.mail_config.email.clone());
+            self.draft = empty_draft(&from);
+            self.composing = true;
+        }
+        let picker = FilePicker::open()
+            .title("Attach file")
+            .start_dir(self.picker_start_dir());
+        self.picker = Some((PickerKind::Attach, picker));
+        Task::none()
+    }
+
+    fn begin_save_attachment(&mut self, index: usize) -> Task<Msg> {
+        let Some(att) = self
+            .message_body
+            .as_ref()
+            .and_then(|b| b.attachments.get(index))
+        else {
+            return Task::none();
+        };
+        let picker = FilePicker::save()
+            .title("Save attachment")
+            .start_dir(self.picker_start_dir())
+            .suggested_name(att.filename.clone());
+        self.picker = Some((PickerKind::Save { index }, picker));
+        Task::none()
+    }
+
+    fn open_attachment(&mut self, index: usize) -> Task<Msg> {
+        let Some(att) = self
+            .message_body
+            .as_ref()
+            .and_then(|b| b.attachments.get(index))
+        else {
+            return Task::none();
+        };
+        match attachments::write_open_temp(&att.filename, &att.bytes) {
+            Ok(path) => {
+                attachments::open_path(&path);
+                Task::none()
+            }
+            Err(e) => self.show_toast(e, false),
+        }
+    }
+
+    fn on_picker(&mut self, msg: PickerMsg) -> Task<Msg> {
+        let Some((kind, picker)) = self.picker.as_mut() else {
+            return Task::none();
+        };
+        let kind = *kind;
+        match picker.update(msg) {
+            Some(Outcome::Cancelled) => {
+                self.picker = None;
+                Task::none()
+            }
+            Some(Outcome::Picked(path)) => {
+                if let Some(parent) = path.parent() {
+                    self.last_picker_dir = Some(parent.to_path_buf());
+                }
+                self.picker = None;
+                match kind {
+                    PickerKind::Attach => self.attach_path(path),
+                    PickerKind::Save { index } => self.save_attachment_to(index, path),
+                }
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn attach_path(&mut self, path: PathBuf) -> Task<Msg> {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let filename = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "attachment".into());
+                let filename = attachments::sanitize_filename(&filename);
+                let mime = attachments::mime_from_filename(&filename);
+                let size = bytes.len() as u64;
+                self.draft.attachments.push(MailAttachment {
+                    filename,
+                    mime,
+                    size,
+                    bytes: Arc::from(bytes),
+                });
+                Task::none()
+            }
+            Err(e) => self.show_toast(format!("Can't attach: {e}"), false),
+        }
+    }
+
+    fn save_attachment_to(&mut self, index: usize, path: PathBuf) -> Task<Msg> {
+        let Some(att) = self
+            .message_body
+            .as_ref()
+            .and_then(|b| b.attachments.get(index))
+        else {
+            return self.show_toast("Attachment is no longer open", false);
+        };
+        match std::fs::write(&path, att.bytes.as_ref()) {
+            Ok(()) => self.show_toast(format!("Saved {}", att.filename), false),
+            Err(e) => self.show_toast(format!("Can't save: {e}"), false),
+        }
+    }
+
     fn restore_removed(&mut self, uid: u32) {
         self.pending_gone.retain(|(_, gone)| *gone != uid);
         let Some(removed) = self.pending_removed.remove(&uid) else {
@@ -1323,14 +1485,19 @@ impl App {
             .style(canvas_style)
             .into();
 
-        sola_kit::wrap_if_floating(
+        let framed = sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
             "Mail",
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
             body,
-        )
+        );
+        if let Some((_, picker)) = self.picker.as_ref() {
+            iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into()
+        } else {
+            framed
+        }
     }
 
     fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
@@ -1491,6 +1658,11 @@ impl App {
         let mut bar = row![
             icon_tool("lucide/square-pen", "Compose", Some(Msg::Compose)),
             icon_tool(
+                "lucide/paperclip",
+                "Attach",
+                self.composing.then_some(Msg::Attach),
+            ),
+            icon_tool(
                 "lucide/reply",
                 "Reply",
                 has_msg.then_some(Msg::Reply { all: false }),
@@ -1563,21 +1735,22 @@ impl App {
             .into();
         };
 
-        let letter = readable(
-            column![
-                letter_header(body),
-                h_hairline(),
-                prose_selectable(
-                    self.reading_blocks.clone(),
-                    &self.theme,
-                    self.prose_select_all,
-                    Msg::OpenUrl,
-                    Msg::BodySelect,
-                ),
-            ]
+        let mut letter_col = column![letter_header(body)]
             .spacing(20.0)
-            .width(Length::Fill)
-            .padding(Padding {
+            .width(Length::Fill);
+        if !body.attachments.is_empty() {
+            letter_col = letter_col.push(received_attachment_list(&body.attachments));
+        }
+        letter_col = letter_col.push(h_hairline()).push(prose_selectable(
+            self.reading_blocks.clone(),
+            &self.theme,
+            self.prose_select_all,
+            Msg::OpenUrl,
+            Msg::BodySelect,
+        ));
+
+        let letter = readable(
+            letter_col.padding(Padding {
                 top: 28.0,
                 right: 8.0,
                 bottom: 40.0,
@@ -1619,23 +1792,32 @@ impl App {
             ),
         ];
 
-        let form = column![
-            headers,
-            h_hairline(),
-            container(editor)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(compose_field_style),
-            row![
-                kit_btn::labeled("Send", kit_btn::primary).on_press(Msg::Send),
-                kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::CancelCompose),
-            ]
-            .spacing(SPACE_SM),
-        ]
-        .spacing(SPACE_SM)
-        .padding(Padding::from([SPACE_LG, SPACE_LG]))
-        .width(Length::Fill)
-        .height(Length::Fill);
+        let mut form = column![headers].spacing(SPACE_SM);
+        if !self.draft.attachments.is_empty() {
+            form = form
+                .push(h_hairline())
+                .push(draft_attachment_list(&self.draft.attachments));
+        }
+        let form = form
+            .push(h_hairline())
+            .push(
+                container(editor)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(compose_field_style),
+            )
+            .push(
+                row![
+                    kit_btn::labeled("Send", kit_btn::primary).on_press(Msg::Send),
+                    kit_btn::labeled_sm("Attach", kit_btn::ghost).on_press(Msg::Attach),
+                    kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::CancelCompose),
+                ]
+                .spacing(SPACE_SM),
+            );
+        let form = form
+            .padding(Padding::from([SPACE_LG, SPACE_LG]))
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         container(form)
             .width(Length::Fill)
@@ -1681,13 +1863,14 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
         subj_text = subj_text.style(kit_text::muted);
     }
 
-    let top = row![
-        container(from_text).width(Length::Fill).clip(true),
-        kit_text::caption(date).style(kit_text::muted),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(iced::Alignment::Center)
-    .width(Length::Fill);
+    let mut top = row![container(from_text).width(Length::Fill).clip(true)]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
+    if m.has_attachment {
+        top = top.push(muted_icon("lucide/paperclip", 12));
+    }
+    let top = top.push(kit_text::caption(date).style(kit_text::muted));
 
     let content = column![top, container(subj_text).width(Length::Fill).clip(true)]
         .spacing(6.0)
@@ -1724,6 +1907,8 @@ fn cached_icon(name: &'static str) -> iced::widget::svg::Handle {
         .get_or_init(|| {
             [
                 "lucide/square-pen",
+                "lucide/paperclip",
+                "lucide/file",
                 "lucide/reply",
                 "lucide/reply-all",
                 "lucide/archive",
@@ -1771,6 +1956,65 @@ fn format_count(n: u32) -> String {
         out.push(ch);
     }
     out.chars().rev().collect()
+}
+
+fn muted_icon(name: &'static str, size: u16) -> Element<'static, Msg> {
+    iced::widget::svg(cached_icon(name))
+        .width(Length::Fixed(size as f32))
+        .height(Length::Fixed(size as f32))
+        .style(|theme: &Theme, _status| iced::widget::svg::Style {
+            color: Some(theme.extended_palette().secondary.base.text),
+        })
+        .into()
+}
+
+fn received_attachment_list(atts: &[MailAttachment]) -> Element<'static, Msg> {
+    let rows: Vec<Element<'static, Msg>> = atts
+        .iter()
+        .enumerate()
+        .map(|(i, att)| {
+            row![
+                icon_svg(cached_icon("lucide/file"), 14),
+                kit_text::body(att.filename.clone()).width(Length::Fill),
+                kit_text::caption(attachments::human_size(att.size)).style(kit_text::muted),
+                kit_btn::labeled_sm("Open", kit_btn::secondary).on_press(Msg::OpenAttachment(i)),
+                kit_btn::labeled_sm("Save", kit_btn::ghost).on_press(Msg::SaveAttachment(i)),
+            ]
+            .spacing(SPACE_MD)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill)
+            .into()
+        })
+        .collect();
+    attachment_well(column(rows).spacing(SPACE_SM).width(Length::Fill))
+}
+
+fn draft_attachment_list(atts: &[MailAttachment]) -> Element<'static, Msg> {
+    let rows: Vec<Element<'static, Msg>> = atts
+        .iter()
+        .enumerate()
+        .map(|(i, att)| {
+            row![
+                icon_svg(cached_icon("lucide/file"), 14),
+                kit_text::body(att.filename.clone()).width(Length::Fill),
+                kit_text::caption(attachments::human_size(att.size)).style(kit_text::muted),
+                kit_btn::labeled_sm("Remove", kit_btn::ghost).on_press(Msg::RemoveAttach(i)),
+            ]
+            .spacing(SPACE_MD)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill)
+            .into()
+        })
+        .collect();
+    attachment_well(column(rows).spacing(SPACE_SM).width(Length::Fill))
+}
+
+fn attachment_well<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+    container(content)
+        .padding(Padding::from([SPACE_MD, SPACE_LG]))
+        .width(Length::Fill)
+        .style(attachment_well_style)
+        .into()
 }
 
 fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
@@ -2229,6 +2473,20 @@ fn hairline_style(theme: &Theme) -> container::Style {
             p.background.base.color,
             HAIRLINE_A,
         ))),
+        ..container::Style::default()
+    }
+}
+
+fn attachment_well_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let fill = mix_white(p.background.base.color, 0.04);
+    container::Style {
+        background: Some(Background::Color(fill)),
+        border: Border {
+            color: mix_white(fill, HAIRLINE_A),
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
         ..container::Style::default()
     }
 }

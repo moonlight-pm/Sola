@@ -83,7 +83,17 @@ fn run() {
                     subject,
                     body,
                     in_reply_to,
-                } => do_send(&state, from, to, cc, subject, body, in_reply_to),
+                    attachments,
+                } => do_send(
+                    &state,
+                    from,
+                    to,
+                    cc,
+                    subject,
+                    body,
+                    in_reply_to,
+                    attachments,
+                ),
             }
         }
         if stop {
@@ -466,6 +476,7 @@ fn do_send(
     subject: String,
     body: String,
     in_reply_to: Option<String>,
+    attachments: Vec<crate::protocol::MailAttachment>,
 ) {
     let Some(account) = state.account.clone() else {
         bridge::emit(MailEvent::Error {
@@ -497,6 +508,7 @@ fn do_send(
         &subject,
         &body,
         in_reply_to.as_deref(),
+        &attachments,
     ) {
         Ok(raw) => {
             let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
