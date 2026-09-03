@@ -14,12 +14,12 @@ use sola_kvm::config::Config;
 use sola_kvm::input::InputBackendKind;
 use sola_kvm::protocol::{Edge, Packet};
 use sola_kvm::run;
-use sola_kvm::udp::{Listener, Sender};
+use sola_kvm::udp::Sender;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "sola-kvm",
-    about = "Sola-native software KVM (novus → ember UDP)"
+    about = "Sola-native software KVM (novus server → Linux or Mac client UDP)"
 )]
 struct Cli {
     /// Config path (default: ~/.config/sola-kvm/config.toml).
@@ -57,11 +57,17 @@ enum Command {
         input: String,
     },
 
-    /// Listen for UDP packets and print them (debug / Mac-side stand-in).
+    /// Listen for UDP packets and inject them (Linux client).
+    ///
+    /// Default: Wayland virtual pointer + virtual keyboard (River).
+    /// `--dump` prints packets instead (debug stand-in).
     Listen {
         /// Bind address (default: 0.0.0.0:<config peer.port>).
         #[arg(long)]
         bind: Option<String>,
+        /// Log packets only; do not inject.
+        #[arg(long)]
+        dump: bool,
     },
 
     /// Send a short test sequence to the configured peer (or --to).
@@ -89,7 +95,7 @@ fn main() {
         Some(Command::Show) => cmd_show(&config_path),
         Some(Command::Init { force }) => cmd_init(&config_path, force),
         Some(Command::Server { input }) => cmd_server(&config_path, &input),
-        Some(Command::Listen { bind }) => cmd_listen(&config_path, bind),
+        Some(Command::Listen { bind, dump }) => cmd_listen(&config_path, bind, dump),
         Some(Command::SendTest { to, x, y }) => cmd_send_test(&config_path, to, x, y),
     }
 }
@@ -119,10 +125,7 @@ fn cmd_show(path: &PathBuf) {
     let layout = cfg.layout();
     println!("config:  {}", path.display());
     println!("peer:    {}", cfg.peer_addr());
-    println!(
-        "primary: {}×{}",
-        cfg.primary.width, cfg.primary.height
-    );
+    println!("primary: {}×{}", cfg.primary.width, cfg.primary.height);
     println!(
         "mac:     {}×{}  side={:?} align={:?}",
         layout.mac_w, layout.mac_h, layout.side, layout.align
@@ -178,10 +181,7 @@ fn cmd_server(path: &PathBuf, input: &str) {
     let backend = match InputBackendKind::parse(input) {
         Some(b) => b,
         None => {
-            error!(
-                input,
-                "unknown --input backend (want feed | demo | evdev)"
-            );
+            error!(input, "unknown --input backend (want feed | demo | evdev)");
             std::process::exit(2);
         }
     };
@@ -191,29 +191,17 @@ fn cmd_server(path: &PathBuf, input: &str) {
     }
 }
 
-fn cmd_listen(path: &PathBuf, bind: Option<String>) {
+fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let cfg = load(path);
     let addr = bind.unwrap_or_else(|| format!("0.0.0.0:{}", cfg.peer.port));
-    let listener = match Listener::bind(&addr) {
-        Ok(l) => l,
-        Err(e) => {
-            error!("bind {addr}: {e}");
-            std::process::exit(1);
-        }
+    let result = if dump {
+        sola_kvm::inject::run_dump(&addr)
+    } else {
+        sola_kvm::inject::run_listen(&addr, cfg.layout.mac_width, cfg.layout.mac_height)
     };
-    let local = listener.local_addr().ok();
-    info!(?local, "listening for sola-kvm UDP packets");
-
-    loop {
-        match listener.recv() {
-            Ok((src, seq, packet)) => {
-                info!(%src, seq, ?packet, "recv");
-            }
-            Err(e) => {
-                error!("recv: {e}");
-                thread::sleep(Duration::from_millis(50));
-            }
-        }
+    if let Err(e) = result {
+        error!("{e}");
+        std::process::exit(1);
     }
 }
 
@@ -255,10 +243,7 @@ fn cmd_send_test(path: &PathBuf, to: Option<String>, x: i32, y: i32) {
             keycode: 30,
             pressed: 0,
         },
-        Packet::Scroll {
-            dx: 0.0,
-            dy: -1.0,
-        },
+        Packet::Scroll { dx: 0.0, dy: -1.0 },
         Packet::Leave,
     ];
 

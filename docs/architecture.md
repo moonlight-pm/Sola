@@ -69,7 +69,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-wrapper` | Website wrappers as first-class apps (`sola-wrapper <id>`; CEF via sola-browser lib; catalog `kind`/`url` on `Topic::Application`) |
 | `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
-| `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
+| `crates/sola-kvm` | KVM / input bridge (novus server → Linux or Mac client) |
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
