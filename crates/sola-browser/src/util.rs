@@ -81,6 +81,13 @@ pub fn display_url(url: &str) -> String {
     }
 }
 
+/// Idle location-bar text: [`display_url`] without query or fragment.
+/// The edit field still holds the full URL; this is display-only.
+pub fn idle_display_url(url: &str) -> String {
+    let shown = display_url(url);
+    shown.split(['?', '#']).next().unwrap_or(&shown).to_string()
+}
+
 /// Clipboard text that is safe to apply to a field. Drops `None`, empty,
 /// and control-only payloads so a failed / consumed Wayland read cannot
 /// wipe the field or get written back as an empty selection.
@@ -355,6 +362,34 @@ pub fn kagi_lucky_url(q: &str) -> String {
     format!("{SEARCH_PREFIX}%5C{}", encode_query(q.trim()))
 }
 
+/// Kagi SERP / lucky URL — same-site tab switching must not steal these.
+pub fn is_kagi_search_url(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("kagi.com/search")
+}
+
+/// Enter / Shift+Enter target for the location bar.
+///
+/// Highlighted history row wins on Enter. Otherwise a URL-like token
+/// navigates, and a search query uses Kagi lucky (first result).
+/// Shift+Enter (`search_results`) always opens the Kagi results page.
+pub fn omnibox_submit_url(typed: &str, highlighted: Option<&str>, search_results: bool) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return String::new();
+    }
+    if search_results {
+        return kagi_search_url(typed);
+    }
+    if let Some(url) = highlighted.filter(|u| !u.is_empty()) {
+        return url.to_string();
+    }
+    if looks_like_url(typed) {
+        resolve_query(typed)
+    } else {
+        kagi_lucky_url(typed)
+    }
+}
+
 /// `scheme://host` of a URL (no path / query). Empty if it cannot be split.
 pub fn page_origin(url: &str) -> String {
     let t = url.trim();
@@ -379,9 +414,7 @@ pub fn same_site(a: &str, b: &str) -> bool {
 
 /// One-line history subtitle: no query string, middle-ellipsis if long.
 pub fn compact_history_url(url: &str) -> String {
-    let shown = display_url(url);
-    let stripped = shown.split(['?', '#']).next().unwrap_or(&shown);
-    truncate(stripped, 72)
+    truncate(&idle_display_url(url), 72)
 }
 
 /// Return the explicit URL scheme of `s` (the alphabetic run before the first
@@ -454,6 +487,25 @@ mod tests {
         assert_eq!(display_url("http://example.com/x"), "http://example.com/x");
         assert_eq!(display_url("about:blank"), "");
         assert_eq!(display_url(""), "");
+    }
+
+    #[test]
+    fn idle_display_url_drops_query_and_fragment() {
+        assert_eq!(
+            idle_display_url(
+                "https://exitgroup.dev/authorize?response_type=code&client_id=wl-long"
+            ),
+            "exitgroup.dev/authorize"
+        );
+        assert_eq!(
+            idle_display_url("https://example.com/path#section"),
+            "example.com/path"
+        );
+        assert_eq!(idle_display_url("https://example.com/"), "example.com");
+        assert_eq!(
+            idle_display_url("http://example.com/login?next=/app"),
+            "http://example.com/login"
+        );
     }
 
     #[test]
@@ -688,15 +740,18 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn same_site_ignores_path_and_query() {
         assert!(same_site(
             "https://ideogram.ai/login?utm=1",
             "https://ideogram.ai/g/abc"
         ));
-        assert!(!same_site("https://ideogram.ai/", "https://kagi.com/search?q=a"));
+        assert!(!same_site(
+            "https://ideogram.ai/",
+            "https://kagi.com/search?q=a"
+        ));
     }
 
+    #[test]
     fn resolve_query_navigates_to_urls() {
         assert_eq!(resolve_query("github.com"), "https://github.com");
         assert_eq!(resolve_query("https://slate.auto"), "https://slate.auto");
@@ -730,5 +785,32 @@ mod tests {
     #[test]
     fn resolve_query_empty_is_empty() {
         assert_eq!(resolve_query("   "), "");
+    }
+
+    #[test]
+    fn omnibox_enter_is_lucky_for_search() {
+        assert_eq!(
+            omnibox_submit_url("weather", None, false),
+            kagi_lucky_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", None, true),
+            kagi_search_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", Some("https://weather.gov/"), false),
+            "https://weather.gov/"
+        );
+        assert_eq!(
+            omnibox_submit_url("weather", Some("https://weather.gov/"), true),
+            kagi_search_url("weather")
+        );
+        assert_eq!(
+            omnibox_submit_url("github.com", None, false),
+            "https://github.com"
+        );
+        assert!(is_kagi_search_url(&kagi_lucky_url("rust")));
+        assert!(is_kagi_search_url(&kagi_search_url("rust")));
+        assert!(!is_kagi_search_url("https://kagi.com/"));
     }
 }

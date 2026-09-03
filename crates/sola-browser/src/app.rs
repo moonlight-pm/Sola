@@ -67,11 +67,7 @@ fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
     use sola_kit::components::style::{SPACE_MD, SPACE_SM};
     let pad = SPACE_MD;
     let gap = SPACE_SM;
-    let left = pad
-        + sidebar_w
-        + DIVIDER_HIT_PX
-        + NAV_BTN_W * 4.0
-        + gap * 6.0;
+    let left = pad + sidebar_w + DIVIDER_HIT_PX + NAV_BTN_W * 4.0 + gap * 6.0;
     let vault = if cfg!(feature = "bitwarden") {
         NAV_BTN_W
     } else {
@@ -801,6 +797,11 @@ impl<E: Engine> App<E> {
         {
             return Some(t.id);
         }
+        // Lucky / SERP URLs share kagi.com with any previous search — switching
+        // would skip the new query.
+        if crate::util::is_kagi_search_url(&want) {
+            return None;
+        }
         let on_site: Vec<TabId> = self
             .cached_tabs
             .iter()
@@ -884,19 +885,10 @@ impl<E: Engine> App<E> {
             return Task::none();
         }
         let hits = self.visits.search(&typed);
-        let url = if search_results {
-            crate::util::kagi_search_url(&typed)
-        } else if let Some(i) = self.omnibox_sel {
-            hits.get(i).map(|v| v.url.clone()).unwrap_or_default()
-        } else if !crate::util::looks_like_url(&typed) {
-            if let Some(top) = hits.first() {
-                top.url.clone()
-            } else {
-                crate::util::kagi_lucky_url(&typed)
-            }
-        } else {
-            crate::util::resolve_query(&typed)
-        };
+        let highlighted = self
+            .omnibox_sel
+            .and_then(|i| hits.get(i).map(|v| v.url.as_str()));
+        let url = crate::util::omnibox_submit_url(&typed, highlighted, search_results);
         self.omnibox_sel = None;
         self.open_omnibox_url(url)
     }
@@ -1252,13 +1244,9 @@ impl<E: Engine> App<E> {
         }
 
         self.devtools = None;
-        self.slot
-            .devtools_tab
-            .store(u64::MAX, Ordering::Relaxed);
+        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
         self.slot.devtools_pending.lock().unwrap().take();
-        self.slot
-            .input_devtools
-            .store(false, Ordering::Relaxed);
+        self.slot.input_devtools.store(false, Ordering::Relaxed);
 
         let profile = crate::profiles::active();
         let resume_id = profile.id.clone();
@@ -2430,18 +2418,14 @@ impl<E: Engine> App<E> {
                 // widget (caret blink / IME require SetFocus).
                 self.set_url_bar_focused(false);
                 self.find_field_focused = false;
-                self.slot
-                    .input_devtools
-                    .store(false, Ordering::Relaxed);
+                self.slot.input_devtools.store(false, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::Focus(true));
                 return crate::integration::unfocus_chrome();
             }
             Msg::DevToolsFocused => {
                 self.set_url_bar_focused(false);
                 self.find_field_focused = false;
-                self.slot
-                    .input_devtools
-                    .store(true, Ordering::Relaxed);
+                self.slot.input_devtools.store(true, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::DevToolsFocus(true));
                 return crate::integration::unfocus_chrome();
             }
@@ -2470,10 +2454,7 @@ impl<E: Engine> App<E> {
                 }
                 // Select-all only on the false→true edge, so a second click in
                 // an already-focused field can place the caret normally.
-                if !now
-                    && self.url_bar_focused
-                    && !self.visits.search(&self.url_field).is_empty()
-                {
+                if !now && self.url_bar_focused && !self.visits.search(&self.url_field).is_empty() {
                     return crate::integration::focus_url_bar();
                 }
                 let gained = now && !self.url_bar_focused;
@@ -2578,9 +2559,9 @@ impl<E: Engine> App<E> {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                // Best-effort: iced exposes no caret/selection, so append
-                // at the end (cursor-at-end assumption).
-                self.url_field.push_str(&s);
+                // Omnibox paste replaces: ⌘L / click select-all, and iced
+                // does not expose the caret to Edit-menu routing.
+                self.url_field = s.clone();
                 // Restore: smithay receive can drop the original offer.
                 return iced::clipboard::write(s);
             }
@@ -2904,10 +2885,7 @@ impl<E: Engine> App<E> {
                     true
                 }
             };
-        let dt_keys = self
-            .slot
-            .input_devtools
-            .load(Ordering::Relaxed);
+        let dt_keys = self.slot.input_devtools.load(Ordering::Relaxed);
         let page_owns_keys = chrome_keys && !dt_keys;
         let webview = crate::cef::page_ime::page_ime(webview, self.slot.clone(), page_owns_keys);
 
@@ -3048,37 +3026,25 @@ impl<E: Engine> App<E> {
             match ev {
                 crate::engine::DevToolsEvent::Opened { tab_id, paint_id } => {
                     self.devtools = Some(tab_id);
-                    self.slot
-                        .devtools_tab
-                        .store(paint_id.0, Ordering::Relaxed);
-                    self.slot
-                        .devtools_blank
-                        .store(true, Ordering::Relaxed);
-                    self.slot
-                        .input_devtools
-                        .store(true, Ordering::Relaxed);
+                    self.slot.devtools_tab.store(paint_id.0, Ordering::Relaxed);
+                    self.slot.devtools_blank.store(true, Ordering::Relaxed);
+                    self.slot.input_devtools.store(true, Ordering::Relaxed);
                     if let Some(frame) = self.slot.parked_frames.lock().unwrap().get(&paint_id.0) {
                         *self.slot.devtools_pending.lock().unwrap() =
                             Some(crate::engine::PendingFrame {
                                 tab_id: paint_id,
                                 frame: frame.clone(),
                             });
-                        self.slot
-                            .devtools_blank
-                            .store(false, Ordering::Relaxed);
+                        self.slot.devtools_blank.store(false, Ordering::Relaxed);
                     }
                     tracing::info!(?tab_id, ?paint_id, "DevTools panel open");
                 }
                 crate::engine::DevToolsEvent::Closed { tab_id } => {
                     if self.devtools == Some(tab_id) || self.devtools.is_some() {
                         self.devtools = None;
-                        self.slot
-                            .devtools_tab
-                            .store(u64::MAX, Ordering::Relaxed);
+                        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
                         self.slot.devtools_pending.lock().unwrap().take();
-                        self.slot
-                            .input_devtools
-                            .store(false, Ordering::Relaxed);
+                        self.slot.input_devtools.store(false, Ordering::Relaxed);
                         tracing::info!(?tab_id, "DevTools panel closed");
                     }
                 }
@@ -3353,7 +3319,7 @@ impl<E: Engine> App<E> {
                 .width(Length::Fill)
                 .into()
         } else {
-            let shown = crate::util::display_url(&self.url_field);
+            let shown = crate::util::idle_display_url(&self.url_field);
             let idle = if shown.is_empty() {
                 text("Search or enter URL")
                     .size(13)
@@ -3368,6 +3334,7 @@ impl<E: Engine> App<E> {
                 text(shown)
                     .size(13)
                     .font(sola_kit::fonts::ui())
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(|theme: &iced::Theme| iced::widget::text::Style {
                         color: Some(theme.extended_palette().background.base.text),
                     })
@@ -3375,15 +3342,18 @@ impl<E: Engine> App<E> {
             mouse_area(
                 container(idle)
                     .width(Length::Fill)
+                    .height(Length::Fill)
                     .padding(sola_kit::components::text_input::DEFAULT_PADDING)
-                    .align_y(Alignment::Center),
+                    .align_y(Alignment::Center)
+                    .clip(true),
             )
             .on_press(Msg::UrlBarActivate)
             .into()
         };
+        let field = container(field).width(Length::Fill).clip(true);
         match self.active_load_frac() {
             Some(frac) => stack![field, omnibox_progress_overlay(frac)].into(),
-            None => field,
+            None => field.into(),
         }
     }
 
@@ -3391,7 +3361,10 @@ impl<E: Engine> App<E> {
         use sola_kit::components::style::{HAIRLINE_A, RADIUS_MD, SPACE_XS, mix_white};
         let hits = self.omnibox_hits();
         if hits.is_empty() {
-            return Space::new().width(Length::Shrink).height(Length::Shrink).into();
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
         }
         let mut list = column![].spacing(SPACE_XS).width(Length::Fill);
         for (i, hit) in hits.iter().enumerate() {
@@ -4929,14 +4902,12 @@ impl<E: Engine> App<E> {
 
         let list_h = if suggest.is_empty() { 400.0 } else { LIST_H };
         col = col.push(
-            scrollable(
-                container(list).width(Length::Fill).padding(Padding {
-                    top: 0.0,
-                    right: SCROLL_GUTTER,
-                    bottom: 0.0,
-                    left: 0.0,
-                }),
-            )
+            scrollable(container(list).width(Length::Fill).padding(Padding {
+                top: 0.0,
+                right: SCROLL_GUTTER,
+                bottom: 0.0,
+                left: 0.0,
+            }))
             .height(Length::Fixed(list_h))
             .width(Length::Fill),
         );
@@ -5183,14 +5154,12 @@ impl<E: Engine> App<E> {
         }
 
         col = col.push(
-            scrollable(
-                container(fields).width(Length::Fill).padding(Padding {
-                    top: 0.0,
-                    right: 14.0,
-                    bottom: 0.0,
-                    left: 0.0,
-                }),
-            )
+            scrollable(container(fields).width(Length::Fill).padding(Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 0.0,
+            }))
             .height(Length::Fixed(360.0))
             .width(Length::Fill),
         );
@@ -6145,16 +6114,12 @@ fn omnibox_key(key: &keyboard::Key, modifiers: &keyboard::Modifiers) -> Option<M
         keyboard::Key::Named(Named::Enter) if modifiers.shift() => Some(Msg::UrlSearchResults),
         keyboard::Key::Named(Named::Enter) => Some(Msg::UrlSubmit),
         keyboard::Key::Character(c)
-            if modifiers.control()
-                && !modifiers.alt()
-                && c.eq_ignore_ascii_case("n") =>
+            if modifiers.control() && !modifiers.alt() && c.eq_ignore_ascii_case("n") =>
         {
             Some(Msg::OmniboxSelectNext)
         }
         keyboard::Key::Character(c)
-            if modifiers.control()
-                && !modifiers.alt()
-                && c.eq_ignore_ascii_case("p") =>
+            if modifiers.control() && !modifiers.alt() && c.eq_ignore_ascii_case("p") =>
         {
             Some(Msg::OmniboxSelectPrev)
         }
@@ -6561,10 +6526,7 @@ fn is_transient_nav_url(url: &str) -> bool {
 
 /// Fresh ⌘T tab: blank URL and no real session history.
 fn tab_is_scratch_blank(t: &TabInfo) -> bool {
-    is_transient_nav_url(&t.url)
-        && t.history
-            .iter()
-            .all(|e| is_transient_nav_url(&e.url))
+    is_transient_nav_url(&t.url) && t.history.iter().all(|e| is_transient_nav_url(&e.url))
 }
 
 /// Apply an engine URL to the omnibar. Never blanks a committed field, and
