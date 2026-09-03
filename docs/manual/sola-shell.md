@@ -30,8 +30,10 @@ outside dismisses.
 
 CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel
 graphs (last ~12 seconds). Exact numbers live in the click dropdown.
-The volume chip (right of Bluetooth, left of CPU) is a 12-band LED
-spectrum analyzer of what the default output is playing.
+The volume chip (right of Bluetooth, left of CPU, with the same gap
+on both sides) is a 12-band LED spectrum analyzer of what the default
+output is playing. Click the bars for the volume popover; there is no
+speaker glyph.
 
 ## Window menu
 

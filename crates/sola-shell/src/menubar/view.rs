@@ -64,12 +64,10 @@ fn stat_pad() -> Padding {
         left: STAT_PAD_H,
     }
 }
-/// Optical nudge for the flower glyph (SVG visual center sits slightly
-/// low relative to SF Pro Text cap height at 13pt).
-const FLOWER_NUDGE_UP: f32 = 1.5;
-/// Pixel graphs are a 14px LED matrix; iced centers the text layout box,
-/// which hangs below the cap height, so the dots sit low. Lift to match.
-const PIXEL_NUDGE_UP: f32 = 2.0;
+/// 14px lucide/SVG and LED matrices: iced centers the layout box, which
+/// hangs below 13pt cap height, so marks sit low. Same lift for icons
+/// and pixel graphs.
+const CHROME_NUDGE_UP: f32 = 2.0;
 
 /// Bold chrome for the focused-app title (macOS application menu name).
 fn app_title_font() -> iced::Font {
@@ -129,12 +127,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
     // Extra bottom pad optically lifts the flower into the text baseline
     // band without changing the outer hit target height.
-    let flower = container(icon_colored("sola/flower", ICON_SIZE, fg)).padding(Padding {
-        top: 0.0,
-        right: 0.0,
-        bottom: FLOWER_NUDGE_UP,
-        left: 0.0,
-    });
+    let flower = extra_icon("sola/flower", fg);
     let system_btn: Element<'_, Msg> = bar_item(
         flower,
         system_active,
@@ -275,14 +268,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             panel_active(shell, crate::app::Panel::Bluetooth),
         ));
     }
-    if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
-        extras.push(audio_chip(
-            icon,
-            fg,
-            muted,
+    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot).map(|icon| {
+        audio_chip(
+            icon.muted,
             panel_active(shell, crate::app::Panel::Audio),
-        ));
-    }
+        )
+    });
 
     let mut percents: Vec<Element<'_, Msg>> = vec![cpu_btn];
     if shell.stats.gpu.is_some() {
@@ -304,10 +295,15 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     }
     percents.push(mem_btn);
 
-    // Four phrases, not nine beads: extras · percents · rates · clock.
+    // Phrases, not nine beads: extras · spectrum · percents · rates · clock.
+    // Spectrum is its own phrase so PHRASE_GAP matches both neighbours
+    // (Bluetooth on the left, CPU on the right).
     let mut phrases: Vec<Element<'_, Msg>> = Vec::new();
     if !extras.is_empty() {
         phrases.push(row(extras).height(Length::Fixed(BAR_H)).into());
+    }
+    if let Some(chip) = spectrum {
+        phrases.push(chip);
     }
     phrases.push(row(percents).height(Length::Fixed(BAR_H)).into());
     phrases.push(row![rx_btn, tx_btn].height(Length::Fixed(BAR_H)).into());
@@ -484,7 +480,7 @@ fn stat_graph<'a>(
         container(crate::stats::pixel::graph(samples, max, tint)).padding(Padding {
             top: 0.0,
             right: 0.0,
-            bottom: PIXEL_NUDGE_UP,
+            bottom: CHROME_NUDGE_UP,
             left: 0.0,
         }),
     ]
@@ -495,6 +491,17 @@ fn stat_graph<'a>(
 
 /// Inbox unread: mail glyph + accent count. Hidden by the caller when
 /// mail is closed or the count is zero.
+fn extra_icon(name: &str, color: Color) -> Element<'static, Msg> {
+    container(icon_colored(name, ICON_SIZE, color))
+        .padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: CHROME_NUDGE_UP,
+            left: 0.0,
+        })
+        .into()
+}
+
 fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
     let label = if unread > 99 {
         "99+".to_string()
@@ -503,7 +510,7 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
     };
     bar_button(
         row![
-            icon_colored("lucide/mail", ICON_SIZE, accent),
+            extra_icon("lucide/mail", accent),
             text(label)
                 .font(fonts::chrome())
                 .size(CHROME_SIZE)
@@ -520,25 +527,14 @@ fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
     .into()
 }
 
-fn audio_chip(
-    icon: crate::audio::BarIcon,
-    fg: Color,
-    muted: Color,
-    active: bool,
-) -> Element<'static, Msg> {
-    let tint = if icon.muted { muted } else { fg };
+fn audio_chip(muted: bool, active: bool) -> Element<'static, Msg> {
     bar_button(
-        row![
-            icon_colored(icon.name, ICON_SIZE, tint),
-            container(crate::audio::wave::visualizer(icon.muted)).padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: PIXEL_NUDGE_UP,
-                left: 0.0,
-            }),
-        ]
-        .spacing(STAT_INNER_SPACING)
-        .align_y(Alignment::Center),
+        container(crate::audio::wave::visualizer(muted)).padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: CHROME_NUDGE_UP,
+            left: 0.0,
+        }),
         active,
         Msg::ToggleAudio,
         extra_pad(),
@@ -554,7 +550,7 @@ fn bluetooth_chip(
 ) -> Element<'static, Msg> {
     let tint = if icon.muted { muted } else { fg };
     bar_button(
-        icon_colored(icon.name, ICON_SIZE, tint),
+        extra_icon(icon.name, tint),
         active,
         Msg::ToggleBluetooth,
         extra_pad(),
@@ -564,7 +560,7 @@ fn bluetooth_chip(
 
 fn notify_pile_chip(accent: Color) -> Element<'static, Msg> {
     bar_button(
-        icon_colored("lucide/bell", ICON_SIZE, accent),
+        extra_icon("lucide/bell", accent),
         false,
         Msg::ToggleNotifyPile,
         extra_pad(),

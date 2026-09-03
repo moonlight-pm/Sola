@@ -1635,12 +1635,13 @@ impl Shell {
         }
     }
 
-    /// Left edge of the Bluetooth chip (left of volume when that chip is
-    /// shown, otherwise immediately left of CPU).
+    /// Left edge of the Bluetooth chip (left of the spectrum when that
+    /// chip is shown, otherwise immediately left of CPU). Spectrum is its
+    /// own phrase, so a PHRASE_GAP sits between Bluetooth and the bars.
     pub fn estimate_bluetooth_x(&self) -> f32 {
         let chip = crate::menubar::extra_chip_w();
         if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
-            self.estimate_audio_x() - chip
+            self.estimate_audio_x() - crate::menubar::PHRASE_GAP - chip
         } else {
             self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
         }
@@ -1708,8 +1709,7 @@ impl Shell {
         }
     }
 
-    /// Left edge of the volume chip (rightmost extra — immediately left
-    /// of CPU). Bluetooth sits to its left when that chip is shown.
+    /// Left edge of the spectrum phrase (immediately left of CPU).
     pub fn estimate_audio_x(&self) -> f32 {
         self.estimate_stat_x(crate::stats::Metric::Cpu)
             - crate::menubar::PHRASE_GAP

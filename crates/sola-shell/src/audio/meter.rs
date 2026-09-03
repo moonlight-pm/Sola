@@ -46,6 +46,9 @@ const PINK_EXP: f32 = 0.7;
 /// Analog graphic-EQ bands overlap (constant-Q). Stretch each FFT
 /// window so a hot neighbour still lights the next bar.
 const OVERLAP: f32 = 1.25;
+/// Drop the bottom ~⅓ of the LED stack after AGC so rumble / overlap
+/// does not keep the lowest two rows always on.
+const PUNCH_GATE: f32 = 0.34;
 
 static TARGET: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 static RING: OnceLock<Mutex<[f32; BANDS]>> = OnceLock::new();
@@ -176,6 +179,9 @@ fn run(kick: UnboundedSender<Event>) {
             pcm.drain(..start + FFT_N / 2);
             let mut bands = analyze(&frame, &bins);
             autoscale(&mut bands, &mut agc_hold);
+            for b in &mut bands {
+                *b = punch(*b);
+            }
             blend(bands);
         } else if got || was {
             decay();
@@ -206,6 +212,16 @@ pub fn autoscale(bands: &mut [f32; BANDS], hold: &mut f32) {
     let scale = hold.max(AGC_FLOOR);
     for b in bands.iter_mut() {
         *b = (*b / scale).clamp(0.0, 1.0);
+    }
+}
+
+/// Eat a floor of AGC'd energy so the bottom two LED rows stay dark
+/// until there is a real peak. Full scale still reaches the top.
+pub fn punch(v: f32) -> f32 {
+    if v <= PUNCH_GATE {
+        0.0
+    } else {
+        ((v - PUNCH_GATE) / (1.0 - PUNCH_GATE)).clamp(0.0, 1.0)
     }
 }
 
@@ -545,6 +561,14 @@ mod tests {
         autoscale(&mut bands, &mut hold);
         assert!(bands.iter().all(|b| *b == 0.0));
         assert!(hold < 0.5);
+    }
+
+    #[test]
+    fn punch_kills_the_always_on_floor() {
+        assert_eq!(punch(0.0), 0.0);
+        assert_eq!(punch(PUNCH_GATE), 0.0);
+        assert!(punch(0.40) < 0.15, "{}", punch(0.40));
+        assert!((punch(1.0) - 1.0).abs() < 1e-5);
     }
 
     #[test]

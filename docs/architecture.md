@@ -174,7 +174,7 @@ area. Iced does not present full-output swapchains in the background (see
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), volume + 12-band LED spectrum (hidden if no PipeWire), pixel-graph stats (CPU/GPU/MEM/RX/TX), whispers (`AppToast`) |
+| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), 12-band LED spectrum (own phrase, hidden if no PipeWire; click opens volume), pixel-graph stats (CPU/GPU/MEM/RX/TX), whispers (`AppToast`) |
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
 | Switcher | MRU window/app switch (parked 2×2 while dismissed) |
@@ -192,6 +192,10 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 (unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
 unread, notification click). Last window of a hidden app retracts the sticky
 so a later map is not stuck hidden. No menubar chip.
+
+**Shell re-exec z-order:** sola-shell rebuilds MRU from window-id order, which
+would shuffle apps. River keeps the last relative stack when only the
+menubar id changed (click-raise still honors a new Composition).
 
 A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
 `closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn

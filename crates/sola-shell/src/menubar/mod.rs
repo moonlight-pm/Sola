@@ -2,8 +2,8 @@
 //!
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
-//! - Right cluster: four phrases, tight within and a breath between —
-//!   extras (mail / bell / bluetooth / volume), percents (CPU / GPU / MEM),
+//! - Right cluster: phrases, tight within and a breath between —
+//!   extras (mail / bell / bluetooth), spectrum, percents (CPU / GPU / MEM),
 //!   rates (RX / TX), clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
@@ -23,7 +23,7 @@ pub const WINDOW_HEIGHT: u32 = 28;
 
 /// Horizontal pad for left-side menu titles (macOS menu-title rhythm).
 pub const MENU_PAD_H: f32 = 9.0;
-/// Horizontal pad for icon extras (bell, volume, bluetooth, mail).
+/// Horizontal pad for icon extras (bell, bluetooth, mail) and the spectrum.
 pub const EXTRA_PAD_H: f32 = 5.0;
 /// Horizontal pad for CPU / GPU / MEM / RX / TX chips.
 pub const STAT_PAD_H: f32 = 6.0;
@@ -42,12 +42,9 @@ pub fn extra_chip_w() -> f32 {
     ICON_SIZE as f32 + EXTRA_PAD_H * 2.0
 }
 
-/// Volume chip: lucide glyph + 12-band LED spectrum analyzer.
+/// Volume chip: spectrum analyzer only (the bars are the hit target).
 pub fn audio_chip_w() -> f32 {
-    ICON_SIZE as f32
-        + STAT_INNER_SPACING
-        + crate::audio::wave::SPECTRUM_W
-        + EXTRA_PAD_H * 2.0
+    crate::audio::wave::SPECTRUM_W + EXTRA_PAD_H * 2.0
 }
 
 /// CPU / GPU / MEM chip width (3-letter label + fixed pixel graph).
@@ -200,7 +197,7 @@ mod tests {
         assert!(PHRASE_GAP > EXTRA_PAD_H * 2.0);
         assert_eq!(
             audio_chip_w(),
-            extra_chip_w() + STAT_INNER_SPACING + crate::audio::wave::SPECTRUM_W
+            crate::audio::wave::SPECTRUM_W + EXTRA_PAD_H * 2.0
         );
         assert!(crate::audio::wave::SPECTRUM_W > crate::stats::pixel::GRAPH_W * 2.5);
     }
