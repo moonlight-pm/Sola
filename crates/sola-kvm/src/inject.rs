@@ -218,9 +218,9 @@ impl WaylandInjector {
             }
             Packet::Motion { x, y } => self.warp(*x, *y),
             Packet::Button { button, pressed } => self.button(*button, *pressed != 0),
-            Packet::Key { keycode, pressed } => match *pressed {
-                0 => self.key(*keycode, false),
-                _ => self.key(*keycode, true),
+            Packet::Key { keycode, pressed } => match wire_key_press(*pressed) {
+                Some(down) => self.key(*keycode, down),
+                None => {}
             },
             Packet::Scroll { dx, dy } => self.scroll(*dx, *dy),
             Packet::Modifiers { mask } => {
@@ -258,9 +258,12 @@ impl WaylandInjector {
 
     fn key(&mut self, evdev: u32, pressed: bool) {
         if pressed {
-            if !self.pressed_keys.contains(&evdev) {
-                self.pressed_keys.push(evdev);
+            if self.pressed_keys.contains(&evdev) {
+                // Already down (kernel auto-repeat or a duplicate). River
+                // stacks press counts and will not fully release on one up.
+                return;
             }
+            self.pressed_keys.push(evdev);
         } else {
             self.pressed_keys.retain(|k| *k != evdev);
         }
@@ -320,6 +323,21 @@ impl WaylandInjector {
         for b in buttons {
             self.button(b, false);
         }
+    }
+}
+
+/// Map a KVM1 key `pressed` byte to inject down/up.
+///
+/// `2` is Linux `EV_KEY` auto-repeat. The Mac agent needs those; Wayland
+/// virtual keyboards must not. River increments a press count on every
+/// down and only fully releases at zero — a held Super (launcher /
+/// Super+Tab) then one Super-up leaves Super stuck. The terminal drops
+/// Super+letter and encodes Alt+letter as ESC+char.
+fn wire_key_press(pressed: u8) -> Option<bool> {
+    match pressed {
+        0 => Some(false),
+        2 => None,
+        _ => Some(true),
     }
 }
 
@@ -513,7 +531,7 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for InjectState {
 
 #[cfg(test)]
 mod tests {
-    use super::linux_button;
+    use super::{linux_button, wire_key_press};
 
     #[test]
     fn buttons_are_linux_evdev() {
@@ -521,5 +539,13 @@ mod tests {
         assert_eq!(linux_button(1), 0x111);
         assert_eq!(linux_button(2), 0x112);
         assert_eq!(linux_button(9), 0x110);
+    }
+
+    #[test]
+    fn kernel_auto_repeat_is_not_injected() {
+        assert_eq!(wire_key_press(0), Some(false));
+        assert_eq!(wire_key_press(1), Some(true));
+        assert_eq!(wire_key_press(2), None);
+        assert_eq!(wire_key_press(99), Some(true));
     }
 }

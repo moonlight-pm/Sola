@@ -3,7 +3,7 @@
 **Date:** 2026-07-27  
 **Status:** Implementing — Phase A done; Phase C server path in; Linux `listen` injects via virtual pointer/keyboard  
 **Dogfood:** novus server; Linux client (`sola-kvm listen`) or ember macOS agent  
-**Gaps:** D2 permanent input ACL on the server; Mac clip is text-only; Super+Tab confirm over Linux listen unsmoked after key-before-modifiers
+**Gaps:** D2 permanent input ACL on the server; Mac clip is text-only; Super+Tab confirm over Linux listen unsmoked after key-before-modifiers + drop kernel auto-repeat
 
 ## 1. Goal
 
