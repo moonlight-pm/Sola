@@ -131,6 +131,13 @@ pub struct ArtistRef {
     pub uri: Option<String>,
 }
 
+impl ArtistRef {
+    /// Web API id, or the id inside `spotify:artist:…`.
+    pub fn catalog_id(&self) -> Option<&str> {
+        catalog_id(self.id.as_deref(), self.uri.as_deref(), "artist")
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Artist {
     #[serde(default)]
@@ -202,6 +209,15 @@ pub struct Copyright {
 }
 
 impl Album {
+    /// Web API id, or the id inside `spotify:album:…`.
+    pub fn catalog_id(&self) -> Option<&str> {
+        catalog_id(
+            (!self.id.is_empty()).then_some(self.id.as_str()),
+            (!self.uri.is_empty()).then_some(self.uri.as_str()),
+            "album",
+        )
+    }
+
     pub fn year(&self) -> Option<&str> {
         self.release_date
             .as_deref()
@@ -261,6 +277,21 @@ pub struct Track {
 impl Track {
     pub fn artist_names(&self) -> String {
         join_names(self.artists.iter().map(|artist| artist.name.as_str()))
+    }
+
+    pub fn artist_links(&self) -> Vec<(String, String)> {
+        self.artists
+            .iter()
+            .filter_map(|artist| {
+                artist
+                    .catalog_id()
+                    .map(|id| (artist.name.clone(), id.to_string()))
+            })
+            .collect()
+    }
+
+    pub fn album_catalog_id(&self) -> Option<&str> {
+        self.album.as_ref().and_then(Album::catalog_id)
     }
 
     pub fn image(&self, target: u32) -> Option<&str> {
@@ -589,6 +620,11 @@ impl PlaylistItem {
 pub fn spotify_id<'a>(uri: &'a str, kind: &str) -> Option<&'a str> {
     let needle = format!("spotify:{kind}:");
     uri.strip_prefix(&needle).filter(|id| !id.is_empty())
+}
+
+fn catalog_id<'a>(id: Option<&'a str>, uri: Option<&'a str>, kind: &str) -> Option<&'a str> {
+    id.filter(|s| !s.is_empty())
+        .or_else(|| uri.and_then(|uri| spotify_id(uri, kind)))
 }
 
 /// Compact added/created day from a Spotify timestamp (`2024-03-12T00:00:00Z`).
@@ -980,6 +1016,32 @@ mod tests {
         assert_eq!(track.artists.len(), 2);
         assert_eq!(track.artists[0].name, "Tyler, the Creator");
         assert_eq!(track.artists[1].id.as_deref(), Some("guest"));
+        assert_eq!(
+            track.artist_links(),
+            vec![
+                ("Tyler, the Creator".into(), "tyler".into()),
+                ("Guest".into(), "guest".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_id_falls_back_to_uri() {
+        let artist: ArtistRef = serde_json::from_str(
+            r#"{"name":"Daft Punk","uri":"spotify:artist:4tZwfgrHOc3mzU5d5ZEbQE"}"#,
+        )
+        .unwrap();
+        assert_eq!(artist.catalog_id(), Some("4tZwfgrHOc3mzU5d5ZEbQE"));
+
+        let album: Album = serde_json::from_str(
+            r#"{"name":"Discovery","uri":"spotify:album:2noRn2Aes5aoNVsU6iWThC"}"#,
+        )
+        .unwrap();
+        assert_eq!(album.catalog_id(), Some("2noRn2Aes5aoNVsU6iWThC"));
+
+        let named: ArtistRef =
+            serde_json::from_str(r#"{"id":"abc","name":"A","uri":"spotify:artist:zzz"}"#).unwrap();
+        assert_eq!(named.catalog_id(), Some("abc"));
     }
 
     #[test]

@@ -62,6 +62,14 @@ impl From<reqwest::Error> for ApiError {
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 
+fn retry_after_wait(header: Option<&str>) -> Duration {
+    header
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(Duration::from_secs(5), Duration::from_secs)
+        .max(Duration::from_secs(5))
+        .min(MAX_RETRY_AFTER)
+}
+
 fn is_quota_exhausted(body: &str) -> bool {
     serde_json::from_str::<ApiErrorBody>(body)
         .ok()
@@ -304,6 +312,10 @@ impl ApiClient {
             .ok_or(ApiError::NotSignedIn)
     }
 
+    pub async fn cooling_down(&self) -> bool {
+        *self.cooldown_until.lock().await > Instant::now()
+    }
+
     async fn wait_for_cooldown(&self) {
         loop {
             let until = *self.cooldown_until.lock().await;
@@ -368,20 +380,23 @@ impl ApiClient {
                 continue;
             }
             if status == StatusCode::TOO_MANY_REQUESTS && attempt <= RATE_LIMIT_RETRIES {
-                let wait = response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .map_or(Duration::from_secs(1), Duration::from_secs)
-                    .min(MAX_RETRY_AFTER);
+                let wait = retry_after_wait(
+                    response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok()),
+                );
                 let text = response.text().await.unwrap_or_default();
                 if is_quota_exhausted(&text) {
                     return Err(ApiError::QuotaExhausted);
                 }
-                tracing::warn!("Spotify rate limit source={} wait={wait:?}", self.source);
+                tracing::warn!(
+                    "Spotify rate limit source={} method={} path={path} wait={wait:?}",
+                    self.source,
+                    method
+                );
                 tracing::info!(
-                    "Spotify cooldown source={} duration_ms={}",
+                    "Spotify cooldown source={} path={path} duration_ms={}",
                     self.source,
                     wait.as_millis()
                 );
@@ -918,6 +933,42 @@ impl ApiClient {
         self.tracks_library(Method::DELETE, uris).await
     }
 
+    pub async fn set_saved_album(&self, id: &str, saved: bool) -> Result<()> {
+        let method = if saved { Method::PUT } else { Method::DELETE };
+        self.write(method, "/me/albums", &[("ids", id.to_string())], None)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn album_is_saved(&self, id: &str) -> Result<bool> {
+        let flags: Vec<bool> = self
+            .get("/me/albums/contains", &[("ids", id.to_string())])
+            .await?;
+        Ok(flags.first().copied().unwrap_or(false))
+    }
+
+    pub async fn set_followed_artist(&self, id: &str, saved: bool) -> Result<()> {
+        let method = if saved { Method::PUT } else { Method::DELETE };
+        self.write(
+            method,
+            "/me/following",
+            &[("type", "artist".to_string()), ("ids", id.to_string())],
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn artist_is_followed(&self, id: &str) -> Result<bool> {
+        let flags: Vec<bool> = self
+            .get(
+                "/me/following/contains",
+                &[("type", "artist".to_string()), ("ids", id.to_string())],
+            )
+            .await?;
+        Ok(flags.first().copied().unwrap_or(false))
+    }
+
     async fn tracks_library(&self, method: Method, uris: &[String]) -> Result<()> {
         let ids: Vec<String> = uris
             .iter()
@@ -1072,6 +1123,14 @@ mod tests {
     }
 
     #[test]
+    fn retry_after_never_waits_less_than_five_seconds() {
+        assert_eq!(retry_after_wait(None), Duration::from_secs(5));
+        assert_eq!(retry_after_wait(Some("1")), Duration::from_secs(5));
+        assert_eq!(retry_after_wait(Some("19")), Duration::from_secs(19));
+        assert_eq!(retry_after_wait(Some("999")), MAX_RETRY_AFTER);
+    }
+
+    #[test]
     fn quota_exhaustion_is_distinct_from_an_ordinary_rate_limit() {
         assert!(is_quota_exhausted(
             r#"{"error":{"status":429,"reason":"QUOTA_EXCEEDED"}}"#
@@ -1099,7 +1158,9 @@ mod tests {
             ApiSource::Personal,
         );
         shared.extend_cooldown(Duration::from_secs(10)).await;
+        assert!(shared.cooling_down().await);
         assert!(*shared.cooldown_until.lock().await > Instant::now());
         assert!(*personal.cooldown_until.lock().await <= Instant::now());
+        assert!(!personal.cooling_down().await);
     }
 }

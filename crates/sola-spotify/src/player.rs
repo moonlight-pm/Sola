@@ -126,7 +126,9 @@ pub struct LocalTrack {
     pub uri: String,
     pub title: String,
     pub artists: Vec<String>,
+    pub artist_links: Vec<(String, String)>,
     pub album: String,
+    pub album_id: Option<String>,
     pub art_url: Option<String>,
     pub art_small_url: Option<String>,
     pub duration_ms: u32,
@@ -238,6 +240,7 @@ pub struct Engine {
     state: Arc<Mutex<LocalState>>,
     interrupted: Arc<Mutex<Option<Interrupted>>>,
     shutting_down: Arc<std::sync::atomic::AtomicBool>,
+    ended: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 impl Engine {
@@ -311,6 +314,7 @@ impl Engine {
         let ended_notify = Arc::clone(&notify);
         let ended_state = Arc::clone(&state);
         let ended_interrupted = Arc::clone(&interrupted);
+        let (ended_tx, ended_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             spirc_task.await;
             {
@@ -325,6 +329,7 @@ impl Engine {
             if !ended_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 ended_notify(EngineEvent::SessionEnded);
             }
+            let _ = ended_tx.send(());
         });
 
         Ok(Self {
@@ -335,6 +340,7 @@ impl Engine {
             state,
             interrupted,
             shutting_down,
+            ended: Mutex::new(Some(ended_rx)),
         })
     }
 
@@ -363,8 +369,25 @@ impl Engine {
         self.player.stop();
     }
 
+    /// Stop this engine and wait until its Connect session has finished
+    /// tearing down. A new engine with the same device id must not start
+    /// until then — the old Spirc deletes connect state on the way out.
+    pub async fn shutdown_wait(&self) {
+        self.shutdown();
+        let ended = self.ended.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(ended) = ended {
+            let _ = tokio::time::timeout(Duration::from_secs(3), ended).await;
+        }
+    }
+
     pub fn command(&self, command: PlayerCommand) -> Result<()> {
         let spirc = &self.spirc;
+        // librespot drops Load/Play/Next/… while this Connect device is
+        // inactive (another speaker took over, or we never finished
+        // registering). Activate is a no-op when already active.
+        if !matches!(command, PlayerCommand::Activate) {
+            spirc.activate()?;
+        }
         match command {
             PlayerCommand::Toggle => spirc.play_pause()?,
             PlayerCommand::Play => spirc.play()?,
@@ -413,12 +436,19 @@ impl Engine {
                     playing_track,
                     context_options,
                 };
+                tracing::info!(
+                    context = spec.context_uri.as_deref().unwrap_or(""),
+                    offset = spec.offset_uri.as_deref().unwrap_or(""),
+                    "load"
+                );
                 // Prefer a Spotify context URI so clicking another row in the
                 // same playlist does not rebuild the queue (that gap is the
                 // audible jerk). A bare track list is only for Home/Search.
-                let request = if let Some(context) = spec.context_uri.as_ref().filter(|uri| {
-                    !uri.is_empty() && !uri.contains(":track:")
-                }) {
+                let request = if let Some(context) = spec
+                    .context_uri
+                    .as_ref()
+                    .filter(|uri| !uri.is_empty() && !uri.contains(":track:"))
+                {
                     LoadRequest::from_context_uri(context.clone(), options)
                 } else if spec.uris.len() >= 2 {
                     LoadRequest::from_tracks(spec.uris, options)
@@ -429,8 +459,6 @@ impl Engine {
                 } else {
                     anyhow::bail!("nothing to play");
                 };
-                // Spirc::load activates if needed; a second activate hitch
-                // on every row click is the other half of the audio jerk.
                 spirc.load(request)?;
             }
         }
@@ -455,10 +483,7 @@ fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> SinkAndVolume 
             tracing::info!(backend = name, "audio backend");
             let volume = mixer.get_soft_volume();
             let device = device.clone();
-            return (
-                Box::new(move || builder(device, AudioFormat::S16)),
-                volume,
-            );
+            return (Box::new(move || builder(device, AudioFormat::S16)), volume);
         }
     }
     panic!("no librespot audio backend available (tried pulseaudio, rodio, alsa)");
@@ -573,11 +598,10 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
             changed |= set(&mut state.username, user_name);
             changed
         }
-        PlayerEvent::SessionDisconnected { .. } => {
-            let mut changed = set(&mut state.connected, false);
-            changed |= set(&mut state.active_client, String::new());
-            changed
-        }
+        // Connect became inactive (another device took over). The librespot
+        // session is still alive; Load activates it again. Treating this as
+        // a dead session leaves clicks no-op'ing forever.
+        PlayerEvent::SessionDisconnected { .. } => set(&mut state.active_client, String::new()),
         PlayerEvent::SessionClientChanged { client_name, .. } => {
             set(&mut state.active_client, client_name)
         }
@@ -602,18 +626,29 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
 }
 
 fn local_track(item: &AudioItem) -> LocalTrack {
-    let (artists, album, is_episode) = match &item.unique_fields {
+    let (artists, artist_links, album, album_id, is_episode) = match &item.unique_fields {
         UniqueFields::Track { artists, album, .. } => (
             artists.iter().map(|artist| artist.name.clone()).collect(),
+            artists
+                .iter()
+                .filter_map(|artist| artist.id.to_id().ok().map(|id| (artist.name.clone(), id)))
+                .collect(),
             album.clone(),
+            None,
             false,
         ),
-        UniqueFields::Episode { show_name, .. } => {
-            (vec![show_name.clone()], show_name.clone(), true)
-        }
+        UniqueFields::Episode { show_name, .. } => (
+            vec![show_name.clone()],
+            Vec::new(),
+            show_name.clone(),
+            None,
+            true,
+        ),
         UniqueFields::Local { artists, album, .. } => (
             artists.iter().cloned().collect(),
+            Vec::new(),
             album.clone().unwrap_or_default(),
+            None,
             false,
         ),
     };
@@ -630,7 +665,9 @@ fn local_track(item: &AudioItem) -> LocalTrack {
         uri: item.uri.clone(),
         title: item.name.clone(),
         artists,
+        artist_links,
         album,
+        album_id,
         art_url,
         art_small_url,
         duration_ms: item.duration_ms,
@@ -682,5 +719,23 @@ mod tests {
         let id = config.device_id();
         assert_eq!(id.len(), 40);
         assert_eq!(id, config.device_id());
+    }
+
+    #[test]
+    fn an_inactive_connect_device_keeps_its_engine_session() {
+        let mut state = LocalState {
+            connected: true,
+            active_client: "Sola".into(),
+            ..LocalState::default()
+        };
+        assert!(apply_event(
+            &mut state,
+            PlayerEvent::SessionDisconnected {
+                connection_id: "connection".into(),
+                user_name: "listener".into(),
+            },
+        ));
+        assert!(state.connected);
+        assert!(state.active_client.is_empty());
     }
 }

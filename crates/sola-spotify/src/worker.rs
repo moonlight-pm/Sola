@@ -147,6 +147,9 @@ pub enum PageBody {
         items: Vec<Track>,
         total: u32,
         offset: u32,
+        /// Set when this collection is an album page (Save / Follow chrome).
+        #[serde(default)]
+        album: Option<Album>,
     },
     Albums {
         items: Vec<Album>,
@@ -173,6 +176,9 @@ pub struct NowPlaying {
     pub title: String,
     pub artists: String,
     pub album: String,
+    /// `(name, catalog id)` for each linked artist on the playing track.
+    pub artist_links: Vec<(String, String)>,
+    pub album_id: Option<String>,
     pub uri: String,
     pub art_url: Option<String>,
     pub duration_ms: u32,
@@ -184,6 +190,12 @@ pub struct NowPlaying {
     pub device_id: Option<String>,
     pub is_local: bool,
     pub saved: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FavoriteKind {
+    Album,
+    Artist,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +219,11 @@ pub enum Cmd {
     FetchArt(String),
     SetSaved {
         uri: String,
+        saved: bool,
+    },
+    SetFavorite {
+        kind: FavoriteKind,
+        id: String,
         saved: bool,
     },
     SetSkipped {
@@ -249,6 +266,11 @@ pub enum Event {
         uri: String,
         saved: bool,
     },
+    Favorite {
+        kind: FavoriteKind,
+        id: String,
+        saved: bool,
+    },
     /// Full Liked Songs snapshot (uris). Replaces the UI's liked set.
     Liked(Vec<String>),
     /// Library playlists (sidebar + Home / Made for you), filled after first paint.
@@ -277,6 +299,14 @@ enum Internal {
         uri: String,
         generation: u64,
     },
+    /// `/me` succeeded; store it on the worker so poll stops asking.
+    ProfileOk(User),
+    /// `/me` 429/quota; keep the session, do not poll again immediately.
+    ProfileSkipped,
+    /// `/me` said the grant is dead; do not keep polling.
+    ProfileFailed,
+    /// Check that a Load after reconnect (or a click) actually started.
+    VerifyResume,
 }
 
 pub fn start() {
@@ -345,9 +375,12 @@ async fn run() {
         signed_in: false,
         premium: None,
         user: None,
+        profile_inflight: false,
+        profile_retry_at: None,
         cancel_signin: None,
         reconnects: Vec::new(),
         resume: None,
+        resume_verify: None,
         pending_play: None,
         play_uris: Vec::new(),
         play_index: 0,
@@ -357,6 +390,7 @@ async fn run() {
         last_engine_uri: None,
         now: NowPlaying::default(),
         devices: Vec::new(),
+        last_devices_at: Instant::now(),
         page: Page::Home,
         page_offset: 0,
         page_total: 0,
@@ -415,9 +449,13 @@ struct Worker {
     signed_in: bool,
     premium: Option<bool>,
     user: Option<User>,
+    profile_inflight: bool,
+    profile_retry_at: Option<Instant>,
     cancel_signin: Option<watch::Sender<bool>>,
     reconnects: Vec<Instant>,
     resume: Option<LoadSpec>,
+    /// Load in flight after reconnect / a click; retry if it never starts.
+    resume_verify: Option<(LoadSpec, u8)>,
     /// Play the user asked for before local playback was up (no Connect device).
     pending_play: Option<PlayRequest>,
     play_uris: Vec<String>,
@@ -431,6 +469,7 @@ struct Worker {
     last_engine_uri: Option<String>,
     now: NowPlaying,
     devices: Vec<Device>,
+    last_devices_at: Instant,
     page: Page,
     page_offset: u32,
     page_total: u32,
@@ -477,22 +516,7 @@ impl Worker {
         );
         self.api
             .set_token_provider(Some(TokenProvider::Web(tokens)));
-        let api = Arc::clone(&self.api);
-        tokio::spawn(async move {
-            match api.me().await {
-                Ok(user) => {
-                    let premium = user.product.as_deref().map(|p| p == "premium");
-                    bridge::emit(Event::User(user.clone()));
-                    bridge::emit(Event::Premium(premium));
-                    bridge::emit(Event::Auth(AuthStatus::Connected {
-                        username: user.name().to_string(),
-                    }));
-                }
-                Err(error) => {
-                    bridge::emit(Event::Auth(AuthStatus::Failed(error.to_string())));
-                }
-            }
-        });
+        self.refresh_me();
         self.signed_in = true;
         self.resume_engine();
         if !self.liked.uris.is_empty() {
@@ -530,6 +554,7 @@ impl Worker {
             Cmd::LoadMore => self.load_more(),
             Cmd::FetchArt(url) => self.fetch_art(url),
             Cmd::SetSaved { uri, saved } => self.set_saved(uri, saved),
+            Cmd::SetFavorite { kind, id, saved } => self.set_favorite(kind, id, saved),
             Cmd::SetSkipped { uri, skipped } => self.set_skipped(uri, skipped),
             Cmd::AddToPlaylist {
                 playlist_id,
@@ -544,7 +569,7 @@ impl Worker {
                 self.settings = settings.clone();
                 bridge::emit(Event::Settings(settings));
                 if self.engine.is_some() {
-                    self.reconnect_engine();
+                    self.reconnect_engine().await;
                 }
             }
             Cmd::Media(command) => self.media(command).await,
@@ -570,30 +595,48 @@ impl Worker {
                 match (engine, error) {
                     (Some(engine), _) => {
                         let device_id = engine.device_id().to_string();
+                        tracing::info!(device_id = %device_id, "local playback ready");
+                        self.reconnects.clear();
                         let pending = self.pending_play.take();
-                        if let Some(request) = pending {
+                        let spec = if let Some(request) = pending {
                             self.hold_play(&request);
                             self.remember_queue(&request);
-                            let _ = engine.command(PlayerCommand::Load(load_spec(&request)));
-                        } else if let Some(spec) = self.resume.take() {
-                            let _ = engine.command(PlayerCommand::Load(spec));
+                            Some(load_spec(&request))
                         } else {
-                            let _ = engine.command(PlayerCommand::Activate);
+                            self.resume.take()
+                        };
+                        // An early Load while Spirc is still registering 400s
+                        // and leaves the device inactive — later clicks then
+                        // no-op. Wait, then verify it actually started.
+                        if let Some(spec) = spec {
+                            self.arm_resume(spec, Duration::from_millis(1_500));
                         }
                         self.engine = Some(engine);
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Ready { device_id }));
                     }
                     (None, Some(error)) => {
+                        tracing::warn!("local playback failed: {error}");
+                        self.resume = None;
+                        self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(error)));
                     }
                     _ => {
+                        self.resume = None;
+                        self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Unavailable));
                     }
                 }
             }
-            Internal::Reconnect => self.reconnect_engine(),
+            Internal::Reconnect => self.reconnect_engine().await,
             Internal::EngineState(state) => self.on_engine_state(state),
             Internal::MaybeAdvance { uri, generation } => self.maybe_advance(uri, generation),
+            Internal::ProfileOk(user) => self.on_profile(user),
+            Internal::ProfileSkipped => self.on_profile_skipped(),
+            Internal::ProfileFailed => {
+                self.profile_inflight = false;
+                self.profile_retry_at = Some(Instant::now() + Duration::from_secs(300));
+            }
+            Internal::VerifyResume => self.verify_resume(),
         }
     }
 
@@ -645,6 +688,9 @@ impl Worker {
         self.signed_in = false;
         self.user = None;
         self.premium = None;
+        self.profile_inflight = false;
+        self.profile_retry_at = None;
+        self.resume_verify = None;
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
         }
@@ -720,10 +766,11 @@ impl Worker {
         }
     }
 
-    fn reconnect_engine(&mut self) {
+    async fn reconnect_engine(&mut self) {
         if !self.signed_in {
             return;
         }
+        self.resume_verify = None;
         if let Some(engine) = self.engine.take() {
             self.resume = engine.interrupted().map(|interrupted| LoadSpec {
                 uris: vec![interrupted.uri],
@@ -731,7 +778,7 @@ impl Worker {
                 play: interrupted.playing,
                 ..LoadSpec::default()
             });
-            engine.shutdown();
+            engine.shutdown_wait().await;
         }
         let now = Instant::now();
         self.reconnects
@@ -744,6 +791,10 @@ impl Worker {
             return;
         }
         self.reconnects.push(now);
+        tracing::info!(
+            attempt = self.reconnects.len(),
+            "local playback session ended; reconnecting"
+        );
         self.resume_engine();
     }
 
@@ -829,9 +880,11 @@ impl Worker {
         self.hold_play(&request);
         self.remember_queue(&request);
         if let Some(engine) = &self.engine {
-            if let Err(error) = engine.command(PlayerCommand::Load(load_spec(&request))) {
+            let spec = load_spec(&request);
+            if let Err(error) = engine.command(PlayerCommand::Load(spec.clone())) {
                 bridge::emit(Event::Error(format!("Playback error: {error}")));
             }
+            self.arm_resume(spec, Duration::from_millis(2_000));
             return;
         }
         // An explicit Connect target (phone, speaker, Electron) — not the
@@ -1126,6 +1179,7 @@ impl Worker {
                             items,
                             total: page.total,
                             offset: page.offset,
+                            album: None,
                         },
                     });
                 }
@@ -1226,6 +1280,7 @@ impl Worker {
                             items,
                             total,
                             offset: page.offset,
+                            album: None,
                         },
                     });
                     Worker::emit_contains(api.clone(), like_uris);
@@ -1278,19 +1333,36 @@ impl Worker {
                         .filter(|t| !t.uri.is_empty())
                         .map(|t| t.uri.clone())
                         .collect();
+                    let mut header = album.clone();
+                    header.tracks = None;
+                    let album_id = header
+                        .catalog_id()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| id.clone());
+                    let artist_id = header
+                        .artists
+                        .iter()
+                        .find_map(|artist| artist.catalog_id().map(str::to_string));
+                    let context_uri = if album.uri.is_empty() {
+                        format!("spotify:album:{id}")
+                    } else {
+                        album.uri.clone()
+                    };
                     bridge::emit(Event::Page {
                         page: Page::Album(id),
                         body: PageBody::Tracks {
                             title: album.name,
                             subtitle: format!("{artists} · {year}"),
                             art,
-                            context_uri: Some(album.uri),
+                            context_uri: Some(context_uri),
                             total: items.len() as u32,
                             offset: 0,
                             items,
+                            album: Some(header),
                         },
                     });
-                    Worker::emit_contains(api, like_uris);
+                    Worker::emit_contains(api.clone(), like_uris);
+                    Worker::emit_library_state(api, Some(album_id), artist_id);
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
@@ -1319,6 +1391,11 @@ impl Worker {
                 .filter(|t| !t.uri.is_empty())
                 .map(|t| t.uri.clone())
                 .collect();
+            let artist_id = if artist.id.is_empty() {
+                id.clone()
+            } else {
+                artist.id.clone()
+            };
             bridge::emit(Event::Page {
                 page: Page::Artist(id),
                 body: PageBody::Artist {
@@ -1327,7 +1404,8 @@ impl Worker {
                     albums,
                 },
             });
-            Worker::emit_contains(api, like_uris);
+            Worker::emit_contains(api.clone(), like_uris);
+            Worker::emit_library_state(api, None, Some(artist_id));
         });
     }
 
@@ -1433,6 +1511,52 @@ impl Worker {
         });
     }
 
+    fn set_favorite(&self, kind: FavoriteKind, id: String, saved: bool) {
+        if id.is_empty() {
+            return;
+        }
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            let result = match kind {
+                FavoriteKind::Album => api.set_saved_album(&id, saved).await,
+                FavoriteKind::Artist => api.set_followed_artist(&id, saved).await,
+            };
+            match result {
+                Ok(()) => bridge::emit(Event::Favorite { kind, id, saved }),
+                Err(error) => bridge::emit(Event::Error(error.to_string())),
+            }
+        });
+    }
+
+    fn emit_library_state(
+        api: Arc<ApiClient>,
+        album_id: Option<String>,
+        artist_id: Option<String>,
+    ) {
+        tokio::spawn(async move {
+            if let Some(id) = album_id {
+                match api.album_is_saved(&id).await {
+                    Ok(saved) => bridge::emit(Event::Favorite {
+                        kind: FavoriteKind::Album,
+                        id,
+                        saved,
+                    }),
+                    Err(error) => tracing::debug!("album contains: {error}"),
+                }
+            }
+            if let Some(id) = artist_id {
+                match api.artist_is_followed(&id).await {
+                    Ok(saved) => bridge::emit(Event::Favorite {
+                        kind: FavoriteKind::Artist,
+                        id,
+                        saved,
+                    }),
+                    Err(error) => tracing::debug!("artist contains: {error}"),
+                }
+            }
+        });
+    }
+
     fn set_saved(&mut self, uri: String, saved: bool) {
         self.liked.set(uri.clone(), saved);
         self.liked.save(&self.dirs);
@@ -1458,6 +1582,9 @@ impl Worker {
             let mut uris = Vec::new();
             let mut offset = 0_u32;
             loop {
+                if api.cooling_down().await {
+                    break;
+                }
                 match api.saved_tracks(offset, PAGE_SIZE).await {
                     Ok(page) => {
                         if page.items.is_empty() {
@@ -1513,12 +1640,13 @@ impl Worker {
         });
     }
 
-    fn refresh_devices(&self) {
+    fn refresh_devices(&mut self) {
+        self.last_devices_at = Instant::now();
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             match api.devices().await {
                 Ok(devices) => bridge::emit(Event::Devices(devices)),
-                Err(ApiError::NotSignedIn) => {}
+                Err(ApiError::NotSignedIn | ApiError::RateLimited) => {}
                 Err(error) => tracing::debug!("devices: {error}"),
             }
         });
@@ -1557,8 +1685,133 @@ impl Worker {
         if !self.signed_in {
             return;
         }
-        self.refresh_playback();
-        self.refresh_devices();
+        if self.api.cooling_down().await {
+            return;
+        }
+        if profile_poll_due(
+            self.user.is_some(),
+            self.profile_inflight,
+            self.profile_retry_at,
+            Instant::now(),
+        ) {
+            self.refresh_me();
+        }
+        if self.engine.is_none() && !self.engine_busy {
+            self.refresh_playback();
+        }
+        if self.last_devices_at.elapsed() >= Duration::from_secs(30) {
+            self.refresh_devices();
+        }
+    }
+
+    fn refresh_me(&mut self) {
+        if self.profile_inflight {
+            return;
+        }
+        self.profile_inflight = true;
+        let api = Arc::clone(&self.api);
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(async move {
+            let msg = match api.me().await {
+                Ok(user) => Internal::ProfileOk(user),
+                Err(ApiError::RateLimited | ApiError::QuotaExhausted) => {
+                    tracing::warn!("profile fetch delayed; keeping the saved session");
+                    Internal::ProfileSkipped
+                }
+                Err(ApiError::NotSignedIn | ApiError::SignInExpired { .. }) => {
+                    bridge::emit(Event::Auth(AuthStatus::Failed(
+                        "Spotify sign-in expired. Sign in again.".into(),
+                    )));
+                    Internal::ProfileFailed
+                }
+                Err(error) => {
+                    tracing::debug!("profile: {error}");
+                    Internal::ProfileSkipped
+                }
+            };
+            let _ = int_tx.send(msg);
+        });
+    }
+
+    fn on_profile(&mut self, user: User) {
+        self.profile_inflight = false;
+        self.profile_retry_at = None;
+        let premium = user.product.as_deref().map(|p| p == "premium");
+        self.user = Some(user.clone());
+        self.premium = premium;
+        if premium == Some(false)
+            && let Some(engine) = self.engine.take()
+        {
+            engine.shutdown();
+            bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(
+                PREMIUM_NEEDED.into(),
+            )));
+        }
+        bridge::emit(Event::User(user.clone()));
+        bridge::emit(Event::Premium(premium));
+        bridge::emit(Event::Auth(AuthStatus::Connected {
+            username: user.name().to_string(),
+        }));
+    }
+
+    fn on_profile_skipped(&mut self) {
+        self.profile_inflight = false;
+        self.profile_retry_at = Some(Instant::now() + Duration::from_secs(300));
+        if !matches!(self.user, Some(_)) {
+            bridge::emit(Event::Auth(AuthStatus::Connected {
+                username: "Spotify".into(),
+            }));
+        }
+    }
+
+    fn arm_resume(&mut self, spec: LoadSpec, delay: Duration) {
+        self.resume_verify = Some((spec, 0));
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = int_tx.send(Internal::VerifyResume);
+        });
+    }
+
+    fn verify_resume(&mut self) {
+        let Some((spec, attempts)) = self.resume_verify.take() else {
+            return;
+        };
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        let waiting = self
+            .hold
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .want
+            .is_some();
+        let going = matches!(
+            self.last_playback,
+            Playback::Playing | Playback::Loading | Playback::Paused
+        ) || engine.interrupted().is_some();
+        // A click sets `want` until that URI is Playing. Stale Playing events
+        // from the previous track must not count as success.
+        if !waiting && going {
+            return;
+        }
+        if attempts >= 3 {
+            tracing::warn!("gave up starting playback after {attempts} tries");
+            return;
+        }
+        tracing::info!(
+            try_n = attempts + 1,
+            "playback did not start; loading again"
+        );
+        if let Err(error) = engine.command(PlayerCommand::Load(spec.clone())) {
+            tracing::warn!("unable to start playback: {error}");
+        }
+        self.resume_verify = Some((spec, attempts + 1));
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            let _ = int_tx.send(Internal::VerifyResume);
+        });
     }
 
     async fn media(&mut self, command: MediaCommand) {
@@ -1710,6 +1963,7 @@ impl Worker {
             self.last_engine_uri = Some(uri.clone());
         }
         self.last_playback = state.playback;
+        self.now = now_playing_from_local(&state);
         if was_going && now_stopped {
             if let Some(uri) = uri {
                 let generation = self.advance_gen.wrapping_add(1);
@@ -1783,7 +2037,9 @@ impl Worker {
         };
         self.hold_play(&request);
         if let Some(engine) = &self.engine {
-            let _ = engine.command(PlayerCommand::Load(load_spec(&request)));
+            let spec = load_spec(&request);
+            let _ = engine.command(PlayerCommand::Load(spec.clone()));
+            self.arm_resume(spec, Duration::from_millis(2_000));
         }
     }
 
@@ -1915,31 +2171,47 @@ fn friendly_player_error(error: &ApiError) -> String {
     }
 }
 
-fn apply_local_state(state: LocalState) {
+fn profile_poll_due(
+    has_user: bool,
+    inflight: bool,
+    retry_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    !has_user && !inflight && retry_at.is_none_or(|at| now >= at)
+}
+
+fn now_playing_from_local(state: &LocalState) -> NowPlaying {
     let volume_percent = ((state.volume as u32) * 100 / 65535) as u8;
-    let (title, artists, album, uri, art_url, duration_ms) = match &state.track {
-        Some(track) => (
-            track.title.clone(),
-            track.artist_names(),
-            track.album.clone(),
-            track.uri.clone(),
-            track.art_url.clone().or(track.art_small_url.clone()),
-            track.duration_ms,
-        ),
-        None => (
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            None,
-            0,
-        ),
-    };
-    bridge::emit(Event::NowPlaying(NowPlaying {
+    let (title, artists, album, artist_links, album_id, uri, art_url, duration_ms) =
+        match &state.track {
+            Some(track) => (
+                track.title.clone(),
+                track.artist_names(),
+                track.album.clone(),
+                track.artist_links.clone(),
+                track.album_id.clone(),
+                track.uri.clone(),
+                track.art_url.clone().or(track.art_small_url.clone()),
+                track.duration_ms,
+            ),
+            None => (
+                String::new(),
+                String::new(),
+                String::new(),
+                Vec::new(),
+                None,
+                String::new(),
+                None,
+                0,
+            ),
+        };
+    NowPlaying {
         playback: state.playback,
         title,
         artists,
         album,
+        artist_links,
+        album_id,
         uri,
         art_url,
         duration_ms,
@@ -1951,7 +2223,11 @@ fn apply_local_state(state: LocalState) {
         device_id: None,
         is_local: true,
         saved: None,
-    }));
+    }
+}
+
+fn apply_local_state(state: LocalState) {
+    bridge::emit(Event::NowPlaying(now_playing_from_local(&state)));
     if let Some(error) = state.error {
         bridge::emit(Event::Error(error));
     }
@@ -1959,6 +2235,23 @@ fn apply_local_state(state: LocalState) {
 
 fn now_from_remote(state: &PlaybackState) -> NowPlaying {
     let item = state.item.as_ref();
+    let (album, artist_links, album_id) = match item {
+        Some(PlayableItem::Track(track)) => (
+            track
+                .album
+                .as_ref()
+                .map(|a| a.name.clone())
+                .unwrap_or_default(),
+            track.artist_links(),
+            track.album_catalog_id().map(str::to_string),
+        ),
+        Some(PlayableItem::Episode(ep)) => (
+            ep.show.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
+            Vec::new(),
+            None,
+        ),
+        None => (String::new(), Vec::new(), None),
+    };
     NowPlaying {
         playback: if state.is_playing {
             Playback::Playing
@@ -1969,17 +2262,9 @@ fn now_from_remote(state: &PlaybackState) -> NowPlaying {
         },
         title: item.map(|i| i.name().to_string()).unwrap_or_default(),
         artists: item.map(|i| i.subtitle()).unwrap_or_default(),
-        album: match item {
-            Some(PlayableItem::Track(track)) => track
-                .album
-                .as_ref()
-                .map(|a| a.name.clone())
-                .unwrap_or_default(),
-            Some(PlayableItem::Episode(ep)) => {
-                ep.show.as_ref().map(|s| s.name.clone()).unwrap_or_default()
-            }
-            None => String::new(),
-        },
+        album,
+        artist_links,
+        album_id,
         uri: item.map(|i| i.uri().to_string()).unwrap_or_default(),
         art_url: item.and_then(|i| i.image(300)).map(str::to_string),
         duration_ms: item.map(|i| i.duration_ms()).unwrap_or(0),
@@ -2083,5 +2368,46 @@ mod tests {
             &h,
             &state("spotify:track:b", Playback::Playing)
         ));
+    }
+
+    #[test]
+    fn profile_poll_stops_once_we_have_a_user_or_are_backing_off() {
+        let now = Instant::now();
+        assert!(profile_poll_due(false, false, None, now));
+        assert!(!profile_poll_due(true, false, None, now));
+        assert!(!profile_poll_due(false, true, None, now));
+        assert!(!profile_poll_due(
+            false,
+            false,
+            Some(now + Duration::from_secs(60)),
+            now
+        ));
+        assert!(profile_poll_due(
+            false,
+            false,
+            Some(now - Duration::from_secs(1)),
+            now
+        ));
+    }
+
+    #[test]
+    fn now_playing_from_local_copies_the_engine_track() {
+        let now = now_playing_from_local(&state("spotify:track:a", Playback::Playing));
+        assert_eq!(now.uri, "spotify:track:a");
+        assert_eq!(now.playback, Playback::Playing);
+        assert!(now.is_local);
+    }
+
+    #[test]
+    fn album_page_cache_without_album_field_still_decodes() {
+        let json = r#"{"Tracks":{"title":"P","subtitle":"s","items":[],"total":0,"offset":0}}"#;
+        let body: PageBody = serde_json::from_str(json).unwrap();
+        match body {
+            PageBody::Tracks { album, title, .. } => {
+                assert!(album.is_none());
+                assert_eq!(title, "P");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

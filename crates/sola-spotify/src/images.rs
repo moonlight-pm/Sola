@@ -12,7 +12,10 @@ const MAX_ART_BYTES: usize = 8 * 1024 * 1024;
 
 enum Entry {
     Pending,
-    Ready { bytes: Arc<[u8]>, last_used: Instant },
+    Ready {
+        bytes: Arc<[u8]>,
+        last_used: Instant,
+    },
     Failed(String),
 }
 
@@ -82,12 +85,7 @@ impl Inner {
             return self.store(url, bytes.into());
         }
 
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        let response = self.http.get(url).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             let err = format!("art HTTP {}", response.status());
             self.fail(url, err.clone());
