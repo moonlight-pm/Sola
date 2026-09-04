@@ -100,7 +100,10 @@ fn sticky_emit_loops_back_to_sender() {
             }
         }
     }
-    assert!(got_theme, "sender should receive its own sticky/persistent emission");
+    assert!(
+        got_theme,
+        "sender should receive its own sticky/persistent emission"
+    );
 
     let _ = bus.kill();
 }

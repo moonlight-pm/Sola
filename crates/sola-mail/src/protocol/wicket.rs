@@ -5,6 +5,10 @@ use tracing::warn;
 
 /// GET `https://{host}/api/auth/me` with Basic auth.
 /// Returns emails array, or empty vec on any failure.
+///
+/// Compose From is settings-only now; this stays for a later picker of
+/// discovered aliases.
+#[allow(dead_code)]
 pub fn fetch_from_addresses(host: &str, username: &str, password: &str) -> Vec<String> {
     let url = format!("https://{host}/api/auth/me");
     let credentials = STANDARD.encode(format!("{username}:{password}"));

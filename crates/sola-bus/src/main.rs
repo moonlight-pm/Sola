@@ -323,17 +323,14 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
 fn retract_persistent(state_path: &Path, kind: TopicKind, event: &sola_bus::Message) {
     if let Some(template) = kind.namespace() {
         let cfg = sola_core::config::sola_config_dir();
-        let resolved = match sola_bus::topic::interpolate_namespace(
-            template,
-            kind.key_names(),
-            &event.keys,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(topic = kind.as_str(), %e, "namespaced retract path failed");
-                return;
-            }
-        };
+        let resolved =
+            match sola_bus::topic::interpolate_namespace(template, kind.key_names(), &event.keys) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(topic = kind.as_str(), %e, "namespaced retract path failed");
+                    return;
+                }
+            };
         let path = cfg.join(format!("{resolved}.yaml"));
         if let Err(e) = state::retract_namespaced(&path) {
             warn!(topic = kind.as_str(), path = %path.display(), %e, "namespaced retract failed");

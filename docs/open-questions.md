@@ -94,6 +94,9 @@ Claude hook policy.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-09-04 | mail From allowlist | Compose From is Settings-chosen identities. Inbox Send from is the Wicket `/api/auth/me` checklist (A–Z, no catch-alls). Extra SMTP accounts still type aliases. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
+| 2026-09-04 | mail multi-IMAP | Every `imap_enabled` account is connected. Sidebar is six canonical boxes combined. Moves/undo stay on that message’s account. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
+| 2026-09-03 | mail identities | One IMAP inbox. Extra accounts are SMTP send identities (forwarded Gmail, etc.). Inbox aliases are extra From addresses. `primary_from` is the default. Reply matches original To/Cc. Extra IMAP listed 2026-09-04. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-01 | cargo make | `build` / `install` default to **release**. `--debug` for unoptimized. `--release` still accepted. | sola-make, AGENTS, CONTRIBUTING, CURRENT locks |
 | 2026-09-01 | Screenshots | Super+Shift+3/4/5 copy Fastest PNG to the compositor clipboard (promised offer). No auto file / Preview. `solactl` still writes a path. | [image clipboard](specs/2026-09-01-image-clipboard-design.md), CURRENT, capabilities, manual/sola-shell |
 | 2026-09-01 | Browser tab favicons | Tab strip shows a reserved 16px leading favicon (CEF `on_favicon_urlchange` + `download_image`). Globe while a http(s) page has no icon yet; empty slot on blank. No domain-name prefix. | CURRENT, capabilities, architecture, manual/sola-browser |
