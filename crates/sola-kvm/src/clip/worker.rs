@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::platform;
+use super::platform::LocalClip;
 use super::proto::{
-    hash_text, read_message, write_message, AckStatus, Message, Role,
+    AckStatus, MIME_PNG, MIME_TEXT_UTF8, Message, Role, hash_text, read_message, write_message,
 };
 
 /// Work enqueued from the input / enter-leave path (never blocks long).
@@ -36,6 +37,11 @@ impl ClipHandle {
     pub fn push_to_mac(&self) {
         self.notify(ClipJob::PushToMac);
     }
+
+    /// Linux client Leave: push local clipboard to the server.
+    pub fn push_to_peer(&self) {
+        self.notify(ClipJob::PushToMac);
+    }
 }
 
 /// No-op handle when clipboard is disabled.
@@ -44,9 +50,7 @@ pub fn disabled_handle() -> ClipHandle {
     // Drain forever in a tiny thread so send never blocks on a full buffer.
     thread::Builder::new()
         .name("kvm-clip-disabled".into())
-        .spawn(move || {
-            while rx.recv().is_ok() {}
-        })
+        .spawn(move || while rx.recv().is_ok() {})
         .ok();
     ClipHandle { tx }
 }
@@ -68,6 +72,21 @@ pub fn spawn(cfg: ClipConfig) -> ClipHandle {
         .spawn(move || worker_main(cfg, rx))
         .expect("spawn kvm-clip");
     ClipHandle { tx }
+}
+
+/// TCP listen on the same bind as UDP (Linux client / ember role).
+pub fn spawn_listen(bind: &str, cfg: ClipConfig) -> std::io::Result<ClipHandle> {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind(bind)?;
+    listener.set_nonblocking(true)?;
+    let local = listener.local_addr().ok();
+    info!(?local, "clipboard TCP listening (same port as UDP)");
+    let (tx, rx) = mpsc::channel::<ClipJob>();
+    thread::Builder::new()
+        .name("kvm-clip-listen".into())
+        .spawn(move || listen_main(listener, cfg, rx))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    Ok(ClipHandle { tx })
 }
 
 struct Cache {
@@ -121,12 +140,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
                 last_connect_try = Instant::now()
                     .checked_sub(Duration::from_secs(60))
                     .unwrap_or_else(Instant::now);
-                ensure_connected(
-                    &cfg,
-                    &mut stream,
-                    &mut last_connect_try,
-                    &mut out_seq,
-                );
+                ensure_connected(&cfg, &mut stream, &mut last_connect_try, &mut out_seq);
                 if let Some(ref mut s) = stream {
                     if let Err(e) = push_local_to_peer(s, &cfg, &mut cache, &mut out_seq) {
                         if is_soft_timeout(&e) {
@@ -155,12 +169,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
             match jobs.try_recv() {
                 Ok(ClipJob::PushToMac) if cfg.sync_on_enter => {
                     info!("clip job PushToMac (enter, drained)");
-                    ensure_connected(
-                        &cfg,
-                        &mut stream,
-                        &mut last_connect_try,
-                        &mut out_seq,
-                    );
+                    ensure_connected(&cfg, &mut stream, &mut last_connect_try, &mut out_seq);
                     if let Some(ref mut s) = stream {
                         if let Err(e) = push_local_to_peer(s, &cfg, &mut cache, &mut out_seq) {
                             if is_soft_timeout(&e) {
@@ -185,24 +194,21 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
             s.set_nonblocking(false).ok();
             s.set_read_timeout(Some(Duration::from_millis(1))).ok();
             match read_message(s, cfg.max_bytes) {
-                Ok((seq, Message::Offer { hash, text })) => {
+                Ok((seq, Message::Offer { mime, hash, body })) => {
                     info!(
                         seq,
                         hash,
-                        bytes = text.len(),
-                        "clip inbound Offer from ember"
+                        mime,
+                        bytes = body.len(),
+                        "clip inbound Offer from peer"
                     );
-                    let ok = apply_inbound(&text, hash, &mut cache);
+                    let ok = apply_inbound(mime, hash, &body, &mut cache);
                     if let Err(e) = write_message(
                         s,
                         out_seq,
                         &Message::Ack {
                             of_seq: seq,
-                            status: if ok {
-                                AckStatus::Ok
-                            } else {
-                                AckStatus::Reject
-                            },
+                            status: if ok { AckStatus::Ok } else { AckStatus::Reject },
                         },
                     ) {
                         warn!(%e, "clip Ack write to ember failed");
@@ -224,11 +230,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
                         out_seq,
                         &Message::Ack {
                             of_seq: seq,
-                            status: if ok {
-                                AckStatus::Ok
-                            } else {
-                                AckStatus::Reject
-                            },
+                            status: if ok { AckStatus::Ok } else { AckStatus::Reject },
                         },
                     ) {
                         warn!(%e, "clip Empty Ack write failed");
@@ -261,12 +263,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
             }
         } else if last_connect_try.elapsed() > Duration::from_secs(2) {
             // Opportunistic connect so Leave offers can arrive once linked.
-            ensure_connected(
-                &cfg,
-                &mut stream,
-                &mut last_connect_try,
-                &mut out_seq,
-            );
+            ensure_connected(&cfg, &mut stream, &mut last_connect_try, &mut out_seq);
         }
     }
 }
@@ -302,13 +299,7 @@ fn ensure_connected(
         Ok(mut s) => {
             s.set_nodelay(true).ok();
             s.set_nonblocking(false).ok();
-            if let Err(e) = write_message(
-                &mut s,
-                *out_seq,
-                &Message::Hello {
-                    role: Role::Novus,
-                },
-            ) {
+            if let Err(e) = write_message(&mut s, *out_seq, &Message::Hello { role: Role::Novus }) {
                 warn!(%e, "clip hello send failed");
                 return;
             }
@@ -344,23 +335,24 @@ fn push_local_to_peer(
     cache: &mut Cache,
     out_seq: &mut u32,
 ) -> std::io::Result<()> {
-    let text = platform::read_text().unwrap_or_default();
+    let local = platform::read_local();
     info!(
-        bytes = text.len(),
-        empty = text.is_empty(),
-        "clip PushToMac read local"
+        bytes = local.len(),
+        empty = local.is_empty(),
+        mime = local.mime(),
+        "clip push read local"
     );
-    if text.len() as u32 > cfg.max_bytes {
+    if local.len() as u32 > cfg.max_bytes {
         warn!(
-            bytes = text.len(),
+            bytes = local.len(),
             max = cfg.max_bytes,
             "clip local too large; skip push"
         );
         return Ok(());
     }
-    if text.is_empty() {
+    if local.is_empty() {
         if cache.last_sent.is_none() && cache.last_recv.is_none() {
-            info!("clip skip empty → ember (nothing ever sent)");
+            info!("clip skip empty → peer (nothing ever sent)");
             return Ok(());
         }
         let seq = *out_seq;
@@ -371,28 +363,31 @@ fn push_local_to_peer(
         let _ = read_message(s, cfg.max_bytes);
         s.set_read_timeout(Some(Duration::from_millis(1))).ok();
         cache.last_sent = Some(hash_text(""));
-        info!("clip Empty → ember");
+        info!("clip Empty → peer");
         return Ok(());
     }
-    let hash = hash_text(&text);
+    let hash = local.hash();
     if cache.should_skip_send(hash) {
         info!(
             hash,
             last_sent = ?cache.last_sent,
             last_recv = ?cache.last_recv,
-            "clip skip unchanged → ember"
+            "clip skip unchanged → peer"
         );
         return Ok(());
     }
     let seq = *out_seq;
     *out_seq = out_seq.wrapping_add(1);
-    info!(seq, hash, bytes = text.len(), "clip sending Offer → ember");
+    let nbytes = local.len();
+    let mime = local.mime();
+    info!(seq, hash, mime, bytes = nbytes, "clip sending Offer → peer");
     write_message(
         s,
         seq,
         &Message::Offer {
+            mime: local.mime(),
             hash,
-            text: text.clone(),
+            body: local.body().to_vec(),
         },
     )?;
     s.set_nonblocking(false).ok();
@@ -402,33 +397,43 @@ fn push_local_to_peer(
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match read_message(s, cfg.max_bytes) {
-            Ok((_, Message::Ack { status: AckStatus::Ok, .. })) => {
+            Ok((
+                _,
+                Message::Ack {
+                    status: AckStatus::Ok,
+                    ..
+                },
+            )) => {
                 cache.last_sent = Some(hash);
-                info!(hash, bytes = text.len(), "clip Offer → ember ok");
+                info!(hash, bytes = nbytes, "clip Offer → peer ok");
                 break;
             }
             Ok((_, Message::Ack { status, .. })) => {
                 warn!(?status, "clip Offer ack not ok");
                 break;
             }
-            Ok((iseq, Message::Offer { hash: ih, text: itext })) => {
+            Ok((
+                iseq,
+                Message::Offer {
+                    mime: imime,
+                    hash: ih,
+                    body,
+                },
+            )) => {
                 info!(
                     iseq,
                     hash = ih,
-                    bytes = itext.len(),
+                    mime = imime,
+                    bytes = body.len(),
                     "clip inbound Offer while awaiting Ack — apply now"
                 );
-                let ok = apply_inbound(&itext, ih, cache);
+                let ok = apply_inbound(imime, ih, &body, cache);
                 let _ = write_message(
                     s,
                     *out_seq,
                     &Message::Ack {
                         of_seq: iseq,
-                        status: if ok {
-                            AckStatus::Ok
-                        } else {
-                            AckStatus::Reject
-                        },
+                        status: if ok { AckStatus::Ok } else { AckStatus::Reject },
                     },
                 );
                 *out_seq = out_seq.wrapping_add(1);
@@ -459,23 +464,172 @@ fn push_local_to_peer(
     Ok(())
 }
 
-fn apply_inbound(text: &str, hash: u32, cache: &mut Cache) -> bool {
+fn apply_inbound(mime: u8, hash: u32, body: &[u8], cache: &mut Cache) -> bool {
     if cache.last_recv == Some(hash) {
         info!(hash, "clip skip apply (already have)");
         return true;
     }
-    if platform::write_text(text) {
+    let clip = match mime {
+        MIME_PNG => LocalClip::Png(body.to_vec()),
+        MIME_TEXT_UTF8 => match std::str::from_utf8(body) {
+            Ok(s) => LocalClip::Text(s.to_string()),
+            Err(e) => {
+                warn!(%e, "clip inbound text not utf-8");
+                return false;
+            }
+        },
+        other => {
+            warn!(mime = other, "clip inbound unsupported mime — reject");
+            return false;
+        }
+    };
+    if platform::write_local(&clip) {
         cache.last_recv = Some(hash);
-        // Avoid echo on next enter.
         cache.last_sent = Some(hash);
-        info!(hash, bytes = text.len(), "clip applied from ember → novus");
+        info!(hash, mime, bytes = body.len(), "clip applied from peer");
         true
     } else {
         warn!(
             hash,
-            bytes = text.len(),
-            "clip apply from ember FAILED (local write)"
+            mime,
+            bytes = body.len(),
+            "clip apply from peer FAILED"
         );
         false
+    }
+}
+
+fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<ClipJob>) {
+    let mut cache = Cache::new();
+    let mut peer: Option<TcpStream> = None;
+    let mut out_seq: u32 = 1;
+    let mut last_push = Instant::now()
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or_else(Instant::now);
+    let mut pending_push = false;
+
+    loop {
+        match listener.accept() {
+            Ok((mut s, addr)) => {
+                info!(%addr, "clipboard TCP accept");
+                s.set_nodelay(true).ok();
+                s.set_nonblocking(false).ok();
+                s.set_read_timeout(Some(Duration::from_millis(500))).ok();
+                match read_message(&mut s, cfg.max_bytes) {
+                    Ok((_, Message::Hello { role })) => {
+                        info!(?role, "clip hello from novus");
+                    }
+                    Ok(other) => info!(?other, "clip first msg (not hello)"),
+                    Err(e) => warn!(%e, "clip hello wait failed"),
+                }
+                let seq = out_seq;
+                out_seq = out_seq.wrapping_add(1);
+                if let Err(e) = write_message(&mut s, seq, &Message::Hello { role: Role::Ember }) {
+                    warn!(%e, "clip hello reply failed");
+                } else {
+                    s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+                    peer = Some(s);
+                    info!("clip peer ready (duplex)");
+                    if pending_push {
+                        pending_push = false;
+                        last_push = Instant::now();
+                        if let Some(ref mut s) = peer {
+                            if let Err(e) = push_local_to_peer(s, &cfg, &mut cache, &mut out_seq) {
+                                if !is_soft_timeout(&e) {
+                                    peer = None;
+                                    pending_push = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+            Err(e) => {
+                warn!(%e, "clip accept error");
+                thread::sleep(Duration::from_millis(200));
+            }
+        }
+
+        match jobs.recv_timeout(Duration::from_millis(100)) {
+            Ok(ClipJob::PushToMac) => {
+                if last_push.elapsed() < Duration::from_millis(400) {
+                    debug!("clip Leave push debounced");
+                } else if let Some(ref mut s) = peer {
+                    info!("clip job push (leave)");
+                    last_push = Instant::now();
+                    match push_local_to_peer(s, &cfg, &mut cache, &mut out_seq) {
+                        Ok(()) => pending_push = false,
+                        Err(e) if is_soft_timeout(&e) => {
+                            warn!(%e, "clip leave push Ack soft-timeout — keeping peer");
+                        }
+                        Err(e) => {
+                            warn!(%e, "clip leave push failed");
+                            peer = None;
+                            pending_push = true;
+                        }
+                    }
+                } else {
+                    pending_push = true;
+                    warn!("clip leave push deferred — no TCP peer");
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+        while matches!(jobs.try_recv(), Ok(_)) {}
+
+        if let Some(ref mut s) = peer {
+            s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+            match read_message(s, cfg.max_bytes) {
+                Ok((seq, Message::Offer { mime, hash, body })) => {
+                    info!(seq, hash, mime, bytes = body.len(), "clip inbound Offer");
+                    let ok = apply_inbound(mime, hash, &body, &mut cache);
+                    let aseq = out_seq;
+                    out_seq = out_seq.wrapping_add(1);
+                    if let Err(e) = write_message(
+                        s,
+                        aseq,
+                        &Message::Ack {
+                            of_seq: seq,
+                            status: if ok { AckStatus::Ok } else { AckStatus::Reject },
+                        },
+                    ) {
+                        warn!(%e, "clip Ack write failed");
+                        peer = None;
+                    }
+                }
+                Ok((seq, Message::Empty)) => {
+                    let _ = platform::clear();
+                    cache.last_recv = Some(hash_text(""));
+                    cache.last_sent = Some(hash_text(""));
+                    info!(seq, "clip cleared from Empty");
+                    let aseq = out_seq;
+                    out_seq = out_seq.wrapping_add(1);
+                    if write_message(
+                        s,
+                        aseq,
+                        &Message::Ack {
+                            of_seq: seq,
+                            status: AckStatus::Ok,
+                        },
+                    )
+                    .is_err()
+                    {
+                        peer = None;
+                    }
+                }
+                Ok((_, Message::Hello { .. })) | Ok((_, Message::Ack { .. })) => {}
+                Err(e) if is_soft_timeout(&e) => {}
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                    info!("clip peer closed");
+                    peer = None;
+                }
+                Err(e) => {
+                    warn!(%e, "clip read error");
+                    peer = None;
+                }
+            }
+        }
     }
 }

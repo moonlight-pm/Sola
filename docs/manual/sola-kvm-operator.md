@@ -44,6 +44,7 @@ Key fields:
 | `[layout]` | `side` (`right`/`left`/`top`/`bottom`), `align`, `mac_width`, `mac_height` (peer output size; names are historical) |
 | `[motion]` | `scale` — multiplies relative deltas while remote |
 | `[primary]` | novus logical size (default `5120×2160`); Phase C does not yet pull bus `OutputGeometry` |
+| `[clipboard]` | `enable` (default true), `max_bytes` (default 8 MiB). Sync on **Enter** (novus → peer) and **Leave** (peer → novus). Text and `image/png` (screenshots / Preview Copy). TCP on the **same port** as UDP. |
 
 Bottoms-aligned Mac to the right of novus (desk default):
 
@@ -158,6 +159,18 @@ Limitations (honest):
   focus + `sola-river` chord disable. Evdev grab bypasses the compositor for
   events but does **not** by itself disable River xkb shell bindings if any
   still fire — prefer testing feed/demo against the Mac agent first.
+
+## Clipboard
+
+TCP on the **same port** as UDP (different protocol). Sync only when the
+pointer **enters** (novus → peer) or **leaves** (peer → novus).
+
+| Payload | Linux ↔ Linux | Mac client |
+|---------|----------------|------------|
+| UTF-8 text | yes | yes |
+| `image/png` | yes (screenshots, Preview Copy) | rejected (pasteboard stays) |
+
+Default cap is 8 MiB. Disable with `[clipboard] enable = false`.
 
 ## Pair with a Linux client
 

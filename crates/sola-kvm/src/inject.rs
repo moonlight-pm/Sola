@@ -30,6 +30,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 };
 use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
+use crate::clip::{self, ClipConfig, ClipHandle};
 use crate::protocol::Packet;
 use crate::udp::{Listener, UdpError};
 
@@ -326,7 +327,12 @@ fn write_memfd(name: &str, bytes: &[u8]) -> Result<File, String> {
 }
 
 /// Bind UDP and inject until the process is killed.
-pub fn run_listen(bind: &str, fallback_w: i32, fallback_h: i32) -> Result<(), String> {
+pub fn run_listen(
+    bind: &str,
+    fallback_w: i32,
+    fallback_h: i32,
+    clip_cfg: Option<ClipConfig>,
+) -> Result<(), String> {
     let listener = Listener::bind(bind).map_err(|e| format!("bind {bind}: {e}"))?;
     listener
         .set_read_timeout(Some(Duration::from_millis(16)))
@@ -335,11 +341,30 @@ pub fn run_listen(bind: &str, fallback_w: i32, fallback_h: i32) -> Result<(), St
     info!(?local, "listening for sola-kvm UDP (linux inject)");
 
     let mut inj = WaylandInjector::connect(fallback_w, fallback_h)?;
+    let clip: Option<ClipHandle> = match clip_cfg {
+        Some(cfg) => match clip::spawn_listen(bind, cfg) {
+            Ok(h) => {
+                info!("clipboard TCP listening (sync on Leave → novus; Enter applies inbound)");
+                Some(h)
+            }
+            Err(e) => {
+                warn!(%e, "clipboard TCP listen failed — clip sync disabled");
+                None
+            }
+        },
+        None => None,
+    };
     loop {
         match listener.recv() {
             Ok((src, seq, packet)) => {
                 debug!(%src, seq, ?packet, "recv");
+                let leave = matches!(packet, Packet::Leave);
                 inj.handle(&packet);
+                if leave {
+                    if let Some(c) = &clip {
+                        c.push_to_peer();
+                    }
+                }
             }
             Err(UdpError::Io(e))
                 if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock =>

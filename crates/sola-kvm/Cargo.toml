@@ -22,6 +22,8 @@ libc = "0.2"
 xkbcommon = "0.8"
 # Wayland/X11 clipboard without requiring wl-clipboard on PATH.
 arboard = "3"
+# In-process data-control (text + image/png). Oath has no wl-copy on PATH.
+wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

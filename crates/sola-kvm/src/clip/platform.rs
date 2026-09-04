@@ -15,12 +15,63 @@ use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+use wl_clipboard_rs::copy::{self, MimeType as CopyMime, Source};
+use wl_clipboard_rs::paste::{
+    self, ClipboardType, Error as PasteError, MimeType as PasteMime, Seat,
+};
+
+use super::proto::{MIME_PNG, MIME_TEXT_UTF8, hash_bytes};
+
+/// What we will put on CLIP1. Prefer PNG when the compositor offers it.
+#[derive(Debug, Clone)]
+pub enum LocalClip {
+    Empty,
+    Text(String),
+    Png(Vec<u8>),
+}
+
+impl LocalClip {
+    pub fn mime(&self) -> u8 {
+        match self {
+            Self::Png(_) => MIME_PNG,
+            _ => MIME_TEXT_UTF8,
+        }
+    }
+
+    pub fn hash(&self) -> u32 {
+        match self {
+            Self::Empty => hash_bytes(b""),
+            Self::Text(s) => hash_bytes(s.as_bytes()),
+            Self::Png(b) => hash_bytes(b),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::Text(s) => s.len(),
+            Self::Png(b) => b.len(),
+        }
+    }
+
+    pub fn body(&self) -> &[u8] {
+        match self {
+            Self::Empty => b"",
+            Self::Text(s) => s.as_bytes(),
+            Self::Png(b) => b,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 static WL_COPY: OnceLock<Option<PathBuf>> = OnceLock::new();
 static WL_PASTE: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -93,7 +144,11 @@ fn preview(s: &str) -> String {
 }
 
 fn resolve_wl(name: &str) -> Option<PathBuf> {
-    let cell = if name == "wl-copy" { &WL_COPY } else { &WL_PASTE };
+    let cell = if name == "wl-copy" {
+        &WL_COPY
+    } else {
+        &WL_PASTE
+    };
     cell.get_or_init(|| find_bin(name)).clone()
 }
 
@@ -274,6 +329,134 @@ fn with_cli_budget<T: Send + 'static>(
     }
 }
 
+/// Read compositor clipboard. Prefers `image/png` (screenshots) then text.
+pub fn read_local() -> LocalClip {
+    if let Some(clip) = with_cli_budget("read_local", read_local_inner) {
+        return clip;
+    }
+    LocalClip::Empty
+}
+
+fn read_local_inner() -> LocalClip {
+    if let Some(clip) = read_via_data_control() {
+        return clip;
+    }
+    match read_text_inner() {
+        Some(s) if !s.is_empty() => LocalClip::Text(s),
+        _ => LocalClip::Empty,
+    }
+}
+
+fn read_via_data_control() -> Option<LocalClip> {
+    let types = paste::get_mime_types(ClipboardType::Regular, Seat::Unspecified).ok()?;
+    let offered: Vec<String> = types.iter().map(|s| s.to_ascii_lowercase()).collect();
+    if offered.iter().any(|m| m == "image/png") {
+        if let Some(bytes) = read_mime_bytes("image/png") {
+            if is_png(&bytes) {
+                info!(bytes = bytes.len(), "clip read image/png via data-control");
+                return Some(LocalClip::Png(bytes));
+            }
+        }
+    }
+    if let Some(bytes) = read_mime_bytes("text/plain;charset=utf-8")
+        .or_else(|| read_mime_bytes("text/plain"))
+        .or_else(|| read_paste_text())
+    {
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        if !s.is_empty() {
+            info!(bytes = s.len(), "clip read text via data-control");
+            return Some(LocalClip::Text(s));
+        }
+    }
+    None
+}
+
+fn read_mime_bytes(mime: &str) -> Option<Vec<u8>> {
+    match paste::get_contents(
+        ClipboardType::Regular,
+        Seat::Unspecified,
+        PasteMime::Specific(mime),
+    ) {
+        Ok((mut pipe, _)) => {
+            let mut buf = Vec::new();
+            pipe.read_to_end(&mut buf).ok()?;
+            if buf.is_empty() { None } else { Some(buf) }
+        }
+        Err(PasteError::ClipboardEmpty | PasteError::NoMimeType) => None,
+        Err(e) => {
+            debug!(%e, mime, "clip data-control read failed");
+            None
+        }
+    }
+}
+
+fn read_paste_text() -> Option<Vec<u8>> {
+    match paste::get_contents(ClipboardType::Regular, Seat::Unspecified, PasteMime::Text) {
+        Ok((mut pipe, _)) => {
+            let mut buf = Vec::new();
+            pipe.read_to_end(&mut buf).ok()?;
+            if buf.is_empty() { None } else { Some(buf) }
+        }
+        Err(_) => None,
+    }
+}
+
+fn is_png(bytes: &[u8]) -> bool {
+    bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+}
+
+/// Write CLIP1 payload onto the compositor clipboard.
+pub fn write_local(clip: &LocalClip) -> bool {
+    match clip {
+        LocalClip::Empty => clear(),
+        LocalClip::Text(s) => write_text(s),
+        LocalClip::Png(b) => write_png(b),
+    }
+}
+
+fn write_png(bytes: &[u8]) -> bool {
+    let bytes = bytes.to_vec();
+    let epoch = WRITE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    with_cli_budget("write_png", move || write_png_inner(&bytes, epoch)).unwrap_or(false)
+}
+
+fn write_png_inner(bytes: &[u8], epoch: u64) -> bool {
+    if WRITE_GEN.load(Ordering::SeqCst) != epoch {
+        return false;
+    }
+    let opts = copy::Options::new();
+    match opts.copy(
+        Source::Bytes(bytes.to_vec().into_boxed_slice()),
+        CopyMime::Specific("image/png".into()),
+    ) {
+        Ok(()) => {
+            info!(bytes = bytes.len(), "clip write image/png via data-control");
+            true
+        }
+        Err(e) => {
+            warn!(%e, bytes = bytes.len(), "clip write image/png failed");
+            false
+        }
+    }
+}
+
+fn write_text_data_control(text: &str) -> bool {
+    let opts = copy::Options::new();
+    match opts.copy(
+        Source::Bytes(text.as_bytes().to_vec().into_boxed_slice()),
+        CopyMime::Text,
+    ) {
+        Ok(()) => {
+            info!(bytes = text.len(), "clip write text via data-control");
+            true
+        }
+        Err(e) => {
+            debug!(%e, "clip data-control text write failed");
+            false
+        }
+    }
+}
+
 /// Read clipboard as UTF-8 text. `None` if empty or unavailable.
 pub fn read_text() -> Option<String> {
     if let Some(Some(s)) = with_cli_budget("read_text", read_text_inner) {
@@ -324,6 +507,9 @@ pub fn write_text(text: &str) -> bool {
 }
 
 fn write_text_inner(text: &str, epoch: u64) -> bool {
+    if write_text_data_control(text) {
+        return true;
+    }
     if write_text_cli(text, epoch) {
         return true;
     }

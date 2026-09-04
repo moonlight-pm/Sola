@@ -1,9 +1,10 @@
 # sola-kvm clipboard — Design
 
 **Date:** 2026-07-30  
-**Status:** Implemented (v1 text, Enter/Leave, hash cache)
+**Status:** Implemented (text + `image/png`, Enter/Leave, hash cache)  
 **Depends on:** `docs/specs/2026-07-27-sola-kvm-design.md` (input path)  
-**Hosts:** novus (Linux / sola-kvm server) ↔ ember (macOS / sola-kvm-mac)
+**Hosts:** novus (Linux server) ↔ Linux `sola-kvm listen` or ember (`sola-kvm-mac`)  
+**Gaps:** Mac client still text-only (PNG Offer is Ack-rejected); no JPEG/other image MIMEs on the wire; no CLIP1 on dump-only listen
 
 ## 1. Goal
 
@@ -120,7 +121,9 @@ TCP stream, little-endian, length-prefixed messages (not UDP datagrams).
 | 4 | `Ack` | `seq: u32` of the Offer/Empty being acked, `status: u8` (0=ok, 1=too large, 2=reject) |
 | 5 | `Ping` / `Pong` | optional keepalive if TCP goes idle for hours |
 
-**mime v1:** only `1 = text/plain;charset=utf-8`.
+**mime:** `1 = text/plain;charset=utf-8`, `2 = image/png`. Unknown mime is
+decoded then Ack-rejected so TCP stays up. Prefer PNG when the compositor
+offers both (same rule as kit image clipboard).
 
 **Cap:** if `len > max_bytes`, sender must not send; receiver rejects with
 `Ack status=too large` and does not write clipboard.
@@ -273,5 +276,6 @@ mirror like today’s `protocol.rs`).
 2. **Separate worker thread** for all clip work on both hosts.  
 3. **Sync only on seat move** (Enter / Leave), not continuous watch.  
 4. **Hash cache** — do not send if content unchanged / already known.  
-5. **UTF-8 text only** in v1.  
+5. **UTF-8 text and `image/png`.** Other image MIMEs stay local. Mac
+   client applies text only.  
 6. **Never block** the input/grab path on clipboard I/O.

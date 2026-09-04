@@ -6,5 +6,5 @@ mod platform;
 mod proto;
 mod worker;
 
-pub use proto::{hash_text, Message, Role, MAGIC, VERSION};
-pub use worker::{disabled_handle, spawn, ClipConfig, ClipHandle, ClipJob};
+pub use proto::{MAGIC, Message, Role, VERSION, hash_text};
+pub use worker::{ClipConfig, ClipHandle, ClipJob, disabled_handle, spawn, spawn_listen};

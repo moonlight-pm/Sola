@@ -134,7 +134,8 @@ impl Default for Primary {
 #[serde(default)]
 pub struct Clipboard {
     pub enable: bool,
-    /// Max UTF-8 bytes per Offer (default 1 MiB).
+    /// Max bytes per Offer (text or PNG). Default 8 MiB so a 5K Fastest
+    /// screenshot can cross; kit's image clipboard cap is 32 MiB.
     pub max_bytes: u32,
     pub sync_on_enter: bool,
     pub sync_on_leave: bool,
@@ -144,7 +145,7 @@ impl Default for Clipboard {
     fn default() -> Self {
         Self {
             enable: true,
-            max_bytes: 1_048_576,
+            max_bytes: 8 * 1024 * 1024,
             sync_on_enter: true,
             sync_on_leave: true,
         }

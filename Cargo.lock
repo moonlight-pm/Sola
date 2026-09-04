@@ -9186,6 +9186,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
+ "wl-clipboard-rs",
  "xkbcommon",
 ]
 

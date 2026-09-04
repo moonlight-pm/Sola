@@ -197,7 +197,18 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let result = if dump {
         sola_kvm::inject::run_dump(&addr)
     } else {
-        sola_kvm::inject::run_listen(&addr, cfg.layout.mac_width, cfg.layout.mac_height)
+        let clip = if cfg.clipboard.enable {
+            Some(sola_kvm::clip::ClipConfig {
+                peer_host: cfg.peer.host.clone(),
+                peer_port: cfg.peer.port,
+                max_bytes: cfg.clipboard.max_bytes,
+                sync_on_enter: cfg.clipboard.sync_on_enter,
+                sync_on_leave: cfg.clipboard.sync_on_leave,
+            })
+        } else {
+            None
+        };
+        sola_kvm::inject::run_listen(&addr, cfg.layout.mac_width, cfg.layout.mac_height, clip)
     };
     if let Err(e) = result {
         error!("{e}");
