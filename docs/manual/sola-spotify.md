@@ -2,7 +2,7 @@
 
 Kit-native Spotify client. Browse the library, search, control Spotify Connect devices, and (with Premium) play on this computer through librespot.
 
-**Partial.** **Installed** `spotify` (release, 2026-09-03). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
+**Partial.** **Installed** `spotify` (release, 2026-09-04). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
 
 ## Requirements
 
@@ -27,6 +27,14 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
 - Click a row or **Play** on a playlist/album to start it. With no other
   speaker on, that **sets up this computer** (a second browser approval,
   once per machine) and plays here. Premium required for local audio.
+- Artist and album names on a track (list, queue, player bar) open
+  those pages. Each credited artist is its own link; hover underlines.
+  Click the player-bar cover to open the album. Local files have no
+  catalog page.
+- Album pages have **Play**, **Save**, and **Follow** (primary artist).
+  Artist pages have **Follow**. Save puts the album on the Albums tab;
+  Follow puts the artist on the Artists tab. **Saved** / **Following**
+  toggles them off.
 - A **cyan circled +** means the track is in Liked Songs (same library as
   the official app). Click it to like or unlike. **−** hides a
   row from autoplay: struck title, dim cover, muted meta — does not
@@ -42,11 +50,12 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   **Back / Forward** (up to 20 back steps, including Search queries).
 - Playlist pages show added dates on the header and on each row.
 - **Albums** and **Artists** are wrapping catalogs (same as Made for you).
-- Bottom bar: now playing on the left, transport in the center. Idle is
-  “Nothing playing” / “Pick a song”; setup copy only if this computer is
-  not connected yet. Play/pause, skip, seek, shuffle, repeat, like,
-  add to playlist, volume, device picker. **This computer** is always the
-  first device. Other Spotify Connect speakers sit under **Other devices**.
+- Bottom bar: now playing on the left (title, then artist · album),
+  transport in the center. Idle is “Nothing playing” / “Pick a song”;
+  setup copy only if this computer is not connected yet. Play/pause,
+  skip, seek, shuffle, repeat, like, add to playlist, volume, device
+  picker. **This computer** is always the first device. Other Spotify
+  Connect speakers sit under **Other devices**.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
 - **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
 
@@ -66,5 +75,6 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
   list-plus picker.
 - No podcasts UI, lyrics, Winamp skin, MilkDrop, or equalizer (Fastpotify has those).
 - No tray / close-to-background; quit from the menu or ⌘Q.
-- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player).
+- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). A 429 on that app keeps the session signed in; library fetches wait out the cooldown.
+- Album **Follow** is the primary artist only. Local files have no catalog page.
 - Local output uses librespot’s PulseAudio backend first, then rodio/ALSA.

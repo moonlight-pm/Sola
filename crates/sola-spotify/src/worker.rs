@@ -147,6 +147,9 @@ pub enum PageBody {
         items: Vec<Track>,
         total: u32,
         offset: u32,
+        /// Set when this collection is an album page (Save / Follow chrome).
+        #[serde(default)]
+        album: Option<Album>,
     },
     Albums {
         items: Vec<Album>,
@@ -173,6 +176,9 @@ pub struct NowPlaying {
     pub title: String,
     pub artists: String,
     pub album: String,
+    /// `(name, catalog id)` for each linked artist on the playing track.
+    pub artist_links: Vec<(String, String)>,
+    pub album_id: Option<String>,
     pub uri: String,
     pub art_url: Option<String>,
     pub duration_ms: u32,
@@ -184,6 +190,12 @@ pub struct NowPlaying {
     pub device_id: Option<String>,
     pub is_local: bool,
     pub saved: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FavoriteKind {
+    Album,
+    Artist,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +219,11 @@ pub enum Cmd {
     FetchArt(String),
     SetSaved {
         uri: String,
+        saved: bool,
+    },
+    SetFavorite {
+        kind: FavoriteKind,
+        id: String,
         saved: bool,
     },
     SetSkipped {
@@ -247,6 +264,11 @@ pub enum Event {
     },
     Saved {
         uri: String,
+        saved: bool,
+    },
+    Favorite {
+        kind: FavoriteKind,
+        id: String,
         saved: bool,
     },
     /// Full Liked Songs snapshot (uris). Replaces the UI's liked set.
@@ -357,6 +379,7 @@ async fn run() {
         last_engine_uri: None,
         now: NowPlaying::default(),
         devices: Vec::new(),
+        last_devices_at: Instant::now(),
         page: Page::Home,
         page_offset: 0,
         page_total: 0,
@@ -431,6 +454,7 @@ struct Worker {
     last_engine_uri: Option<String>,
     now: NowPlaying,
     devices: Vec<Device>,
+    last_devices_at: Instant,
     page: Page,
     page_offset: u32,
     page_total: u32,
@@ -488,6 +512,12 @@ impl Worker {
                         username: user.name().to_string(),
                     }));
                 }
+                Err(ApiError::RateLimited) | Err(ApiError::QuotaExhausted) => {
+                    tracing::warn!("profile fetch delayed; keeping the saved session");
+                    bridge::emit(Event::Auth(AuthStatus::Connected {
+                        username: "Spotify".into(),
+                    }));
+                }
                 Err(error) => {
                     bridge::emit(Event::Auth(AuthStatus::Failed(error.to_string())));
                 }
@@ -530,6 +560,7 @@ impl Worker {
             Cmd::LoadMore => self.load_more(),
             Cmd::FetchArt(url) => self.fetch_art(url),
             Cmd::SetSaved { uri, saved } => self.set_saved(uri, saved),
+            Cmd::SetFavorite { kind, id, saved } => self.set_favorite(kind, id, saved),
             Cmd::SetSkipped { uri, skipped } => self.set_skipped(uri, skipped),
             Cmd::AddToPlaylist {
                 playlist_id,
@@ -570,6 +601,7 @@ impl Worker {
                 match (engine, error) {
                     (Some(engine), _) => {
                         let device_id = engine.device_id().to_string();
+                        tracing::info!(device_id = %device_id, "local playback ready");
                         let pending = self.pending_play.take();
                         if let Some(request) = pending {
                             self.hold_play(&request);
@@ -584,6 +616,7 @@ impl Worker {
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Ready { device_id }));
                     }
                     (None, Some(error)) => {
+                        tracing::warn!("local playback failed: {error}");
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(error)));
                     }
                     _ => {
@@ -1126,6 +1159,7 @@ impl Worker {
                             items,
                             total: page.total,
                             offset: page.offset,
+                            album: None,
                         },
                     });
                 }
@@ -1226,6 +1260,7 @@ impl Worker {
                             items,
                             total,
                             offset: page.offset,
+                            album: None,
                         },
                     });
                     Worker::emit_contains(api.clone(), like_uris);
@@ -1278,19 +1313,36 @@ impl Worker {
                         .filter(|t| !t.uri.is_empty())
                         .map(|t| t.uri.clone())
                         .collect();
+                    let mut header = album.clone();
+                    header.tracks = None;
+                    let album_id = header
+                        .catalog_id()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| id.clone());
+                    let artist_id = header
+                        .artists
+                        .iter()
+                        .find_map(|artist| artist.catalog_id().map(str::to_string));
+                    let context_uri = if album.uri.is_empty() {
+                        format!("spotify:album:{id}")
+                    } else {
+                        album.uri.clone()
+                    };
                     bridge::emit(Event::Page {
                         page: Page::Album(id),
                         body: PageBody::Tracks {
                             title: album.name,
                             subtitle: format!("{artists} · {year}"),
                             art,
-                            context_uri: Some(album.uri),
+                            context_uri: Some(context_uri),
                             total: items.len() as u32,
                             offset: 0,
                             items,
+                            album: Some(header),
                         },
                     });
-                    Worker::emit_contains(api, like_uris);
+                    Worker::emit_contains(api.clone(), like_uris);
+                    Worker::emit_library_state(api, Some(album_id), artist_id);
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
@@ -1319,6 +1371,11 @@ impl Worker {
                 .filter(|t| !t.uri.is_empty())
                 .map(|t| t.uri.clone())
                 .collect();
+            let artist_id = if artist.id.is_empty() {
+                id.clone()
+            } else {
+                artist.id.clone()
+            };
             bridge::emit(Event::Page {
                 page: Page::Artist(id),
                 body: PageBody::Artist {
@@ -1327,7 +1384,8 @@ impl Worker {
                     albums,
                 },
             });
-            Worker::emit_contains(api, like_uris);
+            Worker::emit_contains(api.clone(), like_uris);
+            Worker::emit_library_state(api, None, Some(artist_id));
         });
     }
 
@@ -1433,6 +1491,52 @@ impl Worker {
         });
     }
 
+    fn set_favorite(&self, kind: FavoriteKind, id: String, saved: bool) {
+        if id.is_empty() {
+            return;
+        }
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            let result = match kind {
+                FavoriteKind::Album => api.set_saved_album(&id, saved).await,
+                FavoriteKind::Artist => api.set_followed_artist(&id, saved).await,
+            };
+            match result {
+                Ok(()) => bridge::emit(Event::Favorite { kind, id, saved }),
+                Err(error) => bridge::emit(Event::Error(error.to_string())),
+            }
+        });
+    }
+
+    fn emit_library_state(
+        api: Arc<ApiClient>,
+        album_id: Option<String>,
+        artist_id: Option<String>,
+    ) {
+        tokio::spawn(async move {
+            if let Some(id) = album_id {
+                match api.album_is_saved(&id).await {
+                    Ok(saved) => bridge::emit(Event::Favorite {
+                        kind: FavoriteKind::Album,
+                        id,
+                        saved,
+                    }),
+                    Err(error) => tracing::debug!("album contains: {error}"),
+                }
+            }
+            if let Some(id) = artist_id {
+                match api.artist_is_followed(&id).await {
+                    Ok(saved) => bridge::emit(Event::Favorite {
+                        kind: FavoriteKind::Artist,
+                        id,
+                        saved,
+                    }),
+                    Err(error) => tracing::debug!("artist contains: {error}"),
+                }
+            }
+        });
+    }
+
     fn set_saved(&mut self, uri: String, saved: bool) {
         self.liked.set(uri.clone(), saved);
         self.liked.save(&self.dirs);
@@ -1458,6 +1562,9 @@ impl Worker {
             let mut uris = Vec::new();
             let mut offset = 0_u32;
             loop {
+                if api.cooling_down().await {
+                    break;
+                }
                 match api.saved_tracks(offset, PAGE_SIZE).await {
                     Ok(page) => {
                         if page.items.is_empty() {
@@ -1513,12 +1620,13 @@ impl Worker {
         });
     }
 
-    fn refresh_devices(&self) {
+    fn refresh_devices(&mut self) {
+        self.last_devices_at = Instant::now();
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             match api.devices().await {
                 Ok(devices) => bridge::emit(Event::Devices(devices)),
-                Err(ApiError::NotSignedIn) => {}
+                Err(ApiError::NotSignedIn | ApiError::RateLimited) => {}
                 Err(error) => tracing::debug!("devices: {error}"),
             }
         });
@@ -1557,8 +1665,36 @@ impl Worker {
         if !self.signed_in {
             return;
         }
-        self.refresh_playback();
-        self.refresh_devices();
+        if self.api.cooling_down().await {
+            return;
+        }
+        if self.user.is_none() {
+            self.refresh_me();
+        }
+        if self.engine.is_none() && !self.engine_busy {
+            self.refresh_playback();
+        }
+        if self.last_devices_at.elapsed() >= Duration::from_secs(30) {
+            self.refresh_devices();
+        }
+    }
+
+    fn refresh_me(&self) {
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            match api.me().await {
+                Ok(user) => {
+                    let premium = user.product.as_deref().map(|p| p == "premium");
+                    bridge::emit(Event::User(user.clone()));
+                    bridge::emit(Event::Premium(premium));
+                    bridge::emit(Event::Auth(AuthStatus::Connected {
+                        username: user.name().to_string(),
+                    }));
+                }
+                Err(ApiError::RateLimited | ApiError::QuotaExhausted | ApiError::NotSignedIn) => {}
+                Err(error) => tracing::debug!("profile: {error}"),
+            }
+        });
     }
 
     async fn media(&mut self, command: MediaCommand) {
@@ -1917,29 +2053,36 @@ fn friendly_player_error(error: &ApiError) -> String {
 
 fn apply_local_state(state: LocalState) {
     let volume_percent = ((state.volume as u32) * 100 / 65535) as u8;
-    let (title, artists, album, uri, art_url, duration_ms) = match &state.track {
-        Some(track) => (
-            track.title.clone(),
-            track.artist_names(),
-            track.album.clone(),
-            track.uri.clone(),
-            track.art_url.clone().or(track.art_small_url.clone()),
-            track.duration_ms,
-        ),
-        None => (
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            None,
-            0,
-        ),
-    };
+    let (title, artists, album, artist_links, album_id, uri, art_url, duration_ms) =
+        match &state.track {
+            Some(track) => (
+                track.title.clone(),
+                track.artist_names(),
+                track.album.clone(),
+                track.artist_links.clone(),
+                track.album_id.clone(),
+                track.uri.clone(),
+                track.art_url.clone().or(track.art_small_url.clone()),
+                track.duration_ms,
+            ),
+            None => (
+                String::new(),
+                String::new(),
+                String::new(),
+                Vec::new(),
+                None,
+                String::new(),
+                None,
+                0,
+            ),
+        };
     bridge::emit(Event::NowPlaying(NowPlaying {
         playback: state.playback,
         title,
         artists,
         album,
+        artist_links,
+        album_id,
         uri,
         art_url,
         duration_ms,
@@ -1959,6 +2102,23 @@ fn apply_local_state(state: LocalState) {
 
 fn now_from_remote(state: &PlaybackState) -> NowPlaying {
     let item = state.item.as_ref();
+    let (album, artist_links, album_id) = match item {
+        Some(PlayableItem::Track(track)) => (
+            track
+                .album
+                .as_ref()
+                .map(|a| a.name.clone())
+                .unwrap_or_default(),
+            track.artist_links(),
+            track.album_catalog_id().map(str::to_string),
+        ),
+        Some(PlayableItem::Episode(ep)) => (
+            ep.show.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
+            Vec::new(),
+            None,
+        ),
+        None => (String::new(), Vec::new(), None),
+    };
     NowPlaying {
         playback: if state.is_playing {
             Playback::Playing
@@ -1969,17 +2129,9 @@ fn now_from_remote(state: &PlaybackState) -> NowPlaying {
         },
         title: item.map(|i| i.name().to_string()).unwrap_or_default(),
         artists: item.map(|i| i.subtitle()).unwrap_or_default(),
-        album: match item {
-            Some(PlayableItem::Track(track)) => track
-                .album
-                .as_ref()
-                .map(|a| a.name.clone())
-                .unwrap_or_default(),
-            Some(PlayableItem::Episode(ep)) => {
-                ep.show.as_ref().map(|s| s.name.clone()).unwrap_or_default()
-            }
-            None => String::new(),
-        },
+        album,
+        artist_links,
+        album_id,
         uri: item.map(|i| i.uri().to_string()).unwrap_or_default(),
         art_url: item.and_then(|i| i.image(300)).map(str::to_string),
         duration_ms: item.map(|i| i.duration_ms()).unwrap_or(0),
@@ -2083,5 +2235,18 @@ mod tests {
             &h,
             &state("spotify:track:b", Playback::Playing)
         ));
+    }
+
+    #[test]
+    fn album_page_cache_without_album_field_still_decodes() {
+        let json = r#"{"Tracks":{"title":"P","subtitle":"s","items":[],"total":0,"offset":0}}"#;
+        let body: PageBody = serde_json::from_str(json).unwrap();
+        match body {
+            PageBody::Tracks { album, title, .. } => {
+                assert!(album.is_none());
+                assert_eq!(title, "P");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

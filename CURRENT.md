@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-03 (sola-spotify **on master**, **installed** `spotify` release: Back/Forward **persists** 20 back steps; add-to-playlist picker; media keys immediate, page Back/Forward; launcher row live; Super+K live Frame is **card-sized** like menus — software-GL mouse lag; number pad digits **smoked**; screenshot chords → clipboard **installed** `kit`+`shell` release; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-04 (sola-spotify worktree **installed** `spotify` release: artist/album name links; album Save/Follow + artist Follow; `/me` 429 keeps the session; standing OK to reinstall after each build. **On master** earlier `spotify` release: Back/Forward **persists** 20 back steps; add-to-playlist picker; media keys immediate, page Back/Forward; launcher row live; Super+K live Frame is **card-sized** like menus — software-GL mouse lag; number pad digits **smoked**; screenshot chords → clipboard **installed** `kit`+`shell` release; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam **installed**; Slack huddle camera **smoked**; mail move-rules; browser favicons + popups-as-tabs; Window menu + Super+K; Super+H hide; wrapper Edit/links/notify/huddle; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -217,13 +217,14 @@ warning cleanups; worktree hygiene the user asks for.
 | Terminal | **On master** (installed 2026-08-21): grid selection is neon accent wash (`#3dd6f5` @ 55%). Workspaces PTYs share the palette | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). Image paste (Preview **Copy** → ⌘V) **installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01. | — |
 | Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
-| Spotify | **On master.** **Installed** `spotify` release 2026-09-03: Back/Forward **survives restart** (max 20 back steps in `settings.json`); **list-plus** add-to-playlist picker + **New playlist**; media keys apply immediately; page Back/Forward (chevrons, ⌥←/→, ⌘[/], mouse side buttons). Launcher row live. Made for you catalog; likes from `liked.json`; **−** skip-once; hide strike+dim; last page + last track. Host NixOS has `alsa-lib` + `libpulseaudio`. | — |
+| Spotify | **On master.** **Installed** `spotify` release 2026-09-03: Back/Forward **survives restart** (max 20 back steps in `settings.json`); **list-plus** add-to-playlist picker + **New playlist**; media keys apply immediately; page Back/Forward (chevrons, ⌥←/→, ⌘[/], mouse side buttons). Launcher row live. Made for you catalog; likes from `liked.json`; **−** skip-once; hide strike+dim; last page + last track. Host NixOS has `alsa-lib` + `libpulseaudio`. **This worktree:** artist/album names on a track (list, queue, player bar) open those pages; player-bar cover opens the album; album **Save**/**Follow** and artist **Follow** land on the Albums / Artists tabs. A `/me` 429 no longer kicks the session to sign-in; device poll is 30s and skips while cooling (was a 2s herd on the shared app). **Installed** `spotify` release 2026-09-04. Standing OK to `install spotify` after each build. | — |
 | Agent | **Retired** (on master). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM); `-w/-h` from per-title nest; Fit live-pokes nested X only (never host `:0`) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — except standing OK for **arcade** and
-**workspaces** after each finished round of those apps. User smokes.
+**workspaces** after each finished round of those apps, and **spotify**
+after each build on this worktree. User smokes.
 
 **Useful:**
 

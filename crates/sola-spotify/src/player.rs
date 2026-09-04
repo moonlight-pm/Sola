@@ -126,7 +126,9 @@ pub struct LocalTrack {
     pub uri: String,
     pub title: String,
     pub artists: Vec<String>,
+    pub artist_links: Vec<(String, String)>,
     pub album: String,
+    pub album_id: Option<String>,
     pub art_url: Option<String>,
     pub art_small_url: Option<String>,
     pub duration_ms: u32,
@@ -416,9 +418,11 @@ impl Engine {
                 // Prefer a Spotify context URI so clicking another row in the
                 // same playlist does not rebuild the queue (that gap is the
                 // audible jerk). A bare track list is only for Home/Search.
-                let request = if let Some(context) = spec.context_uri.as_ref().filter(|uri| {
-                    !uri.is_empty() && !uri.contains(":track:")
-                }) {
+                let request = if let Some(context) = spec
+                    .context_uri
+                    .as_ref()
+                    .filter(|uri| !uri.is_empty() && !uri.contains(":track:"))
+                {
                     LoadRequest::from_context_uri(context.clone(), options)
                 } else if spec.uris.len() >= 2 {
                     LoadRequest::from_tracks(spec.uris, options)
@@ -455,10 +459,7 @@ fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> SinkAndVolume 
             tracing::info!(backend = name, "audio backend");
             let volume = mixer.get_soft_volume();
             let device = device.clone();
-            return (
-                Box::new(move || builder(device, AudioFormat::S16)),
-                volume,
-            );
+            return (Box::new(move || builder(device, AudioFormat::S16)), volume);
         }
     }
     panic!("no librespot audio backend available (tried pulseaudio, rodio, alsa)");
@@ -602,18 +603,29 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
 }
 
 fn local_track(item: &AudioItem) -> LocalTrack {
-    let (artists, album, is_episode) = match &item.unique_fields {
+    let (artists, artist_links, album, album_id, is_episode) = match &item.unique_fields {
         UniqueFields::Track { artists, album, .. } => (
             artists.iter().map(|artist| artist.name.clone()).collect(),
+            artists
+                .iter()
+                .filter_map(|artist| artist.id.to_id().ok().map(|id| (artist.name.clone(), id)))
+                .collect(),
             album.clone(),
+            None,
             false,
         ),
-        UniqueFields::Episode { show_name, .. } => {
-            (vec![show_name.clone()], show_name.clone(), true)
-        }
+        UniqueFields::Episode { show_name, .. } => (
+            vec![show_name.clone()],
+            Vec::new(),
+            show_name.clone(),
+            None,
+            true,
+        ),
         UniqueFields::Local { artists, album, .. } => (
             artists.iter().cloned().collect(),
+            Vec::new(),
             album.clone().unwrap_or_default(),
+            None,
             false,
         ),
     };
@@ -630,7 +642,9 @@ fn local_track(item: &AudioItem) -> LocalTrack {
         uri: item.uri.clone(),
         title: item.name.clone(),
         artists,
+        artist_links,
         album,
+        album_id,
         art_url,
         art_small_url,
         duration_ms: item.duration_ms,

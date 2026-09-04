@@ -11,8 +11,8 @@ use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
 use iced::widget::image::Handle as ImageHandle;
 use iced::widget::{
-    Space, button, column, container, image as iced_image, operation, rich_text, row, scrollable,
-    slider, span, stack,
+    Space, button, column, container, image as iced_image, mouse_area, operation, rich_text, row,
+    scrollable, slider, span, stack,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Event as IcedEvent, Length, Padding,
@@ -24,7 +24,7 @@ use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use sola_kit::components::popover::{Placement, popover, popover_anchored};
 use sola_kit::components::style::{
-    CHROME_SURFACE, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, hairline,
+    CHROME_SURFACE, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, alpha, hairline,
     mix_white,
 };
 use sola_kit::components::text as kit_text;
@@ -36,15 +36,17 @@ use sola_kit::theme::default_theme;
 
 use crate::api::PlayRequest as ApiPlay;
 use crate::api::models::{
-    Album, Artist, Device, Playlist, Track, format_added_at, generated_sort_key, pick_image,
-    playlists_for_add,
+    Album, Artist, ArtistRef, Device, PlayableItem, Playlist, Track, format_added_at,
+    generated_sort_key, pick_image, playlists_for_add,
 };
 use crate::bridge;
 use crate::cache::{self, Liked, Skipped};
 use crate::paths::AppDirs;
 use crate::player::Playback;
 use crate::settings::Settings;
-use crate::worker::{AuthStatus, Cmd, Event, LocalPlayback, NowPlaying, Page, PageBody};
+use crate::worker::{
+    AuthStatus, Cmd, Event, FavoriteKind, LocalPlayback, NowPlaying, Page, PageBody,
+};
 
 use self::nav::{NavEntry, NavHistory};
 
@@ -77,6 +79,8 @@ pub enum Msg {
     OpenArtist(String),
     OpenAlbum(String),
     OpenPlaylist(String),
+    HoverTrack(String),
+    UnhoverTrack(String),
     Toggle,
     Next,
     Prev,
@@ -86,6 +90,8 @@ pub enum Msg {
     Repeat,
     Like,
     SaveTrack(String),
+    ToggleAlbum,
+    ToggleArtist,
     SkipTrack {
         uri: String,
     },
@@ -192,6 +198,9 @@ pub struct App {
     dirs: AppDirs,
     /// Last focused/played track — graphite lift, independent of live playback.
     selected_uri: Option<String>,
+    hovered_uri: Option<String>,
+    library_albums: HashSet<String>,
+    library_artists: HashSet<String>,
     add_to: Option<AddTo>,
     notice: Option<Notice>,
 }
@@ -251,6 +260,9 @@ impl App {
             skipped,
             dirs,
             selected_uri: (!last_track.is_empty()).then_some(last_track),
+            hovered_uri: None,
+            library_albums: HashSet::new(),
+            library_artists: HashSet::new(),
             add_to: None,
             notice: None,
         };
@@ -402,6 +414,16 @@ impl App {
                 self.navigate(Page::Playlist(id));
                 Task::none()
             }
+            Msg::HoverTrack(uri) => {
+                self.hovered_uri = Some(uri);
+                Task::none()
+            }
+            Msg::UnhoverTrack(uri) => {
+                if self.hovered_uri.as_deref() == Some(uri.as_str()) {
+                    self.hovered_uri = None;
+                }
+                Task::none()
+            }
             Msg::Toggle => {
                 self.transport_toggle();
                 Task::none()
@@ -456,6 +478,14 @@ impl App {
             }
             Msg::SaveTrack(uri) => {
                 self.toggle_saved(&uri);
+                Task::none()
+            }
+            Msg::ToggleAlbum => {
+                self.toggle_album();
+                Task::none()
+            }
+            Msg::ToggleArtist => {
+                self.toggle_artist();
                 Task::none()
             }
             Msg::SkipTrack { uri } => {
@@ -647,6 +677,45 @@ impl App {
             .collect()
     }
 
+    fn fill_now_links(&self, now: &mut NowPlaying) {
+        if now.uri.is_empty() {
+            return;
+        }
+        let same = same_track_uri(&now.uri, &self.now.uri);
+        if now.artist_links.is_empty() {
+            if same && !self.now.artist_links.is_empty() {
+                now.artist_links = self.now.artist_links.clone();
+            } else if let Some(track) = self
+                .current_tracks()
+                .iter()
+                .find(|t| same_track_uri(&t.uri, &now.uri))
+            {
+                now.artist_links = track.artist_links();
+            }
+        }
+        if now.album_id.is_none() {
+            if same {
+                now.album_id = self.now.album_id.clone();
+                if now.album.is_empty() {
+                    now.album = self.now.album.clone();
+                }
+            } else if let Some(track) = self
+                .current_tracks()
+                .iter()
+                .find(|t| same_track_uri(&t.uri, &now.uri))
+            {
+                now.album_id = track.album_catalog_id().map(str::to_string);
+                if now.album.is_empty() {
+                    now.album = track
+                        .album
+                        .as_ref()
+                        .map(|a| a.name.clone())
+                        .unwrap_or_default();
+                }
+            }
+        }
+    }
+
     fn play_now(&mut self, uri: &str, context: Option<String>) {
         let snapshot = self
             .current_tracks()
@@ -657,17 +726,31 @@ impl App {
                     t.name.clone(),
                     t.artist_names(),
                     t.album.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+                    t.artist_links(),
+                    t.album_catalog_id().map(str::to_string),
                     t.image(300).map(str::to_string),
                     t.duration_ms,
                     t.uri.clone(),
                 )
             });
-        if let Some((title, artists, album, art_url, duration_ms, track_uri)) = snapshot {
+        if let Some((
+            title,
+            artists,
+            album,
+            artist_links,
+            album_id,
+            art_url,
+            duration_ms,
+            track_uri,
+        )) = snapshot
+        {
             self.remember_track(&track_uri);
             self.pending_uri = Some(track_uri.clone());
             self.now.title = title;
             self.now.artists = artists;
             self.now.album = album;
+            self.now.artist_links = artist_links;
+            self.now.album_id = album_id;
             self.now.uri = track_uri;
             self.now.art_url = art_url.clone();
             self.now.duration_ms = duration_ms;
@@ -741,6 +824,133 @@ impl App {
             uri: uri.to_string(),
             saved,
         });
+    }
+
+    fn remember_favorite(&mut self, kind: FavoriteKind, id: &str, saved: bool) {
+        if id.is_empty() {
+            return;
+        }
+        let set = match kind {
+            FavoriteKind::Album => &mut self.library_albums,
+            FavoriteKind::Artist => &mut self.library_artists,
+        };
+        if saved {
+            set.insert(id.to_string());
+        } else {
+            set.remove(id);
+        }
+    }
+
+    fn toggle_album(&mut self) {
+        let Some(PageBody::Tracks {
+            album: Some(album), ..
+        }) = &self.body
+        else {
+            return;
+        };
+        let Some(id) = album.catalog_id().map(str::to_string) else {
+            return;
+        };
+        let album = album.clone();
+        let saved = !self.library_albums.contains(&id);
+        self.remember_favorite(FavoriteKind::Album, &id, saved);
+        self.patch_album_library(&album, saved);
+        bridge::send(Cmd::SetFavorite {
+            kind: FavoriteKind::Album,
+            id,
+            saved,
+        });
+    }
+
+    fn toggle_artist(&mut self) {
+        let artist = if let Some(PageBody::Artist { artist, .. }) = &self.body {
+            Some(artist.clone())
+        } else if let Some(PageBody::Tracks {
+            album: Some(album), ..
+        }) = &self.body
+        {
+            album.artists.iter().find_map(artist_from_ref)
+        } else {
+            None
+        };
+        let Some(artist) = artist else {
+            return;
+        };
+        if artist.id.is_empty() {
+            return;
+        }
+        let saved = !self.library_artists.contains(&artist.id);
+        self.remember_favorite(FavoriteKind::Artist, &artist.id, saved);
+        self.patch_artist_library(&artist, saved);
+        bridge::send(Cmd::SetFavorite {
+            kind: FavoriteKind::Artist,
+            id: artist.id,
+            saved,
+        });
+    }
+
+    fn patch_album_library(&mut self, album: &Album, saved: bool) {
+        let Some(id) = album.catalog_id().map(str::to_string) else {
+            return;
+        };
+        let apply = |items: &mut Vec<Album>, total: &mut u32| {
+            if saved {
+                if !items
+                    .iter()
+                    .any(|item| item.catalog_id() == Some(id.as_str()))
+                {
+                    let mut entry = album.clone();
+                    entry.tracks = None;
+                    items.insert(0, entry);
+                    *total = total.saturating_add(1);
+                }
+            } else if let Some(index) = items
+                .iter()
+                .position(|item| item.catalog_id() == Some(id.as_str()))
+            {
+                items.remove(index);
+                *total = total.saturating_sub(1);
+            }
+        };
+        if let Some(PageBody::Albums { items, total, .. }) = self.page_cache.get_mut(&Page::Albums)
+        {
+            apply(items, total);
+        }
+        if self.page == Page::Albums
+            && let Some(PageBody::Albums { items, total, .. }) = &mut self.body
+        {
+            apply(items, total);
+        }
+        if let Some(body) = self.page_cache.get(&Page::Albums) {
+            self.write_page_disk(&Page::Albums, body);
+        }
+    }
+
+    fn patch_artist_library(&mut self, artist: &Artist, saved: bool) {
+        if artist.id.is_empty() {
+            return;
+        }
+        let id = artist.id.as_str();
+        let apply = |items: &mut Vec<Artist>| {
+            if saved {
+                if !items.iter().any(|item| item.id == id) {
+                    items.insert(0, artist.clone());
+                }
+            } else if let Some(index) = items.iter().position(|item| item.id == id) {
+                items.remove(index);
+            }
+        };
+        if let Some(PageBody::Artists { items }) = self.page_cache.get_mut(&Page::Artists) {
+            apply(items);
+        }
+        if self.page == Page::Artists
+            && let Some(PageBody::Artists { items }) = &mut self.body
+        {
+            apply(items);
+        }
+        if let Some(body) = self.page_cache.get(&Page::Artists) {
+            self.write_page_disk(&Page::Artists, body);
+        }
     }
 
     fn toggle_add_to(&mut self, uri: String) -> Task<Msg> {
@@ -985,6 +1195,20 @@ impl App {
                     } => {
                         self.playlists = playlists.clone();
                     }
+                    PageBody::Albums { items, .. } => {
+                        for album in items {
+                            if let Some(id) = album.catalog_id() {
+                                self.library_albums.insert(id.to_string());
+                            }
+                        }
+                    }
+                    PageBody::Artists { items } => {
+                        for artist in items {
+                            if !artist.id.is_empty() {
+                                self.library_artists.insert(artist.id.clone());
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 self.want_page_art(&body);
@@ -1022,7 +1246,7 @@ impl App {
                     }
                 }
             }
-            Event::NowPlaying(now) => {
+            Event::NowPlaying(mut now) => {
                 if now.uri.is_empty() && !self.now.uri.is_empty() {
                     return Task::none();
                 }
@@ -1034,6 +1258,7 @@ impl App {
                         self.pending_uri = None;
                     }
                 }
+                self.fill_now_links(&mut now);
                 self.want_art(now.art_url.as_deref());
                 if now.playback == Playback::Playing {
                     self.playing_since = Some(std::time::Instant::now());
@@ -1059,6 +1284,9 @@ impl App {
             }
             Event::Saved { uri, saved } => {
                 self.remember_saved(&uri, saved);
+            }
+            Event::Favorite { kind, id, saved } => {
+                self.remember_favorite(kind, &id, saved);
             }
             Event::Liked(uris) => {
                 self.saved.retain(|_, saved| !*saved);
@@ -1637,6 +1865,7 @@ impl App {
             context_uri,
             items,
             total,
+            album,
             ..
         }) = &self.body
         else {
@@ -1651,8 +1880,34 @@ impl App {
             kit_text::caption(subtitle.clone()).style(kit_text::muted),
         ]
         .spacing(SPACE_SM);
+        let mut actions = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+        let mut has_actions = false;
         if let Some(msg) = play_all {
-            titles = titles.push(kit_btn::labeled("Play", kit_btn::primary).on_press(msg));
+            actions = actions.push(kit_btn::labeled("Play", kit_btn::primary).on_press(msg));
+            has_actions = true;
+        }
+        if let Some(album) = album {
+            if let Some(id) = album.catalog_id() {
+                actions = actions.push(self.favorite_btn(
+                    self.library_albums.contains(id),
+                    "Saved",
+                    "Save",
+                    Msg::ToggleAlbum,
+                ));
+                has_actions = true;
+            }
+            if let Some(id) = album.artists.iter().find_map(|artist| artist.catalog_id()) {
+                actions = actions.push(self.favorite_btn(
+                    self.library_artists.contains(id),
+                    "Following",
+                    "Follow",
+                    Msg::ToggleArtist,
+                ));
+                has_actions = true;
+            }
+        }
+        if has_actions {
+            titles = titles.push(actions);
         }
         header = header.push(titles);
         let list = self.track_list(items, context_uri.clone());
@@ -1709,17 +1964,27 @@ impl App {
         else {
             return Space::new().into();
         };
+        let following = !artist.id.is_empty() && self.library_artists.contains(&artist.id);
+        let mut heading = column![
+            kit_text::heading(artist.name.clone()),
+            kit_text::caption(format!(
+                "{} followers",
+                artist.followers.as_ref().map(|f| f.total).unwrap_or(0)
+            ))
+            .style(kit_text::muted),
+        ]
+        .spacing(SPACE_SM);
+        if !artist.id.is_empty() {
+            heading = heading.push(self.favorite_btn(
+                following,
+                "Following",
+                "Follow",
+                Msg::ToggleArtist,
+            ));
+        }
         let header = row![
             self.cover(pick_image(&artist.images, 300), 120.0, false),
-            column![
-                kit_text::heading(artist.name.clone()),
-                kit_text::caption(format!(
-                    "{} followers",
-                    artist.followers.as_ref().map(|f| f.total).unwrap_or(0)
-                ))
-                .style(kit_text::muted),
-            ]
-            .spacing(SPACE_SM),
+            heading,
         ]
         .spacing(SPACE_LG)
         .align_y(Alignment::Center);
@@ -1746,25 +2011,40 @@ impl App {
             .iter()
             .map(|item| {
                 let uri = item.uri().to_string();
-                let play = button(
-                    row![
-                        self.cover(item.image(64), COVER_ROW, false),
-                        column![
-                            kit_text::body(item.name().to_string()),
-                            kit_text::caption(item.subtitle()).style(kit_text::muted),
+                let hovered = self
+                    .hovered_uri
+                    .as_deref()
+                    .is_some_and(|h| same_track_uri(h, &uri));
+                let meta: Element<'_, Msg> = match item {
+                    PlayableItem::Track(track) => {
+                        self.track_meta(&track.artists, track.album.as_ref(), false)
+                    }
+                    _ => kit_text::caption(item.subtitle())
+                        .style(kit_text::muted)
+                        .into(),
+                };
+                let play = mouse_area(
+                    container(
+                        row![
+                            self.cover(item.image(64), COVER_ROW, false),
+                            column![kit_text::body(item.name().to_string()), meta]
+                                .spacing(SPACE_XS)
+                                .width(Length::Fill),
                         ]
-                        .spacing(SPACE_XS)
+                        .spacing(SPACE_MD)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill),
-                    ]
-                    .spacing(SPACE_MD)
-                    .align_y(Alignment::Center),
+                    )
+                    .style(track_hit_style(false, hovered))
+                    .width(Length::Fill),
                 )
-                .style(kit_btn::list_item(false))
                 .on_press(Msg::PlayTrack {
                     uri: uri.clone(),
                     context: None,
                 })
-                .width(Length::Fill);
+                .on_enter(Msg::HoverTrack(uri.clone()))
+                .on_exit(Msg::UnhoverTrack(uri.clone()))
+                .interaction(mouse::Interaction::Pointer);
                 let add = if item.is_track() {
                     self.add_mark(&uri)
                 } else {
@@ -1856,49 +2136,13 @@ impl App {
                     .selected_uri
                     .as_deref()
                     .is_some_and(|sel| same_track_uri(sel, &uri));
+                let hovered = self
+                    .hovered_uri
+                    .as_deref()
+                    .is_some_and(|h| same_track_uri(h, &uri));
                 let saved = self.is_saved(&uri);
                 let skipped = self.skipped.contains(&uri);
                 let withdrawn = skipped && !live;
-                let artist_id = track.artists.first().and_then(|a| a.id.clone());
-                let album_id = track.album.as_ref().map(|a| a.id.clone());
-                let mut meta = row![].spacing(SPACE_SM);
-                let artist_cap = kit_text::caption(track.artist_names());
-                let artist_cap = if selected {
-                    artist_cap
-                } else {
-                    artist_cap.style(kit_text::muted)
-                };
-                if let Some(id) = artist_id {
-                    meta = meta.push(
-                        button(artist_cap)
-                            .style(kit_btn::ghost)
-                            .on_press(Msg::OpenArtist(id))
-                            .padding(0),
-                    );
-                } else {
-                    meta = meta.push(artist_cap);
-                }
-                if let Some(id) = album_id.filter(|s| !s.is_empty())
-                    && let Some(album) = track.album.as_ref()
-                {
-                    let sep = kit_text::caption("·");
-                    let alb = kit_text::caption(album.name.clone());
-                    meta = meta.push(if selected {
-                        sep
-                    } else {
-                        sep.style(kit_text::muted)
-                    });
-                    meta = meta.push(
-                        button(if selected {
-                            alb
-                        } else {
-                            alb.style(kit_text::muted)
-                        })
-                        .style(kit_btn::ghost)
-                        .on_press(Msg::OpenAlbum(id))
-                        .padding(0),
-                    );
-                }
                 let title: Element<'a, Msg> = if live {
                     kit_text::body(track.name.clone())
                         .style(kit_text::accent)
@@ -1929,22 +2173,32 @@ impl App {
                         .width(Length::Fixed(24.0))
                         .into()
                 };
-                let play = button(
-                    row![
-                        index,
-                        self.cover(track.image(64), COVER_ROW, withdrawn),
-                        column![title, meta].spacing(SPACE_XS).width(Length::Fill),
-                    ]
-                    .spacing(SPACE_MD)
-                    .align_y(Alignment::Center)
+                let play = mouse_area(
+                    container(
+                        row![
+                            index,
+                            self.cover(track.image(64), COVER_ROW, withdrawn),
+                            column![
+                                title,
+                                self.track_meta(&track.artists, track.album.as_ref(), selected),
+                            ]
+                            .spacing(SPACE_XS)
+                            .width(Length::Fill),
+                        ]
+                        .spacing(SPACE_MD)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill),
+                    )
+                    .style(track_hit_style(selected, hovered))
                     .width(Length::Fill),
                 )
-                .style(kit_btn::list_item(selected))
                 .on_press(Msg::PlayTrack {
                     uri: uri.clone(),
                     context: ctx,
                 })
-                .width(Length::Fill);
+                .on_enter(Msg::HoverTrack(uri.clone()))
+                .on_exit(Msg::UnhoverTrack(uri.clone()))
+                .interaction(mouse::Interaction::Pointer);
 
                 let plus = self.like_mark(
                     saved,
@@ -1988,6 +2242,81 @@ impl App {
             })
             .collect();
         column(rows).spacing(1.0).width(Length::Fill).into()
+    }
+
+    fn track_meta(
+        &self,
+        artists: &[ArtistRef],
+        album: Option<&Album>,
+        selected: bool,
+    ) -> Element<'_, Msg> {
+        let p = self.theme.extended_palette();
+        let color = if selected {
+            p.background.base.text
+        } else {
+            p.secondary.base.text
+        };
+        let mut spans = Vec::new();
+        for artist in artists {
+            if artist.name.is_empty() {
+                continue;
+            }
+            if !spans.is_empty() {
+                spans.push(span(", ").color(color));
+            }
+            let mut piece = span(artist.name.clone()).color(color);
+            if let Some(id) = artist.catalog_id() {
+                piece = piece.link(Msg::OpenArtist(id.to_string()));
+            }
+            spans.push(piece);
+        }
+        if let Some(album) = album.filter(|a| !a.name.is_empty()) {
+            if !spans.is_empty() {
+                spans.push(span(" · ").color(color));
+            }
+            let mut piece = span(album.name.clone()).color(color);
+            if let Some(id) = album.catalog_id() {
+                piece = piece.link(Msg::OpenAlbum(id.to_string()));
+            }
+            spans.push(piece);
+        }
+        if spans.is_empty() {
+            return Space::new().into();
+        }
+        rich_text(spans)
+            .size(11)
+            .font(fonts::ui())
+            .on_link_click(|msg| msg)
+            .into()
+    }
+
+    fn now_meta(&self) -> Element<'_, Msg> {
+        let artists: Vec<ArtistRef> = if self.now.artist_links.is_empty() {
+            if self.now.artists.is_empty() {
+                Vec::new()
+            } else {
+                vec![ArtistRef {
+                    name: self.now.artists.clone(),
+                    ..ArtistRef::default()
+                }]
+            }
+        } else {
+            self.now
+                .artist_links
+                .iter()
+                .map(|(name, id)| ArtistRef {
+                    name: name.clone(),
+                    id: Some(id.clone()),
+                    ..ArtistRef::default()
+                })
+                .collect()
+        };
+        let album = (!self.now.album.is_empty() || self.now.album_id.is_some()).then(|| Album {
+            name: self.now.album.clone(),
+            id: self.now.album_id.clone().unwrap_or_default(),
+            ..Album::default()
+        });
+        self.track_meta(&artists, album.as_ref(), false)
     }
 
     fn playlist_tiles<'a>(
@@ -2187,12 +2516,9 @@ impl App {
             .spacing(SPACE_XS)
             .width(Length::FillPortion(2))
         } else {
-            column![
-                kit_text::body(self.now.title.clone()),
-                kit_text::caption(self.now.artists.clone()).style(kit_text::muted),
-            ]
-            .spacing(SPACE_XS)
-            .width(Length::FillPortion(2))
+            column![kit_text::body(self.now.title.clone()), self.now_meta(),]
+                .spacing(SPACE_XS)
+                .width(Length::FillPortion(2))
         };
 
         let transport = row![
@@ -2233,8 +2559,17 @@ impl App {
         .spacing(SPACE_MD)
         .align_y(Alignment::Center);
 
+        let cover = self.cover(self.now.art_url.as_deref(), COVER_PLAYER, false);
+        let cover: Element<'_, Msg> = match self.now.album_id.clone() {
+            Some(id) if !id.is_empty() => button(cover)
+                .style(kit_btn::ghost)
+                .padding(0)
+                .on_press(Msg::OpenAlbum(id))
+                .into(),
+            _ => cover,
+        };
         let bar = row![
-            self.cover(self.now.art_url.as_deref(), COVER_PLAYER, false),
+            cover,
             now,
             column![transport, seek]
                 .spacing(SPACE_XS)
@@ -2344,6 +2679,25 @@ impl App {
         popover_anchored(trigger, popover(list), Msg::ToggleDevices)
             .placement(Placement::Below)
             .into()
+    }
+
+    fn favorite_btn(
+        &self,
+        on: bool,
+        on_label: &'static str,
+        off_label: &'static str,
+        msg: Msg,
+    ) -> Element<'_, Msg> {
+        kit_btn::labeled_sm(
+            if on { on_label } else { off_label },
+            if on {
+                kit_btn::ghost
+            } else {
+                kit_btn::secondary
+            },
+        )
+        .on_press(msg)
+        .into()
     }
 
     fn remember_saved(&mut self, uri: &str, saved: bool) {
@@ -2615,6 +2969,20 @@ fn split_playlists(playlists: &[Playlist]) -> (Vec<&Playlist>, Vec<&Playlist>) {
     (made, yours)
 }
 
+fn artist_from_ref(artist: &ArtistRef) -> Option<Artist> {
+    let id = artist.catalog_id()?.to_string();
+    Some(Artist {
+        id: id.clone(),
+        name: artist.name.clone(),
+        uri: artist
+            .uri
+            .clone()
+            .filter(|uri| !uri.is_empty())
+            .unwrap_or_else(|| format!("spotify:artist:{id}")),
+        ..Artist::default()
+    })
+}
+
 fn same_track_uri(a: &str, b: &str) -> bool {
     !a.is_empty() && !b.is_empty() && (a == b || a.rsplit(':').next() == b.rsplit(':').next())
 }
@@ -2636,6 +3004,28 @@ fn v_hairline() -> Element<'static, Msg> {
             }
         })
         .into()
+}
+
+fn track_hit_style(selected: bool, hovered: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme: &Theme| {
+        let p = theme.extended_palette();
+        let bg = if selected {
+            Some(Background::Color(p.background.strong.color))
+        } else if hovered {
+            Some(Background::Color(alpha(p.background.strong.color, 0.70)))
+        } else {
+            Some(Background::Color(Color::TRANSPARENT))
+        };
+        container::Style {
+            background: bg,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..Default::default()
+        }
+    }
 }
 
 fn canvas_style(theme: &Theme) -> container::Style {

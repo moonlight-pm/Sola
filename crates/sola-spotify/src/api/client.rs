@@ -304,6 +304,10 @@ impl ApiClient {
             .ok_or(ApiError::NotSignedIn)
     }
 
+    pub async fn cooling_down(&self) -> bool {
+        *self.cooldown_until.lock().await > Instant::now()
+    }
+
     async fn wait_for_cooldown(&self) {
         loop {
             let until = *self.cooldown_until.lock().await;
@@ -379,9 +383,13 @@ impl ApiClient {
                 if is_quota_exhausted(&text) {
                     return Err(ApiError::QuotaExhausted);
                 }
-                tracing::warn!("Spotify rate limit source={} wait={wait:?}", self.source);
+                tracing::warn!(
+                    "Spotify rate limit source={} method={} path={path} wait={wait:?}",
+                    self.source,
+                    method
+                );
                 tracing::info!(
-                    "Spotify cooldown source={} duration_ms={}",
+                    "Spotify cooldown source={} path={path} duration_ms={}",
                     self.source,
                     wait.as_millis()
                 );
@@ -918,6 +926,42 @@ impl ApiClient {
         self.tracks_library(Method::DELETE, uris).await
     }
 
+    pub async fn set_saved_album(&self, id: &str, saved: bool) -> Result<()> {
+        let method = if saved { Method::PUT } else { Method::DELETE };
+        self.write(method, "/me/albums", &[("ids", id.to_string())], None)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn album_is_saved(&self, id: &str) -> Result<bool> {
+        let flags: Vec<bool> = self
+            .get("/me/albums/contains", &[("ids", id.to_string())])
+            .await?;
+        Ok(flags.first().copied().unwrap_or(false))
+    }
+
+    pub async fn set_followed_artist(&self, id: &str, saved: bool) -> Result<()> {
+        let method = if saved { Method::PUT } else { Method::DELETE };
+        self.write(
+            method,
+            "/me/following",
+            &[("type", "artist".to_string()), ("ids", id.to_string())],
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn artist_is_followed(&self, id: &str) -> Result<bool> {
+        let flags: Vec<bool> = self
+            .get(
+                "/me/following/contains",
+                &[("type", "artist".to_string()), ("ids", id.to_string())],
+            )
+            .await?;
+        Ok(flags.first().copied().unwrap_or(false))
+    }
+
     async fn tracks_library(&self, method: Method, uris: &[String]) -> Result<()> {
         let ids: Vec<String> = uris
             .iter()
@@ -1099,7 +1143,9 @@ mod tests {
             ApiSource::Personal,
         );
         shared.extend_cooldown(Duration::from_secs(10)).await;
+        assert!(shared.cooling_down().await);
         assert!(*shared.cooldown_until.lock().await > Instant::now());
         assert!(*personal.cooldown_until.lock().await <= Instant::now());
+        assert!(!personal.cooling_down().await);
     }
 }
