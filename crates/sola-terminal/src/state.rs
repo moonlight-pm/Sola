@@ -527,8 +527,17 @@ pub fn next_ordinal(existing: &[u32]) -> u32 {
 }
 
 /// The cwd a new pane/tab should start in, given the source's cwd.
+///
+/// No source (first tab, empty window) falls back to `$HOME` so a compositor
+/// that starts the app from `/` still opens the seat home, not the root dir.
 pub fn inherit_cwd(active_cwd: Option<&str>) -> Option<String> {
-    active_cwd.map(|s| s.to_string())
+    inherit_cwd_with(active_cwd, std::env::var("HOME").ok().as_deref())
+}
+
+fn inherit_cwd_with(active_cwd: Option<&str>, home: Option<&str>) -> Option<String> {
+    active_cwd
+        .map(|s| s.to_string())
+        .or_else(|| home.filter(|p| !p.is_empty()).map(|p| p.to_string()))
 }
 
 /// Pick the tab to focus after `closing` is removed, given the display
@@ -765,8 +774,20 @@ mod tests {
 
     #[test]
     fn inherit_cwd_passes_through() {
-        assert_eq!(inherit_cwd(Some("/home/x")), Some("/home/x".to_string()));
-        assert_eq!(inherit_cwd(None), None);
+        assert_eq!(
+            inherit_cwd_with(Some("/home/x"), Some("/home/seat")),
+            Some("/home/x".to_string())
+        );
+    }
+
+    #[test]
+    fn inherit_cwd_falls_back_to_home() {
+        assert_eq!(
+            inherit_cwd_with(None, Some("/home/seat")),
+            Some("/home/seat".to_string())
+        );
+        assert_eq!(inherit_cwd_with(None, Some("")), None);
+        assert_eq!(inherit_cwd_with(None, None), None);
     }
 
     #[test]
