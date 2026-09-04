@@ -1,9 +1,9 @@
 # sola-kvm — Design
 
 **Date:** 2026-07-27  
-**Status:** Implementing — Phase A done; Phase C server path in progress  
-**Worktree:** Orca `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)  
-**Base:** local `master` @ `3d1d44b`
+**Status:** Implementing — Phase A done; Phase C server path in; Linux `listen` injects via virtual pointer/keyboard  
+**Dogfood:** novus server; Linux client (`sola-kvm listen`) or ember macOS agent  
+**Gaps:** Linux client has no CLIP1 TCP listener; D2 permanent input ACL on the server
 
 ## 1. Goal
 
@@ -19,8 +19,8 @@ Replace the lan-mouse-based software KVM with a **Sola-native**, minimal path:
 
 | Role | Host | Responsibility |
 |------|------|----------------|
-| **Server** (input owner) | **novus** | Owns HID; owns virtual layout; exclusive grab while “over” Mac; sends packets |
-| **Client** (receiver) | **ember** | Listens UDP; injects via Accessibility / CGEvent |
+| **Server** (input owner) | **novus** | Owns HID; owns virtual layout; exclusive grab while “over” the peer; sends packets |
+| **Client** (receiver) | Linux peer (`sola-kvm listen`) or **ember** | Listens UDP; Linux injects via `zwlr_virtual_pointer_v1` + `zwp_virtual_keyboard_v1`; Mac injects via Accessibility / CGEvent |
 
 This matches desk intent: hardware stays on novus; Mac is remote display of input only.
 

@@ -15,10 +15,10 @@ use tracing::{debug, info, warn};
 
 use super::platform;
 use super::proto::{
-    hash_text, read_message, write_message, AckStatus, Message, Role,
+    AckStatus, MIME_TEXT_UTF8, Message, Role, hash_text, read_message, write_message,
 };
 
-const MAX_BYTES: u32 = 1_048_576;
+const MAX_BYTES: u32 = 8 * 1024 * 1024;
 const ACK_WAIT: Duration = Duration::from_secs(3);
 const POLL_READ: Duration = Duration::from_millis(1);
 
@@ -119,13 +119,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
                 }
                 let seq = out_seq;
                 out_seq = out_seq.wrapping_add(1);
-                if let Err(e) = write_message(
-                    &mut s,
-                    seq,
-                    &Message::Hello {
-                        role: Role::Ember,
-                    },
-                ) {
+                if let Err(e) = write_message(&mut s, seq, &Message::Hello { role: Role::Ember }) {
                     warn!(%e, "clip hello reply failed");
                 } else {
                     arm_poll_read(&s);
@@ -203,14 +197,15 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
         if let Some(ref mut s) = peer {
             arm_poll_read(s);
             match read_message(s, MAX_BYTES) {
-                Ok((seq, Message::Offer { hash, text })) => {
+                Ok((seq, Message::Offer { mime, hash, body })) => {
                     info!(
                         seq,
                         hash,
-                        bytes = text.len(),
+                        mime,
+                        bytes = body.len(),
                         "clip inbound Offer from novus"
                     );
-                    let ok = apply_inbound(&text, hash, &mut cache);
+                    let ok = apply_inbound(mime, hash, &body, &mut cache);
                     let aseq = out_seq;
                     out_seq = out_seq.wrapping_add(1);
                     if let Err(e) = write_message(
@@ -218,11 +213,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
                         aseq,
                         &Message::Ack {
                             of_seq: seq,
-                            status: if ok {
-                                AckStatus::Ok
-                            } else {
-                                AckStatus::Reject
-                            },
+                            status: if ok { AckStatus::Ok } else { AckStatus::Reject },
                         },
                     ) {
                         warn!(%e, "clip Ack write failed");
@@ -266,11 +257,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
     }
 }
 
-fn push_local(
-    s: &mut TcpStream,
-    cache: &mut Cache,
-    out_seq: &mut u32,
-) -> std::io::Result<()> {
+fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::io::Result<()> {
     s.set_nonblocking(false).ok();
     let text = platform::read_text().unwrap_or_default();
     if text.len() as u32 > MAX_BYTES {
@@ -312,15 +299,22 @@ fn push_local(
         s,
         seq,
         &Message::Offer {
+            mime: MIME_TEXT_UTF8,
             hash,
-            text: text.clone(),
+            body: text.as_bytes().to_vec(),
         },
     )?;
     arm_ack_wait(s);
     let deadline = Instant::now() + ACK_WAIT;
     loop {
         match read_message(s, MAX_BYTES) {
-            Ok((_, Message::Ack { status: AckStatus::Ok, .. })) => {
+            Ok((
+                _,
+                Message::Ack {
+                    status: AckStatus::Ok,
+                    ..
+                },
+            )) => {
                 cache.last_sent = Some(hash);
                 info!(hash, bytes = text.len(), "clip Offer → novus ok");
                 break;
@@ -329,16 +323,24 @@ fn push_local(
                 warn!(?status, "clip Offer ack not ok");
                 break;
             }
-            Ok((iseq, Message::Offer { hash: ih, text: itext })) => {
+            Ok((
+                iseq,
+                Message::Offer {
+                    mime: imime,
+                    hash: ih,
+                    body,
+                },
+            )) => {
                 // Novus pushed on Enter while we pushed on Leave — apply and
                 // keep waiting for our Ack.
                 info!(
                     iseq,
                     hash = ih,
-                    bytes = itext.len(),
+                    mime = imime,
+                    bytes = body.len(),
                     "clip inbound Offer while awaiting Ack — apply now"
                 );
-                let ok = apply_inbound(&itext, ih, cache);
+                let ok = apply_inbound(imime, ih, &body, cache);
                 let aseq = *out_seq;
                 *out_seq = out_seq.wrapping_add(1);
                 let _ = write_message(
@@ -346,11 +348,7 @@ fn push_local(
                     aseq,
                     &Message::Ack {
                         of_seq: iseq,
-                        status: if ok {
-                            AckStatus::Ok
-                        } else {
-                            AckStatus::Reject
-                        },
+                        status: if ok { AckStatus::Ok } else { AckStatus::Reject },
                     },
                 );
                 if Instant::now() >= deadline {
@@ -383,18 +381,33 @@ fn push_local(
     Ok(())
 }
 
-fn apply_inbound(text: &str, hash: u32, cache: &mut Cache) -> bool {
+fn apply_inbound(mime: u8, hash: u32, body: &[u8], cache: &mut Cache) -> bool {
     if cache.last_recv == Some(hash) {
         info!(hash, "clip skip apply (already have)");
         return true;
     }
+    if mime != MIME_TEXT_UTF8 {
+        warn!(mime, bytes = body.len(), "clip Mac rejects non-text mime");
+        return false;
+    }
+    let text = match std::str::from_utf8(body) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(%e, "clip inbound text not utf-8");
+            return false;
+        }
+    };
     if platform::write_text(text) {
         cache.last_recv = Some(hash);
         cache.last_sent = Some(hash);
         info!(hash, bytes = text.len(), "clip applied from novus → Mac");
         true
     } else {
-        warn!(hash, bytes = text.len(), "clip apply from novus FAILED (pbcopy)");
+        warn!(
+            hash,
+            bytes = text.len(),
+            "clip apply from novus FAILED (pbcopy)"
+        );
         false
     }
 }

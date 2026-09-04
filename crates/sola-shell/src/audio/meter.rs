@@ -188,7 +188,10 @@ fn run(kick: UnboundedSender<Event>) {
         } else {
             continue;
         }
-        if !was && is_live() {
+        // Image widgets need a shell message to rebuild; canvas used
+        // RedrawRequest::At. Kick while the meter is live (or just went
+        // dark) so the 12-band LED raster updates at POLL_MS.
+        if is_live() || was {
             let _ = kick.unbounded_send(Event::Kick);
         }
     }

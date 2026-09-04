@@ -2,7 +2,7 @@
 name = "sola-kvm"
 version.workspace = true
 edition.workspace = true
-description = "Sola-native software KVM — novus (server) captures input and sprays UDP to ember (macOS client)"
+description = "Sola-native software KVM — novus (server) captures input and sprays UDP to a Linux or Mac client"
 
 [[bin]]
 name = "sola-kvm"
@@ -16,10 +16,14 @@ toml = { workspace = true }
 tracing = "0.1"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
 rustix = { version = "1", features = ["fs"] }
 libc = "0.2"
+xkbcommon = "0.8"
 # Wayland/X11 clipboard without requiring wl-clipboard on PATH.
 arboard = "3"
+# In-process data-control (text + image/png). Oath has no wl-copy on PATH.
+wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

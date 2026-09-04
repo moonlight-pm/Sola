@@ -3,9 +3,13 @@
 //! A fixed LED matrix (dot + gutter) replaces variable-width numbers so
 //! the cluster cannot reflow. Each column is one recent sample. A cell is
 //! a 2×2 Bayer dither — the same five fill levels btop packs into braille.
+//!
+//! Painted as a nearest-neighbor RGBA image, not iced `canvas` 1×1
+//! rectangles. Tiny fill_rectangle tessellation drops on GLES2 / software
+//! GL (Oath metal, virtio llvmpipe); a 35×14 texture does not.
 
-use iced::widget::canvas::{self, Canvas, Frame, Geometry};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::widget::image::{self, FilterMethod};
+use iced::{Color, ContentFit, Element, Length, Theme};
 
 pub const COLS: usize = 12;
 pub const ROWS: usize = 5;
@@ -26,22 +30,25 @@ pub enum Tint {
     Tx,
 }
 
-#[derive(Clone, Debug)]
-pub struct PixelGraph {
-    pub samples: Vec<f32>,
-    pub max: f32,
-    pub tint: Tint,
+pub fn graph<'a, Message: 'a>(
+    samples: Vec<f32>,
+    max: f32,
+    tint: Tint,
+    theme: &Theme,
+) -> Element<'a, Message> {
+    let samples = last_n(&samples, COLS);
+    let (w, h) = graph_px();
+    let pixels = raster_stats(&samples, max.max(1.0), tint, theme);
+    image::Image::new(image::Handle::from_rgba(w, h, pixels))
+        .filter_method(FilterMethod::Nearest)
+        .content_fit(ContentFit::Fill)
+        .width(Length::Fixed(GRAPH_W))
+        .height(Length::Fixed(GRAPH_H))
+        .into()
 }
 
-pub fn graph<'a, Message: 'a>(samples: Vec<f32>, max: f32, tint: Tint) -> Element<'a, Message> {
-    Canvas::new(PixelGraph {
-        samples: last_n(&samples, COLS),
-        max: max.max(1.0),
-        tint,
-    })
-    .width(Length::Fixed(GRAPH_W))
-    .height(Length::Fixed(GRAPH_H))
-    .into()
+pub fn graph_px() -> (u32, u32) {
+    (GRAPH_W.round() as u32, GRAPH_H.round() as u32)
 }
 
 /// Oldest→newest, length `n`. Short windows pad on the left (btop scroll-on).
@@ -69,53 +76,78 @@ pub fn cell_pixel_on(cell_fill: f32, dx: u32, dy: u32) -> bool {
     cell_fill >= 1.0 || (cell_fill > 0.0 && cell_fill > bayer2(dx, dy))
 }
 
-impl<Message> canvas::Program<Message> for PixelGraph {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &Renderer,
-        theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let p = theme.extended_palette();
-        let unlit = Color {
-            a: 0.16,
-            ..p.background.base.text
-        };
-        let pitch = DOT + GAP;
-        let n = self.samples.len().min(COLS);
-
-        for col in 0..COLS {
-            let sample = if col < n { self.samples[col] } else { 0.0 };
-            let fill = (sample / self.max).clamp(0.0, 1.0);
-            let lit = match self.tint {
-                Tint::Level => crate::stats::level_color(sample, p.background.base.text),
-                Tint::Rx => p.primary.base.color,
-                Tint::Tx => p.success.base.color,
-            };
-            let x0 = (col as f32 * pitch).round();
-            for row in 0..ROWS {
-                let from_bottom = ROWS - 1 - row;
-                let cf = cell_fill(fill, from_bottom);
-                let y0 = (row as f32 * pitch).round();
-                for dy in 0..2u32 {
-                    for dx in 0..2u32 {
-                        let on = cell_pixel_on(cf, dx, dy);
-                        frame.fill_rectangle(
-                            Point::new(x0 + dx as f32, y0 + dy as f32),
-                            Size::new(1.0, 1.0),
-                            if on { lit } else { unlit },
-                        );
-                    }
-                }
-            }
-        }
-        vec![frame.into_geometry()]
+pub fn unlit_color(theme: &Theme) -> Color {
+    let p = theme.extended_palette();
+    Color {
+        a: 0.16,
+        ..p.background.base.text
     }
+}
+
+pub fn put_rgba(buf: &mut [u8], w: u32, h: u32, x: i32, y: i32, c: Color) {
+    if x < 0 || y < 0 {
+        return;
+    }
+    let x = x as u32;
+    let y = y as u32;
+    if x >= w || y >= h {
+        return;
+    }
+    let i = ((y * w + x) * 4) as usize;
+    if i + 3 >= buf.len() {
+        return;
+    }
+    buf[i] = (c.r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    buf[i + 1] = (c.g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    buf[i + 2] = (c.b.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    buf[i + 3] = (c.a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+}
+
+/// One 2×2 LED cell at (`x0`, `y0`).
+pub fn paint_cell(
+    buf: &mut [u8],
+    w: u32,
+    h: u32,
+    x0: f32,
+    y0: f32,
+    cf: f32,
+    lit: Color,
+    unlit: Color,
+) {
+    let x0 = x0.round() as i32;
+    let y0 = y0.round() as i32;
+    for dy in 0..2i32 {
+        for dx in 0..2i32 {
+            let on = cell_pixel_on(cf, dx as u32, dy as u32);
+            put_rgba(buf, w, h, x0 + dx, y0 + dy, if on { lit } else { unlit });
+        }
+    }
+}
+
+fn raster_stats(samples: &[f32], max: f32, tint: Tint, theme: &Theme) -> Vec<u8> {
+    let (w, h) = graph_px();
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let p = theme.extended_palette();
+    let unlit = unlit_color(theme);
+    let pitch = DOT + GAP;
+    let n = samples.len().min(COLS);
+    for col in 0..COLS {
+        let sample = if col < n { samples[col] } else { 0.0 };
+        let fill = (sample / max).clamp(0.0, 1.0);
+        let lit = match tint {
+            Tint::Level => crate::stats::level_color(sample, p.background.base.text),
+            Tint::Rx => p.primary.base.color,
+            Tint::Tx => p.success.base.color,
+        };
+        let x0 = col as f32 * pitch;
+        for row in 0..ROWS {
+            let from_bottom = ROWS - 1 - row;
+            let cf = cell_fill(fill, from_bottom);
+            let y0 = row as f32 * pitch;
+            paint_cell(&mut buf, w, h, x0, y0, cf, lit, unlit);
+        }
+    }
+    buf
 }
 
 #[cfg(test)]
@@ -132,6 +164,9 @@ mod tests {
     fn graph_size_is_fixed() {
         assert_eq!(GRAPH_W, 12.0 * 2.0 + 11.0);
         assert_eq!(GRAPH_H, 5.0 * 2.0 + 4.0);
+        let (w, h) = graph_px();
+        assert_eq!(w, 35);
+        assert_eq!(h, 14);
     }
 
     #[test]
@@ -162,5 +197,22 @@ mod tests {
     #[test]
     fn warn_threshold_unchanged() {
         assert!(crate::stats::WARN_PCT < crate::stats::CRIT_PCT);
+    }
+
+    #[test]
+    fn raster_lights_pixels_for_a_full_column() {
+        let theme = Theme::Dark;
+        let pixels = raster_stats(&[100.0; COLS], 100.0, Tint::Level, &theme);
+        assert_eq!(pixels.len(), 35 * 14 * 4);
+        let lit = pixels.chunks(4).filter(|px| px[3] > 200).count();
+        assert!(lit > 80, "expected a full matrix of opaque LEDs, got {lit}");
+    }
+
+    #[test]
+    fn raster_empty_still_paints_unlit_dots() {
+        let theme = Theme::Dark;
+        let pixels = raster_stats(&[0.0; COLS], 100.0, Tint::Level, &theme);
+        let dim = pixels.chunks(4).filter(|px| px[3] > 0 && px[3] < 80).count();
+        assert!(dim > 80, "unlit LEDs should still be visible, got {dim}");
     }
 }

@@ -1,7 +1,8 @@
 # sola-kvm operator guide (novus server)
 
-Software KVM: physical mouse/keyboard on **novus** control **ember** (macOS)
-over UDP. Design: `docs/specs/2026-07-27-sola-kvm-design.md`.
+Software KVM: physical mouse/keyboard on **novus** control a **peer**
+over UDP (Linux `sola-kvm listen` or macOS `sola-kvm-mac`). Design:
+`docs/specs/2026-07-27-sola-kvm-design.md`.
 
 ## Status vs lan-mouse
 
@@ -9,8 +10,9 @@ over UDP. Design: `docs/specs/2026-07-27-sola-kvm-design.md`.
 
 | Host | Autostart |
 |------|-----------|
-| **novus** | Managed by **`sola`** (`MANAGED` includes `sola-kvm` → `server --input evdev`) after River is up |
-| **ember** | LaunchAgent `com.sola.kvm-mac` (`RunAtLoad` + `KeepAlive`) → `/opt/sola/bin/sola-kvm-mac listen` |
+| **novus** (server) | Managed by **`sola`** (`MANAGED` includes `sola-kvm` → `server --input evdev`) after River is up |
+| **Linux peer** (client) | `sola-kvm listen` (Wayland virtual pointer + keyboard). On Oath: `svc:sola-kvm` as `home`. |
+| **ember** (macOS client, optional) | LaunchAgent `com.sola.kvm-mac` → `/opt/sola/bin/sola-kvm-mac listen` |
 
 Do not reinstall Lan Mouse.app or the old `lan-mouse` user unit.
 
@@ -38,10 +40,11 @@ Key fields:
 
 | Section | Fields |
 |---------|--------|
-| `[peer]` | `host` (ember IP, default `10.0.0.21`), `port` (default `4242`) |
-| `[layout]` | `side` (`right`/`left`/`top`/`bottom`), `align`, `mac_width`, `mac_height` |
+| `[peer]` | `host` (client IP), `port` (default `4242`) |
+| `[layout]` | `side` (`right`/`left`/`top`/`bottom`), `align`, `mac_width`, `mac_height` (peer output size; names are historical) |
 | `[motion]` | `scale` — multiplies relative deltas while remote |
 | `[primary]` | novus logical size (default `5120×2160`); Phase C does not yet pull bus `OutputGeometry` |
+| `[clipboard]` | `enable` (default true), `max_bytes` (default 8 MiB). Sync on **Enter** (novus → peer) and **Leave** (peer → novus). Text and `image/png` (screenshots / Preview Copy). TCP on the **same port** as UDP. |
 
 Bottoms-aligned Mac to the right of novus (desk default):
 
@@ -67,7 +70,7 @@ Logs: `/opt/sola/log/sola.log` (shared) and stderr; also check for `sola-kvm` li
 ### Autostart (managed by sola)
 
 1. Install binaries: `/opt/sola/bin/sola` (with MANAGED including sola-kvm) and `/opt/sola/bin/sola-kvm`
-2. Config: `~/.config/sola-kvm/config.toml` (`peer.host` = ember IP)
+2. Config: `~/.config/sola-kvm/config.toml` (`peer.host` = client IP)
 3. **Input device access** (required for `evdev`; re-plug creates new nodes):
 
    **Permanent (preferred — NixOS / `services.sola.enable`):** the sola NixOS
@@ -104,7 +107,7 @@ Line protocol on stdin. Useful for development and pairing with Phase B
 without HID grab.
 
 ```bash
-# terminal A — dump packets (or run Mac agent on ember)
+# terminal A — Linux client inject (or `--dump` to log packets)
 sola-kvm listen --bind 0.0.0.0:4242
 
 # terminal B — drive server locally
@@ -157,7 +160,37 @@ Limitations (honest):
   events but does **not** by itself disable River xkb shell bindings if any
   still fire — prefer testing feed/demo against the Mac agent first.
 
-## Pair with Phase B (ember)
+## Clipboard
+
+TCP on the **same port** as UDP (different protocol). Sync only when the
+pointer **enters** (novus → peer) or **leaves** (peer → novus).
+
+| Payload | Linux ↔ Linux | Mac client |
+|---------|----------------|------------|
+| UTF-8 text | yes | yes |
+| `image/png` | yes (screenshots, Preview Copy) | rejected (pasteboard stays) |
+
+Default cap is 8 MiB. Disable with `[clipboard] enable = false`.
+
+## Pair with a Linux client
+
+On the peer (River/Sola seat, `WAYLAND_DISPLAY` live):
+
+```bash
+sola-kvm listen --bind 0.0.0.0:4242
+```
+
+On novus: `peer.host` = that machine’s LAN IP, `mac_width` / `mac_height` =
+the peer’s output (e.g. canto 1920×1080). Then:
+
+```bash
+sola-kvm send-test --to <peer-ip>:4242
+# full path: sola-kvm server --input evdev (managed by sola)
+```
+
+`--dump` on listen logs packets and does not inject.
+
+## Pair with Phase B (ember / macOS)
 
 1. Mac agent listening on `0.0.0.0:4242` (Accessibility granted).
 2. On novus: `sola-kvm show` → confirm peer IP.
@@ -165,7 +198,6 @@ Limitations (honest):
 
 ```bash
 sola-kvm send-test --to 10.0.0.21:4242
-# or demo / feed as above
 ```
 
 4. Full path: `sola-kvm server --input evdev` (or feed) + Mac agent injects.

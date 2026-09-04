@@ -6,6 +6,7 @@
 pub mod barrier;
 pub mod clip;
 pub mod config;
+pub mod inject;
 pub mod input;
 pub mod layout;
 pub mod metrics;

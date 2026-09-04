@@ -5,6 +5,7 @@ use std::io::{self, Read, Write};
 pub const MAGIC: u32 = 0x43_4c_49_50;
 pub const VERSION: u8 = 1;
 pub const MIME_TEXT_UTF8: u8 = 1;
+pub const MIME_PNG: u8 = 2;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,18 +46,22 @@ pub enum AckStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Hello { role: Role },
-    Offer { hash: u32, text: String },
+    Offer { mime: u8, hash: u32, body: Vec<u8> },
     Empty,
     Ack { of_seq: u32, status: AckStatus },
 }
 
-pub fn hash_text(text: &str) -> u32 {
+pub fn hash_bytes(bytes: &[u8]) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
-    for &b in text.as_bytes() {
+    for &b in bytes {
         h ^= u32::from(b);
         h = h.wrapping_mul(0x0100_0193);
     }
     h
+}
+
+pub fn hash_text(text: &str) -> u32 {
+    hash_bytes(text.as_bytes())
 }
 
 pub fn write_message(w: &mut dyn Write, seq: u32, msg: &Message) -> io::Result<()> {
@@ -70,16 +75,15 @@ pub fn write_message(w: &mut dyn Write, seq: u32, msg: &Message) -> io::Result<(
             w.write_all(&hdr)?;
             w.write_all(&[*role as u8])?;
         }
-        Message::Offer { hash, text } => {
-            let bytes = text.as_bytes();
-            let len = bytes.len() as u32;
+        Message::Offer { mime, hash, body } => {
+            let len = body.len() as u32;
             hdr[5] = MsgType::Offer as u8;
             hdr[6..10].copy_from_slice(&seq.to_le_bytes());
             w.write_all(&hdr)?;
-            w.write_all(&[MIME_TEXT_UTF8])?;
+            w.write_all(&[*mime])?;
             w.write_all(&len.to_le_bytes())?;
             w.write_all(&hash.to_le_bytes())?;
-            w.write_all(bytes)?;
+            w.write_all(body)?;
         }
         Message::Empty => {
             hdr[5] = MsgType::Empty as u8;
@@ -132,7 +136,7 @@ pub fn read_message(r: &mut dyn Read, max_bytes: u32) -> io::Result<(u32, Messag
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("bad role {o}"),
-                    ))
+                    ));
                 }
             };
             Message::Hello { role }
@@ -141,12 +145,6 @@ pub fn read_message(r: &mut dyn Read, max_bytes: u32) -> io::Result<(u32, Messag
             let mut fixed = [0u8; 9];
             r.read_exact(&mut fixed)?;
             let mime = fixed[0];
-            if mime != MIME_TEXT_UTF8 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unsupported mime {mime}"),
-                ));
-            }
             let len = u32::from_le_bytes(fixed[1..5].try_into().unwrap());
             let _wire_hash = u32::from_le_bytes(fixed[5..9].try_into().unwrap());
             if len > max_bytes {
@@ -166,12 +164,10 @@ pub fn read_message(r: &mut dyn Read, max_bytes: u32) -> io::Result<(u32, Messag
             if len > 0 {
                 r.read_exact(&mut body)?;
             }
-            let text = String::from_utf8(body).map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("offer not utf-8: {e}"))
-            })?;
             Message::Offer {
-                hash: hash_text(&text),
-                text,
+                mime,
+                hash: hash_bytes(&body),
+                body,
             }
         }
         MsgType::Empty => Message::Empty,
