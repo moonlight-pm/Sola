@@ -96,7 +96,10 @@ pub enum Msg {
     /// Jump to a session-history index (from the hold menu).
     NavJump(i32),
     /// Reload when idle; stop when the active tab is loading.
+    /// Shift-click the toolbar button is a hard reload (same as [`Self::NavHardReload`]).
     NavReloadOrStop,
+    /// `⌘⇧R` — reload ignoring HTTP cache (Chromium hard reload).
+    NavHardReload,
     /// Copy the current page URL to the system clipboard.
     CopyUrl,
     /// Escape / explicit stop — always `NavCmd::Stop`.
@@ -206,6 +209,8 @@ pub enum Msg {
     VaultPassword(String),
     VaultOtp(String),
     VaultLogin,
+    /// Wipe Bitwarden tokens, keys, and the on-disk session.
+    VaultLogout,
     VaultVerifyOtp,
     VaultResendEmailCode,
     VaultPanelClose,
@@ -277,6 +282,11 @@ pub enum Msg {
     JsDialogOk,
     JsDialogCancel,
     JsDialogInput(String),
+    HttpAuthUser(String),
+    HttpAuthPass(String),
+    HttpAuthOk,
+    HttpAuthCancel,
+    HttpAuthFocusPass,
     /// Clicked the idle omnibox label — become an edit field.
     UrlBarActivate,
     FindOpen,
@@ -427,6 +437,9 @@ pub struct App<E: Engine> {
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
     closed_tabs: HashSet<TabId>,
+    /// True after the helper has reported a non-empty tab list this run.
+    /// When it later goes empty (helper death), chrome re-opens `cached_tabs`.
+    engine_tabs_seen: bool,
     /// LIFO recently-closed tabs (⌘⇧T). Persisted in `session.json`.
     recently_closed: Vec<crate::session::ClosedTab>,
     /// Editable contents of the URL bar.
@@ -575,6 +588,9 @@ pub struct App<E: Engine> {
     pending_js_dialog: Option<crate::js_dialog::Ipc>,
     js_dialog_queue: VecDeque<crate::js_dialog::Ipc>,
     js_dialog_prompt: String,
+    pending_http_auth: Option<crate::http_auth::Ipc>,
+    http_auth_user: String,
+    http_auth_pass: String,
     /// Instant the copy-URL button last succeeded — drives the check flash.
     copy_url_flash: Option<Instant>,
     /// Page tab the docked inspector is attached to (`None` = closed).
@@ -620,6 +636,7 @@ impl<E: Engine> App<E> {
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
             closed_tabs: HashSet::new(),
+            engine_tabs_seen: false,
             recently_closed,
             url_field: String::new(),
             last_seen_url: String::new(),
@@ -729,6 +746,9 @@ impl<E: Engine> App<E> {
             pending_js_dialog: None,
             js_dialog_queue: VecDeque::new(),
             js_dialog_prompt: String::new(),
+            pending_http_auth: None,
+            http_auth_user: String::new(),
+            http_auth_pass: String::new(),
             copy_url_flash: None,
             devtools: None,
             devtools_ratio: 0.62,
@@ -1720,6 +1740,15 @@ impl<E: Engine> App<E> {
                     self.vault_password.clear();
                 }
             }
+            Msg::VaultLogout => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if self.pending_passkey.is_some() {
+                        self.cancel_pending_passkey("Logged out.");
+                    }
+                    self.vault.send(VaultCmd::Logout);
+                }
+            }
             Msg::VaultVerifyOtp => {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -1880,6 +1909,17 @@ impl<E: Engine> App<E> {
             Msg::JsDialogInput(s) => {
                 self.js_dialog_prompt = s;
             }
+            Msg::HttpAuthUser(s) => {
+                self.http_auth_user = s;
+            }
+            Msg::HttpAuthPass(s) => {
+                self.http_auth_pass = s;
+            }
+            Msg::HttpAuthOk => return self.resolve_http_auth(true),
+            Msg::HttpAuthCancel => return self.resolve_http_auth(false),
+            Msg::HttpAuthFocusPass => {
+                return iced::widget::operation::focus(crate::http_auth::pass_input_id());
+            }
             Msg::UrlBarActivate => {
                 self.set_url_bar_focused(true);
                 self.url_bar_activating = true;
@@ -1982,10 +2022,17 @@ impl<E: Engine> App<E> {
                 if self.active_is_loading() {
                     self.set_active_loading(false);
                     let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Stop));
+                } else if crate::input::stored_modifiers().shift() {
+                    self.set_active_loading(true);
+                    let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::ReloadIgnoreCache));
                 } else {
                     self.set_active_loading(true);
                     let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
                 }
+            }
+            Msg::NavHardReload => {
+                self.set_active_loading(true);
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::ReloadIgnoreCache));
             }
             Msg::CopyUrl => {
                 let page_url = self.active_tab_info().map(|t| t.url.as_str()).unwrap_or("");
@@ -2187,6 +2234,7 @@ impl<E: Engine> App<E> {
                 // not blank out after session restore.
                 let live = self.tabs_handle.lock().unwrap().clone();
                 if !live.is_empty() {
+                    self.engine_tabs_seen = true;
                     let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
                     let opener = self.cached_active;
                     self.cached_tabs =
@@ -2209,6 +2257,23 @@ impl<E: Engine> App<E> {
                             .unwrap_or(*new_popups.last().unwrap());
                         self.switch_active_tab(focus);
                     }
+                } else if self.engine_tabs_seen && !self.cached_tabs.is_empty() {
+                    // Helper died and came back empty. Reopen chrome's list
+                    // (not the helper's last snapshot — that resurrected
+                    // tabs the user had already closed).
+                    self.engine_tabs_seen = false;
+                    tracing::warn!(
+                        tabs = self.cached_tabs.len(),
+                        "engine tab list empty — reopening chrome tabs"
+                    );
+                    for t in &self.cached_tabs {
+                        let _ = self.cmd_tx.send(Cmd::OpenTab {
+                            id: t.id,
+                            url: t.url.clone(),
+                            title: t.title.clone(),
+                        });
+                    }
+                    let _ = self.cmd_tx.send(Cmd::SetActiveTab(self.cached_active));
                 }
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
@@ -2287,6 +2352,7 @@ impl<E: Engine> App<E> {
                     .collect();
                 self.drain_notify_ipc();
                 let js_dlg = self.drain_js_dialogs();
+                let http_auth = self.drain_http_auth();
                 self.drain_find_results();
                 self.drain_favicons();
                 self.drain_devtools();
@@ -2316,13 +2382,14 @@ impl<E: Engine> App<E> {
                         clip,
                         totp_clip,
                         js_dlg,
+                        http_auth,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip, js_dlg]);
+                return Task::batch([clip, totp_clip, js_dlg, http_auth]);
                 #[cfg(not(feature = "bitwarden"))]
-                return Task::batch([clip, js_dlg]);
+                return Task::batch([clip, js_dlg, http_auth]);
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -2959,6 +3026,8 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
+        } else if self.pending_http_auth.is_some() {
+            stack![content, self.view_http_auth()].into()
         } else if self.pending_js_dialog.is_some() {
             stack![content, self.view_js_dialog()].into()
         } else if self.pending_media.is_some() {
@@ -3754,6 +3823,23 @@ impl<E: Engine> App<E> {
                     self.set_vault_panel_open(true);
                 }
             }
+            VaultEvent::SessionRestored { email } => {
+                self.vault_email = email;
+                self.persist_vault_email();
+                self.reset_vault_form_keep_email();
+                self.request_vault_items();
+            }
+            VaultEvent::LoggedOut => {
+                self.vault_items.clear();
+                self.vault_matches.clear();
+                self.vault_item = None;
+                self.vault_item_id = None;
+                self.vault_search.clear();
+                self.vault_filter = ItemFilter::All;
+                self.vault_revealed.clear();
+                self.reset_vault_form_keep_email();
+                self.vault_phase = VaultPanelPhase::Credentials;
+            }
             VaultEvent::LoginNeedsTwoFactor {
                 email,
                 preferred,
@@ -4473,6 +4559,100 @@ impl<E: Engine> App<E> {
             .into()
     }
 
+    fn drain_http_auth(&mut self) -> Task<Msg> {
+        let evs: Vec<crate::http_auth::Event> = self
+            .engine
+            .http_auth_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        let mut focus = Task::none();
+        for ev in evs {
+            match ev {
+                crate::http_auth::Event::Open(dlg) => {
+                    tracing::info!(id = dlg.id, host = %dlg.host, "http-auth prompt");
+                    if self.pending_http_auth.is_none() {
+                        focus = self.show_http_auth(dlg);
+                    }
+                }
+                crate::http_auth::Event::Reset { ids } => {
+                    if self
+                        .pending_http_auth
+                        .as_ref()
+                        .is_some_and(|d| ids.contains(&d.id))
+                    {
+                        self.pending_http_auth = None;
+                        self.http_auth_user.clear();
+                        self.http_auth_pass.clear();
+                        crate::http_auth::set_open(false);
+                    }
+                }
+            }
+        }
+        focus
+    }
+
+    fn show_http_auth(&mut self, dlg: crate::http_auth::Ipc) -> Task<Msg> {
+        crate::http_auth::set_open(true);
+        self.http_auth_user = dlg.username.clone();
+        self.http_auth_pass.clear();
+        if dlg.tab_id != 0 && self.cached_active.0 != dlg.tab_id {
+            if self.cached_tabs.iter().any(|t| t.id.0 == dlg.tab_id) {
+                self.switch_active_tab(TabId(dlg.tab_id));
+            }
+        }
+        self.pending_http_auth = Some(dlg);
+        if self.http_auth_user.is_empty() {
+            iced::widget::operation::focus(crate::http_auth::user_input_id())
+        } else {
+            Task::batch([
+                iced::widget::operation::focus(crate::http_auth::pass_input_id()),
+                iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        crate::http_auth::pass_input_id(),
+                    ),
+                ),
+            ])
+        }
+    }
+
+    fn resolve_http_auth(&mut self, success: bool) -> Task<Msg> {
+        let Some(dlg) = self.pending_http_auth.take() else {
+            crate::http_auth::set_open(false);
+            return Task::none();
+        };
+        let username = std::mem::take(&mut self.http_auth_user);
+        let password = std::mem::take(&mut self.http_auth_pass);
+        let _ = self.cmd_tx.send(Cmd::HttpAuth {
+            id: dlg.id,
+            success,
+            username,
+            password,
+        });
+        crate::http_auth::set_open(false);
+        Task::none()
+    }
+
+    fn view_http_auth(&self) -> Element<'_, Msg> {
+        let Some(dlg) = self.pending_http_auth.as_ref() else {
+            return Space::new()
+                .width(Length::Shrink)
+                .height(Length::Shrink)
+                .into();
+        };
+        crate::http_auth::overlay(
+            dlg,
+            &self.http_auth_user,
+            &self.http_auth_pass,
+            Msg::HttpAuthOk,
+            Msg::HttpAuthCancel,
+            Msg::HttpAuthUser,
+            Msg::HttpAuthPass,
+            Msg::HttpAuthFocusPass,
+        )
+    }
+
     fn view_js_dialog(&self) -> Element<'_, Msg> {
         let Some(dlg) = self.pending_js_dialog.as_ref() else {
             return Space::new()
@@ -4912,12 +5092,25 @@ impl<E: Engine> App<E> {
             .width(Length::Fill),
         );
 
+        let account = {
+            let email = if self.vault_email.trim().is_empty() {
+                "Signed in".to_string()
+            } else {
+                self.vault_email.clone()
+            };
+            let logout =
+                kit_button::labeled_sm("Log out", kit_button::ghost).on_press(Msg::VaultLogout);
+            row![soft_sm(email).width(Length::Fill), logout]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center)
+        };
         let mut refresh = kit_button::labeled_sm("Refresh", kit_button::ghost);
         if !self.vault_busy && !self.vault_items_loading {
             refresh = refresh.on_press(Msg::VaultRefreshMatches);
         }
         let close =
             kit_button::labeled("Close", kit_button::secondary).on_press(Msg::VaultPanelClose);
+        col = col.push(account);
         col = col.push(
             row![refresh, close]
                 .spacing(SPACE_SM)
@@ -5992,6 +6185,11 @@ impl<E: Engine> App<E> {
                         Some(Msg::ReopenClosedTab)
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                        if crate::input::is_hard_reload_shortcut(&key, modifiers) =>
+                    {
+                        Some(Msg::NavHardReload)
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                         if crate::input::chrome_nav_shortcut(&key, modifiers) == Some('r') =>
                     {
                         Some(Msg::NavReloadOrStop)
@@ -6014,6 +6212,10 @@ impl<E: Engine> App<E> {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
+                    }) if crate::http_auth::is_open() => Some(Msg::HttpAuthCancel),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
                     }) if crate::js_dialog::is_open() => Some(if crate::js_dialog::is_alert() {
                         Msg::JsDialogOk
                     } else {
@@ -6028,7 +6230,8 @@ impl<E: Engine> App<E> {
                     Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                         if URL_BAR_FOCUSED.load(Ordering::Relaxed)
                             && !FIND_OPEN.load(Ordering::Relaxed)
-                            && !crate::js_dialog::is_open() =>
+                            && !crate::js_dialog::is_open()
+                            && !crate::http_auth::is_open() =>
                     {
                         omnibox_key(&key, &modifiers)
                     }

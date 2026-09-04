@@ -18,8 +18,9 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DevToolsHandle, DownloadsHandle, FaviconsHandle,
-    FindResultsHandle, FrameMailbox, FrameReceiver, ImeCaret, ImeHandle, JsDialogsHandle,
-    NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle,
+    FindResultsHandle, FrameMailbox, FrameReceiver, HttpAuthHandle, ImeCaret, ImeHandle,
+    JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
+    TabsHandle,
 };
 use crate::profiles;
 
@@ -49,6 +50,7 @@ struct Shared {
     background_tabs: BackgroundTabsHandle,
     notifications: NotificationsHandle,
     js_dialogs: JsDialogsHandle,
+    http_auth: HttpAuthHandle,
     favicons: FaviconsHandle,
     find_results: FindResultsHandle,
     devtools: DevToolsHandle,
@@ -74,6 +76,7 @@ pub struct RouterHandles {
     pub background_tabs: BackgroundTabsHandle,
     pub notifications: NotificationsHandle,
     pub js_dialogs: JsDialogsHandle,
+    pub http_auth: HttpAuthHandle,
     pub favicons: FaviconsHandle,
     pub find_results: FindResultsHandle,
     pub devtools: DevToolsHandle,
@@ -94,6 +97,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let background_tabs: BackgroundTabsHandle = Arc::new(Mutex::new(Vec::new()));
     let notifications: NotificationsHandle = Arc::new(Mutex::new(Vec::new()));
     let js_dialogs: JsDialogsHandle = Arc::new(Mutex::new(Vec::new()));
+    let http_auth: HttpAuthHandle = Arc::new(Mutex::new(Vec::new()));
     let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
     let find_results: FindResultsHandle = Arc::new(Mutex::new(Vec::new()));
     let devtools: DevToolsHandle = Arc::new(Mutex::new(Vec::new()));
@@ -112,6 +116,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         background_tabs: background_tabs.clone(),
         notifications: notifications.clone(),
         js_dialogs: js_dialogs.clone(),
+        http_auth: http_auth.clone(),
         favicons: favicons.clone(),
         find_results: find_results.clone(),
         devtools: devtools.clone(),
@@ -142,6 +147,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         background_tabs,
         notifications,
         js_dialogs,
+        http_auth,
         favicons,
         find_results,
         devtools,
@@ -359,15 +365,19 @@ fn restore_dead_helper(
     if let Some(mut child) = old.child {
         let _ = child.try_wait();
     }
-    let tabs = old.tabs.lock().unwrap().clone();
     let was_front = shared.current.lock().unwrap().as_str() == profile_id;
     let active = shared.active.load(Ordering::Relaxed);
     tracing::error!(
         profile = %profile_id,
-        tabs = tabs.len(),
         was_front,
-        "engine helper died — respawning"
+        "engine helper died — respawning (chrome will reopen its tabs)"
     );
+    // Drop the stale snapshot so iced does not merge resurrected
+    // closed tabs (old helper ids) into the strip.
+    if was_front {
+        shared.tabs.lock().unwrap().clear();
+        crate::chrome_wake::wake();
+    }
 
     let now = Instant::now();
     let stamps = deaths.entry(profile_id.to_string()).or_default();
@@ -393,17 +403,9 @@ fn restore_dead_helper(
     };
     if was_front {
         let _ = helper.to_engine.send(ToEngine::SetFront(true));
-    }
-    for t in &tabs {
-        let _ = helper.to_engine.send(ToEngine::OpenTab {
-            id: t.id.0,
-            url: t.url.clone(),
-            title: t.title.clone(),
-        });
-    }
-    if was_front && active != 0 {
-        let _ = helper.to_engine.send(ToEngine::SetActiveTab(active));
-        shared.active.store(active, Ordering::Relaxed);
+        if active != 0 {
+            shared.active.store(active, Ordering::Relaxed);
+        }
     }
     let (vw, vh, vscale) = *shared.viewport.lock().unwrap();
     let _ = helper.to_engine.send(ToEngine::Resize {
@@ -413,8 +415,7 @@ fn restore_dead_helper(
     });
     tracing::info!(
         profile = %profile_id,
-        tabs = tabs.len(),
-        "engine helper restored"
+        "engine helper restored (empty; chrome reopens tabs)"
     );
 }
 
@@ -681,6 +682,10 @@ fn handle_from(
                 crate::chrome_wake::wake();
             }
         }
+        FromEngine::HttpAuth(ev) => {
+            shared.http_auth.lock().unwrap().push(ev);
+            crate::chrome_wake::wake();
+        }
         FromEngine::FindResult(ev) => {
             shared.find_results.lock().unwrap().push(ev);
             crate::chrome_wake::wake();
@@ -715,6 +720,10 @@ fn launch_helper(profile_id: &str) -> Result<Child, String> {
     let child = Command::new(&exe)
         .arg("--engine")
         .arg(format!("--profile={profile_id}"))
+        // Earliest possible: OSCrypt must be `basic` before Chromium
+        // picks the secret portal (TTY has no keyring → cookies v10
+        // that cannot be decrypted after restart).
+        .arg("--password-store=basic")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -791,6 +800,17 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             Some(ToEngine::MediaPermission { req_id, granted })
         }
         Cmd::JsDialog { id, success, input } => Some(ToEngine::JsDialog { id, success, input }),
+        Cmd::HttpAuth {
+            id,
+            success,
+            username,
+            password,
+        } => Some(ToEngine::HttpAuth {
+            id,
+            success,
+            username,
+            password,
+        }),
         Cmd::Find {
             text,
             forward,

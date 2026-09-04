@@ -5,14 +5,14 @@
 //! socket — the user never sees this process in the app switcher.
 
 use std::fs;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cef::engine::CefEngine;
 use crate::cef::ipc::{self, FromEngine, ToEngine};
@@ -322,6 +322,17 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         }
         ToEngine::MediaPermission { req_id, granted } => Cmd::MediaPermission { req_id, granted },
         ToEngine::JsDialog { id, success, input } => Cmd::JsDialog { id, success, input },
+        ToEngine::HttpAuth {
+            id,
+            success,
+            username,
+            password,
+        } => Cmd::HttpAuth {
+            id,
+            success,
+            username,
+            password,
+        },
         ToEngine::Find {
             text,
             forward,
@@ -334,6 +345,60 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         ToEngine::StopFind { clear } => Cmd::StopFind { clear },
         ToEngine::Shutdown => return None,
     })
+}
+
+/// Ask every profile helper to Quit (flush cookies) before chrome starts.
+///
+/// `exec_self` after `cargo make install` leaves `--engine` children with
+/// ppid == us. SIGTERM skips CEF's cookie flush — GitHub/Google look
+/// signed-out on the next launch. Send `Shutdown` on the control socket
+/// first and wait for the pid file to die.
+pub fn stop_all_profile_engines() {
+    for p in profiles::list() {
+        stop_profile_engine(&p.id);
+    }
+}
+
+fn stop_profile_engine(profile_id: &str) {
+    let sock = profiles::engine_sock_path(profile_id);
+    let pid_path = profiles::engine_pid_path(profile_id);
+    let pid = fs::read_to_string(&pid_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok());
+    if let Ok(mut stream) = UnixStream::connect(&sock) {
+        match ipc::write_msg(&mut stream, &ToEngine::Shutdown) {
+            Ok(()) => {
+                tracing::info!(%profile_id, "asked engine helper to shutdown (flush cookies)")
+            }
+            Err(e) => tracing::warn!(%profile_id, error = %e, "engine shutdown write failed"),
+        }
+    }
+    if let Some(pid) = pid {
+        if wait_pid_gone(pid, Duration::from_secs(6)) {
+            tracing::info!(%profile_id, pid, "engine helper exited");
+        } else {
+            tracing::warn!(%profile_id, pid, "engine helper still up — SIGTERM");
+            let _ = std::process::Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .status();
+            let _ = wait_pid_gone(pid, Duration::from_secs(2));
+        }
+    }
+    let _ = fs::remove_file(&sock);
+    let _ = fs::remove_file(profiles::engine_frame_sock_path(profile_id));
+    let _ = fs::remove_file(&pid_path);
+}
+
+fn wait_pid_gone(pid: u32, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if !Path::new(&format!("/proc/{pid}")).exists() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(40));
+    }
+    !Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// Kill leftover iced fleet windows (`--parked`) and **orphan** helpers.

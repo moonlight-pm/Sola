@@ -142,6 +142,7 @@ pub struct CefEngine {
     background_tabs: crate::engine::BackgroundTabsHandle,
     notifications: NotificationsHandle,
     js_dialogs: crate::engine::JsDialogsHandle,
+    http_auth: crate::engine::HttpAuthHandle,
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
     devtools: crate::engine::DevToolsHandle,
@@ -215,6 +216,7 @@ impl Engine for CefEngine {
             background_tabs: handles.background_tabs,
             notifications: handles.notifications,
             js_dialogs: handles.js_dialogs,
+            http_auth: handles.http_auth,
             favicons: handles.favicons,
             find_results: handles.find_results,
             devtools: handles.devtools,
@@ -274,6 +276,10 @@ impl Engine for CefEngine {
 
     fn js_dialogs_handle(&self) -> crate::engine::JsDialogsHandle {
         self.js_dialogs.clone()
+    }
+
+    fn http_auth_handle(&self) -> crate::engine::HttpAuthHandle {
+        self.http_auth.clone()
     }
 
     fn favicons_handle(&self) -> crate::engine::FaviconsHandle {
@@ -391,6 +397,12 @@ struct CefThreadState {
     /// In-flight `OnJSDialog` / `OnBeforeUnloadDialog` callbacks.
     pending_js_dialog: RefCell<std::collections::HashMap<u64, (cef::JsdialogCallback, i32)>>,
     next_js_dialog_id: Cell<u64>,
+    /// In-flight HTTP auth callbacks (IO thread posts to UI).
+    pending_http_auth:
+        RefCell<std::collections::HashMap<u64, (cef::AuthCallback, crate::http_auth::Key)>>,
+    next_http_auth_id: Cell<u64>,
+    /// Keys we just continued with stored creds — a second call is a reject.
+    http_auth_offered: RefCell<std::collections::HashSet<crate::http_auth::Key>>,
     /// `open_tab` sets this so `on_after_created` can adopt the browser
     /// with the chrome-chosen id. `None` means a `window.open` popup.
     pending_created_id: Cell<Option<TabId>>,
@@ -554,6 +566,9 @@ pub(super) fn run_worker(
         next_media_id: Cell::new(1),
         pending_js_dialog: RefCell::new(std::collections::HashMap::new()),
         next_js_dialog_id: Cell::new(1),
+        pending_http_auth: RefCell::new(std::collections::HashMap::new()),
+        next_http_auth_id: Cell::new(1),
+        http_auth_offered: RefCell::new(std::collections::HashSet::new()),
         pending_created_id: Cell::new(None),
         pending_created_url: RefCell::new(String::new()),
         pending_created_title: RefCell::new(String::new()),
@@ -637,12 +652,18 @@ cef::wrap_render_process_handler! {
         fn on_context_created(
             &self,
             _browser: Option<&mut cef::Browser>,
-            frame: Option<&mut cef::Frame>,
-            _context: Option<&mut cef::V8Context>,
+            _frame: Option<&mut cef::Frame>,
+            context: Option<&mut cef::V8Context>,
         ) {
-            // Document-start: run before page scripts can snapshot
-            // navigator.clipboard.writeText / credentials.get.
-            inject_page_scripts(frame);
+            // `Frame::execute_java_script` is browser-process only. Eval
+            // here so Google cannot snapshot native credentials.get
+            // before on_load_start's posted script arrives. OSR has no
+            // Chromium passkey sheet — miss this race and the page hangs
+            // on "Verifying it's you".
+            let Some(ctx) = context else { return };
+            eval_v8_context(ctx, &crate::paste_js::clipboard_bridge_script());
+            #[cfg(feature = "bitwarden")]
+            eval_v8_context(ctx, crate::vault::inject_webauthn_intercept_script());
         }
     }
 }
@@ -1522,6 +1543,29 @@ cef::wrap_load_handler! {
     }
 }
 
+fn eval_v8_context(ctx: &mut cef::V8Context, code: &str) {
+    if ctx.is_valid() == 0 {
+        return;
+    }
+    let code: cef::CefString = code.into();
+    let entered = ctx.enter() != 0;
+    let mut retval: Option<cef::V8Value> = None;
+    let mut exception: Option<cef::V8Exception> = None;
+    let ok = ctx.eval(
+        Some(&code),
+        None,
+        1,
+        Some(&mut retval),
+        Some(&mut exception),
+    );
+    if entered {
+        ctx.exit();
+    }
+    if ok == 0 {
+        tracing::debug!("v8 document-start eval failed");
+    }
+}
+
 fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
     let Some(frame) = frame else { return };
     let clip_src = crate::paste_js::clipboard_bridge_script();
@@ -1881,6 +1925,50 @@ cef::wrap_request_handler! {
                 return 1;
             }
             0
+        }
+
+        fn auth_credentials(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            origin_url: Option<&cef::CefString>,
+            is_proxy: ::std::os::raw::c_int,
+            host: Option<&cef::CefString>,
+            port: ::std::os::raw::c_int,
+            realm: Option<&cef::CefString>,
+            scheme: Option<&cef::CefString>,
+            callback: Option<&mut cef::AuthCallback>,
+        ) -> ::std::os::raw::c_int {
+            let Some(cb) = callback else {
+                return 0;
+            };
+            let origin = origin_url.map(|s| s.to_string()).unwrap_or_default();
+            let host = host.map(|s| s.to_string()).unwrap_or_default();
+            let realm = realm.map(|s| s.to_string()).unwrap_or_default();
+            let scheme = scheme.map(|s| s.to_string()).unwrap_or_default();
+            let tab_id = notify_tab_id(browser.as_ref().map(|b| &**b));
+            tracing::info!(
+                %host,
+                port,
+                %realm,
+                %scheme,
+                is_proxy = is_proxy != 0,
+                "http-auth challenge"
+            );
+            let mut task = HttpAuthTask::new(
+                cb.clone(),
+                origin,
+                host,
+                port,
+                realm,
+                scheme,
+                is_proxy != 0,
+                tab_id,
+            );
+            cef::post_task(
+                cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+                Some(&mut task),
+            );
+            1
         }
     }
 }
@@ -2408,6 +2496,130 @@ fn cancel_js_dialogs(browser_id: Option<i32>) {
     }
 }
 
+fn continue_http_auth(cb: &cef::AuthCallback, username: &str, password: &str) {
+    let user: cef::CefString = username.into();
+    let pass: cef::CefString = password.into();
+    cb.cont(Some(&user), Some(&pass));
+}
+
+fn emit_http_auth(ev: crate::http_auth::Event) {
+    if let Some(tx) = &cef_state().ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::HttpAuth(ev));
+    }
+}
+
+fn handle_http_auth_on_ui(
+    callback: cef::AuthCallback,
+    origin: String,
+    host: String,
+    port: i32,
+    realm: String,
+    scheme: String,
+    is_proxy: bool,
+    tab_id: u64,
+) {
+    let state = cef_state();
+    let key = crate::http_auth::Key::from_parts(&host, port, &realm, &scheme, is_proxy);
+    let profile = state.live_profile_id.borrow().clone();
+    let mut offered = state.http_auth_offered.borrow_mut();
+    if offered.contains(&key) {
+        offered.remove(&key);
+        drop(offered);
+        let username = if profile.is_empty() {
+            String::new()
+        } else {
+            crate::http_auth::lookup(&profile, &key)
+                .map(|(u, _)| u)
+                .unwrap_or_default()
+        };
+        if !profile.is_empty() {
+            crate::http_auth::forget(&profile, &key);
+        }
+        prompt_http_auth(
+            &state, callback, origin, host, realm, scheme, tab_id, key, username,
+        );
+        return;
+    }
+    if !profile.is_empty() {
+        if let Some((user, pass)) = crate::http_auth::lookup(&profile, &key) {
+            offered.insert(key);
+            drop(offered);
+            tracing::info!(%host, port, "http-auth: using saved credentials");
+            continue_http_auth(&callback, &user, &pass);
+            return;
+        }
+    }
+    drop(offered);
+    prompt_http_auth(
+        &state,
+        callback,
+        origin,
+        host,
+        realm,
+        scheme,
+        tab_id,
+        key,
+        String::new(),
+    );
+}
+
+fn prompt_http_auth(
+    state: &CefThreadState,
+    callback: cef::AuthCallback,
+    origin: String,
+    host: String,
+    realm: String,
+    scheme: String,
+    tab_id: u64,
+    key: crate::http_auth::Key,
+    username: String,
+) {
+    let id = state.next_http_auth_id.get();
+    state.next_http_auth_id.set(id.saturating_add(1));
+    state
+        .pending_http_auth
+        .borrow_mut()
+        .insert(id, (callback, key));
+    tracing::info!(id, %host, "http-auth prompt");
+    emit_http_auth(crate::http_auth::Event::Open(crate::http_auth::Ipc {
+        id,
+        tab_id,
+        origin,
+        host,
+        realm,
+        scheme,
+        username,
+    }));
+}
+
+cef::wrap_task! {
+    pub struct HttpAuthTask {
+        callback: cef::AuthCallback,
+        origin: String,
+        host: String,
+        port: i32,
+        realm: String,
+        scheme: String,
+        is_proxy: bool,
+        tab_id: u64,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            handle_http_auth_on_ui(
+                self.callback.clone(),
+                self.origin.clone(),
+                self.host.clone(),
+                self.port,
+                self.realm.clone(),
+                self.scheme.clone(),
+                self.is_proxy,
+                self.tab_id,
+            );
+        }
+    }
+}
+
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
@@ -2871,6 +3083,28 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 continue_js_dialog(&cb, success, &input);
             } else {
                 tracing::warn!(id, success, "js dialog continue: no pending callback");
+            }
+        }
+        Cmd::HttpAuth {
+            id,
+            success,
+            username,
+            password,
+        } => {
+            let pending = state.pending_http_auth.borrow_mut().remove(&id);
+            if let Some((cb, key)) = pending {
+                if success {
+                    let profile = state.live_profile_id.borrow().clone();
+                    if !profile.is_empty() {
+                        crate::http_auth::save(&profile, &key, &username, &password);
+                    }
+                    state.http_auth_offered.borrow_mut().insert(key);
+                    continue_http_auth(&cb, &username, &password);
+                } else {
+                    cb.cancel();
+                }
+            } else {
+                tracing::warn!(id, success, "http-auth continue: no pending callback");
             }
         }
         Cmd::Find {
@@ -3740,9 +3974,7 @@ fn http_get_local(port: u16, path: &str) -> Result<String, String> {
     let _ = s.set_nodelay(true);
     let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     s.write_all(req.as_bytes())
         .map_err(|e| format!("write: {e}"))?;
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -3843,8 +4075,7 @@ fn frontend_url_from_json_list(body: &str, page_url: &str, panel: &str) -> Optio
             ws = Some(w);
             break;
         }
-        if fallback.is_none() && (ty.is_empty() || ty == "page" || ty == "tab" || ty == "webview")
-        {
+        if fallback.is_none() && (ty.is_empty() || ty == "page" || ty == "tab" || ty == "webview") {
             fallback = Some(w);
         }
     }
@@ -3869,7 +4100,9 @@ mod devtools_frontend_tests {
     fn picks_matching_page_and_uses_bundled_ws() {
         let json = r#"[{"description":"","devtoolsFrontendUrl":"https://chrome-devtools-frontend.appspot.com/serve_file/@abc/inspector.html?panel=elements","id":"A","title":"Pay","type":"page","url":"https://example.com/pay","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/A"},{"id":"B","type":"page","url":"devtools://devtools/bundled/devtools_app.html","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/B"}]"#;
         let u = frontend_url_from_json_list(json, "https://example.com/pay", "console").unwrap();
-        assert!(u.starts_with("devtools://devtools/bundled/devtools_app.html?ws=127.0.0.1:9222/devtools/page/A"));
+        assert!(u.starts_with(
+            "devtools://devtools/bundled/devtools_app.html?ws=127.0.0.1:9222/devtools/page/A"
+        ));
         assert!(u.contains("&panel=console"));
         assert!(!u.contains("appspot"));
         assert!(!u.contains("targetType=tab"));
@@ -4526,6 +4759,7 @@ fn dispatch_nav(browser: &cef::Browser, nav: NavCmd) {
         NavCmd::Back => browser.go_back(),
         NavCmd::Forward => browser.go_forward(),
         NavCmd::Reload => browser.reload(),
+        NavCmd::ReloadIgnoreCache => browser.reload_ignore_cache(),
         NavCmd::Stop => browser.stop_load(),
         NavCmd::LoadUrl(url) => {
             if let Some(frame) = browser.main_frame() {

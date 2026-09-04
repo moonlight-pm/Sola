@@ -39,6 +39,7 @@ const CLIENT_ID: &str = "web";
 #[derive(Debug, Default)]
 pub struct TokenCell {
     access: Mutex<Option<String>>,
+    refresh: Mutex<Option<String>>,
 }
 
 impl TokenCell {
@@ -46,8 +47,33 @@ impl TokenCell {
         *self.access.lock().expect("token mutex") = Some(token);
     }
 
+    pub fn set_refresh(&self, token: Option<String>) {
+        *self.refresh.lock().expect("token mutex") = token;
+    }
+
+    pub fn access(&self) -> Option<String> {
+        self.access.lock().expect("token mutex").clone()
+    }
+
+    pub fn refresh(&self) -> Option<String> {
+        self.refresh.lock().expect("token mutex").clone()
+    }
+
     pub fn clear(&self) {
-        *self.access.lock().expect("token mutex") = None;
+        {
+            let mut g = self.access.lock().expect("token mutex");
+            if let Some(ref mut t) = *g {
+                t.zeroize();
+            }
+            *g = None;
+        }
+        {
+            let mut g = self.refresh.lock().expect("token mutex");
+            if let Some(ref mut t) = *g {
+                t.zeroize();
+            }
+            *g = None;
+        }
     }
 }
 
@@ -120,6 +146,7 @@ pub struct IdentityLogin<'a> {
 enum RawLogin {
     Success {
         access_token: String,
+        refresh_token: Option<String>,
         private_key: String,
         unlock: MasterPasswordUnlockData,
         force_password_reset: bool,
@@ -184,6 +211,7 @@ impl IdentityLogin<'_> {
         match parsed {
             RawLogin::Success {
                 access_token,
+                refresh_token,
                 private_key,
                 unlock,
                 force_password_reset,
@@ -192,7 +220,9 @@ impl IdentityLogin<'_> {
                 // local-user-data-key step (`Unable to initialize local user
                 // data key` if missing). Official clients take it from JWT `sub`.
                 let user_id = user_id_from_access_token(&access_token)?;
-                self.tokens.set(access_token);
+                self.tokens.set(access_token.clone());
+                self.tokens.set_refresh(refresh_token.clone());
+                let private_key_str = private_key.clone();
                 let private_key: EncString = private_key
                     .parse()
                     .map_err(|e| format!("private key: {e}"))?;
@@ -224,29 +254,21 @@ impl IdentityLogin<'_> {
                     "vault: timing decrypt user key"
                 );
 
+                let user_key_b64 = user_key.to_base64().to_string();
                 let t4 = Instant::now();
-                self.client
-                    .crypto()
-                    .initialize_user_crypto(InitUserCryptoRequest {
-                        user_id: Some(user_id),
-                        kdf_params: unlock.kdf.clone(),
-                        email: crypto_email,
-                        account_cryptographic_state: WrappedAccountCryptographicState::V1 {
-                            private_key,
-                        },
-                        // Skip a second 600k PBKDF2 — we already hold the user key.
-                        method: InitUserCryptoMethod::DecryptedKey {
-                            decrypted_user_key: user_key.to_base64().to_string(),
-                        },
-                        upgrade_token: None,
-                    })
-                    .await
-                    .map_err(|e| format!("crypto init: {e}"))?;
+                initialize_user_crypto(
+                    self.client,
+                    user_id,
+                    unlock.kdf.clone(),
+                    crypto_email.clone(),
+                    private_key,
+                    user_key_b64.clone(),
+                )
+                .await?;
                 info!(
                     ms = t4.elapsed().as_millis() as u64,
                     "vault: timing crypto init"
                 );
-
                 // Confirm user key is present.
                 let has_key = self
                     .client
@@ -258,6 +280,16 @@ impl IdentityLogin<'_> {
                     password.zeroize();
                     return Err("crypto init did not load user key".into());
                 }
+                super::persist::save(&super::persist::PersistedSession {
+                    email: email.clone(),
+                    access_token,
+                    refresh_token,
+                    user_key_b64,
+                    private_key: private_key_str,
+                    kdf: unlock.kdf.clone(),
+                    salt: crypto_email,
+                    user_id: user_id.to_string(),
+                });
 
                 password.zeroize();
                 info!(
@@ -459,6 +491,135 @@ impl IdentityLogin<'_> {
     }
 }
 
+pub async fn initialize_user_crypto(
+    client: &Client,
+    user_id: UserId,
+    kdf: bitwarden_crypto::Kdf,
+    email: String,
+    private_key: EncString,
+    user_key_b64: String,
+) -> Result<(), String> {
+    client
+        .crypto()
+        .initialize_user_crypto(InitUserCryptoRequest {
+            user_id: Some(user_id),
+            kdf_params: kdf,
+            email,
+            account_cryptographic_state: WrappedAccountCryptographicState::V1 { private_key },
+            method: InitUserCryptoMethod::DecryptedKey {
+                decrypted_user_key: user_key_b64,
+            },
+            upgrade_token: None,
+        })
+        .await
+        .map_err(|e| format!("crypto init: {e}"))
+}
+
+/// Restore tokens + user crypto from a persisted session (no master password).
+pub async fn apply_persisted_session(
+    client: &Client,
+    tokens: &TokenCell,
+    sess: &super::persist::PersistedSession,
+) -> Result<(), String> {
+    let user_id = UserId::from_str(&sess.user_id).map_err(|e| format!("user id: {e}"))?;
+    let private_key: EncString = sess
+        .private_key
+        .parse()
+        .map_err(|e| format!("private key: {e}"))?;
+    tokens.set(sess.access_token.clone());
+    tokens.set_refresh(sess.refresh_token.clone());
+    let salt = if sess.salt.is_empty() {
+        sess.email.clone()
+    } else {
+        sess.salt.clone()
+    };
+    initialize_user_crypto(
+        client,
+        user_id,
+        sess.kdf.clone(),
+        salt,
+        private_key,
+        sess.user_key_b64.clone(),
+    )
+    .await?;
+    let has_key = client
+        .internal
+        .get_key_store()
+        .context()
+        .has_symmetric_key(SymmetricKeySlotId::User);
+    if !has_key {
+        return Err("crypto init did not load user key".into());
+    }
+    Ok(())
+}
+
+/// Exchange a refresh token for a new access (+ refresh) pair.
+pub async fn refresh_access_token(
+    client: &Client,
+    refresh_token: &str,
+) -> Result<(String, Option<String>), String> {
+    use serde::Serialize;
+
+    let api = client.internal.get_api_configurations();
+    let url = format!(
+        "{}/connect/token",
+        api.identity_config.base_path.trim_end_matches('/')
+    );
+
+    #[derive(Serialize)]
+    struct RefreshBody {
+        grant_type: String,
+        client_id: String,
+        refresh_token: String,
+    }
+
+    let body = serde_qs::to_string(&RefreshBody {
+        grant_type: "refresh_token".into(),
+        client_id: CLIENT_ID.into(),
+        refresh_token: refresh_token.into(),
+    })
+    .map_err(|e| format!("serialize refresh: {e}"))?;
+
+    let resp = api
+        .identity_config
+        .client
+        .post(&url)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded; charset=utf-8",
+        )
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CACHE_CONTROL, "no-store")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("refresh http: {e}"))?;
+
+    let status = resp.status().as_u16();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("refresh body: {e}"))?;
+    if !(200..300).contains(&status) {
+        let redacted = redact_secrets(&text);
+        warn!(status, body = %redacted, "vault: refresh token failed");
+        return Err(format!("Session expired (HTTP {status}). Unlock again."));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("refresh json: {e}"))?;
+    let access = v
+        .get("access_token")
+        .or_else(|| v.get("accessToken"))
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "refresh missing access_token".to_string())?
+        .to_string();
+    let refresh = v
+        .get("refresh_token")
+        .or_else(|| v.get("refreshToken"))
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+    Ok((access, refresh))
+}
+
 struct RawHttp {
     status: u16,
     body: String,
@@ -568,8 +729,14 @@ fn parse_token_body(body: &str, status: u16) -> Result<RawLogin, String> {
             .unwrap_or(false);
 
         let _ = status;
+        let refresh_token = v
+            .get("refresh_token")
+            .or_else(|| v.get("refreshToken"))
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
         return Ok(RawLogin::Success {
             access_token: access_token.to_string(),
+            refresh_token,
             private_key,
             unlock,
             force_password_reset,

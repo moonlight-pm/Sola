@@ -86,6 +86,9 @@ pub enum NavCmd {
     Back,
     Forward,
     Reload,
+    /// Chromium hard reload (`⌘⇧R`): bypass HTTP cache for this navigation.
+    /// Does not empty the profile disk cache.
+    ReloadIgnoreCache,
     Stop,
     LoadUrl(String),
     /// `window.history.go(delta)` on the active tab (`-1` = back one).
@@ -205,6 +208,13 @@ pub enum Cmd<E: Engine> {
         id: u64,
         success: bool,
         input: String,
+    },
+    /// Complete HTTP Basic / Digest auth.
+    HttpAuth {
+        id: u64,
+        success: bool,
+        username: String,
+        password: String,
     },
     /// CEF `BrowserHost::find` on the active tab.
     Find {
@@ -599,6 +609,8 @@ pub type BackgroundTabsHandle = Arc<Mutex<Vec<ChromeTabRequest>>>;
 pub type NotificationsHandle = Arc<Mutex<Vec<crate::notify::Ipc>>>;
 /// Helper → chrome: `alert` / `confirm` / `prompt` / leave-page.
 pub type JsDialogsHandle = Arc<Mutex<Vec<crate::js_dialog::Event>>>;
+/// Helper → chrome: HTTP Basic / Digest auth prompt.
+pub type HttpAuthHandle = Arc<Mutex<Vec<crate::http_auth::Event>>>;
 /// Helper → chrome: tab favicon PNG (empty bytes = clear).
 pub type FaviconsHandle = Arc<Mutex<Vec<FaviconIpc>>>;
 /// Helper → chrome: in-page find match count.
@@ -670,6 +682,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn background_tabs_handle(&self) -> BackgroundTabsHandle;
     fn notifications_handle(&self) -> NotificationsHandle;
     fn js_dialogs_handle(&self) -> JsDialogsHandle;
+    fn http_auth_handle(&self) -> HttpAuthHandle;
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;
     fn devtools_handle(&self) -> DevToolsHandle;

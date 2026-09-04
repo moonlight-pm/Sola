@@ -16,11 +16,14 @@ use bitwarden_vault::{
 use thiserror::Error;
 use zeroize::Zeroize;
 
-use super::identity::{IdentityLogin, TokenCell, build_pm_client};
+use super::identity::{
+    IdentityLogin, TokenCell, apply_persisted_session, build_pm_client, refresh_access_token,
+};
 use super::item::{
     IdentityFillMaterial, ItemRecord, ItemSummary, record_from_view, summary_from_view,
 };
 use super::match_uri::uri_matches;
+use super::persist;
 
 /// Non-secret vault status for chrome.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -302,11 +305,86 @@ impl VaultService {
         Ok(outcome)
     }
 
+    /// Restore an unlocked session from disk. `Ok(true)` means logged in.
+    pub async fn try_restore(&mut self) -> Result<bool, VaultError> {
+        let Some(mut sess) = persist::load() else {
+            return Ok(false);
+        };
+        if persist::access_needs_refresh(&sess.access_token) {
+            let Some(refresh) = sess.refresh_token.clone() else {
+                persist::clear();
+                return Ok(false);
+            };
+            match refresh_access_token(&self.client.0, &refresh).await {
+                Ok((access, new_refresh)) => {
+                    sess.access_token = access;
+                    if new_refresh.is_some() {
+                        sess.refresh_token = new_refresh;
+                    }
+                    persist::save(&sess);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "vault: session refresh failed — clearing");
+                    persist::clear();
+                    return Ok(false);
+                }
+            }
+        }
+        apply_persisted_session(&self.client.0, &self.tokens, &sess)
+            .await
+            .map_err(|e| {
+                persist::clear();
+                VaultError::Login(e)
+            })?;
+        self.email = Some(sess.email.clone());
+        self.session_authenticated = true;
+        tracing::info!(email = %sess.email, "vault: session restored");
+        Ok(true)
+    }
+
+    /// Drop tokens, keys, and the on-disk session. Next use is a full login.
+    pub fn logout(&mut self) {
+        persist::clear();
+        self.tokens.clear();
+        *self = Self::new();
+        tracing::info!("vault: logged out");
+    }
+
+    async fn ensure_fresh_token(&self) -> Result<(), VaultError> {
+        let Some(access) = self.tokens.access() else {
+            return Ok(());
+        };
+        if !persist::access_needs_refresh(&access) {
+            return Ok(());
+        }
+        let Some(refresh) = self.tokens.refresh() else {
+            return Ok(());
+        };
+        match refresh_access_token(&self.client.0, &refresh).await {
+            Ok((access, new_refresh)) => {
+                self.tokens.set(access.clone());
+                if new_refresh.is_some() {
+                    self.tokens.set_refresh(new_refresh.clone());
+                }
+                if let Some(mut sess) = persist::load() {
+                    sess.access_token = access;
+                    if new_refresh.is_some() {
+                        sess.refresh_token = new_refresh;
+                    }
+                    persist::save(&sess);
+                }
+                Ok(())
+            }
+            Err(e) => Err(VaultError::Login(e)),
+        }
+    }
+
     /// Force a full vault sync (encrypted ciphers → local state).
     pub async fn sync(&self) -> Result<bool, VaultError> {
         if !self.session_authenticated {
             return Err(VaultError::NotLoggedIn);
         }
+        let _ = self.ensure_fresh_token().await;
         // Must use the SyncClient that still has handlers registered —
         // not `self.client.sync()` which builds a fresh empty one.
         self.sync

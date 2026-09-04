@@ -38,6 +38,7 @@ pub const ACTION_CLOSE_TAB: &str = "close-tab";
 pub const ACTION_REOPEN_TAB: &str = "reopen-tab";
 pub const ACTION_NEW_GROUP: &str = "new-group";
 pub const ACTION_RELOAD: &str = "reload";
+pub const ACTION_HARD_RELOAD: &str = "hard-reload";
 pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
 pub const ACTION_FORWARD: &str = "forward";
@@ -79,7 +80,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 11] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (
@@ -89,6 +90,7 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     ),
     (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta().alt()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
+    (ACTION_HARD_RELOAD, "Hard Reload", KeyCode::R.meta_shift()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
     (ACTION_FORWARD, "Forward", KeyCode::RIGHT.meta()),
@@ -230,6 +232,7 @@ pub enum BrowserIntent {
     /// Wrap the selected loose tab in a group and start renaming it (⌘⌥G).
     NewGroup,
     Reload,
+    HardReload,
     Back,
     Forward,
     FocusUrl,
@@ -295,6 +298,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_FIND_NEXT => BrowserIntent::FindNext,
         ACTION_FIND_PREV => BrowserIntent::FindPrev,
         ACTION_RELOAD => BrowserIntent::Reload,
+        ACTION_HARD_RELOAD => BrowserIntent::HardReload,
         ACTION_FOCUS_URL => BrowserIntent::FocusUrl,
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
@@ -401,6 +405,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         BrowserIntent::FindNext => app.update(Msg::FindNext),
         BrowserIntent::FindPrev => app.update(Msg::FindPrev),
         BrowserIntent::Reload => app.update(Msg::NavReloadOrStop),
+        BrowserIntent::HardReload => app.update(Msg::NavHardReload),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => {
@@ -502,6 +507,10 @@ mod tests {
     fn menu_actions_map_to_intents() {
         assert_eq!(intent_for_menu_action(ACTION_RELOAD), BrowserIntent::Reload);
         assert_eq!(
+            intent_for_menu_action(ACTION_HARD_RELOAD),
+            BrowserIntent::HardReload
+        );
+        assert_eq!(
             intent_for_menu_action(ACTION_CLOSE_TAB),
             BrowserIntent::CloseActiveTab
         );
@@ -553,6 +562,8 @@ mod tests {
         assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
         assert!(ids.contains(&ACTION_NEW_GROUP));
         assert_eq!(MENU_ITEMS[3].0, ACTION_NEW_GROUP);
+        assert!(ids.contains(&ACTION_HARD_RELOAD));
+        assert_eq!(MENU_ITEMS[5].0, ACTION_HARD_RELOAD);
     }
 
     #[test]

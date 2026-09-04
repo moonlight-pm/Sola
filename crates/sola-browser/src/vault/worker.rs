@@ -98,6 +98,8 @@ pub enum VaultCmd {
         cipher_id: Option<String>,
     },
     Status,
+    /// Wipe tokens, keys, and the on-disk session.
+    Logout,
     Quit,
 }
 
@@ -108,6 +110,11 @@ pub enum VaultEvent {
     LoginOk {
         email: String,
     },
+    /// Unlocked from a persisted session (do not open the panel).
+    SessionRestored {
+        email: String,
+    },
+    LoggedOut,
     /// Email OTP (new device) or authenticator TOTP required.
     LoginNeedsTwoFactor {
         email: String,
@@ -300,7 +307,30 @@ async fn handle_login_outcome(
 
 async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
     let mut svc = VaultService::new();
-    emit(&event_tx, VaultEvent::Status(svc.status()));
+    match svc.try_restore().await {
+        Ok(true) => {
+            let email = svc.status().email.clone().unwrap_or_default();
+            emit(&event_tx, VaultEvent::Status(svc.status()));
+            emit(&event_tx, VaultEvent::SessionRestored { email });
+            match svc.sync().await {
+                Ok(full) => emit(&event_tx, VaultEvent::SyncOk { full }),
+                Err(e) => emit(
+                    &event_tx,
+                    VaultEvent::SyncFailed {
+                        message: e.to_string(),
+                    },
+                ),
+            }
+            emit(&event_tx, VaultEvent::Status(svc.status()));
+        }
+        Ok(false) => {
+            emit(&event_tx, VaultEvent::Status(svc.status()));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "vault: session restore failed");
+            emit(&event_tx, VaultEvent::Status(svc.status()));
+        }
+    }
 
     loop {
         let cmd = match cmd_rx.try_recv() {
@@ -314,6 +344,11 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
 
         match cmd {
             VaultCmd::Quit => break,
+            VaultCmd::Logout => {
+                svc.logout();
+                emit(&event_tx, VaultEvent::LoggedOut);
+                emit(&event_tx, VaultEvent::Status(svc.status()));
+            }
             VaultCmd::Status => {
                 emit(&event_tx, VaultEvent::Status(svc.status()));
             }

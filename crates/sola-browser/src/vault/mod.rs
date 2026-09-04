@@ -17,6 +17,7 @@ mod match_uri;
 mod memory_repo;
 mod org_crypto;
 mod passkey;
+mod persist;
 mod prefs;
 mod sync_cipher;
 mod totp;

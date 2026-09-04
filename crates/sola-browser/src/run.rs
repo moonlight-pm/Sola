@@ -18,8 +18,8 @@
 
 use std::hash::Hash;
 use std::process::ExitCode;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use iced::Subscription;
 use iced::futures::{SinkExt, Stream, StreamExt as _};
@@ -213,6 +213,9 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
 
     // D8: registry + active profile dirs; wipe pre-profile flat data.
     let _ = crate::profiles::ensure_active();
+    // `exec_self` after install leaves helpers with ppid == us. Ask them
+    // to Quit (cookie flush) before SIGTERM leftovers.
+    crate::cef::host::stop_all_profile_engines();
     // Only orphan helpers / pre-exec children — never another chrome's engines.
     crate::cef::host::reap_stale_browser_procs();
     let app_id = base_id;
