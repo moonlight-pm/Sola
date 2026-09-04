@@ -24,7 +24,10 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 mod applications;
+mod edit;
 mod mail;
+mod mail_discover;
+mod mail_from_api;
 mod procfs;
 
 use applications::{AppsMsg, AppsState};
@@ -38,6 +41,15 @@ fn main() -> iced::Result {
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
         .app_menu("Settings", [("quit", "Quit Settings", KeyCode::Q.meta())])
+        .app_menu(
+            "Edit",
+            [
+                ("cut", "Cut", KeyCode::X.meta()),
+                ("copy", "Copy", KeyCode::C.meta()),
+                ("paste", "Paste", KeyCode::V.meta()),
+                ("select_all", "Select All", KeyCode::A.meta()),
+            ],
+        )
         .install();
 
     let app = iced::application(App::boot, App::update, App::view)
@@ -104,6 +116,14 @@ enum Msg {
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
+    ClipboardPasted(Option<String>),
+    EditCopy(Option<iced::widget::Id>),
+    EditCut(Option<iced::widget::Id>),
+    EditPaste {
+        id: Option<iced::widget::Id>,
+        text: String,
+    },
+    EditSelectAll(Option<iced::widget::Id>),
 }
 
 impl App {
@@ -131,6 +151,12 @@ impl App {
 
                 if is_self_quit(&message, APP_ID) {
                     return iced::exit();
+                }
+
+                if let Some(Topic::MenuAction(p)) = Topic::parse(&message) {
+                    if p.app_id == APP_ID {
+                        return self.on_edit_action(&p.action_id);
+                    }
                 }
 
                 match Topic::parse(&message) {
@@ -170,8 +196,66 @@ impl App {
             Msg::TitleClose => {
                 sola_kit::close_app(APP_ID);
             }
+            Msg::ClipboardPasted(text) => {
+                let Some(text) = text.filter(|t| !t.is_empty()) else {
+                    return Task::none();
+                };
+                return edit::find_focused_id().map(move |id| Msg::EditPaste {
+                    id,
+                    text: text.clone(),
+                });
+            }
+            Msg::EditCopy(id) => {
+                if let Some(value) = self.focused_value(id.as_ref()) {
+                    if !value.is_empty() {
+                        return iced::clipboard::write(value);
+                    }
+                }
+            }
+            Msg::EditCut(id) => {
+                if let Some(value) = self.focused_value(id.as_ref()) {
+                    self.set_focused_value(id.as_ref(), String::new());
+                    if !value.is_empty() {
+                        return iced::clipboard::write(value);
+                    }
+                }
+            }
+            Msg::EditPaste { id, text } => {
+                self.set_focused_value(id.as_ref(), text);
+            }
+            Msg::EditSelectAll(id) => {
+                if let Some(id) = id {
+                    return edit::select_all(id).discard();
+                }
+            }
         }
         Task::none()
+    }
+
+    fn on_edit_action(&self, action_id: &str) -> Task<Msg> {
+        match action_id {
+            "copy" => edit::find_focused_id().map(Msg::EditCopy),
+            "cut" => edit::find_focused_id().map(Msg::EditCut),
+            "paste" => iced::clipboard::read().map(Msg::ClipboardPasted),
+            "select_all" => edit::find_focused_id().map(Msg::EditSelectAll),
+            _ => Task::none(),
+        }
+    }
+
+    fn focused_value(&self, id: Option<&iced::widget::Id>) -> Option<String> {
+        let id = id?;
+        mail::focused_value(&self.mail_ui, id)
+            .or_else(|| applications::focused_value(&self.apps_ui, id))
+    }
+
+    fn set_focused_value(&mut self, id: Option<&iced::widget::Id>, value: String) {
+        let Some(id) = id else {
+            return;
+        };
+        if mail::set_focused_value(&mut self.mail_ui, id, &value) {
+            return;
+        }
+        let _ = applications::set_focused_value(&mut self.apps_ui, id, &value);
     }
 
     fn view(&self) -> Element<'_, Msg> {

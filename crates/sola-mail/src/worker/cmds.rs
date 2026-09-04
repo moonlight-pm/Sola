@@ -18,14 +18,17 @@ pub enum MailCmd {
         query: String,
     },
     FetchBody {
+        account: String,
         folder: String,
         uid: u32,
     },
     MarkRead {
+        account: String,
         folder: String,
         uid: u32,
     },
     Move {
+        account: String,
         folder: String,
         uid: u32,
         dest: String,
@@ -70,11 +73,13 @@ pub enum MailEvent {
     Body(MessageBody),
     Sent,
     Moved {
+        account: String,
         uid: u32,
         /// UID in the destination mailbox (IMAP UIDs are per-folder).
         dest_uid: Option<u32>,
     },
     MoveFailed {
+        account: String,
         uid: u32,
         message: String,
     },
@@ -89,6 +94,19 @@ pub enum MailEvent {
     },
     /// Config present but incomplete — UI shows settings prompt.
     NotConfigured,
+    /// One IMAP account's connect progress. UI chrome stays up.
+    AccountLink {
+        account: String,
+        email: String,
+        state: LinkState,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkState {
+    Connecting,
+    Ready,
+    Failed(String),
 }
 
 /// Collapse a burst of UI commands so rapid deletes are not stuck
@@ -99,26 +117,46 @@ pub(crate) fn compact_cmds(cmds: Vec<MailCmd>) -> Vec<MailCmd> {
     }
     if let Some(i) = cmds.iter().position(|c| matches!(c, MailCmd::Shutdown)) {
         let mut kept: Vec<MailCmd> = cmds.into_iter().take(i).collect();
-        kept = compact_cmds_inner(kept);
+        kept = prioritize_cmds(compact_cmds_inner(kept));
         kept.push(MailCmd::Shutdown);
         return kept;
     }
-    compact_cmds_inner(cmds)
+    prioritize_cmds(compact_cmds_inner(cmds))
+}
+
+/// Fetch / mark / list before MOVE so the selected letter is not stuck
+/// behind a trash backlog on the same worker turn.
+fn prioritize_cmds(mut cmds: Vec<MailCmd>) -> Vec<MailCmd> {
+    cmds.sort_by_key(cmd_priority);
+    cmds
+}
+
+fn cmd_priority(cmd: &MailCmd) -> u8 {
+    match cmd {
+        MailCmd::Reconfigure(_) => 0,
+        MailCmd::FetchBody { .. } | MailCmd::MarkRead { .. } => 1,
+        MailCmd::ListMessages { .. } | MailCmd::ListFolders | MailCmd::Search { .. } => 2,
+        MailCmd::Send { .. } => 3,
+        MailCmd::Move { .. } | MailCmd::EmptyFolder { .. } => 4,
+        MailCmd::Shutdown => 5,
+    }
 }
 
 fn compact_cmds_inner(cmds: Vec<MailCmd>) -> Vec<MailCmd> {
     use std::collections::HashSet;
 
-    let moved: HashSet<u32> = cmds
+    let moved: HashSet<(String, u32)> = cmds
         .iter()
         .filter_map(|c| match c {
-            MailCmd::Move { uid, .. } => Some(*uid),
+            MailCmd::Move { account, uid, .. } => Some((account.clone(), *uid)),
             _ => None,
         })
         .collect();
 
     let last_fetch = cmds.iter().enumerate().rev().find_map(|(i, c)| match c {
-        MailCmd::FetchBody { uid, .. } if !moved.contains(uid) => Some(i),
+        MailCmd::FetchBody { account, uid, .. } if !moved.contains(&(account.clone(), *uid)) => {
+            Some(i)
+        }
         _ => None,
     });
 
@@ -131,13 +169,13 @@ fn compact_cmds_inner(cmds: Vec<MailCmd>) -> Vec<MailCmd> {
     let mut out = Vec::with_capacity(cmds.len());
     for (i, cmd) in cmds.into_iter().enumerate().rev() {
         match &cmd {
-            MailCmd::FetchBody { uid, .. } => {
-                if moved.contains(uid) || last_fetch != Some(i) {
+            MailCmd::FetchBody { account, uid, .. } => {
+                if moved.contains(&(account.clone(), *uid)) || last_fetch != Some(i) {
                     continue;
                 }
             }
-            MailCmd::MarkRead { uid, .. } => {
-                if moved.contains(uid) {
+            MailCmd::MarkRead { account, uid, .. } => {
+                if moved.contains(&(account.clone(), *uid)) {
                     continue;
                 }
             }
@@ -183,6 +221,7 @@ mod tests {
 
     fn move_cmd(uid: u32) -> MailCmd {
         MailCmd::Move {
+            account: "a@x".into(),
             folder: "INBOX".into(),
             uid,
             dest: "Trash".into(),
@@ -191,6 +230,7 @@ mod tests {
 
     fn fetch(uid: u32) -> MailCmd {
         MailCmd::FetchBody {
+            account: "a@x".into(),
             folder: "INBOX".into(),
             uid,
         }
@@ -198,6 +238,7 @@ mod tests {
 
     fn mark(uid: u32) -> MailCmd {
         MailCmd::MarkRead {
+            account: "a@x".into(),
             folder: "INBOX".into(),
             uid,
         }
@@ -237,7 +278,16 @@ mod tests {
         ]);
         assert_eq!(
             uids_of(&out),
-            vec![(10, "move"), (11, "move"), (12, "fetch"), (12, "mark")]
+            vec![(12, "fetch"), (12, "mark"), (10, "move"), (11, "move")]
+        );
+    }
+
+    #[test]
+    fn fetch_jumps_ahead_of_moves() {
+        let out = compact_cmds(vec![move_cmd(1), move_cmd(2), fetch(9), mark(9)]);
+        assert_eq!(
+            uids_of(&out),
+            vec![(9, "fetch"), (9, "mark"), (1, "move"), (2, "move")]
         );
     }
 
@@ -271,7 +321,7 @@ mod tests {
         let out = compact_cmds(vec![move_cmd(1), fetch(2), MailCmd::Shutdown, fetch(3)]);
         assert_eq!(
             uids_of(&out),
-            vec![(1, "move"), (2, "fetch"), (0, "shutdown")]
+            vec![(2, "fetch"), (1, "move"), (0, "shutdown")]
         );
     }
 }

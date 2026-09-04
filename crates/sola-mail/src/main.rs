@@ -2,6 +2,7 @@
 
 mod bridge;
 mod protocol;
+mod snapshot;
 mod ui;
 mod worker;
 

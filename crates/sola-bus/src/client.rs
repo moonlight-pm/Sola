@@ -472,9 +472,11 @@ mod control_encoding_tests {
             .filter(|k| !crate::topics::topic_kind_is_after_mail_status(*k))
             .collect();
         assert!(prior.len() < kinds.len());
-        assert!(!prior.iter().any(|k| {
-            crate::topics::topic_kind_is_after_mail_status(*k)
-        }));
+        assert!(
+            !prior
+                .iter()
+                .any(|k| { crate::topics::topic_kind_is_after_mail_status(*k) })
+        );
         let m = encode_subscribe(&prior);
         let decoded: Vec<TopicKind> = decode_payload(&m).unwrap();
         assert_eq!(decoded, prior);

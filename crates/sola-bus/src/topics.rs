@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-pub use sola_core::applications::{AppKind, Application, ApplicationsConfig};
-pub use sola_core::theme::{NamedTheme, Theme};
 use sola_core::Encrypted;
 pub use sola_core::KeyChord;
+pub use sola_core::applications::{AppKind, Application, ApplicationsConfig};
+pub use sola_core::theme::{NamedTheme, Theme};
 
 use crate::define_topics;
 
@@ -260,9 +260,15 @@ impl Zone {
     }
 }
 
-/// Mail account + filter rules. Edited by sola-settings, consumed by
-/// sola-mail. Persisted as a sticky bus topic; the password field is
+/// Mail accounts + filter rules. Edited by sola-settings, consumed by
+/// sola-mail. Persisted as a sticky bus topic; password fields are
 /// encrypted on disk via [`Encrypted`].
+///
+/// The top-level IMAP/SMTP fields are the **inbox** (where mail is
+/// received). [`aliases`] are extra From addresses that send through
+/// that inbox SMTP. [`accounts`] are additional identities — typically
+/// send-only SMTP (Gmail, etc.) when mail is forwarded into the inbox.
+/// [`primary_from`] is the default From for a new message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailConfig {
@@ -274,6 +280,32 @@ pub struct MailConfig {
     pub username: String,
     pub password: Encrypted<String>,
     pub rules: Vec<MailRule>,
+    /// Extra From addresses on the inbox SMTP (same username/password).
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Additional accounts (own SMTP; IMAP optional / unused in v1).
+    #[serde(default)]
+    pub accounts: Vec<MailAccount>,
+    /// Default From. Empty → [`email`]. Must be `email`, an alias, or
+    /// an extra account address.
+    #[serde(default)]
+    pub primary_from: String,
+    /// Receive on this account's IMAP. Default on so old configs keep
+    /// their inbox.
+    #[serde(default = "default_true")]
+    pub imap_enabled: bool,
+    /// Send through this account's SMTP. Default on so old configs keep
+    /// sending.
+    #[serde(default = "default_true")]
+    pub smtp_enabled: bool,
+    /// Aliases omitted from Mail's From picker. Inbox / extra-account
+    /// emails still appear. Catch-alls are never listed either.
+    #[serde(default)]
+    pub from_hidden: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for MailConfig {
@@ -287,8 +319,339 @@ impl Default for MailConfig {
             username: String::new(),
             password: Encrypted(String::new()),
             rules: Vec::new(),
+            aliases: Vec::new(),
+            accounts: Vec::new(),
+            primary_from: String::new(),
+            imap_enabled: true,
+            smtp_enabled: true,
+            from_hidden: Vec::new(),
         }
     }
+}
+
+/// Extra SMTP identity (and optional IMAP). Aliases on this account
+/// send through its SMTP, not the inbox's.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailAccount {
+    pub email: String,
+    pub imap_host: String,
+    pub imap_port: u16,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub username: String,
+    pub password: Encrypted<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default = "default_true")]
+    pub imap_enabled: bool,
+    #[serde(default = "default_true")]
+    pub smtp_enabled: bool,
+}
+
+impl Default for MailAccount {
+    fn default() -> Self {
+        Self {
+            email: String::new(),
+            imap_host: String::new(),
+            imap_port: 993,
+            smtp_host: String::new(),
+            smtp_port: 587,
+            username: String::new(),
+            password: Encrypted(String::new()),
+            aliases: Vec::new(),
+            imap_enabled: true,
+            smtp_enabled: true,
+        }
+    }
+}
+
+/// Address inside `Name <user@host>`, lowercased, for identity match.
+pub fn mail_addr_key(addr: &str) -> String {
+    let t = addr.trim();
+    let inner = if let Some(start) = t.find('<') {
+        let after = &t[start + 1..];
+        after.split('>').next().unwrap_or(t).trim()
+    } else {
+        t
+    };
+    inner.to_ascii_lowercase()
+}
+
+/// Catch-all identities (`*@moonlight.pm`) cannot be a From address.
+pub fn is_catchall_addr(addr: &str) -> bool {
+    let key = mail_addr_key(addr);
+    key.split_once('@')
+        .is_some_and(|(local, host)| !host.is_empty() && local == "*")
+}
+
+impl MailAccount {
+    pub fn owns_from(&self, from: &str) -> bool {
+        let key = mail_addr_key(from);
+        if key.is_empty() {
+            return false;
+        }
+        mail_addr_key(&self.email) == key || self.aliases.iter().any(|a| mail_addr_key(a) == key)
+    }
+}
+
+impl MailConfig {
+    /// Inbox owns this From (its email or an alias).
+    pub fn inbox_owns_from(&self, from: &str) -> bool {
+        let key = mail_addr_key(from);
+        if key.is_empty() {
+            return false;
+        }
+        mail_addr_key(&self.email) == key || self.aliases.iter().any(|a| mail_addr_key(a) == key)
+    }
+
+    /// Extra account that should SMTP this From, if any.
+    pub fn account_for_from(&self, from: &str) -> Option<&MailAccount> {
+        self.accounts
+            .iter()
+            .find(|a| a.smtp_enabled && a.owns_from(from))
+    }
+
+    pub fn primary_from_address(&self) -> String {
+        let p = self.primary_from.trim();
+        if !p.is_empty() {
+            return p.to_string();
+        }
+        let e = self.email.trim();
+        if !e.is_empty() {
+            return e.to_string();
+        }
+        self.accounts
+            .iter()
+            .map(|a| a.email.trim())
+            .find(|e| !e.is_empty())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    pub fn is_from_hidden(&self, addr: &str) -> bool {
+        let key = mail_addr_key(addr);
+        !key.is_empty() && self.from_hidden.iter().any(|h| mail_addr_key(h) == key)
+    }
+
+    pub fn set_from_hidden(&mut self, addr: &str, hidden: bool) {
+        let key = mail_addr_key(addr);
+        if key.is_empty() || is_catchall_addr(addr) {
+            return;
+        }
+        self.from_hidden.retain(|h| mail_addr_key(h) != key);
+        if hidden {
+            self.from_hidden.push(addr.trim().to_string());
+        }
+    }
+
+    /// Configured From addresses shown in Mail. Primary first, then
+    /// A–Z. Catch-alls and [`from_hidden`] aliases are omitted.
+    pub fn from_addresses(&self) -> Vec<String> {
+        let primary_key = mail_addr_key(&self.primary_from_address());
+        let mut rest: Vec<String> = Vec::new();
+        let mut push = |raw: &str| {
+            let t = raw.trim();
+            if t.is_empty() || is_catchall_addr(t) {
+                return;
+            }
+            let key = mail_addr_key(t);
+            if key.is_empty() {
+                return;
+            }
+            if key != primary_key && self.is_from_hidden(t) {
+                return;
+            }
+            if rest.iter().any(|e| mail_addr_key(e) == key) {
+                return;
+            }
+            rest.push(t.to_string());
+        };
+        if self.smtp_enabled {
+            push(&self.email);
+            for a in &self.aliases {
+                push(a);
+            }
+        }
+        for acc in &self.accounts {
+            if !acc.smtp_enabled {
+                continue;
+            }
+            push(&acc.email);
+            for a in &acc.aliases {
+                push(a);
+            }
+        }
+        rest.sort_by(|a, b| mail_addr_key(a).cmp(&mail_addr_key(b)));
+        if primary_key.is_empty() {
+            return rest;
+        }
+        let mut out = Vec::with_capacity(rest.len() + 1);
+        if let Some(i) = rest.iter().position(|e| mail_addr_key(e) == primary_key) {
+            out.push(rest.remove(i));
+        } else if !self.primary_from.trim().is_empty() && !is_catchall_addr(&self.primary_from) {
+            out.push(self.primary_from.trim().to_string());
+        }
+        out.extend(rest);
+        out
+    }
+}
+
+/// Postcard layouts before `from_hidden` (V3), before enable flags (V2),
+/// and before identities (V1).
+pub(crate) fn try_decode_legacy_mail<T: 'static>(bytes: &[u8]) -> Option<T> {
+    use std::any::{Any, TypeId};
+    if TypeId::of::<T>() != TypeId::of::<MailConfig>() {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct MailAccountV1 {
+        email: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+        username: String,
+        password: Encrypted<String>,
+        aliases: Vec<String>,
+    }
+    #[derive(Deserialize)]
+    struct MailAccountV3 {
+        email: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+        username: String,
+        password: Encrypted<String>,
+        aliases: Vec<String>,
+        imap_enabled: bool,
+        smtp_enabled: bool,
+    }
+    #[derive(Deserialize)]
+    struct MailConfigV3 {
+        email: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+        username: String,
+        password: Encrypted<String>,
+        rules: Vec<MailRule>,
+        aliases: Vec<String>,
+        accounts: Vec<MailAccountV3>,
+        primary_from: String,
+        imap_enabled: bool,
+        smtp_enabled: bool,
+    }
+    #[derive(Deserialize)]
+    struct MailConfigV2 {
+        email: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+        username: String,
+        password: Encrypted<String>,
+        rules: Vec<MailRule>,
+        aliases: Vec<String>,
+        accounts: Vec<MailAccountV1>,
+        primary_from: String,
+    }
+    #[derive(Deserialize)]
+    struct MailConfigV1 {
+        email: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+        username: String,
+        password: Encrypted<String>,
+        rules: Vec<MailRule>,
+    }
+    fn acc_v1(a: MailAccountV1) -> MailAccount {
+        MailAccount {
+            email: a.email,
+            imap_host: a.imap_host,
+            imap_port: a.imap_port,
+            smtp_host: a.smtp_host,
+            smtp_port: a.smtp_port,
+            username: a.username,
+            password: a.password,
+            aliases: a.aliases,
+            imap_enabled: true,
+            smtp_enabled: true,
+        }
+    }
+    fn acc_v3(a: MailAccountV3) -> MailAccount {
+        MailAccount {
+            email: a.email,
+            imap_host: a.imap_host,
+            imap_port: a.imap_port,
+            smtp_host: a.smtp_host,
+            smtp_port: a.smtp_port,
+            username: a.username,
+            password: a.password,
+            aliases: a.aliases,
+            imap_enabled: a.imap_enabled,
+            smtp_enabled: a.smtp_enabled,
+        }
+    }
+    let cfg = if let Ok(v3) = postcard::from_bytes::<MailConfigV3>(bytes) {
+        MailConfig {
+            email: v3.email,
+            imap_host: v3.imap_host,
+            imap_port: v3.imap_port,
+            smtp_host: v3.smtp_host,
+            smtp_port: v3.smtp_port,
+            username: v3.username,
+            password: v3.password,
+            rules: v3.rules,
+            aliases: v3.aliases,
+            accounts: v3.accounts.into_iter().map(acc_v3).collect(),
+            primary_from: v3.primary_from,
+            imap_enabled: v3.imap_enabled,
+            smtp_enabled: v3.smtp_enabled,
+            from_hidden: Vec::new(),
+        }
+    } else if let Ok(v2) = postcard::from_bytes::<MailConfigV2>(bytes) {
+        MailConfig {
+            email: v2.email,
+            imap_host: v2.imap_host,
+            imap_port: v2.imap_port,
+            smtp_host: v2.smtp_host,
+            smtp_port: v2.smtp_port,
+            username: v2.username,
+            password: v2.password,
+            rules: v2.rules,
+            aliases: v2.aliases,
+            accounts: v2.accounts.into_iter().map(acc_v1).collect(),
+            primary_from: v2.primary_from,
+            imap_enabled: true,
+            smtp_enabled: true,
+            from_hidden: Vec::new(),
+        }
+    } else {
+        let v1: MailConfigV1 = postcard::from_bytes(bytes).ok()?;
+        MailConfig {
+            email: v1.email,
+            imap_host: v1.imap_host,
+            imap_port: v1.imap_port,
+            smtp_host: v1.smtp_host,
+            smtp_port: v1.smtp_port,
+            username: v1.username,
+            password: v1.password,
+            rules: v1.rules,
+            aliases: Vec::new(),
+            accounts: Vec::new(),
+            primary_from: String::new(),
+            imap_enabled: true,
+            smtp_enabled: true,
+            from_hidden: Vec::new(),
+        }
+    };
+    let boxed: Box<dyn Any> = Box::new(cfg);
+    boxed.downcast::<T>().ok().map(|b| *b)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -952,10 +1315,7 @@ mod tests {
         assert_eq!(TopicKind::Frame.behavior(), Behavior::Ephemeral);
         assert_eq!(TopicKind::Shutdown.behavior(), Behavior::Ephemeral);
         assert_eq!(TopicKind::MouseLeft.behavior(), Behavior::Ephemeral);
-        assert_eq!(
-            TopicKind::AppNotification.behavior(),
-            Behavior::Ephemeral
-        );
+        assert_eq!(TopicKind::AppNotification.behavior(), Behavior::Ephemeral);
         assert_eq!(
             TopicKind::NotificationActivate.behavior(),
             Behavior::Ephemeral
@@ -977,8 +1337,8 @@ mod tests {
         let topic = Topic::AppNotification(n.clone());
         assert_eq!(topic.kind(), TopicKind::AppNotification);
         let value = serde_json::to_value(&n).unwrap();
-        let back = Topic::from_json_kind(TopicKind::AppNotification, value)
-            .expect("AppNotification json");
+        let back =
+            Topic::from_json_kind(TopicKind::AppNotification, value).expect("AppNotification json");
         match back {
             Topic::AppNotification(got) => assert_eq!(got, n),
             other => panic!("expected AppNotification, got {other:?}"),
@@ -988,9 +1348,7 @@ mod tests {
             TopicKind::NotificationActivate.as_str(),
             "NotificationActivate"
         );
-        assert!(topic_kind_is_after_mail_status(
-            TopicKind::AppNotification
-        ));
+        assert!(topic_kind_is_after_mail_status(TopicKind::AppNotification));
         assert!(!topic_kind_is_after_mail_status(TopicKind::MailStatus));
         assert!(!topic_kind_is_after_mail_status(TopicKind::Windows));
     }
@@ -1505,6 +1863,19 @@ mod tests {
             username: "u".into(),
             password: Encrypted("hunter2".into()),
             rules: vec![],
+            aliases: vec!["alias@example.com".into()],
+            accounts: vec![MailAccount {
+                email: "me@gmail.com".into(),
+                smtp_host: "smtp.gmail.com".into(),
+                smtp_port: 587,
+                username: "me@gmail.com".into(),
+                password: Encrypted("app-pass".into()),
+                ..MailAccount::default()
+            }],
+            primary_from: "alias@example.com".into(),
+            imap_enabled: true,
+            smtp_enabled: true,
+            from_hidden: Vec::new(),
         };
         let topic = Topic::MailConfig(cfg.clone());
         let msg = topic.to_message();
@@ -1514,6 +1885,233 @@ mod tests {
                 assert_eq!(back.email, cfg.email);
                 // Password travels in clear over the postcard wire.
                 assert_eq!(back.password.0, "hunter2");
+                assert_eq!(back.aliases, cfg.aliases);
+                assert_eq!(back.accounts.len(), 1);
+                assert_eq!(back.accounts[0].email, "me@gmail.com");
+                assert_eq!(back.accounts[0].password.0, "app-pass");
+                assert_eq!(back.primary_from, "alias@example.com");
+                assert!(back.imap_enabled);
+                assert!(back.smtp_enabled);
+                assert!(back.accounts[0].smtp_enabled);
+            }
+            other => panic!("expected MailConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mail_from_addresses_primary_first_and_dedup() {
+        let cfg = MailConfig {
+            email: "inbox@example.com".into(),
+            aliases: vec!["Alias@example.com".into(), "inbox@example.com".into()],
+            accounts: vec![MailAccount {
+                email: "me@gmail.com".into(),
+                aliases: vec!["shop@gmail.com".into()],
+                ..MailAccount::default()
+            }],
+            primary_from: "shop@gmail.com".into(),
+            ..MailConfig::default()
+        };
+        assert_eq!(
+            cfg.from_addresses(),
+            vec![
+                "shop@gmail.com",
+                "Alias@example.com",
+                "inbox@example.com",
+                "me@gmail.com",
+            ]
+        );
+        assert_eq!(cfg.primary_from_address(), "shop@gmail.com");
+        assert!(cfg.inbox_owns_from("Alias@example.com"));
+        assert!(cfg.account_for_from("me@gmail.com").is_some());
+        assert!(cfg.account_for_from("shop@gmail.com").is_some());
+        assert!(cfg.account_for_from("inbox@example.com").is_none());
+    }
+
+    #[test]
+    fn catchall_never_listed_and_hidden_alias_omitted() {
+        let mut cfg = MailConfig {
+            email: "josh@niarada.co".into(),
+            aliases: vec![
+                "*@moonlight.pm".into(),
+                "hello@niarada.co".into(),
+                "ops@niarada.co".into(),
+            ],
+            primary_from: "josh@niarada.co".into(),
+            smtp_enabled: true,
+            ..MailConfig::default()
+        };
+        cfg.set_from_hidden("ops@niarada.co", true);
+        assert_eq!(
+            cfg.from_addresses(),
+            vec!["josh@niarada.co", "hello@niarada.co"]
+        );
+        assert!(is_catchall_addr("*@moonlight.pm"));
+        assert!(!is_catchall_addr("star@moonlight.pm"));
+    }
+
+    #[test]
+    fn mail_addr_key_strips_display_name() {
+        assert_eq!(
+            mail_addr_key("Wicket <Josh@Example.com>"),
+            "josh@example.com"
+        );
+        assert_eq!(mail_addr_key("  josh@example.com  "), "josh@example.com");
+    }
+
+    #[test]
+    fn mail_config_parse_accepts_pre_identity_postcard() {
+        #[derive(serde::Serialize)]
+        struct MailConfigV1 {
+            email: String,
+            imap_host: String,
+            imap_port: u16,
+            smtp_host: String,
+            smtp_port: u16,
+            username: String,
+            password: Encrypted<String>,
+            rules: Vec<MailRule>,
+        }
+        let old = MailConfigV1 {
+            email: "josh@wicket.example".into(),
+            imap_host: "mail.wicket.example".into(),
+            imap_port: 993,
+            smtp_host: "mail.wicket.example".into(),
+            smtp_port: 587,
+            username: "josh".into(),
+            password: Encrypted("secret".into()),
+            rules: vec![],
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("MailConfig", bytes);
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::MailConfig(cfg)) => {
+                assert_eq!(cfg.email, "josh@wicket.example");
+                assert_eq!(cfg.imap_host, "mail.wicket.example");
+                assert_eq!(cfg.password.0, "secret");
+                assert!(cfg.aliases.is_empty());
+                assert!(cfg.accounts.is_empty());
+            }
+            other => panic!("expected MailConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mail_config_parse_accepts_identity_postcard_without_enabled_flags() {
+        #[derive(serde::Serialize)]
+        struct MailAccountV1 {
+            email: String,
+            imap_host: String,
+            imap_port: u16,
+            smtp_host: String,
+            smtp_port: u16,
+            username: String,
+            password: Encrypted<String>,
+            aliases: Vec<String>,
+        }
+        #[derive(serde::Serialize)]
+        struct MailConfigV2 {
+            email: String,
+            imap_host: String,
+            imap_port: u16,
+            smtp_host: String,
+            smtp_port: u16,
+            username: String,
+            password: Encrypted<String>,
+            rules: Vec<MailRule>,
+            aliases: Vec<String>,
+            accounts: Vec<MailAccountV1>,
+            primary_from: String,
+        }
+        let old = MailConfigV2 {
+            email: "josh@wicket.example".into(),
+            imap_host: "mail.wicket.example".into(),
+            imap_port: 993,
+            smtp_host: "mail.wicket.example".into(),
+            smtp_port: 587,
+            username: "josh".into(),
+            password: Encrypted("secret".into()),
+            rules: vec![],
+            aliases: vec!["hello@wicket.example".into()],
+            accounts: vec![MailAccountV1 {
+                email: "me@gmail.com".into(),
+                imap_host: String::new(),
+                imap_port: 993,
+                smtp_host: "smtp.gmail.com".into(),
+                smtp_port: 587,
+                username: "me@gmail.com".into(),
+                password: Encrypted("app-pass".into()),
+                aliases: vec![],
+            }],
+            primary_from: "hello@wicket.example".into(),
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("MailConfig", bytes);
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::MailConfig(cfg)) => {
+                assert_eq!(cfg.aliases, vec!["hello@wicket.example"]);
+                assert_eq!(cfg.accounts[0].email, "me@gmail.com");
+                assert!(cfg.imap_enabled && cfg.smtp_enabled);
+                assert!(cfg.accounts[0].smtp_enabled);
+            }
+            other => panic!("expected MailConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mail_config_parse_accepts_enabled_flags_without_from_hidden() {
+        #[derive(serde::Serialize)]
+        struct MailAccountV3 {
+            email: String,
+            imap_host: String,
+            imap_port: u16,
+            smtp_host: String,
+            smtp_port: u16,
+            username: String,
+            password: Encrypted<String>,
+            aliases: Vec<String>,
+            imap_enabled: bool,
+            smtp_enabled: bool,
+        }
+        #[derive(serde::Serialize)]
+        struct MailConfigV3 {
+            email: String,
+            imap_host: String,
+            imap_port: u16,
+            smtp_host: String,
+            smtp_port: u16,
+            username: String,
+            password: Encrypted<String>,
+            rules: Vec<MailRule>,
+            aliases: Vec<String>,
+            accounts: Vec<MailAccountV3>,
+            primary_from: String,
+            imap_enabled: bool,
+            smtp_enabled: bool,
+        }
+        let old = MailConfigV3 {
+            email: "josh@wicket.example".into(),
+            imap_host: "mail.wicket.example".into(),
+            imap_port: 993,
+            smtp_host: "mail.wicket.example".into(),
+            smtp_port: 587,
+            username: "josh".into(),
+            password: Encrypted("secret".into()),
+            rules: vec![],
+            aliases: vec!["hello@wicket.example".into()],
+            accounts: vec![],
+            primary_from: "hello@wicket.example".into(),
+            imap_enabled: true,
+            smtp_enabled: true,
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("MailConfig", bytes);
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::MailConfig(cfg)) => {
+                assert_eq!(cfg.aliases, vec!["hello@wicket.example"]);
+                assert!(cfg.from_hidden.is_empty());
             }
             other => panic!("expected MailConfig, got {other:?}"),
         }

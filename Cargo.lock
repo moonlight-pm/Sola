@@ -9316,11 +9316,15 @@ dependencies = [
 name = "sola-settings"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "iced",
+ "serde_json",
  "sola-bus",
  "sola-core",
  "sola-kit",
+ "tokio",
  "tracing",
+ "ureq",
 ]
 
 [[package]]

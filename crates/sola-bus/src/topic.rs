@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 use std::io;
 
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use crate::Message;
 
@@ -19,7 +19,9 @@ pub fn decode_payload<T: DeserializeOwned + 'static>(msg: &Message) -> io::Resul
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing payload"))?;
     match postcard::from_bytes(bytes) {
         Ok(v) => Ok(v),
-        Err(e) => match decode_legacy_application::<T>(bytes) {
+        Err(e) => match decode_legacy_application::<T>(bytes)
+            .or_else(|| crate::topics::try_decode_legacy_mail::<T>(bytes))
+        {
             Some(v) => Ok(v),
             None => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
         },
@@ -123,7 +125,10 @@ impl std::fmt::Display for PathError {
         match self {
             PathError::Empty(name) => write!(f, "namespace key `{name}` is empty"),
             PathError::Forbidden(name, value) => {
-                write!(f, "namespace key `{name}` contains forbidden characters: {value:?}")
+                write!(
+                    f,
+                    "namespace key `{name}` contains forbidden characters: {value:?}"
+                )
             }
             PathError::UnknownPlaceholder(name) => {
                 write!(f, "namespace template references unknown key `{name}`")
@@ -228,8 +233,12 @@ pub fn interpolate_namespace(
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ns_or_none {
-    ( () ) => { None };
-    ( ($ns:literal) ) => { Some($ns) };
+    ( () ) => {
+        None
+    };
+    ( ($ns:literal) ) => {
+        Some($ns)
+    };
 }
 
 #[macro_export]
@@ -808,13 +817,19 @@ mod tests {
 
     #[test]
     fn keys_for_single_key_extracts_field() {
-        let t = Topic::Single(StickyKeyed { id: "abc".into(), other: 7 });
+        let t = Topic::Single(StickyKeyed {
+            id: "abc".into(),
+            other: 7,
+        });
         assert_eq!(t.keys_for(), vec!["abc".to_string()]);
     }
 
     #[test]
     fn keys_for_multi_key_extracts_in_declaration_order() {
-        let t = Topic::Multi(StickyMultiKey { window_id: 42, menu_id: "file".into() });
+        let t = Topic::Multi(StickyMultiKey {
+            window_id: 42,
+            menu_id: "file".into(),
+        });
         assert_eq!(t.keys_for(), vec!["42".to_string(), "file".to_string()]);
     }
 
@@ -829,7 +844,10 @@ mod tests {
     #[test]
     fn namespace_returns_some_only_when_declared() {
         assert_eq!(TopicKind::UnnamedSingleton.namespace(), None);
-        assert_eq!(TopicKind::NamespacedSingleton.namespace(), Some("ns/single"));
+        assert_eq!(
+            TopicKind::NamespacedSingleton.namespace(),
+            Some("ns/single")
+        );
         assert_eq!(TopicKind::NamespacedKeyed.namespace(), Some("ns/keyed/:id"));
         // Non-persistent kinds always None.
         assert_eq!(TopicKind::Plain.namespace(), None);
@@ -851,40 +869,70 @@ mod tests {
 
     #[test]
     fn path_for_no_namespace_falls_back_to_state_yaml() {
-        let t = Topic::UnnamedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let t = Topic::UnnamedSingleton(StickyKeyed {
+            id: "x".into(),
+            other: 1,
+        });
         let p = t.path_for();
         assert_eq!(p, sola_core::config::sola_config_dir().join("state.yaml"));
     }
 
     #[test]
     fn path_for_singleton_namespaced() {
-        let t = Topic::NamespacedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let t = Topic::NamespacedSingleton(StickyKeyed {
+            id: "x".into(),
+            other: 1,
+        });
         let p = t.path_for();
-        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/single.yaml"));
+        assert_eq!(
+            p,
+            sola_core::config::sola_config_dir().join("ns/single.yaml")
+        );
     }
 
     #[test]
     fn path_for_keyed_namespaced_interpolates() {
-        let t = Topic::NamespacedKeyed(StickyKeyed { id: "abc".into(), other: 1 });
+        let t = Topic::NamespacedKeyed(StickyKeyed {
+            id: "abc".into(),
+            other: 1,
+        });
         let p = t.path_for();
-        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/keyed/abc.yaml"));
+        assert_eq!(
+            p,
+            sola_core::config::sola_config_dir().join("ns/keyed/abc.yaml")
+        );
     }
 
     #[test]
     fn path_for_safe_rejects_path_traversal() {
-        let t = Topic::NamespacedKeyed(StickyKeyed { id: "../escape".into(), other: 1 });
-        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+        let t = Topic::NamespacedKeyed(StickyKeyed {
+            id: "../escape".into(),
+            other: 1,
+        });
+        assert!(matches!(
+            t.path_for_safe(),
+            Err(super::PathError::Forbidden(_, _))
+        ));
     }
 
     #[test]
     fn path_for_safe_rejects_forward_slash() {
-        let t = Topic::NamespacedKeyed(StickyKeyed { id: "a/b".into(), other: 1 });
-        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+        let t = Topic::NamespacedKeyed(StickyKeyed {
+            id: "a/b".into(),
+            other: 1,
+        });
+        assert!(matches!(
+            t.path_for_safe(),
+            Err(super::PathError::Forbidden(_, _))
+        ));
     }
 
     #[test]
     fn path_for_safe_rejects_empty_key() {
-        let t = Topic::NamespacedKeyed(StickyKeyed { id: "".into(), other: 1 });
+        let t = Topic::NamespacedKeyed(StickyKeyed {
+            id: "".into(),
+            other: 1,
+        });
         assert!(matches!(t.path_for_safe(), Err(super::PathError::Empty(_))));
     }
 
@@ -896,12 +944,9 @@ mod tests {
 
     #[test]
     fn interpolate_namespace_replaces_known_keys() {
-        let r = super::interpolate_namespace(
-            "a/:x/b/:y",
-            &["x", "y"],
-            &["one".into(), "two".into()],
-        )
-        .unwrap();
+        let r =
+            super::interpolate_namespace("a/:x/b/:y", &["x", "y"], &["one".into(), "two".into()])
+                .unwrap();
         assert_eq!(r, "a/one/b/two");
     }
 }

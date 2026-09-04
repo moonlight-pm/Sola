@@ -43,6 +43,72 @@ impl ImapClient {
         })
     }
 
+    /// CREATE a mailbox (Gmail: a user label).
+    pub fn create_mailbox(&mut self, name: &str) -> anyhow::Result<()> {
+        let name = name.to_string();
+        self.with_reconnect(move |s| {
+            s.session.create(&name)?;
+            Ok(())
+        })
+    }
+
+    /// LIST names + attributes (no STATUS). Used to map canonical boxes.
+    pub fn list_mailbox_names(
+        &mut self,
+    ) -> anyhow::Result<Vec<crate::protocol::boxes::ListedMailbox>> {
+        self.with_reconnect(|s| {
+            let mailboxes = s.session.list(None, Some("*"))?;
+            let mut out = Vec::new();
+            for mb in mailboxes.iter() {
+                let attrs = mb
+                    .attributes()
+                    .iter()
+                    .map(|a| match a {
+                        imap::types::NameAttribute::NoSelect => "\\Noselect".to_string(),
+                        imap::types::NameAttribute::NoInferiors => "\\Noinferiors".to_string(),
+                        imap::types::NameAttribute::Marked => "\\Marked".to_string(),
+                        imap::types::NameAttribute::Unmarked => "\\Unmarked".to_string(),
+                        imap::types::NameAttribute::Custom(c) => c.to_string(),
+                    })
+                    .collect();
+                out.push(crate::protocol::boxes::ListedMailbox {
+                    name: mb.name().to_string(),
+                    attrs,
+                });
+            }
+            Ok(out)
+        })
+    }
+
+    /// Unread/total for one mailbox via STATUS (no SELECT).
+    pub fn folder_status(&mut self, name: &str) -> anyhow::Result<(u32, u32)> {
+        let name = name.to_string();
+        self.with_reconnect(move |s| {
+            s.session.status(&name, "(MESSAGES UNSEEN)")?;
+            let mut total = 0u32;
+            let mut unread = 0u32;
+            while let Ok(resp) = s.session.unsolicited_responses.try_recv() {
+                if let imap::types::UnsolicitedResponse::Status {
+                    mailbox: ref mb,
+                    attributes,
+                } = resp
+                {
+                    if mb != &name {
+                        continue;
+                    }
+                    for attr in attributes {
+                        match attr {
+                            imap::types::StatusAttribute::Messages(n) => total = n,
+                            imap::types::StatusAttribute::Unseen(n) => unread = n,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok((unread, total))
+        })
+    }
+
     /// List all folders with unread/total counts via `STATUS` (no SELECT).
     ///
     /// Uses STATUS rather than SELECT+SEARCH per folder: some servers/crates
@@ -832,6 +898,7 @@ fn parse_summary(fetch: &Fetch) -> Option<MessageSummary> {
         .and_then(|d| std::str::from_utf8(d).ok())
         .unwrap_or("")
         .to_string();
+    let date_sort = super::date::date_sort_key(&date);
 
     // Soft-deleted messages should not appear in the UI list.
     if fetch
@@ -863,11 +930,13 @@ fn parse_summary(fetch: &Fetch) -> Option<MessageSummary> {
     });
 
     Some(MessageSummary {
+        account: String::new(),
         uid,
         from,
         to,
         subject,
         date,
+        date_sort,
         seen,
         forwarded_for,
         has_attachment: fetch.bodystructure().is_some_and(structure_has_attachment),
@@ -971,6 +1040,7 @@ fn parse_body(fetch: &Fetch, uid: u32) -> anyhow::Result<MessageBody> {
     let attachments = collect_attachments(&parsed);
 
     Ok(MessageBody {
+        account: String::new(),
         uid,
         from,
         to,

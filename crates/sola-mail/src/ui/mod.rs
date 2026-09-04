@@ -16,13 +16,17 @@ use iced::widget::text::Wrapping;
 use iced::widget::{
     Space, button, column, container, keyed_column, row, scrollable, text, text_editor,
 };
-use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
+use iced::{
+    Background, Border, Color, Element, Event, Length, Padding, Shadow, Subscription, Task, Theme,
+    Vector,
+};
 use sola_bus::Message;
-use sola_bus::topics::{MailConfig, MailRule, Topic};
+use sola_bus::topics::{MailConfig, MailRule, Topic, mail_addr_key};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::icon::{icon_handle, icon_svg};
 use sola_kit::components::prose::prose_selectable;
+use sola_kit::components::select::{SelectOption, select};
 use sola_kit::components::style::{
     HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, mix_white,
 };
@@ -37,10 +41,13 @@ use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
 use crate::protocol::attachments;
+use crate::protocol::rules::extract_address;
 use crate::protocol::{
-    Folder, MailAttachment, MessageBody, MessageSummary, folder_count_badge, folder_label,
+    Account, Folder, MailAttachment, MailId, MessageBody, MessageSummary, folder_count_badge,
+    folder_label, pick_from_for_reply,
 };
-use crate::worker::{MailCmd, MailEvent};
+use crate::snapshot::{self, Snapshot};
+use crate::worker::{LinkState, MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
@@ -70,7 +77,7 @@ pub enum Msg {
     Bus(Arc<Message>),
     Worker(MailEvent),
     SelectFolder(String),
-    SelectMessage(u32),
+    SelectMessage(MailId),
     SearchChanged(String),
     SearchSubmit,
     SearchClear,
@@ -82,6 +89,8 @@ pub enum Msg {
     },
     CancelCompose,
     ComposeFrom(String),
+    ToggleFromMenu,
+    DismissFromMenu,
     ComposeTo(String),
     ComposeCc(String),
     ComposeSubject(String),
@@ -107,7 +116,7 @@ pub enum Msg {
     PollRefresh,
     /// After rapid delete/advance, load the body of the row we landed on.
     SettleSelect {
-        uid: u32,
+        id: MailId,
         generation: u64,
     },
     WindowReady(Option<iced::window::Id>),
@@ -129,6 +138,7 @@ enum PickerKind {
 
 #[derive(Debug, Clone)]
 struct LastMove {
+    account: String,
     uid: u32,
     /// UID in `to_folder` once IMAP COPY/MOVE reports it. Undo must use this
     /// — source UIDs are not valid in the destination mailbox.
@@ -168,7 +178,7 @@ pub struct App {
     selected_folder: String,
     messages: Vec<MessageSummary>,
     total_messages: u32,
-    selected_uid: Option<u32>,
+    selected: Option<MailId>,
     message_body: Option<MessageBody>,
     /// Visible in-body selection (drag or Select All). Copy uses this.
     body_selection: Option<String>,
@@ -190,60 +200,100 @@ pub struct App {
     /// Bumped on every toast so a late expiry cannot hide a newer one.
     toast_gen: u64,
     composing: bool,
+    from_open: bool,
     draft: ComposeDraft,
     last_move: Option<LastMove>,
     /// UIDs removed from the list before IMAP MOVE finishes.
-    pending_gone: HashSet<(String, u32)>,
-    pending_removed: HashMap<u32, RemovedMail>,
+    pending_gone: HashSet<(String, String, u32)>,
+    pending_removed: HashMap<(String, u32), RemovedMail>,
     /// Bumped on every selection change so delayed body fetches can cancel.
     select_gen: u64,
+    /// Last list scroll Y. Load-more only after the user scrolls down —
+    /// shrinking the list (delete) must not look like a fetch of older mail.
+    list_scroll_y: f32,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
     /// Last inbox unread we published on `Topic::MailStatus`.
     published_inbox_unread: Option<u32>,
     picker: Option<(PickerKind, FilePicker)>,
     last_picker_dir: Option<PathBuf>,
+    account_links: Vec<AccountLink>,
+}
+
+#[derive(Debug, Clone)]
+struct AccountLink {
+    id: String,
+    email: String,
+    state: LinkState,
+}
+
+fn empty_mailboxes() -> Vec<Folder> {
+    crate::protocol::boxes::CANONICAL
+        .iter()
+        .map(|n| Folder {
+            name: (*n).to_string(),
+            unread: 0,
+            total: 0,
+        })
+        .collect()
 }
 
 impl Default for App {
     fn default() -> Self {
+        let snap = snapshot::load();
         Self {
             theme: default_theme(),
             mail_config: MailConfig::default(),
             connected: false,
             not_configured: false,
-            folders: Vec::new(),
+            folders: snap
+                .as_ref()
+                .map(|s| s.folders.clone())
+                .filter(|f| !f.is_empty())
+                .unwrap_or_else(empty_mailboxes),
             smart_counts: Vec::new(),
-            selected_folder: "INBOX".into(),
-            messages: Vec::new(),
-            total_messages: 0,
-            selected_uid: None,
+            selected_folder: snap
+                .as_ref()
+                .map(|s| s.folder.clone())
+                .unwrap_or_else(|| "INBOX".into()),
+            messages: snap
+                .as_ref()
+                .map(|s| s.messages.clone())
+                .unwrap_or_default(),
+            total_messages: snap.as_ref().map(|s| s.total).unwrap_or(0),
+            selected: None,
             message_body: None,
             body_selection: None,
             prose_select_all: 0,
             reading_blocks: Vec::new(),
-            from_addresses: Vec::new(),
+            from_addresses: snap
+                .as_ref()
+                .map(|s| s.from_addresses.clone())
+                .unwrap_or_default(),
             rules: Vec::new(),
             search_query: String::new(),
             search_active: false,
             search_total: 0,
-            loading: true,
+            loading: false,
             folder_loading: false,
             is_loading_more: false,
             toast: None,
             toast_undo: false,
             toast_gen: 0,
             composing: false,
+            from_open: false,
             draft: empty_draft(""),
             last_move: None,
             pending_gone: HashSet::new(),
             pending_removed: HashMap::new(),
             select_gen: 0,
+            list_scroll_y: 0.0,
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
             published_inbox_unread: None,
             picker: None,
             last_picker_dir: None,
+            account_links: Vec::new(),
         }
     }
 }
@@ -332,7 +382,7 @@ impl App {
             Msg::Worker(ev) => self.on_worker(ev),
             Msg::SelectFolder(name) => {
                 self.selected_folder = name.clone();
-                self.selected_uid = None;
+                self.selected = None;
                 self.message_body = None;
                 self.body_selection = None;
                 self.reading_blocks.clear();
@@ -342,19 +392,20 @@ impl App {
                 self.search_query.clear();
                 self.select_gen = self.select_gen.saturating_add(1);
                 self.pending_gone.clear();
+                self.list_scroll_y = 0.0;
                 self.load_folder(name);
                 Task::none()
             }
-            Msg::SelectMessage(uid) => {
+            Msg::SelectMessage(id) => {
                 self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(uid);
+                self.select_message(id);
                 Task::none()
             }
-            Msg::SettleSelect { uid, generation } => {
-                if generation != self.select_gen || self.selected_uid != Some(uid) {
+            Msg::SettleSelect { id, generation } => {
+                if generation != self.select_gen || self.selected.as_ref() != Some(&id) {
                     return Task::none();
                 }
-                self.select_message(uid);
+                self.select_message(id);
                 Task::none()
             }
             Msg::SearchChanged(q) => {
@@ -366,6 +417,7 @@ impl App {
                 if self.search_active {
                     self.search_active = false;
                     self.search_total = 0;
+                    self.list_scroll_y = 0.0;
                     self.load_folder(self.selected_folder.clone());
                 }
                 Task::none()
@@ -377,37 +429,36 @@ impl App {
                 }
                 self.search_active = true;
                 self.folder_loading = true;
+                self.list_scroll_y = 0.0;
                 mail_send(MailCmd::Search { query: q });
                 Task::none()
             }
             Msg::LoadMore => self.load_more(),
             Msg::ListScrolled(vp) => {
-                let remain =
-                    vp.content_bounds().height - vp.bounds().height - vp.absolute_offset().y;
+                let y = vp.absolute_offset().y;
+                let scrolled_down = y > self.list_scroll_y + 1.0;
+                self.list_scroll_y = y;
+                if !scrolled_down {
+                    return Task::none();
+                }
+                let remain = vp.content_bounds().height - vp.bounds().height - y;
                 if remain < 280.0 {
                     return self.update(Msg::LoadMore);
                 }
                 Task::none()
             }
             Msg::Compose => {
-                let from = self
-                    .from_addresses
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| self.mail_config.email.clone());
+                let from = self.default_from();
                 self.draft = empty_draft(&from);
                 self.composing = true;
+                self.from_open = false;
                 Task::none()
             }
             Msg::Reply { all } => {
                 let Some(body) = self.message_body.clone() else {
                     return Task::none();
                 };
-                let from = self
-                    .from_addresses
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| self.mail_config.email.clone());
+                let from = self.reply_from(&body);
                 let to = body.from.clone();
                 let mut cc = String::new();
                 if all {
@@ -417,7 +468,7 @@ impl App {
                         .chain(body.cc.split(','))
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
-                        .filter(|s| !s.contains(&from))
+                        .filter(|s| !self.is_self_addr(s))
                         .collect();
                     others.sort();
                     others.dedup();
@@ -445,15 +496,26 @@ impl App {
                     body.message_id.clone(),
                 );
                 self.composing = true;
+                self.from_open = false;
                 Task::none()
             }
             Msg::CancelCompose => {
                 self.composing = false;
+                self.from_open = false;
                 self.picker = None;
                 Task::none()
             }
             Msg::ComposeFrom(s) => {
                 self.draft.from = s;
+                self.from_open = false;
+                Task::none()
+            }
+            Msg::ToggleFromMenu => {
+                self.from_open = !self.from_open;
+                Task::none()
+            }
+            Msg::DismissFromMenu => {
+                self.from_open = false;
                 Task::none()
             }
             Msg::ComposeTo(s) => {
@@ -520,10 +582,10 @@ impl App {
             Msg::SaveAttachment(i) => self.begin_save_attachment(i),
             Msg::Picker(m) => self.on_picker(m),
             Msg::MoveSelected(dest) => {
-                let Some(uid) = self.selected_uid else {
+                let Some(id) = self.selected.clone() else {
                     return Task::none();
                 };
-                self.move_and_advance(uid, dest)
+                self.move_and_advance(id, dest)
             }
             Msg::Undo => self.undo_last_move(),
             Msg::EmptyFolder => {
@@ -577,8 +639,26 @@ impl App {
         }
         if let Some(Topic::MailConfig(cfg)) = Topic::parse(message) {
             self.mail_config = cfg.clone();
+            self.from_addresses = cfg.from_addresses();
+            let ids: Vec<String> = Account::imap_accounts(&cfg)
+                .iter()
+                .map(|a| a.id())
+                .collect();
+            if ids.is_empty() {
+                self.not_configured = true;
+                self.account_links.clear();
+            } else {
+                self.not_configured = false;
+                self.seed_account_links(&cfg);
+                if let Some(snap) = snapshot::load() {
+                    if !snapshot::matches_accounts(&snap, &ids) {
+                        self.messages.clear();
+                        self.total_messages = 0;
+                        self.folders = empty_mailboxes();
+                    }
+                }
+            }
             mail_send(MailCmd::Reconfigure(cfg));
-            self.loading = true;
         }
         Task::none()
     }
@@ -692,7 +772,12 @@ impl App {
                 self.smart_counts = smart_counts;
                 self.from_addresses = from_addresses;
                 self.rules = rules;
-                self.load_folder(self.selected_folder.clone());
+                if self.messages.is_empty() {
+                    self.load_folder(self.selected_folder.clone());
+                } else {
+                    self.refresh_list_silent();
+                }
+                self.persist_snapshot();
                 self.publish_inbox_unread();
             }
             MailEvent::NotConfigured => {
@@ -732,7 +817,11 @@ impl App {
                 if replace {
                     self.messages = messages
                         .into_iter()
-                        .filter(|m| !self.pending_gone.contains(&(folder.clone(), m.uid)))
+                        .filter(|m| {
+                            !self
+                                .pending_gone
+                                .contains(&(folder.clone(), m.account.clone(), m.uid))
+                        })
                         .collect();
                 } else {
                     self.messages = list_sync::apply_message_page(
@@ -744,6 +833,9 @@ impl App {
                         &folder,
                     );
                 }
+                if !self.search_active {
+                    self.persist_snapshot();
+                }
             }
             MailEvent::SearchResults { messages, total } => {
                 self.folder_loading = false;
@@ -751,13 +843,17 @@ impl App {
                 let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
                 self.messages = messages
                     .into_iter()
-                    .filter(|m| !self.pending_gone.contains(&(folder.clone(), m.uid)))
+                    .filter(|m| {
+                        !self
+                            .pending_gone
+                            .contains(&(folder.clone(), m.account.clone(), m.uid))
+                    })
                     .collect();
                 self.search_total = total.saturating_sub(hidden);
                 self.total_messages = self.search_total;
             }
             MailEvent::Body(body) => {
-                if self.selected_uid != Some(body.uid) {
+                if self.selected.as_ref() != Some(&body.id()) {
                     return Task::none();
                 }
                 let blocks = body.reading_blocks();
@@ -780,16 +876,22 @@ impl App {
                 mail_send(MailCmd::ListFolders);
                 return self.show_toast("Message sent", false);
             }
-            MailEvent::Moved { uid, dest_uid } => {
-                return self.on_moved(uid, dest_uid);
+            MailEvent::Moved {
+                account,
+                uid,
+                dest_uid,
+            } => {
+                return self.on_moved(&account, uid, dest_uid);
             }
-            MailEvent::MoveFailed { uid, message } => {
-                self.restore_removed(uid);
-                if self
-                    .last_move
-                    .as_ref()
-                    .is_some_and(|lm| lm.uid == uid || lm.dest_uid == Some(uid))
-                {
+            MailEvent::MoveFailed {
+                account,
+                uid,
+                message,
+            } => {
+                self.restore_removed(&account, uid);
+                if self.last_move.as_ref().is_some_and(|lm| {
+                    lm.account == account && (lm.uid == uid || lm.dest_uid == Some(uid))
+                }) {
                     self.last_move = None;
                 }
                 return self.show_toast(format!("move: {message}"), false);
@@ -806,15 +908,22 @@ impl App {
             MailEvent::NewMail => {
                 self.refresh_all();
             }
+            MailEvent::AccountLink {
+                account,
+                email,
+                state,
+            } => {
+                self.upsert_link(account, email, state);
+            }
             MailEvent::Error { context, message } => {
                 self.loading = false;
                 self.folder_loading = false;
                 self.is_loading_more = false;
-                if context == "connect" {
-                    self.connected = false;
-                }
                 if context == "empty_folder" {
                     self.load_folder(self.selected_folder.clone());
+                }
+                if context == "connect" {
+                    return Task::none();
                 }
                 return self.show_toast(format!("{context}: {message}"), false);
             }
@@ -869,7 +978,7 @@ impl App {
         ) {
             return Task::none();
         }
-        let Some(uid) = self.selected_uid else {
+        let Some(id) = self.selected.clone() else {
             return Task::none();
         };
         let ch = match &key {
@@ -877,10 +986,10 @@ impl App {
             _ => return Task::none(),
         };
         match ch {
-            "j" => return self.move_and_advance(uid, "Junk".into()),
-            "i" => return self.move_and_advance(uid, "INBOX".into()),
-            "a" => return self.move_and_advance(uid, "Archive".into()),
-            "d" => return self.move_and_advance(uid, "Trash".into()),
+            "j" => return self.move_and_advance(id, "Junk".into()),
+            "i" => return self.move_and_advance(id, "INBOX".into()),
+            "a" => return self.move_and_advance(id, "Archive".into()),
+            "d" => return self.move_and_advance(id, "Trash".into()),
             "u" => return self.undo_last_move(),
             "w" => self.select_prev(),
             "s" => self.select_next(),
@@ -920,7 +1029,7 @@ impl App {
             self.messages.clear();
             self.pending_gone.clear();
             self.pending_removed.clear();
-            self.selected_uid = None;
+            self.selected = None;
             self.message_body = None;
             self.body_selection = None;
             self.reading_blocks.clear();
@@ -970,22 +1079,30 @@ impl App {
         self.refresh_list_silent();
     }
 
-    fn select_message(&mut self, uid: u32) {
-        self.selected_uid = Some(uid);
-        self.body_selection = None;
+    fn select_message(&mut self, id: MailId) {
+        self.selected = Some(id.clone());
         self.composing = false;
         self.picker = None;
+        if !self.reader_shows(&id) {
+            self.clear_reader();
+        }
         let folder = self.real_folder();
         mail_send(MailCmd::FetchBody {
+            account: id.account.clone(),
             folder: folder.clone(),
-            uid,
+            uid: id.uid,
         });
-        if let Some(msg) = self.messages.iter_mut().find(|m| m.uid == uid) {
+        if let Some(msg) = self
+            .messages
+            .iter_mut()
+            .find(|m| m.account == id.account && m.uid == id.uid)
+        {
             if !msg.seen {
                 msg.seen = true;
                 mail_send(MailCmd::MarkRead {
+                    account: id.account.clone(),
                     folder: folder.clone(),
-                    uid,
+                    uid: id.uid,
                 });
                 if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
                     f.unread = f.unread.saturating_sub(1);
@@ -995,12 +1112,16 @@ impl App {
         }
     }
 
-    fn move_and_advance(&mut self, uid: u32, dest: String) -> Task<Msg> {
+    fn move_and_advance(&mut self, id: MailId, dest: String) -> Task<Msg> {
         let folder = self.real_folder();
-        let idx = self.messages.iter().position(|m| m.uid == uid);
+        let idx = self
+            .messages
+            .iter()
+            .position(|m| m.account == id.account && m.uid == id.uid);
         let summary = idx.and_then(|i| self.messages.get(i).cloned());
         self.last_move = Some(LastMove {
-            uid,
+            account: id.account.clone(),
+            uid: id.uid,
             dest_uid: None,
             from_folder: folder.clone(),
             to_folder: dest.clone(),
@@ -1011,11 +1132,11 @@ impl App {
         });
         let toast = self.show_toast(format!("Moved to {dest}"), true);
         self.pending_gone
-            .insert((self.selected_folder.clone(), uid));
+            .insert((self.selected_folder.clone(), id.account.clone(), id.uid));
         if let Some(summary) = summary.clone() {
             self.adjust_counts_for_move(&summary, &folder, &dest, true);
             self.pending_removed.insert(
-                uid,
+                (id.account.clone(), id.uid),
                 RemovedMail {
                     summary,
                     from_folder: folder.clone(),
@@ -1025,11 +1146,17 @@ impl App {
             );
         }
         self.total_messages = self.total_messages.saturating_sub(1);
-        mail_send(MailCmd::Move { folder, uid, dest });
-        self.messages.retain(|m| m.uid != uid);
+        mail_send(MailCmd::Move {
+            account: id.account.clone(),
+            folder,
+            uid: id.uid,
+            dest,
+        });
+        self.messages
+            .retain(|m| !(m.account == id.account && m.uid == id.uid));
         self.select_gen = self.select_gen.saturating_add(1);
         if self.messages.is_empty() {
-            self.selected_uid = None;
+            self.selected = None;
             self.message_body = None;
             self.body_selection = None;
             self.reading_blocks.clear();
@@ -1039,14 +1166,15 @@ impl App {
             return toast;
         };
         let next = if i > 0 { i - 1 } else { 0 };
-        let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
-        self.selected_uid = Some(next_uid);
+        let next_id = self.messages[next.min(self.messages.len() - 1)].id();
+        self.selected = Some(next_id.clone());
+        self.clear_reader();
         let generation = self.select_gen;
         Task::batch([
             toast,
             Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
                 Msg::SettleSelect {
-                    uid: next_uid,
+                    id: next_id,
                     generation,
                 }
             }),
@@ -1061,6 +1189,7 @@ impl App {
             return Task::none();
         }
         lm.undo_requested = true;
+        let account = lm.account.clone();
         let src_uid = lm.uid;
         let dest_uid = lm.dest_uid;
         let to_folder = lm.to_folder.clone();
@@ -1070,10 +1199,11 @@ impl App {
         if dest_uid.is_some() {
             lm.undo_imap_sent = true;
         }
-        self.pending_gone.remove(&(list_id.clone(), src_uid));
+        self.pending_gone
+            .remove(&(list_id.clone(), account.clone(), src_uid));
         let summary = self
             .pending_removed
-            .remove(&src_uid)
+            .remove(&(account.clone(), src_uid))
             .map(|r| r.summary)
             .or(summary);
         if let Some(summary) = summary {
@@ -1083,11 +1213,9 @@ impl App {
                 list_sync::insert_summary_desc(&mut self.messages, summary);
             }
         }
-        // Never reverse using the source UID against dest — that UID names a
-        // different message in Trash/Junk (often one another client already
-        // moved). Wait for dest_uid if the copy has not finished yet.
         if let Some(dest_uid) = list_sync::reverse_move_uid(src_uid, dest_uid) {
             mail_send(MailCmd::Move {
+                account,
                 folder: to_folder,
                 uid: dest_uid,
                 dest: from_folder,
@@ -1096,22 +1224,25 @@ impl App {
         self.show_toast("Move undone", false)
     }
 
-    fn on_moved(&mut self, uid: u32, dest_uid: Option<u32>) -> Task<Msg> {
-        self.pending_removed.remove(&uid);
+    fn on_moved(&mut self, account: &str, uid: u32, dest_uid: Option<u32>) -> Task<Msg> {
+        self.pending_removed.remove(&(account.to_string(), uid));
         let Some(lm) = self.last_move.as_ref() else {
             return Task::none();
         };
+        if lm.account != account {
+            return Task::none();
+        }
         let src_uid = lm.uid;
         let undo_requested = lm.undo_requested;
         let undo_imap_sent = lm.undo_imap_sent;
         let known_dest = lm.dest_uid;
         let to_folder = lm.to_folder.clone();
         let from_folder = lm.from_folder.clone();
+        let account = account.to_string();
 
-        // Reverse completed (dest UID in the event is the source of this MOVE).
         if undo_requested && known_dest == Some(uid) {
             if let Some(new_uid) = dest_uid {
-                self.rewrite_list_uid(src_uid, new_uid);
+                self.rewrite_list_uid(&account, src_uid, new_uid);
             }
             self.last_move = None;
             return Task::none();
@@ -1136,6 +1267,7 @@ impl App {
                         lm.undo_imap_sent = true;
                     }
                     mail_send(MailCmd::Move {
+                        account,
                         folder: to_folder,
                         uid: d,
                         dest: from_folder,
@@ -1151,22 +1283,40 @@ impl App {
         Task::none()
     }
 
-    fn rewrite_list_uid(&mut self, old: u32, new: u32) {
+    fn reader_shows(&self, id: &MailId) -> bool {
+        self.message_body.as_ref().is_some_and(|b| b.id() == *id)
+    }
+
+    fn clear_reader(&mut self) {
+        self.message_body = None;
+        self.body_selection = None;
+        self.reading_blocks.clear();
+    }
+
+    fn rewrite_list_uid(&mut self, account: &str, old: u32, new: u32) {
         if old == new {
             return;
         }
-        if let Some(m) = self.messages.iter_mut().find(|m| m.uid == old) {
+        if let Some(m) = self
+            .messages
+            .iter_mut()
+            .find(|m| m.account == account && m.uid == old)
+        {
             m.uid = new;
         }
-        if self.selected_uid == Some(old) {
-            self.selected_uid = Some(new);
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|s| s.account == account && s.uid == old)
+        {
+            self.selected = Some(MailId::new(account, new));
         }
         if let Some(body) = &mut self.message_body {
-            if body.uid == old {
+            if body.account == account && body.uid == old {
                 body.uid = new;
             }
         }
-        self.messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
+        self.messages.sort_by(MessageSummary::cmp_recency);
     }
 
     fn can_offer_undo(&self) -> bool {
@@ -1189,6 +1339,35 @@ impl App {
         self.toast_gen = self.toast_gen.saturating_add(1);
     }
 
+    fn identities(&self) -> Vec<String> {
+        if !self.from_addresses.is_empty() {
+            self.from_addresses.clone()
+        } else {
+            self.mail_config.from_addresses()
+        }
+    }
+
+    fn default_from(&self) -> String {
+        self.identities()
+            .into_iter()
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.mail_config.primary_from_address())
+    }
+
+    fn reply_from(&self, body: &MessageBody) -> String {
+        pick_from_for_reply(&self.identities(), &body.to, &body.cc)
+            .unwrap_or_else(|| self.default_from())
+    }
+
+    fn is_self_addr(&self, raw: &str) -> bool {
+        let key = mail_addr_key(extract_address(raw));
+        if key.is_empty() {
+            return false;
+        }
+        self.identities().iter().any(|id| mail_addr_key(id) == key)
+    }
+
     fn picker_start_dir(&self) -> PathBuf {
         self.last_picker_dir
             .clone()
@@ -1197,13 +1376,10 @@ impl App {
 
     fn begin_attach(&mut self) -> Task<Msg> {
         if !self.composing {
-            let from = self
-                .from_addresses
-                .first()
-                .cloned()
-                .unwrap_or_else(|| self.mail_config.email.clone());
+            let from = self.default_from();
             self.draft = empty_draft(&from);
             self.composing = true;
+            self.from_open = false;
         }
         let picker = FilePicker::open()
             .title("Attach file")
@@ -1305,9 +1481,10 @@ impl App {
         }
     }
 
-    fn restore_removed(&mut self, uid: u32) {
-        self.pending_gone.retain(|(_, gone)| *gone != uid);
-        let Some(removed) = self.pending_removed.remove(&uid) else {
+    fn restore_removed(&mut self, account: &str, uid: u32) {
+        self.pending_gone
+            .retain(|(_, acc, gone)| !(acc == account && *gone == uid));
+        let Some(removed) = self.pending_removed.remove(&(account.to_string(), uid)) else {
             return;
         };
         if removed.selected_folder != self.selected_folder {
@@ -1322,7 +1499,7 @@ impl App {
         self.total_messages = self.total_messages.saturating_add(1);
         list_sync::insert_summary_desc(&mut self.messages, removed.summary);
         if let Some(lm) = &self.last_move {
-            if lm.uid == uid {
+            if lm.account == account && lm.uid == uid {
                 self.last_move = None;
                 self.toast_undo = false;
             }
@@ -1349,38 +1526,46 @@ impl App {
     }
 
     fn select_prev(&mut self) {
-        let Some(uid) = self.selected_uid else {
+        let Some(id) = self.selected.clone() else {
             return;
         };
-        let Some(idx) = self.messages.iter().position(|m| m.uid == uid) else {
+        let Some(idx) = self
+            .messages
+            .iter()
+            .position(|m| m.account == id.account && m.uid == id.uid)
+        else {
             return;
         };
         if idx == 0 {
             return;
         }
         self.select_gen = self.select_gen.saturating_add(1);
-        self.select_message(self.messages[idx - 1].uid);
+        self.select_message(self.messages[idx - 1].id());
     }
 
     fn select_next(&mut self) {
-        let Some(uid) = self.selected_uid else {
+        let Some(id) = self.selected.clone() else {
             return;
         };
-        let Some(idx) = self.messages.iter().position(|m| m.uid == uid) else {
+        let Some(idx) = self
+            .messages
+            .iter()
+            .position(|m| m.account == id.account && m.uid == id.uid)
+        else {
             return;
         };
         if idx + 1 >= self.messages.len() {
             return;
         }
         self.select_gen = self.select_gen.saturating_add(1);
-        self.select_message(self.messages[idx + 1].uid);
+        self.select_message(self.messages[idx + 1].id());
     }
 
     fn select_next_or_first(&mut self) {
-        if self.selected_uid.is_none() {
+        if self.selected.is_none() {
             if let Some(first) = self.messages.first() {
                 self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(first.uid);
+                self.select_message(first.id());
             }
             return;
         }
@@ -1388,10 +1573,10 @@ impl App {
     }
 
     fn select_prev_or_last(&mut self) {
-        if self.selected_uid.is_none() {
+        if self.selected.is_none() {
             if let Some(last) = self.messages.last() {
                 self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(last.uid);
+                self.select_message(last.id());
             }
             return;
         }
@@ -1431,15 +1616,7 @@ impl App {
     // ── View ──────────────────────────────────────────────────────────
 
     pub fn view(&self) -> Element<'_, Msg> {
-        let content: Element<'_, Msg> = if self.loading {
-            container(kit_text::body("Connecting…"))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(canvas_style)
-                .into()
-        } else if self.not_configured {
+        let content: Element<'_, Msg> = if self.not_configured {
             container(
                 column![
                     kit_text::heading("Mail not configured"),
@@ -1476,6 +1653,16 @@ impl App {
         };
 
         let mut col = column![content].width(Length::Fill).height(Length::Fill);
+        if self.show_link_card() {
+            col = col.push(
+                row![Space::new().width(Length::Fill), self.view_link_card(),].padding(Padding {
+                    top: 0.0,
+                    right: SPACE_LG,
+                    bottom: SPACE_MD,
+                    left: SPACE_LG,
+                }),
+            );
+        }
         if let Some(toast) = &self.toast {
             col = col.push(self.view_toast(toast));
         }
@@ -1498,6 +1685,102 @@ impl App {
         } else {
             framed
         }
+    }
+
+    fn seed_account_links(&mut self, cfg: &MailConfig) {
+        self.account_links = Account::imap_accounts(cfg)
+            .into_iter()
+            .map(|a| AccountLink {
+                id: a.id(),
+                email: a.email.clone(),
+                state: LinkState::Connecting,
+            })
+            .collect();
+    }
+
+    fn upsert_link(&mut self, account: String, email: String, state: LinkState) {
+        if let Some(row) = self
+            .account_links
+            .iter_mut()
+            .find(|r| r.id == account || mail_addr_key(&r.email) == mail_addr_key(&email))
+        {
+            row.email = email;
+            row.state = state;
+        } else {
+            self.account_links.push(AccountLink {
+                id: account,
+                email,
+                state,
+            });
+        }
+    }
+
+    fn show_link_card(&self) -> bool {
+        !self.not_configured
+            && self
+                .account_links
+                .iter()
+                .any(|r| !matches!(r.state, LinkState::Ready))
+    }
+
+    fn persist_snapshot(&self) {
+        if self.messages.is_empty() || self.search_active {
+            return;
+        }
+        let accounts: Vec<String> = Account::imap_accounts(&self.mail_config)
+            .iter()
+            .map(|a| a.id())
+            .collect();
+        if accounts.is_empty() {
+            return;
+        }
+        snapshot::save(&Snapshot {
+            accounts,
+            folder: self.selected_folder.clone(),
+            folders: self.folders.clone(),
+            messages: self.messages.clone(),
+            total: self.total_messages,
+            from_addresses: self.from_addresses.clone(),
+        });
+    }
+
+    fn view_link_card(&self) -> Element<'_, Msg> {
+        let mut rows = column![].spacing(SPACE_SM);
+        for link in &self.account_links {
+            if matches!(link.state, LinkState::Ready) {
+                continue;
+            }
+            let (label, danger) = match &link.state {
+                LinkState::Connecting => ("Connecting", false),
+                LinkState::Failed(e) => (e.as_str(), true),
+                LinkState::Ready => continue,
+            };
+            let name = if link.email.is_empty() {
+                link.id.clone()
+            } else {
+                link.email.clone()
+            };
+            let mut state_txt = kit_text::caption(truncate_status(label)).style(kit_text::muted);
+            if danger {
+                state_txt = kit_text::caption(truncate_status(label)).style(kit_text::danger);
+            }
+            rows = rows.push(
+                row![
+                    status_dot(danger),
+                    column![kit_text::caption(name), state_txt]
+                        .spacing(SPACE_XS)
+                        .width(Length::Fill),
+                ]
+                .spacing(SPACE_MD)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+
+        container(rows)
+            .padding(Padding::from([SPACE_MD, SPACE_LG]))
+            .width(Length::Fixed(268.0))
+            .style(link_card_style)
+            .into()
     }
 
     fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
@@ -1529,6 +1812,9 @@ impl App {
 
         let mut mailbox_items: Vec<SidebarItem<'_, Msg>> = Vec::new();
         for f in &self.folders {
+            if !crate::protocol::boxes::is_canonical(&f.name) {
+                continue;
+            }
             let mut item =
                 SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(f.name.clone()))
                     .active(self.selected_folder == f.name);
@@ -1626,11 +1912,12 @@ impl App {
                 .width(Length::Fill)
                 .into()
         } else {
-            keyed_column(
-                self.messages
-                    .iter()
-                    .map(|m| (m.uid, message_row(m, self.selected_uid == Some(m.uid)))),
-            )
+            keyed_column(self.messages.iter().map(|m| {
+                (
+                    row_key(m),
+                    message_row(m, self.selected.as_ref() == Some(&m.id())),
+                )
+            }))
             .spacing(0)
             .width(Length::Fill)
             .into()
@@ -1654,7 +1941,12 @@ impl App {
     }
 
     fn view_reader_toolbar(&self) -> Element<'_, Msg> {
-        let has_msg = self.selected_uid.is_some() && !self.composing;
+        let has_sel = self.selected.is_some() && !self.composing;
+        let has_letter = has_sel
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|id| self.reader_shows(id));
         let mut bar = row![
             icon_tool("lucide/square-pen", "Compose", Some(Msg::Compose)),
             icon_tool(
@@ -1665,34 +1957,34 @@ impl App {
             icon_tool(
                 "lucide/reply",
                 "Reply",
-                has_msg.then_some(Msg::Reply { all: false }),
+                has_letter.then_some(Msg::Reply { all: false }),
             ),
             icon_tool(
                 "lucide/reply-all",
                 "Reply all",
-                has_msg.then_some(Msg::Reply { all: true }),
+                has_letter.then_some(Msg::Reply { all: true }),
             ),
             icon_tool(
                 "lucide/archive",
                 "Archive",
-                has_msg.then_some(Msg::MoveSelected("Archive".into())),
+                has_sel.then_some(Msg::MoveSelected("Archive".into())),
             ),
             icon_tool(
                 "lucide/trash-2",
                 "Trash",
-                has_msg.then_some(Msg::MoveSelected("Trash".into())),
+                has_sel.then_some(Msg::MoveSelected("Trash".into())),
             ),
             icon_tool(
                 "lucide/ban",
                 "Junk",
-                has_msg.then_some(Msg::MoveSelected("Junk".into())),
+                has_sel.then_some(Msg::MoveSelected("Junk".into())),
             ),
         ]
         .spacing(SPACE_XS)
         .align_y(iced::Alignment::Center);
 
         bar = bar.push(Space::new().width(Length::Fill));
-        if has_msg {
+        if has_letter {
             bar = bar.push(icon_tool(
                 "lucide/copy",
                 "Copy message",
@@ -1718,21 +2010,31 @@ impl App {
     }
 
     fn view_message(&self) -> Element<'_, Msg> {
-        let Some(body) = &self.message_body else {
-            return container(
+        let body = self
+            .message_body
+            .as_ref()
+            .filter(|b| self.selected.as_ref().is_some_and(|id| b.id() == *id));
+        let Some(body) = body else {
+            // Selected but body not in yet: blank well, never the previous letter.
+            // Nothing selected: teach the empty pane.
+            let inner: Element<'_, Msg> = if self.selected.is_some() {
+                Space::new().width(Length::Fill).height(Length::Fill).into()
+            } else {
                 column![
                     kit_text::body("No message selected").style(kit_text::muted),
                     kit_text::caption("Pick one from the list, or press ↓").style(kit_text::muted),
                 ]
                 .spacing(SPACE_SM)
-                .align_x(iced::Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .style(read_pane_style)
-            .into();
+                .align_x(iced::Alignment::Center)
+                .into()
+            };
+            return container(inner)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(read_pane_style)
+                .into();
         };
 
         let mut letter_col = column![letter_header(body)]
@@ -1777,8 +2079,9 @@ impl App {
             .style(compose_editor_style)
             .on_action(Msg::ComposeBodyAction);
 
+        let from_row = compose_from_row(&self.draft.from, &self.identities(), self.from_open);
         let headers = column![
-            compose_header_row("From", "from@", &self.draft.from, Msg::ComposeFrom),
+            from_row,
             h_hairline(),
             compose_header_row("To", "to@", &self.draft.to, Msg::ComposeTo),
             h_hairline(),
@@ -1883,7 +2186,7 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
         });
 
     button(content)
-        .on_press(Msg::SelectMessage(m.uid))
+        .on_press(Msg::SelectMessage(m.id()))
         .padding(0)
         .width(Length::Fill)
         .style(kit_btn::list_item(selected))
@@ -1891,6 +2194,14 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
 }
 
 // ── Display helpers ───────────────────────────────────────────────────
+
+fn row_key(m: &MessageSummary) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    m.account.hash(&mut h);
+    m.uid.hash(&mut h);
+    h.finish()
+}
 
 fn icon_tool(
     name: &'static str,
@@ -2122,115 +2433,11 @@ fn short_from(from: &str) -> String {
 }
 
 fn letter_date(date: &str) -> String {
-    let t = date.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
-        if let (Ok(year), Ok(mo), Ok(d)) = (
-            t[0..4].parse::<u16>(),
-            t[5..7].parse::<u8>(),
-            t[8..10].parse::<u8>(),
-        ) {
-            return format!("{d} {} {year}", month_name(mo));
-        }
-    }
-    let tokens: Vec<&str> = t.split_whitespace().collect();
-    for i in 0..tokens.len().saturating_sub(2) {
-        let day = tokens[i].trim_end_matches(',');
-        if day.parse::<u8>().is_ok() && is_month_token(tokens[i + 1]) {
-            let mon = tokens[i + 1];
-            let year = tokens[i + 2].trim_end_matches(',');
-            if year.parse::<u16>().is_ok() {
-                return format!("{day} {mon} {year}");
-            }
-        }
-    }
-    short_date(date)
-}
-
-fn month_name(mo: u8) -> &'static str {
-    match mo {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        12 => "December",
-        _ => month_abbr(mo),
-    }
+    crate::protocol::date::format_letter_date(date)
 }
 
 fn short_date(date: &str) -> String {
-    let t = date.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    // ISO / RFC3339: 2026-07-28T… or 2026-07-28 …
-    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
-        if let (Ok(mo), Ok(d)) = (t[5..7].parse::<u8>(), t[8..10].parse::<u8>()) {
-            return format!("{d} {}", month_abbr(mo));
-        }
-    }
-    // RFC 2822-ish: "Mon, 28 Jul 2026 01:31:42 +0000" → "28 Jul"
-    let tokens: Vec<&str> = t.split_whitespace().collect();
-    for i in 0..tokens.len().saturating_sub(1) {
-        let day = tokens[i].trim_end_matches(',');
-        if day.parse::<u8>().is_ok() && is_month_token(tokens[i + 1]) {
-            let mon = tokens[i + 1];
-            let mon = &mon[..mon.len().min(3)];
-            return format!("{day} {mon}");
-        }
-    }
-    tokens
-        .into_iter()
-        .filter(|tok| !tok.starts_with('+') && !tok.contains(':'))
-        .take(2)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn month_abbr(mo: u8) -> &'static str {
-    match mo {
-        1 => "Jan",
-        2 => "Feb",
-        3 => "Mar",
-        4 => "Apr",
-        5 => "May",
-        6 => "Jun",
-        7 => "Jul",
-        8 => "Aug",
-        9 => "Sep",
-        10 => "Oct",
-        11 => "Nov",
-        12 => "Dec",
-        _ => "???",
-    }
-}
-
-fn is_month_token(s: &str) -> bool {
-    let head = s.chars().take(3).collect::<String>().to_ascii_lowercase();
-    matches!(
-        head.as_str(),
-        "jan"
-            | "feb"
-            | "mar"
-            | "apr"
-            | "may"
-            | "jun"
-            | "jul"
-            | "aug"
-            | "sep"
-            | "oct"
-            | "nov"
-            | "dec"
-    )
+    crate::protocol::date::format_short_date(date)
 }
 
 fn v_hairline() -> Element<'static, Msg> {
@@ -2247,6 +2454,49 @@ fn h_hairline() -> Element<'static, Msg> {
         .height(1)
         .style(hairline_style)
         .into()
+}
+
+fn compose_from_row<'a>(value: &str, identities: &[String], open: bool) -> Element<'a, Msg> {
+    let control: Element<'a, Msg> = if identities.len() > 1 {
+        let opts = identities.iter().map(|addr| {
+            SelectOption::new(
+                addr.clone(),
+                mail_addr_key(addr) == mail_addr_key(value),
+                Msg::ComposeFrom(addr.clone()),
+            )
+            .mark(addr.clone())
+        });
+        let label = if value.trim().is_empty() {
+            identities[0].clone()
+        } else {
+            value.to_string()
+        };
+        select(label, opts, open, Msg::ToggleFromMenu, Msg::DismissFromMenu)
+    } else {
+        text_input("from@", value)
+            .font(fonts::ui())
+            .size(COMPOSE_HEADER_SIZE)
+            .padding(Padding {
+                top: 4.0,
+                right: SPACE_SM,
+                bottom: 4.0,
+                left: SPACE_SM,
+            })
+            .width(Length::Fill)
+            .style(compose_header_input_style)
+            .on_input(Msg::ComposeFrom)
+            .into()
+    };
+    row![
+        kit_text::caption("From")
+            .style(kit_text::muted)
+            .width(Length::Fixed(COMPOSE_LABEL_W)),
+        control,
+    ]
+    .spacing(SPACE_MD)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
+    .into()
 }
 
 fn compose_header_row<'a>(
@@ -2448,6 +2698,62 @@ fn toolbar_style(theme: &Theme) -> container::Style {
             color: mix_white(p.background.base.color, HAIRLINE_A),
             width: 0.0,
             radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn truncate_status(s: &str) -> String {
+    let t = s.trim();
+    const MAX: usize = 42;
+    if t.chars().count() <= MAX {
+        return t.to_string();
+    }
+    let mut out: String = t.chars().take(MAX.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn status_dot<'a>(failed: bool) -> Element<'a, Msg> {
+    let inner = container(Space::new().width(6).height(6)).style(move |theme: &Theme| {
+        let p = theme.extended_palette();
+        let color = if failed {
+            p.danger.base.color
+        } else {
+            p.background.strongest.color
+        };
+        container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                color,
+                width: 0.0,
+                radius: 999.0.into(),
+            },
+            ..container::Style::default()
+        }
+    });
+    container(inner)
+        .width(8)
+        .height(8)
+        .center_x(8)
+        .center_y(8)
+        .into()
+}
+
+fn link_card_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let fill = p.background.weaker.color;
+    container::Style {
+        background: Some(Background::Color(fill)),
+        border: Border {
+            color: mix_white(fill, HAIRLINE_A),
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
         },
         ..container::Style::default()
     }

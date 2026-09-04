@@ -2,10 +2,10 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker)  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
+**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
 
 **Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
@@ -24,12 +24,12 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 | Process model | In-process background worker (agent-style), not a bus daemon |
 | Architecture | Layered single crate **B** — `protocol/` + `worker/` + `ui/` |
 | Config | Consume sticky `Topic::MailConfig` from the bus (edited by sola-settings). No in-app account editor |
-| Accounts | Single account (matches bus `MailConfig`) |
+| Accounts | Every `imap_enabled` account is connected. The sidebar is the six canonical boxes (Inbox, Sent, Drafts, Archive, Junk, Trash) **combined** across accounts. Remote names (Gmail `[Gmail]/Trash`, `\Sent`, …) map in; All Mail / Starred / Important / extra labels stay off the list. Gmail with no Archive mailbox gets `CREATE Archive` (a user label) on connect. Each message carries `account` + UID so Trash/Archive/undo hit **that** account's mapped mailbox. Extra accounts may still be SMTP-only (`imap_enabled` off). |
 | Location | `crates/sola-mail` |
 
 ## Non-goals (v1)
 
-- Multi-account
+- Showing provider-specific labels / `[Gmail]/All Mail` as extra sidebar rows
 - Rich HTML compose or full HTML render (CID images list as files)
 - Drag-drop onto compose; forward that keeps the original files
 - Separate `sola-mail-d` service / multi-client daemon
@@ -45,7 +45,7 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 │                                                             │
 │  iced UI thread                    mail worker thread       │
 │  · MailApp state                   · typed MailCmd loop     │
-│  · folder / list / message /       · IMAP session           │
+│  · folder / list / message /       · IMAP list/fetch + write│
 │    compose views                   · SMTP send              │
 │  · keyboard shortcuts              · IDLE + keepalive       │
 │  · bus: Theme, MailConfig,         · rules apply on IDLE    │
@@ -150,7 +150,8 @@ Worker holds current `MailConfig` (seeded by `Reconfigure` / first `Connect`). U
 
 ### Source of truth
 
-- **sola-settings** edits account + rules and emits sticky `Topic::MailConfig`.
+- **sola-settings** edits accounts + rules and emits sticky `Topic::MailConfig`.
+- Inbox credentials stay on the top-level fields (old configs load). Inbox **Send from** is the host’s address list (`GET /api/auth/me`); the operator checks which ones Mail offers. Catch-alls (`*@…`) are omitted. Extra accounts still type aliases (`from_hidden` for those). `primary_from` is the default From. Compose does not dump the host’s full alias list.
 - **sola-mail** subscribes and on each delivery:
   1. stores config in UI state for display needs (from address default, rules for smart mailboxes),
   2. sends `MailCmd::Reconfigure(cfg)` (or `Connect` if first time).
@@ -191,7 +192,7 @@ Single iced window, three columns (kit `split` / sidebar + panes):
 - **Folder list:** real IMAP folders + smart mailboxes derived from rules (`action == "smart_mailbox"`). Unread-only badges (hidden when 0).
 - **Message list:** summaries for selected folder; search; load-more; archive-all / trash-all when applicable; empty-folder for Trash/Junk-style folders (parity).
 - **Message view:** letter header (subject, person + address, date); kit `prose` body (paragraphs, quotes, inline links); file list (Open / Save) when the MIME has attachments; Reply / Reply All / Archive / Trash / Copy.
-- **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (pick from wicket list), To, Cc, Subject, body. Attach (toolbar paperclip, Message → Attach Files…, or Attach next to Send) via kit FilePicker. Send / Cancel.
+- **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (kit select of settings identities: Default From first, then A–Z; unchecked aliases and catch-alls like `*@domain` are omitted; reply preselects the identity in the original To/Cc), To, Cc, Subject, body. Attach (toolbar paperclip, Message → Attach Files…, or Attach next to Send) via kit FilePicker. Send / Cancel. SMTP follows the From identity (extra account vs inbox).
 - **List:** paperclip on rows whose IMAP `BODYSTRUCTURE` has a user-facing file.
 
 Loading / fatal / toast states mirror the reference app without WebView chrome.

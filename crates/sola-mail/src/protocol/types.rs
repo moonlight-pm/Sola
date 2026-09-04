@@ -21,6 +21,23 @@ pub struct Folder {
     pub total: u32,
 }
 
+/// Identity of a message on a specific IMAP account. UIDs are per
+/// mailbox *and* per account — never key UI state on `uid` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MailId {
+    pub account: String,
+    pub uid: u32,
+}
+
+impl MailId {
+    pub fn new(account: impl Into<String>, uid: u32) -> Self {
+        Self {
+            account: account.into(),
+            uid,
+        }
+    }
+}
+
 /// Canonical system mailbox order (matches apocrypha folder-list).
 const FOLDER_ORDER: &[(&str, u32)] = &[
     ("INBOX", 0),
@@ -146,6 +163,7 @@ mod tests {
             format!("Use this link to sign in to Wicket:\n\n  {url}\n\nIt expires shortly.\n");
         let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
         let body = MessageBody {
+            account: "you@example.com".into(),
             uid: 1,
             from: "Wicket <noreply@example.com>".into(),
             to: "you@example.com".into(),
@@ -171,18 +189,44 @@ mod tests {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageSummary {
+    #[serde(default)]
+    pub account: String,
     pub uid: u32,
     pub from: String,
     pub to: String,
     pub subject: String,
     pub date: String,
+    /// Unix seconds from `date` (RFC 2822 or IMAP INTERNALDATE). Combined
+    /// lists sort on this, not the display string.
+    #[serde(default)]
+    pub date_sort: i64,
     pub seen: bool,
     pub forwarded_for: Option<String>,
     pub has_attachment: bool,
 }
 
+impl MessageSummary {
+    pub fn id(&self) -> MailId {
+        MailId::new(&self.account, self.uid)
+    }
+
+    pub fn stamp_account(&mut self, account: &str) {
+        self.account = account.to_string();
+    }
+
+    /// Newest first, then UID, then account (stable across combined IMAP).
+    pub fn cmp_recency(a: &Self, b: &Self) -> std::cmp::Ordering {
+        b.date_sort
+            .cmp(&a.date_sort)
+            .then_with(|| b.uid.cmp(&a.uid))
+            .then_with(|| b.account.cmp(&a.account))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageBody {
+    #[serde(default)]
+    pub account: String,
     pub uid: u32,
     pub from: String,
     pub to: String,
@@ -195,6 +239,12 @@ pub struct MessageBody {
     pub message_id: Option<String>,
     #[serde(skip)]
     pub attachments: Vec<MailAttachment>,
+}
+
+impl MessageBody {
+    pub fn id(&self) -> MailId {
+        MailId::new(&self.account, self.uid)
+    }
 }
 
 impl MessageBody {

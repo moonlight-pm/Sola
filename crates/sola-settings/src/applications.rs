@@ -220,11 +220,7 @@ pub enum AppsMsg {
     Remove(String),
 }
 
-pub fn update(
-    msg: AppsMsg,
-    apps: &mut ApplicationsConfig,
-    ui: &mut AppsState,
-) -> Task<AppsMsg> {
+pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -> Task<AppsMsg> {
     match msg {
         AppsMsg::Select(id) => {
             if !can_leave_detail(&ui.detail, apps) {
@@ -399,36 +395,35 @@ fn list_column<'a>(
     .align_y(Alignment::Center)
     .width(Length::Fill);
 
-    let list_body: Element<'a, AppsMsg> = if apps.apps.is_empty()
-        && matches!(ui.detail, Detail::Closed)
-    {
-        container(
-            column![
-                kit_text::body("No applications yet").style(kit_text::muted),
-                kit_text::caption("Add one above, or configure a running app below.")
-                    .style(kit_text::muted),
-            ]
-            .spacing(SPACE_SM),
-        )
-        .padding(SPACE_LG)
-        .width(Length::Fill)
-        .into()
-    } else if apps.apps.is_empty() {
-        // Draft open while catalog empty — no noisy empty copy.
-        container(iced::widget::Space::new())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    } else {
-        let mut rows = column![].spacing(0).width(Length::Fill);
-        for app in sorted_apps(apps) {
-            rows = rows.push(app_row(app, ui));
-        }
-        scrollable(rows)
-            .height(Length::Fill)
+    let list_body: Element<'a, AppsMsg> =
+        if apps.apps.is_empty() && matches!(ui.detail, Detail::Closed) {
+            container(
+                column![
+                    kit_text::body("No applications yet").style(kit_text::muted),
+                    kit_text::caption("Add one above, or configure a running app below.")
+                        .style(kit_text::muted),
+                ]
+                .spacing(SPACE_SM),
+            )
+            .padding(SPACE_LG)
             .width(Length::Fill)
             .into()
-    };
+        } else if apps.apps.is_empty() {
+            // Draft open while catalog empty — no noisy empty copy.
+            container(iced::widget::Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            let mut rows = column![].spacing(0).width(Length::Fill);
+            for app in sorted_apps(apps) {
+                rows = rows.push(app_row(app, ui));
+            }
+            scrollable(rows)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into()
+        };
 
     // One raised surface holds the catalog — rows share the card, not
     // a void of free-floating pink buttons across the pane.
@@ -568,8 +563,7 @@ fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<
 
             let mut col = column![
                 kit_text::subheading("New application"),
-                kit_text::caption("Fill in identity and launch command.")
-                    .style(kit_text::muted),
+                kit_text::caption("Fill in identity and launch command.").style(kit_text::muted),
                 detail_fields(buffer, /* draft placeholders */ true),
             ]
             .spacing(SPACE_MD);
@@ -622,11 +616,15 @@ fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'
             wrapper_command(id)
         };
         col = col.push(field_input("url", &buf.url, ph_url, AppField::Url));
-        col = col.push(
-            kit_text::caption(format!("Launches as {synthesized}")).style(kit_text::muted),
-        );
+        col = col
+            .push(kit_text::caption(format!("Launches as {synthesized}")).style(kit_text::muted));
     } else {
-        col = col.push(field_input("command", &buf.command, ph_cmd, AppField::Command));
+        col = col.push(field_input(
+            "command",
+            &buf.command,
+            ph_cmd,
+            AppField::Command,
+        ));
     }
     col.into()
 }
@@ -638,6 +636,7 @@ fn field_input<'a>(
     f: AppField,
 ) -> Element<'a, AppsMsg> {
     let input = text_input(placeholder, value)
+        .id(app_field_id(f))
         .on_input(move |v| AppsMsg::Field { field: f, value: v })
         .size(13)
         .style(kit_input::style)
@@ -755,6 +754,60 @@ fn required_error(buf: &EditBuffer) -> Option<String> {
     }
 }
 
+fn app_field_id(f: AppField) -> iced::widget::Id {
+    iced::widget::Id::new(match f {
+        AppField::Id => "settings-apps-id",
+        AppField::Label => "settings-apps-label",
+        AppField::Command => "settings-apps-command",
+        AppField::Icon => "settings-apps-icon",
+        AppField::Url => "settings-apps-url",
+    })
+}
+
+const APP_FIELDS: [AppField; 5] = [
+    AppField::Id,
+    AppField::Label,
+    AppField::Command,
+    AppField::Icon,
+    AppField::Url,
+];
+
+pub fn focused_value(ui: &AppsState, id: &iced::widget::Id) -> Option<String> {
+    let buf = match &ui.detail {
+        Detail::Edit { buffer, .. } | Detail::Draft(buffer) => buffer,
+        Detail::Closed => return None,
+    };
+    for f in APP_FIELDS {
+        if id == &app_field_id(f) {
+            return Some(app_field_str(buf, f).to_string());
+        }
+    }
+    None
+}
+
+pub fn set_focused_value(ui: &mut AppsState, id: &iced::widget::Id, value: &str) -> bool {
+    let Some(buf) = open_buffer_mut(&mut ui.detail) else {
+        return false;
+    };
+    for f in APP_FIELDS {
+        if id == &app_field_id(f) {
+            set_field(f, value.to_string(), buf);
+            return true;
+        }
+    }
+    false
+}
+
+fn app_field_str(buf: &EditBuffer, f: AppField) -> &str {
+    match f {
+        AppField::Id => &buf.app_id,
+        AppField::Label => &buf.label,
+        AppField::Command => &buf.command,
+        AppField::Icon => &buf.icon,
+        AppField::Url => &buf.url,
+    }
+}
+
 fn set_field(f: AppField, value: String, buf: &mut EditBuffer) {
     match f {
         AppField::Id => buf.app_id = value,
@@ -807,7 +860,10 @@ mod tests {
             app("a", "Bitwarden"),
             app("m", "Signal"),
         ];
-        let ids: Vec<&str> = sorted_apps(&cfg).iter().map(|a| a.app_id.as_str()).collect();
+        let ids: Vec<&str> = sorted_apps(&cfg)
+            .iter()
+            .map(|a| a.app_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["a", "z", "m"]); // Bitwarden, chrome, Signal
     }
 

@@ -143,8 +143,8 @@ pub fn write_section(path: &Path, topic: &Topic) -> io::Result<()> {
         mapping.insert(section_key, value);
     }
 
-    let content = serde_yaml_ng::to_string(&mapping)
-        .expect("top-level yaml mapping always serializes");
+    let content =
+        serde_yaml_ng::to_string(&mapping).expect("top-level yaml mapping always serializes");
     atomic_write(path, content.as_bytes())
 }
 
@@ -182,8 +182,8 @@ pub fn retract_section(path: &Path, event: &Message) -> io::Result<()> {
         mapping.remove(&section_key);
     }
 
-    let content = serde_yaml_ng::to_string(&mapping)
-        .expect("top-level yaml mapping always serializes");
+    let content =
+        serde_yaml_ng::to_string(&mapping).expect("top-level yaml mapping always serializes");
     atomic_write(path, content.as_bytes())
 }
 
@@ -222,8 +222,8 @@ pub fn write_namespaced(path: &Path, topic: &Topic) -> io::Result<()> {
     let Some(value) = topic.to_yaml_value() else {
         return Ok(());
     };
-    let content = serde_yaml_ng::to_string(&value)
-        .expect("topic payload always serializes to yaml");
+    let content =
+        serde_yaml_ng::to_string(&value).expect("topic payload always serializes to yaml");
     atomic_write(path, content.as_bytes())
 }
 
@@ -368,11 +368,7 @@ mod tests {
     fn load_skips_unknown_sections() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.yaml");
-        fs::write(
-            &path,
-            "NotARealTopic:\n  foo: bar\n",
-        )
-        .unwrap();
+        fs::write(&path, "NotARealTopic:\n  foo: bar\n").unwrap();
         assert!(load(&path).is_empty());
     }
 
@@ -381,11 +377,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.yaml");
         // Windows is sticky, not persistent — must be skipped.
-        fs::write(
-            &path,
-            "Windows:\n  anything: here\n",
-        )
-        .unwrap();
+        fs::write(&path, "Windows:\n  anything: here\n").unwrap();
         assert!(load(&path).is_empty());
     }
 
@@ -502,7 +494,10 @@ mod tests {
         });
         write_namespaced(&path, &t).unwrap();
         let raw = fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains("BrowserConfig:"), "no section header expected");
+        assert!(
+            !raw.contains("BrowserConfig:"),
+            "no section header expected"
+        );
         assert!(raw.contains("active_tab_id: abc"));
     }
 
