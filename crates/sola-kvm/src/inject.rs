@@ -274,9 +274,15 @@ impl WaylandInjector {
         let latched = self.xkb.serialize_mods(xkb::STATE_MODS_LATCHED);
         let locked = self.xkb.serialize_mods(xkb::STATE_MODS_LOCKED);
         let group = self.xkb.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
-        self.keyboard.modifiers(depressed, latched, locked, group);
         let key_state: u32 = if pressed { 1 } else { 0 };
+        // Physical libinput keyboards emit the key *before* xkb updates
+        // modifiers (`wlr_keyboard_notify_key`). River matches registered
+        // Super_L (modifiers=0) on that press; Super-up then sends
+        // ChordReleased, which confirms the app switcher. Sending
+        // modifiers() first leaves Super already depressed, so Super_L
+        // never matches and the switcher stays up after Super+Tab.
         self.keyboard.key(now_msec(), evdev, key_state);
+        self.keyboard.modifiers(depressed, latched, locked, group);
     }
 
     fn scroll(&self, dx: f32, dy: f32) {

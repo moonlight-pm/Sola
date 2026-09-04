@@ -180,6 +180,10 @@ On the peer (River/Sola seat, `WAYLAND_DISPLAY` live):
 sola-kvm listen --bind 0.0.0.0:4242
 ```
 
+Linux inject sends each key **before** the matching `modifiers()` update so
+River sees Super the same way as a physical keyboard. Super+Tab on the
+peer confirms when Super is released (bare Super_L `ChordReleased`).
+
 On novus: `peer.host` = that machine’s LAN IP, `mac_width` / `mac_height` =
 the peer’s output (e.g. canto 1920×1080). Then:
 
