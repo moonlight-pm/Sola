@@ -61,6 +61,7 @@ fn main() -> iced::Result {
             label: "Message".into(),
             items: vec![
                 item("compose", "New Message", Some(KeyCode::N.meta())),
+                item("attach", "Attach Files…", Some(KeyCode::A.meta_shift())),
                 MenuItem::Divider,
                 item("reply", "Reply", Some(KeyCode::R.meta())),
                 item("reply_all", "Reply All", Some(KeyCode::R.meta_shift())),

@@ -2,7 +2,7 @@
 
 use sola_bus::topics::MailConfig;
 
-use crate::protocol::{Folder, MessageBody, MessageSummary};
+use crate::protocol::{Folder, MailAttachment, MessageBody, MessageSummary};
 
 #[derive(Debug, Clone)]
 pub enum MailCmd {
@@ -40,6 +40,7 @@ pub enum MailCmd {
         subject: String,
         body: String,
         in_reply_to: Option<String>,
+        attachments: Vec<MailAttachment>,
     },
     Shutdown,
 }

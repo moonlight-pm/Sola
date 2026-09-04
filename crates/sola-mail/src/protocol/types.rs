@@ -1,6 +1,18 @@
 //! Shared mail message/folder types for UI and protocol.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+
+/// A file on a message (received or outgoing). Bytes are `Arc` so the
+/// worker → UI hop does not copy the payload.
+#[derive(Debug, Clone)]
+pub struct MailAttachment {
+    pub filename: String,
+    pub mime: String,
+    pub size: u64,
+    pub bytes: Arc<[u8]>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
@@ -144,6 +156,7 @@ mod tests {
             text,
             in_reply_to: None,
             message_id: None,
+            attachments: Vec::new(),
         };
         let blocks = body.reading_blocks();
         let has = blocks.iter().any(|b| match b {
@@ -165,6 +178,7 @@ pub struct MessageSummary {
     pub date: String,
     pub seen: bool,
     pub forwarded_for: Option<String>,
+    pub has_attachment: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +193,8 @@ pub struct MessageBody {
     pub text: String,
     pub in_reply_to: Option<String>,
     pub message_id: Option<String>,
+    #[serde(skip)]
+    pub attachments: Vec<MailAttachment>,
 }
 
 impl MessageBody {

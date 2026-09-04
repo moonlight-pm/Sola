@@ -2,10 +2,10 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker)  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter); no attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
+**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no offline store; IDLE watches INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
 
 **Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
@@ -30,8 +30,8 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 ## Non-goals (v1)
 
 - Multi-account
-- Attachments (send or receive) beyond whatever the protocol lift already surfaces in summaries
-- Rich HTML compose or full HTML render
+- Rich HTML compose or full HTML render (CID images list as files)
+- Drag-drop onto compose; forward that keeps the original files
 - Separate `sola-mail-d` service / multi-client daemon
 - In-app settings UI (settings already owns account + rules)
 - Offline local store / full cache (live IMAP like the reference app)
@@ -93,6 +93,7 @@ crates/sola-mail/
       sender.rs          — SMTP (lift)
       wicket.rs          — from-address fetcher (lift)
       html_text.rs       — HTML → plain text helper
+      attachments.rs     — MIME collect, send types, save/open helpers
     worker/
       mod.rs             — thread entry, cmd loop
       cmds.rs            — MailCmd / MailEvent enums + handlers
@@ -122,7 +123,7 @@ pub enum MailCmd {
     MarkRead { folder, uid },
     Move { folder, uid, dest },
     EmptyFolder { folder },
-    Send { from, to, cc, subject, body, in_reply_to },
+    Send { from, to, cc, subject, body, in_reply_to, attachments },
     ApplyRules,
     Shutdown,
 }
@@ -189,8 +190,9 @@ Single iced window, three columns (kit `split` / sidebar + panes):
 
 - **Folder list:** real IMAP folders + smart mailboxes derived from rules (`action == "smart_mailbox"`). Unread-only badges (hidden when 0).
 - **Message list:** summaries for selected folder; search; load-more; archive-all / trash-all when applicable; empty-folder for Trash/Junk-style folders (parity).
-- **Message view:** letter header (subject, person + address, date); kit `prose` body (paragraphs, quotes, inline links); Reply / Reply All / Archive / Trash / Copy.
-- **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (pick from wicket list), To, Cc, Subject, body. Send / Cancel.
+- **Message view:** letter header (subject, person + address, date); kit `prose` body (paragraphs, quotes, inline links); file list (Open / Save) when the MIME has attachments; Reply / Reply All / Archive / Trash / Copy.
+- **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (pick from wicket list), To, Cc, Subject, body. Attach (toolbar paperclip, Message → Attach Files…, or Attach next to Send) via kit FilePicker. Send / Cancel.
+- **List:** paperclip on rows whose IMAP `BODYSTRUCTURE` has a user-facing file.
 
 Loading / fatal / toast states mirror the reference app without WebView chrome.
 
@@ -297,7 +299,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 ### Send
 
-1. Compose mode → `Send`.
+1. Compose mode → `Send` (plain, or `multipart/mixed` when files are attached).
 2. Worker SMTP; on success `Sent` + UI exits compose and may refresh Sent/INBOX as parity requires.
 
 ### Move / undo
@@ -319,6 +321,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 - Port / rewrite rule-matching unit tests from apocrypha `rules.rs` (+ former TS cases for domain/address/contains/equals on from/to/subject).
 - `html_text` fixtures: simple markup, links, nested tags → stable plain text.
+- Attachment parse fixtures (mixed PDF, nested rfc822 flatten) + SMTP `multipart/mixed` round-trip.
 - Worker command handlers with a mock/fake IMAP are optional for v1; not required if mechanical lift is covered by manual smoke.
 
 ### Manual smoke (parity checklist)
@@ -326,6 +329,8 @@ Install rustls crypto provider once at process start (same as apocrypha).
 1. Launch with valid MailConfig from settings → folders + INBOX.
 2. Open message → body; auto mark-read; unread counts update.
 3. Compose → send → appears in Sent.
+3a. Attach a file in compose (paperclip / Attach Files…) → send → recipient (or Sent) shows the file.
+3b. Open a message with a file → Open (paint for images, browser else) / Save (kit picker, default Downloads).
 4. `d` → Trash + advance; `u` restores **that** message (destination UID, not the source UID in Trash).
 5. IDLE new mail → list/counts refresh.
 6. Search → filter; clear → restore.
