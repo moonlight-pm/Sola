@@ -75,6 +75,6 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
   list-plus picker.
 - No podcasts UI, lyrics, Winamp skin, MilkDrop, or equalizer (Fastpotify has those).
 - No tray / close-to-background; quit from the menu or ⌘Q.
-- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). A 429 on that app keeps the session signed in; library fetches wait out the cooldown.
+- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). A 429 on that app keeps the session signed in; library fetches wait out the cooldown. Profile is not re-fetched every couple of seconds while cooling.
 - Album **Follow** is the primary artist only. Local files have no catalog page.
-- Local output uses librespot’s PulseAudio backend first, then rodio/ALSA.
+- Local output uses librespot’s PulseAudio backend first, then rodio/ALSA. If another speaker took over, or the local session dropped, clicking a song makes this computer the active device again and starts the track.

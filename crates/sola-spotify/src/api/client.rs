@@ -62,6 +62,14 @@ impl From<reqwest::Error> for ApiError {
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 
+fn retry_after_wait(header: Option<&str>) -> Duration {
+    header
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(Duration::from_secs(5), Duration::from_secs)
+        .max(Duration::from_secs(5))
+        .min(MAX_RETRY_AFTER)
+}
+
 fn is_quota_exhausted(body: &str) -> bool {
     serde_json::from_str::<ApiErrorBody>(body)
         .ok()
@@ -372,13 +380,12 @@ impl ApiClient {
                 continue;
             }
             if status == StatusCode::TOO_MANY_REQUESTS && attempt <= RATE_LIMIT_RETRIES {
-                let wait = response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .map_or(Duration::from_secs(1), Duration::from_secs)
-                    .min(MAX_RETRY_AFTER);
+                let wait = retry_after_wait(
+                    response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok()),
+                );
                 let text = response.text().await.unwrap_or_default();
                 if is_quota_exhausted(&text) {
                     return Err(ApiError::QuotaExhausted);
@@ -1113,6 +1120,14 @@ mod tests {
             tracks.body(),
             json!({ "uris": ["spotify:track:a"], "offset": { "position": 0 } })
         );
+    }
+
+    #[test]
+    fn retry_after_never_waits_less_than_five_seconds() {
+        assert_eq!(retry_after_wait(None), Duration::from_secs(5));
+        assert_eq!(retry_after_wait(Some("1")), Duration::from_secs(5));
+        assert_eq!(retry_after_wait(Some("19")), Duration::from_secs(19));
+        assert_eq!(retry_after_wait(Some("999")), MAX_RETRY_AFTER);
     }
 
     #[test]
