@@ -77,6 +77,13 @@ pub enum ToEngine {
         success: bool,
         input: String,
     },
+    /// Chrome answered HTTP Basic / Digest auth.
+    HttpAuth {
+        id: u64,
+        success: bool,
+        username: String,
+        password: String,
+    },
     Find {
         text: String,
         forward: bool,
@@ -123,6 +130,8 @@ pub enum FromEngine {
     },
     /// Page `alert` / `confirm` / `prompt` / leave-page (or a reset).
     JsDialog(crate::js_dialog::Event),
+    /// HTTP Basic / Digest auth prompt (or a reset).
+    HttpAuth(crate::http_auth::Event),
     FindResult(crate::engine::FindResult),
     DevTools(crate::engine::DevToolsEvent),
 }
@@ -259,6 +268,18 @@ mod tests {
         let got: ToEngine = read_msg(&mut b).unwrap();
         match got {
             ToEngine::Nav(NavCmd::Reload) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_hard_reload() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        let msg = ToEngine::Nav(NavCmd::ReloadIgnoreCache);
+        write_msg(&mut a, &msg).unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Nav(NavCmd::ReloadIgnoreCache) => {}
             other => panic!("{other:?}"),
         }
     }
@@ -480,6 +501,58 @@ mod tests {
                 assert_eq!(id, 4);
                 assert!(success);
                 assert_eq!(input, "Ada");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_http_auth() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::HttpAuth(crate::http_auth::Event::Open(crate::http_auth::Ipc {
+                id: 9,
+                tab_id: 1,
+                origin: "https://nas.local/".into(),
+                host: "nas.local".into(),
+                realm: "NAS".into(),
+                scheme: "basic".into(),
+                username: "josh".into(),
+            })),
+        )
+        .unwrap();
+        let got: FromEngine = read_msg(&mut b).unwrap();
+        match got {
+            FromEngine::HttpAuth(crate::http_auth::Event::Open(d)) => {
+                assert_eq!(d.id, 9);
+                assert_eq!(d.host, "nas.local");
+                assert_eq!(d.username, "josh");
+            }
+            other => panic!("{other:?}"),
+        }
+        write_msg(
+            &mut a,
+            &ToEngine::HttpAuth {
+                id: 9,
+                success: true,
+                username: "josh".into(),
+                password: "secret".into(),
+            },
+        )
+        .unwrap();
+        let back: ToEngine = read_msg(&mut b).unwrap();
+        match back {
+            ToEngine::HttpAuth {
+                id,
+                success,
+                username,
+                password,
+            } => {
+                assert_eq!(id, 9);
+                assert!(success);
+                assert_eq!(username, "josh");
+                assert_eq!(password, "secret");
             }
             other => panic!("{other:?}"),
         }

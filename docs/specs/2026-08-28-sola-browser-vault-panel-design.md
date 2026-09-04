@@ -1,7 +1,7 @@
 # sola-browser vault — unified panel
 
 **Date:** 2026-08-28  
-**Status:** **Frozen** — implemented; **installed** `browser --release` 2026-08-28; desk smoke pending  
+**Status:** **Frozen** — implemented; stay-logged-in + Log out 2026-09-04; Google passkey document-start intercept 2026-09-04; desk smoke pending  
 **Related:** [create login](2026-08-13-sola-browser-vault-create-login-design.md); [manual](../manual/sola-browser.md)
 
 ## Intent
@@ -40,6 +40,7 @@ sticky-note, …), not a second toolbar.
 ## Gaps
 
 - Desk smoke of org-vault list + identity fill + notes.
+- Desk smoke of Google passkey get (document-start intercept).
 - No item edit.
 - SSH / bank / passport / license are view + copy only (no page fill).
 
@@ -53,3 +54,5 @@ sticky-note, …), not a second toolbar.
 | Item record (notes, identity, card, custom, TOTP) | **done** |
 | Login / card / identity fill from record | **done** (desk smoke pending) |
 | Create login **+** | **done** (existing freeze) |
+| Stay logged in across restarts + **Log out** | **done** (2026-09-04; desk smoke pending) |
+| Passkey get on Google (document-start + platform authenticator) | **done** (2026-09-04; desk smoke pending) |

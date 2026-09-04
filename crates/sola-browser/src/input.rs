@@ -105,7 +105,7 @@ pub fn is_chrome_edit_shortcut(key: &Key, mods: Modifiers) -> bool {
 
 /// Browser-menu chords that chrome should handle even if the bus
 /// `MenuAction` path is down: Super+R reload, Super+T/W/L, Super+F find,
-/// Super+G find next.
+/// Super+G find next. Super+Shift+R is [`is_hard_reload_shortcut`].
 pub fn chrome_nav_shortcut(key: &Key, mods: Modifiers) -> Option<char> {
     if !mods.logo() || mods.alt() || mods.shift() || mods.control() {
         return None;
@@ -130,9 +130,21 @@ pub fn is_reopen_closed_shortcut(key: &Key, mods: Modifiers) -> bool {
     s.eq_ignore_ascii_case("t")
 }
 
+/// Super+Shift+R — hard reload (bypass HTTP cache for this navigation).
+pub fn is_hard_reload_shortcut(key: &Key, mods: Modifiers) -> bool {
+    if !mods.logo() || !mods.shift() || mods.alt() || mods.control() {
+        return false;
+    }
+    let Key::Character(s) = key else {
+        return false;
+    };
+    s.eq_ignore_ascii_case("r")
+}
+
 pub fn is_chrome_nav_shortcut(key: &Key, mods: Modifiers) -> bool {
     chrome_nav_shortcut(key, mods).is_some()
         || is_reopen_closed_shortcut(key, mods)
+        || is_hard_reload_shortcut(key, mods)
         || is_find_prev_shortcut(key, mods)
 }
 
@@ -300,6 +312,29 @@ mod tests {
             &Key::Character("t".into()),
             Modifiers::LOGO | Modifiers::SHIFT
         ));
+        assert!(is_hard_reload_shortcut(
+            &Key::Character("r".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
+        assert!(is_hard_reload_shortcut(
+            &Key::Character("R".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
+        assert!(!is_hard_reload_shortcut(
+            &Key::Character("r".into()),
+            Modifiers::LOGO
+        ));
+        assert!(is_chrome_nav_shortcut(
+            &Key::Character("r".into()),
+            Modifiers::LOGO | Modifiers::SHIFT
+        ));
+        assert_eq!(
+            chrome_nav_shortcut(
+                &Key::Character("r".into()),
+                Modifiers::LOGO | Modifiers::SHIFT
+            ),
+            None
+        );
     }
 
     #[test]

@@ -247,6 +247,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                             crate::input::stored_modifiers(),
                         )
                         || crate::js_dialog::is_open()
+                        || crate::http_auth::is_open()
                     {
                         return Some(iced::widget::shader::Action::capture());
                     }

@@ -1,7 +1,9 @@
 //! Injected WebAuthn intercept + response helper for Bitwarden passkeys.
 
 /// Install navigator.credentials.get/create intercept that posts requests to
-/// the host via `console.debug("__sola_webauthn__"+JSON)`.
+/// the host via `console.log("__sola_webauthn__"+JSON)` (and a same-id iframe
+/// beacon). Injected from the renderer at V8 context creation so the page
+/// cannot snapshot native `get` before the hook lands.
 ///
 /// ArrayBuffers are base64url-encoded for the wire. The host answers with
 /// `window.__solaWebAuthnResolve(id, ok, payloadJsonOrError)`.
@@ -191,23 +193,35 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     }
   };
   function post(req){
-    // One channel. Gemini Exchange stubs console.debug; log still
-    // reaches CEF. Extra console levels + a hidden iframe beacon used
-    // to deliver the same click 4× — chrome rejected the live promise
-    // as "Superseded" and the page showed "passkey auth failed"
-    // before the user could pick.
-    try { console.log('__sola_webauthn__' + JSON.stringify(req)); } catch (e) {}
+    // Gemini stubs debug; Google account scripts sometimes replace
+    // console.log. Same-id duplicates are dropped in the helper.
+    var s = '__sola_webauthn__' + JSON.stringify(req);
+    try { console.log(s); } catch (e) {}
+    try { console.info(s); } catch (e) {}
+    try {
+      var f = document.createElement('iframe');
+      f.width = 0; f.height = 0;
+      f.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+      f.src = 'https://sola.invalid/__sola_webauthn__?' + encodeURIComponent(JSON.stringify(req));
+      (document.documentElement || document.body || document).appendChild(f);
+      setTimeout(function(){ try { f.remove(); } catch (e2) {} }, 2000);
+    } catch (e) {}
   }
   try { console.info('__sola_webauthn_installed__' + (location && location.origin || '')); } catch (e) {}
-  var orig = navigator.credentials && navigator.credentials.get
-    ? navigator.credentials.get.bind(navigator.credentials) : null;
-  var origCreate = navigator.credentials && navigator.credentials.create
-    ? navigator.credentials.create.bind(navigator.credentials) : null;
   if (!navigator.credentials) return;
-  navigator.credentials.get = function(options){
+  var proto = null;
+  try { proto = CredentialsContainer.prototype; } catch (e) {}
+  var origGet = proto && proto.get ? proto.get : navigator.credentials.get;
+  var origCreate = proto && proto.create ? proto.create : navigator.credentials.create;
+  function hookedGet(options){
     if (!options || !options.publicKey) {
-      return orig ? orig(options) : Promise.reject(new DOMException('NotSupportedError'));
+      return origGet ? origGet.call(navigator.credentials, options)
+        : Promise.reject(new DOMException('NotSupportedError', 'NotSupportedError'));
     }
+    // OSR has no Chromium passkey sheet. Immediate/conditional get()
+    // would otherwise hang on "Verifying it's you" (Google). Ignore
+    // AbortSignal — Google aborts immediate get when the native UI
+    // finds no platform credential.
     return new Promise(function(resolve, reject){
       var id = ++seq;
       pending[id] = { resolve: resolve, reject: reject };
@@ -227,13 +241,12 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
         }
       }, 120000);
     });
-  };
-  navigator.credentials.create = function(options){
+  }
+  function hookedCreate(options){
     if (!options || !options.publicKey) {
-      return origCreate ? origCreate(options) : Promise.reject(new DOMException('NotSupportedError'));
+      return origCreate ? origCreate.call(navigator.credentials, options)
+        : Promise.reject(new DOMException('NotSupportedError', 'NotSupportedError'));
     }
-    // Never fall through to Chromium's native WebAuthn window (OSR cannot
-    // host that dialog). Chrome confirms, then the vault registers.
     return new Promise(function(resolve, reject){
       var id = ++seq;
       pending[id] = { resolve: resolve, reject: reject };
@@ -253,18 +266,55 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
         }
       }, 120000);
     });
-  };
-  // WebAuthn L3 static methods bypass navigator.credentials in Chromium.
+  }
+  function installMethod(obj, name, fn){
+    // Getter lock: assignment like `credentials.get = nativeGet` is
+    // swallowed so a late Google script cannot restore Chromium's
+    // sheet (OSR cannot show it).
+    try {
+      Object.defineProperty(obj, name, {
+        configurable: true, enumerable: true,
+        get: function(){ return fn; },
+        set: function(){}
+      });
+    } catch (e) {
+      try { obj[name] = fn; } catch (e2) {}
+    }
+  }
+  if (proto) {
+    installMethod(proto, 'get', hookedGet);
+    installMethod(proto, 'create', hookedCreate);
+  }
+  installMethod(navigator.credentials, 'get', hookedGet);
+  installMethod(navigator.credentials, 'create', hookedCreate);
   try {
     if (window.PublicKeyCredential) {
       if (typeof PublicKeyCredential.get === 'function') {
-        PublicKeyCredential.get = function(options){
-          return navigator.credentials.get(options);
-        };
+        PublicKeyCredential.get = function(options){ return hookedGet(options); };
       }
       if (typeof PublicKeyCredential.create === 'function') {
-        PublicKeyCredential.create = function(options){
-          return navigator.credentials.create(options);
+        PublicKeyCredential.create = function(options){ return hookedCreate(options); };
+      }
+      // Steer Google off native/hybrid sheets (OSR cannot show them).
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = function(){
+        return Promise.resolve(true);
+      };
+      PublicKeyCredential.isConditionalMediationAvailable = function(){
+        return Promise.resolve(false);
+      };
+      if (typeof PublicKeyCredential.getClientCapabilities === 'function') {
+        PublicKeyCredential.getClientCapabilities = function(){
+          return Promise.resolve({
+            conditionalCreate: false,
+            conditionalGet: false,
+            hybridTransport: false,
+            passkeyPlatformAuthenticator: true,
+            userVerifyingPlatformAuthenticator: true,
+            relatedOrigins: false,
+            signalAllAcceptedCredentials: false,
+            signalCurrentUserDetails: false,
+            signalUnknownCredential: false
+          });
         };
       }
     }
@@ -298,7 +348,7 @@ mod tests {
     fn create_public_key_does_not_fall_through_to_chromium() {
         let s = inject_webauthn_intercept_script();
         let create = s
-            .split("navigator.credentials.create = function")
+            .split("function hookedCreate")
             .nth(1)
             .expect("create hook");
         assert!(
@@ -313,9 +363,9 @@ mod tests {
             !create.contains("Passkey registration is not supported"),
             "create() must hold the page promise, not reject immediately"
         );
-        // origCreate is only the non-publicKey fallback.
+        // origCreate.call is only the non-publicKey fallback.
         assert_eq!(
-            create.matches("origCreate(").count(),
+            create.matches("origCreate.call(").count(),
             1,
             "origCreate only for non-publicKey options"
         );
@@ -324,7 +374,7 @@ mod tests {
             .nth(1)
             .expect("create() holds a promise");
         assert!(
-            !pk_path.contains("origCreate("),
+            !pk_path.contains("origCreate.call("),
             "publicKey create() must not fall through to Chromium"
         );
     }
@@ -358,30 +408,50 @@ mod tests {
     }
 
     #[test]
-    fn post_emits_once_via_console_log() {
+    fn post_uses_console_and_beacon() {
         let s = inject_webauthn_intercept_script();
         let post = s.split("function post(req)").nth(1).expect("post()");
-        let body = post.split("try { console.info").next().unwrap_or(post);
+        let body = post
+            .split("try { console.info('__sola_webauthn_installed__'")
+            .next()
+            .unwrap_or(post);
         assert!(
-            body.contains("console.log('__sola_webauthn__'"),
+            body.contains("console.log(s)"),
             "post() must use console.log (Gemini stubs debug)"
         );
         assert!(
-            !body.contains("console.info('__sola_webauthn__'"),
-            "do not also post via console.info"
+            body.contains("console.info(s)"),
+            "Google account scripts sometimes replace console.log"
         );
         assert!(
-            !body.contains("console.warn('__sola_webauthn__'"),
+            !body.contains("console.warn(s)"),
             "do not also post via console.warn"
         );
         assert!(
-            !body.contains("sola.invalid") && !body.contains("createElement('iframe')"),
-            "do not also post via a navigation beacon"
+            body.contains("sola.invalid") && body.contains("createElement('iframe')"),
+            "iframe beacon when the page stubs console"
         );
-        assert_eq!(
-            body.matches("console.log('__sola_webauthn__'").count(),
-            1,
-            "exactly one console.log of the request"
+    }
+
+    #[test]
+    fn hooks_prototype_and_advertises_platform_authenticator() {
+        let s = inject_webauthn_intercept_script();
+        assert!(
+            s.contains("CredentialsContainer.prototype"),
+            "instance assignment is not enough — Google snapshots get()"
+        );
+        assert!(
+            s.contains("isUserVerifyingPlatformAuthenticatorAvailable"),
+            "OSR has no platform authenticator; advertise one so Google calls get()"
+        );
+        assert!(s.contains("isConditionalMediationAvailable"));
+        assert!(
+            s.contains("hybridTransport: false"),
+            "hybrid/QR sheet cannot show in OSR"
+        );
+        assert!(
+            s.contains("get: function(){ return fn; }"),
+            "getter lock so the page cannot restore native get"
         );
     }
 

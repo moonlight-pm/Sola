@@ -27,6 +27,9 @@ result for a search. **Shift+Enter** always loads the Kagi results
 page. Further typing refines the list. Jumping from a new tab to a
 site already open closes the unused blank tab.
 `⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
+`⌘R` reloads; `⌘⇧R` (Browser → **Hard Reload**) bypasses HTTP cache for
+this navigation. Shift-click the reload button does the same. It does
+not empty the profile disk cache.
 Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
 including Steam store trailers, plays on the codecs-enabled CEF used on
 this desk (`scripts/cef-codecs/`); the public `install-cef` tarball does
@@ -83,16 +86,21 @@ A **profile** is a separate web identity + tab workspace (D8).
 | CEF cookies / storage | `~/.local/share/sola/browser/profiles/<uuid>/cef/` |
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
+| Vault session (shared) | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + keys; **Log out** deletes) |
 | Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
 | Visit history (omnibox) | `~/.local/share/sola/browser/shared/history.json` |
 | Notification permission | `~/.local/share/sola/browser/profiles/<uuid>/notifications.json` |
 | Microphone / camera | `~/.local/share/sola/browser/profiles/<uuid>/media.json` |
+| HTTP Basic / Digest auth | `~/.local/share/sola/browser/profiles/<uuid>/http-auth.json` (age-encrypted; kit Sign in prompt) |
 
 Site logins (cookies) live under that profile CEF dir. The engine uses
 Chromium’s **basic** password store so cookie encryption works without a
-desktop keyring (Sola runs from a TTY). After updating the browser binary,
-sign in once more if an older session does not restore — cookies written
-under a failed keyring backend cannot be re-read.
+desktop keyring (Sola runs from a TTY). Updating the browser binary asks
+each helper to **Quit** (flush cookies) before it is replaced — a hard
+kill used to drop GitHub/Google sessions. After updating, sign in once
+more if an older session still does not restore (cookies written under a
+failed keyring backend cannot be re-read). Closed tabs stay closed across
+a restart; ⌘⇧T reopens them.
 
 ### Menubar → Profiles
 
@@ -176,7 +184,8 @@ scheme is left as typed.
   to the page’s canonical URL — it does not flash empty in between.
 - While a real page is loading, a **thin accent line** grows along the
   bottom of the field. Reload becomes **Stop**; back / forward follow
-  the engine. Escape also stops the load.
+  the engine. Escape also stops the load. `⌘⇧R` still hard-reloads
+  (ignores cache even if a load is in flight).
 - A **copy** button sits just left of the field. It puts the current
   page URL on the clipboard (not a draft you are still typing). Empty
   and `about:blank` tabs disable it. The glyph flashes a check for a
@@ -237,6 +246,16 @@ settings for that origin. Chromium has no permission bubble in this
 OSR path — without Allow, the request is denied. Screen share is the
 same dialog when the page asks for desktop capture.
 
+## HTTP sign-in (Basic / Digest)
+
+A site that asks for HTTP Basic or Digest auth gets a kit **Sign in**
+dialog (username + password), not Chromium’s native prompt. **Sign in**
+saves the credentials for that host / realm in this profile
+(`http-auth.json`, age-encrypted). The next visit — including after a
+browser restart — uses them and does not ask again. If the server
+rejects them, the dialog comes back (username prefilled). **Cancel**
+aborts the load.
+
 ## Bitwarden vault
 
 Toolbar **vault** is one control (not separate login / authenticator /
@@ -246,7 +265,10 @@ passkey ceremony. The open panel’s icon is the accent wash.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
   The same panel then shows the vault (unless a passkey ceremony is
-  already waiting).
+  already waiting). After a successful unlock the session stays live
+  across browser restarts (no password again until you **Log out**).
+  **Log out** on the unlocked card wipes tokens, keys, and the session
+  file. Remembered email stays so the next unlock is prefilled.
 - **Browse** searches every item you can decrypt (personal plus every
   organization after unlock/sync): logins, cards, identities, notes,
   SSH keys, and the rest. Type chips filter. Autofill suggestions are
@@ -269,11 +291,12 @@ passkey ceremony. The open panel’s icon is the accent wash.
   still saved.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
-  passkeys** — pick one to complete sign-in. The intercept is injected in
-  **every frame** (Google sign-in iframes, Gemini Exchange 2FA, etc.).
-  Duplicate or retry `get()` calls for the same site stay one picker —
-  they do not fail the page before you pick. Chromium’s own passkey
-  window is not used.
+  passkeys** — pick one to complete sign-in. The intercept is installed at
+  **document-start** in **every frame** (Google sign-in, Gemini Exchange 2FA,
+  etc.) so the page cannot keep Chromium’s native `get`. OSR cannot show
+  Chromium’s passkey sheet; the hook advertises a platform authenticator
+  and opens Bitwarden instead. Duplicate or retry `get()` calls for the
+  same site stay one picker — they do not fail the page before you pick.
 - **Passkeys (create):** when a site calls `navigator.credentials.create`,
   the vault panel opens (unlock first if needed) with **Save a passkey**.
   Confirm creates a new Bitwarden login for the site (name is the apex
@@ -288,7 +311,9 @@ Debug (`--debug`) also compiles crypto crates at opt-level 3, still slower
 than full release.
 
 Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
-(shared across profiles).
+(shared across profiles). The unlocked session is
+`~/.local/share/sola/browser/vault-session.json` (age-encrypted with
+`~/.config/sola/key`; mode 0600). **Log out** deletes it.
 
 ## Copy, paste, and click
 
