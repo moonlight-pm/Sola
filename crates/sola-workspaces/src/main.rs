@@ -495,9 +495,18 @@ impl App {
             }
             Msg::PtyExit(id) => {
                 tracing::info!(pane = %id, "pane PTY exited");
-                // Session is already gone — drop the client, do not
-                // `close()` (that would try to kill a dead tmux session).
+                // Drop the client without `close()` (plain Drop keeps tmux).
                 self.runtimes.remove(&id);
+                let want = tmux::session_name(&id);
+                let live = tmux::list_sessions().unwrap_or_default();
+                if live.iter().any(|s| s == &want) {
+                    tracing::info!(
+                        pane = %id,
+                        session = %want,
+                        "tmux client exited; session lives, reattaching"
+                    );
+                    return self.attach_pane(&id, &[]);
+                }
                 if let Some(st) = self.pane_status.get_mut(&id) {
                     st.status = status::AgentStatus::Idle;
                     st.agent = None;
