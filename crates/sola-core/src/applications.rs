@@ -12,9 +12,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Installed wrapper binary. Settings synthesizes
-/// `"{WRAPPER_BIN} {app_id}"` for `kind = wrapper` entries so the
+/// `"{wrapper_bin()} {app_id}"` for `kind = wrapper` entries so the
 /// launcher/session path stays “spawn this command”.
-pub const WRAPPER_BIN: &str = "/opt/sola/bin/sola-wrapper";
+///
+/// Dual-mode: `/bin/sola-wrapper` on Oath, `/opt/sola/bin/sola-wrapper`
+/// on NixOS (`env::bin_path`).
+pub fn wrapper_bin() -> PathBuf {
+    crate::env::bin_path("sola-wrapper")
+}
 
 /// How the shell launches this catalog entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -61,7 +66,7 @@ pub struct Application {
 
 /// Synthesized launcher argv for a wrapper id.
 pub fn wrapper_command(app_id: &str) -> String {
-    format!("{WRAPPER_BIN} {app_id}")
+    format!("{} {app_id}", wrapper_bin().display())
 }
 
 /// True when `url` is a non-empty `http://` or `https://` start URL.

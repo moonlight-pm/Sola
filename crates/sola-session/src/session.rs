@@ -657,9 +657,9 @@ impl Session {
 }
 
 fn default_command(app_id: &str) -> String {
-    let path = format!("/opt/sola/bin/{app_id}");
-    if std::path::Path::new(&path).exists() {
-        path
+    let path = env::bin_path(app_id);
+    if path.exists() {
+        path.display().to_string()
     } else {
         app_id.to_string()
     }
