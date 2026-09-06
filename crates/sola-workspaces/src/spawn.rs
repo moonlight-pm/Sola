@@ -214,11 +214,7 @@ pub fn rename_branch(worktree: &Path, branch: &str) -> Result<(), String> {
 
 fn current_branch(worktree: &Path) -> Option<String> {
     let s = git_stdout(worktree, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-    if s == "HEAD" {
-        None
-    } else {
-        Some(s)
-    }
+    if s == "HEAD" { None } else { Some(s) }
 }
 
 fn path_eq(a: &Path, b: &Path) -> bool {
@@ -296,11 +292,7 @@ fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn git_output(root: &Path, args: &[&str]) -> (bool, String) {

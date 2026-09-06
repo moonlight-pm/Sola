@@ -91,6 +91,8 @@ impl PaneStatus {
             if let Some(sid) = incoming.mapped.session_id.clone() {
                 self.owner_session = Some(sid);
             }
+            // SessionStart is grok in this pane even before presence ticks.
+            self.agent = Some("grok".into());
         } else if self.is_foreign(sid) {
             return;
         } else if let Some(sid) = incoming.mapped.session_id.clone() {
@@ -180,6 +182,17 @@ impl PaneStatus {
         self.agent.as_deref() == Some("grok")
     }
 
+    /// Session to `grok -r` after a lost tmux. Needs Grok still named on
+    /// the pane (exited-to-shell is not a resume) and a non-empty id.
+    pub fn resume_session_id(&self) -> Option<&str> {
+        if !self.is_grok() {
+            return None;
+        }
+        self.owner_session
+            .as_deref()
+            .filter(|s| !s.is_empty() && is_session_id(s))
+    }
+
     fn shows_compaction(&self) -> bool {
         self.is_grok()
     }
@@ -231,6 +244,33 @@ fn grok_home() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".grok")
         })
+}
+
+/// True when `~/.grok/sessions/<cwd-encode>/<id>/` (any cwd group) exists.
+pub fn grok_session_exists(session_id: &str) -> bool {
+    grok_session_exists_in(&grok_home(), session_id)
+}
+
+fn grok_session_exists_in(home: &Path, session_id: &str) -> bool {
+    if !is_session_id(session_id) {
+        return false;
+    }
+    let sessions = home.join("sessions");
+    let Ok(rd) = std::fs::read_dir(&sessions) else {
+        return false;
+    };
+    rd.filter_map(|e| e.ok()).any(|group| {
+        group.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            && group.path().join(session_id).is_dir()
+    })
+}
+
+fn is_session_id(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('.')
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains('\0')
 }
 
 pub fn read_compaction_count(cwd: &Path, session_id: Option<&str>) -> Option<u32> {
@@ -308,6 +348,9 @@ fn last_status_path() -> PathBuf {
 struct DiskPane {
     status: AgentStatus,
     agent: Option<String>,
+    /// Grok `owner_session`. Resume `grok -r` after a lost tmux.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -323,22 +366,16 @@ struct DiskSnapshot {
     agent: Option<String>,
 }
 
-fn write_snapshot(snap: &DiskSnapshot) {
-    if let Ok(text) = serde_json::to_string_pretty(snap) {
-        let path = last_status_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(path, text);
-    }
-}
-
-fn read_snapshot() -> Option<DiskSnapshot> {
-    let text = std::fs::read_to_string(last_status_path()).ok()?;
+fn read_snapshot_from(path: &Path) -> Option<DiskSnapshot> {
+    let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
 pub fn persist_all(panes: &std::collections::HashMap<String, PaneStatus>) {
+    persist_all_to(&last_status_path(), panes);
+}
+
+fn persist_all_to(path: &Path, panes: &std::collections::HashMap<String, PaneStatus>) {
     let mut snap = DiskSnapshot {
         panes: std::collections::HashMap::new(),
         pane_id: None,
@@ -351,22 +388,31 @@ pub fn persist_all(panes: &std::collections::HashMap<String, PaneStatus>) {
             DiskPane {
                 status: pane.status,
                 agent: pane.agent.clone(),
+                session_id: pane.owner_session.clone().filter(|s| is_session_id(s)),
             },
         );
     }
-    write_snapshot(&snap);
+    write_snapshot_to(path, &snap);
+}
+
+fn write_snapshot_to(path: &Path, snap: &DiskSnapshot) {
+    if let Ok(text) = serde_json::to_string_pretty(snap) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, text);
+    }
 }
 
 /// Hydrate last hook status. Caller must mark unconfirmed and not toast.
 pub fn hydrate(pane_id: &str) -> Option<PaneStatus> {
-    let snap = read_snapshot()?;
+    hydrate_from(&last_status_path(), pane_id)
+}
+
+fn hydrate_from(path: &Path, pane_id: &str) -> Option<PaneStatus> {
+    let snap = read_snapshot_from(path)?;
     if let Some(p) = snap.panes.get(pane_id) {
-        return Some(PaneStatus {
-            status: p.status,
-            agent: p.agent.clone(),
-            restored_unconfirmed: p.status != AgentStatus::Idle,
-            ..PaneStatus::default()
-        });
+        return Some(from_disk_pane(p));
     }
     if snap.pane_id.as_deref() == Some(pane_id) {
         let status = snap.status.unwrap_or_default();
@@ -378,6 +424,16 @@ pub fn hydrate(pane_id: &str) -> Option<PaneStatus> {
         });
     }
     None
+}
+
+fn from_disk_pane(p: &DiskPane) -> PaneStatus {
+    PaneStatus {
+        status: p.status,
+        agent: p.agent.clone(),
+        owner_session: p.session_id.clone().filter(|s| is_session_id(s)),
+        restored_unconfirmed: p.status != AgentStatus::Idle,
+        ..PaneStatus::default()
+    }
 }
 
 #[cfg(test)]
@@ -642,6 +698,7 @@ mod tests {
         pane.apply_hook(&hook("old", AgentStatus::Working));
         pane.apply_hook(&session_start("new"));
         assert_eq!(pane.owner_session.as_deref(), Some("new"));
+        assert_eq!(pane.agent.as_deref(), Some("grok"));
         assert_eq!(pane.status, AgentStatus::Idle);
         pane.apply_hook(&hook("new", AgentStatus::Waiting));
         assert_eq!(pane.status, AgentStatus::Waiting);
@@ -717,5 +774,106 @@ mod tests {
         pane.compaction_count = 4;
         pane.refresh_compaction(Path::new("/tmp/not-a-session"));
         assert_eq!(pane.compaction_count, 0);
+    }
+
+    #[test]
+    fn resume_session_id_needs_grok_and_id() {
+        let mut pane = PaneStatus::default();
+        assert_eq!(pane.resume_session_id(), None);
+        pane.owner_session = Some("sid-a".into());
+        assert_eq!(pane.resume_session_id(), None);
+        pane.agent = Some("grok".into());
+        assert_eq!(pane.resume_session_id(), Some("sid-a"));
+        pane.agent = None;
+        pane.apply_presence(Presence::Shell);
+        assert_eq!(pane.resume_session_id(), None);
+        pane.agent = Some("grok".into());
+        pane.owner_session = Some("../nope".into());
+        assert_eq!(pane.resume_session_id(), None);
+        pane.owner_session = Some("sid-a".into());
+        assert_eq!(pane.resume_session_id(), Some("sid-a"));
+    }
+
+    #[test]
+    fn persist_hydrate_keeps_session_id() {
+        let root = std::env::temp_dir().join(format!(
+            "sola-ws-last-status-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = root.join("last-status.json");
+        let mut panes = std::collections::HashMap::new();
+        panes.insert(
+            "ws-a".into(),
+            PaneStatus {
+                status: AgentStatus::Done,
+                agent: Some("grok".into()),
+                owner_session: Some("sid-live".into()),
+                ..PaneStatus::default()
+            },
+        );
+        panes.insert(
+            "ws-b".into(),
+            PaneStatus {
+                status: AgentStatus::Idle,
+                ..PaneStatus::default()
+            },
+        );
+        persist_all_to(&path, &panes);
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["panes"]["ws-a"]["session_id"], "sid-live");
+        assert!(v["panes"]["ws-b"].get("session_id").is_none());
+        let a = hydrate_from(&path, "ws-a").unwrap();
+        assert_eq!(a.owner_session.as_deref(), Some("sid-live"));
+        assert_eq!(a.agent.as_deref(), Some("grok"));
+        assert_eq!(a.status, AgentStatus::Done);
+        assert!(a.restored_unconfirmed);
+        let b = hydrate_from(&path, "ws-b").unwrap();
+        assert_eq!(b.owner_session, None);
+        assert_eq!(b.agent, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hydrate_legacy_snapshot_without_session_id() {
+        let root = std::env::temp_dir().join(format!(
+            "sola-ws-last-status-legacy-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("last-status.json");
+        std::fs::write(
+            &path,
+            r#"{"panes":{"p":{"status":"working","agent":"grok"}}}"#,
+        )
+        .unwrap();
+        let p = hydrate_from(&path, "p").unwrap();
+        assert_eq!(p.agent.as_deref(), Some("grok"));
+        assert_eq!(p.owner_session, None);
+        assert_eq!(p.status, AgentStatus::Working);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn grok_session_exists_walks_cwd_groups() {
+        let root = std::env::temp_dir().join(format!(
+            "sola-ws-sess-exists-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cwd = Path::new("/tmp/proj");
+        write_session(&root, cwd, "sid-live", r#"{"compactionCount":0}"#, 0, 0);
+        assert!(grok_session_exists_in(&root, "sid-live"));
+        assert!(!grok_session_exists_in(&root, "missing"));
+        assert!(!grok_session_exists_in(&root, "../nope"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

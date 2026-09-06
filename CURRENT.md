@@ -154,7 +154,7 @@ Do not invent product policy.
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
    **CLI freeze:** [`docs/specs/2026-08-18-workspaces-cli-design.md`](docs/specs/2026-08-18-workspaces-cli-design.md)  
-   **Next:** desk-smoke `solactl workspaces`. Polish:
+   **Next:** desk-smoke `solactl workspaces` and grok `-r` after reboot. Polish:
    UI rename modal / recolor / reorder. CLI `workspace.set --name` moves
    `.worktrees/<name>` (id stays); `--branch` is `git branch -m`.
    **Installed** `workspaces` release 2026-09-03.  
@@ -190,7 +190,9 @@ Do not invent product policy.
    session in the tab (segments / checkpoints; `signals.json` can stay
    0). Switching a split attaches every leaf; hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
    — leftover sessions from a deleted workspace are quarantined, not
-   attached to the next tab. Working ring spins (kit mark uses ms
+   attached to the next tab. A live Grok pane’s session id is persisted;
+   after a reboot (tmux gone) the tab execs `grok -r <id>` when that
+   session is still on disk (`/exit` to a shell does not resume). Working ring spins (kit mark uses ms
    phase, not `as_secs_f32`). Rail marks reclaim on Grok
    `SessionStart` / `UserPromptSubmit` after `/new` or `grok -r`
    (was frozen on the old session). `StopCancelled` → done.
@@ -204,7 +206,7 @@ Do not invent product policy.
    `git worktree remove` from inside the pane first (cwd dies; the tab
    used to stick with a working spinner). A gone `.worktrees/<name>`
    path reaps the tab. Hover × / plain `workspace.rm` still leave the
-   checkout. `pane.send` /
+   checkout. `pane.list` / `whoami` include `session_id`. `pane.send` /
    `workspace.exec --prompt` bracketed-paste into the tmux session then
    Enter (raw PTY dump was clipping the composer and not submitting
    until a later wheel/focus). Desk cards (unfocused): title is

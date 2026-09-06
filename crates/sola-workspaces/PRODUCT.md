@@ -53,7 +53,9 @@ is background unless `--select`; can pass `--agent grok` + `--prompt` /
 in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
-tmux persist on socket `sola-ws`, unfocused desk card
+tmux persist on socket `sola-ws` (a Grok pane’s session id is in
+`last-status.json`; a lost tmux after reboot runs `grok -r` when Grok
+was still running and the session dir exists), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `needs attention`),
 `workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
 `workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;

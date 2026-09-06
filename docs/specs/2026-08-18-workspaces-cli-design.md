@@ -6,9 +6,9 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter
-**Dogfood:** `solactl workspaces` still needs a desk smoke after install  
-**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); no UI rename modal / recolor / reorder
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; `pane.list` / `whoami` include `session_id` (Grok owner session; new tmux after reboot runs `grok -r`)
+**Dogfood:** `solactl workspaces` still needs a desk smoke after install; grok `-r` after reboot unsmoked  
+**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); no UI rename modal / recolor / reorder; grok `-r` after reboot unsmoked
 
 ---
 
@@ -71,7 +71,7 @@ an agent needs to orchestrate is on the call plane.
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
 | `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
 | `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. |
-| `pane.list` | `--workspace?` | `{panes:[{id,status,agent}]}` |
+| `pane.list` | `--workspace?` | `{panes:[{id,status,agent,session_id}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` — bracketed paste into the tmux session, then optional Enter |
 | `pane.read` | `[--pane] [--lines]` | `{text, pane}` |
 
@@ -97,7 +97,7 @@ dedicated interrupt. Reply includes `selected: true|false`.
 | `workspace.set` | `--workspace [--name] [--title] [--branch]` | workspace JSON — `--title` empty clears. `--name` slugs the rail label and `git worktree move --force`s to `.worktrees/<name>` (id stays; project root cannot rename). `--branch` is `git branch -m` in that checkout (does not move the folder). |
 | `workspace.exec` | `--workspace [--agent] [--prompt] [--prompt-file]` | `{workspace,pane,started,sent}` |
 | `pane.wait` | `[--pane] [--status] [--timeout] [--fresh]` | `{pane,status}` or error `timeout` |
-| `whoami` | `[--pane] [--path]` | `{pane,workspace,workspace_name,project,project_name,path,kind,status,agent}` |
+| `whoami` | `[--pane] [--path]` | `{pane,workspace,workspace_name,project,project_name,path,kind,status,agent,session_id}` |
 
 `workspace.exec`:
 
