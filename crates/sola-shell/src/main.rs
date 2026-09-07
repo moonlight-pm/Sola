@@ -50,5 +50,18 @@ fn main() -> iced::Result {
         .subscription(app::Shell::subscription)
         .theme(app::Shell::theme)
         .default_font(INTER);
-    iced_daemon.run()
+    match iced_daemon.run() {
+        Ok(()) if app::clean_shutdown() => Ok(()),
+        Ok(()) => {
+            // Restart Shell, or the compositor went away. Exit 1 so
+            // the process manager brings the menubar back. Quit Sola
+            // sets clean_shutdown and stays down.
+            tracing::error!("sola-shell event loop ended");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            tracing::error!(%e, "sola-shell iced failed");
+            std::process::exit(1);
+        }
+    }
 }
