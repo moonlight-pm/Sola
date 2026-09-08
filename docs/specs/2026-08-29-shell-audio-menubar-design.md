@@ -4,7 +4,7 @@
 **Status:** Frozen — implemented in `sola-shell`; 12-band spectrum on the chip 2026-09-02  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [Bluetooth menubar](2026-08-29-shell-bluetooth-menubar-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (audio mixer as a shell popover, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/audio/` + menubar spectrum phrase + `Panel::Audio` on the existing Menu overlay  
-**Dogfood:** `shell` installed debug 2026-08-29; 12-band spectrum **installed** `river`+`shell` release 2026-09-02 and desk-smoked on Spotify (presence-band, punch gate, phrase gaps). Still pending: volume keys vs chip, sink/source switch.  
+**Dogfood:** `shell` installed debug 2026-08-29; 12-band spectrum **installed** `river`+`shell` release 2026-09-02 and desk-smoked on Spotify (presence-band, punch gate, phrase gaps). `pw-dump` unnamed-array strip **installed** `shell` release 2026-09-08 (unsmoked). Still pending: volume keys vs chip, sink/source switch.  
 **Gaps:** no per-app streams; no Bluetooth profile/codec; host PipeWire + WirePlumber (`pw-dump`, `wpctl`, `pw-cat`). `pw-dump` is not always JSON (unnamed empty SPA arrays on MIDI ports); the shell strips those so a parse miss cannot hide the chip.
 
 ## Intent
