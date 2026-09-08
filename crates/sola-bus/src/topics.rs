@@ -411,6 +411,10 @@ pub enum CalendarAccountKind {
     #[default]
     Google,
     Apple,
+    /// ICS / iCal / webcal URL (usually read-only).
+    Url,
+    /// Generic CalDAV (Fastmail, Nextcloud, …).
+    Caldav,
 }
 
 impl CalendarAccountKind {
@@ -418,6 +422,8 @@ impl CalendarAccountKind {
         match self {
             Self::Google => "Google",
             Self::Apple => "iCloud",
+            Self::Url => "URL",
+            Self::Caldav => "CalDAV",
         }
     }
 }
@@ -440,6 +446,12 @@ pub struct CalendarAccount {
     pub refresh_token: Option<Encrypted<String>>,
     #[serde(default)]
     pub expiry_unix: u64,
+    /// ICS feed or CalDAV server URL (`webcal://` allowed).
+    #[serde(default)]
+    pub url: String,
+    /// CalDAV username when it is not [`Self::apple_id`].
+    #[serde(default)]
+    pub username: String,
 }
 
 impl Default for CalendarAccount {
@@ -454,7 +466,39 @@ impl Default for CalendarAccount {
             access_token: None,
             refresh_token: None,
             expiry_unix: 0,
+            url: String::new(),
+            username: String::new(),
         }
+    }
+}
+
+/// Turn `webcal://` / scheme-less hosts into an `https://` fetch URL.
+pub fn normalize_calendar_url(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let (scheme, rest) = match t.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => return format!("https://{t}"),
+    };
+    match scheme.as_str() {
+        "webcal" | "webcals" => format!("https://{rest}"),
+        _ => t.to_string(),
+    }
+}
+
+/// Host of a calendar URL, used when the operator leaves Name blank.
+pub fn calendar_url_label(url: &str) -> String {
+    let n = normalize_calendar_url(url);
+    let rest = n.split("://").nth(1).unwrap_or(n.as_str());
+    let hostport = rest.split('/').next().unwrap_or(rest);
+    let hostport = hostport.split('@').next_back().unwrap_or(hostport);
+    let host = hostport.split(':').next().unwrap_or(hostport);
+    if host.is_empty() {
+        n
+    } else {
+        host.to_string()
     }
 }
 
@@ -2189,27 +2233,65 @@ mod tests {
     fn calendar_config_roundtrips() {
         let cfg = CalendarConfig {
             google_client_id: "abc.apps.googleusercontent.com".into(),
-            accounts: vec![CalendarAccount {
-                id: "a1".into(),
-                kind: CalendarAccountKind::Apple,
-                label: "you@icloud.com".into(),
-                email: "you@icloud.com".into(),
-                apple_id: "you@icloud.com".into(),
-                app_password: Some(Encrypted("xxxx-xxxx".into())),
-                ..CalendarAccount::default()
-            }],
+            accounts: vec![
+                CalendarAccount {
+                    id: "a1".into(),
+                    kind: CalendarAccountKind::Apple,
+                    label: "you@icloud.com".into(),
+                    email: "you@icloud.com".into(),
+                    apple_id: "you@icloud.com".into(),
+                    app_password: Some(Encrypted("xxxx-xxxx".into())),
+                    ..CalendarAccount::default()
+                },
+                CalendarAccount {
+                    id: "u1".into(),
+                    kind: CalendarAccountKind::Url,
+                    label: "US Holidays".into(),
+                    url: "webcal://calendar.google.com/calendar/ical/en.usa%23holiday/public/basic.ics".into(),
+                    ..CalendarAccount::default()
+                },
+                CalendarAccount {
+                    id: "c1".into(),
+                    kind: CalendarAccountKind::Caldav,
+                    label: "fastmail".into(),
+                    username: "you@fastmail.com".into(),
+                    url: "https://caldav.fastmail.com/".into(),
+                    app_password: Some(Encrypted("app-pass".into())),
+                    ..CalendarAccount::default()
+                },
+            ],
         };
         let topic = Topic::CalendarConfig(cfg.clone());
         let msg = topic.to_message();
         match Topic::parse(&msg) {
             Some(Topic::CalendarConfig(back)) => {
                 assert_eq!(back.google_client_id, cfg.google_client_id);
-                assert_eq!(back.accounts.len(), 1);
+                assert_eq!(back.accounts.len(), 3);
                 assert_eq!(back.accounts[0].kind, CalendarAccountKind::Apple);
                 assert_eq!(back.accounts[0].app_password.as_ref().unwrap().0, "xxxx-xxxx");
+                assert_eq!(back.accounts[1].kind, CalendarAccountKind::Url);
+                assert_eq!(back.accounts[1].url, cfg.accounts[1].url);
+                assert_eq!(back.accounts[2].kind, CalendarAccountKind::Caldav);
+                assert_eq!(back.accounts[2].username, "you@fastmail.com");
             }
             other => panic!("expected CalendarConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn calendar_url_normalizes_webcal() {
+        assert_eq!(
+            normalize_calendar_url("webcal://example.com/cal.ics"),
+            "https://example.com/cal.ics"
+        );
+        assert_eq!(
+            normalize_calendar_url("  calendar.example/holidays.ics "),
+            "https://calendar.example/holidays.ics"
+        );
+        assert_eq!(
+            calendar_url_label("webcal://ics.example.com/public/basic.ics"),
+            "ics.example.com"
+        );
     }
 }
 

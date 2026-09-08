@@ -27,6 +27,8 @@ pub enum CalKind {
     Local,
     Google,
     Apple,
+    Url,
+    Caldav,
 }
 
 impl CalKind {
@@ -35,6 +37,8 @@ impl CalKind {
             Self::Local => "On This Computer",
             Self::Google => "Google",
             Self::Apple => "iCloud",
+            Self::Url => "URL",
+            Self::Caldav => "CalDAV",
         }
     }
 }
@@ -209,9 +213,30 @@ pub struct Account {
     pub expiry_unix: u64,
     #[serde(default)]
     pub principal_url: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub username: String,
 }
 
 impl Account {
+    pub fn dav_user(&self) -> &str {
+        if !self.username.trim().is_empty() {
+            self.username.trim()
+        } else {
+            self.apple_id.trim()
+        }
+    }
+
+    pub fn dav_base(&self) -> &str {
+        let u = self.url.trim();
+        if u.is_empty() {
+            "https://caldav.icloud.com/"
+        } else {
+            u
+        }
+    }
+
     pub fn secret(&self) -> String {
         self.app_password
             .as_ref()

@@ -1,14 +1,18 @@
-//! Background sync: local store + Google API + iCloud CalDAV.
+//! Background sync: local store + Google + iCloud/CalDAV + ICS URLs.
 
 use std::time::Duration;
 
 use chrono::NaiveDate;
-use sola_bus::topics::{CalendarAccount, CalendarAccountKind, CalendarConfig};
+use sola_bus::topics::{
+    calendar_url_label, normalize_calendar_url, CalendarAccount, CalendarAccountKind,
+    CalendarConfig,
+};
 use sola_core::Encrypted;
 
 use crate::bridge;
+use crate::ics;
 use crate::model::{
-    Account, CalEvent, CalKind, Settings, Store, LOCAL_CAL_ID, new_id, next_palette,
+    Account, CalEvent, CalKind, Calendar, Settings, Store, LOCAL_CAL_ID, new_id, next_palette,
 };
 use crate::paths::AppDirs;
 use crate::{apple, google, store};
@@ -142,6 +146,16 @@ async fn sync_all(state: &mut State) {
                     bridge::emit(CalNotice::Error(format!("iCloud: {e}")));
                 }
             }
+            CalKind::Caldav => {
+                if let Err(e) = sync_apple(state, &account.id).await {
+                    bridge::emit(CalNotice::Error(format!("CalDAV: {e}")));
+                }
+            }
+            CalKind::Url => {
+                if let Err(e) = sync_url(state, &account.id).await {
+                    bridge::emit(CalNotice::Error(format!("URL: {e}")));
+                }
+            }
             CalKind::Local => {}
         }
     }
@@ -207,10 +221,10 @@ async fn sync_apple(state: &mut State, account_id: &str) -> anyhow::Result<()> {
         .iter()
         .find(|a| a.id == account_id)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("iCloud account gone"))?;
+        .ok_or_else(|| anyhow::anyhow!("CalDAV account gone"))?;
     let password = account.secret();
     if password.is_empty() {
-        anyhow::bail!("missing app-specific password");
+        anyhow::bail!("missing password");
     }
     let cals: Vec<_> = state
         .store
@@ -222,7 +236,7 @@ async fn sync_apple(state: &mut State, account_id: &str) -> anyhow::Result<()> {
     for cal in cals {
         match apple::fetch_events(
             &state.http,
-            &account.apple_id,
+            account.dav_user(),
             &password,
             &cal,
             state.window,
@@ -305,7 +319,7 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
                 Err(e) => bridge::emit(CalNotice::Error(format!("Google: {e}"))),
             }
         }
-        CalKind::Apple => {
+        CalKind::Apple | CalKind::Caldav => {
             let Some(account) = state
                 .store
                 .accounts
@@ -315,15 +329,8 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
             else {
                 return;
             };
-            match apple::put_event(
-                &state.http,
-                &account.apple_id,
-                &account.secret(),
-                &cal,
-                &event,
-            )
-            .await
-            {
+            let user = account.dav_user().to_string();
+            match apple::put_event(&state.http, &user, &account.secret(), &cal, &event).await {
                 Ok(href) => {
                     event.href = Some(href);
                     event.remote_id = event.remote_id.clone().or(Some(event.id.clone()));
@@ -331,8 +338,13 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
                     persist(state);
                     bridge::emit(CalNotice::Toast("Saved".into()));
                 }
-                Err(e) => bridge::emit(CalNotice::Error(format!("iCloud save: {e}"))),
+                Err(e) => {
+                    bridge::emit(CalNotice::Error(format!("{} save: {e}", cal.kind.label())))
+                }
             }
+        }
+        CalKind::Url => {
+            bridge::emit(CalNotice::Error("this calendar is read-only".into()));
         }
     }
 }
@@ -368,7 +380,7 @@ async fn delete_event(state: &mut State, id: &str) {
                     }
                 }
             }
-            CalKind::Apple => {
+            CalKind::Apple | CalKind::Caldav => {
                 if let Some(account) = state
                     .store
                     .accounts
@@ -377,16 +389,23 @@ async fn delete_event(state: &mut State, id: &str) {
                 {
                     if let Err(e) = apple::delete_event(
                         &state.http,
-                        &account.apple_id,
+                        account.dav_user(),
                         &account.secret(),
                         &event,
                     )
                     .await
                     {
-                        bridge::emit(CalNotice::Error(format!("iCloud delete: {e}")));
+                        bridge::emit(CalNotice::Error(format!(
+                            "{} delete: {e}",
+                            cal.kind.label()
+                        )));
                         return;
                     }
                 }
+            }
+            CalKind::Url => {
+                bridge::emit(CalNotice::Error("this calendar is read-only".into()));
+                return;
             }
             CalKind::Local => {}
         }
@@ -421,14 +440,14 @@ async fn apply_config(state: &mut State, cfg: CalendarConfig) {
         .map(|a| account_from_bus(a, &cfg.google_client_id))
         .collect();
     persist(state);
-    let apple: Vec<Account> = state
+    let dav: Vec<Account> = state
         .store
         .accounts
         .iter()
-        .filter(|a| a.kind == CalKind::Apple)
+        .filter(|a| matches!(a.kind, CalKind::Apple | CalKind::Caldav))
         .cloned()
         .collect();
-    for acc in apple {
+    for acc in dav {
         let has_cals = state
             .store
             .calendars
@@ -437,22 +456,38 @@ async fn apply_config(state: &mut State, cfg: CalendarConfig) {
         if has_cals {
             continue;
         }
-        match apple::discover(
-            &state.http,
-            &acc.apple_id,
-            &acc.secret(),
-            &acc.id,
-        )
-        .await
-        {
+        let discovered = if acc.kind == CalKind::Apple {
+            apple::discover(&state.http, acc.dav_user(), &acc.secret(), &acc.id).await
+        } else {
+            apple::discover_at(
+                &state.http,
+                acc.dav_user(),
+                &acc.secret(),
+                &acc.id,
+                acc.dav_base(),
+                acc.kind,
+            )
+            .await
+        };
+        match discovered {
             Ok((principal, calendars)) => {
                 if let Some(slot) = state.store.accounts.iter_mut().find(|a| a.id == acc.id) {
                     slot.principal_url = principal;
                 }
                 merge_calendars(&mut state.store, &acc.id, calendars);
             }
-            Err(e) => bridge::emit(CalNotice::Error(format!("iCloud: {e}"))),
+            Err(e) => bridge::emit(CalNotice::Error(format!("{}: {e}", acc.kind.label()))),
         }
+    }
+    let urls: Vec<Account> = state
+        .store
+        .accounts
+        .iter()
+        .filter(|a| a.kind == CalKind::Url)
+        .cloned()
+        .collect();
+    for acc in urls {
+        ensure_url_calendar(state, &acc);
     }
     persist(state);
     sync_all(state).await;
@@ -464,6 +499,8 @@ fn account_from_bus(a: &CalendarAccount, google_client_id: &str) -> Account {
         kind: match a.kind {
             CalendarAccountKind::Google => CalKind::Google,
             CalendarAccountKind::Apple => CalKind::Apple,
+            CalendarAccountKind::Url => CalKind::Url,
+            CalendarAccountKind::Caldav => CalKind::Caldav,
         },
         label: a.label.clone(),
         email: a.email.clone(),
@@ -471,12 +508,14 @@ fn account_from_bus(a: &CalendarAccount, google_client_id: &str) -> Account {
         app_password: a.app_password.clone(),
         google_client_id: match a.kind {
             CalendarAccountKind::Google => google_client_id.to_string(),
-            CalendarAccountKind::Apple => String::new(),
+            _ => String::new(),
         },
         access_token: a.access_token.clone(),
         refresh_token: a.refresh_token.clone(),
         expiry_unix: a.expiry_unix,
         principal_url: String::new(),
+        url: normalize_calendar_url(&a.url),
+        username: a.username.clone(),
     }
 }
 
@@ -484,6 +523,8 @@ pub fn account_to_bus(a: &Account) -> Option<CalendarAccount> {
     let kind = match a.kind {
         CalKind::Google => CalendarAccountKind::Google,
         CalKind::Apple => CalendarAccountKind::Apple,
+        CalKind::Url => CalendarAccountKind::Url,
+        CalKind::Caldav => CalendarAccountKind::Caldav,
         CalKind::Local => return None,
     };
     Some(CalendarAccount {
@@ -496,7 +537,90 @@ pub fn account_to_bus(a: &Account) -> Option<CalendarAccount> {
         access_token: a.access_token.clone(),
         refresh_token: a.refresh_token.clone(),
         expiry_unix: a.expiry_unix,
+        url: a.url.clone(),
+        username: a.username.clone(),
     })
+}
+
+fn ensure_url_calendar(state: &mut State, account: &Account) {
+    let url = normalize_calendar_url(&account.url);
+    let name = if account.label.trim().is_empty() {
+        calendar_url_label(&url)
+    } else {
+        account.label.trim().to_string()
+    };
+    if let Some(cal) = state.store.calendars.iter_mut().find(|c| {
+        c.account_id.as_deref() == Some(account.id.as_str()) && c.kind == CalKind::Url
+    }) {
+        cal.name = name;
+        cal.href = Some(url.clone());
+        cal.remote_id = Some(url);
+        cal.read_only = true;
+        return;
+    }
+    let mut cal = Calendar {
+        id: format!("url-{}", account.id),
+        name,
+        color: next_palette(&state.store.calendars),
+        kind: CalKind::Url,
+        account_id: Some(account.id.clone()),
+        visible: true,
+        read_only: true,
+        remote_id: Some(url.clone()),
+        href: Some(url),
+    };
+    if state.store.calendars.iter().any(|c| c.id == cal.id) {
+        cal.id = new_id("cal");
+    }
+    state.store.calendars.push(cal);
+}
+
+async fn sync_url(state: &mut State, account_id: &str) -> anyhow::Result<()> {
+    let account = state
+        .store
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("URL account gone"))?;
+    let url = normalize_calendar_url(&account.url);
+    if url.is_empty() {
+        anyhow::bail!("missing calendar URL");
+    }
+    ensure_url_calendar(state, &account);
+    let cal = state
+        .store
+        .calendars
+        .iter()
+        .find(|c| c.account_id.as_deref() == Some(account_id) && c.kind == CalKind::Url)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("URL calendar missing"))?;
+    let resp = state.http.get(&url).send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("GET {url} failed ({status}): {text}");
+    }
+    let body = resp.text().await?;
+    if body.trim().is_empty() {
+        anyhow::bail!("empty calendar at {url}");
+    }
+    if account.label.trim().is_empty() {
+        if let Some(name) = ics::calendar_name(&body) {
+            if let Some(slot) = state.store.calendars.iter_mut().find(|c| c.id == cal.id) {
+                slot.name = name;
+            }
+        }
+    }
+    let mut events = Vec::new();
+    for raw in ics::parse_vevents(&body) {
+        for mut ev in ics::to_cal_events(raw, &cal.id, Some(url.clone()), None, state.window) {
+            ev.read_only = true;
+            events.push(ev);
+        }
+    }
+    replace_calendar_events(&mut state.store, &cal.id, events);
+    Ok(())
 }
 
 fn disconnect(state: &mut State, account_id: &str) {

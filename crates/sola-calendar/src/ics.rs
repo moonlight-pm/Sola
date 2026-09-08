@@ -4,6 +4,26 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, 
 
 use crate::model::CalEvent;
 
+/// `X-WR-CALNAME` / `NAME` on the wrapping VCALENDAR, if present.
+pub fn calendar_name(ics: &str) -> Option<String> {
+    let unfolded = unfold(ics);
+    for line in unfolded.lines() {
+        if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            break;
+        }
+        if let Some((name, _, value)) = split_prop(line) {
+            let n = name.to_ascii_uppercase();
+            if n == "X-WR-CALNAME" || n == "NAME" {
+                let s = unescape(value);
+                if !s.trim().is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn parse_vevents(ics: &str) -> Vec<RawEvent> {
     let unfolded = unfold(ics);
     let mut out = Vec::new();
@@ -433,6 +453,12 @@ fn add_months(d: NaiveDate, months: u32) -> NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_calendar_name() {
+        let ics = "BEGIN:VCALENDAR\r\nX-WR-CALNAME:US Holidays\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Off\r\nDTSTART;VALUE=DATE:20260908\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert_eq!(calendar_name(ics).as_deref(), Some("US Holidays"));
+    }
 
     #[test]
     fn parses_all_day_and_timed() {

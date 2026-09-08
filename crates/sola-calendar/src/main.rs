@@ -1,4 +1,4 @@
-//! sola-calendar — kit-native calendar (local, Google, iCloud).
+//! sola-calendar — kit-native calendar (local, Google, iCloud, CalDAV, ICS URL).
 
 mod apple;
 mod bridge;

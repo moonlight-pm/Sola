@@ -517,7 +517,7 @@ impl App {
         if self.store.accounts.is_empty() {
             account_items.push(
                 SidebarItem::new("Settings → Calendar", Msg::Tick)
-                    .subtitle("Google and iCloud"),
+                    .subtitle("Google, iCloud, URL, CalDAV"),
             );
         } else {
             for acc in &self.store.accounts {

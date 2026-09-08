@@ -1,4 +1,5 @@
-//! iCloud CalDAV: discover calendars, fetch VEVENTs, PUT / DELETE.
+//! CalDAV: discover calendars, fetch VEVENTs, PUT / DELETE.
+//! iCloud is the default base; generic hosts pass `discover_at`.
 
 use anyhow::{Result, anyhow, bail};
 use chrono::{Datelike, NaiveDate};
@@ -20,9 +21,25 @@ pub async fn discover(
     password: &str,
     account_id: &str,
 ) -> Result<(String, Vec<Calendar>)> {
-    let principal = current_user_principal(http, apple_id, password, ICLOUD).await?;
-    let home = calendar_home_set(http, apple_id, password, &principal).await?;
-    let calendars = list_calendars(http, apple_id, password, account_id, &home).await?;
+    discover_at(http, apple_id, password, account_id, ICLOUD, CalKind::Apple).await
+}
+
+pub async fn discover_at(
+    http: &reqwest::Client,
+    user: &str,
+    password: &str,
+    account_id: &str,
+    base_url: &str,
+    kind: CalKind,
+) -> Result<(String, Vec<Calendar>)> {
+    let base = if base_url.trim().is_empty() {
+        ICLOUD
+    } else {
+        base_url.trim()
+    };
+    let principal = current_user_principal(http, user, password, base).await?;
+    let home = calendar_home_set(http, user, password, &principal).await?;
+    let calendars = list_calendars(http, user, password, account_id, &home, kind).await?;
     Ok((principal, calendars))
 }
 
@@ -147,7 +164,7 @@ async fn current_user_principal(
     first_href_named(&xml, "current-user-principal")
         .or_else(|| first_href(&xml))
         .map(|h| absolutize(url, &h))
-        .ok_or_else(|| anyhow!("iCloud did not return a principal"))
+        .ok_or_else(|| anyhow!("CalDAV did not return a principal"))
 }
 
 async fn calendar_home_set(
@@ -166,7 +183,7 @@ async fn calendar_home_set(
     first_href_named(&xml, "calendar-home-set")
         .or_else(|| first_href(&xml))
         .map(|h| absolutize(principal, &h))
-        .ok_or_else(|| anyhow!("iCloud did not return a calendar home"))
+        .ok_or_else(|| anyhow!("CalDAV did not return a calendar home"))
 }
 
 async fn list_calendars(
@@ -175,6 +192,7 @@ async fn list_calendars(
     password: &str,
     account_id: &str,
     home: &str,
+    kind: CalKind,
 ) -> Result<Vec<Calendar>> {
     let body = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
@@ -215,7 +233,7 @@ async fn list_calendars(
             id: format!("a-{account_id}-{}", crate::model::new_id("cal")),
             name,
             color,
-            kind: CalKind::Apple,
+            kind,
             account_id: Some(account_id.into()),
             visible: true,
             read_only: false,
@@ -224,7 +242,7 @@ async fn list_calendars(
         });
     }
     if out.is_empty() {
-        bail!("no iCloud event calendars found");
+        bail!("no event calendars found");
     }
     Ok(out)
 }
