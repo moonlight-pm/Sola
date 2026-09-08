@@ -289,7 +289,7 @@ async fn session(
     let mut removed = om.receive_interfaces_removed().await.ok();
 
     let mut discovering = false;
-    push_snapshot(&om, event_tx, &inner).await;
+    push_snapshot(&conn, &om, event_tx, &inner).await;
 
     loop {
         tokio::select! {
@@ -307,7 +307,7 @@ async fn session(
             } else {
                 POLL
             }) => {
-                push_snapshot(&om, event_tx, &inner).await;
+                push_snapshot(&conn, &om, event_tx, &inner).await;
             }
             added_ev = async {
                 match added.as_mut() {
@@ -318,7 +318,7 @@ async fn session(
                 if added_ev.is_none() {
                     added = None;
                 } else {
-                    push_snapshot(&om, event_tx, &inner).await;
+                    push_snapshot(&conn, &om, event_tx, &inner).await;
                 }
             }
             removed_ev = async {
@@ -330,7 +330,7 @@ async fn session(
                 if removed_ev.is_none() {
                     removed = None;
                 } else {
-                    push_snapshot(&om, event_tx, &inner).await;
+                    push_snapshot(&conn, &om, event_tx, &inner).await;
                 }
             }
         }
@@ -352,7 +352,7 @@ async fn handle_cmd(
 ) -> CmdResult {
     match cmd {
         Command::Refresh => {
-            push_snapshot(om, event_tx, inner).await;
+            push_snapshot(conn, om, event_tx, inner).await;
         }
         Command::SetPowered(on) => {
             if !on && *discovering {
@@ -377,12 +377,12 @@ async fn handle_cmd(
                     return CmdResult::Gone;
                 }
             }
-            push_snapshot(om, event_tx, inner).await;
+            push_snapshot(conn, om, event_tx, inner).await;
         }
         Command::SetDiscovering(on) => {
             if on == *discovering {
                 if on {
-                    push_snapshot(om, event_tx, inner).await;
+                    push_snapshot(conn, om, event_tx, inner).await;
                 }
                 return CmdResult::Ok;
             }
@@ -400,7 +400,7 @@ async fn handle_cmd(
                 let _ = stop_discovery(conn, om).await;
                 *discovering = false;
             }
-            push_snapshot(om, event_tx, inner).await;
+            push_snapshot(conn, om, event_tx, inner).await;
         }
         Command::Disconnect(path) => {
             match device_proxy(conn, &path).await {
@@ -414,7 +414,7 @@ async fn handle_cmd(
                 Err(e) => tracing::debug!(%path, "bluetooth device: {e}"),
             }
             let _ = event_tx.unbounded_send(Event::Busy(None));
-            push_snapshot(om, event_tx, inner).await;
+            push_snapshot(conn, om, event_tx, inner).await;
         }
         Command::Connect(path) => {
             let conn = conn.clone();
@@ -435,7 +435,7 @@ async fn handle_cmd(
                 }
                 let _ = event_tx.unbounded_send(Event::Busy(None));
                 if let Ok(om) = object_manager(&conn).await {
-                    push_snapshot(&om, &event_tx, &inner).await;
+                    push_snapshot(&conn, &om, &event_tx, &inner).await;
                 }
             });
         }
@@ -462,7 +462,7 @@ async fn handle_cmd(
                 }
                 let _ = event_tx.unbounded_send(Event::Busy(None));
                 if let Ok(om) = object_manager(&conn).await {
-                    push_snapshot(&om, &event_tx, &inner).await;
+                    push_snapshot(&conn, &om, &event_tx, &inner).await;
                 }
             });
         }
@@ -497,13 +497,23 @@ async fn register_agent(conn: &zbus::Connection) {
 }
 
 async fn push_snapshot(
+    conn: &zbus::Connection,
     om: &zbus::fdo::ObjectManagerProxy<'_>,
     event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>,
     inner: &AgentInner,
 ) {
     match om.get_managed_objects().await {
         Ok(objs) => {
-            let snap = parse_managed_objects(&objs);
+            let mut snap = parse_managed_objects(&objs);
+            if snap.adapter.is_none() {
+                tracing::warn!(
+                    objects = objs.len(),
+                    "bluetooth GetManagedObjects: no Adapter1"
+                );
+                if let Some(fb) = snapshot_from_adapter1(conn).await {
+                    snap.adapter = fb.adapter;
+                }
+            }
             if let Ok(mut names) = inner.names.lock() {
                 names.clear();
                 for d in &snap.devices {
@@ -513,10 +523,55 @@ async fn push_snapshot(
             let _ = event_tx.unbounded_send(Event::Snapshot(snap));
         }
         Err(e) => {
-            tracing::debug!("bluetooth GetManagedObjects: {e}");
-            let _ = event_tx.unbounded_send(Event::Snapshot(Snapshot::default()));
+            tracing::warn!("bluetooth GetManagedObjects: {e}");
+            match snapshot_from_adapter1(conn).await {
+                Some(snap) => {
+                    tracing::info!(
+                        path = snap
+                            .adapter
+                            .as_ref()
+                            .map(|a| a.path.as_str())
+                            .unwrap_or("-"),
+                        "bluetooth adapter via Adapter1 fallback"
+                    );
+                    let _ = event_tx.unbounded_send(Event::Snapshot(snap));
+                }
+                None => {
+                    let _ = event_tx.unbounded_send(Event::Snapshot(Snapshot::default()));
+                }
+            }
         }
     }
+}
+
+/// When ObjectManager's full dict fails to decode (BlueZ 5.86 nested
+/// `a{sv}` on LEAdvertisingManager1), still surface hci0 so the
+/// menubar chip is not blank.
+async fn snapshot_from_adapter1(conn: &zbus::Connection) -> Option<Snapshot> {
+    for path in ["/org/bluez/hci0", "/org/bluez/hci1"] {
+        let Ok(obj) = ObjectPath::try_from(path) else {
+            continue;
+        };
+        let proxy = match Adapter1Proxy::builder(conn).path(obj) {
+            Ok(b) => match b.build().await {
+                Ok(p) => p,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+        let powered = proxy.powered().await.ok()?;
+        return Some(Snapshot {
+            adapter: Some(Adapter {
+                path: path.to_string(),
+                address: String::new(),
+                alias: path.to_string(),
+                powered,
+                discovering: false,
+            }),
+            devices: Vec::new(),
+        });
+    }
+    None
 }
 
 async fn object_manager(
