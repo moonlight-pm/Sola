@@ -4,7 +4,7 @@ Kit-native calendar. **Partial.** Launcher row is **Calendar** (`lucide/calendar
 
 Month is the default view (Sunday-start, same as the menubar clock). Week and Day list the day’s events. **On This Computer** is always there. Optional accounts: Google Calendar, iCloud, generic CalDAV, and ICS/webcal URLs. Add as many of each as you want.
 
-**Installed** `calendar`+`shell` release 2026-09-08 (unsmoked).
+**Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked).
 
 ## Use
 

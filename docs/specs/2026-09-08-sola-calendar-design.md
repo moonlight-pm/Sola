@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
-**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `calendar`+`shell` release 2026-09-08 (unsmoked); Settings accounts + URL/CalDAV need `bus`+`settings`+`calendar`  
+**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked)  
 **Gaps:** no invites / RSVP; no alerts; Google needs a Desktop OAuth client ID (Sola does not ship a Cloud project); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app
 
 ## Goal
