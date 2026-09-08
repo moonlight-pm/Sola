@@ -7,7 +7,7 @@
 
 ## Goal
 
-Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a day, create an event, connect Google Calendar and iCloud.
+Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a day, create an event. Accounts (Google, iCloud, CalDAV, ICS/webcal URL) live in **Settings → Calendar**.
 
 ## Decisions (locked)
 
