@@ -11,18 +11,12 @@ pub fn snapshot() -> Snapshot {
     let (sinks, sources) = match parse_nodes(&dump) {
         Ok(v) => v,
         Err(e) => {
-            tracing::debug!("audio pw-dump parse: {e}");
-            return Snapshot::default();
+            // Dump ran; PipeWire is up. A SPA params quirk must not hide
+            // the chip (that path is for a missing graph).
+            tracing::warn!("audio pw-dump parse: {e}");
+            (Vec::new(), Vec::new())
         }
     };
-    if sinks.is_empty() && sources.is_empty() {
-        // Graph came back but no endpoints — still "available" so the
-        // chip can show a quiet zero, unless dump itself failed.
-        return Snapshot {
-            available: true,
-            ..Snapshot::default()
-        };
-    }
     let default_sink = inspect_id("@DEFAULT_AUDIO_SINK@");
     let default_source = inspect_id("@DEFAULT_AUDIO_SOURCE@");
     let (sink_volume, sink_mute) = default_sink
@@ -110,8 +104,44 @@ pub fn parse_get_volume(out: &str) -> Option<(f32, bool)> {
     Some((vol.clamp(0.0, 1.5), muted))
 }
 
+/// PipeWire `pw-dump` sometimes emits unnamed empty arrays as object
+/// members (`"Tag": [ ], [ ], [ ]`) which is not JSON. Drop `, [ ]`
+/// so serde can read the rest. Named empty arrays (`"Format": [ ]`) stay.
+pub fn strip_unnamed_empty_arrays(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b',' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'[' {
+                let mut k = j + 1;
+                while k < b.len() && b[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                if k < b.len() && b[k] == b']' {
+                    i = k + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
 pub fn parse_nodes(dump: &str) -> Result<(Vec<Device>, Vec<Device>), String> {
-    let objs: Vec<serde_json::Value> = serde_json::from_str(dump).map_err(|e| e.to_string())?;
+    let objs: Vec<serde_json::Value> = match serde_json::from_str(dump) {
+        Ok(v) => v,
+        Err(_) => {
+            let cleaned = strip_unnamed_empty_arrays(dump);
+            serde_json::from_str(&cleaned).map_err(|e| e.to_string())?
+        }
+    };
     let mut sinks = Vec::new();
     let mut sources = Vec::new();
     for o in objs {
@@ -198,6 +228,32 @@ mod tests {
         "node.name": "bluez_capture_internal.xx"
       }}}
     ]"#;
+
+    #[test]
+    fn parse_tolerates_unnamed_empty_param_arrays() {
+        let dump = r#"[
+      {"id": 45, "type": "PipeWire:Interface:Node", "info": {"props": {
+        "media.class": "Audio/Sink",
+        "node.description": "WH-CH520",
+        "node.name": "bluez_output.xx"
+      }}},
+      {"id": 48, "type": "PipeWire:Interface:Port", "info": {"params": {
+        "EnumFormat": [{"mediaType": "application"}],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Tag": [ ],
+        [ ],
+        [ ]
+      }}}
+    ]"#;
+        assert!(serde_json::from_str::<serde_json::Value>(dump).is_err());
+        let (sinks, sources) = parse_nodes(dump).expect("dump");
+        assert_eq!(
+            sinks.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            vec!["WH-CH520"]
+        );
+        assert!(sources.is_empty());
+    }
 
     #[test]
     fn parse_sinks_and_sources_skips_monitors_and_internal() {
