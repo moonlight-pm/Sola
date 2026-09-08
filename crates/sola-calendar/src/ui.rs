@@ -7,40 +7,53 @@ use chrono::{Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
+use iced::mouse;
+use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, checkbox, column, container, mouse_area, row, scrollable, text,
+    Space, button, column, container, mouse_area, row, scrollable, text, toggler,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
     Theme,
 };
 use sola_bus::Message;
-use sola_bus::topics::{CalendarConfig, Topic};
+use sola_bus::topics::{
+    google_calendar_client_id, CalendarConfig, CalendarShelf, SplitDir, Topic,
+};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::style::{
     HAIRLINE_A, ON_FILL_DARK, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
 };
+use sola_kit::components::color_picker;
+use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+use sola_kit::components::prose::prose;
 use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input as kit_input;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    SelectOption, SidebarItem, SidebarSection, button as kit_btn, field, form_row, select, sidebar,
+    ColorPicker, DividerColors, SidebarItem, SidebarPanel, SidebarSection, button as kit_btn,
+    popover, popover_anchored, split_with, toggle_style,
 };
 use sola_kit::fonts;
-use sola_kit::theme::default_theme;
+use sola_kit::theme::{color_to_hex, default_theme};
 
 use crate::bridge;
-use crate::model::{CalEvent, Calendar, Settings, Store, View, LOCAL_CAL_ID, parse_hex};
+use crate::model::{CalEvent, Calendar, Settings, Store, View, format_hm, parse_hex};
 use crate::timeutil::{
     WEEKDAYS, day_title, first_of_month, month_span, month_title, month_weeks_filled, next_month,
-    next_week, prev_month, prev_week, today, week_of, week_title,
+    next_week, parse_pretty_date, pretty_date, prev_month, prev_week, today, week_of, week_title,
 };
 use crate::worker::{CalCmd, CalNotice};
 
 const APP_ID: &str = "sola-calendar";
-const SIDEBAR_W: f32 = 200.0;
-const INSPECTOR_W: f32 = 300.0;
+const SIDEBAR_W_MIN: f32 = 180.0;
+const SIDEBAR_W_MAX: f32 = 420.0;
+const INSPECTOR_W_MIN: f32 = 260.0;
+const INSPECTOR_W_MAX: f32 = 520.0;
 const CHROME_H: f32 = 44.0;
 const TOAST_TTL: Duration = Duration::from_secs(4);
+const QUICKVIEW_CAP: usize = 6;
+const DRAFT_LABEL_W: f32 = 64.0;
 
 pub struct App {
     theme: Theme,
@@ -55,11 +68,18 @@ pub struct App {
     toast_gen: u64,
     cal_picker_open: bool,
     got_config: bool,
+    renaming: Option<(String, String)>,
+    color_picker: Option<(String, ColorPicker)>,
+    dragging_sidebar: bool,
+    dragging_inspector: bool,
+    window_w: f32,
+    /// Last calendar-shelf fingerprint we published. Stops Snapshot from
+    /// re-emitting (and re-applying) the same `CalendarConfig`.
+    last_shelf_fp: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 enum Pane {
-    Idle,
     Day(NaiveDate),
     Draft(Draft),
 }
@@ -113,11 +133,25 @@ pub enum Msg {
     SaveDraft,
     DeleteDraft,
     ClosePane,
+    OpenUrl(String),
     Refresh,
     DismissToast { generation: u64 },
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     Tick,
     MaybeMigrate,
+    SidebarPress,
+    InspectorPress,
+    SidebarRelease,
+    CursorMoved(f32),
+    WindowResized(f32),
+    RenameCal(String),
+    RenameSelectAll,
+    RenameInput(String),
+    RenameCommit,
+    HideCal(String),
+    ToggleColor(String),
+    ColorMsg(color_picker::Message),
+    ColorDismiss,
 }
 
 impl Default for App {
@@ -134,12 +168,18 @@ impl Default for App {
             },
             settings: Settings::default(),
             cursor: today,
-            pane: Pane::Idle,
+            pane: Pane::Day(today),
             status: String::new(),
             toast: None,
             toast_gen: 0,
             cal_picker_open: false,
             got_config: false,
+            renaming: None,
+            color_picker: None,
+            dragging_sidebar: false,
+            dragging_inspector: false,
+            window_w: 0.0,
+            last_shelf_fp: None,
         }
     }
 }
@@ -179,6 +219,15 @@ impl App {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed(key, modifiers))
                 }
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::CursorMoved(position.x))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::SidebarRelease)
+                }
+                Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Msg::WindowResized(size.width))
+                }
                 _ => None,
             }),
         ])
@@ -190,7 +239,10 @@ impl App {
             Msg::Worker(ev) => self.on_worker(ev),
             Msg::WindowReady(id) => {
                 self.window_id = id;
-                Task::none()
+                match id {
+                    Some(id) => iced::window::size(id).map(|s| Msg::WindowResized(s.width)),
+                    None => Task::none(),
+                }
             }
             Msg::TitleDrag => sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
@@ -205,6 +257,9 @@ impl App {
                     View::Week => prev_week(self.cursor),
                     View::Day => self.cursor - chrono::Duration::days(1),
                 };
+                if matches!(self.pane, Pane::Day(_)) {
+                    self.pane = Pane::Day(self.cursor);
+                }
                 self.sync_visible();
                 Task::none()
             }
@@ -214,11 +269,17 @@ impl App {
                     View::Week => next_week(self.cursor),
                     View::Day => self.cursor + chrono::Duration::days(1),
                 };
+                if matches!(self.pane, Pane::Day(_)) {
+                    self.pane = Pane::Day(self.cursor);
+                }
                 self.sync_visible();
                 Task::none()
             }
             Msg::Today => {
                 self.cursor = today();
+                if matches!(self.pane, Pane::Day(_)) {
+                    self.pane = Pane::Day(self.cursor);
+                }
                 self.sync_visible();
                 Task::none()
             }
@@ -288,12 +349,15 @@ impl App {
                         bridge::send(CalCmd::DeleteEvent(id.clone()));
                     }
                 }
-                self.pane = Pane::Idle;
+                self.show_day(self.cursor);
                 Task::none()
             }
             Msg::ClosePane => {
-                self.pane = Pane::Idle;
-                self.cal_picker_open = false;
+                self.dismiss_draft();
+                Task::none()
+            }
+            Msg::OpenUrl(url) => {
+                sola_core::open_url_logged(&url);
                 Task::none()
             }
             Msg::Refresh => {
@@ -314,6 +378,114 @@ impl App {
                 }
                 Task::none()
             }
+            Msg::SidebarPress => {
+                self.dragging_sidebar = true;
+                Task::none()
+            }
+            Msg::InspectorPress => {
+                self.dragging_inspector = true;
+                Task::none()
+            }
+            Msg::SidebarRelease => {
+                if self.dragging_sidebar || self.dragging_inspector {
+                    self.dragging_sidebar = false;
+                    self.dragging_inspector = false;
+                    bridge::send(CalCmd::SaveSettings(self.settings.clone()));
+                }
+                Task::none()
+            }
+            Msg::CursorMoved(x) => {
+                if self.dragging_sidebar && self.window_w > 1.0 {
+                    self.settings.sidebar_w = x.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                }
+                if self.dragging_inspector && self.window_w > 1.0 {
+                    self.settings.inspector_w =
+                        (self.window_w - x).clamp(INSPECTOR_W_MIN, INSPECTOR_W_MAX);
+                }
+                Task::none()
+            }
+            Msg::WindowResized(w) => {
+                self.window_w = w;
+                Task::none()
+            }
+            Msg::RenameCal(id) => self.begin_rename(id),
+            Msg::RenameSelectAll => {
+                if self.renaming.is_none() {
+                    return Task::none();
+                }
+                iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        cal_rename_id(),
+                    ),
+                )
+            }
+            Msg::RenameInput(s) => {
+                if let Some((_, draft)) = &mut self.renaming {
+                    *draft = s;
+                }
+                Task::none()
+            }
+            Msg::RenameCommit => {
+                if let Some((id, alias)) = self.renaming.take() {
+                    self.color_picker = None;
+                    bridge::send(CalCmd::SetAlias { id, alias });
+                }
+                Task::none()
+            }
+            Msg::HideCal(id) => {
+                if let Some((rid, alias)) = self.renaming.take() {
+                    if rid == id {
+                        bridge::send(CalCmd::SetAlias {
+                            id: rid,
+                            alias,
+                        });
+                    }
+                }
+                self.color_picker = None;
+                if let Some(cal) = self.store.calendars.iter_mut().find(|c| c.id == id) {
+                    cal.hidden = true;
+                    cal.visible = false;
+                }
+                let next = self.store.pick_default(&self.settings.default_calendar);
+                if next != self.settings.default_calendar {
+                    self.settings.default_calendar = next;
+                    bridge::send(CalCmd::SaveSettings(self.settings.clone()));
+                }
+                bridge::send(CalCmd::SetHidden {
+                    id,
+                    hidden: true,
+                });
+                Task::none()
+            }
+            Msg::ToggleColor(id) => {
+                if self.color_picker.as_ref().is_some_and(|(cid, _)| cid == &id) {
+                    self.color_picker = None;
+                } else {
+                    let seed = self
+                        .store
+                        .calendar(&id)
+                        .and_then(|c| parse_hex(c.display_color()))
+                        .unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
+                    self.color_picker = Some((id, ColorPicker::new(seed)));
+                }
+                Task::none()
+            }
+            Msg::ColorMsg(m) => {
+                if let Some((id, picker)) = &mut self.color_picker {
+                    picker.update(m);
+                    let hex = color_to_hex(picker.color());
+                    let id = id.clone();
+                    if let Some(cal) = self.store.calendars.iter_mut().find(|c| c.id == id) {
+                        cal.color_override = Some(hex.clone());
+                    }
+                    bridge::send(CalCmd::SetColor { id, color: hex });
+                }
+                Task::none()
+            }
+            Msg::ColorDismiss => {
+                self.color_picker = None;
+                Task::none()
+            }
         }
     }
 
@@ -331,24 +503,60 @@ impl App {
         }
         if let Some(Topic::CalendarConfig(cfg)) = Topic::parse(message) {
             self.got_config = true;
+            // Our own shelf publish (empty accounts) is already in the store.
+            if cfg.accounts.is_empty() && !cfg.calendars.is_empty() {
+                let fp = shelf_fingerprint_from_bus(&cfg.calendars);
+                if self.last_shelf_fp.as_deref() == Some(fp.as_str()) {
+                    return Task::none();
+                }
+            }
             bridge::send(CalCmd::ApplyConfig(cfg));
         }
         Task::none()
     }
 
-    fn emit_config_from_store(&self) {
+    fn emit_config_from_store(&mut self) {
         let accounts: Vec<_> = self
             .store
             .accounts
             .iter()
             .filter_map(crate::worker::account_to_bus)
             .collect();
-        if accounts.is_empty() && self.settings.google_client_id.is_empty() {
+        let calendars: Vec<_> = self
+            .store
+            .calendars
+            .iter()
+            .map(Calendar::to_shelf)
+            .collect();
+        self.last_shelf_fp = Some(shelf_fingerprint(&self.store.calendars));
+        let cfg = CalendarConfig {
+            google_client_id: google_calendar_client_id(),
+            accounts,
+            calendars,
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::CalendarConfig(cfg));
+        }
+    }
+
+    /// Publish the calendar shelf so Settings can list hidden/alias/colour.
+    /// Accounts stay empty: Settings keeps its own account list.
+    fn maybe_emit_shelf(&mut self) {
+        let fp = shelf_fingerprint(&self.store.calendars);
+        if self.last_shelf_fp.as_deref() == Some(fp.as_str()) {
             return;
         }
+        self.last_shelf_fp = Some(fp);
+        let calendars = self
+            .store
+            .calendars
+            .iter()
+            .map(Calendar::to_shelf)
+            .collect();
         let cfg = CalendarConfig {
-            google_client_id: self.settings.google_client_id.clone(),
-            accounts,
+            google_client_id: google_calendar_client_id(),
+            accounts: Vec::new(),
+            calendars,
         };
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::CalendarConfig(cfg));
@@ -383,7 +591,15 @@ impl App {
             keyboard::Key::Character("3") => self.update(Msg::SetView(View::Day)),
             keyboard::Key::Named(NamedKey::ArrowLeft) => self.update(Msg::Prev),
             keyboard::Key::Named(NamedKey::ArrowRight) => self.update(Msg::Next),
-            keyboard::Key::Named(NamedKey::Escape) => self.update(Msg::ClosePane),
+            keyboard::Key::Named(NamedKey::Escape) => {
+                if self.renaming.is_some() || self.color_picker.is_some() {
+                    self.renaming = None;
+                    self.color_picker = None;
+                    Task::none()
+                } else {
+                    self.update(Msg::ClosePane)
+                }
+            }
             _ => Task::none(),
         }
     }
@@ -393,9 +609,16 @@ impl App {
             CalNotice::Snapshot(store) => {
                 self.store = store;
                 self.store.ensure_local();
+                self.maybe_emit_shelf();
             }
             CalNotice::Settings(s) => {
                 self.settings = s;
+                self.settings.sidebar_w =
+                    self.settings.sidebar_w.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                self.settings.inspector_w = self
+                    .settings
+                    .inspector_w
+                    .clamp(INSPECTOR_W_MIN, INSPECTOR_W_MAX);
             }
             CalNotice::Status(s) => self.status = s,
             CalNotice::Error(s) | CalNotice::Toast(s) => return self.show_toast(s),
@@ -420,15 +643,12 @@ impl App {
     }
 
     fn new_draft(&self, day: NaiveDate) -> Draft {
-        let cal_id = if self
-            .store
-            .calendars
-            .iter()
-            .any(|c| c.id == self.settings.default_calendar && !c.read_only)
-        {
+        let cal_id = if self.store.calendars.iter().any(|c| {
+            c.id == self.settings.default_calendar && !c.read_only && !c.hidden
+        }) {
             self.settings.default_calendar.clone()
         } else {
-            LOCAL_CAL_ID.to_string()
+            self.store.pick_default(&self.settings.default_calendar)
         };
         let ev = CalEvent::new_local(&cal_id, day, Utc::now());
         draft_from_event(&ev)
@@ -444,12 +664,43 @@ impl App {
         }
         match draft_to_event(d) {
             Ok(ev) => {
+                let day = ev
+                    .start_date
+                    .unwrap_or_else(|| ev.start.with_timezone(&chrono::Local).date_naive());
                 bridge::send(CalCmd::SaveEvent(ev));
-                self.pane = Pane::Idle;
+                self.show_day(day);
             }
             Err(e) => return self.show_toast(e),
         }
         Task::none()
+    }
+
+    fn show_day(&mut self, day: NaiveDate) {
+        self.cursor = day;
+        self.pane = Pane::Day(day);
+        self.cal_picker_open = false;
+    }
+
+    fn dismiss_draft(&mut self) {
+        let day = match &self.pane {
+            Pane::Draft(d) => parse_pretty_date(&d.date).unwrap_or(self.cursor),
+            Pane::Day(d) => *d,
+        };
+        self.show_day(day);
+    }
+
+    fn begin_rename(&mut self, id: String) -> Task<Msg> {
+        let draft = self
+            .store
+            .calendar(&id)
+            .map(|c| c.display_name().to_string())
+            .unwrap_or_default();
+        self.renaming = Some((id, draft));
+        self.color_picker = None;
+        Task::batch([
+            iced::widget::operation::focus(cal_rename_id()),
+            Task::done(Msg::RenameSelectAll),
+        ])
     }
 
     fn sync_visible(&self) {
@@ -470,16 +721,40 @@ impl App {
             View::Week => self.view_week(),
             View::Day => self.view_day(),
         };
-        let mut body = row![
-            self.view_sidebar(),
-            v_hairline(),
+        let win = self.window_w.max(1.0);
+        let rest_w = (win - self.settings.sidebar_w).max(1.0);
+        let board_ratio = ((rest_w - self.settings.inspector_w) / rest_w).clamp(0.35, 0.88);
+        let sidebar_ratio = (self.settings.sidebar_w / win).clamp(0.08, 0.45);
+        let palette = self.theme.extended_palette();
+        let line = palette.background.stronger.color;
+        let chrome = palette.background.weakest.color;
+        let canvas = palette.background.base.color;
+        let main = split_with(
+            SplitDir::Vertical,
             column![self.view_toolbar(), board]
                 .width(Length::Fill)
                 .height(Length::Fill),
-        ];
-        if !matches!(self.pane, Pane::Idle) {
-            body = body.push(v_hairline()).push(self.view_inspector());
-        }
+            board_ratio,
+            Msg::InspectorPress,
+            self.view_inspector(),
+            DividerColors {
+                a: canvas,
+                line,
+                b: chrome,
+            },
+        );
+        let body = split_with(
+            SplitDir::Vertical,
+            self.view_sidebar(),
+            sidebar_ratio,
+            Msg::SidebarPress,
+            main,
+            DividerColors {
+                a: chrome,
+                line,
+                b: canvas,
+            },
+        );
         let mut col = column![body].width(Length::Fill).height(Length::Fill);
         if let Some(toast) = &self.toast {
             col = col.push(self.view_toast(toast));
@@ -501,47 +776,131 @@ impl App {
     fn view_sidebar(&self) -> Element<'_, Msg> {
         let mut items = Vec::new();
         for cal in &self.store.calendars {
-            let disc = cal_disc(&cal.color, cal.visible);
-            let mut item = SidebarItem::new(cal.name.clone(), Msg::ToggleCal(cal.id.clone()))
+            if cal.hidden {
+                continue;
+            }
+            let disc = cal_disc(cal.display_color(), cal.visible);
+            let renaming = self
+                .renaming
+                .as_ref()
+                .is_some_and(|(id, _)| id == &cal.id);
+            let item = if renaming {
+                let draft = self
+                    .renaming
+                    .as_ref()
+                    .map(|(_, d)| d.as_str())
+                    .unwrap_or("");
+                let field = text_input("Calendar name", draft)
+                    .id(cal_rename_id())
+                    .size(12)
+                    .font(fonts::ui_medium())
+                    .line_height(iced::widget::text::LineHeight::Relative(1.2))
+                    .on_input(Msg::RenameInput)
+                    .on_submit(Msg::RenameCommit)
+                    .style(kit_input::style)
+                    .padding(Padding::from([1, 4]))
+                    .width(Length::Fill);
+                let fill = parse_hex(cal.display_color())
+                    .unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
+                let swatch = rename_color_swatch(fill, Msg::ToggleColor(cal.id.clone()));
+                let trailing = row![
+                    swatch,
+                    hide_cal_button(Msg::HideCal(cal.id.clone())),
+                    rename_commit_button(Msg::RenameCommit)
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center);
+                let trailing: Element<'_, Msg> =
+                    match self.color_picker.as_ref().filter(|(id, _)| id == &cal.id) {
+                        Some((_, picker)) => popover_anchored(
+                            trailing,
+                            popover(picker.view().map(Msg::ColorMsg)),
+                            Msg::ColorDismiss,
+                        )
+                        .into(),
+                        None => trailing.into(),
+                    };
+                let body = column![
+                    row![field, trailing]
+                        .spacing(SPACE_SM)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill),
+                    kit_text::caption(cal.name.clone()).style(kit_text::muted),
+                ]
+                .spacing(2)
+                .width(Length::Fill);
+                SidebarItem::new(cal.display_name().to_string(), Msg::Tick)
+                    .id(cal.id.clone())
+                    .active(self.settings.default_calendar == cal.id)
+                    .content(body)
+            } else {
+                SidebarItem::new(
+                    cal.display_name().to_string(),
+                    Msg::ToggleCal(cal.id.clone()),
+                )
                 .id(cal.id.clone())
                 .leading(disc)
                 .active(self.settings.default_calendar == cal.id)
-                .on_double_click(Msg::DefaultCal(cal.id.clone()));
-            if cal.read_only {
-                item = item.secondary("view");
-            }
+                .on_double_click(Msg::DefaultCal(cal.id.clone()))
+                .on_edit(Msg::RenameCal(cal.id.clone()))
+            };
             items.push(item);
         }
-        let mut sections = vec![SidebarSection::new("Calendars", items).fill()];
-        let mut account_items = Vec::new();
-        if self.store.accounts.is_empty() {
-            account_items.push(
-                SidebarItem::new("Settings → Calendar", Msg::Tick)
-                    .subtitle("Google, iCloud, URL, CalDAV"),
+        if items.is_empty() {
+            items.push(
+                SidebarItem::new("None shown", Msg::Tick)
+                    .subtitle("Settings → Calendar"),
             );
-        } else {
-            for acc in &self.store.accounts {
-                account_items.push(
-                    SidebarItem::new(acc.label.clone(), Msg::Tick)
-                        .subtitle(acc.kind.label()),
-                );
-            }
         }
-        sections.push(SidebarSection::new("Accounts", account_items));
+        let today = today();
+        let tomorrow = today.succ_opt().unwrap_or(today);
+        let sections = vec![
+            SidebarSection::new("Calendars", items),
+            self.quickview_section("Today", today),
+            self.quickview_section("Tomorrow", tomorrow),
+        ];
         let status = kit_text::caption(if self.status.is_empty() {
             " ".to_string()
         } else {
             self.status.clone()
         })
         .style(kit_text::muted);
-        container(column![
-            sidebar(sections).height(Length::Fill),
-            container(status).padding(Padding::from([SPACE_SM, SPACE_LG])),
-        ])
-        .width(Length::Fixed(SIDEBAR_W))
-        .height(Length::Fill)
-        .style(chrome_style)
-        .into()
+        SidebarPanel::new(sections)
+            .fill_width()
+            .footer(status.into())
+            .build()
+    }
+
+    fn quickview_section(&self, title: &'static str, day: NaiveDate) -> SidebarSection<'_, Msg> {
+        let events = self.store.visible_events_on(day);
+        let extra = events.len().saturating_sub(QUICKVIEW_CAP);
+        let mut items = Vec::new();
+        for ev in events.iter().take(QUICKVIEW_CAP) {
+            let color = self
+                .store
+                .calendar(&ev.calendar_id)
+                .map(|c| c.display_color().to_string())
+                .unwrap_or_else(|| "#7aa2f7".into());
+            items.push(
+                SidebarItem::new(ev.display_title().to_string(), Msg::OpenEvent(ev.id.clone()))
+                    .id(format!("qv-{}", ev.id))
+                    .leading(cal_disc(&color, true))
+                    .subtitle(ev.timed_label()),
+            );
+        }
+        if extra > 0 {
+            items.push(
+                SidebarItem::new(format!("+{extra} more"), Msg::SelectDay(day))
+                    .id(format!("qv-more-{day}")),
+            );
+        }
+        if items.is_empty() {
+            items.push(
+                SidebarItem::new("Nothing scheduled", Msg::Tick)
+                    .id(format!("qv-empty-{day}")),
+            );
+        }
+        SidebarSection::new(title, items)
     }
 
     fn view_toolbar(&self) -> Element<'_, Msg> {
@@ -588,7 +947,6 @@ impl App {
         let selected = match self.pane {
             Pane::Day(d) => Some(d),
             Pane::Draft(_) => Some(self.cursor),
-            _ => None,
         };
         let mut rows: Vec<Element<'_, Msg>> = Vec::new();
         rows.push(
@@ -597,7 +955,7 @@ impl App {
                 .map(|d| {
                     container(kit_text::caption(*d).style(kit_text::muted))
                         .width(Length::Fill)
-                        .center_x(Length::Fill)
+                        .padding(Padding::from([SPACE_SM, SPACE_SM]))
                         .into()
                 })
                 .collect::<Vec<_>>())
@@ -626,24 +984,24 @@ impl App {
         in_month: bool,
     ) -> Element<'_, Msg> {
         let events = self.store.visible_events_on(day);
-        let extra = events.len().saturating_sub(3);
-        let mut chips: Vec<Element<'_, Msg>> = events
+        let chips: Vec<Element<'_, Msg>> = events
             .iter()
-            .take(3)
             .map(|ev| event_chip(ev, self.store.calendar(&ev.calendar_id)))
             .collect();
-        if extra > 0 {
-            chips.push(
-                kit_text::caption(format!("+{extra} more"))
-                    .style(kit_text::muted)
-                    .into(),
-            );
-        }
-        let mut num = container(text(format!("{}", day.day())).size(12).font(fonts::ui_medium()))
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
+        let events_el: Element<'_, Msg> = if chips.is_empty() {
+            Space::new().width(Length::Fill).height(Length::Fill).into()
+        } else {
+            crate::fit::stack(chips)
+        };
+        let mut num = container(
+            text(format!("{}", day.day()))
+                .size(12)
+                .font(fonts::ui_medium()),
+        )
+        .width(Length::Fixed(22.0))
+        .height(Length::Fixed(22.0))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
         if is_today {
             num = num.style(today_disc);
         } else if !in_month {
@@ -652,15 +1010,17 @@ impl App {
                 ..container::Style::default()
             });
         }
-        let body = column![num, column(chips).spacing(1)]
+        let body = column![num, events_el]
             .spacing(SPACE_XS)
             .padding(Padding::from([SPACE_XS, SPACE_SM]))
+            .align_x(Alignment::Start)
             .width(Length::Fill)
             .height(Length::Fill);
         mouse_area(
             container(body)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .clip(true)
                 .style(move |theme: &Theme| cell_style(theme, selected)),
         )
         .on_press(Msg::SelectDay(day))
@@ -719,7 +1079,10 @@ impl App {
             let cal = self.store.calendar(&ev.calendar_id);
             let time = kit_text::caption(ev.timed_label()).style(kit_text::muted);
             let title = kit_text::body(ev.display_title().to_string());
-            let disc = cal_disc(cal.map(|c| c.color.as_str()).unwrap_or("#7aa2f7"), true);
+            let disc = cal_disc(
+                cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"),
+                true,
+            );
             let row = row![disc, column![title, time].spacing(2)]
                 .spacing(SPACE_MD)
                 .align_y(Alignment::Center)
@@ -748,13 +1111,19 @@ impl App {
     }
 
     fn view_inspector(&self) -> Element<'_, Msg> {
-        let content: Element<'_, Msg> = match &self.pane {
-            Pane::Idle => Space::new().into(),
-            Pane::Day(day) => self.view_day_pane(*day),
-            Pane::Draft(d) => self.view_draft(d),
+        let (body, actions): (Element<'_, Msg>, Option<Element<'_, Msg>>) = match &self.pane {
+            Pane::Day(day) => (self.view_day_pane(*day), None),
+            Pane::Draft(d) if d.read_only => (self.view_draft_read(d), None),
+            Pane::Draft(d) => (self.view_draft_edit(d), Some(self.view_draft_actions(d))),
         };
-        container(scrollable(content).height(Length::Fill))
-            .width(Length::Fixed(INSPECTOR_W))
+        let mut col = column![scrollable(body).height(Length::Fill)]
+            .width(Length::Fill)
+            .height(Length::Fill);
+        if let Some(actions) = actions {
+            col = col.push(actions);
+        }
+        container(col)
+            .width(Length::Fill)
             .height(Length::Fill)
             .style(chrome_style)
             .into()
@@ -763,7 +1132,9 @@ impl App {
     fn view_day_pane(&self, day: NaiveDate) -> Element<'_, Msg> {
         let events = self.store.visible_events_on(day);
         let mut rows: Vec<Element<'_, Msg>> = vec![
-            inspector_header(day_title(day)),
+            kit_text::subheading(day_title(day))
+                .wrapping(Wrapping::Word)
+                .into(),
             kit_btn::labeled("New Event", kit_btn::primary)
                 .on_press(Msg::NewOn(day))
                 .width(Length::Fill)
@@ -777,121 +1148,229 @@ impl App {
             );
         }
         for ev in events {
-            let cal = self.store.calendar(&ev.calendar_id);
-            rows.push(event_chip(ev, cal));
+            rows.push(self.inspector_event_row(ev));
         }
         column(rows)
             .spacing(SPACE_MD)
             .padding(SPACE_LG)
+            .width(Length::Fill)
             .into()
     }
 
-    fn view_draft(&self, d: &Draft) -> Element<'_, Msg> {
-        let cal_label = self
-            .store
-            .calendar(&d.calendar_id)
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "Calendar".into());
-        let cal_opts = self.store.writable_calendars().into_iter().map(|c| {
-            SelectOption::new(
-                c.name.clone(),
-                c.id == d.calendar_id,
-                Msg::DraftCalendar(c.id.clone()),
-            )
-            .mark(c.id.clone())
-        });
+    fn inspector_event_row<'a>(&'a self, ev: &'a CalEvent) -> Element<'a, Msg> {
+        let cal = self.store.calendar(&ev.calendar_id);
+        let disc = cal_disc(
+            cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"),
+            true,
+        );
+        let when = kit_text::caption(ev.timed_label()).style(kit_text::muted);
+        let title = kit_text::body(ev.display_title().to_string()).wrapping(Wrapping::Word);
+        button(
+            row![disc, column![title, when].spacing(2).width(Length::Fill)]
+                .spacing(SPACE_MD)
+                .align_y(Alignment::Center)
+                .padding(SPACE_SM),
+        )
+        .style(kit_btn::list_item(false))
+        .width(Length::Fill)
+        .on_press(Msg::OpenEvent(ev.id.clone()))
+        .into()
+    }
+
+    fn view_draft_read<'a>(&'a self, d: &'a Draft) -> Element<'a, Msg> {
+        let title = if d.title.trim().is_empty() {
+            "Untitled"
+        } else {
+            d.title.trim()
+        };
         let mut col = column![
-            inspector_header(if d.original_id.is_some() {
-                "Event"
-            } else {
-                "New Event"
-            }),
-            field(
-                "Title",
-                text_input("Event title", &d.title).on_input(Msg::DraftTitle),
-                None,
-                None,
-            ),
-            field(
-                "Date",
-                text_input("YYYY-MM-DD", &d.date).on_input(Msg::DraftDate),
-                None,
-                None,
-            ),
+            kit_text::subheading(title.to_string()).wrapping(Wrapping::Word),
+            kit_text::caption(draft_when_line(d)).style(kit_text::muted),
         ]
-        .spacing(SPACE_LG)
-        .padding(SPACE_LG);
-        if !d.all_day {
-            col = col.push(field(
-                "Starts",
-                text_input("9:00 AM or 09:00", &d.start_time).on_input(Msg::DraftStart),
-                None,
-                None,
-            ));
-            col = col.push(field(
-                "Ends",
-                text_input("10:00 AM or 10:00", &d.end_time).on_input(Msg::DraftEnd),
-                None,
-                None,
-            ));
+        .spacing(SPACE_SM)
+        .padding(SPACE_LG)
+        .width(Length::Fill);
+        if let Some(cal) = self.store.calendar(&d.calendar_id) {
+            col = col.push(
+                row![
+                    cal_disc(cal.display_color(), true),
+                    kit_text::body(cal.display_name().to_string()).wrapping(Wrapping::Word),
+                ]
+                .spacing(SPACE_MD)
+                .align_y(Alignment::Center),
+            );
         }
-        col = col.push(form_row(
-            "All day",
-            checkbox(d.all_day)
-                .style(sola_kit::components::checkbox_style)
-                .on_toggle(Msg::DraftAllDay),
-        ));
-        if !d.read_only {
-            col = col.push(field(
-                "Calendar",
-                select(
-                    cal_label,
-                    cal_opts,
-                    self.cal_picker_open,
-                    Msg::ToggleCalPicker,
-                    Msg::DismissCalPicker,
-                ),
-                None,
-                None,
-            ));
+        col = col.push(Space::new().height(Length::Fixed(SPACE_MD)));
+        if !d.location.trim().is_empty() {
+            let blocks = crate::rich::to_blocks(&d.location);
+            if !blocks.is_empty() {
+                col = col.push(prose(blocks, &self.theme, Msg::OpenUrl));
+            }
         }
-        col = col.push(field(
-            "Location",
-            text_input("Optional", &d.location).on_input(Msg::DraftLocation),
-            None,
-            None,
-        ));
-        col = col.push(field(
-            "Notes",
-            text_input("Optional", &d.notes).on_input(Msg::DraftNotes),
-            None,
-            None,
-        ));
+        if !d.notes.trim().is_empty() {
+            let blocks = crate::rich::to_blocks(&d.notes);
+            if !blocks.is_empty() {
+                col = col.push(prose(blocks, &self.theme, Msg::OpenUrl));
+            }
+        }
         if d.repeating {
             col = col.push(
-                kit_text::caption("Repeating iCloud event — editing the series comes later.")
+                kit_text::caption("Repeating — editing the series comes later.")
                     .style(kit_text::muted),
             );
         }
-        if d.read_only {
-            col = col.push(kit_btn::labeled("Close", kit_btn::secondary).on_press(Msg::ClosePane));
-        } else {
+        col.into()
+    }
+
+    fn view_draft_edit<'a>(&'a self, d: &'a Draft) -> Element<'a, Msg> {
+        let title = text_input("New Event", &d.title)
+            .size(18)
+            .font(fonts::display())
+            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+            .padding(Padding::from([2, 0]))
+            .width(Length::Fill)
+            .on_input(Msg::DraftTitle)
+            .style(draft_plain_input);
+
+        let mut when = column![draft_meta_row(
+            "Date",
+            draft_value_input("September 8, 2026", &d.date, Msg::DraftDate),
+        )]
+        .spacing(SPACE_MD)
+        .width(Length::Fill);
+        if !d.all_day {
+            when = when.push(draft_meta_row(
+                "Starts",
+                draft_value_input("9:00 AM", &d.start_time, Msg::DraftStart),
+            ));
+            when = when.push(draft_meta_row(
+                "Ends",
+                draft_value_input("10:00 AM", &d.end_time, Msg::DraftEnd),
+            ));
+        }
+        when = when.push(draft_meta_row(
+            "All day",
+            toggler(d.all_day)
+                .on_toggle(Msg::DraftAllDay)
+                .style(toggle_style),
+        ));
+
+        let details = column![
+            draft_meta_row("Calendar", self.calendar_picker(d)),
+            draft_meta_row(
+                "Location",
+                draft_value_input("Add a location", &d.location, Msg::DraftLocation),
+            ),
+            draft_meta_row(
+                "Notes",
+                draft_value_input("Add notes", &d.notes, Msg::DraftNotes),
+            ),
+        ]
+        .spacing(SPACE_MD)
+        .width(Length::Fill);
+
+        let mut col = column![title, draft_hairline(), when, draft_hairline(), details]
+            .spacing(SPACE_LG)
+            .padding(SPACE_LG)
+            .width(Length::Fill);
+        if d.repeating {
             col = col.push(
-                row![
-                    kit_btn::labeled("Save", kit_btn::primary)
-                        .on_press(Msg::SaveDraft)
-                        .width(Length::Fill),
-                    kit_btn::labeled("Cancel", kit_btn::ghost).on_press(Msg::ClosePane),
-                ]
-                .spacing(SPACE_SM),
+                kit_text::caption("Repeating — editing the series comes later.")
+                    .style(kit_text::muted),
             );
-            if d.original_id.is_some() && !d.repeating {
-                col = col.push(
-                    kit_btn::labeled("Delete", kit_btn::danger).on_press(Msg::DeleteDraft),
-                );
-            }
         }
         col.into()
+    }
+
+    fn calendar_picker<'a>(&'a self, d: &'a Draft) -> Element<'a, Msg> {
+        let cal = self.store.calendar(&d.calendar_id);
+        let name = cal
+            .map(|c| c.display_name().to_string())
+            .unwrap_or_else(|| "Calendar".into());
+        let color = cal.map(|c| c.display_color()).unwrap_or("#7aa2f7");
+        let chevron = icon_svg(
+            icon_handle(if self.cal_picker_open {
+                "lucide/chevron-up"
+            } else {
+                "lucide/chevron-down"
+            }),
+            12,
+        );
+        let trigger = button(
+            row![
+                cal_disc(color, true),
+                kit_text::body(name)
+                    .wrapping(Wrapping::Word)
+                    .width(Length::Fill),
+                chevron,
+            ]
+            .spacing(SPACE_MD)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+        )
+        .padding(Padding::from([3, 0]))
+        .style(kit_btn::ghost)
+        .width(Length::Fill)
+        .on_press(Msg::ToggleCalPicker);
+
+        if !self.cal_picker_open {
+            return trigger.into();
+        }
+
+        let rows: Vec<Element<'_, Msg>> = self
+            .store
+            .writable_calendars()
+            .into_iter()
+            .map(|c| {
+                let selected = c.id == d.calendar_id;
+                let check: Element<'_, Msg> = if selected {
+                    icon_svg(icon_handle("lucide/check"), 12)
+                } else {
+                    Space::new().width(12).height(12).into()
+                };
+                button(
+                    row![
+                        cal_disc(c.display_color(), true),
+                        kit_text::body(c.display_name().to_string())
+                            .wrapping(Wrapping::Word)
+                            .width(Length::Fill),
+                        check,
+                    ]
+                    .spacing(SPACE_MD)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+                )
+                .padding(Padding::from([6, 8]))
+                .width(Length::Fill)
+                .style(kit_btn::list_item(selected))
+                .on_press(Msg::DraftCalendar(c.id.clone()))
+                .into()
+            })
+            .collect();
+        let menu = popover(column(rows).spacing(2))
+            .padding(SPACE_SM)
+            .width(Length::Fill);
+        popover_anchored(trigger, menu, Msg::DismissCalPicker)
+            .placement(sola_kit::components::popover::Placement::Below)
+            .match_anchor_width()
+            .into()
+    }
+
+    fn view_draft_actions(&self, d: &Draft) -> Element<'_, Msg> {
+        let mut row = row![kit_btn::labeled("Save", kit_btn::primary)
+            .on_press(Msg::SaveDraft)
+            .width(Length::Fill)]
+        .spacing(SPACE_SM)
+        .width(Length::Fill);
+        if d.original_id.is_some() && !d.repeating {
+            row = row.push(kit_btn::labeled("Delete", kit_btn::danger).on_press(Msg::DeleteDraft));
+        }
+        column![
+            draft_hairline(),
+            container(row).padding(Padding::from([SPACE_MD, SPACE_LG])),
+        ]
+        .width(Length::Fill)
+        .into()
     }
 
     fn view_toast(&self, toast: &str) -> Element<'_, Msg> {
@@ -925,9 +1404,9 @@ fn draft_from_event(ev: &CalEvent) -> Draft {
         notes: ev.notes.clone(),
         location: ev.location.clone(),
         all_day: ev.all_day,
-        date: date.to_string(),
-        start_time: format!("{:02}:{:02}", local_start.hour(), local_start.minute()),
-        end_time: format!("{:02}:{:02}", local_end.hour(), local_end.minute()),
+        date: pretty_date(date),
+        start_time: format_hm(local_start.hour(), local_start.minute()),
+        end_time: format_hm(local_end.hour(), local_end.minute()),
         read_only: ev.read_only,
         repeating: ev.master_id.is_some(),
         remote_id: ev.remote_id.clone(),
@@ -937,8 +1416,8 @@ fn draft_from_event(ev: &CalEvent) -> Draft {
 }
 
 fn draft_to_event(d: &Draft) -> Result<CalEvent, String> {
-    let date = NaiveDate::parse_from_str(d.date.trim(), "%Y-%m-%d")
-        .map_err(|_| "date must be YYYY-MM-DD".to_string())?;
+    let date = parse_pretty_date(&d.date)
+        .ok_or_else(|| "date must be like September 8, 2026".to_string())?;
     let mut ev = if let Some(id) = &d.original_id {
         CalEvent {
             id: id.clone(),
@@ -1033,13 +1512,167 @@ fn parse_time(s: &str) -> Result<NaiveTime, String> {
     NaiveTime::from_hms_opt(hour, m, 0).ok_or_else(|| "bad time".into())
 }
 
-fn inspector_header<'a>(title: impl Into<String>) -> Element<'a, Msg> {
+fn draft_when_line(d: &Draft) -> String {
+    let date = parse_pretty_date(&d.date)
+        .map(day_title)
+        .unwrap_or_else(|| d.date.clone());
+    if d.all_day {
+        format!("{date} · All day")
+    } else {
+        format!("{date} · {} – {}", d.start_time, d.end_time)
+    }
+}
+
+fn cal_rename_id() -> iced::widget::Id {
+    iced::widget::Id::new("calendar-rename")
+}
+
+fn draft_meta_row<'a>(
+    label: &'static str,
+    control: impl Into<Element<'a, Msg>>,
+) -> Element<'a, Msg> {
     row![
-        kit_text::subheading(title.into()).width(Length::Fill),
-        kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(Msg::ClosePane),
+        kit_text::caption(label)
+            .style(kit_text::muted)
+            .width(Length::Fixed(DRAFT_LABEL_W)),
+        control.into(),
     ]
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center)
+    .width(Length::Fill)
     .into()
+}
+
+fn draft_value_input<'a>(
+    placeholder: &'static str,
+    value: &'a str,
+    on_input: fn(String) -> Msg,
+) -> Element<'a, Msg> {
+    text_input(placeholder, value)
+        .size(13)
+        .font(fonts::ui())
+        .padding(Padding::from([2, 0]))
+        .width(Length::Fill)
+        .on_input(on_input)
+        .style(draft_plain_input)
+        .into()
+}
+
+fn draft_plain_input(theme: &Theme, _status: kit_input::Status) -> kit_input::Style {
+    let p = theme.extended_palette();
+    kit_input::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        icon: p.secondary.base.text,
+        placeholder: Color {
+            a: 0.75,
+            ..p.secondary.base.text
+        },
+        value: p.background.base.text,
+        selection: mix_white(p.background.weaker.color, 0.16),
+    }
+}
+
+fn draft_hairline<'a>() -> Element<'a, Msg> {
+    container(Space::new().width(Length::Fill).height(1))
+        .width(Length::Fill)
+        .height(1)
+        .style(|theme: &Theme| {
+            let p = theme.extended_palette();
+            container::Style {
+                background: Some(Background::Color(mix_white(
+                    p.background.weakest.color,
+                    HAIRLINE_A,
+                ))),
+                ..container::Style::default()
+            }
+        })
+        .into()
+}
+
+fn shelf_fingerprint(cals: &[Calendar]) -> String {
+    let mut parts: Vec<String> = cals
+        .iter()
+        .map(|c| {
+            format!(
+                "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+                c.id,
+                c.hidden,
+                c.alias.as_deref().unwrap_or(""),
+                c.color_override.as_deref().unwrap_or(""),
+                c.name
+            )
+        })
+        .collect();
+    parts.sort();
+    parts.join("\u{1e}")
+}
+
+fn shelf_fingerprint_from_bus(cals: &[CalendarShelf]) -> String {
+    let mut parts: Vec<String> = cals
+        .iter()
+        .map(|c| {
+            format!(
+                "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+                c.id,
+                c.hidden,
+                c.alias.as_deref().unwrap_or(""),
+                c.color_override.as_deref().unwrap_or(""),
+                c.name
+            )
+        })
+        .collect();
+    parts.sort();
+    parts.join("\u{1e}")
+}
+
+fn rename_color_swatch<'a>(color: Color, on_press: Msg) -> Element<'a, Msg> {
+    const SIZE: f32 = 16.0;
+    let ink = if (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) > 0.55 {
+        Color::from_rgb(0.12, 0.12, 0.14)
+    } else {
+        Color::WHITE
+    };
+    let tile = container(Space::new())
+        .width(Length::Fixed(SIZE))
+        .height(Length::Fixed(SIZE))
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                color: Color { a: 0.55, ..ink },
+                width: 1.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..container::Style::default()
+        });
+    mouse_area(tile)
+        .interaction(mouse::Interaction::Pointer)
+        .on_press(on_press)
+        .into()
+}
+
+fn rename_commit_button<'a>(msg: Msg) -> Element<'a, Msg> {
+    let handle = icon_handle("lucide/check");
+    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.85, 0.87, 0.90));
+    button(glyph)
+        .padding(Padding::from([2, 5]))
+        .style(kit_btn::ghost)
+        .on_press(msg)
+        .into()
+}
+
+fn hide_cal_button<'a>(msg: Msg) -> Element<'a, Msg> {
+    let handle = icon_handle("lucide/eye-off");
+    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.85, 0.87, 0.90));
+    button(glyph)
+        .padding(Padding::from([2, 5]))
+        .style(kit_btn::ghost)
+        .on_press(msg)
+        .into()
 }
 
 fn view_chip<'a>(label: &'a str, active: bool, view: View) -> Element<'a, Msg> {
@@ -1055,7 +1688,7 @@ fn view_chip<'a>(label: &'a str, active: bool, view: View) -> Element<'a, Msg> {
 
 fn event_chip<'a>(ev: &'a CalEvent, cal: Option<&'a Calendar>) -> Element<'a, Msg> {
     let color = cal
-        .and_then(|c| parse_hex(&c.color))
+        .and_then(|c| parse_hex(c.display_color()))
         .unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
     let disc = container(Space::new().width(8).height(8))
         .width(Length::Fixed(8.0))
@@ -1159,14 +1792,6 @@ fn today_disc(theme: &Theme) -> container::Style {
         },
         ..container::Style::default()
     }
-}
-
-fn v_hairline() -> Element<'static, Msg> {
-    container(Space::new().width(1).height(Length::Fill))
-        .width(1)
-        .height(Length::Fill)
-        .style(hairline_style)
-        .into()
 }
 
 fn h_hairline() -> Element<'static, Msg> {

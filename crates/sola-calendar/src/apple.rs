@@ -239,6 +239,9 @@ async fn list_calendars(
             read_only: false,
             remote_id: Some(href.clone()),
             href: Some(href),
+            alias: None,
+            color_override: None,
+            hidden: false,
         });
     }
     if out.is_empty() {

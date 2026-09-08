@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 use sola_bus::topics::{
-    calendar_url_label, normalize_calendar_url, CalendarAccount, CalendarAccountKind,
-    CalendarConfig,
+    calendar_url_label, google_calendar_client_id, normalize_calendar_url, CalendarAccount,
+    CalendarAccountKind, CalendarConfig,
 };
 use sola_core::Encrypted;
 
@@ -24,6 +24,9 @@ pub enum CalCmd {
     SaveEvent(CalEvent),
     DeleteEvent(String),
     SetVisible { id: String, visible: bool },
+    SetAlias { id: String, alias: String },
+    SetColor { id: String, color: String },
+    SetHidden { id: String, hidden: bool },
     ApplyConfig(CalendarConfig),
     SaveSettings(Settings),
     Shutdown,
@@ -105,6 +108,36 @@ async fn run() {
                 }
                 persist(&state);
             }
+            CalCmd::SetAlias { id, alias } => {
+                if let Some(cal) = state.store.calendars.iter_mut().find(|c| c.id == id) {
+                    let alias = alias.trim();
+                    cal.alias = if alias.is_empty() || alias == cal.name {
+                        None
+                    } else {
+                        Some(alias.to_string())
+                    };
+                }
+                persist(&state);
+            }
+            CalCmd::SetColor { id, color } => {
+                if let Some(cal) = state.store.calendars.iter_mut().find(|c| c.id == id) {
+                    let color = color.trim();
+                    cal.color_override = if color.is_empty() {
+                        None
+                    } else {
+                        Some(color.to_string())
+                    };
+                }
+                persist(&state);
+            }
+            CalCmd::SetHidden { id, hidden } => {
+                if let Some(cal) = state.store.calendars.iter_mut().find(|c| c.id == id) {
+                    cal.hidden = hidden;
+                    cal.visible = !hidden;
+                }
+                ensure_default(&mut state);
+                persist(&state);
+            }
             CalCmd::SaveEvent(event) => save_event(&mut state, event).await,
             CalCmd::DeleteEvent(id) => delete_event(&mut state, &id).await,
             CalCmd::ApplyConfig(cfg) => apply_config(&mut state, cfg).await,
@@ -129,6 +162,43 @@ fn persist(state: &State) {
         return;
     }
     bridge::emit(CalNotice::Snapshot(state.store.clone()));
+}
+
+fn ensure_default(state: &mut State) {
+    let next = state.store.pick_default(&state.settings.default_calendar);
+    if next == state.settings.default_calendar {
+        return;
+    }
+    state.settings.default_calendar = next;
+    let _ = store::save_settings(&state.dirs, &state.settings);
+    bridge::emit(CalNotice::Settings(state.settings.clone()));
+}
+
+fn accounts_match(a: &[Account], b: &[Account]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).all(|(x, y)| {
+        x.id == y.id
+            && x.kind == y.kind
+            && x.label == y.label
+            && x.email == y.email
+            && x.apple_id == y.apple_id
+            && secret_eq(&x.app_password, &y.app_password)
+            && secret_eq(&x.access_token, &y.access_token)
+            && secret_eq(&x.refresh_token, &y.refresh_token)
+            && x.expiry_unix == y.expiry_unix
+            && x.url == y.url
+            && x.username == y.username
+    })
+}
+
+fn secret_eq(a: &Option<Encrypted<String>>, b: &Option<Encrypted<String>>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.0 == y.0,
+        _ => false,
+    }
 }
 
 async fn sync_all(state: &mut State) {
@@ -173,7 +243,7 @@ async fn google_token(state: &mut State, account_id: &str) -> anyhow::Result<Str
     let account = &state.store.accounts[idx];
     let mut access = account.access();
     let refresh = account.refresh();
-    let client_id = account.google_client_id.clone();
+    let client_id = google_calendar_client_id();
     if access.is_empty() {
         anyhow::bail!("not signed in");
     }
@@ -424,21 +494,56 @@ fn upsert_event(store: &mut Store, event: CalEvent) {
 }
 
 async fn apply_config(state: &mut State, cfg: CalendarConfig) {
+    let shelf_changed = state.store.apply_shelf(&cfg.calendars);
+    if shelf_changed {
+        ensure_default(state);
+    }
+    // Calendar publishes the shelf with empty accounts. That is not
+    // “disconnect every account”. Settings still sends accounts when it
+    // edits them; empty accounts + empty shelf is disconnect-all.
+    if cfg.accounts.is_empty() && !cfg.calendars.is_empty() {
+        if shelf_changed {
+            persist(state);
+        }
+        return;
+    }
+    let client_id = google_calendar_client_id();
+    let incoming: Vec<Account> = cfg
+        .accounts
+        .iter()
+        .map(|a| account_from_bus(a, &client_id))
+        .collect();
+    let accounts_changed = !accounts_match(&state.store.accounts, &incoming);
+    if !accounts_changed {
+        if shelf_changed {
+            persist(state);
+        }
+        return;
+    }
     let new_ids: std::collections::HashSet<String> =
-        cfg.accounts.iter().map(|a| a.id.clone()).collect();
+        incoming.iter().map(|a| a.id.clone()).collect();
     let old_ids: Vec<String> = state.store.accounts.iter().map(|a| a.id.clone()).collect();
     for id in old_ids {
         if !new_ids.contains(&id) {
             disconnect(state, &id);
         }
     }
-    state.settings.google_client_id = cfg.google_client_id.clone();
+    state.settings.google_client_id = client_id.clone();
     let _ = store::save_settings(&state.dirs, &state.settings);
-    state.store.accounts = cfg
+    let principals: std::collections::HashMap<String, String> = state
+        .store
         .accounts
         .iter()
-        .map(|a| account_from_bus(a, &cfg.google_client_id))
+        .map(|a| (a.id.clone(), a.principal_url.clone()))
         .collect();
+    state.store.accounts = incoming;
+    for acc in &mut state.store.accounts {
+        if acc.principal_url.is_empty() {
+            if let Some(p) = principals.get(&acc.id) {
+                acc.principal_url = p.clone();
+            }
+        }
+    }
     persist(state);
     let dav: Vec<Account> = state
         .store
@@ -568,6 +673,9 @@ fn ensure_url_calendar(state: &mut State, account: &Account) {
         read_only: true,
         remote_id: Some(url.clone()),
         href: Some(url),
+        alias: None,
+        color_override: None,
+        hidden: false,
     };
     if state.store.calendars.iter().any(|c| c.id == cal.id) {
         cal.id = new_id("cal");

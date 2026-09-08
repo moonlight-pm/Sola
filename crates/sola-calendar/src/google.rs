@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use sola_bus::topics::google_calendar_client_secret;
 
 use crate::model::{CalEvent, Calendar, CalKind};
 
@@ -25,10 +26,12 @@ pub async fn refresh(
     client_id: &str,
     refresh_token: &str,
 ) -> Result<TokenResponse> {
+    let secret = google_calendar_client_secret();
     token_request(
         http,
         &[
             ("client_id", client_id),
+            ("client_secret", secret.as_str()),
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
         ],
@@ -110,6 +113,9 @@ pub async fn list_calendars(
                 read_only,
                 remote_id: Some(item.id),
                 href: None,
+                alias: None,
+                color_override: None,
+                hidden: false,
             }
         })
         .collect())
@@ -133,6 +139,8 @@ struct ApiEvent {
     description: Option<String>,
     #[serde(default)]
     location: Option<String>,
+    #[serde(default, rename = "hangoutLink", skip_serializing_if = "Option::is_none")]
+    hangout_link: Option<String>,
     #[serde(default)]
     status: Option<String>,
     start: Option<ApiWhen>,
@@ -330,6 +338,7 @@ fn event_to_api(event: &CalEvent) -> ApiEvent {
         summary: Some(event.title.clone()),
         description: Some(event.notes.clone()),
         location: Some(event.location.clone()),
+        hangout_link: None,
         status: None,
         start: Some(start),
         end: Some(end),
@@ -340,12 +349,22 @@ fn api_to_event(item: ApiEvent, calendar: &Calendar) -> Option<CalEvent> {
     let start_w = item.start?;
     let end_w = item.end.clone().unwrap_or_else(|| start_w.clone());
     let (all_day, start, end, start_date, end_date) = parse_when(&start_w, &end_w)?;
+    let mut location = item.location.unwrap_or_default();
+    if let Some(hangout) = item.hangout_link.filter(|s| !s.is_empty()) {
+        if !location.contains(&hangout) {
+            if location.trim().is_empty() {
+                location = hangout;
+            } else {
+                location = format!("{location}\n{hangout}");
+            }
+        }
+    }
     Some(CalEvent {
         id: format!("{}:{}", calendar.id, item.id),
         calendar_id: calendar.id.clone(),
         title: item.summary.unwrap_or_default(),
         notes: item.description.unwrap_or_default(),
-        location: item.location.unwrap_or_default(),
+        location,
         all_day,
         start,
         end,

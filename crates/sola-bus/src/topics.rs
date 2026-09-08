@@ -395,14 +395,60 @@ impl MailAccount {
     }
 }
 
+/// Sola's Google Cloud Desktop OAuth client (PKCE, Calendar API).
+/// Public by design — same family as sola-spotify's shared Web API id.
+/// Google's token endpoint still requires the Desktop `client_secret`.
+pub const GOOGLE_CALENDAR_CLIENT_ID: &str =
+    "";
+pub const GOOGLE_CALENDAR_CLIENT_SECRET: &str = "";
+
+/// Shipped client, or `SOLA_GOOGLE_CALENDAR_CLIENT_ID` when that env is set.
+pub fn google_calendar_client_id() -> String {
+    env_or("SOLA_GOOGLE_CALENDAR_CLIENT_ID", GOOGLE_CALENDAR_CLIENT_ID)
+}
+
+/// Shipped secret, or `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET` when that env is set.
+pub fn google_calendar_client_secret() -> String {
+    env_or(
+        "SOLA_GOOGLE_CALENDAR_CLIENT_SECRET",
+        GOOGLE_CALENDAR_CLIENT_SECRET,
+    )
+}
+
+fn env_or(key: &str, default: &str) -> String {
+    match std::env::var(key) {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => default.to_string(),
+    }
+}
+
 /// Calendar accounts. Edited by sola-settings, consumed by sola-calendar.
 /// Secrets (app password, OAuth tokens) encrypt on disk via [`Encrypted`].
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct CalendarConfig {
     /// Google OAuth Desktop client ID (shared by every Google account).
+    /// Empty on the wire means the shipped [`GOOGLE_CALENDAR_CLIENT_ID`].
     pub google_client_id: String,
     pub accounts: Vec<CalendarAccount>,
+    /// Discovered calendars (from sola-calendar). Settings edits hidden /
+    /// alias / colour; empty on an accounts-only publish means “leave as-is”.
+    pub calendars: Vec<CalendarShelf>,
+}
+
+/// One calendar as shown in Settings and the Calendar sidebar.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct CalendarShelf {
+    pub id: String,
+    pub name: String,
+    pub alias: Option<String>,
+    pub color: String,
+    pub color_override: Option<String>,
+    pub hidden: bool,
+    pub visible: bool,
+    /// `local`, `google`, `apple`, `url`, or `caldav`.
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2230,9 +2276,27 @@ mod tests {
     }
 
     #[test]
+    fn shipped_google_calendar_client_id_is_desktop() {
+        assert_eq!(
+            GOOGLE_CALENDAR_CLIENT_ID,
+            ""
+        );
+        assert!(GOOGLE_CALENDAR_CLIENT_ID.ends_with(".apps.googleusercontent.com"));
+        assert!(GOOGLE_CALENDAR_CLIENT_SECRET.starts_with("GOCSPX-"));
+    }
+
+    #[test]
     fn calendar_config_roundtrips() {
         let cfg = CalendarConfig {
             google_client_id: "abc.apps.googleusercontent.com".into(),
+            calendars: vec![CalendarShelf {
+                id: "local".into(),
+                name: "On This Computer".into(),
+                hidden: false,
+                visible: true,
+                kind: "local".into(),
+                ..CalendarShelf::default()
+            }],
             accounts: vec![
                 CalendarAccount {
                     id: "a1".into(),
@@ -2273,6 +2337,9 @@ mod tests {
                 assert_eq!(back.accounts[1].url, cfg.accounts[1].url);
                 assert_eq!(back.accounts[2].kind, CalendarAccountKind::Caldav);
                 assert_eq!(back.accounts[2].username, "you@fastmail.com");
+                assert_eq!(back.calendars.len(), 1);
+                assert_eq!(back.calendars[0].id, "local");
+                assert!(!back.calendars[0].hidden);
             }
             other => panic!("expected CalendarConfig, got {other:?}"),
         }

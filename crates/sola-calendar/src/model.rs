@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
+use sola_bus::topics::{google_calendar_client_id, CalendarShelf};
 use sola_core::Encrypted;
 
 pub const LOCAL_CAL_ID: &str = "local";
@@ -41,6 +42,16 @@ impl CalKind {
             Self::Caldav => "CalDAV",
         }
     }
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Google => "google",
+            Self::Apple => "apple",
+            Self::Url => "url",
+            Self::Caldav => "caldav",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +71,15 @@ pub struct Calendar {
     pub remote_id: Option<String>,
     #[serde(default)]
     pub href: Option<String>,
+    /// Local display label. Empty/None uses [`Self::name`].
+    #[serde(default)]
+    pub alias: Option<String>,
+    /// Local colour. Empty/None uses provider [`Self::color`].
+    #[serde(default)]
+    pub color_override: Option<String>,
+    /// Hidden from the Calendar sidebar (events stay off).
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl Calendar {
@@ -74,6 +94,40 @@ impl Calendar {
             read_only: false,
             remote_id: None,
             href: None,
+            alias: None,
+            color_override: None,
+            hidden: false,
+        }
+    }
+
+    pub fn active(&self) -> bool {
+        self.visible && !self.hidden
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self.alias.as_deref().map(str::trim) {
+            Some(a) if !a.is_empty() => a,
+            _ => self.name.as_str(),
+        }
+    }
+
+    pub fn display_color(&self) -> &str {
+        match self.color_override.as_deref().map(str::trim) {
+            Some(c) if !c.is_empty() => c,
+            _ => self.color.as_str(),
+        }
+    }
+
+    pub fn to_shelf(&self) -> CalendarShelf {
+        CalendarShelf {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            alias: self.alias.clone(),
+            color: self.color.clone(),
+            color_override: self.color_override.clone(),
+            hidden: self.hidden,
+            visible: self.visible,
+            kind: self.kind.wire().into(),
         }
     }
 }
@@ -284,7 +338,7 @@ impl Store {
         let hidden: std::collections::HashSet<&str> = self
             .calendars
             .iter()
-            .filter(|c| !c.visible)
+            .filter(|c| !c.active())
             .map(|c| c.id.as_str())
             .collect();
         let mut out: Vec<&CalEvent> = self
@@ -301,8 +355,80 @@ impl Store {
     }
 
     pub fn writable_calendars(&self) -> Vec<&Calendar> {
-        self.calendars.iter().filter(|c| !c.read_only).collect()
+        self.calendars
+            .iter()
+            .filter(|c| !c.read_only && !c.hidden)
+            .collect()
     }
+
+    pub fn pick_default(&self, current: &str) -> String {
+        if self
+            .calendars
+            .iter()
+            .any(|c| c.id == current && !c.hidden)
+        {
+            return current.to_string();
+        }
+        self.calendars
+            .iter()
+            .find(|c| !c.hidden && !c.read_only)
+            .or_else(|| self.calendars.iter().find(|c| !c.hidden))
+            .map(|c| c.id.clone())
+            .unwrap_or_else(|| LOCAL_CAL_ID.into())
+    }
+
+    /// Apply Settings shelf prefs. Empty `shelves` means leave as-is.
+    /// Hide also turns the calendar off; re-show turns it back on.
+    /// Click-to-toggle `visible` is not overwritten except on that transition.
+    pub fn apply_shelf(&mut self, shelves: &[CalendarShelf]) -> bool {
+        if shelves.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        for s in shelves {
+            let Some(cal) = self.calendars.iter_mut().find(|c| c.id == s.id) else {
+                continue;
+            };
+            let alias = normalize_alias(&s.alias, &cal.name);
+            let color_override = normalize_color_override(&s.color_override);
+            if cal.alias != alias {
+                cal.alias = alias;
+                changed = true;
+            }
+            if cal.color_override != color_override {
+                cal.color_override = color_override;
+                changed = true;
+            }
+            if cal.hidden != s.hidden {
+                cal.hidden = s.hidden;
+                cal.visible = !s.hidden;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+fn normalize_alias(alias: &Option<String>, name: &str) -> Option<String> {
+    match alias.as_deref().map(str::trim) {
+        Some(a) if !a.is_empty() && a != name => Some(a.to_string()),
+        _ => None,
+    }
+}
+
+fn normalize_color_override(color: &Option<String>) -> Option<String> {
+    match color.as_deref().map(str::trim) {
+        Some(c) if !c.is_empty() => Some(c.to_string()),
+        _ => None,
+    }
+}
+
+fn default_sidebar_w() -> f32 {
+    220.0
+}
+
+fn default_inspector_w() -> f32 {
+    320.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +439,12 @@ pub struct Settings {
     pub default_calendar: String,
     #[serde(default)]
     pub google_client_id: String,
+    #[serde(default = "default_sidebar_w")]
+    pub sidebar_w: f32,
+    #[serde(default = "default_inspector_w")]
+    pub inspector_w: f32,
+    #[serde(default)]
+    pub accounts_collapsed: bool,
 }
 
 impl Default for Settings {
@@ -320,7 +452,10 @@ impl Default for Settings {
         Self {
             view: View::Month,
             default_calendar: LOCAL_CAL_ID.into(),
-            google_client_id: std::env::var("SOLA_GOOGLE_CALENDAR_CLIENT_ID").unwrap_or_default(),
+            google_client_id: google_calendar_client_id(),
+            sidebar_w: default_sidebar_w(),
+            inspector_w: default_inspector_w(),
+            accounts_collapsed: false,
         }
     }
 }
@@ -389,5 +524,27 @@ mod tests {
         };
         assert!(e.occurs_on(NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()));
         assert!(!e.occurs_on(NaiveDate::from_ymd_opt(2026, 9, 9).unwrap()));
+    }
+
+    #[test]
+    fn hidden_is_inactive_and_shelf_re_show_activates() {
+        let mut store = Store {
+            calendars: vec![Calendar::local()],
+            events: Vec::new(),
+            accounts: Vec::new(),
+        };
+        store.calendars[0].hidden = true;
+        store.calendars[0].visible = false;
+        assert!(!store.calendars[0].active());
+        let day = NaiveDate::from_ymd_opt(2026, 9, 8).unwrap();
+        store.events.push(CalEvent::new_local(LOCAL_CAL_ID, day, Utc::now()));
+        assert!(store.visible_events_on(day).is_empty());
+
+        let mut shelf = store.calendars[0].to_shelf();
+        shelf.hidden = false;
+        assert!(store.apply_shelf(&[shelf]));
+        assert!(!store.calendars[0].hidden);
+        assert!(store.calendars[0].visible);
+        assert_eq!(store.visible_events_on(day).len(), 1);
     }
 }

@@ -2,7 +2,15 @@
 
 use chrono::{Datelike, Duration, Months, NaiveDate};
 
-pub const WEEKDAYS: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+pub const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 
 pub fn today() -> NaiveDate {
     chrono::Local::now().date_naive()
@@ -67,6 +75,24 @@ pub fn day_title(date: NaiveDate) -> String {
         month_name(date.month()),
         date.day()
     )
+}
+
+pub fn pretty_date(date: NaiveDate) -> String {
+    format!("{} {}, {}", month_name(date.month()), date.day(), date.year())
+}
+
+pub fn parse_pretty_date(s: &str) -> Option<NaiveDate> {
+    let s = s.trim();
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(d);
+    }
+    let (left, year) = s.rsplit_once(',')?;
+    let year: i32 = year.trim().parse().ok()?;
+    let left = left.trim();
+    let (month, day) = left.rsplit_once(' ')?;
+    let day: u32 = day.parse().ok()?;
+    let month = (1u32..=12).find(|&m| month_name(m).eq_ignore_ascii_case(month))?;
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
 pub fn week_title(week: [NaiveDate; 7]) -> String {

@@ -189,7 +189,7 @@ impl App {
                         self.mail_ui.sync_from_canonical(&self.mail);
                     }
                     Some(Topic::CalendarConfig(cfg)) => {
-                        self.calendar = cfg;
+                        merge_calendar_config(&mut self.calendar, cfg);
                         self.calendar_ui.sync_from_canonical(&self.calendar);
                     }
                     Some(Topic::Windows(windows)) => {
@@ -357,4 +357,16 @@ impl App {
     fn subscription(&self) -> Subscription<Msg> {
         bus_subscription().map(Msg::BusMessage)
     }
+}
+
+/// Accounts-only publishes leave `calendars` empty (keep the last shelf).
+/// A shelf publish with empty accounts keeps the last accounts list.
+fn merge_calendar_config(dst: &mut CalendarConfig, mut src: CalendarConfig) {
+    if src.calendars.is_empty() && !dst.calendars.is_empty() {
+        src.calendars = dst.calendars.clone();
+    }
+    if src.accounts.is_empty() && !src.calendars.is_empty() && !dst.accounts.is_empty() {
+        src.accounts = dst.accounts.clone();
+    }
+    *dst = src;
 }

@@ -10,6 +10,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use sola_bus::topics::google_calendar_client_secret;
 
 pub const REDIRECT_PORT: u16 = 8765;
 pub const REDIRECT_PATH: &str = "/oauth";
@@ -66,17 +67,22 @@ pub struct TokenResponse {
 
 pub fn sign_in(client_id: String) -> Result<(TokenResponse, String)> {
     let flow = begin(&client_id)?;
+    let listener = bind_listener()?;
     sola_core::open_url(&flow.url).map_err(|e| anyhow!(e))?;
-    let code = wait_for_code(&flow.state)?;
+    let code = wait_for_code(listener, &flow.state)?;
     let tok = exchange_code(&client_id, &code, &flow.verifier)?;
     let email = user_email(&tok.access_token).unwrap_or_else(|_| "Google".into());
     Ok((tok, email))
 }
 
-fn wait_for_code(expected_state: &str) -> Result<String> {
+fn bind_listener() -> Result<TcpListener> {
     let listener = TcpListener::bind(("127.0.0.1", REDIRECT_PORT))
         .map_err(|e| anyhow!("unable to listen on 127.0.0.1:{REDIRECT_PORT}: {e}"))?;
     listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+fn wait_for_code(listener: TcpListener, expected_state: &str) -> Result<String> {
     let deadline = Instant::now() + LOGIN_TIMEOUT;
     loop {
         if Instant::now() > deadline {
@@ -161,9 +167,11 @@ fn failure_page(error: &str) -> String {
 }
 
 fn exchange_code(client_id: &str, code: &str, verifier: &str) -> Result<TokenResponse> {
+    let secret = google_calendar_client_secret();
     let body = format!(
-        "client_id={}&grant_type=authorization_code&code={}&redirect_uri={}&code_verifier={}",
+        "client_id={}&client_secret={}&grant_type=authorization_code&code={}&redirect_uri={}&code_verifier={}",
         urlencoding::encode(client_id),
+        urlencoding::encode(&secret),
         urlencoding::encode(code),
         urlencoding::encode(&redirect_uri()),
         urlencoding::encode(verifier),
@@ -174,12 +182,19 @@ fn exchange_code(client_id: &str, code: &str, verifier: &str) -> Result<TokenRes
 fn token_request(body: &str) -> Result<TokenResponse> {
     let mut response = ureq::post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
+        .config()
+        .http_status_as_error(false)
+        .build()
         .send(body)
         .map_err(|e| anyhow!("token request failed: {e}"))?;
+    let status = response.status();
     let text = response
         .body_mut()
         .read_to_string()
         .map_err(|e| anyhow!("token body: {e}"))?;
+    if !status.is_success() {
+        bail!("token request failed ({status}): {text}");
+    }
     serde_json::from_str(&text).map_err(|e| anyhow!("token JSON: {e}"))
 }
 

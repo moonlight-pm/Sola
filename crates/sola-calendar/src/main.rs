@@ -2,7 +2,9 @@
 
 mod apple;
 mod bridge;
+mod fit;
 mod google;
+mod rich;
 mod ics;
 mod model;
 mod paths;
