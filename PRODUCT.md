@@ -27,7 +27,7 @@ leaving the storybook.
 
 Sola is a full Wayland desktop environment: process supervisor, bus, call
 plane, River compositor bridge, Iced shell, and first-party apps (browser,
-terminal, mail, workspaces, arcade, settings, …).
+terminal, mail, calendar, workspaces, arcade, settings, …).
 
 **sola-kit** is the shared Iced app kit and the storybook that dogfoods it.
 Every kit visual change is meant to show up in the storybook first.

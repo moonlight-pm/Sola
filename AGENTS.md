@@ -98,6 +98,7 @@ crates/
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
   sola-workspaces/     # Project / workspace rail + agent-aware PTYs
   sola-mail/           # Kit-native mail client
+  sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)

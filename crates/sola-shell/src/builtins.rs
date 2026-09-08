@@ -82,6 +82,13 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
+            app_id: "sola-calendar".into(),
+            label: "Calendar".into(),
+            command: "/opt/sola/bin/sola-calendar".into(),
+            icon: "lucide/calendar".into(),
+            ..Default::default()
+        },
+        Application {
             app_id: "sola-arcade".into(),
             label: "Arcade".into(),
             command: "/opt/sola/bin/sola-arcade".into(),

@@ -40,7 +40,7 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  workspaces · browser        │
-         │              │  wrapper · mail · scope · spotify │
+         │              │  wrapper · mail · calendar · scope · spotify │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -68,6 +68,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-browser` | Iced chrome + CEF engine (single crate). Default web MIME / `xdg-open` (`sola-browser.desktop`). Web `Notification` → `Topic::AppNotification`. |
 | `crates/sola-wrapper` | Website wrappers as first-class apps (`sola-wrapper <id>`; CEF via sola-browser lib; catalog `kind`/`url` on `Topic::Application`) |
 | `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. Attachments: IMAP `BODYSTRUCTURE` + MIME parts; SMTP `multipart/mixed`; kit FilePicker for attach/save. `Topic::MailConfig`: IMAP-enabled accounts combined into six canonical boxes; `aliases` + `from_hidden` + extra SMTP `accounts` + `primary_from`. Per account: list/fetch session + write (MOVE) session + IDLE. Last-session list snapshot under `~/.local/state/sola/mail/snapshot.json`. Gmail `CREATE Archive` if unmapped. |
+| `crates/sola-calendar` | Kit-native calendar. Local **On This Computer** plus Google Calendar API v3 (PKCE) and iCloud CalDAV. Store `~/.local/state/sola/calendar/store.json`; settings `~/.config/sola/calendar/settings.json`. Secrets age-encrypted. Launcher **Calendar** (`lucide/calendar`). |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (novus server → Linux or Mac client) |
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
