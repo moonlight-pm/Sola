@@ -1,7 +1,7 @@
-//! sola-settings — iced port. Single window, sidebar + main pane,
-//! two panels: Applications and Mail. State is bus-replayed: the
-//! sticky `Application` and `MailConfig` topics seed our view on
-//! connect and re-sync on every external edit.
+//! sola-settings — iced port. Single window, sidebar + main pane.
+//! Panels: Applications, Mail, Calendar. State is bus-replayed: the
+//! sticky `Application`, `MailConfig`, and `CalendarConfig` topics
+//! seed our view on connect and re-sync on every external edit.
 //!
 //! Zoned: content-only. Floating: kit titlebar + rounded frame.
 
@@ -11,7 +11,9 @@ use iced::widget::{column, container, row};
 use iced::{Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::Message;
-use sola_bus::topics::{ApplicationsConfig, MailConfig, Topic, TopicKind, Window as BusWindow};
+use sola_bus::topics::{
+    ApplicationsConfig, CalendarConfig, MailConfig, Topic, TopicKind, Window as BusWindow,
+};
 use sola_core::KeyCode;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
@@ -24,6 +26,8 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 mod applications;
+mod calendar;
+mod calendar_oauth;
 mod edit;
 mod mail;
 mod mail_discover;
@@ -31,6 +35,7 @@ mod mail_from_api;
 mod procfs;
 
 use applications::{AppsMsg, AppsState};
+use calendar::{CalMsg, CalendarState};
 use mail::{MailMsg, MailState};
 
 const APP_ID: &str = "sola-settings";
@@ -65,6 +70,7 @@ fn main() -> iced::Result {
 enum Panel {
     Applications,
     Mail,
+    Calendar,
 }
 
 struct App {
@@ -74,6 +80,8 @@ struct App {
     applications: ApplicationsConfig,
     /// Canonical mail config, replayed from `Topic::MailConfig`.
     mail: MailConfig,
+    /// Canonical calendar accounts, replayed from `Topic::CalendarConfig`.
+    calendar: CalendarConfig,
     /// Currently-open windows on the compositor — drives the
     /// "running, not configured" candidate list under Applications.
     running: Vec<BusWindow>,
@@ -85,6 +93,7 @@ struct App {
     /// Per-panel local UI state (drafts, edit buffers, errors).
     apps_ui: AppsState,
     mail_ui: MailState,
+    calendar_ui: CalendarState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -96,10 +105,12 @@ impl Default for App {
             panel: Panel::Applications,
             applications: ApplicationsConfig::default(),
             mail: MailConfig::default(),
+            calendar: CalendarConfig::default(),
             running: Vec::new(),
             theme: default_theme(),
             apps_ui: AppsState::default(),
             mail_ui: MailState::default(),
+            calendar_ui: CalendarState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -112,6 +123,7 @@ enum Msg {
     SelectPanel(Panel),
     Apps(AppsMsg),
     Mail(MailMsg),
+    Calendar(CalMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -176,6 +188,10 @@ impl App {
                         self.mail = cfg;
                         self.mail_ui.sync_from_canonical(&self.mail);
                     }
+                    Some(Topic::CalendarConfig(cfg)) => {
+                        self.calendar = cfg;
+                        self.calendar_ui.sync_from_canonical(&self.calendar);
+                    }
                     Some(Topic::Windows(windows)) => {
                         self.running = windows;
                     }
@@ -189,6 +205,10 @@ impl App {
             }
             Msg::Mail(m) => {
                 return mail::update(m, &mut self.mail, &mut self.mail_ui).map(Msg::Mail);
+            }
+            Msg::Calendar(m) => {
+                return calendar::update(m, &mut self.calendar, &mut self.calendar_ui)
+                    .map(Msg::Calendar);
             }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
@@ -245,6 +265,7 @@ impl App {
     fn focused_value(&self, id: Option<&iced::widget::Id>) -> Option<String> {
         let id = id?;
         mail::focused_value(&self.mail_ui, id)
+            .or_else(|| calendar::focused_value(&self.calendar_ui, id))
             .or_else(|| applications::focused_value(&self.apps_ui, id))
     }
 
@@ -253,6 +274,9 @@ impl App {
             return;
         };
         if mail::set_focused_value(&mut self.mail_ui, id, &value) {
+            return;
+        }
+        if calendar::set_focused_value(&mut self.calendar_ui, id, &value) {
             return;
         }
         let _ = applications::set_focused_value(&mut self.apps_ui, id, &value);
@@ -266,12 +290,15 @@ impl App {
                     .active(self.panel == Panel::Applications),
                 SidebarItem::new("Mail", Msg::SelectPanel(Panel::Mail))
                     .active(self.panel == Panel::Mail),
+                SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
+                    .active(self.panel == Panel::Calendar),
             ],
         )]);
 
         let title_text = match self.panel {
             Panel::Applications => "Applications",
             Panel::Mail => "Mail",
+            Panel::Calendar => "Calendar",
         };
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
@@ -290,6 +317,14 @@ impl App {
             Panel::Mail => column![
                 kit_text::heading(title_text),
                 mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Calendar => column![
+                kit_text::heading(title_text),
+                calendar::view(&self.calendar, &self.calendar_ui).map(Msg::Calendar),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))

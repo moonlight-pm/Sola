@@ -9143,7 +9143,6 @@ name = "sola-calendar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "iced",
@@ -9153,7 +9152,6 @@ dependencies = [
  "rustls 0.23.43",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "sola-bus",
  "sola-core",
  "sola-kit",
@@ -9378,15 +9376,20 @@ dependencies = [
 name = "sola-settings"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "iced",
+ "rand 0.9.5",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sola-bus",
  "sola-core",
  "sola-kit",
  "tokio",
  "tracing",
  "ureq",
+ "urlencoding",
 ]
 
 [[package]]

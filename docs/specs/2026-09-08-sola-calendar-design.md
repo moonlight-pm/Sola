@@ -3,7 +3,7 @@
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
 **Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API + iCloud CalDAV. **Installed** `calendar`+`shell` release 2026-09-08 (unsmoked)  
-**Gaps:** no invites / RSVP; no alerts; no generic CalDAV (Fastmail / Nextcloud); Google needs a Desktop OAuth client ID (Sola does not ship a Cloud project); Apple repeating events are display-only (series edit later); no drag-resize; no timezone picker (local); not in Settings; menubar clock is still a date grid, not this app
+**Gaps:** no invites / RSVP; no alerts; no generic CalDAV (Fastmail / Nextcloud); Google needs a Desktop OAuth client ID (Sola does not ship a Cloud project); Apple repeating events are display-only (series edit later); no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app
 
 ## Goal
 
@@ -18,7 +18,7 @@ Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a da
 | Local | Always **On This Computer**. Events live in `~/.local/state/sola/calendar/store.json` |
 | Google | Calendar API v3. Authorization Code + PKCE. Desktop OAuth client ID is stored in-app (env `SOLA_GOOGLE_CALENDAR_CLIENT_ID` or the Connect field). Redirect `http://127.0.0.1:8765/oauth` |
 | Apple | iCloud CalDAV (`https://caldav.icloud.com`) with Apple ID + app-specific password |
-| Accounts | In-app (Calendars sidebar). Not Settings v1 |
+| Accounts | **Settings → Calendar.** Persistent `Topic::CalendarConfig` (Google OAuth client ID + Google/iCloud accounts). Calendar consumes it; local “On This Computer” stays in the app |
 | Secrets | Age-encrypted on disk via `sola_core::Encrypted` (`~/.config/sola/key`) |
 | Process | In-process worker (mail/spotify pattern), not a bus daemon |
 | Recurrence | Google: `singleEvents=true` instances. Apple: RRULE expanded in the visible window; series edit is later |
@@ -53,5 +53,5 @@ Today is an accent disc on the day number. Calendar color is a 10px disc, not a 
 
 | Path | Role |
 |---|---|
-| `~/.config/sola/calendar/settings.json` | View, selected day, default calendar, Google client id |
-| `~/.local/state/sola/calendar/store.json` | Calendars, events, accounts (secrets encrypted) |
+| `~/.config/sola/calendar/settings.json` | View, selected day, default calendar |
+| `~/.local/state/sola/calendar/store.json` | Calendars + events (visibility). Accounts live on `Topic::CalendarConfig` |

@@ -1,65 +1,15 @@
-//! Google Calendar API v3 + Authorization Code PKCE.
+//! Google Calendar API v3. OAuth sign-in lives in Settings.
 
-use std::net::SocketAddr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, NaiveDate, Utc};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
-use tokio::sync::watch;
 
 use crate::model::{CalEvent, Calendar, CalKind};
 
-pub const REDIRECT_PORT: u16 = 8765;
-pub const REDIRECT_PATH: &str = "/oauth";
-pub const SCOPES: &str = "https://www.googleapis.com/auth/calendar";
-const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const API: &str = "https://www.googleapis.com/calendar/v3";
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
-pub fn redirect_uri() -> String {
-    format!("http://127.0.0.1:{REDIRECT_PORT}{REDIRECT_PATH}")
-}
-
-pub struct Flow {
-    pub verifier: String,
-    pub state: String,
-    pub url: String,
-}
-
-pub fn begin(client_id: &str) -> Result<Flow> {
-    let client_id = client_id.trim();
-    if client_id.is_empty() {
-        bail!("a Google OAuth Desktop client ID is required");
-    }
-    let verifier = random_token(48);
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let state = random_token(18);
-    let url = format!(
-        "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&code_challenge_method=S256&code_challenge={challenge}&state={state}&scope={}&access_type=offline&prompt=consent",
-        urlencoding::encode(client_id),
-        urlencoding::encode(&redirect_uri()),
-        urlencoding::encode(SCOPES),
-    );
-    Ok(Flow {
-        verifier,
-        state,
-        url,
-    })
-}
-
-fn random_token(bytes: usize) -> String {
-    let mut buffer = vec![0u8; bytes];
-    rand::rng().fill_bytes(&mut buffer);
-    URL_SAFE_NO_PAD.encode(buffer)
-}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TokenResponse {
@@ -68,120 +18,6 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     #[serde(default)]
     pub expires_in: Option<u64>,
-}
-
-pub async fn wait_for_code(
-    expected_state: &str,
-    mut cancel: watch::Receiver<bool>,
-) -> Result<String> {
-    let address: SocketAddr = ([127, 0, 0, 1], REDIRECT_PORT).into();
-    let listener = TcpListener::bind(address)
-        .await
-        .with_context(|| format!("unable to listen on {address} for the Google redirect"))?;
-    let deadline = tokio::time::sleep(LOGIN_TIMEOUT);
-    tokio::pin!(deadline);
-    loop {
-        let (mut stream, _) = tokio::select! {
-            accepted = listener.accept() => accepted.context("redirect listener failed")?,
-            _ = cancel.changed() => {
-                if *cancel.borrow() { bail!("sign-in cancelled"); }
-                continue;
-            }
-            _ = &mut deadline => bail!("sign-in timed out; try again"),
-        };
-        let mut reader = BufReader::new(&mut stream);
-        let mut request_line = String::new();
-        if reader.read_line(&mut request_line).await.is_err() {
-            continue;
-        }
-        let outcome = parse_request_line(&request_line, expected_state);
-        let (status, body) = match &outcome {
-            Ok(_) => ("200 OK", success_page()),
-            Err(error) => ("400 Bad Request", failure_page(&error.to_string())),
-        };
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = stream.write_all(response.as_bytes()).await;
-        let _ = stream.shutdown().await;
-        match outcome {
-            Ok(code) => return Ok(code),
-            Err(error) => {
-                tracing::debug!("ignored Google redirect request: {error}");
-                continue;
-            }
-        }
-    }
-}
-
-fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
-    let target = line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| anyhow!("malformed request"))?;
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    if path != REDIRECT_PATH {
-        bail!("unexpected path {path}");
-    }
-    let mut code = None;
-    let mut state = None;
-    let mut error = None;
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = urlencoding::decode(value)
-            .map(|v| v.into_owned())
-            .unwrap_or_else(|_| value.to_string());
-        match key {
-            "code" => code = Some(value),
-            "state" => state = Some(value),
-            "error" => error = Some(value),
-            _ => {}
-        }
-    }
-    if let Some(error) = error {
-        bail!("Google refused the sign-in: {error}");
-    }
-    if state.as_deref() != Some(expected_state) {
-        bail!("state mismatch");
-    }
-    code.ok_or_else(|| anyhow!("Google did not return an authorization code"))
-}
-
-fn success_page() -> String {
-    "<html><body style=\"font-family:sans-serif;background:#0c0e12;color:#e8eaed;padding:48px\"><h1>Signed in</h1><p>You can close this tab and return to Calendar.</p></body></html>".into()
-}
-
-fn failure_page(error: &str) -> String {
-    format!(
-        "<html><body style=\"font-family:sans-serif;background:#0c0e12;color:#e8eaed;padding:48px\"><h1>Sign-in did not finish</h1><p>{}</p></body></html>",
-        html_escape(error)
-    )
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-pub async fn exchange_code(
-    http: &reqwest::Client,
-    client_id: &str,
-    code: &str,
-    verifier: &str,
-) -> Result<TokenResponse> {
-    token_request(
-        http,
-        &[
-            ("client_id", client_id),
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &redirect_uri()),
-            ("code_verifier", verifier),
-        ],
-    )
-    .await
 }
 
 pub async fn refresh(
@@ -424,17 +260,6 @@ pub async fn delete_event(
         bail!("delete failed: {text}");
     }
     Ok(())
-}
-
-pub async fn user_email(http: &reqwest::Client, token: &str) -> Result<String> {
-    let url = format!("{API}/users/me/calendarList/primary");
-    #[derive(Deserialize)]
-    struct Primary {
-        #[serde(default)]
-        id: String,
-    }
-    let primary: Primary = authed_get(http, token, &url).await?;
-    Ok(primary.id)
 }
 
 async fn authed_get<T: for<'de> Deserialize<'de>>(

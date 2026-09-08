@@ -35,9 +35,6 @@ fn main() -> iced::Result {
                 item("new_event", "New Event", Some(KeyCode::N.meta())),
                 item("refresh", "Refresh", Some(KeyCode::R.meta())),
                 MenuItem::Divider,
-                item("connect_google", "Connect Google Calendar…", None),
-                item("connect_apple", "Connect iCloud Calendar…", None),
-                MenuItem::Divider,
                 MenuItem::Action {
                     id: "quit".into(),
                     label: "Quit Calendar".into(),

@@ -395,6 +395,69 @@ impl MailAccount {
     }
 }
 
+/// Calendar accounts. Edited by sola-settings, consumed by sola-calendar.
+/// Secrets (app password, OAuth tokens) encrypt on disk via [`Encrypted`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct CalendarConfig {
+    /// Google OAuth Desktop client ID (shared by every Google account).
+    pub google_client_id: String,
+    pub accounts: Vec<CalendarAccount>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CalendarAccountKind {
+    #[default]
+    Google,
+    Apple,
+}
+
+impl CalendarAccountKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::Apple => "iCloud",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarAccount {
+    pub id: String,
+    pub kind: CalendarAccountKind,
+    pub label: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub apple_id: String,
+    #[serde(default)]
+    pub app_password: Option<Encrypted<String>>,
+    #[serde(default)]
+    pub access_token: Option<Encrypted<String>>,
+    #[serde(default)]
+    pub refresh_token: Option<Encrypted<String>>,
+    #[serde(default)]
+    pub expiry_unix: u64,
+}
+
+impl Default for CalendarAccount {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: CalendarAccountKind::Google,
+            label: String::new(),
+            email: String::new(),
+            apple_id: String::new(),
+            app_password: None,
+            access_token: None,
+            refresh_token: None,
+            expiry_unix: 0,
+        }
+    }
+}
+
 impl MailConfig {
     /// Inbox owns this From (its email or an alias).
     pub fn inbox_owns_from(&self, from: &str) -> bool {
@@ -1153,6 +1216,11 @@ define_topics! {
     // Click on a notification / pile row. Shell raises the app, then emits
     // this so the source can select a tab (browser) or similar.
     NotificationActivate(NotificationActivate),
+
+    // Calendar accounts. Edited by sola-settings, consumed by sola-calendar.
+    // Appended last so TopicKind postcard discriminants stay stable.
+    #[persistent]
+    CalendarConfig(CalendarConfig),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1160,7 +1228,7 @@ define_topics! {
 pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
     matches!(
         kind,
-        TopicKind::AppNotification | TopicKind::NotificationActivate
+        TopicKind::AppNotification | TopicKind::NotificationActivate | TopicKind::CalendarConfig
     )
 }
 
@@ -2114,6 +2182,33 @@ mod tests {
                 assert!(cfg.from_hidden.is_empty());
             }
             other => panic!("expected MailConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn calendar_config_roundtrips() {
+        let cfg = CalendarConfig {
+            google_client_id: "abc.apps.googleusercontent.com".into(),
+            accounts: vec![CalendarAccount {
+                id: "a1".into(),
+                kind: CalendarAccountKind::Apple,
+                label: "you@icloud.com".into(),
+                email: "you@icloud.com".into(),
+                apple_id: "you@icloud.com".into(),
+                app_password: Some(Encrypted("xxxx-xxxx".into())),
+                ..CalendarAccount::default()
+            }],
+        };
+        let topic = Topic::CalendarConfig(cfg.clone());
+        let msg = topic.to_message();
+        match Topic::parse(&msg) {
+            Some(Topic::CalendarConfig(back)) => {
+                assert_eq!(back.google_client_id, cfg.google_client_id);
+                assert_eq!(back.accounts.len(), 1);
+                assert_eq!(back.accounts[0].kind, CalendarAccountKind::Apple);
+                assert_eq!(back.accounts[0].app_password.as_ref().unwrap().0, "xxxx-xxxx");
+            }
+            other => panic!("expected CalendarConfig, got {other:?}"),
         }
     }
 }

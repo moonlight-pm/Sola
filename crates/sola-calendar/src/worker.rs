@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use chrono::NaiveDate;
+use sola_bus::topics::{CalendarAccount, CalendarAccountKind, CalendarConfig};
 use sola_core::Encrypted;
-use tokio::sync::watch;
 
 use crate::bridge;
 use crate::model::{
@@ -20,10 +20,7 @@ pub enum CalCmd {
     SaveEvent(CalEvent),
     DeleteEvent(String),
     SetVisible { id: String, visible: bool },
-    ConnectGoogle { client_id: String },
-    CancelGoogle,
-    ConnectApple { apple_id: String, app_password: String },
-    Disconnect { account_id: String },
+    ApplyConfig(CalendarConfig),
     SaveSettings(Settings),
     Shutdown,
 }
@@ -35,7 +32,6 @@ pub enum CalNotice {
     Status(String),
     Error(String),
     Toast(String),
-    GoogleAuthUrl(String),
 }
 
 pub fn start() {
@@ -58,7 +54,6 @@ struct State {
     settings: Settings,
     http: reqwest::Client,
     window: (NaiveDate, NaiveDate),
-    google_cancel: Option<watch::Sender<bool>>,
 }
 
 async fn run() {
@@ -77,7 +72,6 @@ async fn run() {
         dirs,
         http,
         window: default_window(),
-        google_cancel: None,
     };
     bridge::emit(CalNotice::Settings(state.settings.clone()));
     bridge::emit(CalNotice::Snapshot(state.store.clone()));
@@ -109,17 +103,7 @@ async fn run() {
             }
             CalCmd::SaveEvent(event) => save_event(&mut state, event).await,
             CalCmd::DeleteEvent(id) => delete_event(&mut state, &id).await,
-            CalCmd::ConnectGoogle { client_id } => connect_google(&mut state, client_id).await,
-            CalCmd::CancelGoogle => {
-                if let Some(tx) = &state.google_cancel {
-                    let _ = tx.send(true);
-                }
-            }
-            CalCmd::ConnectApple {
-                apple_id,
-                app_password,
-            } => connect_apple(&mut state, apple_id, app_password).await,
-            CalCmd::Disconnect { account_id } => disconnect(&mut state, &account_id),
+            CalCmd::ApplyConfig(cfg) => apply_config(&mut state, cfg).await,
         }
     }
 }
@@ -420,106 +404,99 @@ fn upsert_event(store: &mut Store, event: CalEvent) {
     }
 }
 
-async fn connect_google(state: &mut State, client_id: String) {
-    let client_id = client_id.trim().to_string();
-    if client_id.is_empty() {
-        bridge::emit(CalNotice::Error(
-            "paste a Google OAuth Desktop client ID first".into(),
-        ));
-        return;
+async fn apply_config(state: &mut State, cfg: CalendarConfig) {
+    let new_ids: std::collections::HashSet<String> =
+        cfg.accounts.iter().map(|a| a.id.clone()).collect();
+    let old_ids: Vec<String> = state.store.accounts.iter().map(|a| a.id.clone()).collect();
+    for id in old_ids {
+        if !new_ids.contains(&id) {
+            disconnect(state, &id);
+        }
     }
-    state.settings.google_client_id = client_id.clone();
+    state.settings.google_client_id = cfg.google_client_id.clone();
     let _ = store::save_settings(&state.dirs, &state.settings);
-    let flow = match google::begin(&client_id) {
-        Ok(f) => f,
-        Err(e) => {
-            bridge::emit(CalNotice::Error(e.to_string()));
-            return;
+    state.store.accounts = cfg
+        .accounts
+        .iter()
+        .map(|a| account_from_bus(a, &cfg.google_client_id))
+        .collect();
+    persist(state);
+    let apple: Vec<Account> = state
+        .store
+        .accounts
+        .iter()
+        .filter(|a| a.kind == CalKind::Apple)
+        .cloned()
+        .collect();
+    for acc in apple {
+        let has_cals = state
+            .store
+            .calendars
+            .iter()
+            .any(|c| c.account_id.as_deref() == Some(acc.id.as_str()));
+        if has_cals {
+            continue;
         }
-    };
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-    state.google_cancel = Some(cancel_tx);
-    bridge::emit(CalNotice::GoogleAuthUrl(flow.url.clone()));
-    bridge::emit(CalNotice::Status("Waiting for Google sign-in…".into()));
-    let code = match google::wait_for_code(&flow.state, cancel_rx).await {
-        Ok(c) => c,
-        Err(e) => {
-            bridge::emit(CalNotice::Error(e.to_string()));
-            return;
-        }
-    };
-    match google::exchange_code(&state.http, &client_id, &code, &flow.verifier).await {
-        Ok(tok) => {
-            let email = google::user_email(&state.http, &tok.access_token)
-                .await
-                .unwrap_or_else(|_| "Google".into());
-            let account = Account {
-                id: new_id("gacc"),
-                kind: CalKind::Google,
-                label: email.clone(),
-                email: email.clone(),
-                apple_id: String::new(),
-                app_password: None,
-                google_client_id: client_id,
-                access_token: Some(Encrypted(tok.access_token)),
-                refresh_token: tok.refresh_token.filter(|s| !s.is_empty()).map(Encrypted),
-                expiry_unix: google::expiry_unix(tok.expires_in),
-                principal_url: String::new(),
-            };
-            let id = account.id.clone();
-            state.store.accounts.push(account);
-            persist(state);
-            if let Err(e) = sync_google(state, &id).await {
-                bridge::emit(CalNotice::Error(format!("Google sync: {e}")));
-            } else {
-                persist(state);
-                bridge::emit(CalNotice::Toast(format!("Connected {email}")));
+        match apple::discover(
+            &state.http,
+            &acc.apple_id,
+            &acc.secret(),
+            &acc.id,
+        )
+        .await
+        {
+            Ok((principal, calendars)) => {
+                if let Some(slot) = state.store.accounts.iter_mut().find(|a| a.id == acc.id) {
+                    slot.principal_url = principal;
+                }
+                merge_calendars(&mut state.store, &acc.id, calendars);
             }
-            bridge::emit(CalNotice::Status("Synced".into()));
+            Err(e) => bridge::emit(CalNotice::Error(format!("iCloud: {e}"))),
         }
-        Err(e) => bridge::emit(CalNotice::Error(format!("Google token: {e}"))),
+    }
+    persist(state);
+    sync_all(state).await;
+}
+
+fn account_from_bus(a: &CalendarAccount, google_client_id: &str) -> Account {
+    Account {
+        id: a.id.clone(),
+        kind: match a.kind {
+            CalendarAccountKind::Google => CalKind::Google,
+            CalendarAccountKind::Apple => CalKind::Apple,
+        },
+        label: a.label.clone(),
+        email: a.email.clone(),
+        apple_id: a.apple_id.clone(),
+        app_password: a.app_password.clone(),
+        google_client_id: match a.kind {
+            CalendarAccountKind::Google => google_client_id.to_string(),
+            CalendarAccountKind::Apple => String::new(),
+        },
+        access_token: a.access_token.clone(),
+        refresh_token: a.refresh_token.clone(),
+        expiry_unix: a.expiry_unix,
+        principal_url: String::new(),
     }
 }
 
-async fn connect_apple(state: &mut State, apple_id: String, app_password: String) {
-    let apple_id = apple_id.trim().to_string();
-    let app_password: String = app_password.chars().filter(|c| !c.is_whitespace()).collect();
-    if apple_id.is_empty() || app_password.is_empty() {
-        bridge::emit(CalNotice::Error(
-            "Apple ID and an app-specific password are required".into(),
-        ));
-        return;
-    }
-    bridge::emit(CalNotice::Status("Connecting to iCloud…".into()));
-    let account_id = new_id("aacc");
-    match apple::discover(&state.http, &apple_id, &app_password, &account_id).await {
-        Ok((principal, calendars)) => {
-            let account = Account {
-                id: account_id.clone(),
-                kind: CalKind::Apple,
-                label: apple_id.clone(),
-                email: apple_id.clone(),
-                apple_id,
-                app_password: Some(Encrypted(app_password)),
-                google_client_id: String::new(),
-                access_token: None,
-                refresh_token: None,
-                expiry_unix: 0,
-                principal_url: principal,
-            };
-            state.store.accounts.push(account);
-            merge_calendars(&mut state.store, &account_id, calendars);
-            persist(state);
-            if let Err(e) = sync_apple(state, &account_id).await {
-                bridge::emit(CalNotice::Error(format!("iCloud sync: {e}")));
-            } else {
-                persist(state);
-                bridge::emit(CalNotice::Toast("Connected iCloud".into()));
-            }
-            bridge::emit(CalNotice::Status("Synced".into()));
-        }
-        Err(e) => bridge::emit(CalNotice::Error(format!("iCloud: {e}"))),
-    }
+pub fn account_to_bus(a: &Account) -> Option<CalendarAccount> {
+    let kind = match a.kind {
+        CalKind::Google => CalendarAccountKind::Google,
+        CalKind::Apple => CalendarAccountKind::Apple,
+        CalKind::Local => return None,
+    };
+    Some(CalendarAccount {
+        id: a.id.clone(),
+        kind,
+        label: a.label.clone(),
+        email: a.email.clone(),
+        apple_id: a.apple_id.clone(),
+        app_password: a.app_password.clone(),
+        access_token: a.access_token.clone(),
+        refresh_token: a.refresh_token.clone(),
+        expiry_unix: a.expiry_unix,
+    })
 }
 
 fn disconnect(state: &mut State, account_id: &str) {
@@ -547,5 +524,4 @@ fn disconnect(state: &mut State, account_id: &str) {
         let _ = store::save_settings(&state.dirs, &state.settings);
     }
     persist(state);
-    bridge::emit(CalNotice::Toast("Disconnected".into()));
 }

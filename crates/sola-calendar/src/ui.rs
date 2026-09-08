@@ -15,7 +15,7 @@ use iced::{
     Theme,
 };
 use sola_bus::Message;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{CalendarConfig, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::style::{
     HAIRLINE_A, ON_FILL_DARK, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
@@ -29,7 +29,6 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::bridge;
-use crate::google;
 use crate::model::{CalEvent, Calendar, Settings, Store, View, LOCAL_CAL_ID, parse_hex};
 use crate::timeutil::{
     WEEKDAYS, day_title, first_of_month, month_span, month_title, month_weeks_filled, next_month,
@@ -54,10 +53,8 @@ pub struct App {
     status: String,
     toast: Option<String>,
     toast_gen: u64,
-    google_client_id: String,
-    apple_id: String,
-    apple_password: String,
     cal_picker_open: bool,
+    got_config: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -65,8 +62,6 @@ enum Pane {
     Idle,
     Day(NaiveDate),
     Draft(Draft),
-    ConnectGoogle,
-    ConnectApple,
 }
 
 #[derive(Debug, Clone)]
@@ -118,19 +113,11 @@ pub enum Msg {
     SaveDraft,
     DeleteDraft,
     ClosePane,
-    ConnectGoogle,
-    ConnectApple,
-    GoogleClientId(String),
-    AppleId(String),
-    ApplePassword(String),
-    SubmitGoogle,
-    SubmitApple,
-    Disconnect(String),
     Refresh,
     DismissToast { generation: u64 },
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     Tick,
-    Noop,
+    MaybeMigrate,
 }
 
 impl Default for App {
@@ -151,26 +138,27 @@ impl Default for App {
             status: String::new(),
             toast: None,
             toast_gen: 0,
-            google_client_id: std::env::var("SOLA_GOOGLE_CALENDAR_CLIENT_ID").unwrap_or_default(),
-            apple_id: String::new(),
-            apple_password: String::new(),
             cal_picker_open: false,
+            got_config: false,
         }
     }
 }
 
 impl App {
     pub fn boot() -> (Self, Task<Msg>) {
-        let mut app = Self::default();
-        app.google_client_id = app.settings.google_client_id.clone();
-        if app.google_client_id.is_empty() {
-            app.google_client_id =
-                std::env::var("SOLA_GOOGLE_CALENDAR_CLIENT_ID").unwrap_or_default();
-        }
+        let app = Self::default();
         bridge::send(CalCmd::Boot);
         (
             app,
-            sola_kit::window_ready_task(Msg::WindowReady),
+            Task::batch([
+                sola_kit::window_ready_task(Msg::WindowReady),
+                Task::perform(
+                    async {
+                        tokio::time::sleep(Duration::from_millis(400)).await;
+                    },
+                    |_| Msg::MaybeMigrate,
+                ),
+            ]),
         )
     }
 
@@ -210,7 +198,7 @@ impl App {
                 sola_kit::close_app(APP_ID);
                 Task::none()
             }
-            Msg::Tick | Msg::Noop => Task::none(),
+            Msg::Tick => Task::none(),
             Msg::Prev => {
                 self.cursor = match self.settings.view {
                     View::Month => prev_month(self.cursor),
@@ -304,51 +292,8 @@ impl App {
                 Task::none()
             }
             Msg::ClosePane => {
-                if matches!(self.pane, Pane::ConnectGoogle) {
-                    bridge::send(CalCmd::CancelGoogle);
-                }
                 self.pane = Pane::Idle;
                 self.cal_picker_open = false;
-                Task::none()
-            }
-            Msg::ConnectGoogle => {
-                if self.google_client_id.is_empty() {
-                    self.google_client_id = self.settings.google_client_id.clone();
-                }
-                self.pane = Pane::ConnectGoogle;
-                Task::none()
-            }
-            Msg::ConnectApple => {
-                self.pane = Pane::ConnectApple;
-                Task::none()
-            }
-            Msg::GoogleClientId(s) => {
-                self.google_client_id = s;
-                Task::none()
-            }
-            Msg::AppleId(s) => {
-                self.apple_id = s;
-                Task::none()
-            }
-            Msg::ApplePassword(s) => {
-                self.apple_password = s;
-                Task::none()
-            }
-            Msg::SubmitGoogle => {
-                bridge::send(CalCmd::ConnectGoogle {
-                    client_id: self.google_client_id.clone(),
-                });
-                Task::none()
-            }
-            Msg::SubmitApple => {
-                bridge::send(CalCmd::ConnectApple {
-                    apple_id: self.apple_id.clone(),
-                    app_password: self.apple_password.clone(),
-                });
-                Task::none()
-            }
-            Msg::Disconnect(id) => {
-                bridge::send(CalCmd::Disconnect { account_id: id });
                 Task::none()
             }
             Msg::Refresh => {
@@ -362,6 +307,13 @@ impl App {
                 Task::none()
             }
             Msg::KeyPressed(key, mods) => self.on_key(key, mods),
+            Msg::MaybeMigrate => {
+                if !self.got_config {
+                    self.emit_config_from_store();
+                    self.got_config = true;
+                }
+                Task::none()
+            }
         }
     }
 
@@ -377,7 +329,30 @@ impl App {
                 return self.on_menu(&p.action_id);
             }
         }
+        if let Some(Topic::CalendarConfig(cfg)) = Topic::parse(message) {
+            self.got_config = true;
+            bridge::send(CalCmd::ApplyConfig(cfg));
+        }
         Task::none()
+    }
+
+    fn emit_config_from_store(&self) {
+        let accounts: Vec<_> = self
+            .store
+            .accounts
+            .iter()
+            .filter_map(crate::worker::account_to_bus)
+            .collect();
+        if accounts.is_empty() && self.settings.google_client_id.is_empty() {
+            return;
+        }
+        let cfg = CalendarConfig {
+            google_client_id: self.settings.google_client_id.clone(),
+            accounts,
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::CalendarConfig(cfg));
+        }
     }
 
     fn on_menu(&mut self, action: &str) -> Task<Msg> {
@@ -392,8 +367,6 @@ impl App {
             "view_month" => self.update(Msg::SetView(View::Month)),
             "view_week" => self.update(Msg::SetView(View::Week)),
             "view_day" => self.update(Msg::SetView(View::Day)),
-            "connect_google" => self.update(Msg::ConnectGoogle),
-            "connect_apple" => self.update(Msg::ConnectApple),
             _ => Task::none(),
         }
     }
@@ -423,17 +396,9 @@ impl App {
             }
             CalNotice::Settings(s) => {
                 self.settings = s;
-                if self.google_client_id.is_empty() {
-                    self.google_client_id = self.settings.google_client_id.clone();
-                }
             }
             CalNotice::Status(s) => self.status = s,
             CalNotice::Error(s) | CalNotice::Toast(s) => return self.show_toast(s),
-            CalNotice::GoogleAuthUrl(url) => {
-                if let Err(e) = sola_core::open_url(&url) {
-                    return self.show_toast(e);
-                }
-            }
         }
         Task::none()
     }
@@ -549,14 +514,18 @@ impl App {
         }
         let mut sections = vec![SidebarSection::new("Calendars", items).fill()];
         let mut account_items = Vec::new();
-        account_items.push(SidebarItem::new("Google Calendar…", Msg::ConnectGoogle));
-        account_items.push(SidebarItem::new("iCloud Calendar…", Msg::ConnectApple));
-        for acc in &self.store.accounts {
+        if self.store.accounts.is_empty() {
             account_items.push(
-                SidebarItem::new(acc.label.clone(), Msg::Noop)
-                    .subtitle(acc.kind.label())
-                    .on_close(Msg::Disconnect(acc.id.clone())),
+                SidebarItem::new("Settings → Calendar", Msg::Tick)
+                    .subtitle("Google and iCloud"),
             );
+        } else {
+            for acc in &self.store.accounts {
+                account_items.push(
+                    SidebarItem::new(acc.label.clone(), Msg::Tick)
+                        .subtitle(acc.kind.label()),
+                );
+            }
         }
         sections.push(SidebarSection::new("Accounts", account_items));
         let status = kit_text::caption(if self.status.is_empty() {
@@ -783,8 +752,6 @@ impl App {
             Pane::Idle => Space::new().into(),
             Pane::Day(day) => self.view_day_pane(*day),
             Pane::Draft(d) => self.view_draft(d),
-            Pane::ConnectGoogle => self.view_connect_google(),
-            Pane::ConnectApple => self.view_connect_apple(),
         };
         container(scrollable(content).height(Length::Fill))
             .width(Length::Fixed(INSPECTOR_W))
@@ -925,58 +892,6 @@ impl App {
             }
         }
         col.into()
-    }
-
-    fn view_connect_google(&self) -> Element<'_, Msg> {
-        column![
-            inspector_header("Google Calendar"),
-            kit_text::caption("Sign-in uses OAuth. Create a Desktop client in Google Cloud, enable Calendar API, and add this redirect:")
-                .style(kit_text::muted),
-            kit_text::code(google::redirect_uri()),
-            field(
-                "OAuth client ID",
-                text_input("….apps.googleusercontent.com", &self.google_client_id)
-                    .on_input(Msg::GoogleClientId),
-                Some("Saved on this machine. Or set SOLA_GOOGLE_CALENDAR_CLIENT_ID."),
-                None,
-            ),
-            kit_btn::labeled("Sign in with Google", kit_btn::primary)
-                .on_press(Msg::SubmitGoogle)
-                .width(Length::Fill),
-            kit_btn::labeled("Cancel", kit_btn::ghost).on_press(Msg::ClosePane),
-        ]
-        .spacing(SPACE_LG)
-        .padding(SPACE_LG)
-        .into()
-    }
-
-    fn view_connect_apple(&self) -> Element<'_, Msg> {
-        column![
-            inspector_header("iCloud Calendar"),
-            kit_text::caption("Use an app-specific password from appleid.apple.com (Apple ID → Sign-In and Security).")
-                .style(kit_text::muted),
-            field(
-                "Apple ID",
-                text_input("you@icloud.com", &self.apple_id).on_input(Msg::AppleId),
-                None,
-                None,
-            ),
-            field(
-                "App-specific password",
-                text_input("xxxx-xxxx-xxxx-xxxx", &self.apple_password)
-                    .secure(true)
-                    .on_input(Msg::ApplePassword),
-                None,
-                None,
-            ),
-            kit_btn::labeled("Connect iCloud", kit_btn::primary)
-                .on_press(Msg::SubmitApple)
-                .width(Length::Fill),
-            kit_btn::labeled("Cancel", kit_btn::ghost).on_press(Msg::ClosePane),
-        ]
-        .spacing(SPACE_LG)
-        .padding(SPACE_LG)
-        .into()
     }
 
     fn view_toast(&self, toast: &str) -> Element<'_, Msg> {
