@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
-**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API + iCloud CalDAV  
+**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API + iCloud CalDAV. **Installed** `calendar`+`shell` release 2026-09-08 (unsmoked)  
 **Gaps:** no invites / RSVP; no alerts; no generic CalDAV (Fastmail / Nextcloud); Google needs a Desktop OAuth client ID (Sola does not ship a Cloud project); Apple repeating events are display-only (series edit later); no drag-resize; no timezone picker (local); not in Settings; menubar clock is still a date grid, not this app
 
 ## Goal
