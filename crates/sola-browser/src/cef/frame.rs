@@ -269,17 +269,27 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 let translated = match k {
                     keyboard::Event::KeyPressed {
                         key,
+                        modified_key,
                         modifiers,
                         text,
+                        location,
                         ..
                     } => input::translate_key(
                         true,
                         key,
+                        modified_key,
                         text.as_ref().and_then(|t| t.chars().next()),
                         *modifiers,
+                        *location,
                     ),
-                    keyboard::Event::KeyReleased { key, modifiers, .. } => {
-                        input::translate_key(false, key, None, *modifiers)
+                    keyboard::Event::KeyReleased {
+                        key,
+                        modified_key,
+                        modifiers,
+                        location,
+                        ..
+                    } => {
+                        input::translate_key(false, key, modified_key, None, *modifiers, *location)
                     }
                     keyboard::Event::ModifiersChanged(_) => None,
                 };

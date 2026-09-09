@@ -6227,13 +6227,19 @@ impl<E: Engine> App<E> {
                     }) if crate::js_dialog::is_open() && !crate::js_dialog::is_prompt() => {
                         Some(Msg::JsDialogOk)
                     }
-                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
-                        if URL_BAR_FOCUSED.load(Ordering::Relaxed)
-                            && !FIND_OPEN.load(Ordering::Relaxed)
-                            && !crate::js_dialog::is_open()
-                            && !crate::http_auth::is_open() =>
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        modified_key,
+                        modifiers,
+                        ..
+                    }) if URL_BAR_FOCUSED.load(Ordering::Relaxed)
+                        && !FIND_OPEN.load(Ordering::Relaxed)
+                        && !crate::js_dialog::is_open()
+                        && !crate::http_auth::is_open() =>
                     {
-                        omnibox_key(&key, &modifiers)
+                        // `modified_key` (not `key`): iced's unmodified `key` for
+                        // numpad digits is Home/End/arrows, which would steal
+                        // history-tray nav while NumLock is typing a number.
+                        omnibox_key(&modified_key, &modifiers)
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),

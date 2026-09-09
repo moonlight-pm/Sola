@@ -337,7 +337,9 @@ menu of that tab’s session history. That list is saved with the
 session, so it survives a browser restart.
 
 Clicking the page focuses the engine (caret / IME). Shift+wheel scrolls
-sideways. Composition (dead keys, CJK) is forwarded to Chromium when the
+sideways. The number pad types digits in page fields and the omnibox
+(NumLock is on by default; turn it off for Home / End / arrows).
+Composition (dead keys, CJK) is forwarded to Chromium when the
 page owns keys; the candidate window sits on the last caret box.
 
 `<select>` dropdowns paint as an overlay on the page (Chromium’s OSR

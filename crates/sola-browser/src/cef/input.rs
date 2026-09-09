@@ -9,7 +9,7 @@
 
 use cef::sys::cef_event_flags_t as F;
 use iced::{
-    keyboard::{Key, Modifiers, key::Named},
+    keyboard::{Key, Location, Modifiers, key::Named},
     mouse,
 };
 
@@ -157,24 +157,72 @@ fn character_to_vk(c: char) -> Option<u32> {
 /// event even when there is no VK (Unidentified + `text`, or a
 /// non-Latin glyph) so punctuation / composed characters are not
 /// dropped on the floor.
+///
+/// `key` is iced's unmodified layout key (bindings); `modified_key` is
+/// the produced key (NumLock / Shift applied). Numpad digits arrive as
+/// `key` = Home/End/arrows and `modified_key` / `text` = `"1"` — using
+/// `key` alone sent `VK_END` and Chromium ate the CHAR as navigation.
 pub fn translate_key(
     down: bool,
     key: &Key,
+    modified_key: &Key,
     text_first: Option<char>,
     modifiers: Modifiers,
+    location: Location,
 ) -> Option<InputEvent> {
     let character = if down {
-        key_to_character(text_first, key)
+        key_to_character(text_first, modified_key).or_else(|| key_to_character(None, key))
     } else {
         None
     };
-    let vk = key_to_vk(key).or_else(|| character.map(|c| c as u32))?;
+    let (vk, flags) = vk_and_flags(key, modified_key, location, character, modifiers)?;
     Some(InputEvent::Key {
         down,
         vk,
         character,
-        modifiers: modifiers_to_cef(modifiers),
+        modifiers: flags,
     })
+}
+
+/// Windows VK_NUMPAD0..9, DECIMAL, ADD, SUBTRACT, MULTIPLY, DIVIDE.
+fn numpad_char_vk(modified_key: &Key, character: Option<u16>) -> Option<u32> {
+    let ch = match modified_key {
+        Key::Character(s) => s.chars().next(),
+        _ => character.and_then(|u| char::from_u32(u as u32)),
+    }?;
+    Some(match ch {
+        '0'..='9' => 0x60 + (ch as u32 - '0' as u32),
+        '.' => 0x6E,
+        '+' => 0x6B,
+        '-' => 0x6D,
+        '*' => 0x6A,
+        '/' => 0x6F,
+        '=' => ch as u32,
+        _ => return None,
+    })
+}
+
+fn vk_and_flags(
+    key: &Key,
+    modified_key: &Key,
+    location: Location,
+    character: Option<u16>,
+    modifiers: Modifiers,
+) -> Option<(u32, u32)> {
+    let mut flags = modifiers_to_cef(modifiers);
+    if location == Location::Numpad {
+        flags |= F::EVENTFLAG_IS_KEY_PAD.0;
+        if let Some(vk) = numpad_char_vk(modified_key, character) {
+            if matches!(vk, 0x60..=0x69 | 0x6E) {
+                flags |= F::EVENTFLAG_NUM_LOCK_ON.0;
+            }
+            return Some((vk, flags));
+        }
+        let vk = key_to_vk(modified_key).or_else(|| key_to_vk(key))?;
+        return Some((vk, flags));
+    }
+    let vk = key_to_vk(key).or_else(|| character.map(|c| c as u32))?;
+    Some((vk, flags))
 }
 
 fn named_to_vk(n: Named) -> Option<u32> {
@@ -454,15 +502,21 @@ mod tests {
         assert_eq!(key_to_vk(&slash), Some(0xBF));
     }
 
+    fn translate(down: bool, key: Key, text: Option<char>) -> Option<InputEvent> {
+        translate_key(
+            down,
+            &key,
+            &key,
+            text,
+            Modifiers::empty(),
+            Location::Standard,
+        )
+    }
+
     #[test]
     fn translate_key_sends_char_for_period() {
-        let ev = translate_key(
-            true,
-            &Key::Character(".".into()),
-            Some('.'),
-            Modifiers::empty(),
-        )
-        .expect("period must produce a key event");
+        let ev = translate(true, Key::Character(".".into()), Some('.'))
+            .expect("period must produce a key event");
         match ev {
             InputEvent::Key {
                 down,
@@ -481,7 +535,7 @@ mod tests {
     #[test]
     fn translate_key_unidentified_uses_text() {
         // Some compositors give Unidentified + text only.
-        let ev = translate_key(true, &Key::Unidentified, Some('.'), Modifiers::empty())
+        let ev = translate(true, Key::Unidentified, Some('.'))
             .expect("text-only period must not be dropped");
         match ev {
             InputEvent::Key { character, vk, .. } => {
@@ -490,6 +544,96 @@ mod tests {
             }
             other => panic!("expected Key, got {other:?}"),
         }
+    }
+
+    fn assert_key(ev: InputEvent, vk: u32, character: Option<u16>, pad: bool, num_lock: bool) {
+        match ev {
+            InputEvent::Key {
+                vk: got_vk,
+                character: got_ch,
+                modifiers,
+                ..
+            } => {
+                assert_eq!(got_vk, vk);
+                assert_eq!(got_ch, character);
+                assert_eq!(
+                    modifiers & F::EVENTFLAG_IS_KEY_PAD.0 != 0,
+                    pad,
+                    "IS_KEY_PAD"
+                );
+                assert_eq!(
+                    modifiers & F::EVENTFLAG_NUM_LOCK_ON.0 != 0,
+                    num_lock,
+                    "NUM_LOCK_ON"
+                );
+            }
+            other => panic!("expected Key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn numpad_digit_is_vk_numpad_not_end() {
+        // iced reports KP_1 with NumLock on as key=End, modified="1", location=Numpad.
+        // Sending VK_END made Chromium navigate; CHAR '1' was dropped.
+        let ev = translate_key(
+            true,
+            &Key::Named(Named::End),
+            &Key::Character("1".into()),
+            Some('1'),
+            Modifiers::empty(),
+            Location::Numpad,
+        )
+        .expect("numpad 1 must produce a key event");
+        assert_key(ev, 0x61, Some('1' as u16), true, true);
+    }
+
+    #[test]
+    fn numpad_digit_keyup_uses_modified_key() {
+        let ev = translate_key(
+            false,
+            &Key::Named(Named::End),
+            &Key::Character("1".into()),
+            None,
+            Modifiers::empty(),
+            Location::Numpad,
+        )
+        .expect("numpad 1 keyup must match the press VK");
+        assert_key(ev, 0x61, None, true, true);
+    }
+
+    #[test]
+    fn numpad_decimal_is_not_delete() {
+        let ev = translate_key(
+            true,
+            &Key::Named(Named::Delete),
+            &Key::Character(".".into()),
+            Some('.'),
+            Modifiers::empty(),
+            Location::Numpad,
+        )
+        .expect("numpad decimal must produce a key event");
+        assert_key(ev, 0x6E, Some('.' as u16), true, true);
+    }
+
+    #[test]
+    fn numpad_end_without_numlock_stays_navigation() {
+        let ev = translate_key(
+            true,
+            &Key::Named(Named::End),
+            &Key::Named(Named::End),
+            None,
+            Modifiers::empty(),
+            Location::Numpad,
+        )
+        .expect("numpad End (NumLock off) must still navigate");
+        assert_key(ev, 0x23, None, true, false);
+    }
+
+    #[test]
+    fn top_row_digit_is_not_numpad() {
+        let ev = translate(true, Key::Character("1".into()), Some('1'))
+            .expect("top-row 1 must produce a key event");
+        assert_key(ev, b'1' as u32, Some('1' as u16), false, false);
     }
 
     #[test]
