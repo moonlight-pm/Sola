@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, container, mouse_area, row, stack};
-use iced::{event, keyboard};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::{event, keyboard};
 
-use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
 use sola_bus::Message;
+use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
-    apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings_transparent,
-    BusSetup,
+    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::fonts;
-use sola_kit::theme::{atoms_from_bus_theme, default_theme, Atoms};
+use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
@@ -495,9 +495,18 @@ impl App {
             }
             Msg::PtyExit(id) => {
                 tracing::info!(pane = %id, "pane PTY exited");
-                // Session is already gone — drop the client, do not
-                // `close()` (that would try to kill a dead tmux session).
+                // Drop the client without `close()` (plain Drop keeps tmux).
                 self.runtimes.remove(&id);
+                let want = tmux::session_name(&id);
+                let live = tmux::list_sessions().unwrap_or_default();
+                if live.iter().any(|s| s == &want) {
+                    tracing::info!(
+                        pane = %id,
+                        session = %want,
+                        "tmux client exited; session lives, reattaching"
+                    );
+                    return self.attach_pane(&id, &[]);
+                }
                 if let Some(st) = self.pane_status.get_mut(&id) {
                     st.status = status::AgentStatus::Idle;
                     st.agent = None;
@@ -805,6 +814,21 @@ impl App {
             return Task::none();
         }
         let cwd = ws.path.to_string_lossy().into_owned();
+        // New tmux (reboot / first attach): if this pane had Grok running,
+        // `grok -r <session>` restores the conversation. `-A` reattach
+        // ignores exec, so a live tmux is left as-is.
+        let resume = if exec.is_empty() && !tmux::has_session(&tmux_session) {
+            self.grok_resume_argv(id)
+        } else {
+            None
+        };
+        if let Some(sid) = resume.as_ref().and_then(|a| a.get(2)) {
+            tracing::info!(pane = %id, session = %sid, "resuming grok session");
+        }
+        let exec_refs: Vec<&str> = match resume.as_ref() {
+            Some(args) => args.iter().map(String::as_str).collect(),
+            None => exec.to_vec(),
+        };
 
         let listener = Listener::new(
             id.to_string(),
@@ -833,7 +857,7 @@ impl App {
             emulator::notify_sender(),
             emulator::exit_sender(),
             &env,
-            exec,
+            &exec_refs,
         ) {
             Ok(b) => b,
             Err(e) => {
@@ -853,6 +877,21 @@ impl App {
         );
         self.resize_all_panes();
         Task::none()
+    }
+
+    /// `grok -r <id>` when last-status named Grok with a session still on disk.
+    fn grok_resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
+        let st = self.pane_status.get(pane_id)?;
+        let sid = st.resume_session_id()?;
+        if !status::grok_session_exists(sid) {
+            tracing::warn!(
+                pane = %pane_id,
+                session = %sid,
+                "stored grok session not on disk; starting a shell"
+            );
+            return None;
+        }
+        Some(cli::grok_resume_argv(sid))
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
@@ -1652,6 +1691,7 @@ impl App {
                     &pid,
                     st.map(|s| s.status).unwrap_or_default(),
                     st.and_then(|s| s.agent.as_deref()),
+                    st.and_then(|s| s.owner_session.as_deref()),
                 )
             })
             .collect();
@@ -1765,6 +1805,7 @@ impl App {
             "kind": cli::kind_str(ws.kind),
             "status": cli::status_str(st.map(|s| s.status).unwrap_or(ws.status)),
             "agent": st.and_then(|s| s.agent.clone()).or_else(|| ws.agent.clone()),
+            "session_id": st.and_then(|s| s.owner_session.clone()),
         }))
     }
 

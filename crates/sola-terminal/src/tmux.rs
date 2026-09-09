@@ -173,6 +173,21 @@ pub fn kill_orphaned_clients() {
             continue;
         }
 
+        // A live sola-terminal / sola-workspaces still owns this client.
+        // LaunchApp always spawns a new process; sweeping those clients
+        // hangs up the other window's PTY (which then kills the tmux
+        // session on PtyExit). Ghosts from a dead app are reparented to
+        // PID 1 (or a subreaper); only those are safe to reap.
+        let ppid = status.lines().find_map(|l| {
+            l.strip_prefix("PPid:\t")
+                .and_then(|s| s.parse::<i32>().ok())
+        });
+        if let Some(ppid) = ppid {
+            if ppid > 1 && std::path::Path::new(&format!("/proc/{ppid}")).is_dir() {
+                continue;
+            }
+        }
+
         let cmdline_path = entry.path().join("cmdline");
         let Ok(cmdline) = std::fs::read(&cmdline_path) else {
             continue;

@@ -5,7 +5,7 @@
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (calendar / audio / bluetooth as shell popovers, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/bluetooth/` + menubar right-cluster icon + `Panel::Bluetooth` on the existing Menu overlay  
 **Dogfood:** `shell` installed debug 2026-08-29. Host BlueZ on (novus; Intel AX210 `hci0`). WH-CH520 paired from the popover. Nearby 6-pair hex filter in the same install as volume; not re-smoked.  
-**Gaps:** no Forget / unpair; no audio-profile picker; no adapter chooser when several exist; pairing agent is KeyboardDisplay on the shell connection (not a call-plane D3 confirm)
+**Gaps:** no Forget / unpair; no audio-profile picker; no adapter chooser when several exist; pairing agent is KeyboardDisplay on the shell connection (not a call-plane D3 confirm). GetManagedObjects can fail to decode BlueZ 5.86 `LEAdvertisingManager1` nested `a{sv}` — `Adapter1.Powered` fallback is in tree (not installed) so the chip still shows when `hci0` exists.
 
 ## Intent
 

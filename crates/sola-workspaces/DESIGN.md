@@ -136,6 +136,9 @@ modal. Do not restyle mail / settings / terminal.
 - Do return the mark to idle (grey disc) when no Grok pane is live
   (every leaf is a shell). `/exit` / process gone is idle, not a stuck
   done check.
+- Do remember the Grok session id on a live grok pane. After a reboot
+  (tmux gone) attach with `grok -r <id>` when that session is still on
+  disk. A shell after `/exit` does not resume.
 - Do put `+` on the project group, not a form in the rail.
 - Do notify done and waiting only when unfocused (desk card, not
   menubar whisper): title `{project} · {tab}`, body `grok is done` /

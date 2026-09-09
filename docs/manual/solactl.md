@@ -73,6 +73,8 @@ Lists include `path`, `kind`, and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also
 **Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).
+`pane.list` and `whoami` include `session_id` when that pane’s Grok
+owner session is known (used to `grok -r` after a reboot loses tmux).
 A workspace name prefers the
 Grok leaf when sending, reading, waiting, or exec-ing. `pane.send` and
 `workspace.exec --prompt` **paste** into the live Grok (tmux

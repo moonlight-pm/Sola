@@ -2,6 +2,7 @@
 //! `bus.rs`; per-window handlers are filled in by tasks 5-10.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +24,19 @@ use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
 pub mod bus;
+
+/// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
+/// and **Restart Shell** leave this false so the process manager
+/// restarts us.
+static CLEAN_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn mark_clean_shutdown() {
+    CLEAN_SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+pub(crate) fn clean_shutdown() -> bool {
+    CLEAN_SHUTDOWN.load(Ordering::SeqCst)
+}
 
 /// Emit/retract on the kit bus if it is installed. No-op in unit tests.
 fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
@@ -2174,6 +2188,7 @@ impl Shell {
                 }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
+                        mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
                     } else if action_id == "_close" {
                         if let Some(ref focused) = self.focused_app_id.clone() {

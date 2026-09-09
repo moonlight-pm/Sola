@@ -8,34 +8,39 @@
 //! list only rebuilds the shell, not every crate in the workspace.
 
 use sola_bus::topics::Application;
+use sola_core::env;
+
+fn kit_command(name: &str) -> String {
+    env::bin_path(name).display().to_string()
+}
 
 pub fn builtin_apps() -> Vec<Application> {
     vec![
         Application {
             app_id: "sola-settings".into(),
             label: "Settings".into(),
-            command: "/opt/sola/bin/sola-settings".into(),
+            command: kit_command("sola-settings"),
             icon: "lucide/settings".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-monitor".into(),
             label: "Monitor".into(),
-            command: "/opt/sola/bin/sola-monitor".into(),
+            command: kit_command("sola-monitor"),
             icon: "lucide/monitor".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-terminal".into(),
             label: "Terminal".into(),
-            command: "/opt/sola/bin/sola-terminal".into(),
+            command: kit_command("sola-terminal"),
             icon: "lucide/terminal".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-workspaces".into(),
             label: "Workspaces".into(),
-            command: "/opt/sola/bin/sola-workspaces".into(),
+            command: kit_command("sola-workspaces"),
             // `folders` — stacked project groups. Distinct from Terminal
             // (`terminal`).
             icon: "lucide/folders".into(),
@@ -46,28 +51,28 @@ pub fn builtin_apps() -> Vec<Application> {
             // the binary name (`sola-browser`).
             app_id: "sola-browser".into(),
             label: "Browser".into(),
-            command: "/opt/sola/bin/sola-browser".into(),
+            command: kit_command("sola-browser"),
             icon: "lucide/globe".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-kit".into(),
             label: "Kit".into(),
-            command: "/opt/sola/bin/sola-kit".into(),
+            command: kit_command("sola-kit"),
             icon: "lucide/palette".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-preview".into(),
             label: "Preview".into(),
-            command: "/opt/sola/bin/sola-preview".into(),
+            command: kit_command("sola-preview"),
             icon: "lucide/image".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-paint".into(),
             label: "Paint".into(),
-            command: "/opt/sola/bin/sola-paint".into(),
+            command: kit_command("sola-paint"),
             // `brush` — simple 20px silhouette. Distinct from Preview
             // (`image`) and Kit (`palette`). The detailed `paintbrush`
             // glyph turns to noise at launcher density.
@@ -77,7 +82,7 @@ pub fn builtin_apps() -> Vec<Application> {
         Application {
             app_id: "sola-mail".into(),
             label: "Mail".into(),
-            command: "/opt/sola/bin/sola-mail".into(),
+            command: kit_command("sola-mail"),
             icon: "lucide/mail".into(),
             ..Default::default()
         },
@@ -91,21 +96,21 @@ pub fn builtin_apps() -> Vec<Application> {
         Application {
             app_id: "sola-arcade".into(),
             label: "Arcade".into(),
-            command: "/opt/sola/bin/sola-arcade".into(),
+            command: kit_command("sola-arcade"),
             icon: "lucide/gamepad-2".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-scope".into(),
             label: "Scope".into(),
-            command: "/opt/sola/bin/sola-scope".into(),
+            command: kit_command("sola-scope"),
             icon: "lucide/scan".into(),
             ..Default::default()
         },
         Application {
             app_id: "sola-spotify".into(),
             label: "Spotify".into(),
-            command: "/opt/sola/bin/sola-spotify".into(),
+            command: kit_command("sola-spotify"),
             icon: "lucide/disc".into(),
             ..Default::default()
         },

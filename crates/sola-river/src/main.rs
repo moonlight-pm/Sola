@@ -66,7 +66,18 @@ fn main() {
         .expect("bus timer");
 
     info!("event loop running");
-    if let Err(e) = event_loop.run(Duration::from_millis(500), &mut data, |_| {}) {
-        error!(%e, "event loop exited with error");
+    match event_loop.run(Duration::from_millis(500), &mut data, |_| {}) {
+        Err(e) => {
+            error!(%e, "event loop exited with error");
+            exit(1);
+        }
+        Ok(()) => {
+            // Topic::Shutdown calls process::exit(0) and never returns
+            // here. A clean loop end is the compositor going away
+            // (River restart). Exit 1 so the process manager restarts
+            // us; exit 0 looks like Quit Sola and the session stays down.
+            error!("wayland event loop ended");
+            exit(1);
+        }
     }
 }

@@ -169,6 +169,11 @@ struct App {
     /// Snapshot of live tmux sessions at startup, used to prune persisted
     /// panes whose tmux peer is gone. None means the query failed — admit all.
     live_tmux_at_startup: Option<HashSet<String>>,
+    /// Sticky `TerminalSession` replay is only for our own last run.
+    /// After this instant, an unknown id is another live instance's tab —
+    /// restore_tab would prune it against the boot snapshot and retract
+    /// it from the bus, closing the tab in every window.
+    startup_replay_until: Instant,
     theme: Theme,
     sidebar: sidebar::SidebarState,
     palette: term_view::Palette,
@@ -282,6 +287,7 @@ impl App {
             active: None,
             config: TerminalConfig::default(),
             live_tmux_at_startup,
+            startup_replay_until: Instant::now(),
             theme: default_theme(),
             sidebar: sidebar::SidebarState::default(),
             palette: term_view::Palette::from_kit_theme(&Atoms::default()),
@@ -372,6 +378,9 @@ impl App {
                 // Expand kinds for reconnect too (kit only remembers the
                 // last set for bus restart recovery).
                 sola_kit::app::set_bus_kinds(SESSION_TOPICS);
+                // Stickies replay synchronously on subscribe. Anything
+                // arriving after this window is another instance's tab.
+                self.startup_replay_until = Instant::now() + Duration::from_secs(2);
                 if let Ok(mut client) = bus().lock() {
                     if let Err(e) = client.subscribe(SESSION_TOPICS) {
                         tracing::warn!("SubscribeSessions failed: {e}");
@@ -390,7 +399,25 @@ impl App {
                 Task::none()
             }
             Msg::Noop => Task::none(),
-            Msg::PtyExit(pane_id) => self.close_pane_by_id(&pane_id),
+            Msg::PtyExit(pane_id) => {
+                let session = self
+                    .tabs
+                    .pane_meta(&pane_id)
+                    .map(|m| m.tmux_session.clone());
+                let live = tmux::list_sessions().unwrap_or_default();
+                if let Some(ref session) = session {
+                    if live.iter().any(|s| s == session) {
+                        tracing::info!(
+                            pane = %pane_id,
+                            %session,
+                            "tmux client exited; session lives, reattaching"
+                        );
+                        let _ = self.tabs.take_pane_runtime(&pane_id);
+                        return self.attach_pane(&pane_id, false);
+                    }
+                }
+                self.close_pane_by_id(&pane_id)
+            }
             Msg::PtyOutput(pane_id) => {
                 perf::pty_output();
                 self.tabs.clear_pane_cache(&pane_id);
@@ -1101,7 +1128,14 @@ impl App {
                     // Our own echo / re-emit — local state is already current.
                     return Task::none();
                 }
-                // First sighting: boot replay of a persisted tab.
+                if Instant::now() > self.startup_replay_until {
+                    // Another live instance minted this tab. Do not
+                    // restore_tab — that prunes against our boot snapshot
+                    // and retracts the sticky, which closes the tab
+                    // everywhere (including the window that just created it).
+                    return Task::none();
+                }
+                // First sighting during sticky replay: our last run's tabs.
                 return self.restore_tab(s);
             }
             Some(Topic::MenuAction(ref p)) if p.app_id == APP_ID => {

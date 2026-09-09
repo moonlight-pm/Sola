@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-08 (volume chip `pw-dump` JSON strip **installed** `shell` release, unsmoked; sola-calendar **installed** `bus`+`settings`+`calendar` release, unsmoked; 2026-09-04: terminal first tab / no-source pane starts in `$HOME`; kvm Linux listen Super+Tab confirm: virtual-keyboard **key before modifiers**; kernel auto-repeat not injected; sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-09 (workspaces persist Grok `session_id` and `grok -r` after reboot, unsmoked; volume chip `pw-dump` JSON strip **installed** `shell` release, unsmoked; sola-calendar **installed** `bus`+`settings`+`calendar` release, unsmoked; 2026-09-04: terminal first tab / no-source pane starts in `$HOME`; kvm Linux listen Super+Tab confirm: virtual-keyboard **key before modifiers**; kernel auto-repeat not injected; sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -156,7 +156,7 @@ Do not invent product policy.
    **Call plane:** [`docs/specs/2026-08-13-sola-call-plane-design.md`](docs/specs/2026-08-13-sola-call-plane-design.md)  
    **Product:** [`crates/sola-workspaces/PRODUCT.md`](crates/sola-workspaces/PRODUCT.md)  
    **CLI freeze:** [`docs/specs/2026-08-18-workspaces-cli-design.md`](docs/specs/2026-08-18-workspaces-cli-design.md)  
-   **Next:** desk-smoke `solactl workspaces`. Polish:
+   **Next:** desk-smoke `solactl workspaces` and grok `-r` after reboot. Polish:
    UI rename modal / recolor / reorder. CLI `workspace.set --name` moves
    `.worktrees/<name>` (id stays); `--branch` is `git branch -m`.
    **Installed** `workspaces` release 2026-09-03.  
@@ -192,7 +192,9 @@ Do not invent product policy.
    session in the tab (segments / checkpoints; `signals.json` can stay
    0). Switching a split attaches every leaf; hover does not spawn. Restart binds tmux by `SOLA_WS_PATH` / cwd
    — leftover sessions from a deleted workspace are quarantined, not
-   attached to the next tab. Working ring spins (kit mark uses ms
+   attached to the next tab. A live Grok pane’s session id is persisted;
+   after a reboot (tmux gone) the tab execs `grok -r <id>` when that
+   session is still on disk (`/exit` to a shell does not resume). Working ring spins (kit mark uses ms
    phase, not `as_secs_f32`). Rail marks reclaim on Grok
    `SessionStart` / `UserPromptSubmit` after `/new` or `grok -r`
    (was frozen on the old session). `StopCancelled` → done.
@@ -206,7 +208,7 @@ Do not invent product policy.
    `git worktree remove` from inside the pane first (cwd dies; the tab
    used to stick with a working spinner). A gone `.worktrees/<name>`
    path reaps the tab. Hover × / plain `workspace.rm` still leave the
-   checkout. `pane.send` /
+   checkout. `pane.list` / `whoami` include `session_id`. `pane.send` /
    `workspace.exec --prompt` bracketed-paste into the tmux session then
    Enter (raw PTY dump was clipping the composer and not submitting
    until a later wheel/focus). Desk cards (unfocused): title is

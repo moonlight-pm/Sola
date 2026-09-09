@@ -35,11 +35,17 @@ pub fn workspace_json(w: &Workspace, selected: Option<&str>) -> serde_json::Valu
     v
 }
 
-pub fn pane_json(id: &str, status: AgentStatus, agent: Option<&str>) -> serde_json::Value {
+pub fn pane_json(
+    id: &str,
+    status: AgentStatus,
+    agent: Option<&str>,
+    session_id: Option<&str>,
+) -> serde_json::Value {
     serde_json::json!({
         "id": id,
         "status": status_str(status),
         "agent": agent,
+        "session_id": session_id,
     })
 }
 
@@ -213,6 +219,11 @@ pub fn grok_argv(prompt: Option<&str>) -> Vec<String> {
     args
 }
 
+/// Resume a known Grok session after tmux was lost (reboot).
+pub fn grok_resume_argv(session_id: &str) -> Vec<String> {
+    vec!["grok".into(), "-r".into(), session_id.to_string()]
+}
+
 pub fn grok_shell_line(prompt: Option<&str>) -> String {
     match prompt {
         Some(p) if !p.trim().is_empty() => format!("grok {}", shell_single_quote(p)),
@@ -354,6 +365,7 @@ mod tests {
             "grok 'it'\\''s a ticket'"
         );
         assert_eq!(grok_argv(Some("go")), vec!["grok", "go"]);
+        assert_eq!(grok_resume_argv("sid-live"), vec!["grok", "-r", "sid-live"]);
     }
 
     #[test]
@@ -379,5 +391,15 @@ mod tests {
         assert!(only_grok(Some("claude")).is_err());
         assert_eq!(only_grok(Some("grok")).unwrap(), Some("grok"));
         assert_eq!(only_grok(None).unwrap(), None);
+    }
+
+    #[test]
+    fn pane_json_includes_session_id() {
+        let v = pane_json("p", AgentStatus::Done, Some("grok"), Some("sid-a"));
+        assert_eq!(v["id"], "p");
+        assert_eq!(v["session_id"], "sid-a");
+        assert_eq!(v["agent"], "grok");
+        let empty = pane_json("p", AgentStatus::Idle, None, None);
+        assert!(empty["session_id"].is_null());
     }
 }

@@ -167,6 +167,12 @@ impl Tabs {
         self.pane_meta.remove(pane_id);
     }
 
+    /// Drop the PTY backend only. Plain `Drop` preserves the tmux session
+    /// so the caller can reattach after a client hangup.
+    pub fn take_pane_runtime(&mut self, pane_id: &str) -> Option<PaneRuntime> {
+        self.panes.remove(pane_id)
+    }
+
     pub fn upsert_pane_meta(&mut self, m: PaneMeta) {
         self.pane_meta.insert(m.id.clone(), m);
     }
