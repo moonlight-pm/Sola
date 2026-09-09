@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Sola Browser
-Comment=Sola product browser (CEF) — default http/https and HTML handler
+Comment=Sola product browser (CEF) — default http/https, HTML, and PDF handler
 Exec=/opt/sola/bin/sola-browser %u
 Terminal=false
 Categories=Network;WebBrowser;
-MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;x-scheme-handler/about;x-scheme-handler/unknown;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;application/pdf;x-scheme-handler/about;x-scheme-handler/unknown;
 NoDisplay=true
 StartupNotify=true

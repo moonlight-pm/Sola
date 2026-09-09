@@ -719,6 +719,7 @@ mod desktop_mime_tests {
             "x-scheme-handler/https",
             "text/html",
             "application/xhtml+xml",
+            "application/pdf",
             "x-scheme-handler/about",
             "x-scheme-handler/unknown",
         ] {
