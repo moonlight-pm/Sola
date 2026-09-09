@@ -44,9 +44,14 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", release_dir.display());
     println!("cargo:rustc-link-lib=dylib=cef");
     println!("cargo:rustc-env=SOLA_BROWSER_CEF_DIR={}", cef_dir.display());
-
-    // RUNPATH (NixOS sw lib + opengl-driver) is set workspace-wide via
-    // .cargo/config.toml — no per-crate link-args needed.
+    // rustc-link-search is link-time only. A clean target (fresh worktree)
+    // does not inherit cef-dll-sys RUNPATH, so the installed binary cannot
+    // find libcef.so (exit 127). Bake the cache Release dir in explicitly.
+    // Workspace .cargo/config.toml still supplies NixOS sw + opengl-driver.
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        release_dir.display()
+    );
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../cef-version");

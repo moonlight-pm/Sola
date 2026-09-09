@@ -36,6 +36,10 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", release_dir.display());
     println!("cargo:rustc-link-lib=dylib=cef");
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        release_dir.display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../cef-version");
 }
