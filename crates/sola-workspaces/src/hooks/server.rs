@@ -13,6 +13,7 @@ use super::map::{self, MappedHook};
 #[derive(Debug, Clone)]
 pub struct Incoming {
     pub pane_id: String,
+    pub agent: String,
     pub mapped: MappedHook,
 }
 
@@ -115,7 +116,7 @@ pub fn parse_buf(buf: &[u8]) -> std::io::Result<Option<Incoming>> {
         return Ok(None);
     }
     if buf[0] == b'{' {
-        return incoming_from_json(None, buf);
+        return incoming_from_json(None, None, buf);
     }
     let Some(idx) = find_headers_end(buf) else {
         return Ok(None);
@@ -123,12 +124,25 @@ pub fn parse_buf(buf: &[u8]) -> std::io::Result<Option<Incoming>> {
     let headers = std::str::from_utf8(&buf[..idx])
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let pane = header_value(headers, "X-Sola-Pane-Id").map(str::to_string);
+    let agent = agent_from_request_line(headers);
     let body = &buf[idx + 4..];
-    incoming_from_json(pane, body)
+    incoming_from_json(pane, agent, body)
+}
+
+fn agent_from_request_line(headers: &str) -> Option<String> {
+    let line = headers.lines().next().unwrap_or("");
+    if line.contains("/hook/codex") {
+        Some("codex".into())
+    } else if line.contains("/hook/grok") {
+        Some("grok".into())
+    } else {
+        None
+    }
 }
 
 fn incoming_from_json(
     pane_header: Option<String>,
+    path_agent: Option<String>,
     body: &[u8],
 ) -> std::io::Result<Option<Incoming>> {
     if body.is_empty() {
@@ -153,10 +167,25 @@ fn incoming_from_json(
     } else {
         value.get("payload").cloned().unwrap_or(value)
     };
-    let Some(mapped) = map::map_grok(&event) else {
+    let agent = path_agent
+        .or_else(|| {
+            event
+                .get("agent")
+                .or_else(|| event.get("agentType"))
+                .or_else(|| event.get("agent_type"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase())
+        })
+        .filter(|s| crate::cli::is_first_class(s))
+        .unwrap_or_else(|| "grok".into());
+    let Some(mapped) = map::map_agent(&agent, &event) else {
         return Ok(None);
     };
-    Ok(Some(Incoming { pane_id, mapped }))
+    Ok(Some(Incoming {
+        pane_id,
+        agent,
+        mapped,
+    }))
 }
 
 #[cfg(test)]
@@ -173,8 +202,23 @@ mod tests {
         );
         let got = parse_buf(req.as_bytes()).unwrap().unwrap();
         assert_eq!(got.pane_id, "pane-1");
+        assert_eq!(got.agent, "grok");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Working));
         assert_eq!(got.mapped.prompt.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn parses_codex_http_post() {
+        let body = br#"{"hook_event_name":"PermissionRequest"}"#;
+        let req = format!(
+            "POST /hook/codex HTTP/1.1\r\nX-Sola-Pane-Id: pane-c\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            std::str::from_utf8(body).unwrap()
+        );
+        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        assert_eq!(got.pane_id, "pane-c");
+        assert_eq!(got.agent, "codex");
+        assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Waiting));
     }
 
     #[test]
@@ -182,6 +226,7 @@ mod tests {
         let raw = br#"{"paneId":"p2","hookEventName":"Stop"}"#;
         let got = parse_buf(raw).unwrap().unwrap();
         assert_eq!(got.pane_id, "p2");
+        assert_eq!(got.agent, "grok");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Done));
     }
 }

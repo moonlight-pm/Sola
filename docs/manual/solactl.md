@@ -43,11 +43,11 @@ solactl workspaces project.rm --project Sola
 solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
-    [--agent grok] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
+    [--agent grok|codex] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
     [--title 'fix login'] [--branch joshua/sc-1234/fix]
-solactl workspaces workspace.exec --workspace ticket-123 [--prompt '…']
+solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex] [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
 solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
 solactl workspaces pane.list [--workspace ticket-123]
@@ -74,14 +74,17 @@ per-project script that runs in a new worktree after spawn (also
 **Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).
 A workspace name prefers the
-Grok leaf when sending, reading, waiting, or exec-ing. `pane.send` and
-`workspace.exec --prompt` **paste** into the live Grok (tmux
+Grok leaf when sending, reading, waiting, or exec-ing (Codex leaf when
+`--agent codex`). `pane.send` and
+`workspace.exec --prompt` **paste** into the live agent (tmux
 bracketed-paste, then Enter) so a multiline brief does not submit on
-the first newline and a long prompt is not truncated. `--prompt` implies
-Grok. `--prompt` and `--prompt-file` are exclusive. Spawn parent defaults
-to `$SOLA_PANE_ID` when you run from a Workspaces pane. `--agent` is Grok
-only. `pane.wait` holds until status matches (`--fresh` waits for a
-transition). Drop unregisters; it does not `git worktree remove` unless
+the first newline and a long prompt is not truncated. `--prompt` without
+`--agent` implies Grok. `--prompt` and `--prompt-file` are exclusive. Spawn
+parent defaults to `$SOLA_PANE_ID` when you run from a Workspaces pane.
+`--agent` is `grok` or `codex`. First Codex session may need `/hooks` in
+the TUI to trust the Sola status hook. `pane.wait` holds until status
+matches (`--fresh` waits for a transition). Drop unregisters; it does not
+`git worktree remove` unless
 you pass `--worktree` (add `--force` to toss a dirty checkout).
 `workspace.rm` replies, then closes the tab on the next tick, so a
 call from inside that pane can finish instead of hanging. Do **not**

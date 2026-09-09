@@ -8,9 +8,9 @@
 **Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
 
-**Implementation:** persist + spawn modal + done/waiting desk card (title `{project} · {tab}`, body `grok is done`) + sola-call owner `workspaces`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→) stay in the grid (one rail row per workspace; Grok mark rolls up waiting > working > done > idle); ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` on the workspace row is the loudest Grok session (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. Grok lead hooks (`SessionStart`, `UserPromptSubmit`) reclaim the pane after `/new` / `grok -r` (SessionStart idles a leftover working ring); `StopCancelled` maps to done; child `subagentType` events ignored. `workspace.rm` replies before tmux teardown; `--worktree` also `git worktree remove`s; a gone checkout reaps the tab. `pane.send` / exec `--prompt` bracketed-paste then Enter. Grid selection follows scrolled PTY text (`sel_follow`; CUP rewrite + local scrollback). **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md) (`workspace.spawn` background unless `--select`)  
-**Dogfood:** app installed; rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. Session-reclaim fix installed. Super-chord no longer latches LOGO (⌘T/⌘V used to kill typing until quit). Exiting Grok back to the shell idles the mark (grey disc; was stuck on done). Grid selection follow (`sel_follow`) installed `workspaces`+`terminal` 2026-09-02 (desk smoke). `solactl workspaces` still needs a desk smoke.  
-**Gaps:** UI rename modal / recolor / reorder; Claude presence-only (D4). CLI `workspace.set --name` moves the worktree; `--branch` renames HEAD.
+**Implementation:** persist + spawn modal + done/waiting desk card (title `{project} · {tab}`, body `grok is done` / `codex is done`) + sola-call owner `workspaces`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→) stay in the grid (one rail row per workspace; Grok/Codex mark rolls up waiting > working > done > idle); ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` on the workspace row is the loudest Grok session (session dir segments/checkpoints; `signals.json` can stay 0); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. Grok lead hooks (`SessionStart`, `UserPromptSubmit`) reclaim the pane after `/new` / `grok -r` (SessionStart idles a leftover working ring); Codex hooks merge into `~/.codex/hooks.json` (`PermissionRequest` → waiting, `Interrupt` → done); `StopCancelled` maps to done; child `subagentType` events ignored. `workspace.rm` replies before tmux teardown; `--worktree` also `git worktree remove`s; a gone checkout reaps the tab. `pane.send` / exec `--prompt` bracketed-paste then Enter. Grid selection follows scrolled PTY text (`sel_follow`; CUP rewrite + local scrollback). **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md) (`workspace.spawn` background unless `--select`; `--agent grok|codex`)  
+**Dogfood:** app installed (`workspaces` release 2026-09-09, Codex first-class). Rail, splits, drop-project, dead-pane, and `×N` smoked on `workspaces-polish`. Session-reclaim fix installed. Super-chord no longer latches LOGO (⌘T/⌘V used to kill typing until quit). Exiting Grok back to the shell idles the mark (grey disc; was stuck on done). Grid selection follow (`sel_follow`) installed `workspaces`+`terminal` 2026-09-02 (desk smoke). `solactl workspaces` still needs a desk smoke. Codex `/hooks` trust unsmoked.  
+**Gaps:** UI rename modal / recolor / reorder; Claude presence-only (D4). Codex first-class (spawn/exec/hooks) as of 2026-09-09; first Codex session may need `/hooks` trust. CLI `workspace.set --name` moves the worktree; `--branch` renames HEAD.
 
 ---
 
@@ -36,8 +36,8 @@ deprecated for this line of work.
 | Kit | Not a museum. Refine tokens/atoms/indicators when the improvement is generally true; keep app-local what is this product’s. Do not silently restyle mail / settings / terminal |
 | Engine | Reuse `sola-terminal` as a **library** (grid, PTY, input). Do not share tmux socket `sola` or `Topic::TerminalSession` |
 | Persistence (PTY) | tmux socket **`sola-ws`**, session prefix `sws-`, own systemd unit `sola-ws-tmux.service` |
-| Status | Hooks (Grok first) + OSC `9999` + process-tree presence. **Never** infer from OSC 0/2 titles |
-| First-class CLI | **Grok.** Always implement and test Grok first. Other agents are presence-only until Grok hooks are trustworthy |
+| Status | Hooks (Grok + Codex) + OSC `9999` + process-tree presence. **Never** infer from OSC 0/2 titles |
+| First-class CLI | **Grok and Codex.** Implement and test Grok first. Claude / OpenCode stay presence-only (D4) |
 | Status vocab | `working` / `waiting` / `done` / idle. Reserved indicator slot (no layout shift) |
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-workspaces` |
@@ -59,7 +59,7 @@ Decision points: [`open-questions.md`](../open-questions.md) D4.
 | Main checkout | A first-class workspace under the project |
 | Drop workspace | Unregister + kill tmux sessions. Hover × / plain `workspace.rm` leave the checkout. CLI `--worktree` is the explicit `git worktree remove` (not a silent hover). A gone checkout reaps the tab. |
 | CLI if app down | Fail loudly (do not launch a Wayland window as a side effect) |
-| Claude in v1 | Presence-only until Grok hooks are trustworthy |
+| Claude in v1 | Presence-only (D4.4). Codex is first-class (2026-09-09). |
 
 ---
 
@@ -94,8 +94,8 @@ crates/sola-workspaces/
   src/main.rs          # iced application, boot, bus
   src/sidebar.rs       # project / workspace rail
   src/status.rs        # working / waiting / done / idle + persist
-  src/hooks.rs         # Grok installer + UDS server
-  src/presence.rs      # process-tree who (Grok first)
+  src/hooks.rs         # Grok + Codex installer + UDS server
+  src/presence.rs      # process-tree who (Grok first, then Codex / others)
   src/workspace.rs     # project + workspace + catalog persist
   src/spawn.rs         # git worktree add under .worktrees/
   src/calls.rs         # sola-call MethodSpec list (owner workspaces)
@@ -183,5 +183,6 @@ look changes; do not treat it as a second freeze.
 
 ## Open questions
 
-See idea + D4. Name and worktree path are locked. Do not invent
-Claude hook policy. CLI if down is fail (call plane).
+See idea + D4. Name and worktree path are locked. Codex is first-class
+(spawn `--agent codex`, hooks merged into `~/.codex/hooks.json`). Do not
+invent Claude hook policy. CLI if down is fail (call plane).

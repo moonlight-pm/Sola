@@ -78,7 +78,7 @@ worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
 and kills its tmux. Worktrees stay on disk.
 ⌘W closes the focused **pane**. A workspace is always one rail row —
 splits stay in the grid, not as child tabs. The mark rolls up every
-Grok pane in that tab (waiting beats working beats done beats idle).
+Grok or Codex pane in that tab (waiting beats working beats done beats idle).
 
 ## Layout
 

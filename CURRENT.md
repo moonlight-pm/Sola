@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-04 (sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-09 (workspaces: Codex first-class — `--agent grok|codex`, hooks merged into `~/.codex/hooks.json`, rail rollup; **installed** `workspaces` release; Claude still presence-only; sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -156,8 +156,12 @@ Do not invent product policy.
    **Next:** desk-smoke `solactl workspaces`. Polish:
    UI rename modal / recolor / reorder. CLI `workspace.set --name` moves
    `.worktrees/<name>` (id stays); `--branch` is `git branch -m`.
-   **Installed** `workspaces` release 2026-09-03.  
-   **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.  
+   **Installed** `workspaces` release 2026-09-09 (Codex first-class).  
+   **Do not invent:** D4 Claude hooks; call-plane **D3** confirm.
+   Codex is first-class (`--agent codex`, hooks merged into
+   `~/.codex/hooks.json`, rail rollup). First Codex session may need
+   `/hooks` to trust the Sola status hook. Claude / OpenCode stay
+   presence-only.  
    **Install:** standing OK to `install workspaces` after each finished
    round. Ask for any other target.  
    **Now:** persist + spawn + done toast. Crate/app id `sola-workspaces`.
@@ -169,8 +173,8 @@ Do not invent product policy.
    `sola-ws` / `sws-`. App installed and dogfooded (rail, splits,
    drop-project, dead-pane, `×N`). `solactl workspaces` implemented (richer
    payloads, `--prompt-file`, `project.add`, `workspace.select` /
-   `workspace.exec`, `pane.wait`, `whoami`; Grok-leaf targeting;
-   parent from `$SOLA_PANE_ID`) — **desk smoke pending**. CLI
+   `workspace.exec`, `pane.wait`, `whoami`; Grok-leaf targeting, Codex
+   leaf when `--agent codex`; parent from `$SOLA_PANE_ID`) — **desk smoke pending**. CLI
    `workspace.spawn` is background unless `--select` (UI + / ⌘T still
    jump). Skill `sola-workspaces-cli`: “review/work ticket”, “create
    worktree”, “tell that grok” → spawn/exec, never steal the rail.
@@ -182,7 +186,7 @@ Do not invent product policy.
    Launcher builtin **Workspaces** is in shell (`lucide/folders`).
    Shortcuts: ⌘T spawn, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
    right, ⌘W close pane. A workspace is one rail row even when split;
-   the mark rolls up every Grok pane (waiting / needs-attention beats
+   the mark rolls up every Grok or Codex pane (waiting / needs-attention beats
    working beats done beats idle). Last pane close keeps the workspace.
    Dead last pane shows **Start new shell**; a split leaf that exits
    retracts. Quiet `×N` on the workspace row is the loudest Grok
@@ -207,7 +211,8 @@ Do not invent product policy.
    `workspace.exec --prompt` bracketed-paste into the tmux session then
    Enter (raw PTY dump was clipping the composer and not submitting
    until a later wheel/focus). Desk cards (unfocused): title is
-   `{project} · {tab}`, body is `grok is done` / `needs attention`.
+   `{project} · {tab}`, body is `grok is done` / `codex is done` /
+   `needs attention`.
    Grid selection follows the glyphs when the pane scrolls (was a
    screen-fixed wash over changing text). Installed (self-restart).  
 12. **sola-paint** — default MIME / `solactl open` dest; crop / rotate /
@@ -307,9 +312,9 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
 | Wrapper | **`sola-wrapper <id>`**; `app_id` is the configured id; per-id CEF profile under `~/.config/sola/wrapper/<id>/`; Applications catalog (`kind` + `url`); not sola-browser chrome |
-| Agent product | **Workspaces** (`grok` CLI in PTYs). The iced ACP/Grok-leader GUI (`crates/sola-agent`) is **retired** — do not rebuild it or a multi-client ACP chat. |
+| Agent product | **Workspaces** (`grok` / `codex` CLI in PTYs). The iced ACP/Grok-leader GUI (`crates/sola-agent`) is **retired** — do not rebuild it or a multi-client ACP chat. |
 | Workspaces | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
-| Workspaces CLI | **Grok is first-class.** Hooks, presence, OSC, and spawn always implement and test Grok first. Other CLIs are presence-only until Grok status is trustworthy. |
+| Workspaces CLI | **Grok and Codex are first-class.** Hooks, presence, OSC, and spawn implement Grok first; Codex gets the same spawn / exec / hook path. Claude / OpenCode stay presence-only (D4). |
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |
 | Workspaces worktrees | **`<project-root>/.worktrees/<name>`** (D4.2). App may append `/.worktrees/` to the project's `.gitignore` on first spawn. |
 | Workspaces merge / drop | Never remove a git worktree or rail tab unless asked. Merge/LGTM is merge only. "Clean up this worktree" / "merge and clean up" / "remove this worktree, don't merge" also close the tab. If the worktree goes, the tab goes unless they say keep it. |

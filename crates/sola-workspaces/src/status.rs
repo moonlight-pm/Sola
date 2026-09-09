@@ -1,6 +1,6 @@
 //! Pane / workspace status vocabulary.
 //!
-//! Hooks (Grok first) and OSC 9999 write this. Process-tree only names
+//! Hooks (Grok and Codex) and OSC 9999 write this. Process-tree only names
 //! *who*. Never infer from OSC 0/2 titles.
 
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ impl AgentStatus {
     }
 
     /// Workspace row: waiting (needs attention) beats working beats
-    /// done beats idle. Shell panes are filtered out by [`rollup_grok`].
+    /// done beats idle. Shell panes are filtered out by [`rollup_tracked`].
     pub fn rollup(statuses: impl IntoIterator<Item = Self>) -> Self {
         let mut best = Self::Idle;
         for s in statuses {
@@ -49,10 +49,27 @@ impl AgentStatus {
     }
 }
 
-/// Mark for a workspace tab: Grok panes only. A sibling shell stays off
-/// the disc even if it still holds a leftover status.
-pub fn rollup_grok<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> AgentStatus {
-    AgentStatus::rollup(panes.into_iter().filter(|p| p.is_grok()).map(|p| p.status))
+/// Mark for a workspace tab: Grok and Codex panes. A sibling shell stays
+/// off the disc even if it still holds a leftover status.
+pub fn rollup_tracked<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> AgentStatus {
+    AgentStatus::rollup(
+        panes
+            .into_iter()
+            .filter(|p| p.is_tracked())
+            .map(|p| p.status),
+    )
+}
+
+/// Agent name for desk cards / `workspace.agent`: the tracked pane whose
+/// status matches the roll-up (waiting first).
+pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Option<String> {
+    let panes: Vec<&PaneStatus> = panes.into_iter().filter(|p| p.is_tracked()).collect();
+    let rolled = AgentStatus::rollup(panes.iter().map(|p| p.status));
+    panes
+        .iter()
+        .find(|p| p.status == rolled)
+        .and_then(|p| p.agent.clone())
+        .or_else(|| panes.first().and_then(|p| p.agent.clone()))
 }
 
 /// Quiet `×N` on the workspace row: loudest Grok session in the tab.
@@ -108,8 +125,13 @@ impl PaneStatus {
                 return;
             }
         }
+        let who = if incoming.agent.is_empty() {
+            "grok".to_string()
+        } else {
+            incoming.agent.clone()
+        };
         if incoming.mapped.compacted {
-            self.agent = Some("grok".into());
+            self.agent = Some(who.clone());
         }
         if incoming.mapped.compacted && incoming.mapped.status.is_none() {
             return;
@@ -119,7 +141,7 @@ impl PaneStatus {
         };
         self.status = status;
         self.restored_unconfirmed = false;
-        self.agent = Some("grok".into());
+        self.agent = Some(who);
         if let Some(tool) = &incoming.mapped.tool {
             self.tool = Some(tool.clone());
         }
@@ -178,6 +200,12 @@ impl PaneStatus {
 
     pub fn is_grok(&self) -> bool {
         self.agent.as_deref() == Some("grok")
+    }
+
+    pub fn is_tracked(&self) -> bool {
+        self.agent
+            .as_deref()
+            .is_some_and(crate::cli::is_first_class)
     }
 
     fn shows_compaction(&self) -> bool {
@@ -389,6 +417,7 @@ mod tests {
     fn hook(session: &str, status: AgentStatus) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(status),
                 clear_turn: false,
@@ -405,6 +434,7 @@ mod tests {
     fn session_start(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            agent: "grok".into(),
             mapped: MappedHook {
                 status: None,
                 clear_turn: true,
@@ -421,6 +451,7 @@ mod tests {
     fn prompt_submit(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Working),
                 clear_turn: false,
@@ -437,6 +468,7 @@ mod tests {
     fn session_end(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Done),
                 clear_turn: false,
@@ -588,7 +620,17 @@ mod tests {
             agent: Some("claude".into()),
             ..PaneStatus::default()
         };
-        assert_eq!(rollup_grok([&grok, &shell, &other]), AgentStatus::Done);
+        assert_eq!(rollup_tracked([&grok, &shell, &other]), AgentStatus::Done);
+        let codex = PaneStatus {
+            status: AgentStatus::Waiting,
+            agent: Some("codex".into()),
+            ..PaneStatus::default()
+        };
+        assert_eq!(
+            rollup_tracked([&grok, &shell, &codex]),
+            AgentStatus::Waiting
+        );
+        assert_eq!(loudest_agent([&grok, &codex]).as_deref(), Some("codex"));
         let working = PaneStatus {
             status: AgentStatus::Working,
             agent: Some("grok".into()),
@@ -600,10 +642,10 @@ mod tests {
             ..PaneStatus::default()
         };
         assert_eq!(
-            rollup_grok([&working, &waiting, &shell]),
+            rollup_tracked([&working, &waiting, &shell]),
             AgentStatus::Waiting
         );
-        assert_eq!(rollup_grok([&shell]), AgentStatus::Idle);
+        assert_eq!(rollup_tracked([&shell]), AgentStatus::Idle);
     }
 
     #[test]
@@ -717,5 +759,17 @@ mod tests {
         pane.compaction_count = 4;
         pane.refresh_compaction(Path::new("/tmp/not-a-session"));
         assert_eq!(pane.compaction_count, 0);
+    }
+
+    #[test]
+    fn apply_hook_names_codex() {
+        let mut pane = PaneStatus::default();
+        let mut incoming = hook("c1", AgentStatus::Working);
+        incoming.agent = "codex".into();
+        pane.apply_hook(&incoming);
+        assert_eq!(pane.agent.as_deref(), Some("codex"));
+        assert_eq!(pane.status, AgentStatus::Working);
+        assert!(pane.is_tracked());
+        assert!(!pane.is_grok());
     }
 }

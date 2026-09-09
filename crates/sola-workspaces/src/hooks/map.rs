@@ -1,4 +1,4 @@
-//! Grok hook events → status. Grok is the first-class mapping.
+//! Grok / Codex hook events → status.
 
 use serde_json::Value;
 
@@ -21,6 +21,23 @@ pub struct MappedHook {
 
 /// Map a Grok stdin JSON envelope. Unknown / child-only events return `None`.
 pub fn map_grok(payload: &Value) -> Option<MappedHook> {
+    map_payload(payload, "grok")
+}
+
+/// Codex lifecycle events. Same vocab as Grok, plus permission / interrupt.
+pub fn map_codex(payload: &Value) -> Option<MappedHook> {
+    map_payload(payload, "codex")
+}
+
+pub fn map_agent(agent: &str, payload: &Value) -> Option<MappedHook> {
+    if agent.eq_ignore_ascii_case("codex") {
+        map_codex(payload)
+    } else {
+        map_grok(payload)
+    }
+}
+
+fn map_payload(payload: &Value, kind: &str) -> Option<MappedHook> {
     let event = event_name(payload);
     if event.is_empty() {
         return None;
@@ -42,6 +59,21 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
     let tool = string_field(payload, &["toolName", "tool_name", "name"]);
 
     if event == "session_start" {
+        // Codex fires SessionStart with source=compact mid-turn after a
+        // compact. That is not a new session — do not idle the ring.
+        let source = string_field(payload, &["source"]).unwrap_or_default();
+        if kind == "codex" && normalize_event(&source) == "compact" {
+            return Some(MappedHook {
+                status: None,
+                clear_turn: false,
+                claim: false,
+                session_end: false,
+                compacted: true,
+                prompt: None,
+                tool: None,
+                session_id,
+            });
+        }
         return Some(MappedHook {
             status: None,
             clear_turn: true,
@@ -77,9 +109,11 @@ pub fn map_grok(payload: &Value) -> Option<MappedHook> {
         } else {
             Some(AgentStatus::Working)
         }
+    } else if event == "permission_request" {
+        Some(AgentStatus::Waiting)
     } else if matches!(
         event.as_str(),
-        "stop" | "session_end" | "stop_failure" | "stop_cancelled"
+        "stop" | "session_end" | "stop_failure" | "stop_cancelled" | "interrupt"
     ) {
         Some(AgentStatus::Done)
     } else if event == "notification" {
@@ -291,5 +325,39 @@ mod tests {
         assert_eq!(normalize_event("StopFailure"), "stop_failure");
         assert_eq!(normalize_event("pre_tool_use"), "pre_tool_use");
         assert_eq!(normalize_event("UserPromptSubmit"), "user_prompt_submit");
+    }
+
+    #[test]
+    fn codex_permission_and_interrupt() {
+        assert_eq!(
+            map_codex(&json!({"hook_event_name": "PermissionRequest"}))
+                .unwrap()
+                .status,
+            Some(AgentStatus::Waiting)
+        );
+        assert_eq!(
+            map_codex(&json!({"hook_event_name": "Interrupt"}))
+                .unwrap()
+                .status,
+            Some(AgentStatus::Done)
+        );
+        assert_eq!(
+            map_codex(&json!({"hookEventName": "Stop"})).unwrap().status,
+            Some(AgentStatus::Done)
+        );
+        let compact = map_codex(&json!({
+            "hook_event_name": "SessionStart",
+            "source": "compact"
+        }))
+        .unwrap();
+        assert!(compact.compacted);
+        assert!(!compact.clear_turn);
+        let start = map_codex(&json!({
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        }))
+        .unwrap();
+        assert!(start.clear_turn);
+        assert!(start.claim);
     }
 }

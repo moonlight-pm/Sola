@@ -16,9 +16,9 @@ Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/id
    keep the widget local. Do not silently restyle mail / settings / terminal.
 4. Spawn sibling is a v1 product verb — design it as a first-class control,
    not a hidden menu item.
-5. **Grok is the first-class CLI.** Implement and test Grok first (hooks,
-   presence, OSC, spawn `--agent`). Other agents are presence-only until
-   Grok status is trustworthy. Do not lead with Claude/Codex adapters.
+5. **Grok and Codex are first-class CLIs.** Implement and test Grok first
+   (hooks, presence, OSC, spawn `--agent`). Codex gets the same spawn / exec /
+   hook path. Claude / OpenCode stay presence-only (D4).
 6. **`solactl workspaces` is a first-class surface.** Any change to verbs, args,
    payloads, targeting, or timeouts updates `calls.rs`, dispatch, tests,
    and `docs/manual/solactl.md` in the **same change**. Do not ship a

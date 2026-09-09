@@ -145,24 +145,41 @@ pub fn wait_timeout_secs(raw: Option<u64>) -> u64 {
     }
 }
 
-/// Explicit pane id wins. A workspace leaf list prefers Grok, else `active`.
-pub fn prefer_grok_pane(
+/// Spawn / exec first-class CLIs. Claude and others stay presence-only.
+pub const FIRST_CLASS: &[&str] = &["grok", "codex"];
+
+pub fn canonical_agent(name: &str) -> Option<&'static str> {
+    FIRST_CLASS
+        .iter()
+        .copied()
+        .find(|a| name.eq_ignore_ascii_case(a))
+}
+
+pub fn is_first_class(name: &str) -> bool {
+    canonical_agent(name).is_some()
+}
+
+/// Explicit pane id wins. Else the requested agent, else `active`.
+pub fn prefer_agent_pane(
     leaves: &[String],
     agents: &[(String, Option<String>)],
     active: &str,
     explicit: Option<&str>,
+    prefer: Option<&str>,
 ) -> String {
     if let Some(id) = explicit {
         if leaves.iter().any(|p| p == id) {
             return id.to_string();
         }
     }
-    if let Some((id, _)) = agents.iter().find(|(_, a)| {
-        a.as_deref()
-            .is_some_and(|name| name.eq_ignore_ascii_case("grok"))
-    }) {
-        if leaves.iter().any(|p| p == id) {
-            return id.clone();
+    if let Some(want) = prefer {
+        if let Some((id, _)) = agents.iter().find(|(_, a)| {
+            a.as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(want))
+        }) {
+            if leaves.iter().any(|p| p == id) {
+                return id.clone();
+            }
         }
     }
     if leaves.iter().any(|p| p == active) {
@@ -172,6 +189,17 @@ pub fn prefer_grok_pane(
         .first()
         .cloned()
         .unwrap_or_else(|| active.to_string())
+}
+
+/// Workspace name prefers the Grok leaf, else `active`.
+#[cfg(test)]
+pub fn prefer_grok_pane(
+    leaves: &[String],
+    agents: &[(String, Option<String>)],
+    active: &str,
+    explicit: Option<&str>,
+) -> String {
+    prefer_agent_pane(leaves, agents, active, explicit, Some("grok"))
 }
 
 pub fn read_prompt(
@@ -202,8 +230,8 @@ pub fn read_prompt(
     }
 }
 
-pub fn grok_argv(prompt: Option<&str>) -> Vec<String> {
-    let mut args = vec!["grok".to_string()];
+pub fn agent_argv(agent: &str, prompt: Option<&str>) -> Vec<String> {
+    let mut args = vec![agent.to_string()];
     if let Some(p) = prompt {
         let p = p.trim();
         if !p.is_empty() {
@@ -213,11 +241,21 @@ pub fn grok_argv(prompt: Option<&str>) -> Vec<String> {
     args
 }
 
-pub fn grok_shell_line(prompt: Option<&str>) -> String {
+pub fn agent_shell_line(agent: &str, prompt: Option<&str>) -> String {
     match prompt {
-        Some(p) if !p.trim().is_empty() => format!("grok {}", shell_single_quote(p)),
-        _ => "grok".into(),
+        Some(p) if !p.trim().is_empty() => format!("{agent} {}", shell_single_quote(p)),
+        _ => agent.to_string(),
     }
+}
+
+#[cfg(test)]
+pub fn grok_argv(prompt: Option<&str>) -> Vec<String> {
+    agent_argv("grok", prompt)
+}
+
+#[cfg(test)]
+pub fn grok_shell_line(prompt: Option<&str>) -> String {
+    agent_shell_line("grok", prompt)
 }
 
 pub fn shell_single_quote(s: &str) -> String {
@@ -233,13 +271,16 @@ pub fn shell_single_quote(s: &str) -> String {
     out
 }
 
-pub fn only_grok(agent: Option<&str>) -> Result<Option<&str>, String> {
+/// `None` if omitted. `--prompt` without `--agent` still implies grok.
+pub fn first_class_agent(agent: Option<&str>) -> Result<Option<&'static str>, String> {
     match agent {
         None => Ok(None),
-        Some("grok") => Ok(Some("grok")),
-        Some(other) => Err(format!(
-            "only grok is first-class; other agents are presence-only (got {other})"
-        )),
+        Some(name) => match canonical_agent(name) {
+            Some(a) => Ok(Some(a)),
+            None => Err(format!(
+                "only grok and codex are first-class; other agents are presence-only (got {name})"
+            )),
+        },
     }
 }
 
@@ -321,6 +362,20 @@ mod tests {
     }
 
     #[test]
+    fn prefer_codex_leaf_when_requested() {
+        let leaves = vec!["a".into(), "b".into()];
+        let agents = vec![
+            ("a".into(), Some("grok".into())),
+            ("b".into(), Some("codex".into())),
+        ];
+        assert_eq!(
+            prefer_agent_pane(&leaves, &agents, "a", None, Some("codex")),
+            "b"
+        );
+        assert_eq!(prefer_grok_pane(&leaves, &agents, "b", None), "a");
+    }
+
+    #[test]
     fn prefer_active_when_no_grok() {
         let leaves = vec!["a".into(), "b".into()];
         let agents = vec![("a".into(), Some("shell".into())), ("b".into(), None)];
@@ -354,6 +409,12 @@ mod tests {
             "grok 'it'\\''s a ticket'"
         );
         assert_eq!(grok_argv(Some("go")), vec!["grok", "go"]);
+        assert_eq!(agent_argv("codex", Some("go")), vec!["codex", "go"]);
+        assert_eq!(agent_shell_line("codex", None), "codex");
+        assert_eq!(
+            agent_shell_line("codex", Some("it's a ticket")),
+            "codex 'it'\\''s a ticket'"
+        );
     }
 
     #[test]
@@ -375,9 +436,11 @@ mod tests {
     }
 
     #[test]
-    fn only_grok_rejects_claude() {
-        assert!(only_grok(Some("claude")).is_err());
-        assert_eq!(only_grok(Some("grok")).unwrap(), Some("grok"));
-        assert_eq!(only_grok(None).unwrap(), None);
+    fn first_class_rejects_claude() {
+        assert!(first_class_agent(Some("claude")).is_err());
+        assert!(first_class_agent(Some("opencode")).is_err());
+        assert_eq!(first_class_agent(Some("grok")).unwrap(), Some("grok"));
+        assert_eq!(first_class_agent(Some("Codex")).unwrap(), Some("codex"));
+        assert_eq!(first_class_agent(None).unwrap(), None);
     }
 }

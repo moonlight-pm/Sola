@@ -1,6 +1,6 @@
-//! Grok hook installer + Unix-socket receiver.
+//! Grok + Codex hook installer + Unix-socket receiver.
 //!
-//! Other agents wait. Identity is `SOLA_PANE_ID`, not the hook file name.
+//! Claude stays presence-only. Identity is `SOLA_PANE_ID`, not the hook file name.
 
 use std::sync::{mpsc, Mutex, OnceLock};
 
@@ -25,16 +25,18 @@ fn ensure_channel() {
     });
 }
 
-/// Install Grok hooks and start the UDS server. Fail-open on errors.
+/// Install Grok + Codex hooks and start the UDS server. Fail-open on errors.
 pub fn start() -> HookPaths {
     let paths = HookPaths::live();
     if let Err(e) = install::install(&paths) {
-        tracing::warn!("grok hook install failed: {e}");
+        tracing::warn!("agent hook install failed: {e}");
     } else {
         tracing::info!(
-            script = %paths.script_path.display(),
-            hooks = %paths.grok_hooks_dir.display(),
-            "installed grok sola-status hooks"
+            grok_script = %paths.script_path.display(),
+            grok_hooks = %paths.grok_hooks_dir.display(),
+            codex_script = %paths.codex_script_path.display(),
+            codex_hooks = %paths.codex_hooks_json.display(),
+            "installed grok and codex sola-status hooks"
         );
     }
     match server::bind(&paths.socket_path) {
