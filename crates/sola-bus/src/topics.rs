@@ -395,11 +395,11 @@ impl MailAccount {
     }
 }
 
-/// Sola's Google Cloud Desktop OAuth client (PKCE, Calendar API).
-/// Public by design — same family as sola-spotify's shared Web API id.
-/// Google's token endpoint still requires the Desktop `client_secret`.
-pub const GOOGLE_CALENDAR_CLIENT_ID: &str =
-    "";
+/// Google Cloud Desktop OAuth client (PKCE, Calendar API).
+/// Not stored in git (GitHub push protection). Set
+/// `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET`,
+/// or `CalendarConfig.google_client_id`.
+pub const GOOGLE_CALENDAR_CLIENT_ID: &str = "";
 pub const GOOGLE_CALENDAR_CLIENT_SECRET: &str = "";
 
 /// Shipped client, or `SOLA_GOOGLE_CALENDAR_CLIENT_ID` when that env is set.
@@ -2276,13 +2276,15 @@ mod tests {
     }
 
     #[test]
-    fn shipped_google_calendar_client_id_is_desktop() {
-        assert_eq!(
-            GOOGLE_CALENDAR_CLIENT_ID,
-            ""
+    fn google_calendar_client_not_stored_in_tree() {
+        assert!(
+            GOOGLE_CALENDAR_CLIENT_ID.is_empty(),
+            "do not commit a Google OAuth client id"
         );
-        assert!(GOOGLE_CALENDAR_CLIENT_ID.ends_with(".apps.googleusercontent.com"));
-        assert!(GOOGLE_CALENDAR_CLIENT_SECRET.starts_with("GOCSPX-"));
+        assert!(
+            GOOGLE_CALENDAR_CLIENT_SECRET.is_empty(),
+            "do not commit a Google OAuth client secret"
+        );
     }
 
     #[test]
