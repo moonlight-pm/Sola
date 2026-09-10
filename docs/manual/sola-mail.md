@@ -24,8 +24,9 @@ Default From.
 ## Use
 
 Three columns: mailboxes, message list, letter (or compose). Unread rows
-are **bold**. The toolbar stays on; message actions mute until a row is
-selected.
+are **bold**. The letter Date is the local calendar day with the local
+clock (`16:00`) under it. The toolbar stays on; message actions mute
+until a row is selected.
 
 - **Compose** — toolbar pen, or Message → New Message (⌘N).
 - **Attach** — while composing: toolbar paperclip, **Attach** next to
@@ -34,7 +35,7 @@ selected.
 - **Received files** — paperclip on the list row. In the letter: **Open**
   (images in Paint, everything else in the browser) or **Save** (picker,
   starts in Downloads).
-- **j / i / a / d** — Junk / Inbox / Archive / Trash and advance.
+- **x / i / a / d** — Junk / Inbox / Archive / Trash and advance.
   **u** undoes the last move.
 - On open, the last inbox list shows immediately. A card at the bottom
   right lists accounts still connecting (or that failed).

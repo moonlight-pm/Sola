@@ -986,7 +986,7 @@ impl App {
             _ => return Task::none(),
         };
         match ch {
-            "j" => return self.move_and_advance(id, "Junk".into()),
+            "x" => return self.move_and_advance(id, "Junk".into()),
             "i" => return self.move_and_advance(id, "INBOX".into()),
             "a" => return self.move_and_advance(id, "Archive".into()),
             "d" => return self.move_and_advance(id, "Trash".into()),
@@ -2336,6 +2336,7 @@ fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
     };
     let (name, addr) = split_address(&body.from);
     let date = letter_date(&body.date);
+    let time = letter_time(&body.date);
 
     let mut from_value = column![text(name).font(fonts::ui_medium()).size(14)]
         .spacing(2)
@@ -2344,12 +2345,16 @@ fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
         from_value = from_value.push(kit_text::caption(addr).style(kit_text::muted));
     }
 
+    let mut date_value = column![kit_text::caption(date).style(kit_text::muted)]
+        .spacing(2)
+        .width(Length::Fill);
+    if !time.is_empty() {
+        date_value = date_value.push(kit_text::caption(time).style(kit_text::muted));
+    }
+
     let mut meta = column![
         letter_meta_row("From", from_value.into()),
-        letter_meta_row(
-            "Date",
-            kit_text::caption(date).style(kit_text::muted).into(),
-        ),
+        letter_meta_row("Date", date_value.into()),
     ]
     .spacing(SPACE_LG)
     .width(Length::Fill);
@@ -2434,6 +2439,10 @@ fn short_from(from: &str) -> String {
 
 fn letter_date(date: &str) -> String {
     crate::protocol::date::format_letter_date(date)
+}
+
+fn letter_time(date: &str) -> String {
+    crate::protocol::date::format_letter_time(date)
 }
 
 fn short_date(date: &str) -> String {

@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-09-04 (sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
+**As of:** 2026-09-10 (mail: letter Date + local `HH:MM`; junk is `x` — **installed** `mail` release; 2026-09-04 sola-spotify: clicks re-activate after Connect inactive; session teardown waits before reconnect; `/me` 429 no longer 2s-polls; artist/album name links; album Save/Follow + artist Follow — **installed** `spotify` release; mail multi-IMAP canonical boxes; send identities **installed** `mail`+`settings` release; browser: vault stay-logged-in + Log out, HTTP auth persist, helper Shutdown-flush, Google passkey document-start intercept, ⌘⇧R hard reload — **installed** `browser` release, desk smoke pending; mail attachments send/receive; kvm Linux listen + CLIP1 text/`image/png`; workspaces `workspace.set --name` moves `.worktrees/<slug>` + `--branch`; self-cleanup: `workspace.rm --worktree` + gone-path reap; grid selection follows scroll; idle omnibox query-strip + Kagi lucky Enter + page ⌘V **smoked**; switcher count marks + grouped notify pile, no cap 20 — **installed** `kit`+`shell` release; shell menubar: pixel-graph stats + 12-band spectrum **raster to a nearest-neighbor image** (not iced canvas 1×1; GLES2 / software GL); notify pile bell + count, Super+Shift+4 freeze keeps open panels, app-menu X from layout — **installed** `shell` release; Super+K live Frame is **card-sized**; DevTools docked panel **smoked**; JS dialogs kit modal; sola-spotify **on master** **installed** `spotify` release; number pad digits **smoked**; screenshot chords → clipboard + promised PNG; `cargo make` defaults to release; Arcade watch / singleton / refuse-live-Steam; Slack huddle camera **smoked**; mail move-rules; GPU idle → [`PERFORMANCE.md`](PERFORMANCE.md))
 
 ---
 
@@ -136,8 +136,11 @@ Do not invent product policy.
    freeform. Canonical six boxes still combine across `imap_enabled`
    accounts. Attachments send + receive (list paperclip; Open/Save;
    compose Attach ⌘⇧A; `multipart/mixed`; CID images are files).
-   **Install:** standing OK to `install mail` after each finished round
-   (`mail`+`settings` release 2026-09-04). Self-restarts.
+   Letter Date is the local day with local `HH:MM` under it. Junk is
+   **x** (not `j`).
+   **Install:** standing OK to `install mail` after **every** mail update
+   (2026-09-10). Self-restarts. Last: letter local time + junk `x`
+   (release 2026-09-10).
 10. **Marketing site (sola.computer)** — **teaser live** at
    [https://sola.computer/](https://sola.computer/). Implemented as a Thoxa
    container (`Thoxa` repo `containers/sola`) on Wicket aulos (workload

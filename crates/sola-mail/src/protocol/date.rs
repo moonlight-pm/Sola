@@ -1,5 +1,6 @@
 //! Envelope / IMAP INTERNALDATE parsing for sort keys and list labels.
 
+use chrono::{DateTime as ChronoDateTime, Datelike, Local, Timelike};
 use mail_parser::DateTime;
 
 /// IMAP envelope Date → unix seconds. `0` if the field is missing or junk.
@@ -17,12 +18,35 @@ pub fn format_short_date(raw: &str) -> String {
     }
 }
 
-/// Letter header: `4 September 2026`.
+/// Letter header date: `4 September 2026` in the local timezone.
 pub fn format_letter_date(raw: &str) -> String {
-    match parse_mail_datetime(raw) {
-        Some(dt) => format!("{} {} {}", dt.day, month_name(dt.month), dt.year),
+    match local_from_mail(raw) {
+        Some(dt) => format!(
+            "{} {} {}",
+            dt.day(),
+            month_name(dt.month() as u8),
+            dt.year()
+        ),
         None => String::new(),
     }
+}
+
+/// Letter header time: `16:00` in the local timezone. Empty when the
+/// envelope has no clock (date-only) or does not parse.
+pub fn format_letter_time(raw: &str) -> String {
+    if !raw.contains(':') {
+        return String::new();
+    }
+    match local_from_mail(raw) {
+        Some(dt) => format!("{:02}:{:02}", dt.hour(), dt.minute()),
+        None => String::new(),
+    }
+}
+
+fn local_from_mail(raw: &str) -> Option<ChronoDateTime<Local>> {
+    let parsed = parse_mail_datetime(raw)?;
+    ChronoDateTime::from_timestamp(parsed.to_timestamp(), 0)
+        .map(|utc| utc.with_timezone(&Local))
 }
 
 fn parse_mail_datetime(raw: &str) -> Option<DateTime> {
@@ -222,10 +246,7 @@ mod tests {
         assert_eq!(format_short_date("04-Sep-2026 16:00:00 -0700"), "4 Sep");
         assert_eq!(format_short_date("25-Aug-2026 10:00:00 +0000"), "25 Aug");
         assert!(!format_short_date("04-Sep-2026 16:00:00 -0700").contains("0700"));
-        assert_eq!(
-            format_letter_date("04-Sep-2026 16:00:00 -0700"),
-            "4 September 2026"
-        );
+        assert_letter_stamp_is_local("04-Sep-2026 16:00:00 -0700");
     }
 
     #[test]
@@ -234,10 +255,43 @@ mod tests {
             format_short_date("Tue, 25 Aug 2026 10:00:00 +0000"),
             "25 Aug"
         );
+        assert_letter_stamp_is_local("Tue, 25 Aug 2026 10:00:00 +0000");
+    }
+
+    #[test]
+    fn letter_time_empty_without_clock() {
+        assert_eq!(format_letter_time("2026-09-04"), "");
+        assert_eq!(format_letter_time(""), "");
+        assert_eq!(format_letter_time("not a date -0700"), "");
+    }
+
+    #[test]
+    fn letter_time_honors_offset() {
+        let utc = format_letter_time("04-Sep-2026 16:00:00 +0000");
+        let west = format_letter_time("04-Sep-2026 16:00:00 -0700");
+        assert_ne!(utc, west);
         assert_eq!(
-            format_letter_date("Tue, 25 Aug 2026 10:00:00 +0000"),
-            "25 August 2026"
+            date_sort_key("04-Sep-2026 16:00:00 -0700")
+                - date_sort_key("04-Sep-2026 16:00:00 +0000"),
+            7 * 3600
         );
+    }
+
+    fn assert_letter_stamp_is_local(raw: &str) {
+        let local = local_from_mail(raw).expect(raw);
+        assert_eq!(
+            format_letter_date(raw),
+            format!(
+                "{} {} {}",
+                local.day(),
+                month_name(local.month() as u8),
+                local.year()
+            )
+        );
+        let time = format_letter_time(raw);
+        assert_eq!(time, format!("{:02}:{:02}", local.hour(), local.minute()));
+        assert!(!time.contains("0700"));
+        assert!(!time.contains('+'));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; letter Date is local day with local `HH:MM` under it; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
 **Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
@@ -191,7 +191,7 @@ Single iced window, three columns (kit `split` / sidebar + panes):
 
 - **Folder list:** real IMAP folders + smart mailboxes derived from rules (`action == "smart_mailbox"`). Unread-only badges (hidden when 0).
 - **Message list:** summaries for selected folder; search; load-more; archive-all / trash-all when applicable; empty-folder for Trash/Junk-style folders (parity).
-- **Message view:** letter header (subject, person + address, date); kit `prose` body (paragraphs, quotes, inline links); file list (Open / Save) when the MIME has attachments; Reply / Reply All / Archive / Trash / Copy.
+- **Message view:** letter header (subject, person + address, date with local time under it); kit `prose` body (paragraphs, quotes, inline links); file list (Open / Save) when the MIME has attachments; Reply / Reply All / Archive / Trash / Copy.
 - **Compose mode:** replaces the right pane (or right two panes if density requires — default: replace message pane only). Fields: From (kit select of settings identities: Default From first, then A–Z; unchecked aliases and catch-alls like `*@domain` are omitted; reply preselects the identity in the original To/Cc), To, Cc, Subject, body. Attach (toolbar paperclip, Message → Attach Files…, or Attach next to Send) via kit FilePicker. Send / Cancel. SMTP follows the From identity (extra account vs inbox).
 - **List:** paperclip on rows whose IMAP `BODYSTRUCTURE` has a user-facing file.
 
@@ -228,7 +228,7 @@ When not composing and focus is not a text input:
 
 | Key | Action |
 |---|---|
-| `j` | Move selected → Junk, advance (Message menu) |
+| `x` | Move selected → Junk, advance (Message menu) |
 | `i` | Move selected → INBOX, advance (Message menu) |
 | `a` | Move selected → Archive, advance (Message menu) |
 | `d` | Move selected → Trash, advance (Message menu) |
