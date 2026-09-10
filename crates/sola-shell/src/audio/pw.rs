@@ -1,27 +1,32 @@
 //! PipeWire graph + WirePlumber `wpctl` helpers.
 //! Parsing is unit-tested; the worker never runs on the iced thread.
+//!
+//! Helpers are time-bounded. A stuck `pw-dump` / `wpctl` used to block the
+//! audio worker forever, so device clicks never reached `set-default`.
 
 use super::{Device, Kind, Snapshot};
-use std::process::Command;
+use std::io::Read;
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
-pub fn snapshot() -> Snapshot {
-    let Ok(dump) = run(&["pw-dump"]) else {
-        return Snapshot::default();
-    };
-    let (sinks, sources) = match parse_nodes(&dump) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::debug!("audio pw-dump parse: {e}");
-            return Snapshot::default();
-        }
-    };
+/// Bound for `pw-dump` / `wpctl`. Control-plane stalls (hung WirePlumber)
+/// must not freeze the picker.
+const HELPER_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub fn snapshot() -> Result<Snapshot, String> {
+    let dump = run(&["pw-dump"])?;
+    let (sinks, sources) = parse_nodes(&dump).map_err(|e| {
+        tracing::debug!("audio pw-dump parse: {e}");
+        e
+    })?;
     if sinks.is_empty() && sources.is_empty() {
         // Graph came back but no endpoints — still "available" so the
         // chip can show a quiet zero, unless dump itself failed.
-        return Snapshot {
+        return Ok(Snapshot {
             available: true,
             ..Snapshot::default()
-        };
+        });
     }
     let default_sink = inspect_id("@DEFAULT_AUDIO_SINK@");
     let default_source = inspect_id("@DEFAULT_AUDIO_SOURCE@");
@@ -31,7 +36,7 @@ pub fn snapshot() -> Snapshot {
     let (source_volume, source_mute) = default_source
         .and_then(|id| get_volume(id))
         .unwrap_or((0.0, false));
-    Snapshot {
+    Ok(Snapshot {
         available: true,
         sinks,
         sources,
@@ -41,29 +46,50 @@ pub fn snapshot() -> Snapshot {
         sink_mute,
         source_volume,
         source_mute,
-    }
+    })
 }
 
 pub fn set_volume(id: u32, volume: f32) -> bool {
     let pct = ((volume.clamp(0.0, 1.0)) * 100.0).round();
-    run(&[
-        "wpctl",
+    log_cmd(
+        run(&[
+            "wpctl",
+            "set-volume",
+            &id.to_string(),
+            &format!("{pct:.0}%"),
+            "-l",
+            "1.0",
+        ]),
         "set-volume",
-        &id.to_string(),
-        &format!("{pct:.0}%"),
-        "-l",
-        "1.0",
-    ])
-    .is_ok()
+        id,
+    )
 }
 
 pub fn set_mute(id: u32, mute: bool) -> bool {
     let v = if mute { "1" } else { "0" };
-    run(&["wpctl", "set-mute", &id.to_string(), v]).is_ok()
+    log_cmd(
+        run(&["wpctl", "set-mute", &id.to_string(), v]),
+        "set-mute",
+        id,
+    )
 }
 
 pub fn set_default(id: u32) -> bool {
-    run(&["wpctl", "set-default", &id.to_string()]).is_ok()
+    log_cmd(
+        run(&["wpctl", "set-default", &id.to_string()]),
+        "set-default",
+        id,
+    )
+}
+
+fn log_cmd(result: Result<String, String>, op: &str, id: u32) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("wpctl {op} {id}: {e}");
+            false
+        }
+    }
 }
 
 fn inspect_id(spec: &str) -> Option<u32> {
@@ -77,21 +103,75 @@ fn get_volume(id: u32) -> Option<(f32, bool)> {
 }
 
 fn run(cmd: &[&str]) -> Result<String, String> {
+    run_with_timeout(cmd, HELPER_TIMEOUT)
+}
+
+fn run_with_timeout(cmd: &[&str], timeout: Duration) -> Result<String, String> {
     let (bin, args) = cmd
         .split_first()
         .ok_or_else(|| "empty command".to_string())?;
-    let out = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .args(args)
-        .output()
-        .map_err(|e| format!("{bin}: {e}"))?;
-    if !out.status.success() {
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // SAFETY: `set_pdeathsig_sigterm` is the documented pre_exec hook.
+    unsafe {
+        command.pre_exec(sola_core::process::set_pdeathsig_sigterm);
+    }
+    let mut child = command.spawn().map_err(|e| format!("{bin}: {e}"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{bin}: no stdout"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{bin}: no stderr"))?;
+    let out_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if Instant::now() >= deadline => {
+                tracing::warn!(
+                    bin,
+                    cmd = %args.join(" "),
+                    "audio helper timed out after {timeout:?}"
+                );
+                sola_core::process::graceful_shutdown(&mut child, Duration::from_millis(150));
+                let _ = out_h.join();
+                let _ = err_h.join();
+                return Err(format!("{bin} {}: timed out", args.join(" ")));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+            Err(e) => {
+                let _ = out_h.join();
+                let _ = err_h.join();
+                return Err(format!("{bin}: {e}"));
+            }
+        }
+    };
+    let stdout = out_h.join().unwrap_or_default();
+    let stderr = err_h.join().unwrap_or_default();
+    if !status.success() {
         return Err(format!(
             "{bin} {}: {}",
             args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&stderr)
         ));
     }
-    String::from_utf8(out.stdout).map_err(|e| e.to_string())
+    String::from_utf8(stdout).map_err(|e| e.to_string())
 }
 
 pub fn parse_inspect_id(out: &str) -> Option<u32> {
@@ -170,6 +250,7 @@ pub fn parse_nodes(dump: &str) -> Result<(Vec<Device>, Vec<Device>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     const DUMP: &str = r#"[
       {"id": 66, "type": "PipeWire:Interface:Node", "info": {"props": {
@@ -227,5 +308,19 @@ mod tests {
             parse_get_volume("Volume: 0.40 [MUTED]\n"),
             Some((0.40, true))
         );
+    }
+
+    #[test]
+    fn helper_captures_stdout() {
+        let out = super::run_with_timeout(&["echo", "ok"], Duration::from_secs(1)).expect("echo");
+        assert_eq!(out.trim(), "ok");
+    }
+
+    #[test]
+    fn helper_times_out() {
+        let start = Instant::now();
+        let err = super::run_with_timeout(&["sleep", "5"], Duration::from_millis(120)).unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 }
