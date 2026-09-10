@@ -4,8 +4,8 @@
 **Status:** Frozen — implemented in `sola-shell`; 12-band spectrum on the chip 2026-09-02  
 **Related:** [shell iced](2026-05-22-sola-shell-iced-port-design.md); [system monitors](2026-06-16-menubar-system-monitors-design.md); [Bluetooth menubar](2026-08-29-shell-bluetooth-menubar-design.md); [omarchy consideration](../ideas/2026-08-22-omarchy-consideration.md) (audio mixer as a shell popover, not a Waybar)  
 **Implementation:** `crates/sola-shell/src/audio/` + menubar spectrum phrase + `Panel::Audio` on the existing Menu overlay  
-**Dogfood:** `shell` installed debug 2026-08-29; 12-band spectrum **installed** `river`+`shell` release 2026-09-02 and desk-smoked on Spotify (presence-band, punch gate, phrase gaps). `pw-dump` unnamed-array strip **installed** `shell` release 2026-09-08 (unsmoked). 2026-09-10: device pick was stuck behind a hung `pw-dump` (PipeWire control stall). Helpers now time out at 2s; set-default no longer waits on the dump — **installed** `shell` release. Desk-smoke of sink/source switch pending (`wpctl` still does not answer on this desk). Still pending: volume keys vs chip.  
-**Gaps:** no per-app streams; no Bluetooth profile/codec; host PipeWire + WirePlumber (`pw-dump`, `wpctl`, `pw-cat`). `pw-dump` is not always JSON (unnamed empty SPA arrays on MIDI ports); the shell strips those so a parse miss cannot hide the chip. Existing streams may stay on the old sink until they reconnect.
+**Dogfood:** `shell` installed debug 2026-08-29; 12-band spectrum **installed** `river`+`shell` release 2026-09-02 and desk-smoked on Spotify (presence-band, punch gate, phrase gaps). `pw-dump` unnamed-array strip **installed** `shell` release 2026-09-08 (unsmoked). 2026-09-10: device pick was stuck behind a hung `pw-dump` (PipeWire control stall). Helpers now time out at 2s; set-default no longer waits on the dump — **installed** `shell` release. Same day: a wedged `wpctl settings` (Steam/Factorio, 5h) made full `pw-dump` never return, so the 2s timeout hid the chip even though PipeWire and endpoints were up. Graph is now `pw-cli ls Node` (properties; partial stdout on timeout); chip stays up while the PipeWire socket exists. Desk-smoke of sink/source switch pending (`wpctl` still does not answer on this desk). Still pending: volume keys vs chip.  
+**Gaps:** no per-app streams; no Bluetooth profile/codec; host PipeWire + WirePlumber (`pw-cli`, `wpctl`, `pw-cat`). A stalled WirePlumber still blocks volume/default (`wpctl`); the chip stays. Existing streams may stay on the old sink until they reconnect.
 
 ## Intent
 
@@ -21,7 +21,7 @@ A volume control in the **Mac-shaped** sola-shell menubar. Media keys already ch
 | Output | Slider for the **default sink** (same object media keys move). Mute on that sink. List sinks; click sets default (`wpctl set-default`). |
 | Input | Slider + mute for the **default source**. List sources; click sets default. Omit sink **monitors** (`.monitor`) and WirePlumber internal capture nodes. |
 | Keys | `XF86AudioRaiseVolume` / `LowerVolume` / `Mute` stay `solactl media`. The chip **follows** those changes (refresh after the chord + poll). |
-| Sampling | In-process: `pw-dump` (device graph) + `wpctl` (get-volume / set-volume / set-mute / set-default / inspect). Poll thread (~1s) is separate from the command thread so a hung dump cannot sit on a device click. Helpers time out at 2s and keep the last graph. **No 16ms iced timer.** Spectrum is a separate `pw-cat` tap on the default sink (`stream.capture.sink`, `node.passive`) → 2048-point FFT → 12 power-warped log bands (~55 Hz–6.5 kHz, more bars on the treble, constant-Q overlap) + pink (~+4 dB/oct) weight → peak-hold autoscale (loudest recent band = full height) → punch gate (bottom ~⅓ of the LED stack stays dark until a real peak); the spectrum is a nearest-neighbor RGBA image; the meter thread `Kick`s the shell at ~50ms only while bands are live (same cadence as the old canvas `RedrawRequest::At`). No new bus topic, no pavucontrol. |
+| Sampling | In-process: `pw-cli ls Node` (device graph, properties only) + `wpctl` (get-volume / set-volume / set-mute / set-default / inspect). Poll thread (~1s) is separate from the command thread so a hung helper cannot sit on a device click. Helpers time out at 2s; partial stdout is the graph; last endpoints/volume stay when `wpctl` is silent. **No 16ms iced timer.** Spectrum is a separate `pw-cat` tap on the default sink (`stream.capture.sink`, `node.passive`) → 2048-point FFT → 12 power-warped log bands (~55 Hz–6.5 kHz, more bars on the treble, constant-Q overlap) + pink (~+4 dB/oct) weight → peak-hold autoscale (loudest recent band = full height) → punch gate (bottom ~⅓ of the LED stack stays dark until a real peak); the spectrum is a nearest-neighbor RGBA image; the meter thread `Kick`s the shell at ~50ms only while bands are live (same cadence as the old canvas `RedrawRequest::At`). No new bus topic, no pavucontrol. |
 
 ## Layout
 
@@ -50,14 +50,14 @@ Empty input: “No input devices.” Slider is 0–100, capped at 100% (same as 
 media keys  →  solactl media  →  wpctl (default sink)
                  ↘ audio::Refresh
 sola-shell audio poll thread
-  pw-dump + wpctl inspect/get-volume  →  Snapshot  →  iced
-  (2s helper timeout; keep last graph on fail)
+  pw-cli ls Node + wpctl inspect/get-volume  →  Snapshot  →  iced
+  (2s helper timeout; partial ls is the graph; keep last volume on wpctl fail)
 sola-shell audio command thread
   Command (volume / mute / default)   →  wpctl
-  (does not wait on dump)
+  (does not wait on the graph helper)
 sola-shell audio meter
   pw-cat (default-sink monitor, passive)  →  FFT → 12 warped-log bands + pink weight
   canvas RedrawRequest::At(50ms) while live
 ```
 
-First matching `Audio/Sink` / `Audio/Source` nodes from `pw-dump`. Default ids from `wpctl inspect @DEFAULT_AUDIO_SINK@` / `@DEFAULT_AUDIO_SOURCE@`.
+First matching `Audio/Sink` / `Audio/Source` nodes from `pw-cli ls Node`. Default ids from `wpctl inspect @DEFAULT_AUDIO_SINK@` / `@DEFAULT_AUDIO_SOURCE@`.

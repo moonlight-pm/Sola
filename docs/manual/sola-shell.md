@@ -60,7 +60,9 @@ on both sides) is a 12-band LED spectrum analyzer of what the default
 output is playing. Click the bars for the volume popover; there is no
 speaker glyph. The popover lists outputs and inputs — click a row to
 make it the default (`wpctl set-default`). Media keys still change
-volume on that default sink.
+volume on that default sink. The chip hides only when PipeWire is
+down; a stalled `wpctl` / session manager still shows it (device
+pick and the slider wait until WirePlumber answers).
 
 ## Window menu
 
