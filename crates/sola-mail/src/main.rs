@@ -69,7 +69,7 @@ fn main() -> iced::Result {
                 MenuItem::Divider,
                 item("archive", "Archive", Some(KeyCode::A.chord())),
                 item("inbox", "Move to Inbox", Some(KeyCode::I.chord())),
-                item("junk", "Move to Junk", Some(KeyCode::J.chord())),
+                item("junk", "Move to Junk", Some(KeyCode::X.chord())),
                 item("trash", "Delete", Some(KeyCode::D.chord())),
                 MenuItem::Divider,
                 item("undo", "Undo Move", Some(KeyCode::U.chord())),
