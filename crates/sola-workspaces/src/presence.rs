@@ -121,6 +121,8 @@ mod tests {
         assert_eq!(agent_from_name("/opt/sola/bin/grok"), Some("grok"));
         assert_eq!(agent_from_name("grok-1.0.3-linux-x86_64"), Some("grok"));
         assert_eq!(agent_from_name("claude"), Some("claude"));
+        assert_eq!(agent_from_name("codex"), Some("codex"));
+        assert_eq!(agent_from_name("codex-0.50.0"), Some("codex"));
         assert_eq!(agent_from_name("bash"), None);
         assert_eq!(AGENTS[0], "grok");
     }

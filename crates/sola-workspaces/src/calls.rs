@@ -59,7 +59,7 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s("branch", Some('b'), "Git branch (default: same as name)"),
                 opt_s("base-branch", None, "Start-point (default: HEAD)"),
                 opt_s("title", None, "Rail subtitle (name · title)"),
-                opt_s("agent", Some('a'), "Only grok in v1"),
+                opt_s("agent", Some('a'), "grok or codex"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
                 opt(
                     "prompt-file",
@@ -120,10 +120,10 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "workspace.exec",
-            "Start or brief Grok in an existing workspace",
+            "Start or brief Grok or Codex in an existing workspace",
             &[
                 req_s("workspace", Some('w'), "Workspace id or name"),
-                opt_s("agent", Some('a'), "Only grok in v1"),
+                opt_s("agent", Some('a'), "grok or codex (default grok)"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
                     "prompt-file",

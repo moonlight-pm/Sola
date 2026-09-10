@@ -15,8 +15,9 @@ Sola app chassis and the proven PTY grid. No WebView. No Electron.
 
 ## Users
 
-The person at this desk who already runs several CLI coding agents (Grok first)
-across isolated git checkouts, grouped by product (Sola, Illuno, Wicket, …).
+The person at this desk who already runs several CLI coding agents (Grok and
+Codex first) across isolated git checkouts, grouped by product (Sola, Illuno,
+Wicket, …).
 They glance at many panes and need to know which are working, waiting, or done
 without opening each one.
 
@@ -39,36 +40,38 @@ becoming this product.
 
 - Physical TTY → Sola desktop; this app is one window among kit apps
 - Sibling checkouts live under `<project-root>/.worktrees/<name>`
-- Agents are CLI TUIs in PTYs (Grok). Orca may be installed alongside; hooks
-  must not fight (`sola-status.json` vs `orca-status.json`)
+- Agents are CLI TUIs in PTYs (Grok, Codex). Orca may be installed alongside; hooks
+  must not fight (`sola-status.json` vs `orca-status.json`). Codex hooks merge
+  into `~/.codex/hooks.json` and leave Impeccable groups alone.
 - `sola-terminal` remains the untitled shell on tmux socket `sola`
 
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
 spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
-is background unless `--select`; can pass `--agent grok` + `--prompt` /
-`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok hooks
-+ OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok panes
-in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+is background unless `--select`; can pass `--agent grok|codex` + `--prompt` /
+`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok and
+Codex hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok
+panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws` (a Grok pane’s session id is in
 `last-status.json`; a lost tmux after reboot runs `grok -r` when Grok
 was still running and the session dir exists), unfocused desk card
-(title `{project} · {tab}`, body `grok is done` / `needs attention`),
+(title `{project} · {tab}`, body `grok is done` / `codex is done` /
+`needs attention`),
 `workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
 `workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;
 `--branch` is `git branch -m`).
 
-**First-class CLI:** **Grok.** Implement and test Grok first whenever adding
-agent support. Other CLIs are presence-only until Grok status is trustworthy.
+**First-class CLI:** **Grok and Codex.** Implement and test Grok first whenever
+adding agent support. Claude / OpenCode stay presence-only (D4).
 
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters.
 
 **Undecided (do not invent):** Claude hook installer vs presence. App-down
-is fail (call plane).
+is fail (call plane). Codex is decided: first-class.
 
 ## Brand Commitments
 
@@ -85,6 +88,7 @@ is fail (call plane).
 - Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `status_mark`, `SidebarPanel`)
 - Surface record: `crates/sola-workspaces/DESIGN.md` (status chrome)
 - Grok hooks: `~/.grok/hooks/sola-status.json` (do not touch `orca-status.json`)
+- Codex hooks: merged into `~/.codex/hooks.json` (do not drop Impeccable groups)
 - No customer quotes, screenshots of this app, or usage stats. Do not fabricate.
 
 ## Product Principles

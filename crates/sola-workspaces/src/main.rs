@@ -1,7 +1,7 @@
 //! sola-workspaces — project / workspace rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
+//! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -932,11 +932,8 @@ impl App {
                 .filter_map(|id| self.pane_status.get(id))
                 .collect();
             (
-                status::rollup_grok(panes.iter().copied()),
-                panes
-                    .iter()
-                    .find(|s| s.is_grok())
-                    .and_then(|s| s.agent.clone()),
+                status::rollup_tracked(panes.iter().copied()),
+                status::loudest_agent(panes.iter().copied()),
             )
         };
         if let Some(ws) = workspace::find_workspace_mut(&mut self.workspaces, &ws_id) {
@@ -1068,8 +1065,10 @@ impl App {
             return Err("name needs a letter or number".into());
         }
         if let Some(a) = agent {
-            if a != "grok" {
-                return Err("only grok is first-class; other agents are presence-only".into());
+            if cli::canonical_agent(a).is_none() {
+                return Err(
+                    "only grok and codex are first-class; other agents are presence-only".into(),
+                );
             }
         }
         let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
@@ -1420,15 +1419,15 @@ impl App {
         select: bool,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let prompt = cli::read_prompt(prompt, prompt_file)?;
-        let agent = match (cli::only_grok(agent)?, prompt.as_deref()) {
+        let agent = match (cli::first_class_agent(agent)?, prompt.as_deref()) {
             (Some(a), _) => Some(a),
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
         let (id, startup_err) =
             self.spawn_workspace(project, name, parent, agent, branch, base, title, select)?;
-        let task = if agent == Some("grok") {
-            let args = cli::grok_argv(prompt.as_deref());
+        let task = if let Some(a) = agent {
+            let args = cli::agent_argv(a, prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             self.attach_pane(&id, &refs)
         } else {
@@ -1604,21 +1603,18 @@ impl App {
         prompt: Option<&str>,
         prompt_file: Option<&str>,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let agent = cli::only_grok(agent)?.unwrap_or("grok");
-        if agent != "grok" {
-            return Err("only grok is first-class; other agents are presence-only".into());
-        }
+        let agent = cli::first_class_agent(agent)?.unwrap_or("grok");
         let prompt = cli::read_prompt(prompt, prompt_file)?;
         let ws_id = workspace::resolve_workspace(&self.workspaces, q)?
             .id
             .clone();
-        let pane = self.preferred_pane(Some(&ws_id))?;
-        let is_grok = self
+        let pane = self.preferred_pane_for(Some(&ws_id), Some(agent))?;
+        let is_same = self
             .pane_status
             .get(&pane)
             .and_then(|s| s.agent.as_deref())
-            .is_some_and(|a| a.eq_ignore_ascii_case("grok"));
-        if is_grok {
+            .is_some_and(|a| a.eq_ignore_ascii_case(agent));
+        if is_same {
             if let Some(text) = prompt.as_deref() {
                 self.write_pane(&pane, text, true)?;
             }
@@ -1635,12 +1631,12 @@ impl App {
         let session = tmux::session_name(&pane);
         let new_session = !tmux::has_session(&session);
         let task = if new_session {
-            let args = cli::grok_argv(prompt.as_deref());
+            let args = cli::agent_argv(agent, prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             self.attach_pane(&pane, &refs)
         } else {
             let attach = self.attach_pane(&pane, &[]);
-            let line = cli::grok_shell_line(prompt.as_deref());
+            let line = cli::agent_shell_line(agent, prompt.as_deref());
             self.write_pane(&pane, &line, true)?;
             attach
         };
@@ -1711,6 +1707,14 @@ impl App {
     }
 
     fn preferred_pane(&self, hint: Option<&str>) -> Result<String, String> {
+        self.preferred_pane_for(hint, Some("grok"))
+    }
+
+    fn preferred_pane_for(
+        &self,
+        hint: Option<&str>,
+        prefer: Option<&str>,
+    ) -> Result<String, String> {
         if let Some(q) = hint {
             if self.workspaces.iter().any(|w| w.owns_pane(q) && w.id != q) {
                 return Ok(q.to_string());
@@ -1718,18 +1722,19 @@ impl App {
             let ws = workspace::resolve_workspace(&self.workspaces, q)?;
             let leaves = ws.layout().leaves();
             let agents = self.pane_agents(&leaves);
-            return Ok(cli::prefer_grok_pane(
+            return Ok(cli::prefer_agent_pane(
                 &leaves,
                 &agents,
                 &ws.active_pane_id(),
                 None,
+                prefer,
             ));
         }
         if !self.focused.is_empty() {
             return Ok(self.focused.clone());
         }
         if !self.selected.is_empty() {
-            return self.preferred_pane(Some(&self.selected));
+            return self.preferred_pane_for(Some(&self.selected), prefer);
         }
         Err("no pane".into())
     }

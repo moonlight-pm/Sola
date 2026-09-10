@@ -83,7 +83,7 @@ comparison warrants a second engine.
 4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
 
 **Until decided:** use freeze **Interim** table for (4). Do not invent
-Claude hook policy.
+Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
 
 **Related:** `workspaces` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
@@ -95,6 +95,7 @@ Claude hook policy.
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
 | 2026-09-09 | Browser agent control | Agent uses the **same** tabs as the human. It may create a normal tab group for its own work. No agent-only tab type or second profile. Chrome ships generic tab/group/page verbs; particular workflows (pocket, don’t steal the seat) are an agent skill. Face when built: `solactl browser`. Confirm still **D3**. | CURRENT locks, capabilities gap |
+| 2026-09-09 | workspaces Codex | Codex is first-class alongside Grok: `--agent grok\|codex`, spawn/exec argv, hooks merged into `~/.codex/hooks.json` (Impeccable groups kept), rail rollup. Claude stays presence-only (D4.4). First Codex session may need `/hooks` trust. | freeze, CLI freeze, CURRENT, capabilities, manual/solactl, skill |
 | 2026-09-04 | mail From allowlist | Compose From is Settings-chosen identities. Inbox Send from is the Wicket `/api/auth/me` checklist (A–Z, no catch-alls). Extra SMTP accounts still type aliases. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-04 | mail multi-IMAP | Every `imap_enabled` account is connected. Sidebar is six canonical boxes combined. Moves/undo stay on that message’s account. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-03 | mail identities | One IMAP inbox. Extra accounts are SMTP send identities (forwarded Gmail, etc.). Inbox aliases are extra From addresses. `primary_from` is the default. Reply matches original To/Cc. Extra IMAP listed 2026-09-04. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |

@@ -8,9 +8,12 @@
 //! sit still while the glyphs move underneath.
 //!
 //! On each follow we compare fingerprints of the live viewport to the ones
-//! captured when the selection was committed. A majority shift of unique
-//! rows rotates the selection the same way. If the selected string is
-//! already intact (engine rotation did its job), we do nothing.
+//! captured on the last pass. A majority shift of unique rows rotates the
+//! selection the same way — including **while the pointer is still down**,
+//! so a Grok/Codex wheel during a drag does not leave a screen-fixed wash.
+//! If the selected string is already intact (engine rotation did its job),
+//! we do nothing. A TUI that drops lines off the top keeps the remaining
+//! range (exact `selection_to_string` match is not required).
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -61,65 +64,96 @@ pub fn uncommit(track: &mut Track) {
     track.committed_start = None;
 }
 
+/// Start a new in-progress selection: forget committed text, snapshot the
+/// live grid so a TUI CUP-rewrite during the drag can still be rotated.
+pub fn begin<T: EventListener>(term: &Term<T>, track: &mut Track) {
+    uncommit(track);
+    track.fingerprints = fingerprints(term);
+}
+
 /// Re-anchor `term.selection` after the live grid was rewritten in place.
 ///
 /// No-op while scrolled into history (`display_offset != 0`): the engine
 /// already keeps that viewport stationary and the renderer maps buffer
 /// points through the offset. No-op when the selected string is still
 /// under the current range (ANSI scroll already rotated it).
-pub fn follow<T: EventListener>(term: &mut Term<T>, track: &mut Track) {
-    let Some(committed) = track.committed_text.clone() else {
-        track.fingerprints = fingerprints(term);
-        return;
-    };
+///
+/// `dragging` skips needle restore so an in-progress drag is only
+/// fingerprint-rotated (the live range is the truth until release).
+pub fn follow<T: EventListener>(term: &mut Term<T>, track: &mut Track, dragging: bool) {
     if term.grid().display_offset() != 0 {
         track.fingerprints = fingerprints(term);
         return;
     }
 
-    let current = term.selection_to_string();
-    if term.selection.is_some() && current.as_deref() == Some(committed.as_str()) {
-        track.fingerprints = fingerprints(term);
-        return;
-    }
-
-    let now = fingerprints(term);
-    let shifted = if !track.fingerprints.is_empty() {
-        match best_shift(&track.fingerprints, &now) {
-            Some(shift) if shift != 0 => try_rotate(term, shift, &committed),
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    if !shifted {
-        let prefer = track.committed_start.unwrap_or_else(|| {
-            term.selection
-                .as_ref()
-                .and_then(|s| s.to_range(term))
-                .map(|r| r.start)
-                .unwrap_or_default()
-        });
-        if let Some((start, end)) = find_needle(term, &committed, prefer) {
-            let mut sel = Selection::new(SelectionType::Simple, start, Side::Left);
-            sel.update(end, Side::Right);
-            sel.include_all();
-            term.selection = Some(sel);
-            if term.selection_to_string().as_deref() != Some(committed.as_str()) {
-                // Mapping was approximate (wide cells / wrap). Keep the
-                // engine range rather than a lying string.
+    let committed = track.committed_text.clone();
+    if !dragging {
+        if let Some(text) = committed.as_deref() {
+            if term.selection.is_some() && term.selection_to_string().as_deref() == Some(text) {
+                track.fingerprints = fingerprints(term);
+                remember_start(term, track);
+                return;
             }
         }
     }
 
-    track.fingerprints = fingerprints(term);
-    if term.selection_to_string().as_deref() == Some(committed.as_str()) {
-        track.committed_start = term
-            .selection
+    let shifted = if term.selection.is_some() {
+        let ok = apply_shift(term, track);
+        clamp_to_live_screen(term);
+        ok
+    } else {
+        false
+    };
+
+    if dragging || committed.is_none() {
+        track.fingerprints = fingerprints(term);
+        return;
+    }
+
+    let committed = committed.unwrap();
+    if term.selection.is_some() && term.selection_to_string().as_deref() == Some(committed.as_str())
+    {
+        track.fingerprints = fingerprints(term);
+        remember_start(term, track);
+        return;
+    }
+
+    // A confident row-shift already moved the range with the glyphs.
+    // Needle restore is for EL/full redraws that drop the engine range.
+    if shifted && term.selection.is_some() {
+        track.fingerprints = fingerprints(term);
+        return;
+    }
+
+    let prefer = track.committed_start.unwrap_or_else(|| {
+        term.selection
             .as_ref()
             .and_then(|s| s.to_range(term))
-            .map(|r| r.start);
+            .map(|r| r.start)
+            .unwrap_or_default()
+    });
+    if let Some((start, end)) = find_needle(term, &committed, prefer)
+        .or_else(|| find_visible_fragment(term, &committed, prefer))
+    {
+        let mut sel = Selection::new(SelectionType::Simple, start, Side::Left);
+        sel.update(end, Side::Right);
+        sel.include_all();
+        term.selection = Some(sel);
+    }
+
+    track.fingerprints = fingerprints(term);
+    remember_start(term, track);
+}
+
+fn remember_start<T: EventListener>(term: &Term<T>, track: &mut Track) {
+    if let Some(text) = track.committed_text.as_deref() {
+        if term.selection_to_string().as_deref() == Some(text) {
+            track.committed_start = term
+                .selection
+                .as_ref()
+                .and_then(|s| s.to_range(term))
+                .map(|r| r.start);
+        }
     }
 }
 
@@ -195,32 +229,89 @@ fn best_shift(old: &[u64], new: &[u64]) -> Option<i32> {
         return None;
     }
     // Majority of unique rows, at least a few — a single matching status
-    // line must not count as a scroll.
-    if best_matches >= 3 && best_matches * 2 >= nonempty {
+    // line must not count as a scroll. A Grok/Codex *page* of wheel can
+    // leave only a handful of overlapping rows; still accept when the
+    // shift is large and we have a few consecutive hits.
+    let majority = best_matches * 2 >= nonempty;
+    let page_jump = best_s.unsigned_abs() as usize * 2 >= old.len() && best_matches >= 3;
+    if best_matches >= 3 && (majority || page_jump) {
         Some(best_s)
     } else {
         None
     }
 }
 
+/// Fingerprint-rotate the live selection. Keeps the range even when the
+/// committed string is no longer fully on screen (TUI dropped lines).
+fn apply_shift<T: EventListener>(term: &mut Term<T>, track: &Track) -> bool {
+    if track.fingerprints.is_empty() {
+        return false;
+    }
+    let now = fingerprints(term);
+    let Some(shift) = best_shift(&track.fingerprints, &now) else {
+        return false;
+    };
+    if shift == 0 {
+        return false;
+    }
+    try_rotate(term, shift)
+}
+
 /// `shift` is the visual delta (negative = moved up). Alacritty's
 /// `Selection::rotate` delta is the opposite sign of a visual move:
 /// content up 1 → line numbers decrease → delta = +1.
-fn try_rotate<T: EventListener>(term: &mut Term<T>, shift: i32, committed: &str) -> bool {
+fn try_rotate<T: EventListener>(term: &mut Term<T>, shift: i32) -> bool {
     let screen = term.screen_lines() as i32;
     let region: Range<Line> = Line(0)..Line(screen);
-    let backup = term.selection.clone();
     let delta = -shift;
-    term.selection = term
+    let rotated = term
         .selection
         .take()
         .and_then(|s| s.rotate(term, &region, delta));
-    if term.selection_to_string().as_deref() == Some(committed) {
-        true
-    } else {
-        term.selection = backup;
-        false
+    match rotated {
+        Some(sel) => {
+            term.selection = Some(sel);
+            true
+        }
+        None => false,
     }
+}
+
+/// TUI CUP-rewrites do not push lines into history. A rotate that walks
+/// above `Line(0)` would highlight stale scrollback; clamp to the live
+/// screen, or drop the range if it left the viewport entirely.
+fn clamp_to_live_screen<T: EventListener>(term: &mut Term<T>) {
+    let Some(sel) = term.selection.as_ref() else {
+        return;
+    };
+    let Some(range) = sel.to_range(term) else {
+        return;
+    };
+    let last = term.screen_lines() as i32 - 1;
+    if last < 0 {
+        return;
+    }
+    let start = range.start;
+    let end = range.end;
+    if end.line.0 < 0 || start.line.0 > last {
+        term.selection = None;
+        return;
+    }
+    let mut new_start = start;
+    let mut new_end = end;
+    if new_start.line.0 < 0 {
+        new_start = Point::new(Line(0), Column(0));
+    }
+    if new_end.line.0 > last {
+        new_end = Point::new(Line(last), Column(term.columns().saturating_sub(1)));
+    }
+    if new_start == start && new_end == end {
+        return;
+    }
+    let mut sel = Selection::new(SelectionType::Simple, new_start, Side::Left);
+    sel.update(new_end, Side::Right);
+    sel.include_all();
+    term.selection = Some(sel);
 }
 
 fn find_needle<T: EventListener>(
@@ -282,6 +373,35 @@ fn find_needle<T: EventListener>(
         }
     }
     best.map(|(s, e, _)| (s, e))
+}
+
+/// When the full committed block is no longer on screen, glue to every
+/// remaining line (Grok/Codex page-sized TUI scrolls).
+fn find_visible_fragment<T: EventListener>(
+    term: &Term<T>,
+    needle: &str,
+    prefer: Point,
+) -> Option<(Point, Point)> {
+    let parts: Vec<&str> = needle
+        .trim_end_matches('\n')
+        .split('\n')
+        .filter(|l| l.chars().count() >= 3)
+        .collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let mut hits: Vec<Point> = Vec::new();
+    for part in &parts {
+        if let Some((start, end)) = find_needle(term, part, prefer) {
+            hits.push(start);
+            hits.push(end);
+        }
+    }
+    if hits.is_empty() {
+        return None;
+    }
+    hits.sort_by_key(|p| (p.line.0, p.column.0));
+    Some((*hits.first()?, *hits.last()?))
 }
 
 fn row_text<T: EventListener>(term: &Term<T>, line: Line) -> String {
@@ -366,7 +486,7 @@ mod tests {
             let mut term = handle.lock();
             // Without follow the highlight still covers row 5 = LINE-0006.
             assert_eq!(term.selection_to_string().as_deref(), Some("LINE-0006"));
-            follow(&mut term, &mut track);
+            follow(&mut term, &mut track, false);
             assert_eq!(
                 term.selection_to_string().as_deref(),
                 Some("LINE-0005"),
@@ -404,7 +524,7 @@ mod tests {
                 term.selection.is_none(),
                 "EL of the selected line clears the engine range"
             );
-            follow(&mut term, &mut track);
+            follow(&mut term, &mut track, false);
             assert_eq!(
                 term.selection_to_string().as_deref(),
                 Some("LINE-0005"),
@@ -433,7 +553,7 @@ mod tests {
             let before = term.selection_to_string();
             // Engine rotation should already have kept the text.
             assert_eq!(before.as_deref(), Some("LINE-0003"));
-            follow(&mut term, &mut track);
+            follow(&mut term, &mut track, false);
             assert_eq!(
                 term.selection_to_string().as_deref(),
                 Some("LINE-0003"),
@@ -462,11 +582,81 @@ mod tests {
             commit(&term, &mut track);
             term.scroll_display(Scroll::Delta(4));
             assert!(term.grid().display_offset() > 0);
-            follow(&mut term, &mut track);
+            follow(&mut term, &mut track, false);
             assert_eq!(
                 term.selection_to_string(),
                 original,
                 "scrolled-back viewport must not re-anchor"
+            );
+        }
+    }
+
+    #[test]
+    fn cup_redraw_during_drag_rotates_without_commit() {
+        let mut e = emu(20, 12);
+        write_numbered(&mut e, 0, 12);
+        select_row(&e, 5, 9);
+        let mut track = Track::new();
+        {
+            let handle = e.term();
+            let term = handle.lock();
+            begin(&term, &mut track);
+            assert_eq!(term.selection_to_string().as_deref(), Some("LINE-0005"));
+        }
+        write_numbered(&mut e, 1, 12);
+        {
+            let handle = e.term();
+            let mut term = handle.lock();
+            follow(&mut term, &mut track, true);
+            assert_eq!(
+                term.selection_to_string().as_deref(),
+                Some("LINE-0005"),
+                "in-progress drag must fingerprint-rotate a TUI CUP rewrite"
+            );
+        }
+    }
+
+    #[test]
+    fn cup_redraw_keeps_remaining_lines_when_top_scrolls_off() {
+        let mut e = emu(20, 12);
+        write_numbered(&mut e, 0, 12);
+        // LINE-0006 .. LINE-0011
+        {
+            let handle = e.term();
+            let mut term = handle.lock();
+            let mut sel = Selection::new(
+                SelectionType::Simple,
+                Point::new(Line(6), Column(0)),
+                Side::Left,
+            );
+            sel.update(Point::new(Line(11), Column(8)), Side::Right);
+            sel.include_all();
+            term.selection = Some(sel);
+        }
+        let mut track = Track::new();
+        {
+            let handle = e.term();
+            let term = handle.lock();
+            commit(&term, &mut track);
+            assert_eq!(
+                term.selection_to_string().as_deref(),
+                Some("LINE-0006\nLINE-0007\nLINE-0008\nLINE-0009\nLINE-0010\nLINE-0011")
+            );
+        }
+        // Shift up 8 rows: 0006/0007 leave the screen; 0008..0011 land on 0..3.
+        write_numbered(&mut e, 8, 12);
+        {
+            let handle = e.term();
+            let mut term = handle.lock();
+            follow(&mut term, &mut track, false);
+            let got = term.selection_to_string().unwrap_or_default();
+            assert!(
+                got.contains("LINE-0008") && got.contains("LINE-0011"),
+                "remaining selected lines must stay highlighted, got {got:?}"
+            );
+            assert!(
+                !got.contains("LINE-0014"),
+                "must not leave a screen-fixed wash on the new text, got {got:?}"
             );
         }
     }

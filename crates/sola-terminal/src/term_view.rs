@@ -647,12 +647,15 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         if let Some(sel) = term.selection.as_mut() {
                             sel.update(point, side);
                         }
+                        if let Ok(mut track) = self.selection_track.lock() {
+                            sel_follow::uncommit(&mut track);
+                        }
                         true
                     } else {
                         let ty = selection_type_for_click(click.kind());
                         term.selection = Some(Selection::new(ty, point, side));
                         if let Ok(mut track) = self.selection_track.lock() {
-                            sel_follow::uncommit(&mut track);
+                            sel_follow::begin(&term, &mut track);
                         }
                         // A word/line pick is deliberate — keep it on release. A
                         // single click that never drags stays a deselect.
@@ -690,6 +693,9 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     let mut sel = Selection::new(SelectionType::Simple, origin, origin_side);
                     sel.update(point, side);
                     term.selection = Some(sel);
+                    if let Ok(mut track) = self.selection_track.lock() {
+                        sel_follow::begin(&term, &mut track);
+                    }
                     drop(term);
                     state.moved = true;
                     return Some(canvas::Action::publish(self.on_select.clone()).and_capture());
@@ -851,10 +857,8 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // is brief (raw Copy fields only); starving a single advance
                 // is fine.
                 let mut term = self.term.lock_unfair();
-                if !state.dragging {
-                    if let Ok(mut track) = self.selection_track.lock() {
-                        sel_follow::follow(&mut *term, &mut track);
-                    }
+                if let Ok(mut track) = self.selection_track.lock() {
+                    sel_follow::follow(&mut *term, &mut track, state.dragging);
                 }
                 let content = term.renderable_content();
                 let RenderableContent {
