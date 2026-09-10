@@ -29,6 +29,8 @@ pointer to `CURRENT.md` (auto-load reminder).
 - `sola-workspaces-cli` — `solactl workspaces` control plane (review/work
   ticket, create worktree, tell a pane, merge/cleanup — fan-out stays off
   the rail)  
+- `sync-project` — checkpoint each sibling worktree (if needed), merge
+  into master, then merge master back into each worktree (`/sync-project`)  
 
 ## Progress documentation is first-class (mandatory)
 
