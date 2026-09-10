@@ -8,7 +8,8 @@ pub mod wave;
 
 use iced::Subscription;
 use iced::futures::Stream;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,8 +127,14 @@ impl Ui {
                 self.snapshot.source_mute = next;
                 Some(Command::SetSourceMute(next))
             }
-            UiMsg::SetDefaultSink(id) => Some(Command::SetDefault(id)),
-            UiMsg::SetDefaultSource(id) => Some(Command::SetDefault(id)),
+            UiMsg::SetDefaultSink(id) => {
+                self.snapshot.default_sink = Some(id);
+                Some(Command::SetDefault(id))
+            }
+            UiMsg::SetDefaultSource(id) => {
+                self.snapshot.default_source = Some(id);
+                Some(Command::SetDefault(id))
+            }
         }
     }
 }
@@ -171,60 +178,120 @@ fn worker(
     event_tx: iced::futures::channel::mpsc::UnboundedSender<Event>,
     cmd_rx: std::sync::mpsc::Receiver<Command>,
 ) {
-    push(&event_tx);
-    loop {
-        match cmd_rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(cmd) => {
-                apply(cmd);
-                while let Ok(more) = cmd_rx.try_recv() {
-                    apply(more);
+    let last = Arc::new(Mutex::new(Snapshot::default()));
+    refresh(&event_tx, &last);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    std::thread::Builder::new()
+        .name("sola-audio-poll".into())
+        .spawn({
+            let event_tx = event_tx.clone();
+            let last = last.clone();
+            let stop = stop.clone();
+            move || {
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_secs(1));
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    refresh(&event_tx, &last);
                 }
-                push(&event_tx);
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => push(&event_tx),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        })
+        .ok();
+
+    while let Ok(cmd) = cmd_rx.recv() {
+        apply(cmd, &last);
+        while let Ok(more) = cmd_rx.try_recv() {
+            apply(more, &last);
         }
+        let g = last.lock().unwrap_or_else(|e| e.into_inner());
+        publish(&event_tx, &g);
     }
+    stop.store(true, Ordering::Relaxed);
 }
 
-fn apply(cmd: Command) {
-    let snap = pw::snapshot();
+fn apply(cmd: Command, last: &Mutex<Snapshot>) {
     match cmd {
         Command::Refresh => {}
         Command::SetSinkVolume(v) => {
-            if let Some(id) = snap.default_sink {
-                let _ = pw::set_volume(id, v);
+            let id = lock_snap(last).default_sink;
+            if let Some(id) = id {
+                if pw::set_volume(id, v) {
+                    lock_snap(last).sink_volume = v;
+                }
             }
         }
         Command::SetSourceVolume(v) => {
-            if let Some(id) = snap.default_source {
-                let _ = pw::set_volume(id, v);
+            let id = lock_snap(last).default_source;
+            if let Some(id) = id {
+                if pw::set_volume(id, v) {
+                    lock_snap(last).source_volume = v;
+                }
             }
         }
         Command::SetSinkMute(m) => {
-            if let Some(id) = snap.default_sink {
-                let _ = pw::set_mute(id, m);
+            let id = lock_snap(last).default_sink;
+            if let Some(id) = id {
+                if pw::set_mute(id, m) {
+                    lock_snap(last).sink_mute = m;
+                }
             }
         }
         Command::SetSourceMute(m) => {
-            if let Some(id) = snap.default_source {
-                let _ = pw::set_mute(id, m);
+            let id = lock_snap(last).default_source;
+            if let Some(id) = id {
+                if pw::set_mute(id, m) {
+                    lock_snap(last).source_mute = m;
+                }
             }
         }
         Command::SetDefault(id) => {
-            let _ = pw::set_default(id);
+            if !pw::set_default(id) {
+                return;
+            }
+            let mut g = lock_snap(last);
+            if g.sinks.iter().any(|d| d.id == id) {
+                g.default_sink = Some(id);
+            } else if g.sources.iter().any(|d| d.id == id) {
+                g.default_source = Some(id);
+            }
         }
     }
 }
 
-fn push(event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>) {
-    let snap = pw::snapshot();
-    meter::set_target(if snap.available {
-        snap.default_sink
+fn refresh(
+    event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>,
+    last: &Mutex<Snapshot>,
+) {
+    match pw::snapshot() {
+        Ok(snap) => {
+            let mut g = lock_snap(last);
+            *g = snap;
+            publish(event_tx, &g);
+        }
+        Err(e) => {
+            tracing::warn!("audio snapshot: {e}");
+            let mut g = lock_snap(last);
+            if !g.available {
+                *g = Snapshot::default();
+                publish(event_tx, &g);
+            }
+        }
+    }
+}
+
+fn lock_snap(last: &Mutex<Snapshot>) -> std::sync::MutexGuard<'_, Snapshot> {
+    last.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn publish(event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>, last: &Snapshot) {
+    meter::set_target(if last.available {
+        last.default_sink
     } else {
         None
     });
-    let _ = event_tx.unbounded_send(Event::Snapshot(snap));
+    let _ = event_tx.unbounded_send(Event::Snapshot(last.clone()));
 }
 
 #[cfg(test)]
@@ -271,5 +338,25 @@ mod tests {
         ui.on_event(Event::Kick);
         assert!(ui.snapshot.available);
         assert!((ui.snapshot.sink_volume - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn set_default_sink_is_optimistic() {
+        let mut ui = Ui::default();
+        ui.snapshot.available = true;
+        ui.snapshot.default_sink = Some(1);
+        let cmd = ui.update(UiMsg::SetDefaultSink(9));
+        assert!(matches!(cmd, Some(Command::SetDefault(9))));
+        assert_eq!(ui.snapshot.default_sink, Some(9));
+    }
+
+    #[test]
+    fn set_default_source_is_optimistic() {
+        let mut ui = Ui::default();
+        ui.snapshot.available = true;
+        ui.snapshot.default_source = Some(2);
+        let cmd = ui.update(UiMsg::SetDefaultSource(8));
+        assert!(matches!(cmd, Some(Command::SetDefault(8))));
+        assert_eq!(ui.snapshot.default_source, Some(8));
     }
 }

@@ -58,7 +58,9 @@ graphs (last ~12 seconds). Exact numbers live in the click dropdown.
 The volume chip (right of Bluetooth, left of CPU, with the same gap
 on both sides) is a 12-band LED spectrum analyzer of what the default
 output is playing. Click the bars for the volume popover; there is no
-speaker glyph.
+speaker glyph. The popover lists outputs and inputs — click a row to
+make it the default (`wpctl set-default`). Media keys still change
+volume on that default sink.
 
 ## Window menu
 
