@@ -236,26 +236,36 @@ impl PtyBackend {
         let slave_fd = pty.slave.into_raw_fd();
 
         let mut cmd = crate::tmux::tmux_cmd();
-        cmd.args([
-            "new-session",
-            "-A",
-            "-s",
-            tmux_session,
-            "-x",
-            &cols.to_string(),
-            "-y",
-            &rows.to_string(),
-        ]);
-        // Start directory only applies when tmux actually creates the session;
-        // on reattach (`-A` finds an existing session) tmux ignores `-c`.
-        if let Some(dir) = cwd {
-            cmd.args(["-c", dir]);
-        }
-        for (key, val) in env {
-            cmd.args(["-e", &format!("{key}={val}")]);
-        }
-        if !exec.is_empty() {
-            cmd.args(exec);
+        // Do not use `new-session -A -s name`: `-A` attaches with tmux's
+        // default *prefix* match, so a dead `sws-ws-foo` would steal
+        // split leaf `sws-ws-foo-p`. Exact `has-session` then either
+        // attach or create.
+        if crate::tmux::has_session(tmux_session) {
+            cmd.args([
+                "attach-session",
+                "-t",
+                &crate::tmux::session_target(tmux_session),
+            ]);
+        } else {
+            cmd.args([
+                "new-session",
+                "-s",
+                tmux_session,
+                "-x",
+                &cols.to_string(),
+                "-y",
+                &rows.to_string(),
+            ]);
+            // Start directory only applies when tmux actually creates the session.
+            if let Some(dir) = cwd {
+                cmd.args(["-c", dir]);
+            }
+            for (key, val) in env {
+                cmd.args(["-e", &format!("{key}={val}")]);
+            }
+            if !exec.is_empty() {
+                cmd.args(exec);
+            }
         }
 
         // SAFETY: pre_exec runs in the child between fork and exec; the libc
