@@ -1,6 +1,6 @@
 //! Linux client inject: Wayland virtual pointer + virtual keyboard.
 //!
-//! `sola-kvm listen` on a River/Sola seat (canto, or any Linux peer) binds
+//! `sola-kvm listen` on a Wayland seat (River or Hyprland) binds
 //! `zwlr_virtual_pointer_v1` and `zwp_virtual_keyboard_v1` and turns KVM1
 //! UDP packets into compositor input. Mac inject stays in `apps/sola-kvm-mac`.
 
@@ -58,7 +58,11 @@ fn ensure_xkb_root() {
     if std::env::var_os("XKB_CONFIG_ROOT").is_some() {
         return;
     }
-    for p in ["/oath/store/pkg/river/share/X11/xkb", "/usr/share/X11/xkb"] {
+    for p in [
+        "/oath/store/pkg/hyprland/share/X11/xkb",
+        "/oath/store/pkg/river/share/X11/xkb",
+        "/usr/share/X11/xkb",
+    ] {
         if Path::new(p).is_dir() {
             unsafe {
                 std::env::set_var("XKB_CONFIG_ROOT", p);
@@ -99,7 +103,7 @@ impl WaylandInjector {
         ensure_xkb_root();
 
         let conn = Connection::connect_to_env()
-            .map_err(|e| format!("wayland connect: {e} (WAYLAND_DISPLAY set? River up?)"))?;
+            .map_err(|e| format!("wayland connect: {e} (WAYLAND_DISPLAY set? compositor up?)"))?;
         let (globals, mut event_queue) =
             registry_queue_init::<InjectState>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = event_queue.handle();
@@ -122,10 +126,10 @@ impl WaylandInjector {
             state.output = Some(output);
         }
         state.pointer_mgr = Some(globals.bind(&qh, 1..=2, ()).map_err(|e| {
-            format!("zwlr_virtual_pointer_manager_v1: {e} (River must advertise virtual pointer)")
+            format!("zwlr_virtual_pointer_manager_v1: {e} (compositor must advertise virtual pointer)")
         })?);
         state.keyboard_mgr = Some(globals.bind(&qh, 1..=1, ()).map_err(|e| {
-            format!("zwp_virtual_keyboard_manager_v1: {e} (River must advertise virtual keyboard)")
+            format!("zwp_virtual_keyboard_manager_v1: {e} (compositor must advertise virtual keyboard)")
         })?);
 
         event_queue
