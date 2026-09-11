@@ -100,20 +100,11 @@ Then wait until that checkout’s `HEAD` is an ancestor of `master` (or is
 `pane.wait --pane SLUG --status done --timeout 300 --fresh`. If `--fresh`
 misses the transition, poll `pane.list` + `git rev-parse HEAD`.
 
-### Send failed / no tab
+### Exec failed / no tab
 
-`workspace.exec` / `pane.send` can fail with `send failed` even when the
-tmux session exists: `paste-buffer -t =session` is not a pane target.
-Do **not** `--select`. Deliver the brief on socket `sola-ws`:
-
-```bash
-# pane id is catalog `ws-<slug>` (e.g. ws-sola-mail)
-tmux -L sola-ws load-buffer -b sola-sync /tmp/sola-sync-project-pass2.md
-tmux -L sola-ws paste-buffer -dp -b sola-sync -t "sws-ws-SLUG:0.0"
-tmux -L sola-ws send-keys -t "sws-ws-SLUG:0.0" Enter
-```
-
-No tab, dead tmux, or paste also fails: merge from here and note it.
+Retry `workspace.exec` once. If it still fails (app down, no tab, dead
+tmux): do **not** `--select` and do **not** paste with raw tmux. Merge
+from here and note it.
 
 ```bash
 git -C .worktrees/SLUG merge master

@@ -1745,10 +1745,7 @@ impl App {
 
     fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
         let session = tmux::session_name(id);
-        if !tmux::send_prompt(&session, text, enter) {
-            return Err("send failed".into());
-        }
-        Ok(())
+        tmux::send_prompt(&session, text, enter)
     }
 
     fn cli_send(&self, pane: Option<&str>, text: &str, enter: bool) -> Result<String, String> {

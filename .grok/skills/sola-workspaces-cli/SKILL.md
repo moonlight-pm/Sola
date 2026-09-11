@@ -180,3 +180,6 @@ Prefer the parent/root pane when it is already there.
 - Build a mailbox / ask-reply / `worker_done`
 - Call `sat` (there is no such binary)
 - Wait out a sibling unless they want a report back
+- Raw `tmux paste-buffer` / `send-keys` / `capture-pane` when
+  `workspace.exec` / `pane.send` / `pane.read` fail — retry or report
+  the error. Do not address the pane by `%id` yourself.
