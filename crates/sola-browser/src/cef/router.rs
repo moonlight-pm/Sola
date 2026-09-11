@@ -54,6 +54,7 @@ struct Shared {
     favicons: FaviconsHandle,
     find_results: FindResultsHandle,
     devtools: DevToolsHandle,
+    agent: crate::agent::AgentHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -80,6 +81,7 @@ pub struct RouterHandles {
     pub favicons: FaviconsHandle,
     pub find_results: FindResultsHandle,
     pub devtools: DevToolsHandle,
+    pub agent: crate::agent::AgentHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -101,6 +103,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
     let find_results: FindResultsHandle = Arc::new(Mutex::new(Vec::new()));
     let devtools: DevToolsHandle = Arc::new(Mutex::new(Vec::new()));
+    let agent: crate::agent::AgentHandle = Arc::new(Mutex::new(Vec::new()));
 
     let shared = Arc::new(Shared {
         current: Mutex::new(String::new()),
@@ -120,6 +123,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons: favicons.clone(),
         find_results: find_results.clone(),
         devtools: devtools.clone(),
+        agent: agent.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -151,6 +155,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons,
         find_results,
         devtools,
+        agent,
     }
 }
 
@@ -699,6 +704,10 @@ fn handle_from(
                 crate::chrome_wake::wake();
             }
         }
+        FromEngine::Agent(reply) => {
+            shared.agent.lock().unwrap().push(reply);
+            crate::chrome_wake::wake();
+        }
         FromEngine::Favicon { tab_id, png } => {
             if is_front {
                 shared
@@ -842,6 +851,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::DevToolsInput(ev) => Some(ToEngine::DevToolsInput(ev)),
         Cmd::DevToolsFocus(f) => Some(ToEngine::DevToolsFocus(f)),
         Cmd::CloseDevTools => Some(ToEngine::CloseDevTools),
+        Cmd::Agent(req) => Some(ToEngine::Agent(req)),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

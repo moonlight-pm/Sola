@@ -53,7 +53,7 @@ rows for feature-level progress.
 - `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the agent product)
 
 **Remaining:** Workspaces dogfood + UI rename modal / recolor / reorder; browser chrome
-completeness; mail polish; calendar Settings accounts desk smoke; kvm input ACL permanence; preview
+completeness; browser agent control (`solactl browser` — [frozen](specs/2026-09-11-sola-browser-agent-control-design.md), desk-smoked on Tertius); mail polish; calendar Settings accounts desk smoke; kvm input ACL permanence; preview
 zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
 
 ---

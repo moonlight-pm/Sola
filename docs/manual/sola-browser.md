@@ -42,7 +42,10 @@ Bitwarden vault when built with `bitwarden`) plus a **CEF** CPU OSR engine in
 one binary, `sola-browser`.
 
 Launch from the shell launcher (**Browser**), or
-`/opt/sola/bin/sola-browser`.
+`/opt/sola/bin/sola-browser`. The same window is also a call-plane owner:
+`solactl browser` lists tabs, opens/moves them, and snapshots/clicks the
+page (YAML + refs). See [solactl](solactl.md). Chrome or sola-call down
+fails; it does not launch a window.
 
 ## Default URL handler
 

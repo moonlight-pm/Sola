@@ -24,13 +24,13 @@ pub fn run(args: Vec<String>) -> i32 {
     };
 
     if args.len() == 1 || matches!(args.get(1).map(String::as_str), Some("-h" | "--help")) {
-        println!("solactl {owner} — {}", entry.app_id);
+        crate::call::print_stdout(&format!("solactl {owner} — {}", entry.app_id));
         if entry.methods.is_empty() {
-            println!("  (no methods advertised)");
+            crate::call::print_stdout("  (no methods advertised)");
             return 0;
         }
         for m in &entry.methods {
-            println!("  {:<16} {}", m.name, m.summary);
+            crate::call::print_stdout(&format!("  {:<16} {}", m.name, m.summary));
         }
         return 0;
     }
@@ -104,12 +104,15 @@ fn json_u64(v: &serde_json::Value) -> Option<u64> {
 }
 
 fn print_method_help(owner: &str, spec: &MethodSpec) {
-    println!("solactl {owner} {} — {}", spec.name, spec.summary);
+    crate::call::print_stdout(&format!(
+        "solactl {owner} {} — {}",
+        spec.name, spec.summary
+    ));
     if spec.args.is_empty() {
-        println!("  (no flags)");
+        crate::call::print_stdout("  (no flags)");
         return;
     }
-    println!();
+    crate::call::print_stdout("");
     for a in &spec.args {
         let long = a.long.as_deref().unwrap_or(a.name.as_str());
         let mut flag = format!("--{long}");
@@ -121,9 +124,9 @@ fn print_method_help(owner: &str, spec: &MethodSpec) {
         }
         let req = if a.required { "required" } else { "optional" };
         if a.help.is_empty() {
-            println!("  {flag:<28} ({req})");
+            crate::call::print_stdout(&format!("  {flag:<28} ({req})"));
         } else {
-            println!("  {flag:<28} {} ({req})", a.help);
+            crate::call::print_stdout(&format!("  {flag:<28} {} ({req})", a.help));
         }
     }
 }
@@ -278,6 +281,44 @@ mod tests {
         let p = params_from_args(&spec(), &["--enter", "--text", "hi"]).unwrap();
         assert_eq!(p["enter"], true);
         assert_eq!(p["text"], "hi");
+    }
+
+    #[test]
+    fn wait_load_is_a_bool_flag() {
+        let spec = MethodSpec {
+            name: "wait".into(),
+            summary: String::new(),
+            args: vec![
+                ArgSpec {
+                    name: "tab".into(),
+                    long: Some("tab".into()),
+                    short: Some('t'),
+                    ty: ArgType::String,
+                    required: false,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "load".into(),
+                    long: Some("load".into()),
+                    short: Some('l'),
+                    ty: ArgType::Bool,
+                    required: false,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "text".into(),
+                    long: Some("text".into()),
+                    short: Some('q'),
+                    ty: ArgType::String,
+                    required: false,
+                    help: String::new(),
+                },
+            ],
+            timeout_ms: Some(32_000),
+        };
+        let p = params_from_args(&spec, &["--load", "--tab", "44"]).unwrap();
+        assert_eq!(p["load"], true);
+        assert_eq!(p["tab"], "44");
     }
 
     fn spawn_spec() -> MethodSpec {

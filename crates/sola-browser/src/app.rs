@@ -123,6 +123,8 @@ pub enum Msg {
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
+    /// `solactl browser` invoke.
+    Call(sola_call::Incoming),
     /// Kit sidebar gesture. Forward into [`SidebarState::update`].
     Sidebar(sidebar::Msg),
 
@@ -482,7 +484,7 @@ pub struct App<E: Engine> {
     pub cached_active: TabId,
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
-    closed_tabs: HashSet<TabId>,
+    pub(crate) closed_tabs: HashSet<TabId>,
     /// True after the helper has reported a non-empty tab list this run.
     /// When it later goes empty (helper death), chrome re-opens `cached_tabs`.
     engine_tabs_seen: bool,
@@ -500,7 +502,8 @@ pub struct App<E: Engine> {
     pub sidebar_w: f32,
     /// Kit-owned hover / drag / animation.
     sidebar: SidebarState,
-    groups: Groups,
+    pub(crate) groups: Groups,
+    pub(crate) agent: crate::agent::AgentState,
     context_menu: Option<(iced::Point, CtxTarget)>,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
@@ -653,7 +656,7 @@ pub struct App<E: Engine> {
     /// Logical window height for divider drag.
     window_h: f32,
     /// Live tab favicons (CEF PNG → iced handle).
-    favicons: HashMap<TabId, iced::widget::image::Handle>,
+    pub(crate) favicons: HashMap<TabId, iced::widget::image::Handle>,
     /// Parked favicons per profile so a switch does not wait for CEF.
     favicon_park: HashMap<String, HashMap<TabId, iced::widget::image::Handle>>,
     globe: iced::widget::svg::Handle,
@@ -696,6 +699,7 @@ impl<E: Engine> App<E> {
             sidebar_w,
             sidebar: SidebarState::new(),
             groups: Groups::default(),
+            agent: crate::agent::AgentState::default(),
             context_menu: None,
             nav_hold: None,
             page_menus,
@@ -2428,6 +2432,7 @@ impl<E: Engine> App<E> {
                 self.switch_active_tab(id);
                 self.persist_session();
             }
+            Msg::Call(inc) => return self.on_call(inc),
             Msg::Tick => {
                 crate::chrome_wake::take_queued();
                 if self
@@ -2639,6 +2644,7 @@ impl<E: Engine> App<E> {
                     .take()
                     .map(iced::clipboard::write)
                     .unwrap_or_else(Task::none);
+                let agent = self.drain_agent();
                 #[cfg(feature = "bitwarden")]
                 if focus_otp {
                     return Task::batch([
@@ -2646,13 +2652,14 @@ impl<E: Engine> App<E> {
                         totp_clip,
                         js_dlg,
                         http_auth,
+                        agent,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip, js_dlg, http_auth]);
+                return Task::batch([clip, totp_clip, js_dlg, http_auth, agent]);
                 #[cfg(not(feature = "bitwarden"))]
-                return Task::batch([clip, js_dlg, http_auth]);
+                return Task::batch([clip, js_dlg, http_auth, agent]);
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -2974,7 +2981,7 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
-    fn remember_closed(&mut self, id: TabId) {
+    pub(crate) fn remember_closed(&mut self, id: TabId) {
         let Some(index) = self.cached_tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -6622,6 +6629,7 @@ impl<E: Engine> App<E> {
         let mut subs = vec![
             crate::run::frame_subscription::<E>(frames, slot, active),
             sola_kit::app::bus_subscription().map(Msg::Bus),
+            sola_kit::call_subscription().map(Msg::Call),
             chrome_drain_subscription(),
             self.sidebar.subscription().map(Msg::Sidebar),
             event::listen_with(|event, status, _| {

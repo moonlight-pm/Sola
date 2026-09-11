@@ -23,9 +23,9 @@ is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
 shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
 copy to the clipboard instead of writing this file.
 
-`workspaces` is a first-class subcommand (`solactl` / `solactl --help`).
-Other running apps that have advertised methods: `solactl <app-id>` lists
-them; `solactl <app-id> <method> …` invokes.
+`workspaces` and `browser` are first-class subcommands (`solactl` /
+`solactl --help`). Other running apps that have advertised methods:
+`solactl <app-id>` lists them; `solactl <app-id> <method> …` invokes.
 
 ## Workspaces (`solactl workspaces`)
 
@@ -96,6 +96,47 @@ already gone, Workspaces reaps the tab (no leftover working spinner).
 
 Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags. Spawn /
 add / wait use a longer call deadline than the default 8s.
+
+## Browser (`solactl browser`)
+
+Needs **sola-browser** running (owner `browser`). Fails if chrome or
+`sola-call` is down — it does not launch a window. Same tab strip as
+the human; an **Agent** group is an ordinary group a skill may create.
+
+`tab.open` appends and does **not** focus unless `--select`. Page verbs
+use a pruned accessibility YAML snapshot and opaque refs (`e12`). Stale
+refs fail; snapshot again. Screenshot is a fallback when the tree is
+empty. Vault fill / confirm gates are not on this plane (**D3**).
+
+```text
+solactl browser                         # list methods
+solactl browser tabs
+solactl browser tab.open --url https://example.com
+solactl browser tab.open --url https://example.com --select
+solactl browser tab.focus --tab 3
+solactl browser tab.close --tab 3
+solactl browser tab.move --tab 3 --group Agent
+solactl browser group.create --tab 3 --name Agent
+solactl browser group.list
+solactl browser goto --url https://example.com/path --tab 3
+solactl browser snapshot [--tab 3] [--interactive] [--ref e8]
+solactl browser find --text Submit
+solactl browser click --ref e12
+solactl browser fill --ref e5 --text user@example.com
+solactl browser type --ref e5 --text more --submit
+solactl browser hover --ref e12
+solactl browser select --ref e9 --values OptionA,OptionB
+solactl browser wait [--load] [--text done] [--timeout 30]
+solactl browser screenshot [-o PATH]
+solactl browser back|forward|reload|stop [--tab 3]
+solactl browser find.page --text needle
+```
+
+`--tab` is an id, or a unique URL/title substring. `--group` is an id or
+name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
+`wait` / `wait --load` returns when `document.readyState` is `complete` on
+a committed URL (not the tab-strip spinner). `wait --text` snapshots until
+that string appears.
 
 ## Not calls
 

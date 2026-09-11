@@ -92,6 +92,7 @@ pub enum ToEngine {
     StopFind {
         clear: bool,
     },
+    Agent(crate::agent::AgentRequest),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +135,7 @@ pub enum FromEngine {
     HttpAuth(crate::http_auth::Event),
     FindResult(crate::engine::FindResult),
     DevTools(crate::engine::DevToolsEvent),
+    Agent(crate::agent::AgentReply),
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
@@ -290,6 +292,48 @@ mod tests {
         write_msg(&mut a, &ToEngine::SetFront(false)).unwrap();
         let got: ToEngine = read_msg(&mut b).unwrap();
         assert!(matches!(got, ToEngine::SetFront(false)));
+    }
+
+    #[test]
+    fn round_trip_agent_snapshot() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        let msg = ToEngine::Agent(crate::agent::AgentRequest {
+            id: 7,
+            tab: 41,
+            op: crate::agent::AgentOp::Snapshot {
+                interactive: false,
+                subtree_backend: None,
+                json: false,
+            },
+        });
+        write_msg(&mut a, &msg).unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Agent(r) => {
+                assert_eq!(r.id, 7);
+                assert_eq!(r.tab, 41);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_agent_ready_state() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        let msg = ToEngine::Agent(crate::agent::AgentRequest {
+            id: 8,
+            tab: 44,
+            op: crate::agent::AgentOp::ReadyState,
+        });
+        write_msg(&mut a, &msg).unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Agent(r) => {
+                assert_eq!(r.id, 8);
+                assert!(matches!(r.op, crate::agent::AgentOp::ReadyState));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
