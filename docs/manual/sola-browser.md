@@ -290,6 +290,12 @@ passkey ceremony. The open panel’s icon is the accent wash.
   vault **first**, then fills every username and password field on the
   page (including confirm). If the page has no fields yet, the item is
   still saved.
+- **Edit** is on the item record (next to **Fill**). Name, login / card /
+  identity / note / SSH / bank / license / passport fields, websites,
+  notes, and custom fields are writable. **Save** writes the cipher;
+  Cancel returns to the record. Passkeys stay attached (not edited here).
+  Org items you cannot write hide **Edit**. License and passport dates
+  are `YYYY-MM-DD`. There is no delete in this panel.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
   passkeys** — pick one to complete sign-in. The intercept is installed at

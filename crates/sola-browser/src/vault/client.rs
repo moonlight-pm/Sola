@@ -16,6 +16,7 @@ use bitwarden_vault::{
 use thiserror::Error;
 use zeroize::Zeroize;
 
+use super::edit::{ItemDraft, apply_draft};
 use super::identity::{
     IdentityLogin, TokenCell, apply_persisted_session, build_pm_client, refresh_access_token,
 };
@@ -704,6 +705,35 @@ impl VaultService {
         Ok((id, FillMaterial { username, password }))
     }
 
+    /// Apply a chrome edit onto the live cipher, PUT, then sync.
+    pub async fn update_item(&self, draft: ItemDraft) -> Result<ItemRecord, VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        let mut view = self
+            .client
+            .vault()
+            .ciphers()
+            .get(&draft.id)
+            .await
+            .map_err(|_| VaultError::NotFound)?;
+        apply_draft(&mut view, &draft).map_err(VaultError::Other)?;
+        let record = record_from_view(view.clone()).ok_or(VaultError::NotFound)?;
+        let ctx = self
+            .client
+            .vault()
+            .ciphers()
+            .encrypt(view)
+            .await
+            .map_err(|e| VaultError::Other(format!("encrypt item: {e}")))?;
+        self.persist_encryption_context(ctx).await?;
+        Ok(record)
+    }
+
     /// POST a new cipher or PUT an existing one, then sync.
     pub async fn persist_encryption_context(
         &self,
@@ -725,7 +755,7 @@ impl VaultService {
                 .ciphers_api()
                 .put(id.into(), Some(req))
                 .await
-                .map_err(|e| VaultError::Other(format!("update login: {e}")))?;
+                .map_err(|e| VaultError::Other(format!("update item: {e}")))?;
             Some(id.to_string())
         } else {
             let created = api
