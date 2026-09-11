@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13  
 **Status:** **Frozen** — implemented and dogfooded (landed on master 2026-08-13)  
-**Related:** vault module (`crates/sola-browser/src/vault/`); [unified panel](2026-08-28-sola-browser-vault-panel-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [manual](../manual/sola-browser.md)
+**Related:** vault module (`crates/sola-browser/src/vault/`); [unified panel](2026-08-28-sola-browser-vault-panel-design.md); [item edit](2026-09-11-sola-browser-vault-item-edit-design.md); [profiles](2026-08-10-sola-browser-profiles-design.md); [manual](../manual/sola-browser.md)
 
 ## Intent
 

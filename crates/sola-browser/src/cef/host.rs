@@ -343,6 +343,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             next,
         },
         ToEngine::StopFind { clear } => Cmd::StopFind { clear },
+        ToEngine::Agent(req) => Cmd::Agent(req),
         ToEngine::Shutdown => return None,
     })
 }

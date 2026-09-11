@@ -250,6 +250,8 @@ pub enum Cmd<E: Engine> {
     HelperDied {
         profile_id: String,
     },
+    /// Agent control-plane request (snapshot / act / nav on a named tab).
+    Agent(crate::agent::AgentRequest),
     Quit,
 }
 
@@ -686,6 +688,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;
     fn devtools_handle(&self) -> DevToolsHandle;
+    fn agent_handle(&self) -> crate::agent::AgentHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Second shader for a docked inspector. Default is the page program

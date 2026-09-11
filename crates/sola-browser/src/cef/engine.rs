@@ -146,6 +146,7 @@ pub struct CefEngine {
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
     devtools: crate::engine::DevToolsHandle,
+    agent: crate::agent::AgentHandle,
 }
 
 impl Engine for CefEngine {
@@ -220,6 +221,7 @@ impl Engine for CefEngine {
             favicons: handles.favicons,
             find_results: handles.find_results,
             devtools: handles.devtools,
+            agent: handles.agent,
         }
     }
 
@@ -292,6 +294,10 @@ impl Engine for CefEngine {
 
     fn devtools_handle(&self) -> crate::engine::DevToolsHandle {
         self.devtools.clone()
+    }
+
+    fn agent_handle(&self) -> crate::agent::AgentHandle {
+        self.agent.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -487,6 +493,9 @@ struct CefTabState {
     paint_bufs: RefCell<PixelRing>,
     /// `<select>` / date-picker OSR popup (PET_POPUP). Blitted onto VIEW.
     popup: RefCell<OsrPopup>,
+    /// Keeps the DevTools-protocol observer alive for agent snapshot/act.
+    #[allow(dead_code)]
+    agent_obs: RefCell<Option<cef::Registration>>,
 }
 
 /// Windowless DevTools browser, attached to one page tab.
@@ -587,6 +596,9 @@ pub(super) fn run_worker(
             .map_err(|_| ())
             .expect("CEF_STATE set twice");
     });
+    if let Some(tx) = &state.ipc_events {
+        crate::cef::agent::init(tx.clone());
+    }
 
     initialize_cef(app_id);
     *state.request_context.borrow_mut() = None;
@@ -2862,6 +2874,58 @@ fn set_host_hidden(host: &cef::BrowserHost, hidden: bool) {
     host.set_windowless_frame_rate(if hidden { 1 } else { 60 });
 }
 
+thread_local! {
+    static AGENT_REVEALED: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// Show a background tab for CDP mouse/keyboard without switching chrome's
+/// seat. `on_paint` still drops non-active frames, so the user does not see it.
+pub(super) fn reveal_agent_tab(browser_id: i32) {
+    let state = cef_state();
+    let Some(tab_id) = tab_id_by_browser_id(&state, browser_id) else {
+        return;
+    };
+    if tab_id == state.active.get() && state.is_front.get() {
+        return;
+    }
+    if let Some(host) = host_for_browser_id(browser_id) {
+        host.was_hidden(0);
+        host.set_focus(1);
+        host.was_resized();
+    }
+    AGENT_REVEALED.with(|c| c.set(browser_id));
+}
+
+pub(super) fn conceal_agent_tab() {
+    let bid = AGENT_REVEALED.with(|c| c.replace(0));
+    if bid == 0 {
+        return;
+    }
+    let state = cef_state();
+    let still_front = tab_id_by_browser_id(&state, bid) == Some(state.active.get())
+        && state.is_front.get();
+    if still_front {
+        return;
+    }
+    if let Some(host) = host_for_browser_id(bid) {
+        set_host_hidden(&host, true);
+    }
+    if state.is_front.get() {
+        if let Some(tab) = active_tab(&state) {
+            if let Some(host) = tab.browser.host() {
+                set_host_hidden(&host, false);
+            }
+        }
+    }
+}
+
+pub(super) fn agent_load_url(browser_id: i32, url: &str) {
+    let state = cef_state();
+    for_tab_by_browser_id(&state, browser_id, |tab| {
+        dispatch_nav(&tab.browser, NavCmd::LoadUrl(url.to_string()));
+    });
+}
+
 cef::wrap_task! {
     pub struct CmdDrainTask {}
 
@@ -3231,6 +3295,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 cb.cancel();
             }
         }
+        Cmd::Agent(req) => handle_agent_cmd(state, req),
         Cmd::HelperDied { .. } => {}
         Cmd::Quit => {
             state.shutting_down.set(true);
@@ -3268,6 +3333,98 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
 /// landing on the worker.
 fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
     tab_state_by_id(state, state.active.get())
+}
+
+pub(super) fn host_for_browser_id(browser_id: i32) -> Option<cef::BrowserHost> {
+    let state = cef_state();
+    let tabs = state.tabs.borrow();
+    tabs.iter()
+        .find(|t| t.browser_id == browser_id)
+        .and_then(|t| t.browser.host())
+}
+
+fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
+    let tab_id = TabId(req.tab);
+    let Some(tab) = tab_state_by_id(state, tab_id) else {
+        if let Some(tx) = &state.ipc_events {
+            let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                crate::agent::AgentReply::fail(req.id, req.tab, "unknown tab"),
+            ));
+        }
+        return;
+    };
+    match &req.op {
+        crate::agent::AgentOp::Nav(nav) => {
+            dispatch_nav(&tab.browser, nav.clone());
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply {
+                        id: req.id,
+                        tab: req.tab,
+                        ok: true,
+                        error: None,
+                        yaml: None,
+                        refs: Vec::new(),
+                        url: None,
+                        title: None,
+                        focused: None,
+                        dialog_open: false,
+                        json: false,
+                        path: None,
+                        ready: None,
+                    },
+                ));
+            }
+        }
+        crate::agent::AgentOp::FindPage {
+            text,
+            forward,
+            next,
+        } => {
+            if let Some(host) = tab.browser.host() {
+                let needle: cef::CefString = text.as_str().into();
+                host.find(Some(&needle), *forward as _, 0, *next as _);
+            }
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply {
+                        id: req.id,
+                        tab: req.tab,
+                        ok: true,
+                        error: None,
+                        yaml: None,
+                        refs: Vec::new(),
+                        url: None,
+                        title: None,
+                        focused: None,
+                        dialog_open: false,
+                        json: false,
+                        path: None,
+                        ready: None,
+                    },
+                ));
+            }
+        }
+        _ => {
+            let needs_show = !matches!(
+                req.op,
+                crate::agent::AgentOp::Snapshot { .. } | crate::agent::AgentOp::ReadyState
+            );
+            let browser_id = tab.browser_id;
+            let host = tab.browser.host();
+            drop(tab);
+            if needs_show {
+                reveal_agent_tab(browser_id);
+            }
+            if let Some(host) = host {
+                crate::cef::agent::begin(&host, browser_id, req);
+            } else if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply::fail(req.id, req.tab, "no host"),
+                ));
+            }
+        }
+    }
 }
 
 fn tab_id_by_browser_id(state: &CefThreadState, browser_id: i32) -> Option<TabId> {
@@ -3467,6 +3624,7 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         last_frame: RefCell::new(None),
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
+        agent_obs: RefCell::new(None),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -4447,12 +4605,15 @@ fn push_tab(
 
     // Background tabs start hidden so only the active OSR surface paints.
     let is_active = state.active.get() == id;
-    if let Some(host) = browser.host() {
+    let agent_obs = if let Some(mut host) = browser.host() {
         // Even the "active" tab stays hidden until this helper is front.
         // (Prewarm / parked profiles must not composite.)
         let show = is_active && state.is_front.get();
         set_host_hidden(&host, !show);
-    }
+        crate::cef::agent::attach(&mut host)
+    } else {
+        None
+    };
 
     state.tabs.borrow_mut().push(CefTabState {
         id,
@@ -4467,6 +4628,7 @@ fn push_tab(
         last_frame: RefCell::new(None),
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
+        agent_obs: RefCell::new(agent_obs),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");

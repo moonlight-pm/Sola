@@ -259,6 +259,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     for def in crate::integration::browser_app_menu(app_id).menus {
         bus = bus.app_menu_definition(def);
     }
+    bus = bus.calls(crate::calls::OWNER, crate::calls::methods());
     bus.install();
 
     // `engine` is moved into the App on first call. The iced application

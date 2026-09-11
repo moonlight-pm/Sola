@@ -3,7 +3,10 @@
 //! Chrome (tabs, omnibox, session, profiles, vault, bus) lives at the crate
 //! root and is generic over [`Engine`]. The CEF backend lives under [`cef`].
 
+pub mod agent;
 pub mod app;
+pub mod ax;
+pub mod calls;
 pub mod cef;
 pub mod chrome_wake;
 pub mod downloads;
