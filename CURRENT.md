@@ -155,7 +155,10 @@ Do not invent product policy.
    [file](https://app.paper.design/file/01KZF8TSPFDJZ4APR05E2ADXBJ)
    **Teaser · Desktop / Mobile**; ISO notify form (SQLite `news`). Copy
    authority [`docs/marketing/PRODUCT.md`](docs/marketing/PRODUCT.md).
-   **Gaps:** full Landing artboard not shipped; ISO download still unreleased.
+   Teaser copy (2026-09-12): mac-like Linux desktop; Omarchy plugins
+   coming; no Steam/gaming hero; session roster is the first-party apps.
+   Source is Thoxa `containers/sola` (not yet redeployed). **Gaps:** full
+   Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
 11. **sola-workspaces** — **partial** (on master)  

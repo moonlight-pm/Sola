@@ -37,11 +37,11 @@ ready**. Download / NixOS install CTAs wait until media exists.
 
 ## Positioning
 
-**What is interesting:** shell and first-party apps are one product — same **sola-kit** components, same graphite language, same live theme. Not a compositor with a grab-bag of unrelated UIs.
+**What is interesting:** a mac-like Wayland desktop — menubar, launcher, switcher — where shell and first-party apps are one product (same **sola-kit**, same live theme). Omarchy plugin support is coming, first-class.
 
-**Also true, not the lead:** multi-process + bus (restart resilience); Steam on XWayland without a gamescope wrapper.
+**Also true, not the lead:** multi-process + bus (restart resilience); ordinary Linux apps run without ceremony.
 
-**Not the pitch:** “IPC over a bus” as a headline. That is implementation detail for a secondary line, not the open.
+**Not the pitch:** gaming, Steam, or “IPC over a bus.” Those are not the open.
 
 ## Marketing messaging (copy authority)
 
@@ -49,8 +49,8 @@ ready**. Download / NixOS install CTAs wait until media exists.
 
 ### Hierarchy (say only this)
 
-1. **One kit for the whole desktop** — sola-kit + live theme across shell and first-party apps  
-2. **Steam is here** — in the launcher; works; no ceremony  
+1. **Mac-like Linux desktop** — menubar, launcher, switcher; sola-kit + live theme across first-party apps  
+2. **Omarchy plugins** — first-class support, coming (not shipped)  
 3. **Install** — teaser: notify for ISO (not yet released). Later: ISO primary; NixOS module alternate  
 4. **Honest early** — dogfood, not a finished OS  
 
@@ -62,7 +62,7 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 
 **Headline (teaser, live):** Sola Desktop  
 
-**Sub (teaser, live):** For Linux workstations that also have to be gaming machines.
+**Sub (teaser, live):** A mac-like desktop for Linux. First-class Omarchy plugin support is coming.
 
 **Primary CTA (teaser, live):** Notify me — one email when the ISO is ready.  
 
@@ -70,7 +70,7 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 
 **Headline (full landing, Paper only):** One kit. The whole desktop.  
 
-**Sub (full landing, Paper only):** Sola is a graphite Wayland shell where menubar, launcher, and first-party apps share sola-kit — the same Iced components and a theme that updates live. Steam is in the launcher too.
+**Sub (full landing, Paper only):** Sola is a graphite Wayland shell where menubar, launcher, and first-party apps share sola-kit — the same Iced components and a theme that updates live. Omarchy plugins are coming, first-class.
 
 **Primary CTA (full landing, not live):** Download ISO  
 **Secondary CTA (full landing, not live):** NixOS install  
@@ -80,12 +80,16 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 **Title:** sola-kit  
 **Body:** Buttons, fields, sidebars, cards, fonts, and theme atoms. Shell chrome and first-party apps import the same crate. Change the palette once; everything follows.
 
-**Steam**  
-**Title:** Steam  
-**Body:** Launch it from the launcher. XWayland through River — no gamescope wrapper for the library or friends list.
+**Desktop**  
+**Title:** Desktop  
+**Body:** Menubar, launcher, switcher — mac-like session chrome.
+
+**Plugins**  
+**Title:** Plugins  
+**Body:** Omarchy plugins — first-class support, coming.
 
 **What you get** (compact, not a feature novel)  
-Shell · Terminal · Browser · Agent · Mail · Settings · Steam · more  
+Shell · Terminal · Browser · Mail · Calendar · Workspaces · Settings · Spotify · Paint · Preview · Arcade · Monitor · Scope · KVM · Wrappers  
 
 **Install**  
 **Title:** Boot the ISO. Land in Sola.  
@@ -96,16 +100,18 @@ Shell · Terminal · Browser · Agent · Mail · Settings · Steam · more
 ### Do not write
 
 - Hero about “processes” or “the bus”  
+- Gaming / Steam as the open (Steam is an ordinary app; do not name it)  
 - Multi-step Steam how-tos  
 - Card grids that restate the same idea six ways  
 - Copy invented to fill a layout slot  
+- Omarchy plugins as shipped (they are coming)  
 
 ## Capabilities (marketing-honest)
 
 - sola-kit + live theme across shell / kit apps  
-- Shell: menubar, launcher, switcher; float + opt-in zoning  
-- **Steam** — launcher; XWayland; no gamescope wrapper required  
-- First-party apps (many partial): terminal, browser, agent, mail, settings, monitor, preview, KVM  
+- Shell: menubar, launcher, switcher; float + opt-in zoning — mac-like session  
+- **Omarchy plugins** — coming, first-class (not live yet)  
+- First-party apps (many partial): terminal, browser, mail, calendar, workspaces, settings, spotify, paint, preview, arcade, monitor, scope, kvm, wrappers  
 - Under the hood (secondary): multi-process supervisor, sola-bus, sola-river ↔ River  
 - Install: ISO (assumed for marketing) + NixOS module path  
 
