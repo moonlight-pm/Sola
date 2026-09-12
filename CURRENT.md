@@ -157,7 +157,7 @@ Do not invent product policy.
    authority [`docs/marketing/PRODUCT.md`](docs/marketing/PRODUCT.md).
    Teaser copy (2026-09-12): mac-like Linux desktop; Omarchy plugins
    coming; no Steam/gaming hero; session roster is the first-party apps.
-   Source is Thoxa `containers/sola` (not yet redeployed). **Gaps:** full
+   **Live** on aulos (`sola-landing:latest` / `fe94e2c`). **Gaps:** full
    Landing artboard not shipped; ISO download still unreleased.
    Root [`PRODUCT.md`](PRODUCT.md) remains the **desktop** product truth —
    do not overwrite it with site messaging.
