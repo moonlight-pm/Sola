@@ -62,7 +62,7 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 
 **Headline (teaser, live):** Sola Desktop  
 
-**Sub (teaser, live):** A mac-like desktop for Linux. First-class Omarchy plugin support is coming.
+**Sub (teaser, live):** Tiling Wayland with a suite of custom productivity apps
 
 **Primary CTA (teaser, live):** Notify me — one email when the ISO is ready.  
 
@@ -88,8 +88,22 @@ Architecture (bus, supervisor, River) is optional “how it is built” — shor
 **Title:** Plugins  
 **Body:** Omarchy plugins — first-class support, coming.
 
-**What you get** (compact, not a feature novel)  
-Shell · Terminal · Browser · Mail · Calendar · Workspaces · Settings · Spotify · Paint · Preview · Arcade · Monitor · Scope · KVM · Wrappers  
+**Custom applications** (name + one-line what it does)  
+Shell — Menubar, launcher, and window switcher.  
+Terminal — Kit terminal with an Alacritty grid.  
+Browser — Iced chrome over a CEF engine.  
+Mail — Kit-native mail. IMAP, send, attachments.  
+Calendar — Month, week, and day. Local, Google, iCloud.  
+Workspaces — Project rail and agent terminals.  
+Settings — Theme, accounts, and system prefs.  
+Spotify — Kit-native Spotify client.  
+Paint — Default image viewer and editor.  
+Preview — Screenshots and quick image open.  
+Arcade — Windowed game library.  
+Monitor — Bus and call inspector.  
+Scope — Pixel loupe under the pointer.  
+KVM — Share keyboard, video, and mouse.  
+Wrappers — Websites as first-class apps.  
 
 **Install**  
 **Title:** Boot the ISO. Land in Sola.  
