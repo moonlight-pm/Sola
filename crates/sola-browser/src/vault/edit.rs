@@ -318,6 +318,10 @@ fn apply_login(view: &mut CipherView, draft: &ItemDraft) -> Result<(), String> {
             fido2_credentials: None,
         });
     }
+    let fido2 = view
+        .login
+        .as_ref()
+        .and_then(|l| l.fido2_credentials.clone());
     if let Some(login) = view.login.as_mut() {
         login.username = opt(draft.row_value("username"));
         login.totp = opt(draft.row_value("totp"));
@@ -358,6 +362,9 @@ fn apply_login(view: &mut CipherView, draft: &ItemDraft) -> Result<(), String> {
     if let Some(login) = view.login.as_mut() {
         login.uris = if uris.is_empty() { None } else { Some(uris) };
         login.generate_checksums();
+        if login.fido2_credentials.is_none() {
+            login.fido2_credentials = fido2;
+        }
     }
     Ok(())
 }
@@ -756,6 +763,25 @@ mod tests {
         assert_eq!(fields[0].value.as_deref(), Some("beta"));
         assert_eq!(fields[1].name.as_deref(), Some("Pin"));
         assert_eq!(fields[1].r#type, FieldType::Hidden);
+    }
+
+    #[test]
+    fn apply_draft_keeps_passkey_slot() {
+        let mut view = login_cipher();
+        view.login.as_mut().unwrap().fido2_credentials = Some(Vec::new());
+        let mut draft = ItemDraft::from_record(&record_for(&view));
+        draft.set_row("username", "bob".into());
+        apply_draft(&mut view, &draft).unwrap();
+        assert!(view
+            .login
+            .as_ref()
+            .unwrap()
+            .fido2_credentials
+            .is_some());
+        assert_eq!(
+            view.login.as_ref().unwrap().username.as_deref(),
+            Some("bob")
+        );
     }
 
     #[test]

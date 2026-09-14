@@ -14,7 +14,7 @@ use bitwarden_core::{
     Client, ClientSettings, DeviceType, FromClient, UserId,
     auth::{ClientManagedTokens, JwtToken},
     key_management::{
-        MasterPasswordUnlockData, SymmetricKeySlotId,
+        BLOB_SECURITY_VERSION, MasterPasswordUnlockData, SymmetricKeySlotId,
         account_cryptographic_state::WrappedAccountCryptographicState,
         crypto::{InitUserCryptoMethod, InitUserCryptoRequest},
     },
@@ -512,7 +512,15 @@ pub async fn initialize_user_crypto(
             upgrade_token: None,
         })
         .await
-        .map_err(|e| format!("crypto init: {e}"))
+        .map_err(|e| format!("crypto init: {e}"))?;
+    // V1 init leaves security-state at 1. Official clients are on blob
+    // encryption (v2); a legacy PUT on those items is rejected as
+    // "Update to the latest version of Bitwarden".
+    client
+        .internal
+        .get_key_store()
+        .set_security_state_version(BLOB_SECURITY_VERSION);
+    Ok(())
 }
 
 /// Restore tokens + user crypto from a persisted session (no master password).

@@ -164,6 +164,10 @@ pub enum VaultError {
     Other(String),
 }
 
+/// Protocol version advertised as `Bitwarden-Client-Version`. Must match the
+/// official desktop `YYYY.M.P` shape; this SDK pin is the 2026.8 line.
+const BITWARDEN_CLIENT_VERSION: &str = "2026.8.0";
+
 /// In-process Bitwarden password-manager client (official cloud).
 pub struct VaultService {
     pub(crate) client: PasswordManagerClient,
@@ -179,8 +183,11 @@ impl VaultService {
         let settings = ClientSettings {
             user_agent: format!("SolaBrowser/{}", env!("CARGO_PKG_VERSION")),
             device_type: DeviceType::LinuxDesktop,
-            bitwarden_client_version: Some(env!("CARGO_PKG_VERSION").into()),
-            bitwarden_package_type: Some("sola-browser".into()),
+            // Cloud parses this as YYYY.M.P. Crate version is 0.1.0; sending
+            // that makes PUT /ciphers return 400 "Update to the latest version
+            // of Bitwarden" on blob/passkey items.
+            bitwarden_client_version: Some(BITWARDEN_CLIENT_VERSION.into()),
+            bitwarden_package_type: Some("desktop".into()),
             ..ClientSettings::default()
         };
         let tokens = Arc::new(TokenCell::default());
@@ -714,6 +721,9 @@ impl VaultService {
             return Err(VaultError::Locked);
         }
 
+        if let Err(e) = self.sync().await {
+            tracing::warn!(error = %e, "vault: sync before edit failed");
+        }
         let mut view = self
             .client
             .vault()
@@ -721,7 +731,9 @@ impl VaultService {
             .get(&draft.id)
             .await
             .map_err(|_| VaultError::NotFound)?;
+        let revision = view.revision_date;
         apply_draft(&mut view, &draft).map_err(VaultError::Other)?;
+        view.revision_date = revision;
         let record = record_from_view(view.clone()).ok_or(VaultError::NotFound)?;
         let ctx = self
             .client
@@ -747,7 +759,14 @@ impl VaultService {
         }
 
         let existing_id = ctx.cipher.id;
+        let blob = ctx.cipher.data.is_some();
         let req: CipherRequestModel = ctx.into();
+        tracing::info!(
+            id = existing_id.map(|i| i.to_string()).as_deref().unwrap_or("-"),
+            blob,
+            last_known = req.last_known_revision_date.as_deref().unwrap_or("-"),
+            "vault: cipher persist"
+        );
         let api = self.client.0.internal.get_api_configurations();
 
         let id = if let Some(id) = existing_id {
@@ -755,7 +774,7 @@ impl VaultService {
                 .ciphers_api()
                 .put(id.into(), Some(req))
                 .await
-                .map_err(|e| VaultError::Other(format!("update item: {e}")))?;
+                .map_err(|e| persist_conflict("update item", e))?;
             Some(id.to_string())
         } else {
             let created = api
@@ -763,7 +782,7 @@ impl VaultService {
                 .ciphers_api()
                 .post(Some(req))
                 .await
-                .map_err(|e| VaultError::Other(format!("create login: {e}")))?;
+                .map_err(|e| persist_conflict("create login", e))?;
             created.id.map(|id| id.to_string())
         };
 
@@ -771,6 +790,27 @@ impl VaultService {
             tracing::warn!(error = %e, "vault: persisted cipher but sync failed");
         }
         Ok(id)
+    }
+}
+
+pub(crate) fn persist_conflict(op: &str, e: impl std::fmt::Display) -> VaultError {
+    let s = e.to_string();
+    let lower = s.to_lowercase();
+    if lower.contains("update to the latest version") {
+        VaultError::Other(
+            "Bitwarden rejected this save (client too old for the item format). Retry after a Sola browser update."
+                .into(),
+        )
+    } else if lower.contains("outdated")
+        || lower.contains("revision")
+        || (lower.contains("version") && lower.contains("old"))
+    {
+        VaultError::Other(
+            "Bitwarden has a newer copy of this item (often after a passkey was used elsewhere). Try Save again."
+                .into(),
+        )
+    } else {
+        VaultError::Other(format!("{op}: {s}"))
     }
 }
 
@@ -1055,5 +1095,35 @@ mod tests {
             Some("12/28")
         );
         assert_eq!(card_exp_display(Some("12"), None), None);
+    }
+
+    #[test]
+    fn bitwarden_client_version_is_yyyy_m() {
+        let y: u32 = BITWARDEN_CLIENT_VERSION
+            .split('.')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            y >= 2026,
+            "cloud rejects crate version 0.1.0: {BITWARDEN_CLIENT_VERSION}"
+        );
+    }
+
+    #[test]
+    fn persist_conflict_maps_stale_revision() {
+        let e = persist_conflict("update item", "Cipher revisionDate is outdated.");
+        let s = e.to_string();
+        assert!(s.contains("newer copy"), "{s}");
+        let e = persist_conflict("update item", "the version is old");
+        assert!(e.to_string().contains("newer copy"));
+        let e = persist_conflict("update item", "network down");
+        assert!(e.to_string().contains("update item: network down"));
+        let e = persist_conflict(
+            "update item",
+            r#"400: {"message":"Cannot edit item. Update to the latest version of Bitwarden and try again."}"#,
+        );
+        assert!(e.to_string().contains("client too old"), "{}", e);
     }
 }
