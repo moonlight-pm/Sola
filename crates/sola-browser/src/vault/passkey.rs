@@ -374,6 +374,12 @@ pub async fn authenticate(
         .await
         .map_err(|e| VaultError::Other(format!("passkey authenticate failed: {e}")))?;
 
+    if let Some(ctx) = store.saved.lock().unwrap().take() {
+        if let Err(e) = svc.persist_encryption_context(ctx).await {
+            tracing::warn!(error = %e, "vault: passkey counter persist failed");
+        }
+    }
+
     let client_data_str = String::from_utf8_lossy(&result.response.client_data_json);
     // Must return this exact clientDataJSON — signature covers its SHA-256.
     if client_data_str.contains("androidPackageName") {
@@ -422,6 +428,10 @@ pub async fn register(
 ) -> Result<(PasskeyAttestationJson, EncryptionContext), VaultError> {
     if !svc.is_ready_for_passkey() {
         return Err(VaultError::Locked);
+    }
+
+    if let Err(e) = svc.sync().await {
+        tracing::warn!(error = %e, "vault: sync before passkey register failed");
     }
 
     let listed = svc

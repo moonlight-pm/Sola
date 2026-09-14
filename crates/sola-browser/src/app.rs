@@ -474,6 +474,10 @@ pub struct App<E: Engine> {
     /// Live tab snapshot, owned by the engine. We re-read on
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
+    /// Helper currently filling `tabs_handle`. Ignore live tabs until this
+    /// matches the active profile (otherwise a switch copies the previous
+    /// profile's strip into the next).
+    front_profile: crate::engine::FrontProfileHandle,
     /// Active-tab id (worker is the sole writer after startup).
     /// Chrome keeps `cached_active` for optimistic paint.
     pub active_handle: Arc<AtomicU64>,
@@ -682,11 +686,13 @@ impl<E: Engine> App<E> {
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
+        let front_profile = engine.front_profile_handle();
         let mut app = Self {
             engine,
             slot,
             cmd_tx,
             tabs_handle,
+            front_profile,
             active_handle,
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
@@ -1410,6 +1416,7 @@ impl<E: Engine> App<E> {
             self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
 
+        self.engine_tabs_seen = false;
         self.devtools = None;
         self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
         self.slot.devtools_pending.lock().unwrap().take();
@@ -1623,11 +1630,28 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
+    fn front_helper_is_active(&self) -> bool {
+        let front = self.front_profile.lock().unwrap().clone();
+        let active = crate::profiles::active_if_bound()
+            .map(|p| p.id)
+            .unwrap_or_default();
+        front_matches_active(&front, &active)
+    }
+
+    /// Live helper tabs, or empty while the router is still on another profile.
+    fn live_tabs_for_active_profile(&self) -> Vec<TabInfo> {
+        if !self.front_helper_is_active() {
+            return Vec::new();
+        }
+        self.tabs_handle.lock().unwrap().clone()
+    }
+
     /// Write session to disk if the tab list / active / sidebar changed.
     pub fn persist_session(&mut self) {
         // Merge so a mid-navigation engine `about:blank` does not persist
-        // over the URL we just committed.
-        let live = self.tabs_handle.lock().unwrap().clone();
+        // over the URL we just committed. Skip live merge while the helper
+        // is still the *previous* profile (switch is async).
+        let live = self.live_tabs_for_active_profile();
         let tabs = if live.is_empty() {
             self.cached_tabs.clone()
         } else {
@@ -2500,7 +2524,7 @@ impl<E: Engine> App<E> {
                 // empty title until the page finishes loading (esp. inactive
                 // restored tabs). Keep the last known title so the strip does
                 // not blank out after session restore.
-                let live = self.tabs_handle.lock().unwrap().clone();
+                let live = self.live_tabs_for_active_profile();
                 if !live.is_empty() {
                     self.engine_tabs_seen = true;
                     let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
@@ -2525,7 +2549,10 @@ impl<E: Engine> App<E> {
                             .unwrap_or(*new_popups.last().unwrap());
                         self.switch_active_tab(focus);
                     }
-                } else if self.engine_tabs_seen && !self.cached_tabs.is_empty() {
+                } else if self.front_helper_is_active()
+                    && self.engine_tabs_seen
+                    && !self.cached_tabs.is_empty()
+                {
                     // Helper died and came back empty. Reopen chrome's list
                     // (not the helper's last snapshot — that resurrected
                     // tabs the user had already closed).
@@ -7235,6 +7262,10 @@ impl<E: Engine> Drop for App<E> {
 
 /// Empty / `about:blank` mid-navigation — do not flash these in the omnibar
 /// over a URL the user just committed.
+fn front_matches_active(front: &str, active: &str) -> bool {
+    !front.is_empty() && front == active
+}
+
 fn is_transient_nav_url(url: &str) -> bool {
     url.is_empty() || url == BLANK_URL
 }
@@ -7390,6 +7421,13 @@ mod tests {
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
         TabInfo::chrome(TabId(id), url, title)
+    }
+
+    #[test]
+    fn live_tabs_ignored_until_front_helper_matches() {
+        assert!(!front_matches_active("", "tertius"));
+        assert!(!front_matches_active("primary", "tertius"));
+        assert!(front_matches_active("tertius", "tertius"));
     }
 
     #[test]

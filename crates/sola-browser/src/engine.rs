@@ -529,6 +529,8 @@ impl<E: Engine> FrameSlot<E> {
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
+/// Profile id of the helper currently filling [`tabs_handle`] / frames.
+pub type FrontProfileHandle = Arc<Mutex<String>>;
 /// Active / paint-tab id (`TabId.0`). Chrome writes optimistically on
 /// `switch_active_tab` so the worker can filter frames without waiting for
 /// the cmd pump. Worker also writes on `Cmd::SetActiveTab` (focus/resize).
@@ -672,6 +674,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn alloc_tab_id(&self) -> TabId;
     fn cmd_sender(&self) -> Sender<Cmd<Self>>;
     fn tabs_handle(&self) -> TabsHandle;
+    fn front_profile_handle(&self) -> FrontProfileHandle;
     fn active_tab_handle(&self) -> ActiveHandle;
     fn cursor_handle(&self) -> CursorHandle;
     /// Shared slot the engine fills with copy text (page selection) for the

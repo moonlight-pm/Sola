@@ -18,9 +18,9 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DevToolsHandle, DownloadsHandle, FaviconsHandle,
-    FindResultsHandle, FrameMailbox, FrameReceiver, HttpAuthHandle, ImeCaret, ImeHandle,
-    JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
-    TabsHandle,
+    FindResultsHandle, FrameMailbox, FrameReceiver, FrontProfileHandle, HttpAuthHandle, ImeCaret,
+    ImeHandle, JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId,
+    TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -37,7 +37,7 @@ struct HelperSet {
 }
 
 struct Shared {
-    current: Mutex<String>,
+    current: FrontProfileHandle,
     frames: FrameReceiver<CefFrame>,
     tabs: TabsHandle,
     active: Arc<AtomicU64>,
@@ -82,6 +82,7 @@ pub struct RouterHandles {
     pub find_results: FindResultsHandle,
     pub devtools: DevToolsHandle,
     pub agent: crate::agent::AgentHandle,
+    pub front_profile: FrontProfileHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -105,8 +106,9 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let devtools: DevToolsHandle = Arc::new(Mutex::new(Vec::new()));
     let agent: crate::agent::AgentHandle = Arc::new(Mutex::new(Vec::new()));
 
+    let front_profile: FrontProfileHandle = Arc::new(Mutex::new(String::new()));
     let shared = Arc::new(Shared {
-        current: Mutex::new(String::new()),
+        current: front_profile.clone(),
         frames: frames.clone(),
         tabs: tabs.clone(),
         active: active.clone(),
@@ -156,6 +158,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         find_results,
         devtools,
         agent,
+        front_profile,
     }
 }
 

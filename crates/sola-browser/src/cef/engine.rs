@@ -147,6 +147,7 @@ pub struct CefEngine {
     find_results: crate::engine::FindResultsHandle,
     devtools: crate::engine::DevToolsHandle,
     agent: crate::agent::AgentHandle,
+    front_profile: crate::engine::FrontProfileHandle,
 }
 
 impl Engine for CefEngine {
@@ -222,6 +223,7 @@ impl Engine for CefEngine {
             find_results: handles.find_results,
             devtools: handles.devtools,
             agent: handles.agent,
+            front_profile: handles.front_profile,
         }
     }
 
@@ -238,6 +240,10 @@ impl Engine for CefEngine {
 
     fn tabs_handle(&self) -> TabsHandle {
         self.tabs.clone()
+    }
+
+    fn front_profile_handle(&self) -> crate::engine::FrontProfileHandle {
+        self.front_profile.clone()
     }
 
     fn active_tab_handle(&self) -> ActiveHandle {
