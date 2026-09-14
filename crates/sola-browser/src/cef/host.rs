@@ -175,6 +175,7 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
                             width: tagged.frame.width,
                             height: tagged.frame.height,
                             dirty: tagged.frame.dirty.clone(),
+                            drag: tagged.frame.drag,
                         };
                         // Write the Arc slice directly — no extra 8 MiB clone.
                         if ipc::write_frame(

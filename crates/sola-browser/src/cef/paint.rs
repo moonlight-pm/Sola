@@ -40,15 +40,104 @@ pub fn is_full_damage(rects: &[DirtyRect], width: u32, height: u32) -> bool {
     rects.is_empty() || rects.iter().any(|r| r.is_full(width, height))
 }
 
+const MAX_DIRTY_RECTS: usize = 8;
+
+/// Bounding box of `rects`. None if empty.
+pub fn union_aabb(rects: &[DirtyRect]) -> Option<DirtyRect> {
+    let mut iter = rects.iter();
+    let first = *iter.next()?;
+    let mut x0 = first.x;
+    let mut y0 = first.y;
+    let mut x1 = first.x.saturating_add(first.w);
+    let mut y1 = first.y.saturating_add(first.h);
+    for r in iter {
+        x0 = x0.min(r.x);
+        y0 = y0.min(r.y);
+        x1 = x1.max(r.x.saturating_add(r.w));
+        y1 = y1.max(r.y.saturating_add(r.h));
+    }
+    Some(DirtyRect {
+        x: x0,
+        y: y0,
+        w: x1.saturating_sub(x0),
+        h: y1.saturating_sub(y0),
+    })
+}
+
+/// Merge `extra` into `into` for an accumulator.
+///
+/// Empty `extra` is full damage (wire protocol) and absorbs. Empty `into`
+/// is **no damage yet** — callers that mean "already full" must use
+/// [`merge_wire_damage`]. Too many rects collapse to an AABB; a huge AABB
+/// becomes full (empty vec).
+pub fn merge_damage(into: &mut Vec<DirtyRect>, extra: &[DirtyRect], w: u32, h: u32) {
+    if is_full_damage(extra, w, h) {
+        into.clear();
+        return;
+    }
+    if into.iter().any(|r| r.is_full(w, h)) {
+        into.clear();
+        return;
+    }
+    into.extend_from_slice(extra);
+    if into.len() <= MAX_DIRTY_RECTS {
+        return;
+    }
+    let Some(u) = union_aabb(into) else {
+        return;
+    };
+    into.clear();
+    let area = u64::from(u.w).saturating_mul(u64::from(u.h));
+    let view = u64::from(w).saturating_mul(u64::from(h));
+    if u.is_full(w, h) || (view > 0 && area > view / 2) {
+        return;
+    }
+    into.push(u);
+}
+
+/// Merge using the frame wire protocol: empty `into` **or** `extra` is full.
+pub fn merge_wire_damage(into: &mut Vec<DirtyRect>, extra: &[DirtyRect], w: u32, h: u32) {
+    if is_full_damage(into, w, h) {
+        into.clear();
+        return;
+    }
+    merge_damage(into, extra, w, h);
+}
+
+/// Pending damage that is not yet on a published frame.
+/// `None` = nothing. `Some([])` = full. `Some(rects)` = partial.
+pub fn absorb_pending(pending: &mut Option<Vec<DirtyRect>>, extra: &[DirtyRect], w: u32, h: u32) {
+    match pending {
+        None => {
+            *pending = Some(if is_full_damage(extra, w, h) {
+                Vec::new()
+            } else {
+                extra.to_vec()
+            });
+        }
+        Some(into) => merge_wire_damage(into, extra, w, h),
+    }
+}
+
 /// Copy `src` (full `src_w × src_h` BGRA) into `dst` (same geometry).
-/// `dst` is resized to `src_w * src_h * 4` when the size changes or on
-/// a full-damage blit. Partial damage is applied in place.
-pub fn apply_paint(dst: &mut Vec<u8>, src: &[u8], src_w: u32, src_h: u32, dirty: &[DirtyRect]) {
+///
+/// Partial damage is applied in place **only** when `dst_complete` is set
+/// (the buffer is the previous full frame at this size). A fresh or
+/// zeroed `dst` always takes a full blit — otherwise holes stay until a
+/// later hover damage happens to cover them.
+pub fn apply_paint(
+    dst: &mut Vec<u8>,
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dirty: &[DirtyRect],
+    dst_complete: bool,
+) {
     let need = (src_w as usize)
         .saturating_mul(src_h as usize)
         .saturating_mul(4);
     let size_changed = dst.len() != need;
-    if size_changed || is_full_damage(dirty, src_w, src_h) {
+    if size_changed || !dst_complete || is_full_damage(dirty, src_w, src_h) {
         dst.clear();
         if src.len() >= need {
             dst.extend_from_slice(&src[..need]);
@@ -58,12 +147,17 @@ pub fn apply_paint(dst: &mut Vec<u8>, src: &[u8], src_w: u32, src_h: u32, dirty:
         }
         return;
     }
-    for r in dirty {
+    copy_rects(dst, src, src_w, src_h, dirty);
+}
+
+/// Copy each rect from a full `src` buffer into `dst` (same stride).
+pub fn copy_rects(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32, rects: &[DirtyRect]) {
+    for r in rects {
         copy_rect(dst, src, src_w, src_h, *r);
     }
 }
 
-fn copy_rect(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32, r: DirtyRect) {
+pub fn copy_rect(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32, r: DirtyRect) {
     if r.w == 0 || r.h == 0 {
         return;
     }
@@ -245,9 +339,12 @@ pub fn take_unique_pixels(prev: Option<std::sync::Arc<Vec<u8>>>, need: usize) ->
     vec![0u8; need]
 }
 
-/// Triple-buffer of pixel `Arc`s. Latest-wins mailbox + last_frame hold at
-/// most two refs; the third slot is free to unwrap and refill without
-/// allocating an 8 MiB `Vec` on every paint.
+/// Triple-buffer of pixel `Arc`s for recycle.
+///
+/// Overlay publish keeps the latest slot so a mailbox drop can unique-unwrap
+/// an older buffer. View `last_frame` must **not** [`publish`] the current
+/// Arc — that pins latest at ≥2 refs and makes `try_unwrap` fail every paint.
+/// Stash only shared (mailbox-held) buffers; unique last_frame is the dest.
 pub struct PixelRing {
     slots: [Option<std::sync::Arc<Vec<u8>>>; 3],
     next: usize,
@@ -264,14 +361,21 @@ impl Default for PixelRing {
 
 impl PixelRing {
     pub fn take(&mut self, need: usize) -> Vec<u8> {
+        self.take_recycled(need).0
+    }
+
+    /// Same as [`take`], plus whether `pixels` is a same-size unique recycle
+    /// (safe to apply partial dirty). A resize or fresh alloc is `false`.
+    pub fn take_recycled(&mut self, need: usize) -> (Vec<u8>, bool) {
         for slot in &mut self.slots {
             if let Some(arc) = slot.take() {
                 match std::sync::Arc::try_unwrap(arc) {
                     Ok(mut v) => {
-                        if v.len() != need {
-                            v.resize(need, 0);
+                        if v.len() == need {
+                            return (v, true);
                         }
-                        return v;
+                        v.resize(need, 0);
+                        return (v, false);
                     }
                     Err(arc) => {
                         *slot = Some(arc);
@@ -279,7 +383,19 @@ impl PixelRing {
                 }
             }
         }
-        vec![0u8; need]
+        (vec![0u8; need], false)
+    }
+
+    /// Keep `arc` for a later unique unwrap. Does not clone.
+    pub fn stash(&mut self, arc: std::sync::Arc<Vec<u8>>) {
+        for slot in &mut self.slots {
+            if slot.is_none() {
+                *slot = Some(arc);
+                return;
+            }
+        }
+        self.slots[self.next] = Some(arc);
+        self.next = (self.next + 1) % 3;
     }
 
     pub fn publish(&mut self, pixels: Vec<u8>) -> std::sync::Arc<Vec<u8>> {
@@ -304,7 +420,7 @@ mod tests {
     fn full_damage_replaces() {
         let src = vec![1u8; 4 * 2 * 2];
         let mut dst = vec![9u8; 4];
-        apply_paint(&mut dst, &src, 2, 2, &[]);
+        apply_paint(&mut dst, &src, 2, 2, &[], true);
         assert_eq!(dst, src);
     }
 
@@ -325,9 +441,120 @@ mod tests {
                 w: 1,
                 h: 1,
             }],
+            true,
         );
         assert_eq!(&dst[4..8], &[5, 6, 7, 8]);
         assert_eq!(&dst[0..4], &[9, 9, 9, 9]);
+    }
+
+    #[test]
+    fn incomplete_dst_partial_dirty_copies_full_src() {
+        let mut src = vec![0u8; 16];
+        src[0..4].copy_from_slice(&[1, 2, 3, 4]);
+        src[4..8].copy_from_slice(&[5, 6, 7, 8]);
+        let mut dst = vec![9u8; 16];
+        apply_paint(
+            &mut dst,
+            &src,
+            2,
+            2,
+            &[DirtyRect {
+                x: 1,
+                y: 0,
+                w: 1,
+                h: 1,
+            }],
+            false,
+        );
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn ghost_union_is_not_full_damage() {
+        let a = DirtyRect {
+            x: 10,
+            y: 20,
+            w: 40,
+            h: 12,
+        };
+        let b = DirtyRect {
+            x: 80,
+            y: 90,
+            w: 40,
+            h: 12,
+        };
+        assert!(!is_full_damage(&[a, b], 5120, 2000));
+        assert!(!is_full_damage(&[a], 5120, 2000));
+    }
+
+    #[test]
+    fn merge_damage_full_absorbs() {
+        let mut d = vec![DirtyRect {
+            x: 1,
+            y: 1,
+            w: 2,
+            h: 2,
+        }];
+        merge_damage(&mut d, &[], 10, 10);
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn merge_wire_empty_into_stays_full() {
+        let mut d = Vec::new();
+        merge_wire_damage(
+            &mut d,
+            &[DirtyRect {
+                x: 1,
+                y: 1,
+                w: 2,
+                h: 2,
+            }],
+            10,
+            10,
+        );
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn absorb_pending_none_then_partial() {
+        let mut p = None;
+        absorb_pending(
+            &mut p,
+            &[DirtyRect {
+                x: 2,
+                y: 0,
+                w: 1,
+                h: 1,
+            }],
+            10,
+            10,
+        );
+        let r = p.as_ref().unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].x, 2);
+    }
+
+    #[test]
+    fn merge_damage_unions_many_to_aabb() {
+        let mut d = Vec::new();
+        for i in 0..10u32 {
+            merge_damage(
+                &mut d,
+                &[DirtyRect {
+                    x: i,
+                    y: 0,
+                    w: 1,
+                    h: 1,
+                }],
+                100,
+                100,
+            );
+        }
+        assert!(d.len() <= MAX_DIRTY_RECTS);
+        let u = union_aabb(&d).unwrap();
+        assert_eq!(u.x, 0);
+        assert_eq!(u.w, 10);
     }
 
     #[test]
@@ -355,6 +582,33 @@ mod tests {
         assert_eq!(v.len(), 16);
         // Recycled buffer keeps previous bytes (then we overwrite in apply_paint).
         assert_eq!(v[0], 1);
+    }
+
+    #[test]
+    fn pixel_ring_recycles_older_while_latest_shared() {
+        let mut ring = PixelRing::default();
+        let a = ring.publish(vec![1u8; 16]);
+        drop(a);
+        let b = ring.publish(vec![2u8; 16]);
+        let _hold = b.clone();
+        let (v, recycled) = ring.take_recycled(16);
+        assert!(recycled);
+        assert_eq!(v[0], 1);
+    }
+
+    #[test]
+    fn stash_shared_recycles_after_drop() {
+        let mut ring = PixelRing::default();
+        let a = std::sync::Arc::new(vec![1u8; 16]);
+        let hold = a.clone();
+        ring.stash(a);
+        let (v, recycled) = ring.take_recycled(16);
+        assert!(!recycled);
+        assert_eq!(v[0], 0);
+        drop(hold);
+        let (v2, recycled2) = ring.take_recycled(16);
+        assert!(recycled2);
+        assert_eq!(v2[0], 1);
     }
 
     #[test]

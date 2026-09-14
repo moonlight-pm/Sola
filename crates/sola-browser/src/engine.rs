@@ -11,6 +11,62 @@ use std::time::Instant;
 /// animations do not kick `Msg::NewFrame` (and rebuild chrome) every frame.
 pub const FRAME_PUMP_HANGOVER_MS: u64 = 50;
 
+/// Chrome-thread GPU upload counters (iced shader). 250 ms windows.
+#[derive(Default)]
+pub struct OsrChromeTelem {
+    win_ms: AtomicU64,
+    presents: AtomicU32,
+    full: AtomicU32,
+    partial: AtomicU32,
+    bytes: AtomicU64,
+    drag: AtomicU32,
+    pending_drop: AtomicU32,
+}
+
+impl OsrChromeTelem {
+    pub fn note_pending_drop(&self) {
+        self.pending_drop.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn note_present(&self, full: bool, bytes: u64, is_drag: bool) {
+        self.presents.fetch_add(1, Ordering::Relaxed);
+        if full {
+            self.full.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.partial.fetch_add(1, Ordering::Relaxed);
+        }
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        if is_drag {
+            self.drag.fetch_add(1, Ordering::Relaxed);
+        }
+        let now = monotonic_ms();
+        let start = self.win_ms.load(Ordering::Relaxed);
+        if start == 0 {
+            self.win_ms.store(now, Ordering::Relaxed);
+            return;
+        }
+        if now.saturating_sub(start) < 250 {
+            return;
+        }
+        if self.presents.load(Ordering::Relaxed) == 0 {
+            self.win_ms.store(now, Ordering::Relaxed);
+            return;
+        }
+        let dt = now.saturating_sub(start).max(1);
+        tracing::info!(
+            dt_ms = dt,
+            presents = self.presents.swap(0, Ordering::Relaxed),
+            gpu_full = self.full.swap(0, Ordering::Relaxed),
+            gpu_partial = self.partial.swap(0, Ordering::Relaxed),
+            gpu_mib = self.bytes.swap(0, Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            drag_frames = self.drag.swap(0, Ordering::Relaxed),
+            pending_drop = self.pending_drop.swap(0, Ordering::Relaxed),
+            "osr chrome present"
+        );
+        self.win_ms.store(now, Ordering::Relaxed);
+    }
+}
+
 pub fn monotonic_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
@@ -261,12 +317,19 @@ pub struct TaggedFrame<F> {
     pub frame: F,
 }
 
+/// Merge damage from a dropped latest-wins frame into the one that replaced it.
+/// Default is a no-op (tests / engines without dirty rects).
+pub trait AbsorbDamage {
+    fn absorb_damage(&mut self, _dropped: &Self) {}
+}
+
 /// Latest-wins handoff from the engine worker to iced.
 ///
 /// One slot **per tab id** so the page and a docked inspector can both
 /// paint. A capacity-1 notify that *dropped the newer frame* under load
 /// caused blackouts while scrolling; this keeps the newest buffer per
-/// id and drops the older (older `Drop` → recycle), then pings.
+/// id, **absorbs the dropped frame's dirty rects** into the survivor, then
+/// pings.
 pub struct FrameMailbox<F: Send> {
     latest: Mutex<HashMap<u64, TaggedFrame<F>>>,
     /// Capacity 1: `Full` means a wakeup is already queued.
@@ -274,7 +337,7 @@ pub struct FrameMailbox<F: Send> {
     notify_rx: Mutex<Receiver<()>>,
 }
 
-impl<F: Send> FrameMailbox<F> {
+impl<F: Send + AbsorbDamage> FrameMailbox<F> {
     pub fn new() -> Arc<Self> {
         let (notify_tx, notify_rx) = sync_channel(1);
         Arc::new(Self {
@@ -284,14 +347,30 @@ impl<F: Send> FrameMailbox<F> {
         })
     }
 
+    /// True when this tab already has a frame waiting (chrome has not
+    /// taken it). Overlay publish coalesces in that case so dirty rects
+    /// stay consecutive with what the GPU actually showed.
+    pub fn contains(&self, tab_id: u64) -> bool {
+        self.latest.lock().unwrap().contains_key(&tab_id)
+    }
+
     /// Producer path. Never blocks; prefer newest frame per tab id.
-    pub fn push(&self, frame: TaggedFrame<F>) -> bool {
-        let old = {
+    /// Replaced frames donate their dirty rects to the survivor.
+    pub fn push(&self, mut frame: TaggedFrame<F>) -> bool {
+        let replaced = {
             let mut g = self.latest.lock().unwrap();
-            g.insert(frame.tab_id.0, frame)
+            match g.remove(&frame.tab_id.0) {
+                Some(old) => {
+                    frame.frame.absorb_damage(&old.frame);
+                    g.insert(frame.tab_id.0, frame);
+                    true
+                }
+                None => {
+                    g.insert(frame.tab_id.0, frame);
+                    false
+                }
+            }
         };
-        let replaced = old.is_some();
-        drop(old);
         match self.notify_tx.try_send(()) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {}
@@ -324,8 +403,20 @@ impl<F: Send> FrameMailbox<F> {
 }
 
 #[cfg(test)]
+impl AbsorbDamage for u8 {}
+
+#[cfg(test)]
 mod frame_mailbox_tests {
     use super::*;
+
+    #[derive(Debug, PartialEq)]
+    struct Acc(Vec<u8>);
+
+    impl AbsorbDamage for Acc {
+        fn absorb_damage(&mut self, dropped: &Self) {
+            self.0.extend_from_slice(&dropped.0);
+        }
+    }
 
     #[test]
     fn keeps_latest_per_tab() {
@@ -348,6 +439,21 @@ mod frame_mailbox_tests {
         assert_eq!(got[0].frame, 2);
         assert_eq!(got[1].tab_id.0, 2);
         assert_eq!(got[1].frame, 3);
+    }
+
+    #[test]
+    fn absorbs_replaced_frame() {
+        let box_ = FrameMailbox::new();
+        assert!(!box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: Acc(vec![1]),
+        }));
+        assert!(box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: Acc(vec![2]),
+        }));
+        let got = box_.recv().unwrap();
+        assert_eq!(got.frame, Acc(vec![2, 1]));
     }
 }
 
@@ -411,6 +517,10 @@ pub struct FrameSlot<E: Engine> {
     /// Shader is already request_redraw-pumping; frame stream should not
     /// enqueue another `NewFrame` (that rebuilds chrome).
     pub pumping: AtomicBool,
+    /// HTML5 OSR drag overlay is live — keep `request_redraw` without a
+    /// chrome rebuild (same idea as Morph2 drag-only vsync).
+    pub page_drag: AtomicBool,
+    pub osr: OsrChromeTelem,
     /// Monotonic ms of the last accepted paint (shader hangover / kick).
     pub last_frame_ms: AtomicU64,
     /// Composition caret (helper) / last pointer fallback (chrome).
@@ -443,6 +553,8 @@ impl<E: Engine> FrameSlot<E> {
             blank_content: AtomicBool::new(false),
             redraw_queued: AtomicBool::new(false),
             pumping: AtomicBool::new(false),
+            page_drag: AtomicBool::new(false),
+            osr: OsrChromeTelem::default(),
             last_frame_ms: AtomicU64::new(0),
             ime,
         }
@@ -651,9 +763,13 @@ pub struct FaviconIpc {
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
     /// Engine-specific raw frame (CEF: CPU BGRA buffer).
-    type Frame: Send + Clone + 'static;
+    type Frame: Send + Clone + AbsorbDamage + 'static;
     /// Pixel size of a parked frame (for same-size replay).
     fn frame_size(frame: &Self::Frame) -> (u32, u32);
+    /// Host-composited HTML5 drag overlay. Default false.
+    fn frame_is_page_drag(_frame: &Self::Frame) -> bool {
+        false
+    }
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
     /// Engine-specific native input event carried by `Cmd::Input`.

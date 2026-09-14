@@ -6,9 +6,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 
+use cef::ImplBrowserHost;
 use cef::rc::*;
 use cef::*;
-use cef::ImplBrowserHost;
 
 use crate::agent::{AgentOp, AgentReply, AgentRequest};
 use crate::ax::{self, SnapshotOpts};
@@ -30,19 +30,21 @@ enum Phase {
     Resolve { next: AfterResolve },
     CallJs,
     BoxModel,
-    Mouse {
-        x: i32,
-        y: i32,
-        step: u8,
-    },
+    Mouse { x: i32, y: i32, step: u8 },
     Ready,
     Shot { path: String },
 }
 
 enum AfterResolve {
-    Click { role: String, name: String },
+    Click {
+        role: String,
+        name: String,
+    },
     #[allow(dead_code)]
-    Hover { role: String, name: String },
+    Hover {
+        role: String,
+        name: String,
+    },
     Type {
         role: String,
         name: String,
@@ -157,11 +159,7 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
                 browser_id,
                 req,
                 backend_node_id,
-                AfterResolve::Select {
-                    role,
-                    name,
-                    values,
-                },
+                AfterResolve::Select { role, name, values },
             );
         }
         AgentOp::Screenshot { path } => {
@@ -227,7 +225,13 @@ fn start(host: &BrowserHost, browser_id: i32, job: Job) {
     );
 }
 
-fn resolve(host: &BrowserHost, browser_id: i32, req: AgentRequest, backend: i32, next: AfterResolve) {
+fn resolve(
+    host: &BrowserHost,
+    browser_id: i32,
+    req: AgentRequest,
+    backend: i32,
+    next: AfterResolve,
+) {
     let mut params = dict();
     set_int(&mut params, "backendNodeId", backend);
     let mid = cdp(host, "DOM.resolveNode", Some(&mut params));
@@ -395,16 +399,7 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
                 ));
                 return;
             };
-            queue_mouse(
-                &host,
-                browser_id,
-                job.req,
-                x,
-                y,
-                "mouseMoved",
-                false,
-                3,
-            );
+            queue_mouse(&host, browser_id, job.req, x, y, "mouseMoved", false, 3);
         }
         Phase::Mouse { x, y, step } => match step {
             1 => queue_mouse(&host, browser_id, job.req, x, y, "mousePressed", true, 2),
@@ -590,11 +585,7 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
                 name.clone(),
             )
         }
-        AfterResolve::Select {
-            role,
-            name,
-            values,
-        } => {
+        AfterResolve::Select { role, name, values } => {
             let lit = serde_json::to_string(values).unwrap_or_else(|_| "[]".into());
             (
                 format!(
@@ -684,8 +675,7 @@ fn dispatch_mouse(host: &BrowserHost, ty: &str, x: i32, y: i32, down: bool) -> i
 }
 
 fn cdp_js_value(json: &str) -> Result<serde_json::Value, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("cdp json: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("cdp json: {e}"))?;
     if let Some(exc) = v.get("exceptionDetails") {
         let msg = exc
             .pointer("/exception/description")
@@ -763,8 +753,9 @@ mod tests {
 
     #[test]
     fn cdp_js_value_reads_return_by_value() {
-        let v = cdp_js_value(r#"{"result":{"type":"object","value":{"ok":true,"x":10.4,"y":20.6}}}"#)
-            .unwrap();
+        let v =
+            cdp_js_value(r#"{"result":{"type":"object","value":{"ok":true,"x":10.4,"y":20.6}}}"#)
+                .unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(pointer_target(&v), Some((10, 21)));
     }

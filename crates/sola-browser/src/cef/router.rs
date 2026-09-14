@@ -564,6 +564,7 @@ fn spawn_helper(
                                 width: meta.width,
                                 height: meta.height,
                                 dirty: meta.dirty,
+                                drag: meta.drag,
                             },
                         });
                     }

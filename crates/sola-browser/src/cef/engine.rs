@@ -17,9 +17,9 @@ use std::thread::JoinHandle;
 use crate::cef::paint::{self, DirtyRect, PixelRing};
 
 use crate::engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
-    FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext, PageMenusHandle,
-    PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
+    AbsorbDamage, ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine,
+    FrameReceiver, FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext,
+    PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -42,6 +42,19 @@ pub struct CefFrame {
     pub height: u32,
     /// Empty = full buffer is new. Otherwise chrome may upload only these.
     pub dirty: Vec<crate::cef::paint::DirtyRect>,
+    /// Host-composited HTML5 drag overlay. Shader pumps while this is set;
+    /// chrome must not park it as the tab's last clean frame.
+    pub drag: bool,
+}
+
+impl AbsorbDamage for CefFrame {
+    fn absorb_damage(&mut self, dropped: &Self) {
+        if self.width != dropped.width || self.height != dropped.height {
+            self.dirty.clear();
+            return;
+        }
+        paint::merge_wire_damage(&mut self.dirty, &dropped.dirty, self.width, self.height);
+    }
 }
 
 /// CEF-specific input event. Uses CEF's integer-pixel coordinates and
@@ -103,6 +116,12 @@ pub enum InputEvent {
         y: i32,
         modifiers: u32,
     },
+    /// Cancel an in-page HTML5 drag (Escape, pointer-up outside the page,
+    /// or the window lost the pointer).
+    DragCancel {
+        x: i32,
+        y: i32,
+    },
 }
 
 fn default_click_count() -> u32 {
@@ -158,6 +177,10 @@ impl Engine for CefEngine {
 
     fn frame_size(frame: &Self::Frame) -> (u32, u32) {
         (frame.width, frame.height)
+    }
+
+    fn frame_is_page_drag(frame: &Self::Frame) -> bool {
+        frame.drag
     }
 
     /// CEF subprocess gate. Must run first in `main`, before logging
@@ -431,6 +454,7 @@ struct CefThreadState {
     cmd_click_opened: Cell<bool>,
     /// In-page HTML5 drag (OSR `start_dragging`).
     osr_drag: RefCell<Option<OsrDrag>>,
+    osr: crate::cef::osr_telem::HelperTelem,
     /// Remote-debugging port for DevTools-as-a-tab.
     debug_port: Cell<u16>,
     /// Inspect-element coords to run once the inspector frontend has loaded.
@@ -449,10 +473,20 @@ struct OsrDrag {
     x: i32,
     y: i32,
     ghost: Option<DragGhost>,
+    last_ghost_rect: Option<DirtyRect>,
+    /// Triple-buffer for the host ghost composite. Must not also keep the
+    /// published `Arc` on the session — that pinned the latest buffer at
+    /// 3 refs and forced a 19 MiB alloc on every pointer move.
+    overlay_ring: PixelRing,
+    /// Ghost / view dirty skipped while the helper mailbox still held a
+    /// frame. Merged into the next published overlay so GPU damage is
+    /// continuous since the last upload.
+    pending_dirty: Option<Vec<DirtyRect>>,
 }
 
 /// Bitmap we composite onto the page while an HTML5 drag is live.
 /// Chromium expects the host to draw this; OSR has no OS ghost.
+#[derive(Clone)]
 struct DragGhost {
     pixels: Vec<u8>,
     w: u32,
@@ -592,6 +626,7 @@ pub(super) fn run_worker(
         new_tab_click_armed: Cell::new(false),
         cmd_click_opened: Cell::new(false),
         osr_drag: RefCell::new(None),
+        osr: crate::cef::osr_telem::HelperTelem::default(),
         debug_port: Cell::new(0),
         pending_inspect: Cell::new(None),
         pending_favicon: RefCell::new(std::collections::HashMap::new()),
@@ -974,8 +1009,10 @@ cef::wrap_render_handler! {
                 return 0;
             };
             let state = cef_state();
-            let ghost = drag_ghost_from_data(&owned)
-                .or_else(|| drag_ghost_from_last_frame(&state, x, y));
+            let ghost = drag_ghost_from_data(&owned);
+            let from_cef_image = ghost.is_some();
+            let ghost = ghost.or_else(|| drag_ghost_from_last_frame(&state, x, y));
+            let ghost_sz = ghost.as_ref().map(|g| (g.w, g.h));
             let mut session = OsrDrag {
                 data: owned,
                 allowed: allowed_ops,
@@ -983,12 +1020,16 @@ cef::wrap_render_handler! {
                 x,
                 y,
                 ghost,
+                last_ghost_rect: None,
+                overlay_ring: PixelRing::default(),
+                pending_dirty: None,
             };
             if let Some(host) = browser.and_then(|b| b.host()) {
                 osr_drag_enter(&host, &mut session, x, y);
             }
             *state.osr_drag.borrow_mut() = Some(session);
-            publish_drag_overlay(&state);
+            state.osr.note_start_dragging(x, y, ghost_sz, from_cef_image);
+            publish_drag_overlay(&state, OverlayDamage::GhostOnly);
             1
         }
 
@@ -2743,26 +2784,70 @@ fn publish_view_paint(
     h: u32,
     dirty: Vec<DirtyRect>,
 ) {
-    let len = (w as usize) * (h as usize) * 4;
-    let mut ring = tab.paint_bufs.borrow_mut();
-    let mut bytes = ring.take(len);
-    paint::apply_paint(&mut bytes, src, w, h, &dirty);
-    paint::ensure_bgra_dirty(&mut bytes, w, h, &dirty);
+    let (mut bytes, complete) = take_view_dst(tab, w, h);
+    let full = paint::is_full_damage(&dirty, w, h);
+    paint::apply_paint(&mut bytes, src, w, h, &dirty, complete);
+    // Incomplete dest is a full blit of CEF's buffer — swizzle the whole
+    // region, not just `dirty` (ARGB holes otherwise).
+    let swizzle: &[DirtyRect] = if complete { &dirty } else { &[] };
+    paint::ensure_bgra_dirty(&mut bytes, w, h, swizzle);
     let dirty = composite_popup(tab, &mut bytes, w, h, dirty);
-    let pixels = ring.publish(bytes);
-    drop(ring);
+    let pixels = Arc::new(bytes);
+    state.osr.note_paint(
+        full,
+        !complete,
+        crate::cef::osr_telem::dirty_px(&dirty, w, h),
+    );
     tracing::trace!(w, h, dirty = dirty.len(), ?tab.id, "CEF on_paint VIEW");
     let frame = CefFrame {
         pixels,
         width: w,
         height: h,
         dirty,
+        drag: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
-    state.frames.push(TaggedFrame {
+    if drag_has_ghost(state) {
+        publish_drag_overlay_on(state, tab, OverlayDamage::View(&frame.dirty));
+        return;
+    }
+    if state.frames.push(TaggedFrame {
         tab_id: tab.id,
         frame,
-    });
+    }) {
+        state.osr.note_mailbox_drop();
+    }
+}
+
+/// Prefer uniquely unwrapping the previous complete last_frame so partial
+/// dirty copies are valid. Shared last_frame (mailbox still holds it) is
+/// stashed for later recycle — never published as the ring's latest, or
+/// `try_unwrap` fails every paint. Any other dest is incomplete.
+fn take_view_dst(tab: &CefTabState, w: u32, h: u32) -> (Vec<u8>, bool) {
+    let need = (w as usize).saturating_mul(h as usize).saturating_mul(4);
+    let prev = tab.last_frame.borrow_mut().take();
+    if let Some(frame) = prev {
+        match Arc::try_unwrap(frame.pixels) {
+            Ok(mut v) => {
+                if v.len() == need {
+                    return (v, true);
+                }
+                v.resize(need, 0);
+                return (v, false);
+            }
+            Err(arc) => tab.paint_bufs.borrow_mut().stash(arc),
+        }
+    }
+    let (v, _) = tab.paint_bufs.borrow_mut().take_recycled(need);
+    (v, false)
+}
+
+fn drag_has_ghost(state: &CefThreadState) -> bool {
+    state
+        .osr_drag
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.ghost.is_some())
 }
 
 fn publish_popup_paint(
@@ -2782,8 +2867,11 @@ fn publish_popup_paint(
         if popup.h == 0 {
             popup.h = h;
         }
-        paint::apply_paint(&mut popup.pixels, src, w, h, &dirty);
-        paint::ensure_bgra_dirty(&mut popup.pixels, w, h, &dirty);
+        let complete =
+            popup.pixels.len() == (w as usize) * (h as usize) * 4 && popup.w == w && popup.h == h;
+        paint::apply_paint(&mut popup.pixels, src, w, h, &dirty, complete);
+        let swizzle: &[DirtyRect] = if complete { &dirty } else { &[] };
+        paint::ensure_bgra_dirty(&mut popup.pixels, w, h, swizzle);
         popup.w = w;
         popup.h = h;
     }
@@ -2792,8 +2880,7 @@ fn publish_popup_paint(
         return;
     };
     let need = (view.width as usize) * (view.height as usize) * 4;
-    let mut ring = tab.paint_bufs.borrow_mut();
-    let mut bytes = ring.take(need);
+    let mut bytes = tab.paint_bufs.borrow_mut().take(need);
     if view.pixels.len() == need {
         bytes.copy_from_slice(&view.pixels);
     } else {
@@ -2803,8 +2890,7 @@ fn publish_popup_paint(
         bytes[..n].copy_from_slice(&view.pixels[..n]);
     }
     let dirty = composite_popup(tab, &mut bytes, view.width, view.height, Vec::new());
-    let pixels = ring.publish(bytes);
-    drop(ring);
+    let pixels = Arc::new(bytes);
     tracing::debug!(
         view_w = view.width,
         view_h = view.height,
@@ -2818,6 +2904,7 @@ fn publish_popup_paint(
         width: view.width,
         height: view.height,
         dirty,
+        drag: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
     state.frames.push(TaggedFrame {
@@ -2908,8 +2995,8 @@ pub(super) fn conceal_agent_tab() {
         return;
     }
     let state = cef_state();
-    let still_front = tab_id_by_browser_id(&state, bid) == Some(state.active.get())
-        && state.is_front.get();
+    let still_front =
+        tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
     if still_front {
         return;
     }
@@ -3837,7 +3924,8 @@ fn osr_drag_move(
     drag.x = x;
     drag.y = y;
     drop(slot);
-    publish_drag_overlay(state);
+    state.osr.note_move();
+    publish_drag_overlay(state, OverlayDamage::GhostOnly);
     true
 }
 
@@ -3848,26 +3936,49 @@ fn osr_drag_drop(
     y: i32,
     modifiers: u32,
 ) -> bool {
-    let Some(mut drag) = state.osr_drag.borrow_mut().take() else {
+    let size = *state.size.lock().unwrap();
+    let entered = state.osr_drag.borrow().as_ref().is_some_and(|d| d.entered);
+    if !entered || x < 0 || y < 0 || x >= size.0 as i32 || y >= size.1 as i32 {
+        return osr_drag_cancel(state, host, x, y);
+    }
+    let Some(drag) = state.osr_drag.borrow_mut().take() else {
         return false;
     };
-    if !drag.entered {
-        osr_drag_enter(host, &mut drag, x, y);
-    }
     let me = osr_drag_mouse(x, y, modifiers);
     host.drag_target_drop(Some(&me));
     host.drag_source_ended_at(x, y, drag.allowed);
     host.drag_source_system_drag_ended();
-    // Restore a clean frame (no ghost) from the last CEF paint.
-    if let Some(tab) = active_tab(state) {
-        if let Some(frame) = tab.last_frame.borrow().clone() {
-            state.frames.push(TaggedFrame {
-                tab_id: tab.id,
-                frame,
-            });
-        }
-    }
+    state.osr.note_drag_end("drop");
+    push_clean_last_frame(state);
     true
+}
+
+fn osr_drag_cancel(state: &CefThreadState, host: &cef::BrowserHost, x: i32, y: i32) -> bool {
+    let Some(drag) = state.osr_drag.borrow_mut().take() else {
+        return false;
+    };
+    if drag.entered {
+        host.drag_target_drag_leave();
+    }
+    host.drag_source_ended_at(x, y, cef::DragOperationsMask::default());
+    host.drag_source_system_drag_ended();
+    state.osr.note_drag_end("cancel");
+    push_clean_last_frame(state);
+    true
+}
+
+fn push_clean_last_frame(state: &CefThreadState) {
+    let Some(tab) = active_tab(state) else {
+        return;
+    };
+    if let Some(mut frame) = tab.last_frame.borrow().clone() {
+        frame.drag = false;
+        frame.dirty.clear();
+        state.frames.push(TaggedFrame {
+            tab_id: tab.id,
+            frame,
+        });
+    }
 }
 
 fn drag_ghost_from_data(data: &cef::DragData) -> Option<DragGhost> {
@@ -3937,31 +4048,154 @@ fn drag_ghost_from_last_frame(state: &CefThreadState, x: i32, y: i32) -> Option<
     })
 }
 
-fn publish_drag_overlay(state: &CefThreadState) {
-    let drag = state.osr_drag.borrow();
-    let Some(drag) = drag.as_ref() else {
+/// What changed besides the ghost. `View` with an empty slice is a full
+/// CEF paint (must full-blit last_frame + ghost).
+enum OverlayDamage<'a> {
+    GhostOnly,
+    View(&'a [DirtyRect]),
+}
+
+fn publish_drag_overlay(state: &CefThreadState, extra: OverlayDamage<'_>) {
+    let Some(tab) = active_tab(state) else {
+        return;
+    };
+    publish_drag_overlay_on(state, &tab, extra);
+}
+
+fn publish_drag_overlay_on(state: &CefThreadState, tab: &CefTabState, extra: OverlayDamage<'_>) {
+    let Some(base) = tab.last_frame.borrow().clone() else {
+        return;
+    };
+    let tab_id = tab.id;
+    let view_w = base.width;
+    let view_h = base.height;
+    // Latest-wins would drop this overlay before chrome presents it, and
+    // the next dirty (old∪new of consecutive helper frames) would not
+    // erase the ghost still on the GPU → trails. Wait until the mailbox
+    // is empty so each presented frame is consecutive — but keep the
+    // skipped ghost/view damage so the next upload covers every hole.
+    if state.frames.contains(tab_id.0) {
+        note_overlay_skip(state, extra, view_w, view_h);
+        return;
+    }
+
+    let (pixels, dirty, full, unique_buf) = {
+        let mut slot = state.osr_drag.borrow_mut();
+        let Some(drag) = slot.as_mut() else {
+            return;
+        };
+        let Some(ghost) = drag.ghost.clone() else {
+            return;
+        };
+        let gx = drag.x;
+        let gy = drag.y;
+        let new_rect = paint::overlay_dirty(
+            gx - ghost.hot_x,
+            gy - ghost.hot_y,
+            ghost.w,
+            ghost.h,
+            view_w,
+            view_h,
+        );
+        let old_rect = drag.last_ghost_rect;
+        let mut dirty = overlay_damage_rects(extra, old_rect, new_rect, view_w, view_h);
+        if let Some(pending) = drag.pending_dirty.take() {
+            paint::merge_wire_damage(&mut dirty, &pending, view_w, view_h);
+        }
+        let need = (view_w as usize)
+            .saturating_mul(view_h as usize)
+            .saturating_mul(4);
+        let (mut dst, unique_buf) = take_overlay_pixels(drag, need);
+        // Recycled ring slots can contain a ghost from several moves ago.
+        // Always rebuild from the clean CEF last_frame, then blit.
+        dst.clear();
+        let src = base.pixels.as_slice();
+        if src.len() >= need {
+            dst.extend_from_slice(&src[..need]);
+        } else {
+            dst.extend_from_slice(src);
+            dst.resize(need, 0);
+        }
+        blit_ghost(&mut dst, view_w, view_h, &ghost, gx, gy);
+        drag.last_ghost_rect = new_rect;
+        let pixels = drag.overlay_ring.publish(dst);
+        let full = paint::is_full_damage(&dirty, view_w, view_h);
+        (pixels, dirty, full, unique_buf)
+    };
+    state.osr.note_overlay(
+        full,
+        unique_buf,
+        crate::cef::osr_telem::dirty_px(&dirty, view_w, view_h),
+    );
+    if state.frames.push(TaggedFrame {
+        tab_id,
+        frame: CefFrame {
+            pixels,
+            width: view_w,
+            height: view_h,
+            dirty,
+            drag: true,
+        },
+    }) {
+        state.osr.note_mailbox_drop();
+    }
+}
+
+fn note_overlay_skip(state: &CefThreadState, extra: OverlayDamage<'_>, view_w: u32, view_h: u32) {
+    let mut slot = state.osr_drag.borrow_mut();
+    let Some(drag) = slot.as_mut() else {
         return;
     };
     let Some(ghost) = drag.ghost.as_ref() else {
         return;
     };
-    let Some(tab) = active_tab(state) else {
-        return;
-    };
-    let Some(base) = tab.last_frame.borrow().clone() else {
-        return;
-    };
-    let mut pixels = (*base.pixels).clone();
-    blit_ghost(&mut pixels, base.width, base.height, ghost, drag.x, drag.y);
-    state.frames.push(TaggedFrame {
-        tab_id: tab.id,
-        frame: CefFrame {
-            pixels: Arc::new(pixels),
-            width: base.width,
-            height: base.height,
-            dirty: Vec::new(),
-        },
-    });
+    let new_rect = paint::overlay_dirty(
+        drag.x - ghost.hot_x,
+        drag.y - ghost.hot_y,
+        ghost.w,
+        ghost.h,
+        view_w,
+        view_h,
+    );
+    let extra_rects = overlay_damage_rects(extra, drag.last_ghost_rect, new_rect, view_w, view_h);
+    paint::absorb_pending(&mut drag.pending_dirty, &extra_rects, view_w, view_h);
+    drag.last_ghost_rect = new_rect;
+}
+
+fn overlay_damage_rects(
+    extra: OverlayDamage<'_>,
+    old_ghost: Option<DirtyRect>,
+    new_ghost: Option<DirtyRect>,
+    view_w: u32,
+    view_h: u32,
+) -> Vec<DirtyRect> {
+    match extra {
+        OverlayDamage::View(d) if paint::is_full_damage(d, view_w, view_h) => Vec::new(),
+        OverlayDamage::View(d) => {
+            let mut out = d.to_vec();
+            if let Some(r) = old_ghost {
+                out.push(r);
+            }
+            if let Some(r) = new_ghost {
+                out.push(r);
+            }
+            out
+        }
+        OverlayDamage::GhostOnly => {
+            let mut out = Vec::new();
+            if let Some(r) = old_ghost {
+                out.push(r);
+            }
+            if let Some(r) = new_ghost {
+                out.push(r);
+            }
+            out
+        }
+    }
+}
+
+fn take_overlay_pixels(drag: &mut OsrDrag, need: usize) -> (Vec<u8>, bool) {
+    drag.overlay_ring.take_recycled(need)
 }
 
 fn blit_ghost(dst: &mut [u8], dw: u32, dh: u32, ghost: &DragGhost, cx: i32, cy: i32) {
@@ -4257,6 +4491,67 @@ fn frontend_url_from_json_list(body: &str, page_url: &str, panel: &str) -> Optio
 }
 
 #[cfg(test)]
+mod frame_absorb_tests {
+    use super::*;
+    use crate::cef::paint::DirtyRect;
+    use crate::engine::AbsorbDamage;
+
+    fn frame(dirty: Vec<DirtyRect>) -> CefFrame {
+        CefFrame {
+            pixels: Arc::new(vec![0; 16]),
+            width: 2,
+            height: 2,
+            dirty,
+            drag: false,
+        }
+    }
+
+    #[test]
+    fn absorb_unions_partial() {
+        let dropped = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        let mut kept = frame(vec![DirtyRect {
+            x: 1,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        kept.absorb_damage(&dropped);
+        assert_eq!(kept.dirty.len(), 2);
+    }
+
+    #[test]
+    fn absorb_full_kept_stays_full() {
+        let dropped = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        let mut kept = frame(vec![]);
+        kept.absorb_damage(&dropped);
+        assert!(kept.dirty.is_empty());
+    }
+
+    #[test]
+    fn absorb_full_dropped_makes_full() {
+        let dropped = frame(vec![]);
+        let mut kept = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        kept.absorb_damage(&dropped);
+        assert!(kept.dirty.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod devtools_frontend_tests {
     use super::frontend_url_from_json_list;
 
@@ -4335,6 +4630,7 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
                 // Parked buffer is a complete composite — never a dirty patch
                 // against the previous tab's GPU texture.
                 frame.dirty.clear();
+                frame.drag = false;
                 state.frames.push(TaggedFrame { tab_id: id, frame });
             }
             ok
@@ -4785,6 +5081,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
             let me = MouseEvent { x, y, modifiers };
             host.send_mouse_move_event(Some(&me), 0);
         }
+        InputEvent::DragCancel { x, y } => {
+            osr_drag_cancel(state, host, x, y);
+        }
         InputEvent::PointerButton {
             down,
             x,
@@ -4884,6 +5183,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
             ke.native_key_code = 0;
             ke.is_system_key = 0;
             if down {
+                if vk == 0x1B {
+                    osr_drag_cancel(state, host, 0, 0);
+                }
                 ke.type_ = KeyEventType::RAWKEYDOWN;
                 host.send_key_event(Some(&ke));
                 if let Some(ch) = character {

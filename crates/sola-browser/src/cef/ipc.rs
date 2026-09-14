@@ -181,6 +181,9 @@ pub struct FrameMeta {
     /// a full `width × height` BGRA buffer (damage already applied by the
     /// helper); chrome may upload only these rects.
     pub dirty: Vec<DirtyRect>,
+    /// Host-composited HTML5 drag overlay. Default false for older writers.
+    #[serde(default)]
+    pub drag: bool,
 }
 
 pub fn write_msg<T: Serialize>(stream: &mut UnixStream, msg: &T) -> io::Result<()> {
@@ -349,12 +352,14 @@ mod tests {
                 w: 1,
                 h: 1,
             }],
+            drag: true,
         };
         let pixels = vec![1, 2, 3, 4, 5, 6, 7, 8];
         write_frame(&mut a, &meta, &pixels).unwrap();
         let (got, pix) = read_frame(&mut b).unwrap();
         assert_eq!(got.tab_id, 7);
         assert_eq!(got.width, 2);
+        assert!(got.drag);
         assert_eq!(pix, pixels);
     }
 

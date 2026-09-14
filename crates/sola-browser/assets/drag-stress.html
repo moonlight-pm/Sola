@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sola OSR drag / layer stress</title>
+<style>
+  :root {
+    --bg: #121216;
+    --fg: #e8e8ed;
+    --muted: #8b8b96;
+    --card: #1c1c22;
+    --accent: #6c8cff;
+    --col: #16161a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg);
+    font: 15px/1.4 system-ui, "SF Pro Text", sans-serif; }
+  header { padding: 16px 20px 8px; }
+  header h1 { font-size: 24px; line-height: 1.2; margin: 0 0 8px; font-weight: 650; color: var(--fg); }
+  header p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; max-width: 52rem; }
+  #board {
+    display: flex; gap: 16px; padding: 16px 20px 80px; align-items: flex-start;
+  }
+  .col {
+    width: 240px; min-height: 420px; background: var(--col); border-radius: 10px;
+    padding: 10px; border: 1px solid #2a2a32;
+  }
+  .col h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .card {
+    background: var(--card); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px;
+    cursor: grab; border: 1px solid #2f2f38; user-select: none;
+  }
+  .card:active { cursor: grabbing; }
+  .card strong { display: block; font-size: 14px; }
+  .card span { font-size: 12px; color: var(--muted); }
+  .col.over { outline: 2px solid var(--accent); }
+  #fixed-chip {
+    position: fixed; right: 24px; bottom: 24px; z-index: 20;
+    background: var(--accent); color: #0b0b10; font-weight: 600;
+    padding: 10px 14px; border-radius: 999px;
+    transform: translateY(0);
+    box-shadow: 0 8px 24px #0008;
+  }
+  #late {
+    position: absolute; left: 280px; top: 72px; width: 220px;
+    background: #2a1f12; border: 1px solid #c9862a; border-radius: 8px;
+    padding: 10px 12px; color: #f3d9a4;
+    /* Appears after 400ms — used to catch dirty-rect holes until hover. */
+    display: none;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>OSR drag / layer stress</h1>
+  <p>Drag a card between columns (HTML5 DnD). The amber panel should appear without hovering it. The chip stays pinned at the bottom-right.</p>
+</header>
+<div id="late">Late-mounted layer — if this is missing until you mouse over it, dirty rects are wrong.</div>
+<div id="board">
+  <div class="col" data-col="todo">
+    <h2>Todo</h2>
+    <div class="card" draggable="true" id="c1"><strong>Alpha</strong><span>draggable</span></div>
+    <div class="card" draggable="true" id="c2"><strong>Bravo</strong><span>draggable</span></div>
+    <div class="card" draggable="true" id="c3"><strong>Charlie</strong><span>draggable</span></div>
+  </div>
+  <div class="col" data-col="doing">
+    <h2>Doing</h2>
+    <div class="card" draggable="true" id="c4"><strong>Delta</strong><span>draggable</span></div>
+  </div>
+  <div class="col" data-col="done">
+    <h2>Done</h2>
+  </div>
+</div>
+<div id="fixed-chip">fixed + transform</div>
+<script>
+  let dragging = null;
+  document.querySelectorAll('.card').forEach((card) => {
+    card.addEventListener('dragstart', (e) => {
+      dragging = card;
+      e.dataTransfer.setData('text/plain', card.id);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => { dragging = null; });
+  });
+  document.querySelectorAll('.col').forEach((col) => {
+    col.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('over');
+    });
+    col.addEventListener('dragleave', () => col.classList.remove('over'));
+    col.addEventListener('drop', (e) => {
+      e.preventDefault();
+      col.classList.remove('over');
+      const id = e.dataTransfer.getData('text/plain');
+      const card = document.getElementById(id) || dragging;
+      if (card) col.appendChild(card);
+    });
+  });
+  setTimeout(() => { document.getElementById('late').style.display = 'block'; }, 400);
+  const chip = document.getElementById('fixed-chip');
+  let t = 0;
+  setInterval(() => {
+    t += 0.08;
+    chip.style.transform = 'translateY(' + (Math.sin(t) * 8) + 'px)';
+  }, 32);
+</script>
+</body>
+</html>

@@ -58,16 +58,11 @@ pub fn upload(
     frame: &CefFrame,
     staging: &mut Vec<u8>,
     force_full: bool,
-) {
-    let dirty = if force_full
-        || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height)
-    {
-        None
-    } else {
-        Some(frame.dirty.as_slice())
-    };
-    match dirty {
-        None => upload_rect(
+) -> (bool, u64) {
+    let full =
+        force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height);
+    if full {
+        upload_rect(
             queue,
             texture,
             frame.pixels.as_slice(),
@@ -77,23 +72,28 @@ pub fn upload(
             frame.width,
             frame.height,
             staging,
-        ),
-        Some(rects) => {
-            for r in rects {
-                upload_rect(
-                    queue,
-                    texture,
-                    frame.pixels.as_slice(),
-                    frame.width,
-                    r.x,
-                    r.y,
-                    r.w,
-                    r.h,
-                    staging,
-                );
-            }
-        }
+        );
+        return (
+            true,
+            u64::from(frame.width).saturating_mul(u64::from(frame.height)) * 4,
+        );
     }
+    let mut bytes = 0u64;
+    for r in &frame.dirty {
+        upload_rect(
+            queue,
+            texture,
+            frame.pixels.as_slice(),
+            frame.width,
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            staging,
+        );
+        bytes = bytes.saturating_add(u64::from(r.w).saturating_mul(u64::from(r.h)) * 4);
+    }
+    (false, bytes)
 }
 
 fn upload_rect(
