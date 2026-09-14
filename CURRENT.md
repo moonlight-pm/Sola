@@ -263,10 +263,12 @@ Do not invent product policy.
    focused window at 0,0). Keep the game **fullscreen** for Fit. Nest passes
    `--cursor-scale-height` (desktop-sized host pointer; Factorio was huge).
    A–Z / Recent sort persists (`arcade-prefs.json`).  
-   **This slice (2026-09-01):** debounced `steamapps/` watch; Stop/Play from
-   `UserAppExited` (no 1s `/proc` poll); Stop kills Arcade-owned pids only
-   (not `AppId=`); second Arcade raises the live window; Play **refused**
-   while desktop Steam is open (no exclusive-fullscreen surprise).  
+   **This slice (2026-09-14):** nested-steam treats Steam **install-script**
+   reapers (`AppId=<id> Install=1`, `iscriptevaluator`) as prepare, not the
+   game — Palworld-class Proton titles no longer “crash” when VC redist
+   exits. **Next:** desk-smoke Palworld from Arcade (quit desktop Steam
+   first; first Play may still show Steam’s launch-option picker in the
+   nest: Play Palworld vs DirectX 12).  
    **Install:** standing OK to `install arcade` after each finished round.  
    - Fit rezone dogfooded (Factorio, fullscreen on).  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -321,7 +323,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Mail | **Installed** `mail` release 2026-09-10: letter Date + local `HH:MM`; junk is `x`. **Installed** `mail`+`settings` release 2026-09-04: multi-IMAP canonical boxes; Gmail Archive create; parsed-date list; async MOVE; snapshot boot + connect card; Wicket From checklist; Workspace MX fill; attachments send/receive. Standing OK to reinstall `mail`. No HTML engine | — |
 | Terminal | **On this branch** (installed 2026-09-02; lib via Workspaces **installed** 2026-09-11 pane `=session:` / 2026-09-10 TUI follow): grid selection is neon accent wash (`#3dd6f5` @ 55%). Wash follows scrolled glyphs (`sel_follow`) and TUI CUP-rewrites during drag and page-sized Grok/Codex wheels. Workspaces PTYs share the palette and the follow (**installed** `workspaces` 2026-09-02). First tab / no-source pane starts in `$HOME`. | — |
 | Wrapper | **On master.** Slack paints. Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam Cinema huddle camera **smoked** 2026-09-01 (V4L2 `getUserMedia`; mic is the same USB device as the volume-chip default source). Image paste (Preview **Copy** → ⌘V) **installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01. JS dialog overlay in this worktree. | — |
-| Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
+| Arcade | **Installed** 2026-08-25; 2026-09-01 watch / singleton / refuse-Steam-open / narrow Stop **installed** `arcade`. 2026-09-14: nest ignores `Install=1` / `iscriptevaluator` reapers (Palworld prepare was tearing the nest down) — **installed** `arcade` this slice, Palworld desk smoke pending (quit Steam first). Banner list + nest dogfooded (Core Keeper, PEAK, Factorio); per-title **Fit / resolution** (default 1080p); live Fit follow dogfooded (Factorio rezone, fullscreen on). Standing OK to reinstall after each arcade update | — |
 | Calendar | **On master.** **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked). Settings accounts: Google / iCloud / CalDAV / URL, multiple. | — |
 | Spotify | **On master.** **Installed** `spotify` release 2026-09-04: artist/album names on a track (list, queue, player bar) open those pages; player-bar cover opens the album; album **Save**/**Follow** and artist **Follow** land on the Albums / Artists tabs. A `/me` 429 no longer kicks the session to sign-in; profile is not re-polled every 2s while missing (5 min backoff). Device poll is 30s and skips while cooling. After Connect marks this computer inactive (or the session drops), a song click **activates then loads**; reconnect waits for the old Spirc to finish so it cannot delete the new device. MPRIS follows the local engine. Earlier: Back/Forward **survives restart** (max 20 back steps); **list-plus** add-to-playlist picker + **New playlist**; media keys apply immediately; page Back/Forward. Launcher row live. Made for you catalog; likes from `liked.json`; **−** skip-once; hide strike+dim; last page + last track. Host NixOS has `alsa-lib` + `libpulseaudio`. Standing OK to `install spotify` after each build. | — |
 | Agent | **Retired** (on master). Crate gone; launcher has no **Agent**; settings no longer treats `sola-agent` as a system app. Leftover `/opt/sola/bin/sola-agent` from 2026-08-25 bulk until a later install. Daily agent work is Workspaces. | — |

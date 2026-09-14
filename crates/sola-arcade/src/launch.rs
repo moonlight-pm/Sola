@@ -79,9 +79,13 @@ pub fn pid_cmdline_contains(pid: u32, needle: &[u8]) -> bool {
     cmdline_contains(&std::path::PathBuf::from(format!("/proc/{pid}")), needle)
 }
 
+fn bytes_contains(hay: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle)
+}
+
 fn cmdline_contains(pid_dir: &std::path::Path, needle: &[u8]) -> bool {
     let cmdline = read_cmdline_spaced(pid_dir);
-    cmdline.windows(needle.len()).any(|w| w == needle)
+    bytes_contains(&cmdline, needle)
 }
 
 fn process_cmdline_contains(needle: &[u8]) -> bool {
@@ -137,13 +141,48 @@ pub fn session_alive(steam_app_id: u32) -> bool {
     false
 }
 
+/// True when a space-normalized `/proc` cmdline is the **game** reaper for
+/// `steam_app_id`, not a Steam prepare helper.
+///
+/// Steam's install-script evaluator is
+/// `reaper SteamLaunch AppId=<id> Install=1 -- … iscriptevaluator.exe`.
+/// Matching that as the title made Arcade kill nested Steam when the script
+/// exited (Palworld never reached `Palworld.exe`).
+pub fn is_game_process_cmdline(cmdline: &[u8], steam_app_id: u32) -> bool {
+    let needle = format!("AppId={steam_app_id}");
+    if !bytes_contains(cmdline, needle.as_bytes()) {
+        return false;
+    }
+    if bytes_contains(cmdline, b"Install=") {
+        return false;
+    }
+    if bytes_contains(cmdline, b"iscriptevaluator") {
+        return false;
+    }
+    true
+}
+
 /// True when Steam's launch reaper / game process for this app id is live.
 ///
-/// Matches `AppId=<id>` on cmdline (Steam reaper / proton wrappers). Used to
-/// detect in-game exit so the nested Steam client can be torn down.
+/// Matches `AppId=<id>` on cmdline (Steam reaper / proton wrappers), excluding
+/// install-script / evaluator helpers. Used to detect in-game exit so the
+/// nested Steam client can be torn down.
 pub fn game_process_alive(steam_app_id: u32) -> bool {
-    let needle = format!("AppId={steam_app_id}");
-    process_cmdline_contains(needle.as_bytes())
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = read_cmdline_spaced(&entry.path());
+        if is_game_process_cmdline(&cmdline, steam_app_id) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Status / `--run` copy when a desktop Steam client is already open.
@@ -475,7 +514,10 @@ pub fn run_nested_steam_blocking(steam_app_id: u32) -> ! {
 
         if game_process_alive(steam_app_id) {
             if !saw_game {
-                eprintln!("sola-arcade: nested-steam saw game process AppId={app}");
+                eprintln!(
+                    "sola-arcade: nested-steam saw game process AppId={app} \
+                     (not Install= / iscriptevaluator)"
+                );
             }
             saw_game = true;
             gone_ticks = 0;
@@ -612,6 +654,32 @@ mod tests {
                 .any(|w| w == ["--cursor-scale-height", "1080"]),
             "{locked:?}"
         );
+    }
+
+    #[test]
+    fn game_process_ignores_install_script_reaper() {
+        let install = b"/home/joshua/.local/share/Steam/ubuntu12_32/steam-launch-wrapper -- \
+/home/joshua/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1623730 Install=1 -- \
+/home/joshua/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/_v2-entry-point --verb=run -- \
+/home/joshua/.local/share/Steam/steamapps/common/Proton - Experimental/proton run \
+/home/joshua/.local/share/Steam/legacycompat/iscriptevaluator.exe \
+legacycompat\\evaluatorscript_1623730.vdf";
+        let game = b"/home/joshua/.local/share/Steam/ubuntu12_32/steam-launch-wrapper -- \
+/home/joshua/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1623730 -- \
+/home/joshua/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/_v2-entry-point \
+--verb=waitforexitandrun -- \
+/home/joshua/.local/share/Steam/steamapps/common/Proton - Experimental/proton waitforexitandrun \
+/home/joshua/.local/share/Steam/steamapps/common/Palworld/Palworld.exe";
+        let native = b"/home/joshua/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=427520 -- \
+/home/joshua/.local/share/Steam/steamapps/common/Factorio/bin/x64/factorio";
+        let other = b"reaper SteamLaunch AppId=400 -- /games/portal";
+        assert!(!is_game_process_cmdline(install, 1623730));
+        assert!(is_game_process_cmdline(game, 1623730));
+        assert!(!is_game_process_cmdline(game, 427520));
+        assert!(is_game_process_cmdline(native, 427520));
+        assert!(!is_game_process_cmdline(native, 1623730));
+        assert!(is_game_process_cmdline(other, 400));
+        assert!(!is_game_process_cmdline(other, 1623730));
     }
 
     #[test]
