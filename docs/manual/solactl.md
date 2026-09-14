@@ -77,10 +77,14 @@ per-project script that runs in a new worktree after spawn (also
 owner session is known (used to `grok -r` after a reboot loses tmux).
 A workspace name prefers the
 Grok leaf when sending, reading, waiting, or exec-ing (Codex leaf when
-`--agent codex`). `pane.send` and
+`--agent codex`). `pane.send`, `pane.read`, and
+`workspace.exec --prompt` address that workspace’s tmux session exactly
+(`=session:` current pane) so a split leaf `…-p` is not confused with
+the parent. `pane.send` and
 `workspace.exec --prompt` **paste** into the live agent (tmux
 bracketed-paste, then Enter) so a multiline brief does not submit on
-the first newline and a long prompt is not truncated. `--prompt` without
+the first newline and a long prompt is not truncated. A failed paste
+returns the tmux error (not a bare `send failed`). `--prompt` without
 `--agent` implies Grok. `--prompt` and `--prompt-file` are exclusive. Spawn
 parent defaults to `$SOLA_PANE_ID` when you run from a Workspaces pane.
 `--agent` is `grok` or `codex`. First Codex session may need `/hooks` in

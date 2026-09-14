@@ -6,8 +6,8 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; `pane.list` / `whoami` include `session_id` (Grok owner session; new tmux after reboot runs `grok -r`); `--agent grok|codex` on spawn/exec (Codex leaf when requested)
-**Dogfood:** `solactl workspaces` still needs a desk smoke after install; grok `-r` after reboot unsmoked  
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; tmux pane/window `-t` is `=session:` (session commands stay `=session`); `pane.list` / `whoami` include `session_id` (Grok owner session; new tmux after reboot runs `grok -r`); `--agent grok|codex` on spawn/exec (Codex leaf when requested)
+**Dogfood:** split-tab `pane.read` smoked 2026-09-11; rest of `solactl workspaces` desk smoke pending; grok `-r` after reboot unsmoked  
 **Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); Codex is first-class (`--agent grok|codex`); no UI rename modal / recolor / reorder; grok `-r` after reboot unsmoked
 
 ---
@@ -144,6 +144,7 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - Shell-quoting for `grok '…'`
 - `solactl` bool-flag parse (`--enter --text` order; `--select --name` order)
 - Empty paste skips tmux; `pane.send` / exec `--prompt` use `paste-buffer -p` then Enter
+- Pane/window tmux `-t` is `=session:`; session commands stay `=session` (bare `=session` is an exact pane name)
 - CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout
 - `workspace.rm --worktree` / `--force`; gone worktree path reaps the tab

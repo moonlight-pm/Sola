@@ -229,14 +229,39 @@ pub fn session_name(id: &str) -> String {
     format!("{}{id}", identity().session_prefix)
 }
 
-/// tmux `-t` value. `=` is an exact session name so `sws-ws-foo` does
-/// not match a split leaf `sws-ws-foo-p` (prefix match is tmux's default).
+fn exact_session_name(session: &str) -> &str {
+    session
+        .strip_prefix('=')
+        .unwrap_or(session)
+        .trim_end_matches(':')
+}
+
+/// tmux `-t` for **session** commands (`has-session`, `kill-session`,
+/// `attach-session`, env). `=` is an exact session name so `sws-ws-foo`
+/// does not match a split leaf `sws-ws-foo-p` (prefix match is tmux's
+/// default).
+///
+/// Do **not** pass this to pane/window commands — see [`pane_target`].
 pub fn session_target(session: &str) -> String {
-    if let Some(rest) = session.strip_prefix('=') {
-        format!("={rest}")
-    } else {
-        format!("={session}")
-    }
+    format!("={}", exact_session_name(session))
+}
+
+/// tmux `-t` for **pane/window** commands (`capture-pane`, `paste-buffer`,
+/// `send-keys`, `display-message`, `resize-window`).
+///
+/// A bare `=session` is parsed as an exact *pane* name, so
+/// `capture-pane -t =sws-ws-foo` fails with `can't find pane`. The
+/// trailing `:` is "that exact session's current window/pane".
+pub fn pane_target(session: &str) -> String {
+    format!("{}:", session_target(session))
+}
+
+fn tmux_fail(verb: &str, output: &std::process::Output) -> String {
+    format!(
+        "tmux {verb} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
 }
 
 /// Inverse of [`session_name`] when `session` uses this process's prefix.
@@ -323,15 +348,11 @@ pub fn rename_session(from: &str, to: &str) -> bool {
 
 pub fn capture_scrollback(session: &str) -> Result<String, String> {
     let output = tmux_cmd()
-        .args(["capture-pane", "-t", &session_target(session), "-p", "-S", "-"])
+        .args(["capture-pane", "-t", &pane_target(session), "-p", "-S", "-"])
         .output()
         .map_err(|e| format!("tmux capture-pane failed: {e}"))?;
     if !output.status.success() {
-        return Err(format!(
-            "tmux capture-pane exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(tmux_fail("capture-pane", &output));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -340,62 +361,75 @@ pub fn capture_scrollback(session: &str) -> Result<String, String> {
 ///
 /// Fine for short shell lines. Long or multiline text should use
 /// [`paste_bracketed`] — `send-keys -l` is an argv and will truncate.
-pub fn send_literal(session: &str, text: &str) -> bool {
-    tmux_cmd()
-        .args(["send-keys", "-t", &session_target(session), "-l", "--", text])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+pub fn send_literal(session: &str, text: &str) -> Result<(), String> {
+    let output = tmux_cmd()
+        .args(["send-keys", "-t", &pane_target(session), "-l", "--", text])
+        .output()
+        .map_err(|e| format!("tmux send-keys failed: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(tmux_fail("send-keys", &output))
+    }
 }
 
 /// Paste `text` into the session with tmux bracketed-paste (`paste-buffer
 /// -p`). Newlines stay in the TUI composer instead of submitting; length
 /// is not capped by `send-keys` argv.
-pub fn paste_bracketed(session: &str, text: &str) -> bool {
+pub fn paste_bracketed(session: &str, text: &str) -> Result<(), String> {
     if text.is_empty() {
-        return true;
+        return Ok(());
     }
     let buf = format!("sws-paste-{session}");
-    let mut child = match tmux_cmd()
+    let mut child = tmux_cmd()
         .args(["load-buffer", "-b", &buf, "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
+        .map_err(|e| format!("tmux load-buffer failed: {e}"))?;
     {
         let Some(mut stdin) = child.stdin.take() else {
-            return false;
+            return Err("tmux load-buffer: no stdin".into());
         };
-        if stdin.write_all(text.as_bytes()).is_err() {
-            return false;
-        }
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("tmux load-buffer write failed: {e}"))?;
     }
-    if !child.wait().map(|s| s.success()).unwrap_or(false) {
-        return false;
+    let loaded = child
+        .wait_with_output()
+        .map_err(|e| format!("tmux load-buffer wait failed: {e}"))?;
+    if !loaded.status.success() {
+        return Err(tmux_fail("load-buffer", &loaded));
     }
-    tmux_cmd()
-        .args(["paste-buffer", "-dp", "-b", &buf, "-t", &session_target(session)])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let pasted = tmux_cmd()
+        .args([
+            "paste-buffer",
+            "-dp",
+            "-b",
+            &buf,
+            "-t",
+            &pane_target(session),
+        ])
+        .output()
+        .map_err(|e| format!("tmux paste-buffer failed: {e}"))?;
+    if pasted.status.success() {
+        Ok(())
+    } else {
+        Err(tmux_fail("paste-buffer", &pasted))
+    }
 }
 
-pub fn send_enter(session: &str) -> bool {
-    tmux_cmd()
-        .args(["send-keys", "-t", &session_target(session), "Enter"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+pub fn send_enter(session: &str) -> Result<(), String> {
+    let output = tmux_cmd()
+        .args(["send-keys", "-t", &pane_target(session), "Enter"])
+        .output()
+        .map_err(|e| format!("tmux send-keys failed: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(tmux_fail("send-keys", &output))
+    }
 }
 
 /// Brief Grok (or any TUI composer): bracketed paste, settle, optional Enter.
@@ -406,19 +440,17 @@ pub fn send_enter(session: &str) -> bool {
 /// submits until a later input (wheel / focus) flushes it.
 pub const PASTE_SETTLE: Duration = Duration::from_millis(80);
 
-pub fn send_prompt(session: &str, text: &str, enter: bool) -> bool {
-    if !text.is_empty() && !paste_bracketed(session, text) {
-        return false;
+pub fn send_prompt(session: &str, text: &str, enter: bool) -> Result<(), String> {
+    if !text.is_empty() {
+        paste_bracketed(session, text)?;
     }
     if enter {
         if !text.is_empty() {
             std::thread::sleep(PASTE_SETTLE);
         }
-        if !send_enter(session) {
-            return false;
-        }
+        send_enter(session)?;
     }
-    true
+    Ok(())
 }
 
 pub fn kill_session(session: &str) {
@@ -593,7 +625,7 @@ pub fn pane_current_path(session: &str) -> Option<String> {
             "display-message",
             "-p",
             "-t",
-            &session_target(session),
+            &pane_target(session),
             "-F",
             "#{pane_current_path}",
         ])
@@ -611,7 +643,14 @@ pub fn pane_current_path(session: &str) -> Option<String> {
 /// Foreground pane pid, if tmux still has the session.
 pub fn pane_pid(session: &str) -> Option<i32> {
     let output = tmux_cmd()
-        .args(["display-message", "-p", "-t", &session_target(session), "-F", "#{pane_pid}"])
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            &pane_target(session),
+            "-F",
+            "#{pane_pid}",
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .output()
@@ -625,7 +664,13 @@ pub fn pane_pid(session: &str) -> Option<i32> {
 /// Stamp a session environment variable (inherited by new panes / shells).
 pub fn set_environment(session: &str, key: &str, value: &str) {
     let _ = tmux_cmd()
-        .args(["set-environment", "-t", &session_target(session), key, value])
+        .args([
+            "set-environment",
+            "-t",
+            &session_target(session),
+            key,
+            value,
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -636,7 +681,7 @@ pub fn resize_window(session: &str, cols: u16, rows: u16) {
         .args([
             "resize-window",
             "-t",
-            &session_target(session),
+            &pane_target(session),
             "-x",
             &cols.to_string(),
             "-y",
@@ -666,7 +711,18 @@ mod tests {
         assert_eq!(session_target("sws-ws-foo"), "=sws-ws-foo");
         assert_eq!(session_target("=sws-ws-foo"), "=sws-ws-foo");
         assert_eq!(session_target("sws-ws-foo-p"), "=sws-ws-foo-p");
+        assert_eq!(session_target("=sws-ws-foo:"), "=sws-ws-foo");
         // tmux treats `=` as exact; without it, `sws-ws-foo` matches `sws-ws-foo-p`.
+    }
+
+    #[test]
+    fn pane_target_is_exact_session_current_pane() {
+        // Bare `=session` is an exact *pane* name (`can't find pane`).
+        assert_eq!(pane_target("sws-ws-foo"), "=sws-ws-foo:");
+        assert_eq!(pane_target("=sws-ws-foo"), "=sws-ws-foo:");
+        assert_eq!(pane_target("sws-ws-foo-p"), "=sws-ws-foo-p:");
+        assert_eq!(pane_target("=sws-ws-foo:"), "=sws-ws-foo:");
+        assert_ne!(pane_target("sws-ws-foo"), session_target("sws-ws-foo"));
     }
 
     #[test]
@@ -683,8 +739,8 @@ mod tests {
 
     #[test]
     fn paste_bracketed_empty_skips_tmux() {
-        assert!(paste_bracketed("no-such-session", ""));
-        assert!(send_prompt("no-such-session", "", false));
+        assert!(paste_bracketed("no-such-session", "").is_ok());
+        assert!(send_prompt("no-such-session", "", false).is_ok());
     }
 
     #[test]
