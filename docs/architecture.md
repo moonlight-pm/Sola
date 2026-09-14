@@ -180,21 +180,23 @@ swapchains in the background (see
 
 | Kind | Role |
 |------|------|
-| Menubar | Top chrome, menus, mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), 12-band LED spectrum (own phrase, hidden if no PipeWire; click opens volume), pixel-graph stats (CPU/GPU/MEM/RX/TX), whispers (`AppToast`) |
+| Menubar | Top chrome, menus, **screen 1–5 marks** (middle), mail unread chip (when `sola-mail` is mapped), missed-notification bell, Bluetooth (hidden if no adapter), 12-band LED spectrum (own phrase, hidden if no PipeWire; click opens volume), pixel-graph stats (CPU/GPU/MEM/RX/TX). Opening/screenshot copy is a desk notification, not a bar toast |
 | Menu | Open application menus + calendar / stat / notification-pile / Bluetooth / volume panels (parked 2×2 while dismissed) |
 | Launcher | App launch (parked 2×2 while dismissed) |
-| Switcher | MRU window/app switch (parked 2×2 while dismissed) |
+| Switcher | MRU window/app switch, **current screen only**, **Alt+Tab** (parked 2×2 while dismissed) |
 | Shortcuts | Super+K cheatsheet (parked 2×2 while dismissed; live Frame is the card + shadow pad, not the usable output) |
 | Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
 
-Zoning / floating is coordinated with `sola-river` over the bus:
-unassigned windows **default-float** (client size + `Topic::WindowFloating`);
-saved zones restore frames; Meta+numpad snaps assign zones.
+Screens + tiling are coordinated with `sola-river` over the bus:
+five global screens (`Topic::ScreenLayout`); unassigned windows
+**default-float** (client size + `Topic::WindowFloating`); Super+Y inserts
+into a dwindle BSP on the current screen; Super+Shift+drag move/resize.
+Zone snaps are retired (`Topic::Zones` still decodes, not applied).
 
 **Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
-`Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab
-(switcher still lists hidden apps), launcher on an already-running hidden app
+`Topic::Composition` (River `hide` — not send-to-back). Restore: Alt+Tab
+(switcher still lists hidden apps on this screen), launcher on an already-running hidden app
 (unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
 unread, notification click). Last window of a hidden app retracts the sticky
 so a later map is not stuck hidden. No menubar chip.

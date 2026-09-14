@@ -307,9 +307,9 @@ pub fn handle_manage_start(state: &mut AppData) {
 
     apply_fullscreen_requests(state);
 
-    // CSD move/resize: cursor device + any pending op_start_pointer/op_end.
-    // No Super+button pointer bindings — those clicks reach clients.
+    // CSD + Super+Shift pointer move/resize.
     crate::client::op::ensure_op_cursor(state);
+    crate::client::op::ensure_pointer_bindings(state);
     crate::client::op::drive(state);
 
     wm.manage_finish();

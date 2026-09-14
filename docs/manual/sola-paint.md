@@ -9,7 +9,7 @@ Default image viewer and editor. First pass — install to use.
 - `solactl open /path/to/photo.png`
 - `sola-paint /path/to/photo.png`
 A second `open` (MIME, `solactl open`, `sola-paint path`) hands off to the
-running window and opens another tab. Super+Shift+3/4/5 screenshots still
+running window and opens another tab. Super+Ctrl+3/4/5 screenshots still
 open **Preview**, not Paint.
 
 ## Edit

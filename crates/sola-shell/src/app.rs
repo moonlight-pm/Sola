@@ -7,8 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sola_bus::topics::{
-    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
-    MenuActionPayload, MenuItem, RegisteredChord, Topic, Window, Zone,
+    AppMenuPayload, AppNotification, ApplicationsConfig, CompositionEntry, FocusTarget,
+    FrameUpdate, MenuActionPayload, MenuItem, RegisteredChord, ScreenFloat, ScreenLayout, Topic,
+    Window,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -18,9 +19,11 @@ use crate::launcher::state::LauncherState;
 use crate::menu::state::MenuCache;
 use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
+use crate::screens::ScreenState;
 use crate::selection::state::SelectionState;
 use crate::shortcuts::state::ShortcutsState;
 use crate::switcher::state::SwitcherState;
+use crate::tiling::{Compass, Rect as TileRect};
 use crate::zoning::ZoningState;
 
 pub mod bus;
@@ -116,6 +119,8 @@ pub enum Msg {
     /// Expire the toast for `generation` if it matches the current generation.
     /// Also clears a matching pending launch (opening feedback timeout).
     ToastExpire(u64),
+    /// Menubar screen numeral 1..=5.
+    SwitchScreen(u8),
     /// End a menubar shortcut-flash for `generation` if it's still current.
     MenuFlashExpire(u64),
     // --- Launcher messages ---
@@ -364,6 +369,8 @@ pub struct Shell {
     /// must not yank the keyboard off the pre-capture app).
     pub suppress_map_focus_for: Option<String>,
     pub zoning: ZoningState,
+    pub screens: ScreenState,
+    saved_layout: Option<ScreenLayout>,
 
     // Menubar state (clock, toast, label positions)
     pub menubar: MenubarState,
@@ -460,6 +467,8 @@ impl Shell {
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
+            screens: ScreenState::default(),
+            saved_layout: None,
             menubar: MenubarState::new(),
             pending_launch: None,
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -548,28 +557,210 @@ impl Shell {
         crate::menu::state::effective_app_menu(&self.menus, app_id, &label)
     }
 
-    /// Snap the focused window to `zone` (numpad, Window menu, Super+K).
-    pub fn snap_focused_zone(&mut self, zone: Zone) -> iced::Task<Msg> {
-        let Some(frame) = self.zoning.apply_zone(zone, self.focused_window_id) else {
+    fn live_tile_rect(&self, window_id: u32) -> Option<TileRect> {
+        self.zoning.live_geometry.get(&window_id).map(|g| TileRect {
+            x: g.x,
+            y: g.y,
+            w: g.width,
+            h: g.height,
+        })
+    }
+
+    fn persist_screens(&mut self) {
+        if !self.screens.take_dirty() {
+            return;
+        }
+        let mut floats = std::collections::HashMap::new();
+        for (app_id, g) in &self.zoning.float_geometry {
+            let screen = self
+                .known_windows
+                .iter()
+                .find(|w| w.app_id == *app_id)
+                .map(|w| self.screens.screen_of(w.window_id))
+                .unwrap_or_else(|| self.screens.current());
+            floats.insert(
+                app_id.clone(),
+                ScreenFloat {
+                    app_id: app_id.clone(),
+                    screen,
+                    x: g.x,
+                    y: g.y,
+                    width: g.width,
+                    height: g.height,
+                },
+            );
+        }
+        let layout = self.screens.snapshot(&self.known_windows, &floats);
+        if self.saved_layout.as_ref() == Some(&layout) {
+            return;
+        }
+        self.saved_layout = Some(layout.clone());
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::ScreenLayout(layout));
+        });
+    }
+
+    fn apply_layout(&mut self) {
+        self.emit_all_frames();
+        self.emit_composition();
+        self.sync_window_floating();
+        self.persist_screens();
+        self.focus_mru_on_current_screen();
+        self.emit_registered_chords();
+    }
+
+    fn focus_mru_on_current_screen(&mut self) {
+        let wid = self.mru_apps.iter().find_map(|app| {
+            self.known_windows.iter().find_map(|w| {
+                if w.app_id == *app && self.screens.is_on_current(w.window_id) {
+                    Some(w.window_id)
+                } else {
+                    None
+                }
+            })
+        });
+        let Some(wid) = wid else {
+            return;
+        };
+        self.focused_window_id = Some(wid);
+        if let Some(app) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == wid)
+            .map(|w| w.app_id.clone())
+        {
+            self.focused_app_id = Some(app);
+        }
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        });
+    }
+
+    fn switch_screen(&mut self, n: u8) {
+        self.screens.switch_to(n);
+        if self.switcher.active {
+            self.switcher.active = false;
+        }
+        self.apply_layout();
+    }
+
+    fn rebuild_switcher(&mut self) {
+        let on_screen: HashSet<u32> = self
+            .known_windows
+            .iter()
+            .filter(|w| self.screens.is_on_current(w.window_id))
+            .map(|w| w.window_id)
+            .collect();
+        crate::switcher::state::rebuild_apps(
+            &mut self.switcher,
+            &self.mru_apps.clone(),
+            &self.known_windows.clone(),
+            |wid| on_screen.contains(&wid),
+        );
+    }
+
+    fn whisper(&mut self, title: impl Into<String>) -> iced::Task<Msg> {
+        self.push_notification(AppNotification {
+            id: String::new(),
+            app_id: Self::APP_ID.into(),
+            source: "Shell".into(),
+            title: title.into(),
+            body: String::new(),
+            tag: Some("whisper".into()),
+            tab_id: None,
+            url: None,
+        })
+    }
+
+    fn toggle_tile_focused(&mut self) {
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
+        let Some(app_id) = self.focused_app_id.clone() else {
+            return;
+        };
+        let focused_tiled = self
+            .known_windows
+            .iter()
+            .filter(|w| {
+                self.screens.is_on_current(w.window_id) && self.screens.is_tiled(w.window_id)
+            })
+            .map(|w| w.window_id)
+            .find(|&id| id != wid)
+            .or(Some(wid));
+        let live = self.live_tile_rect(wid);
+        let mode = self
+            .screens
+            .toggle_tile(wid, &app_id, focused_tiled, live);
+        if mode == crate::screens::Mode::Float {
+            self.zoning
+                .window_zones
+                .insert(wid, sola_bus::topics::Zone::Float);
+        } else {
+            self.zoning.window_zones.remove(&wid);
+        }
+        self.apply_layout();
+    }
+
+    fn focus_dir(&mut self, dir: Compass) -> iced::Task<Msg> {
+        let Some(wid) = self.focused_window_id else {
             return iced::Task::none();
         };
-        let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
-            (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
-                self.zoning.float_geometry.get(&app_id).cloned()
-            }
-            _ => None,
-        };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::Frame(frame));
-            if let Some(zones) = self.zoning.take_zones_update() {
-                let _ = bus.emit(Topic::Zones(zones));
-            }
-            if let Some(fg) = float_fg {
-                let _ = bus.emit(Topic::FloatGeometry(fg));
+        let mut cands: Vec<(u32, TileRect)> = Vec::new();
+        if let Some((ow, oh)) = self.zoning.output_size {
+            for f in self.screens.current_managed_frames(ow, oh) {
+                cands.push((
+                    f.window_id,
+                    TileRect {
+                        x: f.x,
+                        y: f.y,
+                        w: f.width,
+                        h: f.height,
+                    },
+                ));
             }
         }
-        self.sync_window_floating();
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || !self.screens.is_on_current(w.window_id) {
+                continue;
+            }
+            if cands.iter().any(|(id, _)| *id == w.window_id) {
+                continue;
+            }
+            if let Some(r) = self.live_tile_rect(w.window_id) {
+                cands.push((w.window_id, r));
+            }
+        }
+        let Some(next) = ScreenState::neighbor_among(wid, dir, &cands) else {
+            return iced::Task::none();
+        };
+        self.focused_window_id = Some(next);
+        if let Some(app) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == next)
+            .map(|w| w.app_id.clone())
+        {
+            self.focused_app_id = Some(app);
+        }
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: next }));
+        });
         iced::Task::none()
+    }
+
+    fn swap_dir(&mut self, dir: Compass) {
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
+        let Some(output) = self.zoning.output_size else {
+            return;
+        };
+        let Some(other) = self.screens.neighbor(wid, dir, output) else {
+            return;
+        };
+        self.screens.swap(wid, other);
+        self.apply_layout();
     }
 
     fn handle_window_action(&mut self, action: sola_kit::WindowAction) -> iced::Task<Msg> {
@@ -579,7 +770,24 @@ impl Shell {
                 iced::Task::none()
             }
             sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
-            sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
+            sola_kit::WindowAction::Tile => {
+                self.toggle_tile_focused();
+                iced::Task::none()
+            }
+            sola_kit::WindowAction::Fullscreen => {
+                if let Some(wid) = self.focused_window_id {
+                    self.screens.toggle_fullscreen(wid);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
+            sola_kit::WindowAction::Cinema => {
+                if let Some(wid) = self.focused_window_id {
+                    self.screens.toggle_cinema(wid);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
         }
     }
 
@@ -598,11 +806,7 @@ impl Shell {
                 if let Some(id) = self.focused_app_id.clone() {
                     self.ack_notify_badge(&id);
                 }
-                crate::switcher::state::rebuild_apps(
-                    &mut self.switcher,
-                    &self.mru_apps.clone(),
-                    &self.known_windows.clone(),
-                );
+                self.rebuild_switcher();
                 self.switcher.active = true;
                 self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
                 self.emit_registered_chords();
@@ -629,13 +833,7 @@ impl Shell {
             ShortcutAction::ScreenshotRegion => iced::Task::done(Msg::OpenSelection),
             ShortcutAction::ScreenshotWindow => {
                 let Some(app_id) = self.focused_app_id.clone() else {
-                    self.menubar
-                        .push_toast("Screenshot failed: no focused window");
-                    let toast_gen = self.menubar.toast_generation;
-                    return iced::Task::perform(
-                        tokio::time::sleep(Duration::from_secs(5)),
-                        move |_| Msg::ToastExpire(toast_gen),
-                    );
+                    return self.whisper("Screenshot failed: no focused window");
                 };
                 let title = self.focused_window_id.and_then(|wid| {
                     self.known_windows
@@ -646,7 +844,72 @@ impl Shell {
                 self.arm_screenshot_handoff();
                 crate::screenshot::window(app_id, title)
             }
-            ShortcutAction::Zone(zone) => self.snap_focused_zone(zone),
+            ShortcutAction::Tile => {
+                self.toggle_tile_focused();
+                iced::Task::none()
+            }
+            ShortcutAction::Fullscreen => {
+                if let Some(wid) = self.focused_window_id {
+                    self.screens.toggle_fullscreen(wid);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
+            ShortcutAction::Cinema => {
+                if let Some(wid) = self.focused_window_id {
+                    self.screens.toggle_cinema(wid);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
+            ShortcutAction::SwitchScreen(n) => {
+                self.switch_screen(n);
+                iced::Task::none()
+            }
+            ShortcutAction::SendToScreen(n) => {
+                if let (Some(wid), Some(app)) = (self.focused_window_id, self.focused_app_id.clone())
+                {
+                    let live = self.live_tile_rect(wid);
+                    self.screens.send_to(wid, &app, n, live);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
+            ShortcutAction::NextScreen => {
+                self.screens.cycle(true);
+                self.apply_layout();
+                iced::Task::none()
+            }
+            ShortcutAction::PrevScreen => {
+                self.screens.cycle(false);
+                self.apply_layout();
+                iced::Task::none()
+            }
+            ShortcutAction::FormerScreen => {
+                self.screens.switch_former();
+                self.apply_layout();
+                iced::Task::none()
+            }
+            ShortcutAction::FocusUp => self.focus_dir(Compass::Up),
+            ShortcutAction::FocusDown => self.focus_dir(Compass::Down),
+            ShortcutAction::Swap(code) => {
+                let dir = match code {
+                    KeyCode::LEFT => Compass::Left,
+                    KeyCode::RIGHT => Compass::Right,
+                    KeyCode::UP => Compass::Up,
+                    KeyCode::DOWN => Compass::Down,
+                    _ => return iced::Task::none(),
+                };
+                self.swap_dir(dir);
+                iced::Task::none()
+            }
+            ShortcutAction::ToggleSplit => {
+                if let Some(wid) = self.focused_window_id {
+                    self.screens.toggle_split(wid);
+                    self.apply_layout();
+                }
+                iced::Task::none()
+            }
             ShortcutAction::Menu { app_id, action_id } => {
                 iced::Task::done(Msg::MenuAction { app_id, action_id })
             }
@@ -812,11 +1075,7 @@ impl Shell {
         self.emit_composition();
         self.emit_registered_chords();
         if let Err(msg) = crate::power::request(kind) {
-            self.menubar.push_toast(msg);
-            let toast_gen = self.menubar.toast_generation;
-            return iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
-                Msg::ToastExpire(toast_gen)
-            });
+            return self.whisper(msg);
         }
         iced::Task::none()
     }
@@ -896,11 +1155,7 @@ impl Shell {
                 let keep = prior.or(self.screenshot_return_focus.take());
                 self.restore_app_focus(keep);
                 tracing::warn!(%e, "selection freeze failed");
-                self.menubar.push_toast(format!("Screenshot failed: {e}"));
-                let toast_gen = self.menubar.toast_generation;
-                iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
-                    Msg::ToastExpire(toast_gen)
-                })
+                self.whisper(format!("Screenshot failed: {e}"))
             }
             Ok(img) => {
                 // Keep live chrome composed until the freeze texture is on
@@ -1025,17 +1280,21 @@ impl Shell {
             .filter(|w| self.matches_pending_app(&w.app_id, app_id))
             .map(|w| w.window_id)
             .collect();
-        self.menubar.push_toast(format!("Opening {label}…"));
+        let opening_note = self.whisper(format!("Opening {label}…"));
+        self.menubar.toast_generation = self.menubar.toast_generation.wrapping_add(1);
         let toast_generation = self.menubar.toast_generation;
         self.pending_launch = Some(PendingLaunch {
             app_id: app_id.to_string(),
             toast_generation,
             existing_wids,
         });
-        iced::Task::perform(
-            tokio::time::sleep(Duration::from_secs(OPENING_TOAST_SECS)),
-            move |_| Msg::ToastExpire(toast_generation),
-        )
+        iced::Task::batch([
+            opening_note,
+            iced::Task::perform(
+                tokio::time::sleep(Duration::from_secs(OPENING_TOAST_SECS)),
+                move |_| Msg::ToastExpire(toast_generation),
+            ),
+        ])
     }
 
     /// Drop pending launch (and its toast, if still current) when a matching
@@ -1106,6 +1365,7 @@ impl Shell {
             if w.app_id == Self::APP_ID
                 || mru_set.contains(w.app_id.as_str())
                 || self.is_app_hidden(&w.app_id)
+                || !self.screens.is_on_current(w.window_id)
             {
                 continue;
             }
@@ -1122,17 +1382,21 @@ impl Shell {
             }
             let top_wid = self.mru_window_by_app.get(app_id).copied();
             for w in &self.known_windows {
-                if w.app_id == *app_id && Some(w.window_id) != top_wid {
+                if w.app_id == *app_id
+                    && Some(w.window_id) != top_wid
+                    && self.screens.is_on_current(w.window_id)
+                {
                     entries.push(CompositionEntry {
                         window_id: w.window_id,
                     });
                 }
             }
             if let Some(wid) = top_wid {
-                if self
-                    .known_windows
-                    .iter()
-                    .any(|w| w.window_id == wid && w.app_id == *app_id)
+                if self.screens.is_on_current(wid)
+                    && self
+                        .known_windows
+                        .iter()
+                        .any(|w| w.window_id == wid && w.app_id == *app_id)
                 {
                     entries.push(CompositionEntry { window_id: wid });
                 }
@@ -1263,6 +1527,18 @@ impl Shell {
             keysym: keys::KEYSYM_SUPER_L,
             modifiers: 0,
         });
+        // Alt release confirms Alt+Tab switcher (only while it is up so we
+        // do not steal Alt from apps).
+        if self.switcher.active {
+            chords.push(RegisteredChord {
+                keysym: keys::KEYSYM_ALT_L,
+                modifiers: 0,
+            });
+            chords.push(RegisteredChord {
+                keysym: keys::KEYSYM_ALT_R,
+                modifiers: 0,
+            });
+        }
         // Global media keys (play/pause, mute, next/prev, volume). Bare
         // keysyms, registered unconditionally so they work regardless of
         // focus or overlay state; `on_chord` runs them via `solactl media`.
@@ -1357,18 +1633,36 @@ impl Shell {
         bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
         bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
-        // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
-        bindings.push(KeyCode::KEY_3.meta_shift());
-        bindings.push(KeyCode::KEY_4.meta_shift());
-        bindings.push(KeyCode::KEY_5.meta_shift());
+        // Super+Ctrl+3 full / +4 selection / +5 focused window.
+        bindings.push(KeyCode::KEY_3.meta().ctrl());
+        bindings.push(KeyCode::KEY_4.meta().ctrl());
+        bindings.push(KeyCode::KEY_5.meta().ctrl());
 
-        // Meta+Numpad zones a window.
-        for &raw in crate::zoning::ZONING_KEYCODES {
-            bindings.push(KeyChord {
-                keycode: KeyCode::from(raw),
-                ..KeyCode::TAB.meta()
-            });
+        // Screens Super+1..=5, send Super+Shift+1..=5.
+        for k in [
+            KeyCode::KEY_1,
+            KeyCode::KEY_2,
+            KeyCode::KEY_3,
+            KeyCode::KEY_4,
+            KeyCode::KEY_5,
+        ] {
+            bindings.push(k.meta());
+            bindings.push(k.meta_shift());
         }
+        bindings.push(KeyCode::TAB.meta_shift());
+        bindings.push(KeyCode::TAB.meta().ctrl());
+        bindings.push(KeyCode::TAB.alt());
+        bindings.push(KeyCode::TAB.alt().shift());
+        bindings.push(KeyCode::UP.meta());
+        bindings.push(KeyCode::DOWN.meta());
+        bindings.push(KeyCode::LEFT.meta_shift());
+        bindings.push(KeyCode::RIGHT.meta_shift());
+        bindings.push(KeyCode::UP.meta_shift());
+        bindings.push(KeyCode::DOWN.meta_shift());
+        bindings.push(KeyCode::J.meta());
+        bindings.push(KeyCode::Y.meta());
+        bindings.push(KeyCode::M.meta());
+        bindings.push(KeyCode::M.meta_shift());
 
         bindings.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
         bindings.dedup();
@@ -1391,20 +1685,8 @@ impl Shell {
             }
         }
         self.collect_overlay_frames(&mut frames);
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
-            }
-            // Floating windows (assigned Float or default-float with no zone)
-            // keep client-requested / restore size — never re-frame them.
-            // Unassigned sola-* apps used to get default_app_frame (full usable
-            // area), which treated them like a zone; they now default-float.
-            if self.zoning.is_floating(w.window_id) {
-                continue;
-            }
-            if let Some(f) = self.zoning.window_frame(w.window_id) {
-                frames.push(f);
-            }
+        if let Some((ow, oh)) = self.zoning.output_size {
+            frames.extend(self.screens.current_managed_frames(ow, oh));
         }
 
         Self::emit_frames(frames);
@@ -2492,6 +2774,10 @@ impl Shell {
                 }
                 iced::Task::none()
             }
+            Msg::SwitchScreen(n) => {
+                self.switch_screen(n);
+                iced::Task::none()
+            }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {
                 if next {
@@ -2608,13 +2894,7 @@ impl Shell {
                 let Some(handle) = freeze else {
                     tracing::warn!("selection capture missing freeze frame");
                     self.screenshot_return_focus = None;
-                    self.menubar
-                        .push_toast("Screenshot failed: no freeze frame");
-                    let toast_gen = self.menubar.toast_generation;
-                    return iced::Task::perform(
-                        tokio::time::sleep(Duration::from_secs(5)),
-                        move |_| Msg::ToastExpire(toast_gen),
-                    );
+                    return self.whisper("Screenshot failed: no freeze frame");
                 };
                 tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection crop from freeze");
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
@@ -2762,6 +3042,8 @@ mod pending_launch_tests {
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
+            screens: ScreenState::default(),
+            saved_layout: None,
             menubar: MenubarState::new(),
             pending_launch: Some(PendingLaunch {
                 app_id: "sola-terminal".into(),
@@ -2870,6 +3152,8 @@ mod hide_tests {
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
+            screens: ScreenState::default(),
+            saved_layout: None,
             menubar: MenubarState::new(),
             pending_launch: None,
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -2928,6 +3212,24 @@ mod hide_tests {
     }
 
     #[test]
+    fn shell_key_chords_include_screens_and_tile() {
+        let shell = desktop();
+        let chords = shell.shell_key_chords();
+        assert!(chords
+            .iter()
+            .any(|c| c.keycode == KeyCode::Y && c.meta && !c.shift));
+        assert!(chords
+            .iter()
+            .any(|c| c.keycode == KeyCode::KEY_1 && c.meta && !c.shift));
+        assert!(chords
+            .iter()
+            .any(|c| c.keycode == KeyCode::TAB && c.alt && !c.meta));
+        assert!(chords
+            .iter()
+            .any(|c| c.keycode == KeyCode::KEY_3 && c.meta && c.ctrl && !c.shift));
+    }
+
+    #[test]
     fn effective_app_menu_injects_window_when_missing() {
         let shell = desktop();
         let payload = shell.effective_app_menu("sola-terminal");
@@ -2939,7 +3241,7 @@ mod hide_tests {
             "Window menu is injected for apps that did not publish one"
         );
         assert!(payload.menus.iter().any(|m| m.items.iter().any(|item| {
-            matches!(item, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_FLOAT)
+            matches!(item, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_TILE)
         })));
     }
 

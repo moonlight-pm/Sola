@@ -1,6 +1,6 @@
 # sola-shell
 
-Desktop shell: menubar, launcher, switcher, zoning, shortcuts overlay.
+Desktop shell: menubar, launcher, switcher, screens, tiling, shortcuts overlay.
 
 **Partial.** Super+H hide **installed** `river` + `shell` (debug, 2026-08-31).
 Window menu + Super+K shortcuts overlay **installed** `kit`+`shell`+`paint`+`terminal`
@@ -12,17 +12,26 @@ shell surfaces.
 | Chord | Action |
 |-------|--------|
 | Super+Space | Launcher |
-| Super+Tab | App switcher (release Super to raise) |
+| Super+1…5 | Switch to that screen |
+| Super+Shift+1…5 | Send the focused window to that screen and follow |
+| Super+Tab / Super+Shift+Tab | Next / previous screen |
+| Super+Ctrl+Tab | Former screen |
+| Alt+Tab / Alt+Shift+Tab | App switcher on this screen (release Alt to raise) |
 | Super+\` | Cycle windows of the focused app |
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
 | Super+K | Keyboard shortcuts overlay (same chord as Omarchy) |
-| Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
-| Super+Numpad | Zone snap (NumLock on or off) |
+| Super+Y | Toggle tile / float |
+| Super+J | Toggle split direction |
+| Super+M | Fullscreen under the menubar |
+| Super+Shift+M | Cinema (covers the menubar) |
+| Super+↑ / Super+↓ | Focus window above / below |
+| Super+Shift+←↑↓→ | Swap with the neighboring tile |
+| Super+Shift + left/right drag | Move / resize (float or tile) |
+| Super+Ctrl+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 
 The number pad types digits at session start (NumLock is turned on for
-each keyboard). Super+Numpad zoning still works if you turn NumLock off
-(the pad then sends Home / End / arrows). Press NumLock to toggle.
+each keyboard). Press NumLock to toggle.
 
 The flower menu also has **Keyboard Shortcuts**. Type in the overlay to
 filter; click or Enter runs the action. Escape / Super+K again dismiss.
@@ -67,16 +76,28 @@ pick and the slider wait until WirePlumber answers).
 ## Window menu
 
 Every focused app gets a **Window** menu (kit default; an app can replace
-it). Hide, cycle windows, float, and every zone — the mouse path for
-chords that used to be keyboard-only. The shell handles those items even
-for XWayland windows.
+it). Hide, cycle windows, tile, fullscreen, cinema — the mouse path for
+those compositor chords. The shell handles those items even for XWayland
+windows.
+
+## Screens
+
+Five numbered **screens** (virtual desktops — not the Workspaces app).
+The menubar shows 1–5 in the middle: accent = current, full chrome =
+occupied, muted = empty. Click a numeral or Super+N to switch. An empty
+screen is just the menubar and wallpaper.
+
+New windows **float**. Super+Y inserts the focused window into a tiling
+layout on this screen (Hyprland dwindle: split the focused tile along its
+longer edge). Super+Y again floats it in place. Gaps are 12px outside
+and 8px between tiles.
 
 ## Hide
 
 Super+H does **not** close the app. Surfaces drop out of composition
 (River `hide`) so they are not drawn until you bring the app back:
 
-- Super+Tab — hidden apps stay in the switcher
+- Alt+Tab — hidden apps on this screen stay in the switcher
 - Super+Space — pick a running hidden app to unhide (does not spawn a
   second copy)
 
@@ -93,26 +114,26 @@ matches). A flood from one app collapses to one row with a count; click
 to expand. Same-tag updates replace the missed row instead of stacking.
 Accent while unseen; clicking the bell returns it to normal chrome.
 There is no Clear-all; the group × dismisses that app’s missed items.
-Click a row to raise the source. Super+Tab shows a count on the app icon
+Click a row to raise the source. Alt+Tab shows a count on the app icon
 for notifications you have not opened in the pile or visited in that app
 (Mail uses inbox unread). Super+Shift+4 with the panel open keeps it in
 the freeze.
 
 ## Screenshots
 
-Super+Shift+3 / 4 / 5 copy a PNG onto the system clipboard and toast
+Super+Ctrl+3 / 4 / 5 copy a PNG onto the system clipboard and notify
 **Screenshot copied**. The clipboard is offered at the chord — paste in
 Slack immediately; the paste waits until encode finishes. They do not
 write a file or open Preview.
 
-Super+Shift+4 freezes the live output first (menus, text selections, and
+Super+Ctrl+4 freezes the live output first (menus, text selections, and
 other transient UI stay in the still), then opens a full-brightness
 marquee on that still (no dim). The chord does **not** dismiss an open
 notifications panel or other menubar popover before the copy — the
 freeze is the live pixels. The crop is taken from the freeze — not a
 second live capture.
 
-Super+Shift+5 and `solactl compositor screenshot --app` copy the
+Super+Ctrl+5 and `solactl compositor screenshot --app` copy the
 window’s own buffer. They do not raise the app. The CLI still writes a
 PNG path; the chord copies to the clipboard.
 

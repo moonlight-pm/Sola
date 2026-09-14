@@ -1,9 +1,10 @@
 # Omarchy — ideas worth considering for Sola
 
 **Status:** idea (parked 2026-08-22). Super+K cheatsheet **promoted** 2026-08-31
-([freeze](../specs/2026-08-31-window-menu-and-shortcuts-design.md)). Do not
-implement the rest from this file. Promote a slice into a freeze + plan +
-`CURRENT.md` **Now** if work starts.  
+([freeze](../specs/2026-08-31-window-menu-and-shortcuts-design.md)). Screens +
+dwindle tiling **promoted** 2026-09-11
+([freeze](../specs/2026-09-11-screens-and-dwindle-design.md)) — River stays;
+tiling lives in the shell. Do not implement the rest from this file.  
 **Sources:** [omarchy.org](https://omarchy.org/), [Quattro manual](https://omarchy.org/manual/),
 [`basecamp/omarchy` `quattro`](https://github.com/basecamp/omarchy) (v4.0.0, 2026-08-14).  
 **Sola locks this must not reopen:** Iced + sola-kit; River; bus + call plane;

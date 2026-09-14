@@ -48,13 +48,18 @@ impl SwitcherState {
 /// Result: MRU-ordered `SwitcherApp` entries for apps that have ≥1 open window,
 /// followed by any open apps not yet in the MRU list.
 /// The shell itself (`app_id == "sola-shell"`) is excluded.
-pub fn rebuild_apps(state: &mut SwitcherState, mru: &[String], known: &[sola_bus::topics::Window]) {
+pub fn rebuild_apps(
+    state: &mut SwitcherState,
+    mru: &[String],
+    known: &[sola_bus::topics::Window],
+    on_screen: impl Fn(u32) -> bool,
+) {
     use std::collections::HashSet;
 
-    // Unique app_ids that have at least one open window, excluding shell itself.
+    // Unique app_ids that have at least one open window on this screen.
     let open_ids: HashSet<&str> = known
         .iter()
-        .filter(|w| w.app_id != "sola-shell")
+        .filter(|w| w.app_id != "sola-shell" && on_screen(w.window_id))
         .map(|w| w.app_id.as_str())
         .collect();
 

@@ -1,6 +1,6 @@
 # sola-preview
 
-Image viewer. Super+Shift+3/4/5 copy to the clipboard; they do **not**
+Image viewer. Super+Ctrl+3/4/5 copy to the clipboard; they do **not**
 open this app. Launch Preview from the launcher or `sola-preview /path`.
 
 **Partial.** **Copy** (image bytes) **installed** `kit` + `preview` +

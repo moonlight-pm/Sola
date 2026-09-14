@@ -25,6 +25,8 @@ const MOD_SUPER: u32 = 64; // mod4
 const KEYSYM_KP_0: u32 = 0xFFB0;
 // XK_Super_L — the left Super/Meta key on a stock xkb layout.
 pub const KEYSYM_SUPER_L: u32 = 0xFFEB;
+pub const KEYSYM_ALT_L: u32 = 0xFFE9;
+pub const KEYSYM_ALT_R: u32 = 0xFFEA;
 pub const KEYSYM_ESCAPE: u32 = 0xFF1B;
 
 // Numpad navigation keysyms (what the keys produce when NumLock is off).

@@ -1,6 +1,6 @@
 //! Shortcut catalog + filter state for Super+K.
 
-use sola_bus::topics::{AppMenuPayload, MenuItem, Zone};
+use sola_bus::topics::{AppMenuPayload, MenuItem};
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::menu::{WINDOW_MENU_ENTRIES, WindowAction, WindowMenuEntry, parse_window_action};
 
@@ -15,7 +15,18 @@ pub enum ShortcutAction {
     ScreenshotFull,
     ScreenshotRegion,
     ScreenshotWindow,
-    Zone(Zone),
+    Tile,
+    Fullscreen,
+    Cinema,
+    SwitchScreen(u8),
+    SendToScreen(u8),
+    NextScreen,
+    PrevScreen,
+    FormerScreen,
+    FocusUp,
+    FocusDown,
+    Swap(sola_core::KeyCode),
+    ToggleSplit,
     Menu { app_id: String, action_id: String },
 }
 
@@ -170,7 +181,7 @@ fn shell_rows() -> Vec<ShortcutRow> {
         row(
             "Shell",
             "App Switcher",
-            Some(KeyCode::TAB.meta()),
+            Some(KeyCode::TAB.alt()),
             ShortcutAction::OpenSwitcher,
         ),
         row(
@@ -200,20 +211,140 @@ fn shell_rows() -> Vec<ShortcutRow> {
         row(
             "Capture",
             "Screenshot Screen",
-            Some(KeyCode::KEY_3.meta_shift()),
+            Some(KeyCode::KEY_3.meta().ctrl()),
             ShortcutAction::ScreenshotFull,
         ),
         row(
             "Capture",
             "Screenshot Selection",
-            Some(KeyCode::KEY_4.meta_shift()),
+            Some(KeyCode::KEY_4.meta().ctrl()),
             ShortcutAction::ScreenshotRegion,
         ),
         row(
             "Capture",
             "Screenshot Window",
-            Some(KeyCode::KEY_5.meta_shift()),
+            Some(KeyCode::KEY_5.meta().ctrl()),
             ShortcutAction::ScreenshotWindow,
+        ),
+        row(
+            "Screens",
+            "Screen 1",
+            Some(KeyCode::KEY_1.meta()),
+            ShortcutAction::SwitchScreen(1),
+        ),
+        row(
+            "Screens",
+            "Screen 2",
+            Some(KeyCode::KEY_2.meta()),
+            ShortcutAction::SwitchScreen(2),
+        ),
+        row(
+            "Screens",
+            "Screen 3",
+            Some(KeyCode::KEY_3.meta()),
+            ShortcutAction::SwitchScreen(3),
+        ),
+        row(
+            "Screens",
+            "Screen 4",
+            Some(KeyCode::KEY_4.meta()),
+            ShortcutAction::SwitchScreen(4),
+        ),
+        row(
+            "Screens",
+            "Screen 5",
+            Some(KeyCode::KEY_5.meta()),
+            ShortcutAction::SwitchScreen(5),
+        ),
+        row(
+            "Screens",
+            "Send to Screen 1",
+            Some(KeyCode::KEY_1.meta_shift()),
+            ShortcutAction::SendToScreen(1),
+        ),
+        row(
+            "Screens",
+            "Send to Screen 2",
+            Some(KeyCode::KEY_2.meta_shift()),
+            ShortcutAction::SendToScreen(2),
+        ),
+        row(
+            "Screens",
+            "Send to Screen 3",
+            Some(KeyCode::KEY_3.meta_shift()),
+            ShortcutAction::SendToScreen(3),
+        ),
+        row(
+            "Screens",
+            "Send to Screen 4",
+            Some(KeyCode::KEY_4.meta_shift()),
+            ShortcutAction::SendToScreen(4),
+        ),
+        row(
+            "Screens",
+            "Send to Screen 5",
+            Some(KeyCode::KEY_5.meta_shift()),
+            ShortcutAction::SendToScreen(5),
+        ),
+        row(
+            "Screens",
+            "Next Screen",
+            Some(KeyCode::TAB.meta()),
+            ShortcutAction::NextScreen,
+        ),
+        row(
+            "Screens",
+            "Previous Screen",
+            Some(KeyCode::TAB.meta_shift()),
+            ShortcutAction::PrevScreen,
+        ),
+        row(
+            "Screens",
+            "Former Screen",
+            Some(KeyCode::TAB.meta().ctrl()),
+            ShortcutAction::FormerScreen,
+        ),
+        row(
+            "Window",
+            "Focus Tile Up",
+            Some(KeyCode::UP.meta()),
+            ShortcutAction::FocusUp,
+        ),
+        row(
+            "Window",
+            "Focus Tile Down",
+            Some(KeyCode::DOWN.meta()),
+            ShortcutAction::FocusDown,
+        ),
+        row(
+            "Window",
+            "Swap Tile Left",
+            Some(KeyCode::LEFT.meta_shift()),
+            ShortcutAction::Swap(KeyCode::LEFT),
+        ),
+        row(
+            "Window",
+            "Swap Tile Right",
+            Some(KeyCode::RIGHT.meta_shift()),
+            ShortcutAction::Swap(KeyCode::RIGHT),
+        ),
+        row(
+            "Window",
+            "Swap Tile Up",
+            Some(KeyCode::UP.meta_shift()),
+            ShortcutAction::Swap(KeyCode::UP),
+        ),
+        row(
+            "Window",
+            "Swap Tile Down",
+            Some(KeyCode::DOWN.meta_shift()),
+            ShortcutAction::Swap(KeyCode::DOWN),
+        ),
+        row(
+            "Window",
+            "Toggle Split",
+            Some(KeyCode::J.meta()),
+            ShortcutAction::ToggleSplit,
         ),
     ]
 }
@@ -225,7 +356,9 @@ fn window_rows() -> Vec<ShortcutRow> {
             WindowMenuEntry::Item(i) => {
                 let action = match i.action {
                     WindowAction::Hide | WindowAction::Cycle => return None,
-                    WindowAction::Zone(z) => ShortcutAction::Zone(z),
+                    WindowAction::Tile => ShortcutAction::Tile,
+                    WindowAction::Fullscreen => ShortcutAction::Fullscreen,
+                    WindowAction::Cinema => ShortcutAction::Cinema,
                 };
                 Some(row("Window", i.label, Some(i.shortcut), action))
             }
@@ -254,7 +387,7 @@ mod tests {
     use sola_bus::topics::MenuDefinition;
 
     #[test]
-    fn catalog_includes_super_k_and_zones() {
+    fn catalog_includes_super_k_and_tile() {
         let rows = catalog(None);
         assert!(
             rows.iter()
@@ -262,11 +395,11 @@ mod tests {
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::Zone(Zone::Float)))
+                .any(|r| matches!(r.action, ShortcutAction::Tile))
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::Zone(Zone::Left)))
+                .any(|r| matches!(r.action, ShortcutAction::SwitchScreen(1)))
         );
         assert!(
             rows.iter()
@@ -323,11 +456,11 @@ mod tests {
         assert!(!rows.iter().any(|r| r.label == "Quit Terminal"));
         assert!(!rows.iter().any(|r| r.label == "Restart Computer"));
         assert!(!rows.iter().any(|r| r.label == "Shut Down"));
-        let float_hits = rows
+        let tile_hits = rows
             .iter()
-            .filter(|r| matches!(r.action, ShortcutAction::Zone(Zone::Float)))
+            .filter(|r| matches!(r.action, ShortcutAction::Tile))
             .count();
-        assert_eq!(float_hits, 1);
+        assert_eq!(tile_hits, 1);
     }
 
     #[test]
@@ -335,9 +468,9 @@ mod tests {
         let mut s = ShortcutsState::default();
         s.rebuild(None);
         s.selected = 3;
-        s.apply_query("float");
+        s.apply_query("cinema");
         assert_eq!(s.filtered.len(), 1);
         assert_eq!(s.selected, 0);
-        assert_eq!(s.selected_row().map(|r| r.label.as_str()), Some("Float"));
+        assert_eq!(s.selected_row().map(|r| r.label.as_str()), Some("Cinema"));
     }
 }

@@ -7,10 +7,10 @@
 //! once `op_release` arrives. Move follows the pointer; resize drags the
 //! grabbed edge or corner, pinning the opposite side(s).
 //!
-//! Only floating windows participate in move/resize, and only via CSD
-//! (`pointer_move_requested` / `pointer_resize_requested` from a kit
-//! titlebar). Super+left/right are **not** bound — they reach clients
-//! (⌘-click in the browser).
+//! Floating windows also move/resize via CSD (`pointer_move_requested` /
+//! `pointer_resize_requested` from a kit titlebar). Super+Shift+left/right
+//! drag is bound for both floats and tiles (Super-click still reaches
+//! clients).
 
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::river_window_v1::Edges;
@@ -185,18 +185,45 @@ pub fn edges_to_handle(edges: Edges) -> ResizeHandle {
 /// `handle`: `Some(h)` uses that edge/corner (resize from requested edges);
 /// `None` on a resize falls back to `pick_corner` from the pointer position;
 /// ignored for a move.
-pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, handle: Option<ResizeHandle>) {
-    if state.op.is_some() {
+pub fn on_pressed(state: &mut AppData, kind: OpKind) {
+    let Some(wid) = state.pointer_window else {
+        tracing::debug!("Super+Shift drag ignored: no window under pointer");
+        return;
+    };
+    if state
+        .registry
+        .as_windows()
+        .iter()
+        .any(|w| w.window_id == wid && w.app_id == "sola-shell")
+    {
         return;
     }
+    begin_for_any(state, kind, wid, None, true);
+}
+
+pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, handle: Option<ResizeHandle>) {
     if !state.floating.contains(&window_id) {
         tracing::debug!(
             window_id,
             ?kind,
-            "interactive op ignored: window not floating"
+            "CSD interactive op ignored: window not floating"
         );
-        return; // move/resize is floating-only
+        return;
     }
+    begin_for_any(state, kind, window_id, handle, false);
+}
+
+fn begin_for_any(
+    state: &mut AppData,
+    kind: OpKind,
+    window_id: u32,
+    handle: Option<ResizeHandle>,
+    from_binding: bool,
+) {
+    if state.op.is_some() {
+        return;
+    }
+    state.pointer_op_from_binding = from_binding;
     let Some(g) = state.registry.geometry(window_id) else {
         tracing::debug!(window_id, "interactive op ignored: geometry unknown");
         return;
@@ -274,6 +301,24 @@ pub fn drive(state: &mut AppData) {
         state.op = None;
         clear_cursor(state);
         crate::translator::emit_geometry(state, wid);
+        if state.pointer_op_from_binding {
+            state.pointer_op_from_binding = false;
+            if let Some(g) = state.registry.geometry(wid) {
+                use sola_bus::topics::{Topic, WindowOp, WindowOpKind};
+                let op_kind = match kind {
+                    OpKind::Move => WindowOpKind::Move,
+                    OpKind::Resize => WindowOpKind::Resize,
+                };
+                state.bus.emit(Topic::WindowOp(WindowOp {
+                    window_id: wid,
+                    kind: op_kind,
+                    x: g.x,
+                    y: g.y,
+                    width: g.width,
+                    height: g.height,
+                }));
+            }
+        }
         tracing::info!(window_id = wid, "ended interactive op");
     } else if !started {
         if let Some(op) = state.op.as_mut() {
@@ -289,6 +334,32 @@ pub fn drive(state: &mut AppData) {
 /// inside a manage sequence (no pointer bindings — Super+click reaches clients).
 pub fn ensure_op_cursor(state: &mut AppData) {
     ensure_cursor_device(state);
+}
+
+/// Super+Shift + left/right drag. Idempotent; `enable` is manage-sequence.
+pub fn ensure_pointer_bindings(state: &mut AppData) {
+    use crate::protocol::river_window_management_v1::river_seat_v1::Modifiers;
+    const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
+    let Some(seat) = state.seat.clone() else {
+        return;
+    };
+    let Some(qh) = state.qh.clone() else {
+        return;
+    };
+    let mods = Modifiers::Mod4 | Modifiers::Shift;
+    if state.move_binding.is_none() {
+        let b = seat.get_pointer_binding(BTN_LEFT, mods, &qh, OpKind::Move);
+        b.enable();
+        state.move_binding = Some(b);
+        tracing::info!("enabled Super+Shift+LeftDrag move binding");
+    }
+    if state.resize_binding.is_none() {
+        let b = seat.get_pointer_binding(BTN_RIGHT, mods, &qh, OpKind::Resize);
+        b.enable();
+        state.resize_binding = Some(b);
+        tracing::info!("enabled Super+Shift+RightDrag resize binding");
+    }
 }
 
 /// Create the cursor-shape device for the seat's pointer once both the seat and

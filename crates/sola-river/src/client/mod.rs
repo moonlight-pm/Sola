@@ -150,8 +150,16 @@ pub struct AppData {
     /// event). Used to pick the grabbed corner when a resize starts.
     pub pointer_pos: Option<(i32, i32)>,
     /// The in-flight interactive move/resize, if any. See `client::op`.
-    /// Started only from CSD (`pointer_move_requested` / resize).
+    /// Started from CSD or Super+Shift pointer bindings.
     pub op: Option<op::OpState>,
+    /// True when the in-flight op came from Super+Shift+drag (shell retile).
+    pub pointer_op_from_binding: bool,
+    pub move_binding: Option<
+        crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1,
+    >,
+    pub resize_binding: Option<
+        crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1,
+    >,
     /// `wp_cursor_shape_manager_v1`, bound from the registry. Used to make a
     /// cursor-shape device for the seat's pointer.
     pub cursor_shape_manager: Option<WpCursorShapeManagerV1>,
@@ -235,6 +243,9 @@ impl AppData {
             pointer_window: None,
             pointer_pos: None,
             op: None,
+            pointer_op_from_binding: false,
+            move_binding: None,
+            resize_binding: None,
             cursor_shape_manager: None,
             wl_pointer: None,
             cursor_device: None,
@@ -800,5 +811,23 @@ impl Dispatch<WpCursorShapeDeviceV1, ()> for AppData {
         _: &QueueHandle<Self>,
     ) {
         // wp_cursor_shape_device_v1 has no events.
+    }
+}
+
+use crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1;
+impl Dispatch<RiverPointerBindingV1, op::OpKind> for AppData {
+    fn event(
+        state: &mut Self,
+        _: &RiverPointerBindingV1,
+        event: <RiverPointerBindingV1 as Proxy>::Event,
+        kind: &op::OpKind,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_window_management_v1::river_pointer_binding_v1::Event;
+        match event {
+            Event::Pressed => op::on_pressed(state, *kind),
+            Event::Released => op::on_released(state),
+        }
     }
 }

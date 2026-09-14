@@ -1,12 +1,8 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [≡] [App Name] [Menu1] [Menu2] … ──────── [mail?] [stats] [clock]
-//!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
-//!
-//! Transient toasts are overlaid at the **horizontal center** of the bar
-//! (not in the right cluster), so short status like "Opening Terminal…"
-//! reads as bar-level feedback rather than a trailing status item.
+//!   [≡] [App Name] [Menu1] … ── [1 2 3 4 5] ── [mail?] [stats] [clock]
+//!    ^system-menu  ^app-title     ^screens
 //!
 //! Type matches macOS menu bar: one chrome face throughout (labels, stats,
 //! clock). Focused-app name is bold (macOS application menu title). Colours
@@ -16,7 +12,7 @@
 //! Hit targets are full bar height ([`BAR_H`] = window height) so a pointer
 //! at y=0 on the screen still activates a menu title.
 
-use iced::widget::{container, mouse_area, row, stack, text};
+use iced::widget::{container, mouse_area, row, text};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
@@ -24,7 +20,6 @@ use sola_kit::fonts;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
-use crate::components::toast::toast_widget;
 use crate::menu::state::synthesized_menu;
 use crate::menubar::{
     EXTRA_PAD_H, FlashTarget, ICON_SIZE, MENU_PAD_H, PHRASE_GAP, STAT_INNER_SPACING, STAT_PAD_H,
@@ -315,11 +310,37 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     phrases.push(row![rx_btn, tx_btn].height(Length::Fixed(BAR_H)).into());
     phrases.push(clock);
 
-    // Base chrome: left menus | flexible gap | right phrases.
+    let screens: Element<'_, Msg> = {
+        let current = shell.screens.current();
+        let mut marks = Vec::new();
+        for n in 1u8..=crate::screens::SCREEN_COUNT {
+            let occupied = shell.screens.occupied(n);
+            let active = n == current;
+            let color = if active {
+                shell.theme.palette().primary
+            } else if occupied {
+                fg
+            } else {
+                muted
+            };
+            let label = text(n.to_string())
+                .font(fonts::chrome())
+                .size(CHROME_SIZE)
+                .color(color);
+            marks.push(
+                bar_button(label, active, Msg::SwitchScreen(n), menu_pad()).into(),
+            );
+        }
+        row(marks).height(Length::Fixed(BAR_H)).into()
+    };
+
+    // Base chrome: left menus | screens | right phrases.
     // Fixed BAR_H root — matches the window size so children with Fixed(BAR_H)
     // are not shrink-wrapped / vertically centred with a dead band at y=0.
-    let base: Element<'_, Msg> = row![
+    let bar: Element<'_, Msg> = row![
         row(left).height(Length::Fixed(BAR_H)),
+        iced::widget::Space::new().width(Length::Fill),
+        screens,
         iced::widget::Space::new().width(Length::Fill),
         iced::widget::row(phrases)
             .spacing(PHRASE_GAP)
@@ -328,25 +349,6 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fixed(BAR_H))
     .into();
-
-    // Toast sits in the true horizontal center of the bar (window mid-line),
-    // layered above left/right chrome so asymmetric clusters don't pull it
-    // off center. Only stacked when a message is active so the fill overlay
-    // cannot sit idle over the chrome.
-    let bar: Element<'_, Msg> = if mb.toast.is_some() {
-        let toast_layer: Element<'_, Msg> = container(toast_widget(mb.toast.as_deref()))
-            .width(Length::Fill)
-            .height(Length::Fixed(BAR_H))
-            .center_x(Length::Fill)
-            .align_y(Alignment::Center)
-            .into();
-        stack![base, toast_layer]
-            .width(Length::Fill)
-            .height(Length::Fixed(BAR_H))
-            .into()
-    } else {
-        base
-    };
 
     container(bar)
         .width(Length::Fill)

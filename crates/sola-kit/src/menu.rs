@@ -6,7 +6,7 @@
 //! the shell injects the same definition when an app omits it, so XWayland
 //! and other external windows still get a Window menu.
 
-use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Zone};
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 use sola_core::{KeyChord, KeyCode};
 
 /// Menubar label. The shell uses this to decide whether to inject a
@@ -15,15 +15,9 @@ pub const WINDOW_MENU_LABEL: &str = "Window";
 
 pub const ACTION_HIDE: &str = "window.hide";
 pub const ACTION_CYCLE: &str = "window.cycle";
+pub const ACTION_TILE: &str = "window.tile";
+/// Historical id from the zone menu; still parsed as [`WindowAction::Tile`].
 pub const ACTION_FLOAT: &str = "window.float";
-pub const ACTION_LEFT: &str = "window.left";
-pub const ACTION_RIGHT: &str = "window.right";
-pub const ACTION_TOP: &str = "window.top";
-pub const ACTION_BOTTOM: &str = "window.bottom";
-pub const ACTION_TOP_MIDDLE: &str = "window.top-middle";
-pub const ACTION_BOTTOM_MIDDLE: &str = "window.bottom-middle";
-pub const ACTION_FULL_MIDDLE: &str = "window.full-middle";
-pub const ACTION_MIDDLE_RIGHT: &str = "window.middle-right";
 pub const ACTION_FULLSCREEN: &str = "window.fullscreen";
 pub const ACTION_CINEMA: &str = "window.cinema";
 
@@ -32,7 +26,9 @@ pub const ACTION_CINEMA: &str = "window.cinema";
 pub enum WindowAction {
     Hide,
     Cycle,
-    Zone(Zone),
+    Tile,
+    Fullscreen,
+    Cinema,
 }
 
 /// One row of the default Window menu (not a divider).
@@ -67,7 +63,7 @@ const fn item(
     })
 }
 
-/// Canonical Window menu. Keep in lockstep with shell zoning keys.
+/// Canonical Window menu. Keep in lockstep with shell screen/tiling keys.
 pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     item(ACTION_HIDE, "Hide", KeyCode::H.meta(), WindowAction::Hide),
     item(
@@ -78,85 +74,25 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     ),
     WindowMenuEntry::Divider,
     item(
-        ACTION_FLOAT,
-        "Float",
-        kp(KeyCode::KP_MULTIPLY),
-        WindowAction::Zone(Zone::Float),
-    ),
-    WindowMenuEntry::Divider,
-    item(
-        ACTION_LEFT,
-        "Left",
-        kp(KeyCode::KP_4),
-        WindowAction::Zone(Zone::Left),
-    ),
-    item(
-        ACTION_RIGHT,
-        "Right",
-        kp(KeyCode::KP_6),
-        WindowAction::Zone(Zone::Right),
-    ),
-    item(
-        ACTION_TOP,
-        "Top",
-        kp(KeyCode::KP_EQUAL),
-        WindowAction::Zone(Zone::Top),
-    ),
-    item(
-        ACTION_BOTTOM,
-        "Bottom",
-        kp(KeyCode::KP_DECIMAL),
-        WindowAction::Zone(Zone::Bottom),
-    ),
-    WindowMenuEntry::Divider,
-    item(
-        ACTION_TOP_MIDDLE,
-        "Top Middle",
-        kp(KeyCode::KP_8),
-        WindowAction::Zone(Zone::TopMiddle),
-    ),
-    item(
-        ACTION_FULL_MIDDLE,
-        "Full Middle",
-        kp(KeyCode::KP_5),
-        WindowAction::Zone(Zone::FullMiddle),
-    ),
-    item(
-        ACTION_BOTTOM_MIDDLE,
-        "Bottom Middle",
-        kp(KeyCode::KP_2),
-        WindowAction::Zone(Zone::BottomMiddle),
-    ),
-    item(
-        ACTION_MIDDLE_RIGHT,
-        "Middle Right",
-        kp(KeyCode::KP_ADD),
-        WindowAction::Zone(Zone::MiddleRight),
+        ACTION_TILE,
+        "Tile",
+        KeyCode::Y.meta(),
+        WindowAction::Tile,
     ),
     WindowMenuEntry::Divider,
     item(
         ACTION_FULLSCREEN,
         "Fullscreen",
-        kp(KeyCode::KP_0),
-        WindowAction::Zone(Zone::Fullscreen),
+        KeyCode::M.meta(),
+        WindowAction::Fullscreen,
     ),
     item(
         ACTION_CINEMA,
         "Cinema",
-        kp(KeyCode::KP_ENTER),
-        WindowAction::Zone(Zone::Cinema),
+        KeyCode::M.meta_shift(),
+        WindowAction::Cinema,
     ),
 ];
-
-const fn kp(keycode: KeyCode) -> KeyChord {
-    KeyChord {
-        keycode,
-        meta: true,
-        alt: false,
-        ctrl: false,
-        shift: false,
-    }
-}
 
 /// Default Window menu for [`crate::app::BusSetup::app_menu_definition`].
 pub fn window_menu() -> MenuDefinition {
@@ -181,6 +117,9 @@ pub fn window_menu() -> MenuDefinition {
 /// Map a menu action id to a compositor window action. `None` means the
 /// id is not a kit Window item (forward to the app).
 pub fn parse_window_action(id: &str) -> Option<WindowAction> {
+    if id == ACTION_FLOAT {
+        return Some(WindowAction::Tile);
+    }
     WINDOW_MENU_ENTRIES.iter().find_map(|entry| match entry {
         WindowMenuEntry::Item(i) if i.id == id => Some(i.action),
         _ => None,
@@ -202,42 +141,16 @@ pub fn ensure_window_menu(mut payload: AppMenuPayload) -> AppMenuPayload {
 mod tests {
     use super::*;
 
-    fn zone_action_id(zone: Zone) -> &'static str {
-        // Exhaustive: a new Zone variant fails to compile until the Window
-        // menu names it.
-        match zone {
-            Zone::Left => ACTION_LEFT,
-            Zone::Right => ACTION_RIGHT,
-            Zone::Top => ACTION_TOP,
-            Zone::Bottom => ACTION_BOTTOM,
-            Zone::TopMiddle => ACTION_TOP_MIDDLE,
-            Zone::BottomMiddle => ACTION_BOTTOM_MIDDLE,
-            Zone::FullMiddle => ACTION_FULL_MIDDLE,
-            Zone::MiddleRight => ACTION_MIDDLE_RIGHT,
-            Zone::Fullscreen => ACTION_FULLSCREEN,
-            Zone::Cinema => ACTION_CINEMA,
-            Zone::Float => ACTION_FLOAT,
-        }
-    }
-
     #[test]
-    fn window_menu_covers_every_zone() {
-        for zone in [
-            Zone::Left,
-            Zone::Right,
-            Zone::Top,
-            Zone::Bottom,
-            Zone::TopMiddle,
-            Zone::BottomMiddle,
-            Zone::FullMiddle,
-            Zone::MiddleRight,
-            Zone::Fullscreen,
-            Zone::Cinema,
-            Zone::Float,
-        ] {
-            let id = zone_action_id(zone);
-            assert_eq!(parse_window_action(id), Some(WindowAction::Zone(zone)));
-        }
+    fn window_menu_covers_tiling_actions() {
+        assert_eq!(parse_window_action(ACTION_TILE), Some(WindowAction::Tile));
+        assert_eq!(parse_window_action(ACTION_FLOAT), Some(WindowAction::Tile));
+        assert_eq!(
+            parse_window_action(ACTION_FULLSCREEN),
+            Some(WindowAction::Fullscreen)
+        );
+        assert_eq!(parse_window_action(ACTION_CINEMA), Some(WindowAction::Cinema));
+        assert_eq!(parse_window_action("window.left"), None);
     }
 
     #[test]
@@ -288,13 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn window_menu_float_is_super_kp_multiply() {
+    fn window_menu_tile_is_super_y() {
         let chord = WINDOW_MENU_ENTRIES.iter().find_map(|e| match e {
-            WindowMenuEntry::Item(i) if i.id == ACTION_FLOAT => Some(i.shortcut),
+            WindowMenuEntry::Item(i) if i.id == ACTION_TILE => Some(i.shortcut),
             _ => None,
         });
-        let chord = chord.expect("float item");
+        let chord = chord.expect("tile item");
         assert!(chord.meta);
-        assert_eq!(chord.keycode, KeyCode::KP_MULTIPLY);
+        assert!(!chord.shift);
+        assert_eq!(chord.keycode, KeyCode::Y);
     }
 }

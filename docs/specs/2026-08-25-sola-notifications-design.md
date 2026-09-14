@@ -6,17 +6,18 @@
 
 ## Intent
 
-The menubar toast (`Topic::AppToast`) is chrome feedback: same 13pt face
-as menus, 28px bar, 5s, no click. That is the wrong object for “pay
-attention.” Notifications occupy the desk, carry identity, and leave a
-missed pile. Browser `Notification` leaves the page and becomes the same
-object.
+The menubar toast (`Topic::AppToast`) was chrome feedback: same 13pt face
+as menus, 28px bar, 5s, no click. **2026-09-11:** the bar overlay is gone;
+`AppToast` and Opening/screenshot copy land as desk notifications so the
+middle of the menubar can hold screen 1–5. Notifications occupy the desk,
+carry identity, and leave a missed pile. Browser `Notification` leaves the
+page and becomes the same object.
 
 ## Two objects
 
 | Object | Job | Surface |
 |--------|-----|---------|
-| **Whisper** | Shell talking about itself | Menubar toast (`AppToast`) |
+| **Whisper** | Shell talking about itself | Desk notification (`AppToast` → same cards as `AppNotification`, 2026-09-11) |
 | **Notification** | An event you would miss if you were not staring at the bar | Desk card + missed pile |
 
 Whispers stay: `Opening Terminal…`, screenshot path, launch failure,

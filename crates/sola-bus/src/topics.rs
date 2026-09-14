@@ -150,6 +150,71 @@ pub struct FloatGeometry {
     pub height: i32,
 }
 
+/// One dwindle node persisted by app_id (window ids are runtime-only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScreenTileNode {
+    Leaf {
+        app_id: String,
+    },
+    Split {
+        dir: ScreenTileDir,
+        ratio: f32,
+        a: Box<ScreenTileNode>,
+        b: Box<ScreenTileNode>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenTileDir {
+    Row,
+    Col,
+}
+
+/// Remembered float on a screen. Geometry 0×0 means “float here, client size”.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenFloat {
+    pub app_id: String,
+    pub screen: u8,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Persistent screen + dwindle layout. Shell owns it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenLayout {
+    pub current: u8,
+    pub former: u8,
+    /// Index 0 = screen 1. Missing slots are empty trees.
+    #[serde(default)]
+    pub trees: Vec<Option<ScreenTileNode>>,
+    #[serde(default)]
+    pub floats: std::collections::HashMap<String, ScreenFloat>,
+    /// `fullscreen` / `cinema` keyed by app_id.
+    #[serde(default)]
+    pub special: std::collections::HashMap<String, String>,
+}
+
+/// Super+Shift pointer op finished (sola-river → shell).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowOpKind {
+    Move,
+    Resize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowOp {
+    pub window_id: u32,
+    pub kind: WindowOpKind,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -1311,6 +1376,14 @@ define_topics! {
     // Appended last so TopicKind postcard discriminants stay stable.
     #[persistent]
     CalendarConfig(CalendarConfig),
+
+    // Five screens + dwindle trees + float/cinema. Shell owns it.
+    // Appended so older bus hosts skip the discriminant.
+    #[persistent]
+    ScreenLayout(ScreenLayout),
+
+    // Super+Shift move/resize finished. Ephemeral; shell retile or persist.
+    WindowOp(WindowOp),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1318,7 +1391,11 @@ define_topics! {
 pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
     matches!(
         kind,
-        TopicKind::AppNotification | TopicKind::NotificationActivate | TopicKind::CalendarConfig
+        TopicKind::AppNotification
+            | TopicKind::NotificationActivate
+            | TopicKind::CalendarConfig
+            | TopicKind::ScreenLayout
+            | TopicKind::WindowOp
     )
 }
 

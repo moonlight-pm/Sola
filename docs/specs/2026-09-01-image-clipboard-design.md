@@ -3,7 +3,7 @@
 **Date:** 2026-09-01  
 **Status:** Frozen — implemented in `sola-kit` + `sola-preview` + CEF paste  
 **Related:** [preview](2026-08-04-sola-preview-and-selection-capture-design.md); [paint](2026-08-14-sola-paint-design.md); [kvm clipboard](2026-07-30-sola-kvm-clipboard-design.md)  
-**Implementation:** Preview **Copy** (image bytes) next to **Copy path**. Wrapper / browser ⌘V pastes an image File into the focused frame. Super+Shift+3/4/5 Fast-encode PNG onto the compositor clipboard (shell owns the offer); no file, no Preview. **Installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01; screenshot dest + promised paste + Fastest **installed** `kit`+`shell` release 2026-09-01. Super+Shift+4 copies the live scene **before** dismissing menubar panels (**installed** `shell` release 2026-09-02). sola-kvm CLIP1 carries `image/png` Linux↔Linux (Enter/Leave).  
+**Implementation:** Preview **Copy** (image bytes) next to **Copy path**. Wrapper / browser ⌘V pastes an image File into the focused frame. Super+Ctrl+3/4/5 Fast-encode PNG onto the compositor clipboard (shell owns the offer); no file, no Preview. Super+Shift+1…5 is send-to-screen ([screens freeze](2026-09-11-screens-and-dwindle-design.md)). **Installed** `kit`+`preview`+`browser`+`wrapper` debug 2026-09-01; screenshot dest + promised paste + Fastest **installed** `kit`+`shell` release 2026-09-01. Super+Ctrl+4 copies the live scene **before** dismissing menubar panels. sola-kvm CLIP1 carries `image/png` Linux↔Linux (Enter/Leave).  
 **Gaps:** paint has no image paste yet; kvm Mac client still text-only; freeze-with-open-panel desk smoke.
 
 ## Intent
@@ -26,7 +26,7 @@ River already advertises data-control (kvm’s `wl-copy` path). Kit talks to it 
 
 | Action | MIME | Body |
 |--------|------|------|
-| Super+Shift+3/4/5 | `image/png` (Fast zlib) | In-memory encode; shell serves the offer. No disk PNG. |
+| Super+Ctrl+3/4/5 | `image/png` (Fast zlib) | In-memory encode; shell serves the offer. No disk PNG. Super+Shift+1…5 is send-to-screen. |
 | Preview **Copy** | `image/png` (or jpeg/gif/webp/bmp from sniff/ext) | File bytes as stored. No re-encode. |
 | Preview **Copy path** | text (iced / smithay) | Absolute path. Unchanged. |
 | Cap | — | 32 MiB compressed payload. |
@@ -50,7 +50,7 @@ URL-bar and vault paste stay text-only (iced).
 ## v1 surface
 
 - Preview header: **Copy** then **Copy path** (both compact secondary). **Copied** flashes on the button that succeeded.
-- Super+Shift+3/4/5 copy a Fast PNG to the clipboard and toast **Screenshot copied**. They do **not** write a PNG or open Preview. `solactl compositor screenshot` still writes a file (also Fast PNG).
+- Super+Ctrl+3/4/5 copy a Fast PNG to the clipboard and notify **Screenshot copied**. They do **not** write a PNG or open Preview. `solactl compositor screenshot` still writes a file (also Fast PNG).
 
 ## Non-goals
 

@@ -23,7 +23,9 @@ mod screenshot;
 pub mod selection;
 pub mod shortcuts;
 pub mod stats;
+pub mod screens;
 pub mod switcher;
+pub mod tiling;
 pub mod zoning;
 
 const APP_ID: &str = "sola-shell";
