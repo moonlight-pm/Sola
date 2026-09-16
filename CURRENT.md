@@ -284,7 +284,8 @@ Do not invent product policy.
    localhost / loopback is `http://`. Agent tab/group/page control
    (`solactl browser`, same strip, Agent pocket by skill —
    [freeze](docs/specs/2026-09-11-sola-browser-agent-control-design.md);
-   implemented, desk-smoked on Tertius).
+   implemented, desk-smoked on Tertius; CSS-pixel click/hover +
+   `key --chord` + `SOLA_BOT=1` guards **in code**, not installed).
    Passkey **create** smoked. Page
    menu DevTools / Inspect Element. HTML5 OSR drag: host ghost is
    dirty-rect only (not a full-page clone); incomplete CPU paints no
@@ -354,7 +355,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
-| Browser agent control | Agent lives in **Workspaces**, not in the browser. Face: `solactl browser` (owner `browser`). Same strip / profile; **Agent** pocket is a skill convention. Page loop: pruned a11y **YAML** + opaque refs (`backendDOMNodeId`, fail stale) — not JSON/DOM/CDP. Confirm still **D3**. Freeze [`docs/specs/2026-09-11-sola-browser-agent-control-design.md`](docs/specs/2026-09-11-sola-browser-agent-control-design.md). |
+| Browser agent control | Agent lives in **Workspaces**, not in the browser. Face: `solactl browser` (owner `browser`). Same strip / profile; **Agent** pocket is a skill convention. Page loop: pruned a11y **YAML** + opaque refs; CSS-pixel `--x/--y` click/hover and `key --chord` on `--tab` when the tree is empty (CEF, not compositor). `SOLA_BOT=1` never `--select` / `tab.focus` and must pass `--tab`. Confirm still **D3**. Freeze [`docs/specs/2026-09-11-sola-browser-agent-control-design.md`](docs/specs/2026-09-11-sola-browser-agent-control-design.md). |
 | Wrapper | **`sola-wrapper <id>`**; `app_id` is the configured id; per-id CEF profile under `~/.config/sola/wrapper/<id>/`; Applications catalog (`kind` + `url`); not sola-browser chrome |
 | Agent product | **Workspaces** (`grok` / `codex` CLI in PTYs). The iced ACP/Grok-leader GUI (`crates/sola-agent`) is **retired** — do not rebuild it or a multi-client ACP chat. The agent **calls** the browser; it does not live there. |
 | Workspaces | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |

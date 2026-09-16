@@ -70,7 +70,29 @@ pub enum InputCmd {
     },
 }
 
+fn is_sola_bot() -> bool {
+    matches!(
+        std::env::var("SOLA_BOT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes")
+    )
+}
+
+fn refuse_bot_compositor(what: &str) -> i32 {
+    eprintln!(
+        "solactl: SOLA_BOT=1: compositor {what} is refused (use solactl browser; do not steal the seat)"
+    );
+    3
+}
+
 pub fn run(cmd: Command) -> i32 {
+    if is_sola_bot() {
+        match &cmd {
+            Command::Screenshot { .. } => return refuse_bot_compositor("screenshot"),
+            Command::Sample { .. } => return refuse_bot_compositor("sample"),
+            Command::Input(_) => return refuse_bot_compositor("input"),
+            Command::Windows => {}
+        }
+    }
     match cmd {
         Command::Screenshot {
             output,

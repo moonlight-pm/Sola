@@ -7,6 +7,7 @@ pub mod agent;
 pub mod app;
 pub mod ax;
 pub mod calls;
+pub mod chord;
 pub mod cef;
 pub mod chrome_wake;
 pub mod downloads;
