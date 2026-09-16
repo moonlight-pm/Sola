@@ -9103,6 +9103,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "iced",
+ "libc",
  "serde",
  "serde_json",
  "sola-bus",

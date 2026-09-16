@@ -49,7 +49,10 @@ desk for that proxy:
 ```text
 GET  /health
 GET  /bots
+GET  /poll?bot={id}
 GET  /bots/{id}/transcript
+POST /bots                 { "name": "Suno" }
+DELETE /bots/{id}
 POST /bots/{id}/send     { "text": "…" }
 POST /bots/{id}/cancel
 Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>

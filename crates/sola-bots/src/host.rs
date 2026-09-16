@@ -43,6 +43,7 @@ struct Live {
     dialog: Vec<DialogTurn>,
     acp: Arc<Mutex<Option<Arc<AcpSession>>>>,
     cancel: Arc<AtomicBool>,
+    last_flush: Instant,
 }
 
 fn empty_live() -> Live {
@@ -52,6 +53,7 @@ fn empty_live() -> Live {
         dialog: Vec::new(),
         acp: Arc::new(Mutex::new(None)),
         cancel: Arc::new(AtomicBool::new(false)),
+        last_flush: Instant::now(),
     }
 }
 
@@ -77,11 +79,10 @@ impl Host {
             live_row.dialog = dialog;
             live.insert(rec.id.clone(), live_row);
         }
-        let host = Arc::new(Self {
+        Arc::new(Self {
             inner: Mutex::new(Inner { catalog, live }),
             list_cache: Mutex::new(None),
-        });
-        host
+        })
     }
 
     pub fn list_json(&self) -> serde_json::Value {
@@ -207,22 +208,27 @@ impl Host {
                 live.map(|l| l.acp),
             )
         };
-        if let Some(slot) = acp {
-            if let Ok(mut g) = slot.lock() {
-                *g = None;
-            }
-        }
-        let home = paths::bot_home(&slug);
-        if home.exists() {
-            fs::remove_dir_all(&home).map_err(|e| format!("remove {}: {e}", home.display()))?;
-        }
-        if let Some(sid) = session_id {
-            let _ = std::process::Command::new(paths::grok_bin())
-                .args(["sessions", "delete", &sid])
-                .status();
-        }
-        info!(%slug, "bot removed");
-        Ok(json!({ "ok": true, "id": id, "slug": slug }))
+        thread::Builder::new()
+            .name(format!("bot-rm-{slug}"))
+            .spawn(move || {
+                if let Some(slot) = acp {
+                    if let Ok(mut g) = slot.lock() {
+                        *g = None;
+                    }
+                }
+                let home = paths::bot_home(&slug);
+                if home.exists() {
+                    let _ = fs::remove_dir_all(&home);
+                }
+                if let Some(sid) = session_id {
+                    let _ = std::process::Command::new(paths::grok_bin())
+                        .args(["sessions", "delete", &sid])
+                        .status();
+                }
+                info!(%slug, "bot removed");
+            })
+            .ok();
+        Ok(json!({ "ok": true, "id": id }))
     }
 
     pub fn send(self: &Arc<Self>, key: &str, text: &str) -> Result<serde_json::Value, String> {
@@ -361,9 +367,19 @@ fn run_turn(
                     || e.contains("writer gone")
                     || e.contains("timed out") =>
             {
-                warn!(%slug, "acp died ({e}); respawn and retry");
+                let partial = {
+                    let g = host.inner.lock().unwrap();
+                    g.live.get(id).and_then(|l| l.dialog.last()).is_some_and(|t| {
+                        t.role == "assistant" && !t.text.trim().is_empty()
+                    })
+                };
+                warn!(%slug, %partial, "acp died ({e})");
                 if let Ok(mut g) = acp_slot.lock() {
                     *g = None;
+                }
+                if partial {
+                    // Keep the streamed text. Do not re-send the user prompt.
+                    return Ok(());
                 }
                 thread::sleep(Duration::from_millis(400));
             }
@@ -382,6 +398,45 @@ fn run_turn_once(
     cancel: &Arc<AtomicBool>,
     prompt: &str,
 ) -> Result<(), String> {
+    let (sess, session_id) = ensure_session(host, id, slug, model, home, acp_slot)?;
+
+    let cancel = Arc::clone(cancel);
+    sess.prompt(
+        &session_id,
+        prompt,
+        move || cancel.load(Ordering::SeqCst),
+        |ev| {
+        if let Some(delta) = ev.text_delta {
+            let mut g = host.inner.lock().unwrap();
+            if let Some(live) = g.live.get_mut(id) {
+                if let Some(last) = live.dialog.last_mut() {
+                    if last.role == "assistant" {
+                        last.text.push_str(&delta);
+                    }
+                }
+                if live.last_flush.elapsed() >= Duration::from_millis(250) {
+                    save_dialog(slug, &live.dialog);
+                    live.last_flush = Instant::now();
+                }
+            }
+        }
+        if let Some(err) = ev.error {
+            error!(%slug, "turn error: {err}");
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    let _ = Duration::from_secs(0);
+    Ok(())
+}
+
+fn ensure_session(
+    host: &Host,
+    id: &str,
+    slug: &str,
+    model: &str,
+    home: &std::path::Path,
+    acp_slot: &Arc<Mutex<Option<Arc<AcpSession>>>>,
+) -> Result<(Arc<AcpSession>, String), String> {
     let sess = {
         let mut guard = acp_slot.lock().map_err(|e| e.to_string())?;
         if let Some(s) = guard.as_ref() {
@@ -422,30 +477,7 @@ fn run_turn_once(
         persist_session(host, id, &sid);
         sid
     };
-
-    let cancel = Arc::clone(cancel);
-    sess.prompt(
-        &session_id,
-        prompt,
-        move || cancel.load(Ordering::SeqCst),
-        |ev| {
-        if let Some(delta) = ev.text_delta {
-            let mut g = host.inner.lock().unwrap();
-            if let Some(live) = g.live.get_mut(id) {
-                if let Some(last) = live.dialog.last_mut() {
-                    if last.role == "assistant" {
-                        last.text.push_str(&delta);
-                    }
-                }
-            }
-        }
-        if let Some(err) = ev.error {
-            error!(%slug, "turn error: {err}");
-        }
-    })
-    .map_err(|e| e.to_string())?;
-    let _ = Duration::from_secs(0);
-    Ok(())
+    Ok((sess, session_id))
 }
 
 fn persist_session(host: &Host, id: &str, sid: &str) {
@@ -466,11 +498,16 @@ fn load_dialog(slug: &str) -> Vec<DialogTurn> {
 
 fn save_dialog(slug: &str, turns: &[DialogTurn]) {
     let path = paths::dialog_path(slug);
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    if let Ok(bytes) = serde_json::to_vec_pretty(turns) {
-        let _ = fs::write(path, bytes);
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let _ = fs::create_dir_all(dir);
+    let Ok(bytes) = serde_json::to_vec_pretty(turns) else {
+        return;
+    };
+    let tmp = dir.join("dialog.json.tmp");
+    if fs::write(&tmp, bytes).is_ok() {
+        let _ = fs::rename(tmp, path);
     }
 }
 

@@ -1,14 +1,14 @@
 # sola-bots
 
 **Date:** 2026-09-15  
-**Status:** **Frozen** — daemon + iced + `solactl bots` POC in this worktree  
+**Status:** **Frozen** — daemon + iced + HTTP + iOS client (partial)  
 **Related:** [call plane](2026-08-13-sola-call-plane-design.md); [browser agent control](2026-09-11-sola-browser-agent-control-design.md); Workspaces is a **different** product ([workspaces freeze](2026-08-13-sola-agent-terminal-design.md))
 
 | | |
 |--|--|
-| **Implementation** | `crates/sola-bots`: `sola-botsd` + `sola-bots`; supervisor MANAGED; shell builtin; `solactl bots` |
-| **Dogfood** | not smoked |
-| **Gaps** | HTTP/iOS; session-roll; ACP handshake on live grok; `sola`/`shell`/`solactl` not auto-installed with this slice |
+| **Implementation** | `crates/sola-bots` (`sola-botsd` + iced); HTTP `:27419`; iOS `~/Workspace/SolaBot` on Ember; `solactl bots`; seat guards |
+| **Dogfood** | desk + phone used; ACP dies on `cargo make install bots` |
+| **Gaps** | session-roll; Grok not tmux-backed (child of daemon); iOS SSH codesign flaky |
 
 ---
 
