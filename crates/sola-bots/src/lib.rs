@@ -8,6 +8,7 @@ pub mod foundation;
 pub mod host;
 pub mod http;
 pub mod paths;
+pub mod sse;
 pub mod ui;
 
 pub use catalog::{BotRecord, Catalog};

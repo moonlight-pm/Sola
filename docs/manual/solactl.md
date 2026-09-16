@@ -49,7 +49,8 @@ desk for that proxy:
 ```text
 GET  /health
 GET  /bots
-GET  /poll?bot={id}
+GET  /events                 # SSE: snapshot, bots, transcript, delta, removed
+GET  /poll?bot={id}          # one-shot snapshot (debug); the phone uses /events
 GET  /bots/{id}/transcript
 POST /bots                 { "name": "Suno" }
 DELETE /bots/{id}
@@ -57,6 +58,11 @@ POST /bots/{id}/send     { "text": "…" }
 POST /bots/{id}/cancel
 Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
 ```
+
+`GET /events` is `text/event-stream` (chunked). Keepalive comments every 15s.
+The TLS proxy must not buffer the body (`proxy_buffering off`, honor
+`X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with a
+long `proxy_read_timeout`.
 
 Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
 (introduction; the orientation prompt is not shown as a user message).

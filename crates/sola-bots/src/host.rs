@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,6 +16,7 @@ use crate::acp::AcpSession;
 use crate::catalog::{self, BotRecord, Catalog};
 use crate::foundation;
 use crate::paths;
+use crate::sse;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -60,6 +62,7 @@ fn empty_live() -> Live {
 pub struct Host {
     inner: Mutex<Inner>,
     list_cache: Mutex<Option<(Instant, serde_json::Value)>>,
+    subs: Mutex<Vec<mpsc::Sender<Vec<u8>>>>,
 }
 
 struct Inner {
@@ -82,6 +85,7 @@ impl Host {
         Arc::new(Self {
             inner: Mutex::new(Inner { catalog, live }),
             list_cache: Mutex::new(None),
+            subs: Mutex::new(Vec::new()),
         })
     }
 
@@ -135,6 +139,40 @@ impl Host {
         })
     }
 
+    /// Snapshot then live frames. Drop the receiver to disconnect.
+    pub fn subscribe(&self) -> mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        let snap = self.poll_json(None);
+        let _ = tx.send(sse::frame("snapshot", &snap));
+        self.subs.lock().unwrap().push(tx);
+        rx
+    }
+
+    fn fanout(&self, bytes: Vec<u8>) {
+        let mut subs = self.subs.lock().unwrap();
+        subs.retain(|tx| tx.send(bytes.clone()).is_ok());
+    }
+
+    fn emit_list(&self) {
+        self.invalidate_list_cache();
+        let v = self.list_json();
+        self.fanout(sse::frame("bots", &v));
+    }
+
+    fn emit_removed(&self, id: &str) {
+        self.fanout(sse::frame("removed", &json!({ "id": id })));
+    }
+
+    fn emit_transcript(&self, id: &str) {
+        if let Ok(v) = self.transcript_json(id) {
+            self.fanout(sse::frame("transcript", &v));
+        }
+    }
+
+    fn emit_delta(&self, id: &str, text: &str) {
+        self.fanout(sse::frame("delta", &json!({ "id": id, "text": text })));
+    }
+
     pub fn transcript_json(&self, key: &str) -> Result<serde_json::Value, String> {
         let g = self.inner.lock().unwrap();
         let rec = g
@@ -186,6 +224,7 @@ impl Host {
             rec
         };
         self.invalidate_list_cache();
+        self.emit_list();
         let home = paths::bot_home(&rec.slug);
         let intro = foundation::intro_prompt(&rec.name, &rec.slug, &home);
         let _ = self.prompt(&rec.id, &intro, false);
@@ -227,6 +266,8 @@ impl Host {
             fs::remove_dir_all(&home).map_err(|e| e.to_string())?;
         }
         self.invalidate_list_cache();
+        self.emit_removed(&id);
+        self.emit_list();
         if let Some(sid) = session_id {
             thread::Builder::new()
                 .name(format!("bot-rm-session-{slug}"))
@@ -295,6 +336,8 @@ impl Host {
             )
         };
         self.invalidate_list_cache();
+        self.emit_list();
+        self.emit_transcript(&id);
 
         let host = Arc::clone(self);
         let prompt = text.to_string();
@@ -343,6 +386,8 @@ impl Host {
                 }
                 drop(g);
                 host.invalidate_list_cache();
+                host.emit_transcript(&thread_id);
+                host.emit_list();
             });
         if let Err(e) = spawn {
             self.revert_failed_spawn(&id, &slug, show_user, e.to_string());
@@ -365,6 +410,8 @@ impl Host {
         }
         drop(g);
         self.invalidate_list_cache();
+        self.emit_transcript(id);
+        self.emit_list();
     }
 
     fn invalidate_list_cache(&self) {
@@ -444,18 +491,21 @@ fn run_turn(
             move || cancel.load(Ordering::SeqCst),
             |ev| {
                 if let Some(delta) = ev.text_delta {
-                    let mut g = host.inner.lock().unwrap();
-                    if let Some(live) = g.live.get_mut(id) {
-                        if let Some(last) = live.dialog.last_mut() {
-                            if last.role == "assistant" {
-                                last.text.push_str(&delta);
+                    {
+                        let mut g = host.inner.lock().unwrap();
+                        if let Some(live) = g.live.get_mut(id) {
+                            if let Some(last) = live.dialog.last_mut() {
+                                if last.role == "assistant" {
+                                    last.text.push_str(&delta);
+                                }
+                            }
+                            if live.last_flush.elapsed() >= Duration::from_millis(250) {
+                                save_dialog(slug, &live.dialog);
+                                live.last_flush = Instant::now();
                             }
                         }
-                        if live.last_flush.elapsed() >= Duration::from_millis(250) {
-                            save_dialog(slug, &live.dialog);
-                            live.last_flush = Instant::now();
-                        }
                     }
+                    host.emit_delta(id, &delta);
                 }
                 if let Some(err) = ev.error {
                     error!(%slug, "turn error: {err}");

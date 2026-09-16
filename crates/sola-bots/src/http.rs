@@ -10,6 +10,7 @@ use tracing::{info, warn};
 
 use crate::auth::{HTTP_BIND, HTTP_TOKEN};
 use crate::host::Host;
+use crate::sse::SseBody;
 
 const MAX_BODY: u64 = 256 * 1024;
 
@@ -81,6 +82,9 @@ fn handle_inner(
 
     if method == &Method::Get && path == "/bots" {
         return respond(req, 200, host.list_json());
+    }
+    if method == &Method::Get && path == "/events" {
+        return stream_events(host, req);
     }
     if method == &Method::Get && path == "/poll" {
         let bot = query_param(url, "bot");
@@ -203,6 +207,30 @@ fn read_json(req: &mut Request) -> Result<serde_json::Value, String> {
         return Ok(serde_json::json!({}));
     }
     serde_json::from_slice(&buf).map_err(|e| e.to_string())
+}
+
+fn stream_events(host: &Arc<Host>, req: Request) -> Result<u16, String> {
+    let rx = host.subscribe();
+    info!("sse client connected");
+    let body = SseBody::new(rx);
+    let res = cors(Response::new(
+        StatusCode(200),
+        vec![
+            Header::from_bytes(
+                &b"Content-Type"[..],
+                &b"text/event-stream; charset=utf-8"[..],
+            )
+            .unwrap(),
+            Header::from_bytes(&b"Cache-Control"[..], &b"no-cache"[..]).unwrap(),
+            Header::from_bytes(&b"X-Accel-Buffering"[..], &b"no"[..]).unwrap(),
+        ],
+        body,
+        None,
+        None,
+    ));
+    req.respond(res).map_err(|e| e.to_string())?;
+    info!("sse client disconnected");
+    Ok(200)
 }
 
 fn respond(req: Request, code: u16, body: serde_json::Value) -> Result<u16, String> {

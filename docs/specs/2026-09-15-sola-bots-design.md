@@ -6,7 +6,7 @@
 
 | | |
 |--|--|
-| **Implementation** | `crates/sola-bots` (`sola-botsd` + iced); HTTP `:27419`; iOS `~/Workspace/SolaBot` on Ember (scheme **SolaBot-Release** default); `solactl bots`; seat guards |
+| **Implementation** | `crates/sola-bots` (`sola-botsd` + iced); HTTP `:27419` + SSE `GET /events`; iOS `~/Workspace/SolaBot` on Ember (scheme **SolaBot-Release** default); `solactl bots`; seat guards |
 | **Dogfood** | desk + phone used; ACP dies on `cargo make install bots` |
 | **Gaps** | session-roll; Grok not tmux-backed (child of daemon); iOS SSH codesign flaky |
 
