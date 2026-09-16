@@ -17,7 +17,9 @@ pub fn run(args: Vec<String>) -> i32 {
             return 3;
         }
     };
-    let Some(entry) = owners.iter().find(|o| o.owner == *owner || o.app_id == *owner)
+    let Some(entry) = owners
+        .iter()
+        .find(|o| o.owner == *owner || o.app_id == *owner)
     else {
         eprintln!("solactl: {owner} is not running");
         return 3;
@@ -50,6 +52,10 @@ pub fn run(args: Vec<String>) -> i32 {
             if entry.owner == "workspaces" {
                 inject_ws_context(method, &mut params);
             }
+            if let Err(e) = apply_bot_policy(&entry.owner, method, &params) {
+                eprintln!("solactl: {e}");
+                return 3;
+            }
             let timeout = invoke_timeout_secs(spec, &params);
             call::run(&entry.owner, method, params, timeout)
         }
@@ -58,6 +64,78 @@ pub fn run(args: Vec<String>) -> i32 {
             3
         }
     }
+}
+
+fn is_sola_bot() -> bool {
+    matches!(
+        std::env::var("SOLA_BOT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes")
+    )
+}
+
+/// Named informational bots never steal the human seat or default to it.
+fn apply_bot_policy(owner: &str, method: &str, params: &serde_json::Value) -> Result<(), String> {
+    bot_browser_policy(is_sola_bot(), owner, method, params)
+}
+
+fn bot_browser_policy(
+    bot: bool,
+    owner: &str,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<(), String> {
+    if !bot || owner != "browser" {
+        return Ok(());
+    }
+    if method == "tab.focus" {
+        return Err("SOLA_BOT=1: tab.focus is refused (would steal the seat)".into());
+    }
+    if param_is_true(params, "select") {
+        return Err("SOLA_BOT=1: --select is refused (would steal the seat)".into());
+    }
+    const NEED_TAB: &[&str] = &[
+        "snapshot",
+        "click",
+        "hover",
+        "type",
+        "fill",
+        "select",
+        "wait",
+        "screenshot",
+        "goto",
+        "back",
+        "forward",
+        "reload",
+        "stop",
+        "find.page",
+        "find",
+        "key",
+        "scroll",
+        "tab.close",
+        "tab.move",
+    ];
+    if NEED_TAB.contains(&method) {
+        let tab = params.get("tab").and_then(|v| {
+            v.as_str()
+                .map(|s| !s.is_empty())
+                .or_else(|| v.as_i64().map(|_| true))
+                .or_else(|| v.as_u64().map(|_| true))
+        });
+        if tab != Some(true) {
+            return Err("SOLA_BOT=1: --tab is required (do not default to the focused tab)".into());
+        }
+    }
+    Ok(())
+}
+
+fn param_is_true(params: &serde_json::Value, key: &str) -> bool {
+    params
+        .get(key)
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
+        })
+        .unwrap_or(false)
 }
 
 fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
@@ -104,10 +182,7 @@ fn json_u64(v: &serde_json::Value) -> Option<u64> {
 }
 
 fn print_method_help(owner: &str, spec: &MethodSpec) {
-    crate::call::print_stdout(&format!(
-        "solactl {owner} {} — {}",
-        spec.name, spec.summary
-    ));
+    crate::call::print_stdout(&format!("solactl {owner} {} — {}", spec.name, spec.summary));
     if spec.args.is_empty() {
         crate::call::print_stdout("  (no flags)");
         return;
@@ -161,7 +236,10 @@ fn params_from_args(spec: &MethodSpec, rest: &[&str]) -> Result<serde_json::Valu
             continue;
         }
         // Positional: fill the next required arg that isn't set.
-        if let Some(arg) = spec.args.iter().find(|a| a.required && !map.contains_key(&a.name))
+        if let Some(arg) = spec
+            .args
+            .iter()
+            .find(|a| a.required && !map.contains_key(&a.name))
         {
             map.insert(arg.name.clone(), coerce(spec, &arg.name, tok));
             i += 1;
@@ -223,8 +301,9 @@ fn coerce(spec: &MethodSpec, name: &str, raw: &str) -> serde_json::Value {
             .map(serde_json::Value::from)
             .unwrap_or_else(|_| serde_json::Value::String(raw.into())),
         ArgType::Bool => serde_json::Value::Bool(raw != "false" && raw != "0"),
-        ArgType::Json => serde_json::from_str(raw)
-            .unwrap_or_else(|_| serde_json::Value::String(raw.into())),
+        ArgType::Json => {
+            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.into()))
+        }
         ArgType::String | ArgType::Path => serde_json::Value::String(raw.into()),
     }
 }
@@ -353,6 +432,32 @@ mod tests {
             ],
             timeout_ms: Some(60_000),
         }
+    }
+
+    #[test]
+    fn bot_policy_refuses_focus_select_and_missing_tab() {
+        assert!(bot_browser_policy(false, "browser", "tab.focus", &serde_json::json!({})).is_ok());
+        assert!(bot_browser_policy(true, "browser", "tab.focus", &serde_json::json!({})).is_err());
+        assert!(
+            bot_browser_policy(
+                true,
+                "browser",
+                "tab.open",
+                &serde_json::json!({"url": "https://example.com", "select": true})
+            )
+            .is_err()
+        );
+        assert!(bot_browser_policy(true, "browser", "snapshot", &serde_json::json!({})).is_err());
+        assert!(
+            bot_browser_policy(
+                true,
+                "browser",
+                "click",
+                &serde_json::json!({"tab": "9", "x": 1, "y": 2})
+            )
+            .is_ok()
+        );
+        assert!(bot_browser_policy(true, "browser", "tabs", &serde_json::json!({})).is_ok());
     }
 
     #[test]
