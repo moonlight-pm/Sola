@@ -142,8 +142,18 @@ the human; an **Agent** group is an ordinary group a skill may create.
 
 `tab.open` appends and does **not** focus unless `--select`. Page verbs
 use a pruned accessibility YAML snapshot and opaque refs (`e12`). Stale
-refs fail; snapshot again. Screenshot is a fallback when the tree is
-empty. Vault fill / confirm gates are not on this plane (**D3**).
+refs fail; snapshot again. `click` / `hover` also take CSS-pixel `--x`
+`--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
+not the compositor seat). `key --chord` (e.g. `Return`, `Control+Enter`)
+and `scroll --dx --dy` go to the same tab. Screenshot is a fallback when
+the tree is empty (canvas / maps) and captures **that tab’s** document
+even when backgrounded. Vault fill / confirm gates are not on this plane
+(**D3**).
+
+With `SOLA_BOT=1` (named informational bots): `--select` and `tab.focus`
+are refused; page verbs require `--tab` (never default to the focused
+tab); `solactl compositor input` / `screenshot` / `sample` are refused.
+The web path is `solactl browser` only.
 
 ```text
 solactl browser                         # list methods
@@ -159,12 +169,17 @@ solactl browser goto --url https://example.com/path --tab 3
 solactl browser snapshot [--tab 3] [--interactive] [--ref e8]
 solactl browser find --text Submit
 solactl browser click --ref e12
+solactl browser click --tab 3 --x 120 --y 80
 solactl browser fill --ref e5 --text user@example.com
 solactl browser type --ref e5 --text more --submit
 solactl browser hover --ref e12
+solactl browser hover --tab 3 --x 120 --y 80
+solactl browser key --tab 3 --chord Return
+solactl browser key --tab 3 --chord Control+Enter
+solactl browser scroll --tab 3 --dy 400
 solactl browser select --ref e9 --values OptionA,OptionB
 solactl browser wait [--load] [--text done] [--timeout 30]
-solactl browser screenshot [-o PATH]
+solactl browser screenshot --tab 3 [-o PATH]
 solactl browser back|forward|reload|stop [--tab 3]
 solactl browser find.page --text needle
 ```

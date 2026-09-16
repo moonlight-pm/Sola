@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{App, BLANK_URL, Msg};
 use crate::ax::{self, RefEntry};
+use crate::chord::{self, CdpKeyEvent};
 use crate::engine::{Cmd, Engine, NavCmd, TabId, TabInfo};
 use crate::groups::TabGroup;
 use iced::Task;
@@ -39,6 +40,24 @@ pub enum AgentOp {
         backend_node_id: i32,
         role: String,
         name: String,
+    },
+    /// CSS-pixel click in the tab viewport (`Input.dispatchMouseEvent`).
+    ClickAt {
+        x: i32,
+        y: i32,
+    },
+    HoverAt {
+        x: i32,
+        y: i32,
+    },
+    Key {
+        events: Vec<CdpKeyEvent>,
+    },
+    Scroll {
+        dx: i32,
+        dy: i32,
+        x: i32,
+        y: i32,
     },
     Type {
         backend_node_id: i32,
@@ -171,10 +190,7 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> bool {
-    params
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    params.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 fn param_i64(params: &serde_json::Value, key: &str) -> Option<i64> {
@@ -271,10 +287,7 @@ impl<E: Engine> App<E> {
         for e in &r.refs {
             refs.insert(e.r#ref.clone(), e.clone());
         }
-        self.agent.snaps.insert(
-            tab,
-            LastSnap { yaml, refs },
-        );
+        self.agent.snaps.insert(tab, LastSnap { yaml, refs });
         self.agent.last_tab = Some(tab);
         for w in &mut self.agent.waits {
             if w.tab == tab {
@@ -286,7 +299,8 @@ impl<E: Engine> App<E> {
 
     fn finish_engine_reply(&mut self, inc: Incoming, r: AgentReply) {
         if !r.ok {
-            inc.reply.err(r.error.unwrap_or_else(|| "engine error".into()));
+            inc.reply
+                .err(r.error.unwrap_or_else(|| "engine error".into()));
             return;
         }
         if let Some(yaml) = r.yaml.clone() {
@@ -345,7 +359,8 @@ impl<E: Engine> App<E> {
             return;
         }
         if let Some(path) = r.path {
-            inc.reply.ok(serde_json::json!({ "ok": true, "path": path }));
+            inc.reply
+                .ok(serde_json::json!({ "ok": true, "path": path }));
             return;
         }
         inc.reply.ok(serde_json::json!({ "ok": true }));
@@ -379,6 +394,8 @@ impl<E: Engine> App<E> {
             "snapshot" => self.cli_snapshot(params),
             "find" => CallOut::Reply(self.cli_find_snap(params)),
             "click" | "hover" | "type" | "fill" | "select" => self.cli_act(method, params),
+            "key" => self.cli_key(params),
+            "scroll" => self.cli_scroll(params),
             "screenshot" => self.cli_screenshot(params),
             other => CallOut::Reply(Err(format!("unknown method {other}"))),
         }
@@ -419,16 +436,18 @@ impl<E: Engine> App<E> {
         let url = param_str(params, "url").ok_or_else(|| "missing url".to_string())?;
         let select = param_bool(params, "select");
         self.open_tab(url.clone(), select);
-        let id = self.cached_tabs.last().map(|t| t.id).unwrap_or(self.cached_active);
+        let id = self
+            .cached_tabs
+            .last()
+            .map(|t| t.id)
+            .unwrap_or(self.cached_active);
         if let Some(g) = param_str(params, "group") {
             let gid = self.resolve_group(&g)?;
             self.groups.add_to(id, &gid);
             self.groups.normalize(&mut self.cached_tabs);
             self.persist_session();
         }
-        self.agent
-            .pending_nav
-            .insert(id, PendingNav::Url(url));
+        self.agent.pending_nav.insert(id, PendingNav::Url(url));
         Ok(serde_json::json!({ "id": id.0, "selected": select }))
     }
 
@@ -481,7 +500,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "ok": true, "id": id.0 }))
     }
 
-    fn cli_group_create(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_create(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let id = self.resolve_tab(param_str(params, "tab").as_deref())?;
         let gid = self.groups.new_group(id);
         if let Some(name) = param_str(params, "name") {
@@ -492,7 +514,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "id": gid, "tab": id.0 }))
     }
 
-    fn cli_group_rename(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_rename(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
         let name = param_str(params, "name").ok_or_else(|| "missing name".to_string())?;
         self.groups.rename(&gid, name);
@@ -500,7 +525,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "ok": true, "id": gid }))
     }
 
-    fn cli_group_recolor(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_recolor(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
         let color = param_str(params, "color");
         self.groups.set_color(&gid, color);
@@ -513,7 +541,8 @@ impl<E: Engine> App<E> {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
-        self.groups.set_collapsed(&gid, param_bool(params, "collapsed"));
+        self.groups
+            .set_collapsed(&gid, param_bool(params, "collapsed"));
         self.persist_session();
         Ok(serde_json::json!({ "ok": true, "id": gid }))
     }
@@ -583,9 +612,8 @@ impl<E: Engine> App<E> {
     fn cli_snapshot(&mut self, params: &serde_json::Value) -> CallOut {
         match self.resolve_tab(param_str(params, "tab").as_deref()) {
             Ok(tab) => {
-                let subtree = param_str(params, "ref").and_then(|r| {
-                    self.lookup_ref(tab, &r).map(|e| e.backend_node_id)
-                });
+                let subtree = param_str(params, "ref")
+                    .and_then(|r| self.lookup_ref(tab, &r).map(|e| e.backend_node_id));
                 if param_str(params, "ref").is_some() && subtree.is_none() {
                     return CallOut::Reply(Err(
                         "ref not found in the current page snapshot. Try capturing new snapshot."
@@ -622,12 +650,31 @@ impl<E: Engine> App<E> {
     }
 
     fn cli_act(&mut self, method: &str, params: &serde_json::Value) -> CallOut {
-        let Some(r) = param_str(params, "ref") else {
-            return CallOut::Reply(Err("missing ref".into()));
-        };
         let tab = match self.resolve_tab_or_last(param_str(params, "tab").as_deref()) {
             Ok(t) => t,
             Err(e) => return CallOut::Reply(Err(e)),
+        };
+        let r = param_str(params, "ref");
+        let x = param_i64(params, "x").and_then(|n| i32::try_from(n).ok());
+        let y = param_i64(params, "y").and_then(|n| i32::try_from(n).ok());
+        if r.is_none() && matches!(method, "click" | "hover") {
+            let (Some(x), Some(y)) = (x, y) else {
+                return CallOut::Reply(Err(
+                    "missing --ref, or both --x and --y (CSS px in the tab)".into(),
+                ));
+            };
+            let id = self.agent.next_id;
+            self.agent.next_id += 1;
+            self.agent.last_tab = Some(tab);
+            let op = if method == "hover" {
+                AgentOp::HoverAt { x, y }
+            } else {
+                AgentOp::ClickAt { x, y }
+            };
+            return CallOut::Engine(AgentRequest { id, tab: tab.0, op });
+        }
+        let Some(r) = r else {
+            return CallOut::Reply(Err("missing ref".into()));
         };
         let entry = match self.lookup_ref(tab, &r) {
             Some(e) => e.clone(),
@@ -693,11 +740,61 @@ impl<E: Engine> App<E> {
             }
             other => return CallOut::Reply(Err(format!("unknown act {other}"))),
         };
-        CallOut::Engine(AgentRequest {
-            id,
-            tab: tab.0,
-            op,
-        })
+        CallOut::Engine(AgentRequest { id, tab: tab.0, op })
+    }
+
+    fn cli_key(&mut self, params: &serde_json::Value) -> CallOut {
+        let Some(raw) = param_str(params, "chord") else {
+            return CallOut::Reply(Err("missing chord".into()));
+        };
+        let events = match chord::parse_chord(&raw) {
+            Ok(e) => e,
+            Err(e) => return CallOut::Reply(Err(e)),
+        };
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Key { events },
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
+    }
+
+    fn cli_scroll(&mut self, params: &serde_json::Value) -> CallOut {
+        let dx = param_i64(params, "dx")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(0);
+        let dy = param_i64(params, "dy")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(0);
+        if dx == 0 && dy == 0 {
+            return CallOut::Reply(Err("missing --dx or --dy".into()));
+        }
+        let x = param_i64(params, "x")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(100);
+        let y = param_i64(params, "y")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(100);
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Scroll { dx, dy, x, y },
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
     }
 
     fn cli_screenshot(&mut self, params: &serde_json::Value) -> CallOut {
@@ -765,7 +862,9 @@ impl<E: Engine> App<E> {
                     if let Some(snap) = self.agent.snaps.get(&tab) {
                         if !ax::find_in_yaml(&snap.yaml, &text).is_empty() {
                             let w = self.agent.waits.remove(i);
-                            w.inc.reply.ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
+                            w.inc
+                                .reply
+                                .ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
                             continue;
                         }
                     }
@@ -793,7 +892,9 @@ impl<E: Engine> App<E> {
                 self.agent.waits[i].saw_busy,
             ) {
                 let w = self.agent.waits.remove(i);
-                w.inc.reply.ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
+                w.inc
+                    .reply
+                    .ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
                 continue;
             } else if !self.agent.waits[i].awaiting_snap {
                 self.agent.waits[i].awaiting_snap = true;
@@ -872,7 +973,9 @@ impl<E: Engine> App<E> {
             .groups
             .groups
             .iter()
-            .filter(|g| g.name.to_ascii_lowercase() == ql || g.name.to_ascii_lowercase().contains(&ql))
+            .filter(|g| {
+                g.name.to_ascii_lowercase() == ql || g.name.to_ascii_lowercase().contains(&ql)
+            })
             .collect();
         match hits.len() {
             1 => Ok(hits[0].id.clone()),
@@ -946,9 +1049,7 @@ fn url_matches_pending(ready: &str, want: &str) -> bool {
 }
 
 fn normalize_wait_url(url: &str) -> String {
-    url.trim()
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
 /// Wait --load: trust `document.readyState` once the helper has sampled it.
@@ -1009,7 +1110,12 @@ mod tests {
             None,
             false
         ));
-        assert!(!load_wait_done(true, Some(&ready("complete", "")), None, false));
+        assert!(!load_wait_done(
+            true,
+            Some(&ready("complete", "")),
+            None,
+            false
+        ));
     }
 
     #[test]

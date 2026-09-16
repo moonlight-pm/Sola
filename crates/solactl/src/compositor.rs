@@ -70,11 +70,29 @@ pub enum InputCmd {
     },
 }
 
-fn bot_blocked_capture() -> bool {
-    std::env::var("SOLA_BOT").ok().as_deref() == Some("1")
+fn is_sola_bot() -> bool {
+    matches!(
+        std::env::var("SOLA_BOT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes")
+    )
+}
+
+fn refuse_bot_compositor(what: &str) -> i32 {
+    eprintln!(
+        "solactl: SOLA_BOT=1: compositor {what} is refused (use solactl browser; do not steal the seat)"
+    );
+    3
 }
 
 pub fn run(cmd: Command) -> i32 {
+    if is_sola_bot() {
+        match &cmd {
+            Command::Screenshot { .. } => return refuse_bot_compositor("screenshot"),
+            Command::Sample { .. } => return refuse_bot_compositor("sample"),
+            Command::Input(_) => return refuse_bot_compositor("input"),
+            Command::Windows => {}
+        }
+    }
     match cmd {
         Command::Screenshot {
             output,
@@ -83,13 +101,6 @@ pub fn run(cmd: Command) -> i32 {
             format,
             timeout,
         } => {
-            if bot_blocked_capture() {
-                eprintln!(
-                    "solactl: bots must not screenshot the compositor.\n\
-                     Use `solactl browser snapshot --tab <id>` (works on background tabs)."
-                );
-                return 3;
-            }
             let mut params = serde_json::Map::new();
             if let Some(p) = output {
                 params.insert(
@@ -114,10 +125,6 @@ pub fn run(cmd: Command) -> i32 {
             )
         }
         Command::Sample { size, timeout } => {
-            if bot_blocked_capture() {
-                eprintln!("solactl: bots must not use compositor sample.");
-                return 3;
-            }
             call::run(
                 OWNER_COMPOSITOR,
                 "sample",
@@ -131,13 +138,6 @@ pub fn run(cmd: Command) -> i32 {
 }
 
 fn run_input(cmd: InputCmd) -> i32 {
-    if std::env::var("SOLA_BOT").ok().as_deref() == Some("1") {
-        eprintln!(
-            "solactl: bots must not use compositor input (mouse/keyboard).\n\
-             Joshua is at the seat. Drive pages with `solactl browser` (snapshot + click/fill by ref)."
-        );
-        return 3;
-    }
     match cmd {
         InputCmd::Click {
             x,

@@ -46,7 +46,9 @@ Loop (always pass `--tab <id>`; never the focused tab by default):
 4. `solactl browser snapshot --tab N` — **this is the page description**
    (a11y YAML + refs `e12`). Not a screenshot. Works on background tabs.
 5. Act on **that** tab: `find --text …`, `click --ref e12`,
-   `fill --ref e5 --text …`, `type --ref e5 --text …`.
+   `fill --ref e5 --text …`, `type --ref e5 --text …`. If the snapshot
+   is empty (canvas), `click --tab N --x --y` and `key --tab N --chord Return`
+   in **that tab’s CSS pixels / CEF**, never compositor input.
 6. Stale ref → snapshot again. Never invent refs.
 7. `wait --text '…' --tab N` after navigations.
 8. `solactl browser screenshot --tab N` only if snapshot is empty

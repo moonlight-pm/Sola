@@ -13,6 +13,7 @@ use cef::*;
 use crate::agent::{AgentOp, AgentReply, AgentRequest};
 use crate::ax::{self, SnapshotOpts};
 use crate::cef::ipc::FromEngine;
+use crate::chord::CdpKeyEvent;
 
 thread_local! {
     static JOBS: RefCell<HashMap<(i32, i32), Job>> = RefCell::new(HashMap::new());
@@ -31,6 +32,8 @@ enum Phase {
     CallJs,
     BoxModel,
     Mouse { x: i32, y: i32, step: u8 },
+    Keys { events: Vec<CdpKeyEvent>, i: usize },
+    Wheel,
     Ready,
     Shot { path: String },
 }
@@ -111,6 +114,30 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
                 Job {
                     req,
                     phase: Phase::BoxModel,
+                },
+            );
+        }
+        AgentOp::ClickAt { x, y } => {
+            queue_mouse(host, browser_id, req, x, y, "mouseMoved", false, 1);
+        }
+        AgentOp::HoverAt { x, y } => {
+            queue_mouse(host, browser_id, req, x, y, "mouseMoved", false, 3);
+        }
+        AgentOp::Key { events } => {
+            if events.is_empty() {
+                emit(AgentReply::fail(id, tab, "empty chord"));
+                return;
+            }
+            queue_key(host, browser_id, req, events, 0);
+        }
+        AgentOp::Scroll { dx, dy, x, y } => {
+            let mid = dispatch_wheel(host, x, y, dx, dy);
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req,
+                    phase: Phase::Wheel,
                 },
             );
         }
@@ -406,6 +433,15 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
             2 => queue_mouse(&host, browser_id, job.req, x, y, "mouseReleased", false, 3),
             _ => emit_ok(job.req.id, job.req.tab, None),
         },
+        Phase::Keys { events, i } => {
+            let next = i + 1;
+            if next >= events.len() {
+                emit_ok(job.req.id, job.req.tab, None);
+            } else {
+                queue_key(&host, browser_id, job.req, events, next);
+            }
+        }
+        Phase::Wheel => emit_ok(job.req.id, job.req.tab, None),
         Phase::Ready => match parse_ready(result) {
             Ok((ready, url, title)) => {
                 emit(AgentReply {
@@ -657,6 +693,53 @@ fn queue_mouse(
             phase: Phase::Mouse { x, y, step: next },
         },
     );
+}
+
+fn queue_key(
+    host: &BrowserHost,
+    browser_id: i32,
+    req: AgentRequest,
+    events: Vec<CdpKeyEvent>,
+    i: usize,
+) {
+    let Some(ev) = events.get(i) else {
+        emit(AgentReply::fail(req.id, req.tab, "empty chord"));
+        return;
+    };
+    let mid = dispatch_key(host, ev);
+    put(
+        browser_id,
+        mid,
+        Job {
+            req,
+            phase: Phase::Keys { events, i },
+        },
+    );
+}
+
+fn dispatch_key(host: &BrowserHost, ev: &CdpKeyEvent) -> i32 {
+    let mut params = dict();
+    set_str(&mut params, "type", &ev.ty);
+    set_str(&mut params, "key", &ev.key);
+    set_str(&mut params, "code", &ev.code);
+    set_int(&mut params, "windowsVirtualKeyCode", ev.vk);
+    set_int(&mut params, "nativeVirtualKeyCode", ev.vk);
+    set_int(&mut params, "modifiers", ev.modifiers);
+    if !ev.text.is_empty() {
+        set_str(&mut params, "text", &ev.text);
+        set_str(&mut params, "unmodifiedText", &ev.text);
+    }
+    cdp(host, "Input.dispatchKeyEvent", Some(&mut params))
+}
+
+fn dispatch_wheel(host: &BrowserHost, x: i32, y: i32, dx: i32, dy: i32) -> i32 {
+    let mut params = dict();
+    set_str(&mut params, "type", "mouseWheel");
+    set_int(&mut params, "x", x);
+    set_int(&mut params, "y", y);
+    set_int(&mut params, "deltaX", dx);
+    set_int(&mut params, "deltaY", dy);
+    cdp(host, "Input.dispatchMouseEvent", Some(&mut params))
 }
 
 fn dispatch_mouse(host: &BrowserHost, ty: &str, x: i32, y: i32, down: bool) -> i32 {

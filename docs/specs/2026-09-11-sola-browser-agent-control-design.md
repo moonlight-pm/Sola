@@ -6,9 +6,9 @@
 
 | | |
 |--|--|
-| **Implementation** | sola-browser advertises owner `browser`; `solactl browser` compiled clap; chrome verbs + page snapshot/act via helper-wrapped CDP (`Accessibility.getFullAXTree` / `Runtime.callFunctionOn` / `Input.dispatchMouseEvent`). `wait --load` uses `document.readyState` plus the pending goto/open URL (not the CEF spinner). Background act briefly unhides the OSR host without switching chrome’s seat; mouse events complete before it is hidden again. Ref map stays in chrome. |
-| **Dogfood** | **installed** `browser`+`solactl` release 2026-09-11 (Tertius one-tab profile). Smoke: background `tab.open` does not steal seat; `wait --load` returns on example.com (not blank); YAML snapshot + refs; background `click` Learn more → IANA; fill + radio/checkbox on httpbin; screenshot / hover / goto / group.create Agent / back / `wait --text`; tab.close. Seat stayed on DHH. |
-| **Gaps** | confirm still **D3**; `read` / REPL later; vault fill not shipped; locked agent viewport not decided; iframe OOPIF trees not walked (in-process iframe nodes only); `tabs` URL can lag a live snapshot after click; `wait --load` after click has no pending URL (use `wait --text` or snapshot) |
+| **Implementation** | sola-browser advertises owner `browser`; `solactl browser` compiled clap; chrome verbs + page snapshot/act via helper-wrapped CDP (`Accessibility.getFullAXTree` / `Runtime.callFunctionOn` / `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`). `wait --load` uses `document.readyState` plus the pending goto/open URL (not the CEF spinner). Background act briefly unhides the OSR host without switching chrome’s seat; mouse/key events complete before it is hidden again. `click`/`hover` take a snapshot `--ref` **or** CSS-pixel `--x`/`--y` in that tab’s viewport. `key --chord` and `scroll --dx/--dy` dispatch on that tab, not the Wayland seat. `SOLA_BOT=1` refuses `tab.focus`, `--select`, compositor input/screenshot, and page verbs without `--tab`. Ref map stays in chrome. |
+| **Dogfood** | **installed** `browser`+`solactl` release 2026-09-11 (Tertius one-tab profile). Smoke: background `tab.open` does not steal seat; `wait --load` returns on example.com (not blank); YAML snapshot + refs; background `click` Learn more → IANA; fill + radio/checkbox on httpbin; screenshot / hover / goto / group.create Agent / back / `wait --text`; tab.close. Seat stayed on DHH. CSS-pixel click / `key --chord` **in code**, not installed. |
+| **Gaps** | confirm still **D3**; `read` / REPL later; vault fill not shipped; locked agent viewport not decided; iframe OOPIF trees not walked (in-process iframe nodes only); `tabs` URL can lag a live snapshot after click; `wait --load` after click has no pending URL (use `wait --text` or snapshot); file chooser not on this plane |
 
 ---
 
@@ -74,7 +74,8 @@ dispatch, tests, [`docs/manual/solactl.md`](../manual/solactl.md)). Direction:
    user can do” in chrome; grow the call plane until an agent can do the
    same work.
 2. **Page** — `snapshot` (pruned a11y YAML + refs), `click` / `type` /
-   `fill` / `select` / `hover` by ref, `goto` + `wait`, `find` in the
+   `fill` / `select` / `hover` by ref **or** CSS-pixel `--x`/`--y` in
+   that tab, `key --chord`, `scroll`, `goto` + `wait`, `find` in the
    last snapshot, page `screenshot` as fallback. Playwright-shaped
    **REPL** with the **same**
    refs is second, not first. `read` (prose) is later.
@@ -201,8 +202,9 @@ the Sola contract, Agent Tabs as chrome.
   compiled clap noun (fail if chrome/call down).
 - Chrome verbs: tabs, tab.open/close/focus/move, groups, goto/back/forward/
   reload/stop, find.page. `tab.open` does not focus unless `--select`.
-- Page verbs: snapshot (YAML + refs), find, click/hover/type/fill/select,
-  wait, screenshot. Helper wraps CDP; chrome holds `ref → backendDOMNodeId`.
+- Page verbs: snapshot (YAML + refs), find, click/hover (ref or CSS `--x/--y`),
+  type/fill/select, key `--chord`, scroll, wait, screenshot. Helper wraps CDP;
+  chrome holds `ref → backendDOMNodeId`.
 - Open URL still works: `solactl open`, bus `OpenUrl`, `chrome.sock`.
 - Each CEF helper still binds a localhost Chromium debug port for DevTools.
   That is not the agent API.
