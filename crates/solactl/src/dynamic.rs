@@ -50,6 +50,10 @@ pub fn run(args: Vec<String>) -> i32 {
             if entry.owner == "workspaces" {
                 inject_ws_context(method, &mut params);
             }
+            if let Err(e) = apply_bot_policy(&entry.owner, method, &mut params) {
+                eprintln!("solactl: {e}");
+                return 3;
+            }
             let timeout = invoke_timeout_secs(spec, &params);
             call::run(&entry.owner, method, params, timeout)
         }
@@ -58,6 +62,88 @@ pub fn run(args: Vec<String>) -> i32 {
             3
         }
     }
+}
+
+/// Bots (`SOLA_BOT=1`) must not steal the seat: no compositor capture/input,
+/// no `tab.focus` / `--select`, and page verbs require `--tab`.
+pub(crate) fn apply_bot_policy(
+    owner: &str,
+    method: &str,
+    params: &mut serde_json::Value,
+) -> Result<(), String> {
+    bot_policy(
+        std::env::var("SOLA_BOT").ok().as_deref() == Some("1"),
+        owner,
+        method,
+        params,
+    )
+}
+
+fn bot_policy(
+    is_bot: bool,
+    owner: &str,
+    method: &str,
+    params: &mut serde_json::Value,
+) -> Result<(), String> {
+    if !is_bot {
+        return Ok(());
+    }
+    if owner == "compositor"
+        && (method == "screenshot" || method == "sample" || method.starts_with("input."))
+    {
+        return Err(
+            "bots must not use compositor screenshot/input. Use `solactl browser snapshot --tab …` (background tabs are fine)."
+                .into(),
+        );
+    }
+    if owner == "browser" {
+        if method == "tab.focus" {
+            return Err(
+                "bots must not focus a tab — Joshua may be using the browser. Target `--tab <id>` instead."
+                    .into(),
+            );
+        }
+        if method == "tab.open"
+            && params.get("select").and_then(|v| v.as_bool()) == Some(true)
+        {
+            return Err(
+                "bots must not --select a tab. `tab.open` already stays in the background."
+                    .into(),
+            );
+        }
+        const NEED_TAB: &[&str] = &[
+            "snapshot",
+            "click",
+            "fill",
+            "type",
+            "hover",
+            "select",
+            "wait",
+            "goto",
+            "screenshot",
+            "find",
+            "back",
+            "forward",
+            "reload",
+            "stop",
+            "find.page",
+        ];
+        if NEED_TAB.contains(&method) {
+            let tab = params.get("tab").and_then(|v| {
+                v.as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            });
+            if tab.is_none() {
+                return Err(
+                    "bots must pass --tab <id> so they never touch the focused tab."
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
@@ -374,5 +460,18 @@ mod tests {
         assert_eq!(invoke_timeout_secs(&spec, &p), 122);
         let empty = serde_json::json!({});
         assert_eq!(invoke_timeout_secs(&spec, &empty), 8);
+    }
+
+    #[test]
+    fn bot_cannot_focus_or_omit_tab() {
+        let mut p = serde_json::json!({});
+        assert!(bot_policy(true, "browser", "tab.focus", &mut p).is_err());
+        assert!(bot_policy(true, "browser", "snapshot", &mut p).is_err());
+        p["tab"] = serde_json::json!("3");
+        assert!(bot_policy(true, "browser", "snapshot", &mut p).is_ok());
+        p["select"] = serde_json::json!(true);
+        assert!(bot_policy(true, "browser", "tab.open", &mut p).is_err());
+        assert!(bot_policy(true, "compositor", "screenshot", &mut p).is_err());
+        assert!(bot_policy(false, "browser", "tab.focus", &mut p).is_ok());
     }
 }

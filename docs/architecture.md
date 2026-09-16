@@ -40,7 +40,7 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
          │              │  workspaces · browser        │
-         │              │  wrapper · mail · calendar · scope · spotify │
+         │              │  wrapper · mail · calendar · bots · scope · spotify │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -57,6 +57,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola` | Process manager (binary entry) |
 | `crates/sola-bus` | Bus host + client library + topics |
 | `crates/sola-call` | Call host + client library (request/reply) |
+| `crates/sola-bots` | Named informational LLM sessions. Daemon `sola-botsd` (supervisor `MANAGED`, owner `bots`) + iced **Bots** (`sola-bots`). Homes `~/Bots/<slug>/`. ACP `grok agent stdio` (yolo). Not Workspaces. |
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |

@@ -9,7 +9,7 @@ the **bus** only for `emit`.
 solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
 solactl compositor sample [--size N]
 solactl compositor windows
-solactl compositor input click|move|scroll|key …
+solactl compositor input click|move|scroll|key …   # rejected when SOLA_BOT=1
 solactl session launch <app_id> [--command CMD]
 solactl session close  <app_id>
 ```
@@ -23,9 +23,42 @@ is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
 shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
 copy to the clipboard instead of writing this file.
 
-`workspaces` and `browser` are first-class subcommands (`solactl` /
+`workspaces`, `browser`, and `bots` are first-class subcommands (`solactl` /
 `solactl --help`). Other running apps that have advertised methods:
 `solactl <app-id>` lists them; `solactl <app-id> <method> …` invokes.
+
+## Bots (`solactl bots`)
+
+Needs **sola-botsd** (owner `bots`). Fails if the daemon or `sola-call`
+is down — it does not launch a window.
+
+```text
+solactl bots                         # list methods
+solactl bots list
+solactl bots new --name Suno
+solactl bots send --bot suno --text 'hello'
+solactl bots transcript --bot suno
+solactl bots rm --bot suno
+solactl bots cancel --bot suno
+```
+
+Phone API: daemon binds HTTP `0.0.0.0:27419`. Public name is
+`https://bot.sola.computer` (TLS at the proxy). Open **27419/tcp** to the
+desk for that proxy:
+
+```text
+GET  /health
+GET  /bots
+GET  /bots/{id}/transcript
+POST /bots/{id}/send     { "text": "…" }
+POST /bots/{id}/cancel
+Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
+```
+
+Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
+(introduction; the orientation prompt is not shown as a user message).
+`rm` deletes the catalog row, the home directory, and the Grok session.
+Not a coding agent; not Workspaces.
 
 ## Workspaces (`solactl workspaces`)
 
@@ -141,6 +174,12 @@ name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
 `wait` / `wait --load` returns when `document.readyState` is `complete` on
 a committed URL (not the tab-strip spinner). `wait --text` snapshots until
 that string appears.
+
+Snapshot, click, fill, type, and `browser screenshot` target **that tab’s
+CEF document** — they work when the tab is in the background and do not
+raise it. `tab.open` does not focus. Bots (`SOLA_BOT=1`) **must** pass
+`--tab`, and are refused `tab.focus`, `tab.open --select`, and compositor
+screenshot/input.
 
 ## Not calls
 

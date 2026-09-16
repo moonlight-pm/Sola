@@ -16,6 +16,13 @@ Do not invent product policy.
 
 ## Now
 
+0. **Bots** (this worktree) — named informational LLM sessions on this
+   machine; iced dialog + native iPhone; not a PTY, not coding.
+   Freeze
+   [`docs/specs/2026-09-15-sola-bots-design.md`](docs/specs/2026-09-15-sola-bots-design.md).
+   POC **installed** `bots` + `shell` + `sola` + `solactl` (release).
+   Supervisor starts `sola-botsd`; launcher **Bots**; `solactl bots`.
+   Desk-smoke create/send. HTTP/iOS later.
 1. **Window menu + Super+K** — kit Window menu (zones, float, hide, cycle);
    shell injects it when an app omits it; Super+K shortcuts overlay
    (Omarchy chord). Freeze
@@ -358,7 +365,8 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
 | Browser agent control | Agent lives in **Workspaces**, not in the browser. Face: `solactl browser` (owner `browser`). Same strip / profile; **Agent** pocket is a skill convention. Page loop: pruned a11y **YAML** + opaque refs (`backendDOMNodeId`, fail stale) — not JSON/DOM/CDP. Confirm still **D3**. Freeze [`docs/specs/2026-09-11-sola-browser-agent-control-design.md`](docs/specs/2026-09-11-sola-browser-agent-control-design.md). |
 | Wrapper | **`sola-wrapper <id>`**; `app_id` is the configured id; per-id CEF profile under `~/.config/sola/wrapper/<id>/`; Applications catalog (`kind` + `url`); not sola-browser chrome |
-| Agent product | **Workspaces** (`grok` / `codex` CLI in PTYs). The iced ACP/Grok-leader GUI (`crates/sola-agent`) is **retired** — do not rebuild it or a multi-client ACP chat. The agent **calls** the browser; it does not live there. |
+| Agent product | **Two products.** **Workspaces** = coding (`grok` / `codex` in PTYs, worktrees). **Bots** = informational named sessions (`sola-bots` daemon + ACP `grok agent stdio`, dialog UI, `~/Bots/<slug>/`). The iced ACP/Grok-leader GUI (`crates/sola-agent`) stays **retired** — do not rebuild it. Coding agents **call** the browser; bots do too (`solactl browser`). Freeze [`docs/specs/2026-09-15-sola-bots-design.md`](docs/specs/2026-09-15-sola-bots-design.md). |
+| Bots | Informational, not coding. Yolo tools. One long dialog (hide compaction). Home **`~/Bots/<slug>/`** (write fence is the foundation prompt). No `~/Workspace` / worktrees. Daemon is process of record; iced + native iOS are clients. Owner `bots`. |
 | Workspaces | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
 | Workspaces CLI | **Grok and Codex are first-class.** Hooks, presence, OSC, and spawn implement Grok first; Codex gets the same spawn / exec / hook path. Claude / OpenCode stay presence-only (D4). |
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |

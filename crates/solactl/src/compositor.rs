@@ -70,6 +70,10 @@ pub enum InputCmd {
     },
 }
 
+fn bot_blocked_capture() -> bool {
+    std::env::var("SOLA_BOT").ok().as_deref() == Some("1")
+}
+
 pub fn run(cmd: Command) -> i32 {
     match cmd {
         Command::Screenshot {
@@ -79,6 +83,13 @@ pub fn run(cmd: Command) -> i32 {
             format,
             timeout,
         } => {
+            if bot_blocked_capture() {
+                eprintln!(
+                    "solactl: bots must not screenshot the compositor.\n\
+                     Use `solactl browser snapshot --tab <id>` (works on background tabs)."
+                );
+                return 3;
+            }
             let mut params = serde_json::Map::new();
             if let Some(p) = output {
                 params.insert(
@@ -102,18 +113,31 @@ pub fn run(cmd: Command) -> i32 {
                 timeout,
             )
         }
-        Command::Sample { size, timeout } => call::run(
-            OWNER_COMPOSITOR,
-            "sample",
-            serde_json::json!({ "size": size }),
-            timeout,
-        ),
+        Command::Sample { size, timeout } => {
+            if bot_blocked_capture() {
+                eprintln!("solactl: bots must not use compositor sample.");
+                return 3;
+            }
+            call::run(
+                OWNER_COMPOSITOR,
+                "sample",
+                serde_json::json!({ "size": size }),
+                timeout,
+            )
+        }
         Command::Windows => call::run(OWNER_COMPOSITOR, "windows", serde_json::json!({}), 5),
         Command::Input(input) => run_input(input),
     }
 }
 
 fn run_input(cmd: InputCmd) -> i32 {
+    if std::env::var("SOLA_BOT").ok().as_deref() == Some("1") {
+        eprintln!(
+            "solactl: bots must not use compositor input (mouse/keyboard).\n\
+             Joshua is at the seat. Drive pages with `solactl browser` (snapshot + click/fill by ref)."
+        );
+        return 3;
+    }
     match cmd {
         InputCmd::Click {
             x,
