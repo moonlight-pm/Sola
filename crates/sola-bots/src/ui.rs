@@ -1,9 +1,11 @@
-//! Iced Bots window: list + long dialog.
+//! Iced Bots window: list + long dialog. Talks HTTP/SSE to sola-botsd.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iced::event;
+use iced::futures::Stream;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
@@ -77,9 +79,8 @@ pub enum Msg {
     TitleDrag,
     TitleClose,
     TitleResize(iced::window::Direction),
-    Tick,
+    Sse(SseFrame),
     Listed(Result<Value, String>),
-    Polled(Result<Value, String>),
     Transcript(Result<Value, String>),
     Sent(Result<Value, String>),
     OpenUrl(String),
@@ -103,6 +104,16 @@ pub enum Msg {
     Scrolled(Viewport),
     JumpLatest,
     BodySelect(Option<String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum SseFrame {
+    Snapshot(Value),
+    Bots(Value),
+    Transcript(Value),
+    Delta { id: String, text: String },
+    Removed { id: String },
+    Error(String),
 }
 
 impl Default for App {
@@ -155,12 +166,7 @@ impl App {
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
-            iced::time::every(if self.sending {
-                Duration::from_millis(400)
-            } else {
-                Duration::from_millis(1500)
-            })
-            .map(|_| Msg::Tick),
+            iced::Subscription::run(sse_stream).map(Msg::Sse),
             event::listen_with(|event, _status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
                     if matches!(key, iced::keyboard::Key::Named(NamedKey::Escape)) =>
@@ -212,8 +218,7 @@ impl App {
                 iced::exit()
             }
             Msg::TitleResize(d) => sola_kit::drag_resize(self.window_id, d),
-            Msg::Tick => poll_task(self.live_selected()),
-            Msg::Polled(r) => self.apply_poll(r),
+            Msg::Sse(frame) => self.apply_sse(frame),
             Msg::Listed(Ok(v)) => self.apply_bots(&v),
             Msg::Listed(Err(e)) => {
                 self.status = e;
@@ -254,7 +259,12 @@ impl App {
                 if !self.sending {
                     return Task::none();
                 }
-                invoke("cancel", serde_json::json!({ "bot": id }), Msg::Cancelled)
+                rest(
+                    move || {
+                        crate::client::post(&format!("/bots/{id}/cancel"), &serde_json::json!({}))
+                    },
+                    Msg::Cancelled,
+                )
             }
             Msg::Cancelled(Ok(_)) => {
                 self.status.clear();
@@ -291,11 +301,7 @@ impl App {
             Msg::KeySend | Msg::Send => self.send_compose(),
             Msg::Sent(Ok(_)) => {
                 self.status.clear();
-                if let Some(id) = self.live_selected() {
-                    refresh_transcript(id)
-                } else {
-                    Task::none()
-                }
+                Task::none()
             }
             Msg::Sent(Err(e)) => {
                 self.sending = false;
@@ -312,7 +318,10 @@ impl App {
                     return Task::none();
                 }
                 self.new_name.clear();
-                invoke("new", serde_json::json!({ "name": name }), Msg::Created)
+                rest(
+                    move || crate::client::post("/bots", &serde_json::json!({ "name": name })),
+                    Msg::Created,
+                )
             }
             Msg::Created(Ok(v)) => {
                 if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
@@ -333,16 +342,25 @@ impl App {
                 self.status = e;
                 Task::none()
             }
-            Msg::Rm(id) => invoke("rm", serde_json::json!({ "bot": id }), Msg::Removed),
+            Msg::Rm(id) => rest(
+                {
+                    let id = id.clone();
+                    move || crate::client::delete(&format!("/bots/{id}"))
+                },
+                Msg::Removed,
+            ),
             Msg::Removed(Ok(v)) => {
                 let gone = v.get("id").and_then(|i| i.as_str());
-                if gone.is_some() && self.selected.as_deref() == gone {
-                    self.selected = None;
-                    self.turns.clear();
-                    self.body_sel = None;
-                    self.status.clear();
+                if let Some(id) = gone {
+                    self.bots.retain(|b| b.id != id);
+                    if self.selected.as_deref() == Some(id) {
+                        self.selected = None;
+                        self.turns.clear();
+                        self.body_sel = None;
+                        self.status.clear();
+                    }
                 }
-                refresh_list()
+                Task::none()
             }
             Msg::Removed(Err(e)) => {
                 self.status = e;
@@ -388,6 +406,50 @@ impl App {
                 Task::none()
             }
         }
+    }
+
+    fn apply_sse(&mut self, frame: SseFrame) -> Task<Msg> {
+        match frame {
+            SseFrame::Snapshot(v) => {
+                self.status.clear();
+                self.apply_poll(Ok(v))
+            }
+            SseFrame::Bots(v) => {
+                self.status.clear();
+                self.apply_bots(&v)
+            }
+            SseFrame::Transcript(v) => self.apply_transcript(&v),
+            SseFrame::Delta { id, text } => self.apply_delta(&id, &text),
+            SseFrame::Removed { id } => {
+                self.bots.retain(|b| b.id != id);
+                if self.selected.as_deref() == Some(id.as_str()) {
+                    self.selected = None;
+                    self.turns.clear();
+                    self.body_sel = None;
+                    self.status.clear();
+                }
+                Task::none()
+            }
+            SseFrame::Error(e) => {
+                self.status = e;
+                Task::none()
+            }
+        }
+    }
+
+    fn apply_delta(&mut self, id: &str, text: &str) -> Task<Msg> {
+        if let Some(row) = self.bots.iter_mut().find(|b| b.id == id) {
+            row.status = "working".into();
+        }
+        if self.selected.as_deref() != Some(id) {
+            return Task::none();
+        }
+        match self.turns.last_mut() {
+            Some((role, body)) if role == "assistant" => body.push_str(text),
+            _ => self.turns.push(("assistant".into(), text.to_string())),
+        }
+        self.sending = true;
+        self.on_thread_changed()
     }
 
     fn apply_poll(&mut self, r: Result<Value, String>) -> Task<Msg> {
@@ -497,9 +559,13 @@ impl App {
         self.thread_follow = true;
         self.thread_unseen = false;
         Task::batch([
-            invoke(
-                "send",
-                serde_json::json!({ "bot": id, "text": text }),
+            rest(
+                move || {
+                    crate::client::post(
+                        &format!("/bots/{id}/send"),
+                        &serde_json::json!({ "text": text }),
+                    )
+                },
                 Msg::Sent,
             ),
             snap_thread(),
@@ -846,36 +912,101 @@ fn snap_thread() -> Task<Msg> {
     operation::snap_to_end(thread_scroll_id())
 }
 
-fn poll_task(bot: Option<String>) -> Task<Msg> {
-    let params = match bot {
-        Some(id) => serde_json::json!({ "bot": id }),
-        None => serde_json::json!({}),
-    };
-    invoke("poll", params, Msg::Polled)
-}
-
 fn refresh_list() -> Task<Msg> {
-    invoke("list", serde_json::json!({}), Msg::Listed)
+    rest(|| crate::client::get("/bots"), Msg::Listed)
 }
 
 fn refresh_transcript(id: String) -> Task<Msg> {
-    invoke(
-        "transcript",
-        serde_json::json!({ "bot": id }),
+    rest(
+        move || crate::client::get(&format!("/bots/{id}/transcript")),
         Msg::Transcript,
     )
 }
 
-fn invoke(method: &'static str, params: Value, map: fn(Result<Value, String>) -> Msg) -> Task<Msg> {
+fn rest(
+    work: impl FnOnce() -> Result<Value, String> + Send + 'static,
+    map: fn(Result<Value, String>) -> Msg,
+) -> Task<Msg> {
     Task::perform(
         async move {
-            std::thread::spawn(move || {
-                sola_call::invoke("bots", method, params, Duration::from_secs(8))
-                    .map_err(|e| e.to_string())
-            })
-            .join()
-            .unwrap_or_else(|_| Err("invoke thread panicked".into()))
+            std::thread::spawn(work)
+                .join()
+                .unwrap_or_else(|_| Err("http thread panicked".into()))
         },
         map,
     )
+}
+
+static SSE_TX: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<SseFrame>>> =
+    Mutex::new(None);
+static SSE_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn sse_stream() -> impl Stream<Item = SseFrame> {
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+    match SSE_TX.lock() {
+        Ok(mut slot) => *slot = Some(tx),
+        Err(poisoned) => *poisoned.into_inner() = Some(tx),
+    }
+    ensure_sse_thread();
+    rx
+}
+
+fn ensure_sse_thread() {
+    if SSE_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("bots-sse".into())
+        .spawn(|| {
+            let mut backoff = Duration::from_millis(400);
+            loop {
+                let result = crate::client::read_events(|event, data| {
+                    let frame = match event {
+                        "snapshot" => SseFrame::Snapshot(data),
+                        "bots" => SseFrame::Bots(data),
+                        "transcript" => SseFrame::Transcript(data),
+                        "delta" => SseFrame::Delta {
+                            id: data
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            text: data
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        },
+                        "removed" => SseFrame::Removed {
+                            id: data
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        },
+                        _ => return true,
+                    };
+                    let mut slot = SSE_TX.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(tx) = slot.as_ref() {
+                        if tx.unbounded_send(frame).is_err() {
+                            *slot = None;
+                            return false;
+                        }
+                    }
+                    true
+                });
+                if let Err(e) = result {
+                    let slot = SSE_TX.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(tx) = slot.as_ref() {
+                        let _ = tx.unbounded_send(SseFrame::Error(e));
+                    }
+                    std::thread::sleep(backoff);
+                    backoff = (backoff * 2).min(Duration::from_secs(8));
+                } else {
+                    backoff = Duration::from_millis(400);
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
+        })
+        .ok();
 }

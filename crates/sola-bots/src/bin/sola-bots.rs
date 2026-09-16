@@ -1,4 +1,4 @@
-//! Bots iced app — talks to sola-botsd over sola-call.
+//! Bots iced app — talks to sola-botsd over HTTP + SSE (same as the phone).
 
 use sola_bots::ui::{self, App};
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};

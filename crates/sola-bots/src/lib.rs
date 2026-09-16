@@ -4,6 +4,7 @@ pub mod acp;
 pub mod auth;
 pub mod calls;
 pub mod catalog;
+pub mod client;
 pub mod foundation;
 pub mod host;
 pub mod http;

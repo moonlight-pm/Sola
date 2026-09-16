@@ -60,9 +60,11 @@ Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
 ```
 
 `GET /events` is `text/event-stream` (chunked). Keepalive comments every 15s.
-The TLS proxy must not buffer the body (`proxy_buffering off`, honor
-`X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with a
-long `proxy_read_timeout`.
+The iced **Bots** window uses the same HTTP/SSE on `127.0.0.1:27419`
+(list/send/create/delete + live events). `solactl bots` still uses
+sola-call. The TLS proxy must not buffer the body (`proxy_buffering off`,
+honor `X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with
+a long `proxy_read_timeout`.
 
 Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
 (introduction; the orientation prompt is not shown as a user message).

@@ -6,7 +6,7 @@
 
 | | |
 |--|--|
-| **Implementation** | `crates/sola-bots` (`sola-botsd` + iced); HTTP `:27419` + SSE `GET /events`; iOS `~/Workspace/SolaBot` on Ember (scheme **SolaBot-Release** default); `solactl bots`; seat guards |
+| **Implementation** | `crates/sola-bots` (`sola-botsd` + iced HTTP/SSE client); HTTP `:27419` + SSE `GET /events`; iOS `~/Workspace/SolaBot` on Ember (scheme **SolaBot-Release** default); `solactl bots` on sola-call; seat guards |
 | **Dogfood** | desk + phone used; ACP dies on `cargo make install bots` |
 | **Gaps** | session-roll; Grok not tmux-backed (child of daemon); iOS SSH codesign flaky |
 
@@ -84,11 +84,12 @@ directory.
                          ├── ~/Bots/suno/   grok agent stdio
                          └── ~/Bots/mail/   grok agent stdio
 
-  sola-bots iced  ──sola-call / local HTTP──▶  daemon
+  sola-bots iced  ──HTTP SSE 127.0.0.1:27419──▶  daemon
 ```
 
 - Supervisor starts the daemon with bus/call, not only with the window.
 - Iced app is a launcher row (`app_id=sola-bots`). It does not spawn Grok.
+  Live state is HTTP SSE to the daemon, same as the phone.
 - Phone never talks Unix sockets.
 
 ---

@@ -23,11 +23,11 @@ Do not invent product policy.
    **Installed** `bots`+`solactl`+`browser` (this worktree). HTTP
    `https://bot.sola.computer` → desk `:27419`. iOS **SolaBot** on Ember
    (`~/Workspace/SolaBot`); default scheme **SolaBot-Release** (Run =
-   Release). Phone realtime is **SSE** `GET /events` (not `/poll`).
-   List swipe is Mail-style `swipeActions`. ACP no longer re-sends a
-   turn after disconnect. **Not installed** this pass — daemon must
-   stay up during a turn. **Next:** `install bots` when idle (needed
-   for SSE); session-roll TBD.
+   Release). Phone **and** iced Bots use HTTP SSE `GET /events`
+   (not sola-call poll). List swipe is Mail-style `swipeActions`.
+   ACP no longer re-sends a turn after disconnect. **Not installed**
+   this pass — daemon must stay up during a turn. **Next:**
+   `install bots` when idle (needed for SSE); session-roll TBD.
 1. **Window menu + Super+K** — kit Window menu (zones, float, hide, cycle);
    shell injects it when an app omits it; Super+K shortcuts overlay
    (Omarchy chord). Freeze
