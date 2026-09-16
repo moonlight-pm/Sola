@@ -1,7 +1,8 @@
 //! Phone API: JSON over HTTP, bearer token, bind `HTTP_BIND`.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Arc;
+use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
 use std::time::Instant;
 
@@ -10,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::auth::{HTTP_BIND, HTTP_TOKEN};
 use crate::host::Host;
-use crate::sse::SseBody;
+use crate::sse;
 
 const MAX_BODY: u64 = 256 * 1024;
 
@@ -212,25 +213,44 @@ fn read_json(req: &mut Request) -> Result<serde_json::Value, String> {
 fn stream_events(host: &Arc<Host>, req: Request) -> Result<u16, String> {
     let rx = host.subscribe();
     info!("sse client connected");
-    let body = SseBody::new(rx);
-    let res = cors(Response::new(
-        StatusCode(200),
-        vec![
-            Header::from_bytes(
-                &b"Content-Type"[..],
-                &b"text/event-stream; charset=utf-8"[..],
-            )
-            .unwrap(),
-            Header::from_bytes(&b"Cache-Control"[..], &b"no-cache"[..]).unwrap(),
-            Header::from_bytes(&b"X-Accel-Buffering"[..], &b"no"[..]).unwrap(),
-        ],
-        body,
-        None,
-        None,
-    ));
-    req.respond(res).map_err(|e| e.to_string())?;
+    // Write the socket ourselves. tiny_http's Response path does not
+    // flush until the body reader EOFs, so SSE would sit empty.
+    let mut w = req.into_writer();
+    w.write_all(
+        b"HTTP/1.1 200 OK\r\n\
+          Content-Type: text/event-stream; charset=utf-8\r\n\
+          Cache-Control: no-cache\r\n\
+          Connection: keep-alive\r\n\
+          Transfer-Encoding: chunked\r\n\
+          X-Accel-Buffering: no\r\n\
+          Access-Control-Allow-Origin: *\r\n\
+          Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
+          Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
+          \r\n",
+    )
+    .and_then(|_| w.flush())
+    .map_err(|e| e.to_string())?;
+    loop {
+        let frame = match rx.recv_timeout(sse::KEEPALIVE) {
+            Ok(bytes) => bytes,
+            Err(RecvTimeoutError::Timeout) => sse::comment("keepalive"),
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        if write_chunk(&mut w, &frame).is_err() {
+            break;
+        }
+    }
+    let _ = write!(w, "0\r\n\r\n");
+    let _ = w.flush();
     info!("sse client disconnected");
     Ok(200)
+}
+
+fn write_chunk(w: &mut impl Write, data: &[u8]) -> std::io::Result<()> {
+    write!(w, "{:x}\r\n", data.len())?;
+    w.write_all(data)?;
+    w.write_all(b"\r\n")?;
+    w.flush()
 }
 
 fn respond(req: Request, code: u16, body: serde_json::Value) -> Result<u16, String> {
