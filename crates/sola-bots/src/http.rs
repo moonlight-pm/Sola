@@ -11,6 +11,8 @@ use tracing::{info, warn};
 use crate::auth::{HTTP_BIND, HTTP_TOKEN};
 use crate::host::Host;
 
+const MAX_BODY: u64 = 256 * 1024;
+
 pub fn spawn(host: Arc<Host>) {
     thread::Builder::new()
         .name("bots-http".into())
@@ -42,7 +44,10 @@ fn handle(host: &Arc<Host>, req: Request) -> Result<(), String> {
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("/").to_string();
-    let remote = req.remote_addr().map(|a| a.to_string()).unwrap_or_else(|| "-".into());
+    let remote = req
+        .remote_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "-".into());
     let result = handle_inner(host, req, &method, &path, &url);
     let ms = t0.elapsed().as_millis();
     match &result {
@@ -161,23 +166,43 @@ fn query_param(url: &str, key: &str) -> Option<String> {
 }
 
 fn authorized(req: &Request) -> bool {
-    req.headers().iter().any(|h| {
-        h.field.equiv("Authorization") && {
-            let v = h.value.as_str();
-            v == format!("Bearer {HTTP_TOKEN}") || v == HTTP_TOKEN
-        }
-    })
+    req.headers()
+        .iter()
+        .any(|h| h.field.equiv("Authorization") && bearer_ok(h.value.as_str()))
+}
+
+fn bearer_ok(value: &str) -> bool {
+    let got = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .unwrap_or(value)
+        .as_bytes();
+    constant_eq(got, HTTP_TOKEN.as_bytes())
+}
+
+fn constant_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 fn read_json(req: &mut Request) -> Result<serde_json::Value, String> {
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     req.as_reader()
-        .read_to_string(&mut buf)
+        .take(MAX_BODY + 1)
+        .read_to_end(&mut buf)
         .map_err(|e| e.to_string())?;
-    if buf.trim().is_empty() {
+    if buf.len() as u64 > MAX_BODY {
+        return Err("body too large".into());
+    }
+    if buf.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(serde_json::json!({}));
     }
-    serde_json::from_str(&buf).map_err(|e| e.to_string())
+    serde_json::from_slice(&buf).map_err(|e| e.to_string())
 }
 
 fn respond(req: Request, code: u16, body: serde_json::Value) -> Result<u16, String> {
@@ -214,7 +239,33 @@ fn cors<R: std::io::Read>(res: Response<R>) -> Response<R> {
             .unwrap(),
         )
         .with_header(
-            Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"GET, POST, OPTIONS"[..])
-                .unwrap(),
+            Header::from_bytes(
+                &b"Access-Control-Allow-Methods"[..],
+                &b"GET, POST, DELETE, OPTIONS"[..],
+            )
+            .unwrap(),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearer_accepts_prefix_and_raw() {
+        assert!(bearer_ok(&format!("Bearer {HTTP_TOKEN}")));
+        assert!(bearer_ok(HTTP_TOKEN));
+        assert!(!bearer_ok("Bearer deadbeef"));
+        assert!(!bearer_ok(""));
+    }
+
+    #[test]
+    fn query_param_reads_bot() {
+        assert_eq!(
+            query_param("/poll?bot=abc-123", "bot").as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(query_param("/poll", "bot"), None);
+        assert_eq!(query_param("/poll?bot=", "bot"), None);
+    }
 }

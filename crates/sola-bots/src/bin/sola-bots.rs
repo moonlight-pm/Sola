@@ -1,10 +1,10 @@
 //! Bots iced app — talks to sola-botsd over sola-call.
 
+use sola_bots::ui::{self, App};
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
-use sola_bots::ui::{self, App};
 
 fn main() -> iced::Result {
     startup(ui::APP_ID);

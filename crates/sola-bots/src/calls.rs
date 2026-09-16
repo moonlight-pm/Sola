@@ -60,7 +60,10 @@ pub fn dispatch(host: &Arc<Host>, incoming: Incoming) {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
-                params.get(k).and_then(|v| v.as_i64()).map(|n| n.to_string())
+                params
+                    .get(k)
+                    .and_then(|v| v.as_i64())
+                    .map(|n| n.to_string())
             })
     };
     match method.as_str() {

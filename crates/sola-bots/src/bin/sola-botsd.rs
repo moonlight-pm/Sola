@@ -13,7 +13,10 @@ fn main() {
         // Crate is `sola_bots`; process name `sola-botsd` would otherwise
         // filter out host/acp logs.
         unsafe {
-            std::env::set_var("RUST_LOG", "sola_bots=info,sola_botsd=info,sola_core=info,sola_call=info");
+            std::env::set_var(
+                "RUST_LOG",
+                "sola_bots=info,sola_botsd=info,sola_core=info,sola_call=info",
+            );
         }
     }
     sola_core::log::init("sola-botsd");

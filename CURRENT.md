@@ -22,8 +22,10 @@ Do not invent product policy.
    [`docs/specs/2026-09-15-sola-bots-design.md`](docs/specs/2026-09-15-sola-bots-design.md).
    **Installed** `bots`+`solactl`+`browser` (this worktree). HTTP
    `https://bot.sola.computer` → desk `:27419`. iOS **SolaBot** on Ember
-   (`~/Workspace/SolaBot`). **Next:** leave daemon running during turns
-   (install kills ACP). Session-roll still TBD.
+   (`~/Workspace/SolaBot`); default scheme **SolaBot-Release** (Run =
+   Release). ACP no longer re-sends a turn after disconnect (would
+   duplicate tools). **Not installed** this pass — daemon must stay up
+   during a turn. **Next:** `install bots` when idle; session-roll TBD.
 1. **Window menu + Super+K** — kit Window menu (zones, float, hide, cycle);
    shell injects it when an app omits it; Super+K shortcuts overlay
    (Omarchy chord). Freeze

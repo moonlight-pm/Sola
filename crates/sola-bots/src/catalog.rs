@@ -63,11 +63,15 @@ impl Catalog {
     }
 
     pub fn find(&self, key: &str) -> Option<&BotRecord> {
-        self.bots.iter().find(|b| b.id == key || b.slug == key || b.name.eq_ignore_ascii_case(key))
+        self.bots
+            .iter()
+            .find(|b| b.id == key || b.slug == key || b.name.eq_ignore_ascii_case(key))
     }
 
     pub fn find_mut(&mut self, key: &str) -> Option<&mut BotRecord> {
-        self.bots.iter_mut().find(|b| b.id == key || b.slug == key || b.name.eq_ignore_ascii_case(key))
+        self.bots
+            .iter_mut()
+            .find(|b| b.id == key || b.slug == key || b.name.eq_ignore_ascii_case(key))
     }
 }
 
@@ -84,11 +88,7 @@ pub fn slugify(name: &str) -> String {
         }
     }
     let out = out.trim_matches('-').to_string();
-    if out.is_empty() {
-        "bot".into()
-    } else {
-        out
-    }
+    if out.is_empty() { "bot".into() } else { out }
 }
 
 pub fn unique_slug(catalog: &Catalog, base: &str) -> String {
@@ -116,5 +116,24 @@ mod tests {
     fn slug_from_name() {
         assert_eq!(slugify("Suno Music"), "suno-music");
         assert_eq!(slugify("  "), "bot");
+        assert_eq!(slugify("--Foo--Bar--"), "foo-bar");
+    }
+
+    #[test]
+    fn unique_slug_suffixes() {
+        let cat = Catalog {
+            bots: vec![BotRecord {
+                id: "1".into(),
+                name: "Suno".into(),
+                slug: "suno".into(),
+                vendor: "grok".into(),
+                model: "grok-4.6".into(),
+                grok_session_id: None,
+                created: String::new(),
+                last_used: String::new(),
+            }],
+        };
+        assert_eq!(unique_slug(&cat, "suno"), "suno-2");
+        assert_eq!(unique_slug(&cat, "mail"), "mail");
     }
 }

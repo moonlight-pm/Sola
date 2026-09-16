@@ -137,8 +137,14 @@ impl Host {
 
     pub fn transcript_json(&self, key: &str) -> Result<serde_json::Value, String> {
         let g = self.inner.lock().unwrap();
-        let rec = g.catalog.find(key).ok_or_else(|| format!("unknown bot {key}"))?;
-        let live = g.live.get(&rec.id).ok_or_else(|| format!("unknown bot {key}"))?;
+        let rec = g
+            .catalog
+            .find(key)
+            .ok_or_else(|| format!("unknown bot {key}"))?;
+        let live = g
+            .live
+            .get(&rec.id)
+            .ok_or_else(|| format!("unknown bot {key}"))?;
         Ok(json!({
             "id": rec.id,
             "name": rec.name,
@@ -179,6 +185,7 @@ impl Host {
             info!(%slug, "bot created");
             rec
         };
+        self.invalidate_list_cache();
         let home = paths::bot_home(&rec.slug);
         let intro = foundation::intro_prompt(&rec.name, &rec.slug, &home);
         let _ = self.prompt(&rec.id, &intro, false);
@@ -208,26 +215,31 @@ impl Host {
                 live.map(|l| l.acp),
             )
         };
-        thread::Builder::new()
-            .name(format!("bot-rm-{slug}"))
-            .spawn(move || {
-                if let Some(slot) = acp {
-                    if let Ok(mut g) = slot.lock() {
-                        *g = None;
-                    }
-                }
-                let home = paths::bot_home(&slug);
-                if home.exists() {
-                    let _ = fs::remove_dir_all(&home);
-                }
-                if let Some(sid) = session_id {
+        // Drop ACP and the home directory before returning so a create that
+        // reuses the slug cannot race `remove_dir_all` on the new bot.
+        if let Some(slot) = acp {
+            if let Ok(mut g) = slot.lock() {
+                *g = None;
+            }
+        }
+        let home = paths::bot_home(&slug);
+        if home.exists() {
+            fs::remove_dir_all(&home).map_err(|e| e.to_string())?;
+        }
+        self.invalidate_list_cache();
+        if let Some(sid) = session_id {
+            thread::Builder::new()
+                .name(format!("bot-rm-session-{slug}"))
+                .spawn(move || {
                     let _ = std::process::Command::new(paths::grok_bin())
                         .args(["sessions", "delete", &sid])
                         .status();
-                }
-                info!(%slug, "bot removed");
-            })
-            .ok();
+                    info!(%slug, "bot removed");
+                })
+                .ok();
+        } else {
+            info!(%slug, "bot removed");
+        }
         Ok(json!({ "ok": true, "id": id }))
     }
 
@@ -282,21 +294,33 @@ impl Host {
                 Arc::clone(&live.cancel),
             )
         };
+        self.invalidate_list_cache();
 
         let host = Arc::clone(self);
         let prompt = text.to_string();
         let reply_id = id.clone();
-        thread::Builder::new()
+        let thread_id = id.clone();
+        let thread_slug = slug.clone();
+        let spawn = thread::Builder::new()
             .name(format!("bot-{slug}"))
             .spawn(move || {
-                let result = run_turn(&host, &id, &slug, &model, &home, &acp_slot, &cancel, &prompt);
-                if result.as_ref().is_err_and(|e| e.contains("disconnect")) {
+                let result = run_turn(
+                    &host,
+                    &thread_id,
+                    &thread_slug,
+                    &model,
+                    &home,
+                    &acp_slot,
+                    &cancel,
+                    &prompt,
+                );
+                if result.as_ref().is_err_and(|e| acp_retryable(e)) {
                     if let Ok(mut slot) = acp_slot.lock() {
                         *slot = None;
                     }
                 }
                 let mut g = host.inner.lock().unwrap();
-                if let Some(live) = g.live.get_mut(&id) {
+                if let Some(live) = g.live.get_mut(&thread_id) {
                     match result {
                         Ok(()) => {
                             live.status = BotStatus::Idle;
@@ -311,16 +335,42 @@ impl Host {
                             live.error = Some(e);
                         }
                     }
-                    save_dialog(&slug, &live.dialog);
+                    save_dialog(&thread_slug, &live.dialog);
                 }
-                if let Some(rec) = g.catalog.find_mut(&id) {
+                if let Some(rec) = g.catalog.find_mut(&thread_id) {
                     rec.last_used = now_rfc();
                     let _ = g.catalog.save();
                 }
-            })
-            .map_err(|e| e.to_string())?;
+                drop(g);
+                host.invalidate_list_cache();
+            });
+        if let Err(e) = spawn {
+            self.revert_failed_spawn(&id, &slug, show_user, e.to_string());
+            return Err(e.to_string());
+        }
 
         Ok(json!({ "ok": true, "id": reply_id, "status": "working" }))
+    }
+
+    fn revert_failed_spawn(&self, id: &str, slug: &str, show_user: bool, err: String) {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(live) = g.live.get_mut(id) {
+            live.status = BotStatus::Idle;
+            live.error = Some(err);
+            let _ = live.dialog.pop();
+            if show_user {
+                let _ = live.dialog.pop();
+            }
+            save_dialog(slug, &live.dialog);
+        }
+        drop(g);
+        self.invalidate_list_cache();
+    }
+
+    fn invalidate_list_cache(&self) {
+        if let Ok(mut c) = self.list_cache.lock() {
+            *c = None;
+        }
     }
 
     pub fn cancel(&self, key: &str) -> Result<serde_json::Value, String> {
@@ -345,6 +395,13 @@ impl Host {
     }
 }
 
+fn acp_retryable(e: &str) -> bool {
+    e.contains("disconnect")
+        || e.contains("writer gone")
+        || e.contains("timed out")
+        || e.contains("spawn grok")
+}
+
 fn run_turn(
     host: &Host,
     id: &str,
@@ -355,78 +412,75 @@ fn run_turn(
     cancel: &Arc<AtomicBool>,
     prompt: &str,
 ) -> Result<(), String> {
-    loop {
+    if cancel.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
+    }
+    // Retry spawn/handshake only. Never re-send session/prompt — that
+    // would duplicate tool calls if Grok died after accepting the turn.
+    let mut tries = 0u32;
+    let (sess, session_id) = loop {
         if cancel.load(Ordering::SeqCst) {
             return Err("cancelled".into());
         }
-        match run_turn_once(host, id, slug, model, home, acp_slot, cancel, prompt) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.contains("cancelled") => return Err(e),
-            Err(e)
-                if e.contains("disconnect")
-                    || e.contains("writer gone")
-                    || e.contains("timed out") =>
-            {
-                let partial = {
-                    let g = host.inner.lock().unwrap();
-                    g.live.get(id).and_then(|l| l.dialog.last()).is_some_and(|t| {
-                        t.role == "assistant" && !t.text.trim().is_empty()
-                    })
-                };
-                warn!(%slug, %partial, "acp died ({e})");
+        match ensure_session(host, id, slug, model, home, acp_slot) {
+            Ok(pair) => break pair,
+            Err(e) if acp_retryable(&e) && tries < 2 => {
+                tries += 1;
+                warn!(%slug, tries, "acp spawn/handshake failed ({e}); retry");
                 if let Ok(mut g) = acp_slot.lock() {
                     *g = None;
-                }
-                if partial {
-                    // Keep the streamed text. Do not re-send the user prompt.
-                    return Ok(());
                 }
                 thread::sleep(Duration::from_millis(400));
             }
             Err(e) => return Err(e),
         }
-    }
-}
-
-fn run_turn_once(
-    host: &Host,
-    id: &str,
-    slug: &str,
-    model: &str,
-    home: &std::path::Path,
-    acp_slot: &Arc<Mutex<Option<Arc<AcpSession>>>>,
-    cancel: &Arc<AtomicBool>,
-    prompt: &str,
-) -> Result<(), String> {
-    let (sess, session_id) = ensure_session(host, id, slug, model, home, acp_slot)?;
+    };
 
     let cancel = Arc::clone(cancel);
-    sess.prompt(
-        &session_id,
-        prompt,
-        move || cancel.load(Ordering::SeqCst),
-        |ev| {
-        if let Some(delta) = ev.text_delta {
-            let mut g = host.inner.lock().unwrap();
-            if let Some(live) = g.live.get_mut(id) {
-                if let Some(last) = live.dialog.last_mut() {
-                    if last.role == "assistant" {
-                        last.text.push_str(&delta);
+    let result = sess
+        .prompt(
+            &session_id,
+            prompt,
+            move || cancel.load(Ordering::SeqCst),
+            |ev| {
+                if let Some(delta) = ev.text_delta {
+                    let mut g = host.inner.lock().unwrap();
+                    if let Some(live) = g.live.get_mut(id) {
+                        if let Some(last) = live.dialog.last_mut() {
+                            if last.role == "assistant" {
+                                last.text.push_str(&delta);
+                            }
+                        }
+                        if live.last_flush.elapsed() >= Duration::from_millis(250) {
+                            save_dialog(slug, &live.dialog);
+                            live.last_flush = Instant::now();
+                        }
                     }
                 }
-                if live.last_flush.elapsed() >= Duration::from_millis(250) {
-                    save_dialog(slug, &live.dialog);
-                    live.last_flush = Instant::now();
+                if let Some(err) = ev.error {
+                    error!(%slug, "turn error: {err}");
                 }
+            },
+        )
+        .map_err(|e| e.to_string());
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) if e.contains("cancelled") => Err(e),
+        Err(e) => {
+            let partial = {
+                let g = host.inner.lock().unwrap();
+                g.live
+                    .get(id)
+                    .and_then(|l| l.dialog.last())
+                    .is_some_and(|t| t.role == "assistant" && !t.text.trim().is_empty())
+            };
+            warn!(%slug, %partial, "acp prompt ended ({e})");
+            if let Ok(mut g) = acp_slot.lock() {
+                *g = None;
             }
+            if partial { Ok(()) } else { Err(e) }
         }
-        if let Some(err) = ev.error {
-            error!(%slug, "turn error: {err}");
-        }
-    })
-    .map_err(|e| e.to_string())?;
-    let _ = Duration::from_secs(0);
-    Ok(())
+    }
 }
 
 fn ensure_session(
@@ -456,9 +510,7 @@ fn ensure_session(
     let (sess, fresh) = sess;
     let existing = {
         let g = host.inner.lock().unwrap();
-        g.catalog
-            .find(id)
-            .and_then(|r| r.grok_session_id.clone())
+        g.catalog.find(id).and_then(|r| r.grok_session_id.clone())
     };
     let session_id = if !fresh {
         existing.ok_or_else(|| "missing session id".to_string())?
@@ -517,4 +569,18 @@ fn now_rfc() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retryable_is_spawn_and_disconnect_not_unknown_bot() {
+        assert!(acp_retryable("acp disconnected"));
+        assert!(acp_retryable("initialize timed out"));
+        assert!(acp_retryable("spawn grok (/opt/x) failed: No such file"));
+        assert!(!acp_retryable("unknown bot suno"));
+        assert!(!acp_retryable("bot is already working"));
+    }
 }

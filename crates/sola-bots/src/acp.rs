@@ -27,10 +27,21 @@ enum Outgoing {
     Rpc(Value),
 }
 
+#[derive(Debug)]
 enum Incoming {
-    Response { id: u64, result: Result<Value, String> },
-    Notify { method: String, params: Value },
-    Request { id: Value, method: String, params: Value },
+    Response {
+        id: u64,
+        result: Result<Value, String>,
+    },
+    Notify {
+        method: String,
+        params: Value,
+    },
+    Request {
+        id: Value,
+        method: String,
+        params: Value,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -78,11 +89,17 @@ impl AcpSession {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::anyhow!("spawn grok ({}) failed: {e}", grok.display())
-        })?;
-        let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("no stdin"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("no stdout"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("spawn grok ({}) failed: {e}", grok.display()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("no stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("no stdout"))?;
         let stderr = child.stderr.take();
         if let Some(stderr) = stderr {
             thread::Builder::new()
@@ -158,19 +175,21 @@ impl AcpSession {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
-                init.get("authMethods").and_then(|v| v.as_array()).and_then(|methods| {
-                    methods
-                        .iter()
-                        .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-                        .find(|id| *id == "cached_token")
-                        .or_else(|| {
-                            methods
-                                .iter()
-                                .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-                                .next()
-                        })
-                        .map(|s| s.to_string())
-                })
+                init.get("authMethods")
+                    .and_then(|v| v.as_array())
+                    .and_then(|methods| {
+                        methods
+                            .iter()
+                            .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                            .find(|id| *id == "cached_token")
+                            .or_else(|| {
+                                methods
+                                    .iter()
+                                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                                    .next()
+                            })
+                            .map(|s| s.to_string())
+                    })
             });
         if let Some(id) = method_id {
             info!(auth = %id, "acp authenticate");
@@ -264,10 +283,7 @@ impl AcpSession {
                 Ok(Incoming::Request { id, method, params }) => {
                     self.answer_rpc(id, &method, &params);
                 }
-                Ok(Incoming::Response {
-                    id: rid,
-                    result,
-                }) if rid == id => {
+                Ok(Incoming::Response { id: rid, result }) if rid == id => {
                     if let Err(e) = result {
                         on_event(TurnEvent {
                             text_delta: None,
@@ -351,10 +367,7 @@ impl AcpSession {
                 inbox.recv_timeout(left.min(Duration::from_millis(200)))
             };
             match msg {
-                Ok(Incoming::Response {
-                    id: rid,
-                    result,
-                }) if rid == id => {
+                Ok(Incoming::Response { id: rid, result }) if rid == id => {
                     return result.map_err(anyhow::Error::msg);
                 }
                 Ok(Incoming::Response { id: rid, result }) => {
@@ -366,7 +379,11 @@ impl AcpSession {
                     self.answer_rpc(id, &method, &params);
                 }
                 Ok(Incoming::Notify { .. }) => {}
-                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.child_exited() {
+                        return Err(anyhow::anyhow!("acp disconnected"));
+                    }
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     return Err(anyhow::anyhow!("acp disconnected"));
                 }
@@ -406,7 +423,9 @@ impl Drop for AcpSession {
 }
 
 fn extract_text(params: &Value) -> Option<String> {
-    let u = params.get("update").or_else(|| params.get("sessionUpdate"))?;
+    let u = params
+        .get("update")
+        .or_else(|| params.get("sessionUpdate"))?;
     let kind = u
         .get("sessionUpdate")
         .or_else(|| u.get("kind"))
@@ -558,5 +577,59 @@ fn read_one(reader: &mut BufReader<impl Read>) -> anyhow::Result<Option<Value>> 
             }
         }
         warn!("skip acp stdout: {line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn classify_rpc_shapes() {
+        match classify(json!({"jsonrpc":"2.0","id":1,"result":{"ok":true}})) {
+            Incoming::Response { id, result } => {
+                assert_eq!(id, 1);
+                assert!(result.is_ok());
+            }
+            other => panic!("expected response, got {other:?}"),
+        }
+        match classify(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/request_permission",
+            "params": {}
+        })) {
+            Incoming::Request { method, .. } => {
+                assert!(method.contains("permission"));
+            }
+            other => panic!("expected request, got {other:?}"),
+        }
+        match classify(json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {}
+        })) {
+            Incoming::Notify { method, .. } => assert!(method.contains("update")),
+            other => panic!("expected notify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_text_keeps_agent_hides_thought() {
+        let chunk = json!({
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "text": "hi" }
+            }
+        });
+        assert_eq!(extract_text(&chunk).as_deref(), Some("hi"));
+        let thought = json!({
+            "update": {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": { "text": "secret" }
+            }
+        });
+        assert_eq!(extract_text(&thought), None);
     }
 }

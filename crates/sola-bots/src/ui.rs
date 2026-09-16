@@ -7,24 +7,22 @@ use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
-use iced::widget::text_editor;
 use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::Viewport;
+use iced::widget::text_editor;
 use iced::widget::{
-    column, container, row, scrollable, stack, text_editor as text_editor_widget, Space,
+    Space, column, container, row, scrollable, stack, text_editor as text_editor_widget,
 };
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
 use serde_json::Value;
 use sola_bus::Message;
 use sola_bus::topics::{SplitDir, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::style::{
-    HAIRLINE_A, RADIUS_LG, SPACE_LG, SPACE_SM, SPACE_XL, mix_white,
-};
+use sola_kit::components::prose::{parse_plain, prose_selectable};
+use sola_kit::components::style::{HAIRLINE_A, RADIUS_LG, SPACE_LG, SPACE_SM, SPACE_XL, mix_white};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::prose::{parse_plain, prose_selectable};
 use sola_kit::components::{
     DividerColors, SidebarIndicator, SidebarItem, SidebarSection, button as kit_btn, readable,
     split_with,
@@ -157,7 +155,12 @@ impl App {
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
-            iced::time::every(Duration::from_millis(1500)).map(|_| Msg::Tick),
+            iced::time::every(if self.sending {
+                Duration::from_millis(400)
+            } else {
+                Duration::from_millis(1500)
+            })
+            .map(|_| Msg::Tick),
             event::listen_with(|event, _status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
                     if matches!(key, iced::keyboard::Key::Named(NamedKey::Escape)) =>
@@ -197,8 +200,9 @@ impl App {
             Msg::WindowReady(id) => {
                 self.window_id = id;
                 match id {
-                    Some(id) => iced::window::size(id)
-                        .map(|s| Msg::WindowResized(s.width, s.height)),
+                    Some(id) => {
+                        iced::window::size(id).map(|s| Msg::WindowResized(s.width, s.height))
+                    }
                     None => Task::none(),
                 }
             }
@@ -358,10 +362,8 @@ impl App {
                 }
                 if self.dragging_compose && self.window_h > 1.0 {
                     let usable = (self.window_h - HEADER_H).max(1.0);
-                    let thread = (y - HEADER_H).clamp(
-                        usable * THREAD_RATIO_MIN,
-                        usable * THREAD_RATIO_MAX,
-                    );
+                    let thread =
+                        (y - HEADER_H).clamp(usable * THREAD_RATIO_MIN, usable * THREAD_RATIO_MAX);
                     self.thread_ratio = (thread / usable).clamp(THREAD_RATIO_MIN, THREAD_RATIO_MAX);
                 }
                 Task::none()
@@ -378,9 +380,10 @@ impl App {
             }
             Msg::Pasted(text) => {
                 if let Some(t) = text {
-                    self.compose.perform(text_editor::Action::Edit(
-                        text_editor::Edit::Paste(Arc::new(t)),
-                    ));
+                    self.compose
+                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                            Arc::new(t),
+                        )));
                 }
                 Task::none()
             }
@@ -494,17 +497,17 @@ impl App {
         self.thread_follow = true;
         self.thread_unseen = false;
         Task::batch([
-            invoke("send", serde_json::json!({ "bot": id, "text": text }), Msg::Sent),
+            invoke(
+                "send",
+                serde_json::json!({ "bot": id, "text": text }),
+                Msg::Sent,
+            ),
             snap_thread(),
         ])
     }
 
     fn on_thread_changed(&mut self) -> Task<Msg> {
-        let fp: String = self
-            .turns
-            .iter()
-            .map(|(r, t)| format!("{r}:{t}"))
-            .collect();
+        let fp: String = self.turns.iter().map(|(r, t)| format!("{r}:{t}")).collect();
         if fp == self.thread_fp {
             return Task::none();
         }
@@ -580,9 +583,7 @@ impl App {
                 b: canvas,
             },
         );
-        let canvas = container(body)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let canvas = container(body).width(Length::Fill).height(Length::Fill);
         sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
             "Bots",
@@ -595,7 +596,10 @@ impl App {
 
     fn selected_name(&self) -> Option<&str> {
         let id = self.selected.as_deref()?;
-        self.bots.iter().find(|b| b.id == id).map(|b| b.name.as_str())
+        self.bots
+            .iter()
+            .find(|b| b.id == id)
+            .map(|b| b.name.as_str())
     }
 
     fn view_rail(&self) -> Element<'_, Msg> {
@@ -656,14 +660,10 @@ impl App {
             },
         );
 
-        column![
-            header,
-            sola_kit::components::horizontal_divider(),
-            body,
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        column![header, sola_kit::components::horizontal_divider(), body,]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn view_thread(&self) -> Element<'_, Msg> {
@@ -866,11 +866,7 @@ fn refresh_transcript(id: String) -> Task<Msg> {
     )
 }
 
-fn invoke(
-    method: &'static str,
-    params: Value,
-    map: fn(Result<Value, String>) -> Msg,
-) -> Task<Msg> {
+fn invoke(method: &'static str, params: Value, map: fn(Result<Value, String>) -> Msg) -> Task<Msg> {
     Task::perform(
         async move {
             std::thread::spawn(move || {
