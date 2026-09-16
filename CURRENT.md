@@ -26,9 +26,9 @@ Do not invent product policy.
    Release). Phone **and** iced Bots use HTTP SSE `GET /events`
    (not sola-call poll). List swipe is Mail-style `swipeActions`.
    ACP no longer re-sends a turn after disconnect. **Installed**
-   `bots` release (SSE flush + iced HTTP client). Chat markdown
-   (stanzas / `verse` fences); existing sessions pick up AGENTS.md on
-   the next turn. **Next:** session-roll TBD.
+   `bots` release (SSE + chat markdown / `verse` fences; existing
+   sessions pick up AGENTS.md on the next turn). **Next:** session-roll
+   TBD.
 1. **Window menu + Super+K** — kit Window menu (zones, float, hide, cycle);
    shell injects it when an app omits it; Super+K shortcuts overlay
    (Omarchy chord). Freeze
