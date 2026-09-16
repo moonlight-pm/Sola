@@ -4,15 +4,20 @@
 //! of a `text_editor`. Tokens only; no hex. Links are accent + underline
 //! and emit `on_link` on click. Drag-select copies the visible text.
 
+mod markdown;
 mod view;
 
+pub use markdown::parse_markdown;
 pub use view::{prose, prose_selectable};
 
 /// One styled run inside a block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProseRun {
     pub text: String,
     pub url: Option<String>,
+    pub bold: bool,
+    pub italic: bool,
+    pub code: bool,
 }
 
 impl ProseRun {
@@ -20,6 +25,9 @@ impl ProseRun {
         Self {
             text: text.into(),
             url: None,
+            bold: false,
+            italic: false,
+            code: false,
         }
     }
 
@@ -27,15 +35,31 @@ impl ProseRun {
         Self {
             text: text.into(),
             url: Some(url.into()),
+            bold: false,
+            italic: false,
+            code: false,
         }
     }
 }
 
-/// A vertical unit of a letter.
+/// A vertical unit of a letter (or a chat reply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProseBlock {
     Paragraph(Vec<ProseRun>),
     Quote(Vec<ProseRun>),
+    Heading {
+        level: u8,
+        runs: Vec<ProseRun>,
+    },
+    /// Fenced block. `verse` keeps UI type and hard line breaks (lyrics).
+    Code {
+        text: String,
+        verse: bool,
+    },
+    List {
+        ordered: bool,
+        items: Vec<Vec<ProseRun>>,
+    },
 }
 
 /// Parse plain text into paragraphs, `>` quotes, and http(s) link runs.
@@ -95,7 +119,9 @@ pub fn flatten(blocks: &[ProseBlock]) -> String {
             out.push_str("\n\n");
         }
         match block {
-            ProseBlock::Paragraph(runs) => append_runs(&mut out, runs),
+            ProseBlock::Paragraph(runs) | ProseBlock::Heading { runs, .. } => {
+                append_runs(&mut out, runs)
+            }
             ProseBlock::Quote(runs) => {
                 let mut body = String::new();
                 append_runs(&mut body, runs);
@@ -107,6 +133,21 @@ pub fn flatten(blocks: &[ProseBlock]) -> String {
                     first = false;
                     out.push_str("> ");
                     out.push_str(line);
+                }
+            }
+            ProseBlock::Code { text, .. } => out.push_str(text),
+            ProseBlock::List { ordered, items } => {
+                for (n, item) in items.iter().enumerate() {
+                    if n > 0 {
+                        out.push('\n');
+                    }
+                    if *ordered {
+                        out.push_str(&(n + 1).to_string());
+                        out.push_str(". ");
+                    } else {
+                        out.push_str("- ");
+                    }
+                    append_runs(&mut out, item);
                 }
             }
         }
@@ -143,41 +184,144 @@ pub(crate) struct LayoutLine {
     pub start: usize,
     pub gap: u8,
     pub quote: bool,
+    pub heading: u8,
+    pub code: bool,
+    pub verse: bool,
 }
 
 pub(crate) fn iter_lines(blocks: &[ProseBlock]) -> Vec<LayoutLine> {
     let mut out = Vec::new();
     let mut offset = 0usize;
+    let nblocks = blocks.len();
     for (bi, block) in blocks.iter().enumerate() {
-        let (runs, quote) = match block {
-            ProseBlock::Paragraph(r) => (r.as_slice(), false),
-            ProseBlock::Quote(r) => (r.as_slice(), true),
-        };
-        let hard = split_runs_on_newline(runs);
-        let n = hard.len();
-        for (li, runs) in hard.into_iter().enumerate() {
-            let text: String = runs.iter().map(|r| r.text.as_str()).collect();
-            let last_in_block = li + 1 == n;
-            let last_block = bi + 1 == blocks.len();
-            let gap = if !last_in_block {
-                1
-            } else if !last_block {
-                2
-            } else {
-                0
-            };
-            let start = offset;
-            offset += text.len() + gap as usize;
-            out.push(LayoutLine {
-                runs,
-                text,
-                start,
-                gap,
-                quote,
-            });
+        let last_block = bi + 1 == nblocks;
+        match block {
+            ProseBlock::Paragraph(r) => {
+                push_hard_lines(&mut out, &mut offset, r, false, 0, false, false, last_block);
+            }
+            ProseBlock::Quote(r) => {
+                push_hard_lines(&mut out, &mut offset, r, true, 0, false, false, last_block);
+            }
+            ProseBlock::Heading { level, runs } => {
+                push_hard_lines(
+                    &mut out,
+                    &mut offset,
+                    runs,
+                    false,
+                    *level,
+                    false,
+                    false,
+                    last_block,
+                );
+            }
+            ProseBlock::Code { text, verse } => {
+                let lines: Vec<&str> = text.split('\n').collect();
+                let n = lines.len();
+                for (li, line) in lines.iter().enumerate() {
+                    let last_in_block = li + 1 == n;
+                    let gap = if !last_in_block {
+                        1
+                    } else if !last_block {
+                        2
+                    } else {
+                        0
+                    };
+                    let start = offset;
+                    offset += line.len() + gap as usize;
+                    let run = if line.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![ProseRun {
+                            text: (*line).to_string(),
+                            url: None,
+                            bold: false,
+                            italic: false,
+                            code: !*verse,
+                        }]
+                    };
+                    out.push(LayoutLine {
+                        runs: run,
+                        text: (*line).to_string(),
+                        start,
+                        gap,
+                        quote: false,
+                        heading: 0,
+                        code: !*verse,
+                        verse: *verse,
+                    });
+                }
+            }
+            ProseBlock::List { ordered, items } => {
+                let n = items.len();
+                for (li, item) in items.iter().enumerate() {
+                    let mut runs = Vec::new();
+                    let prefix = if *ordered {
+                        format!("{}. ", li + 1)
+                    } else {
+                        "• ".into()
+                    };
+                    runs.push(ProseRun::text(prefix));
+                    runs.extend(item.iter().cloned());
+                    let last_in_block = li + 1 == n;
+                    push_hard_lines(
+                        &mut out,
+                        &mut offset,
+                        &runs,
+                        false,
+                        0,
+                        false,
+                        false,
+                        last_block && last_in_block,
+                    );
+                    if let Some(last) = out.last_mut() {
+                        if !last_in_block {
+                            last.gap = 1;
+                        } else if !last_block {
+                            last.gap = 2;
+                        }
+                    }
+                }
+            }
         }
     }
     out
+}
+
+fn push_hard_lines(
+    out: &mut Vec<LayoutLine>,
+    offset: &mut usize,
+    runs: &[ProseRun],
+    quote: bool,
+    heading: u8,
+    code: bool,
+    verse: bool,
+    last_block: bool,
+) {
+    let hard = split_runs_on_newline(runs);
+    let n = hard.len();
+    for (li, runs) in hard.into_iter().enumerate() {
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let last_in_block = li + 1 == n;
+        let gap = if !last_in_block {
+            1
+        } else if !last_block {
+            2
+        } else {
+            0
+        };
+        let start = *offset;
+        *offset += text.len() + gap as usize;
+        out.push(LayoutLine {
+            runs,
+            text,
+            start,
+            gap,
+            quote,
+            heading,
+            code,
+            verse,
+        });
+    }
 }
 
 pub(crate) fn snap_byte(s: &str, mut i: usize) -> usize {
@@ -245,6 +389,9 @@ fn split_runs_on_newline(runs: &[ProseRun]) -> Vec<Vec<ProseRun>> {
                         lines.last_mut().unwrap().push(ProseRun {
                             text: head.to_string(),
                             url: run.url.clone(),
+                            bold: run.bold,
+                            italic: run.italic,
+                            code: run.code,
                         });
                     }
                     lines.push(Vec::new());
@@ -255,6 +402,9 @@ fn split_runs_on_newline(runs: &[ProseRun]) -> Vec<Vec<ProseRun>> {
                         lines.last_mut().unwrap().push(ProseRun {
                             text: rest.to_string(),
                             url: run.url.clone(),
+                            bold: run.bold,
+                            italic: run.italic,
+                            code: run.code,
                         });
                     }
                     break;
@@ -312,7 +462,7 @@ fn join_soft_wrap(lines: &[String]) -> String {
     out
 }
 
-fn runs_from_text(text: &str) -> Vec<ProseRun> {
+pub(crate) fn runs_from_text(text: &str) -> Vec<ProseRun> {
     let chars: Vec<char> = text.chars().collect();
     let mut runs = Vec::new();
     let mut i = 0;
@@ -579,7 +729,10 @@ mod tests {
         let links: Vec<_> = blocks
             .iter()
             .flat_map(|b| match b {
-                ProseBlock::Paragraph(r) | ProseBlock::Quote(r) => r.iter(),
+                ProseBlock::Paragraph(r) | ProseBlock::Quote(r) => r.iter().collect::<Vec<_>>(),
+                ProseBlock::Heading { runs, .. } => runs.iter().collect(),
+                ProseBlock::List { items, .. } => items.iter().flatten().collect(),
+                ProseBlock::Code { .. } => Vec::new(),
             })
             .filter(|r| r.url.is_some())
             .collect();

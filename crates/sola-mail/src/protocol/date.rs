@@ -45,8 +45,7 @@ pub fn format_letter_time(raw: &str) -> String {
 
 fn local_from_mail(raw: &str) -> Option<ChronoDateTime<Local>> {
     let parsed = parse_mail_datetime(raw)?;
-    ChronoDateTime::from_timestamp(parsed.to_timestamp(), 0)
-        .map(|utc| utc.with_timezone(&Local))
+    ChronoDateTime::from_timestamp(parsed.to_timestamp(), 0).map(|utc| utc.with_timezone(&Local))
 }
 
 fn parse_mail_datetime(raw: &str) -> Option<DateTime> {

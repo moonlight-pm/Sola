@@ -21,7 +21,7 @@ use serde_json::Value;
 use sola_bus::Message;
 use sola_bus::topics::{SplitDir, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::prose::{parse_plain, prose_selectable};
+use sola_kit::components::prose::{parse_markdown, parse_plain, prose_selectable};
 use sola_kit::components::style::{HAIRLINE_A, RADIUS_LG, SPACE_LG, SPACE_SM, SPACE_XL, mix_white};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
@@ -868,40 +868,12 @@ fn user_line<'a>(body: String, theme: &'a Theme, select_all: u64) -> Element<'a,
 
 fn bot_line<'a>(body: &'a str, theme: &'a Theme, select_all: u64) -> Element<'a, Msg> {
     prose_selectable(
-        parse_plain(&soften_md(body)),
+        parse_markdown(body),
         theme,
         select_all,
         Msg::OpenUrl,
         Msg::BodySelect,
     )
-}
-
-fn soften_md(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '*' || c == '_' {
-            if chars.peek() == Some(&c) {
-                chars.next();
-            }
-            continue;
-        }
-        if c == '`' {
-            continue;
-        }
-        if c == '#' && (out.is_empty() || out.ends_with('\n')) {
-            while chars.peek() == Some(&'#') || chars.peek() == Some(&' ') {
-                if chars.peek() == Some(&' ') {
-                    chars.next();
-                    break;
-                }
-                chars.next();
-            }
-            continue;
-        }
-        out.push(c);
-    }
-    out
 }
 
 fn thread_scroll_id() -> ScrollId {

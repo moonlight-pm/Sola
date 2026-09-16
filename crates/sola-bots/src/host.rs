@@ -340,7 +340,11 @@ impl Host {
         self.emit_transcript(&id);
 
         let host = Arc::clone(self);
-        let prompt = text.to_string();
+        let mut prompt = text.to_string();
+        if foundation::refresh_agents(&home) {
+            prompt = format!("{}\n\n{prompt}", foundation::ADOPT);
+            foundation::stamp(&home);
+        }
         let reply_id = id.clone();
         let thread_id = id.clone();
         let thread_slug = slug.clone();

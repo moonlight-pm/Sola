@@ -182,6 +182,7 @@ mod tests {
             | sola_kit::components::prose::ProseBlock::Quote(runs) => {
                 runs.iter().any(|r| r.url.as_deref() == Some(url.as_str()))
             }
+            _ => false,
         });
         assert!(has, "{blocks:?}");
     }
