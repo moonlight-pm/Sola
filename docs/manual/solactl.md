@@ -69,7 +69,10 @@ a long `proxy_read_timeout`.
 Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
 (introduction; the orientation prompt is not shown as a user message).
 `rm` deletes the catalog row, the home directory, and the Grok session.
-Not a coding agent; not Workspaces.
+Write fence is prompt-only: **default that home**; say “drop the write
+fence” / “work on the whole computer” / name a path outside the home to
+open it for that task. Seat steal is still refused. Not a coding agent;
+not Workspaces unless you ask for that rail.
 
 ## Workspaces (`solactl workspaces`)
 

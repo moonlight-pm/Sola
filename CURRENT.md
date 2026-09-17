@@ -27,8 +27,8 @@ Do not invent product policy.
    (not sola-call poll). List swipe is Mail-style `swipeActions`.
    ACP no longer re-sends a turn after disconnect. **Installed**
    `bots` release (SSE + chat markdown / `verse` fences; existing
-   sessions pick up AGENTS.md on the next turn). **Next:** session-roll
-   TBD.
+   sessions pick up AGENTS.md on the next turn). Write fence default is
+   the bot home; Joshua can order an escape. **Next:** session-roll TBD.
 1. **Window menu + Super+K** — kit Window menu (zones, float, hide, cycle);
    shell injects it when an app omits it; Super+K shortcuts overlay
    (Omarchy chord). Freeze
@@ -373,7 +373,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Browser agent control | Agent lives in **Workspaces**, not in the browser. Face: `solactl browser` (owner `browser`). Same strip / profile; **Agent** pocket is a skill convention. Page loop: pruned a11y **YAML** + opaque refs; CSS-pixel `--x/--y` click/hover and `key --chord` on `--tab` when the tree is empty (CEF, not compositor). `SOLA_BOT=1` never `--select` / `tab.focus` and must pass `--tab`. Confirm still **D3**. Freeze [`docs/specs/2026-09-11-sola-browser-agent-control-design.md`](docs/specs/2026-09-11-sola-browser-agent-control-design.md). |
 | Wrapper | **`sola-wrapper <id>`**; `app_id` is the configured id; per-id CEF profile under `~/.config/sola/wrapper/<id>/`; Applications catalog (`kind` + `url`); not sola-browser chrome |
 | Agent product | **Two products.** **Workspaces** = coding (`grok` / `codex` in PTYs, worktrees). **Bots** = informational named sessions (`sola-bots` daemon + ACP `grok agent stdio`, dialog UI, `~/Bots/<slug>/`). The iced ACP/Grok-leader GUI (`crates/sola-agent`) stays **retired** — do not rebuild it. Coding agents **call** the browser; bots do too (`solactl browser`). Freeze [`docs/specs/2026-09-15-sola-bots-design.md`](docs/specs/2026-09-15-sola-bots-design.md). |
-| Bots | Informational, not coding. Yolo tools. One long dialog (hide compaction). Home **`~/Bots/<slug>/`** (write fence is the foundation prompt). No `~/Workspace` / worktrees. Daemon is process of record; iced + native iOS are clients. Owner `bots`. |
+| Bots | Informational, not coding. Yolo tools. One long dialog (hide compaction). Home **`~/Bots/<slug>/`**. Write fence is the foundation prompt: **default home-only**; Joshua can order an escape (whole computer / a path outside home). Seat steal never lifts. Daemon is process of record; iced + native iOS are clients. Owner `bots`. |
 | Workspaces | Host **user-launched CLI agents in PTYs**. Spawn sibling is the fan-out verb. No ACP chat, no mailbox orchestration. |
 | Workspaces CLI | **Grok and Codex are first-class.** Hooks, presence, OSC, and spawn implement Grok first; Codex gets the same spawn / exec / hook path. Claude / OpenCode stay presence-only (D4). |
 | Workspaces UI | Load **impeccable** (Operate) + **frontend-design** before any UI. Kit tokens/atoms/components may be refined; do not silently restyle other apps. |

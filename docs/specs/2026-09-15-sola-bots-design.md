@@ -40,11 +40,11 @@ directory.
 |---|---|
 | Name | Crate / daemon **`sola-bots`**. Window **Bots**. Call owner **`bots`**. iOS app **Bots**. |
 | Job | Informational / account / research / ops bots. **Not** a coding agent. |
-| vs Workspaces | No overlap. Bots never use `~/Workspace` or `.worktrees/`. Workspaces never hosts these sessions. |
+| vs Workspaces | No overlap as the **product**. Default write fence is the bot home; Joshua can order an escape (whole computer / a path outside home). Workspaces never hosts these sessions. `solactl workspaces` stays off-limits unless he asks for the coding rail. |
 | vs old sola-agent | Do **not** resurrect `crates/sola-agent`. Daemon owns ACP; UIs are viewers. |
 | Runtime (v1) | One long-lived **`grok agent stdio`** (ACP) per bot. Vendor/model selectable later; Grok is the proof. |
 | Tools | **Yolo.** `--always-approve` / equivalent. No per-tool prompt in UI or on the phone. |
-| Write fence | **Prompt only.** Strong foundation rules: mutate files only under the bot’s home. Read elsewhere and drive the browser are allowed. Hard sandbox is out of v1. |
+| Write fence | **Prompt only.** Default: mutate files only under the bot’s home. Joshua can **order an escape** (whole computer / drop the fence / a path outside home) for that task or the session. Seat steal stays forbidden. Hard sandbox is out of v1. |
 | Bot home | **`~/Bots/<slug>/`**. Created on bot create. ACP `cwd` is that directory. Not hidden XDG for the working tree. |
 | Catalog | `~/.config/sola/bots/catalog.json` |
 | Dialog | One long conversation in the UI. Compaction, session roll, and Grok internals are **never** shown. |
@@ -117,9 +117,10 @@ Foundation files in `~/Bots/<slug>/` (seeded at create, operator-editable):
 | (optional later) `docs/` | Longer memory the roll rule can re-seed |
 
 Host-wide foundation (not in the bot dir) is injected every session:
-yolo is on; **only write/edit/delete under `~/Bots/<slug>/`**; read the rest
-of the machine; prefer `solactl browser` for web accounts; never treat this
-as a coding agent; never create worktrees.
+yolo is on; **default** write/edit/delete under `~/Bots/<slug>/` (Joshua
+can order an escape); read the rest of the machine; prefer `solactl
+browser` for web accounts; not a coding agent by default; seat steal
+never lifts.
 
 ---
 
@@ -163,3 +164,4 @@ Do not install without express permission.
 | Date | Decision |
 |------|----------|
 | 2026-09-15 | Yolo all tools. Informational, not coding. One long dialog; hide compaction. Per-bot `~/Bots/<slug>/`. No Workspace/worktree overlap. Native iOS, not PWA-first. Crate **Bots**. Soft write fence via foundation prompt. This computer is the sandbox; browser via `solactl browser`. |
+| 2026-09-17 | Write fence stays **default home-only**. Joshua can explicitly order an escape (whole computer / drop the fence / a named path outside home). Seat steal still forbidden. |
