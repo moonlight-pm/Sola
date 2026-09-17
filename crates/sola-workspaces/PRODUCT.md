@@ -61,8 +61,11 @@ was still running and the session dir exists), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `codex is done` /
 `needs attention`),
 `workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
-`workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;
-`--branch` is `git branch -m`).
+`workspace.set --name` (`git worktree move` to `.worktrees/<name>`;
+`--title` is the rail label, defaulting to that slug; `--branch` is
+`git branch -m`; `--before` reorders in the project).
+Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
+tabs inside a project and project groups (`project.reorder`).
 
 **First-class CLI:** **Grok and Codex.** Implement and test Grok first whenever
 adding agent support. Claude / OpenCode stay presence-only (D4).

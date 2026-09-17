@@ -1700,6 +1700,7 @@ impl<E: Engine> App<E> {
                 self.groups.apply_kit_drop(&mut self.cached_tabs, &drop);
                 self.persist_session();
             }
+            SidebarEvent::Edit { .. } => {}
         }
     }
 

@@ -40,13 +40,14 @@ solactl workspaces project.add --path ~/Workspace/Sola
 solactl workspaces project.startup --project Illuno
 solactl workspaces project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
 solactl workspaces project.rm --project Sola
+solactl workspaces project.reorder --project Sola [--before Illuno]
 solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
     [--agent grok|codex] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
-    [--title 'fix login'] [--branch joshua/sc-1234/fix]
+    [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
 solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex] [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
 solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
@@ -57,17 +58,23 @@ solactl workspaces pane.wait [--pane ticket-123] [--status done] [--timeout 300]
 solactl workspaces whoami                  # from a Workspaces pane; or --pane / --path
 ```
 
-`--name` is the rail slug and `.worktrees/<name>` folder. `--branch`
-defaults to that name; `--base-branch` defaults to HEAD. `--title` is a
-rail subtitle (`sc-1234 · fix login`). Spawn is background: the new
-row appears, the rail/grid stay on the caller. `--select` jumps
-(same as the UI + / ⌘T). `workspace.exec` does not select.
-`workspace.set --name` slugs the rail label and `git worktree move`s
-to `.worktrees/<name>` (id stays so tmux sessions keep working; live
-or dirty checkouts are forced). The project root cannot be renamed.
+`--name` is the `.worktrees/<name>` folder (and the rail **default**).
+`--branch` defaults to that name; `--base-branch` defaults to HEAD.
+`--title` is the rail label. Empty `--title` (or a title equal to
+`--name`) falls back to the folder slug — the slug is not prefixed onto
+a custom title. Spawn is background: the new row appears, the rail/grid
+stay on the caller. `--select` jumps (same as the UI + / ⌘T).
+`workspace.exec` does not select.
+`workspace.set --name` `git worktree move`s to `.worktrees/<name>` (id
+stays so tmux sessions keep working; live or dirty checkouts are
+forced). The project root cannot be renamed.
 `--branch` is `git branch -m` in that checkout and does not move the
 folder. Promote an ad hoc tab with both: `--name sc-1234 --branch
-joshua/sc-1234/fix --title '…'`. Target by id if the old slug is gone.
+joshua/sc-1234/fix --title '…'`. Target by id, slug, path, or rail
+label. `--before` reorders that workspace in its project (`end` = last).
+The rail also does this with drag-drop; hover pencil / double-click on a
+worktree tab is `--title` (the label, not the folder). `project.reorder`
+moves a project group (`--before` another project, or omit / `end` for last).
 
 Lists include `path`, `kind`, and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also

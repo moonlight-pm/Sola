@@ -24,7 +24,7 @@
 //! ```ignore
 //! SidebarPanel::new(sections)
 //!     .controller(&self.sidebar, Msg::Sidebar)
-//!     .reorderable()
+//!     .reorderable() // or `.reorder_within_sections()` to keep items in group
 //!     .resizable_with(self.width, colors)
 //!     .build()
 //! ```
@@ -1387,21 +1387,24 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
     hover_wired: bool,
     collapsed: bool,
     on_action: Rc<dyn Fn(Msg) -> Message + 'a>,
+    locked: bool,
 ) -> Element<'a, Message> {
     let mut leaves = Vec::new();
     let mut meta = Vec::new();
     let mut spans = Vec::new();
     let mut row_index = 0usize;
     for (si, section) in sections.into_iter().enumerate() {
-        let grouped = section.collapse.is_some();
+        let collapsible = section.collapse.is_some();
+        let labeled = section.label.is_some();
         let hide = section.collapse.as_ref().is_some_and(|c| c.collapsed);
         let well_color = section.collapse.as_ref().and_then(|c| c.color);
-        let pocket = grouped.then(|| pocket_fill(well_color));
+        let pocket = collapsible.then(|| pocket_fill(well_color));
         let start = leaves.len();
+        let is_group = collapsible || labeled;
         let gid = section
             .id
             .clone()
-            .or_else(|| grouped.then(|| format!("s{si}")));
+            .or_else(|| is_group.then(|| format!("s{si}")));
         if let Some(collapse) = section.collapse {
             let header = assign_close_id(collapse_header_item(section.label, collapse), row_index);
             let hid = gid.clone().unwrap_or_else(|| format!("s{si}"));
@@ -1424,8 +1427,24 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                 kind: strip::LeafKind::Header,
                 group: Some(hid),
                 color: pocket,
+                pocket: true,
+                editable: false,
             });
             row_index += 1;
+        } else if let (Some(label), Some(hid)) = (section.label.clone(), gid.clone()) {
+            if !collapsed {
+                let el = section_header(label, None, section.on_add);
+                leaves.push(el);
+                meta.push(strip::LeafMeta {
+                    id: hid.clone(),
+                    kind: strip::LeafKind::Header,
+                    group: Some(hid),
+                    color: None,
+                    pocket: false,
+                    editable: false,
+                });
+                row_index += 1;
+            }
         }
         if !hide {
             for item in section.items {
@@ -1434,6 +1453,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                     item.well = Some(c);
                 }
                 let id = item.id.clone().unwrap_or_else(|| format!("i{row_index}"));
+                let editable = item.on_edit.is_some() || item.on_double_click.is_some();
                 let show = item
                     .id
                     .as_ref()
@@ -1452,20 +1472,29 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                 meta.push(strip::LeafMeta {
                     id: id.clone(),
                     kind: strip::LeafKind::Item,
-                    group: if grouped { gid.clone() } else { None },
+                    group: if is_group { gid.clone() } else { None },
                     color: pocket,
+                    pocket: false,
+                    editable,
                 });
                 row_index += 1;
             }
         }
         spans.push(strip::SectionSpan {
-            grouped,
+            grouped: is_group,
             start,
             len: leaves.len() - start,
         });
     }
-    let strip: Element<'a, Message> =
-        strip::ReorderStrip::new(leaves, meta, spans, item_spacing, Rc::clone(&on_action)).into();
+    let strip: Element<'a, Message> = strip::ReorderStrip::new(
+        leaves,
+        meta,
+        spans,
+        item_spacing,
+        Rc::clone(&on_action),
+        locked,
+    )
+    .into();
     mouse_area(hidden_scroll(strip, None, None))
         .on_exit(on_action(Msg::Hover(None)))
         .into()
@@ -1741,21 +1770,25 @@ fn finish_list_row<'a, Message: Clone + 'a>(
         row_el
     };
 
-    let chip = if let Some(msg) = on_close {
-        Some(hover_chip(
-            HoverChip::Close,
-            msg,
-            active,
-            chrome,
-            density,
-            well,
-        ))
-    } else {
-        on_edit.map(|msg| hover_chip(HoverChip::Edit, msg, active, chrome, density, well))
-    };
-    let Some(chip) = chip else {
+    let kinds = hover_chip_kinds(on_close.is_some(), on_edit.is_some());
+    if kinds.is_empty() {
         return etched;
-    };
+    }
+    let mut chips = row![].spacing(2).align_y(iced::Alignment::Center);
+    for kind in kinds {
+        let msg = match kind {
+            HoverChip::Close => on_close.clone().expect("close chip"),
+            HoverChip::Edit => on_edit.clone().expect("edit chip"),
+        };
+        chips = chips.push(hover_chip_button(kind, msg, active, chrome, density, well));
+    }
+    let chip = container(chips)
+        .align_x(iced::alignment::Horizontal::Right)
+        .align_y(iced::alignment::Vertical::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding::from([0, 4]))
+        .into();
     if hover_tracked {
         // Always mount: paint/hit from live cursor-over-row, not enter
         // tracking. After a close the next row slides under a stationary
@@ -1768,15 +1801,24 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     stack![etched, chip].into()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HoverChip {
     Close,
     Edit,
 }
 
-/// Right-aligned stacked chip. Shared by the always-visible fallback and
-/// the cursor-gated [`HoverClose`] overlay.
-fn hover_chip<'a, Message: Clone + 'a>(
+/// Pencil then × when both are set. Close-only and edit-only stay a
+/// single chip so browser tabs and group headers do not change.
+fn hover_chip_kinds(on_close: bool, on_edit: bool) -> Vec<HoverChip> {
+    match (on_close, on_edit) {
+        (true, true) => vec![HoverChip::Edit, HoverChip::Close],
+        (true, false) => vec![HoverChip::Close],
+        (false, true) => vec![HoverChip::Edit],
+        (false, false) => Vec::new(),
+    }
+}
+
+fn hover_chip_button<'a, Message: Clone + 'a>(
     kind: HoverChip,
     msg: Message,
     active: bool,
@@ -1794,16 +1836,10 @@ fn hover_chip<'a, Message: Clone + 'a>(
     } else {
         icon_svg(handle, m.close as u16)
     };
-    let chip = button(glyph)
+    button(glyph)
         .style(move |theme, status| tab_close_style(theme, status, active, chrome, well))
         .padding(Padding::from([3, 6]))
-        .on_press(msg);
-    container(chip)
-        .align_x(iced::alignment::Horizontal::Right)
-        .align_y(iced::alignment::Vertical::Center)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([0, 4]))
+        .on_press(msg)
         .into()
 }
 
@@ -1931,7 +1967,7 @@ fn assign_close_id<'a, Message>(
     mut item: SidebarItem<'a, Message>,
     index: usize,
 ) -> SidebarItem<'a, Message> {
-    if item.on_close.is_some() && item.id.is_none() {
+    if item.id.is_none() && (item.on_close.is_some() || item.on_edit.is_some()) {
         item.id = Some(format!("__row:{index}"));
     }
     item
@@ -2202,6 +2238,16 @@ fn dim_label<'a, Message: 'a>(s: &str, well: Option<Color>) -> Element<'a, Messa
 
 // ─────────────────────────────── SidebarPanel ───────────────────────────────
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ReorderMode {
+    #[default]
+    Off,
+    /// Morph2 strip: items may join other groups or become loose.
+    Strip,
+    /// Items stay in their section; section headers still reorder groups.
+    Sections,
+}
+
 /// Opt-in richer sidebar: collapse/expand, drag-to-resize, drag-reorder,
 /// per-item shortcut hints / close buttons / secondary labels, section-
 /// scoped scroll with overflow chips, plus an optional footer.
@@ -2215,7 +2261,7 @@ pub struct SidebarPanel<'a, Message> {
     collapse: Option<(bool, Message)>,
     /// `(width, colors)` — `colors` is `None` for theme-default chrome.
     resize: Option<(f32, Option<crate::components::DividerColors>)>,
-    reorder: bool,
+    reorder: ReorderMode,
     controller: Option<(&'a State, Rc<dyn Fn(Msg) -> Message + 'a>)>,
     /// Optional leading content (search field, brand, rename bar).
     /// Stacked above the section list; never scrolls with items.
@@ -2244,7 +2290,7 @@ where
             sections,
             collapse: None,
             resize: None,
-            reorder: false,
+            reorder: ReorderMode::Off,
             controller: None,
             header: None,
             footer: None,
@@ -2313,8 +2359,17 @@ where
 
     /// Enable drag-to-reorder. Requires [`Self::controller`]. Click vs
     /// drag is decided on release; drop arrives as [`Event::Drop`].
+    /// Items may join other groups or become loose (browser / terminal).
     pub fn reorderable(mut self) -> Self {
-        self.reorder = true;
+        self.reorder = ReorderMode::Strip;
+        self
+    }
+
+    /// Drag-to-reorder, but items cannot leave their section. Group
+    /// headers still move as blocks. Workspaces uses this so a tab stays
+    /// in its project.
+    pub fn reorder_within_sections(mut self) -> Self {
+        self.reorder = ReorderMode::Sections;
         self
     }
 
@@ -2343,7 +2398,7 @@ where
             sections,
             collapse,
             resize,
-            reorder: reorder_enabled,
+            reorder,
             controller,
             header,
             footer,
@@ -2415,6 +2470,8 @@ where
         // the caller remembering `.fill()`. Multiple sections require an
         // explicit mark so short groups don't steal the Fill slot.
         let auto_fill_single = !any_explicit_fill && n_sections == 1;
+        let reorder_enabled = !matches!(reorder, ReorderMode::Off);
+        let reorder_locked = matches!(reorder, ReorderMode::Sections);
         let sections_el: Element<'a, Message, Theme> = if reorder_enabled {
             match on_action.as_ref() {
                 Some(act) => build_reorder_strip(
@@ -2425,6 +2482,7 @@ where
                     hover_wired,
                     collapsed,
                     Rc::clone(act),
+                    reorder_locked,
                 ),
                 None => column![].into(),
             }
@@ -3210,10 +3268,23 @@ mod tests {
     fn assign_close_id_only_when_needed() {
         let with_close = assign_close_id(SidebarItem::new("x", ()).on_close(()), 3);
         assert_eq!(with_close.id.as_deref(), Some("__row:3"));
+        let with_edit = assign_close_id(SidebarItem::new("x", ()).on_edit(()), 4);
+        assert_eq!(with_edit.id.as_deref(), Some("__row:4"));
         let with_id = assign_close_id(SidebarItem::new("x", ()).on_close(()).id("keep"), 3);
         assert_eq!(with_id.id.as_deref(), Some("keep"));
         let no_close = assign_close_id(SidebarItem::new("x", ()), 3);
         assert_eq!(no_close.id, None);
+    }
+
+    #[test]
+    fn hover_chips_close_only_when_no_edit() {
+        assert_eq!(hover_chip_kinds(true, false), vec![HoverChip::Close]);
+        assert_eq!(hover_chip_kinds(false, true), vec![HoverChip::Edit]);
+        assert_eq!(
+            hover_chip_kinds(true, true),
+            vec![HoverChip::Edit, HoverChip::Close]
+        );
+        assert!(hover_chip_kinds(false, false).is_empty());
     }
 
     #[test]

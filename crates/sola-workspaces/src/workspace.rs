@@ -130,7 +130,7 @@ pub struct Workspace {
     pub id: String,
     pub project_id: String,
     pub name: String,
-    /// Extra rail label (`sc-1234 · short title`). Empty = just `name`.
+    /// Rail display when set. Empty = show [`Self::name`] (the worktree slug).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub path: PathBuf,
@@ -532,55 +532,103 @@ pub fn lineage_depth(ws: &Workspace, all: &[Workspace]) -> u8 {
     d.min(2)
 }
 
-/// Main first, then each parent's children, then remaining by name.
+/// Catalog encounter order for this project (rail + `ps`). Drag-reorder
+/// writes that order back; spawn appends.
 pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Workspace]) -> Vec<&'a Workspace> {
-    let mine: Vec<&Workspace> = all.iter().filter(|w| w.project_id == project_id).collect();
-    let mut out = Vec::with_capacity(mine.len());
-    let mut seen = HashSet::new();
-    let mut roots: Vec<&Workspace> = mine
+    all.iter().filter(|w| w.project_id == project_id).collect()
+}
+
+fn splice_ids(ids: &mut Vec<String>, id: &str, before: Option<&str>) {
+    ids.retain(|x| x != id);
+    let at = before
+        .and_then(|b| ids.iter().position(|x| x == b))
+        .unwrap_or(ids.len());
+    ids.insert(at.min(ids.len()), id.to_string());
+}
+
+/// Reorder `id` among this project's workspaces. `before` is another
+/// workspace in the same project (`None` = end).
+pub fn move_workspace_before(
+    all: &mut Vec<Workspace>,
+    id: &str,
+    before: Option<&str>,
+) -> Result<(), String> {
+    let project_id = all
         .iter()
-        .copied()
-        .filter(|w| {
-            w.parent
-                .as_ref()
-                .is_none_or(|p| mine.iter().all(|o| o.id != *p))
-        })
-        .collect();
-    roots.sort_by(|a, b| match (&a.kind, &b.kind) {
-        (Kind::Main, Kind::Main) => a.name.cmp(&b.name),
-        (Kind::Main, _) => std::cmp::Ordering::Less,
-        (_, Kind::Main) => std::cmp::Ordering::Greater,
-        _ => a.name.cmp(&b.name),
-    });
-    fn walk<'a>(
-        node: &'a Workspace,
-        mine: &[&'a Workspace],
-        seen: &mut HashSet<String>,
-        out: &mut Vec<&'a Workspace>,
-    ) {
-        if !seen.insert(node.id.clone()) {
-            return;
-        }
-        out.push(node);
-        let mut kids: Vec<&Workspace> = mine
+        .find(|w| w.id == id)
+        .map(|w| w.project_id.clone())
+        .ok_or_else(|| format!("unknown workspace '{id}'"))?;
+    if let Some(b) = before {
+        let other = all
             .iter()
-            .copied()
-            .filter(|w| w.parent.as_deref() == Some(node.id.as_str()))
-            .collect();
-        kids.sort_by(|a, b| a.name.cmp(&b.name));
-        for k in kids {
-            walk(k, mine, seen, out);
+            .find(|w| w.id == b)
+            .ok_or_else(|| format!("unknown workspace '{b}'"))?;
+        if other.project_id != project_id {
+            return Err("cannot move a workspace into another project".into());
+        }
+        if other.id == id {
+            return Ok(());
         }
     }
-    for r in roots {
-        walk(r, &mine, &mut seen, &mut out);
-    }
-    for w in mine {
-        if seen.insert(w.id.clone()) {
-            out.push(w);
+    let mut order: Vec<String> = all
+        .iter()
+        .filter(|w| w.project_id == project_id)
+        .map(|w| w.id.clone())
+        .collect();
+    splice_ids(&mut order, id, before);
+    apply_workspace_order(all, &project_id, &order);
+    Ok(())
+}
+
+fn apply_workspace_order(all: &mut Vec<Workspace>, project_id: &str, order: &[String]) {
+    let mut mine: Vec<Workspace> = Vec::new();
+    let mut slots = Vec::new();
+    for (i, w) in all.iter().enumerate() {
+        if w.project_id == project_id {
+            slots.push(i);
+            mine.push(w.clone());
         }
     }
-    out
+    let mut next = Vec::new();
+    for id in order {
+        if let Some(j) = mine.iter().position(|w| w.id == *id) {
+            next.push(mine.remove(j));
+        }
+    }
+    next.extend(mine);
+    for (slot, w) in slots.into_iter().zip(next) {
+        all[slot] = w;
+    }
+}
+
+/// Reorder a project in the rail. `before` is a project id (`None` = end).
+pub fn move_project_before(
+    projects: &mut Vec<Project>,
+    id: &str,
+    before: Option<&str>,
+) -> Result<(), String> {
+    if !projects.iter().any(|p| p.id == id) {
+        return Err(format!("unknown project '{id}'"));
+    }
+    if let Some(b) = before {
+        if !projects.iter().any(|p| p.id == b) {
+            return Err(format!("unknown project '{b}'"));
+        }
+        if b == id {
+            return Ok(());
+        }
+    }
+    let mut order: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
+    splice_ids(&mut order, id, before);
+    let mut next = Vec::new();
+    for pid in &order {
+        if let Some(i) = projects.iter().position(|p| p.id == *pid) {
+            next.push(projects.remove(i));
+        }
+    }
+    next.append(projects);
+    *projects = next;
+    Ok(())
 }
 
 /// Sibling worktrees can close from the row. The project's root
@@ -589,7 +637,7 @@ pub fn can_close(ws: &Workspace) -> bool {
     ws.kind == Kind::Worktree
 }
 
-/// Another workspace in this project already uses this rail slug or
+/// Another workspace in this project already uses this worktree slug or
 /// `.worktrees/<slug>` folder. `except_id` is the row being renamed.
 pub fn worktree_name_taken(
     workspaces: &[Workspace],
@@ -710,6 +758,21 @@ pub fn resolve_workspace<'a>(
     let hits: Vec<&Workspace> = workspaces
         .iter()
         .filter(|w| w.name.eq_ignore_ascii_case(q))
+        .collect();
+    match hits.as_slice() {
+        [one] => return Ok(one),
+        [] => {}
+        _ => return Err(format!("workspace '{q}' is ambiguous")),
+    }
+    let hits: Vec<&Workspace> = workspaces
+        .iter()
+        .filter(|w| {
+            w.title
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some_and(|t| t.eq_ignore_ascii_case(q))
+        })
         .collect();
     match hits.as_slice() {
         [one] => Ok(one),
@@ -896,6 +959,40 @@ mod tests {
     }
 
     #[test]
+    fn resolve_workspace_by_title_after_name() {
+        let named = Workspace {
+            id: "ws-kid".into(),
+            project_id: "p".into(),
+            name: "kid".into(),
+            title: Some("fix login".into()),
+            path: PathBuf::from("/tmp/sola-ws-kid-title"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let other = Workspace {
+            id: "ws-other".into(),
+            project_id: "p".into(),
+            name: "other".into(),
+            title: Some("kid".into()),
+            path: PathBuf::from("/tmp/sola-ws-other-title"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let all = vec![named, other];
+        assert_eq!(resolve_workspace(&all, "kid").unwrap().id, "ws-kid");
+        assert_eq!(resolve_workspace(&all, "fix login").unwrap().id, "ws-kid");
+        assert_eq!(resolve_workspace(&all, "other").unwrap().id, "ws-other");
+    }
+
+    #[test]
     fn unique_id_suffixes() {
         let mut taken = HashSet::new();
         taken.insert("ws-kvm-perf".into());
@@ -951,9 +1048,76 @@ mod tests {
             .into_iter()
             .map(|w| w.id.as_str())
             .collect();
-        assert_eq!(ids, ["ws-main", "ws-kid", "ws-z"]);
+        assert_eq!(ids, ["ws-z", "ws-kid", "ws-main"]);
         assert_eq!(lineage_depth(&child, &all), 1);
         assert_eq!(lineage_depth(&main, &all), 0);
+    }
+
+    fn ws(id: &str, project: &str, name: &str, kind: Kind) -> Workspace {
+        Workspace {
+            id: id.into(),
+            project_id: project.into(),
+            name: name.into(),
+            title: None,
+            path: PathBuf::from(format!("/{name}")),
+            kind,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        }
+    }
+
+    #[test]
+    fn move_workspace_before_stays_in_project() {
+        let mut all = vec![
+            ws("a-root", "a", "root", Kind::Main),
+            ws("a-kid", "a", "kid", Kind::Worktree),
+            ws("b-root", "b", "root", Kind::Main),
+            ws("a-z", "a", "z", Kind::Worktree),
+        ];
+        move_workspace_before(&mut all, "a-z", Some("a-kid")).unwrap();
+        let ids: Vec<&str> = ordered_for_project("a", &all)
+            .into_iter()
+            .map(|w| w.id.as_str())
+            .collect();
+        assert_eq!(ids, ["a-root", "a-z", "a-kid"]);
+        assert_eq!(all[2].id, "b-root");
+        assert!(move_workspace_before(&mut all, "a-z", Some("b-root")).is_err());
+    }
+
+    #[test]
+    fn move_project_before_reorders_rail() {
+        let mut projects = vec![
+            Project {
+                id: "a".into(),
+                name: "A".into(),
+                collapsed: false,
+                root: PathBuf::from("/a"),
+                startup: String::new(),
+            },
+            Project {
+                id: "b".into(),
+                name: "B".into(),
+                collapsed: false,
+                root: PathBuf::from("/b"),
+                startup: String::new(),
+            },
+            Project {
+                id: "c".into(),
+                name: "C".into(),
+                collapsed: false,
+                root: PathBuf::from("/c"),
+                startup: String::new(),
+            },
+        ];
+        move_project_before(&mut projects, "c", Some("a")).unwrap();
+        let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["c", "a", "b"]);
+        move_project_before(&mut projects, "c", None).unwrap();
+        let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub fn workspace_json(w: &Workspace, selected: Option<&str>) -> serde_json::Valu
         "id": w.id,
         "name": title,
         "title": w.title,
+        "label": rail_label(w),
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -54,6 +55,7 @@ pub fn spawn_json(w: &Workspace, selected: bool) -> serde_json::Value {
         "id": w.id,
         "name": w.name,
         "title": w.title,
+        "label": rail_label(w),
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -70,14 +72,29 @@ pub fn display_name(w: &Workspace) -> &str {
     }
 }
 
-/// Rail label: `root`, `sc-1234`, or `sc-1234 · short title`.
+/// Rail label: `root`, the worktree slug, or `--title` when set.
+/// The folder slug is not prefixed onto a custom title.
 pub fn rail_label(w: &Workspace) -> String {
     if w.kind == Kind::Main {
         return "root".into();
     }
     match w.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(t) => format!("{} · {t}", w.name),
+        Some(t) => t.to_string(),
         None => w.name.clone(),
+    }
+}
+
+/// Set the rail display. Empty or equal to the worktree slug clears
+/// `title` so the row tracks `--name`.
+pub fn apply_rail_title(ws: &mut Workspace, raw: &str) {
+    if ws.kind == Kind::Main {
+        return;
+    }
+    let t = raw.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case(&ws.name) {
+        ws.title = None;
+    } else {
+        ws.title = Some(t.to_string());
     }
 }
 
@@ -317,11 +334,18 @@ mod tests {
     }
 
     #[test]
-    fn rail_label_joins_title() {
+    fn rail_label_is_title_or_name() {
         let mut w = ws("ws-kid", "sc-1234", Kind::Worktree);
         assert_eq!(rail_label(&w), "sc-1234");
         w.title = Some("fix login".into());
-        assert_eq!(rail_label(&w), "sc-1234 · fix login");
+        assert_eq!(rail_label(&w), "fix login");
+        apply_rail_title(&mut w, "sc-1234");
+        assert_eq!(w.title, None);
+        assert_eq!(rail_label(&w), "sc-1234");
+        apply_rail_title(&mut w, " GPU idle ");
+        assert_eq!(w.title.as_deref(), Some("GPU idle"));
+        apply_rail_title(&mut w, "");
+        assert_eq!(w.title, None);
     }
 
     #[test]
@@ -330,14 +354,9 @@ mod tests {
             status_notice(Some("Sola"), "sola-workspaces", "grok", AgentStatus::Done).unwrap();
         assert_eq!(done.title, "Sola · sola-workspaces");
         assert_eq!(done.body, "grok is done");
-        let wait = status_notice(
-            Some("Illuno"),
-            "sc-1234 · fix login",
-            "grok",
-            AgentStatus::Waiting,
-        )
-        .unwrap();
-        assert_eq!(wait.title, "Illuno · sc-1234 · fix login");
+        let wait =
+            status_notice(Some("Illuno"), "fix login", "grok", AgentStatus::Waiting).unwrap();
+        assert_eq!(wait.title, "Illuno · fix login");
         assert_eq!(wait.body, "grok needs attention");
         let root = status_notice(Some("Sola"), "root", "grok", AgentStatus::Done).unwrap();
         assert_eq!(root.title, "Sola · root");
@@ -357,6 +376,7 @@ mod tests {
         let w = ws("ws-main", "Sola", Kind::Main);
         assert_eq!(display_name(&w), "root");
         assert_eq!(workspace_json(&w, Some("ws-main"))["name"], "root");
+        assert_eq!(workspace_json(&w, Some("ws-main"))["label"], "root");
         assert_eq!(workspace_json(&w, Some("ws-main"))["selected"], true);
         assert_eq!(workspace_json(&w, Some("ws-main"))["kind"], "main");
     }

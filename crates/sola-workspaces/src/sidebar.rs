@@ -1,10 +1,12 @@
 //! Project groups + workspace rows. `+` on the group opens a name modal.
 
 use iced::widget::{column, container, mouse_area, row, text_editor};
-use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
+use sola_kit::components::status_mark;
+use sola_kit::components::style::SPACE_SM;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
@@ -17,10 +19,13 @@ use crate::workspace::{self, Project, Workspace};
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
 pub const ADD_INPUT_ID: &str = "ws-add-path";
+pub const RENAME_INPUT_ID: &str = "ws-tab-rename";
 
 pub struct SidebarState {
     pub width: f32,
     pub gestures: sola_kit::components::SidebarState,
+    /// `(workspace id, draft name)` while a tab is being renamed.
+    pub renaming: Option<(String, String)>,
 }
 
 impl Default for SidebarState {
@@ -28,6 +33,7 @@ impl Default for SidebarState {
         Self {
             width: SIDEBAR_W_DEFAULT,
             gestures: sola_kit::components::SidebarState::new(),
+            renaming: None,
         }
     }
 }
@@ -101,30 +107,18 @@ pub fn view<'a>(
         let mut items = Vec::new();
         if !project.collapsed {
             for ws in workspace::ordered_for_project(&project.id, workspaces) {
-                let title = crate::cli::rail_label(ws);
-                let leaves = ws.layout().leaves();
-                let panes = leaves.iter().filter_map(|id| pane_status.get(id));
-                let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
-                    .active(ws.id == selected)
-                    .indicator(ws.status.indicator())
-                    .id(ws.id.clone());
-                let n = crate::status::grok_compaction(panes);
-                if n > 0 {
-                    item = item.secondary(format!("×{n}"));
-                }
-                // Kit list `on_close` — hover × (lucide/x), vertically
-                // centered. Not `hover_action` (session-card trash).
-                // Root stays; Drop Project unregisters the project.
-                if workspace::can_close(ws) {
-                    item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
-                }
-                items.push(item);
+                items.push(workspace_row(
+                    ws,
+                    selected,
+                    pane_status,
+                    state.renaming.as_ref(),
+                ));
             }
         }
         let mark = if project.collapsed { "▸ " } else { "" };
         sections.push(
             SidebarSection::new(format!("{mark}{}", project.name), items)
-                .on_label(Msg::ToggleProject(project.id.clone()))
+                .id(project.id.clone())
                 .on_add(Msg::OpenSpawn(project.id.clone())),
         );
     }
@@ -136,11 +130,61 @@ pub fn view<'a>(
         b: term_bg,
     };
 
-    let mut panel = SidebarPanel::new(sections).controller(&state.gestures, Msg::Sidebar);
+    let mut panel = SidebarPanel::new(sections)
+        .controller(&state.gestures, Msg::Sidebar)
+        .reorder_within_sections();
     if projects.is_empty() {
         panel = panel.footer(empty_footer());
     }
     panel.resizable_with(state.width, divider).build()
+}
+
+fn workspace_row<'a>(
+    ws: &'a Workspace,
+    selected: &str,
+    pane_status: &'a std::collections::HashMap<String, PaneStatus>,
+    renaming: Option<&(String, String)>,
+) -> SidebarItem<'a, Msg> {
+    let title = crate::cli::rail_label(ws);
+    let leaves = ws.layout().leaves();
+    let panes = leaves.iter().filter_map(|id| pane_status.get(id));
+    let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
+        .active(ws.id == selected)
+        .indicator(ws.status.indicator())
+        .id(ws.id.clone());
+    let n = crate::status::grok_compaction(panes);
+    if n > 0 {
+        item = item.secondary(format!("×{n}"));
+    }
+    // Kit list `on_close` — hover × (lucide/x), vertically
+    // centered. Not `hover_action` (session-card trash).
+    // Root stays; Drop Project unregisters the project.
+    if workspace::can_close(ws) {
+        item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
+    }
+    let editing = renaming.is_some_and(|(id, _)| id == &ws.id);
+    if editing {
+        let draft = renaming.map(|(_, d)| d.as_str()).unwrap_or("");
+        let field = text_input("label", draft)
+            .id(iced::widget::Id::new(RENAME_INPUT_ID))
+            .size(12)
+            .font(fonts::ui())
+            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+            .on_input(Msg::RenameInput)
+            .on_submit(Msg::RenameCommit)
+            .style(sola_kit::components::text_input::style)
+            .padding(Padding::from([1, 4]))
+            .width(Length::Fill);
+        let body = row![status_mark(ws.status.indicator()), field]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+        item = item.content(body);
+    } else if workspace::can_close(ws) {
+        // Worktree tabs: hover pencil (and double-click via kit Event::Edit).
+        item = item.on_edit(Msg::BeginRename(ws.id.clone()));
+    }
+    item
 }
 
 /// Dead PTY (Ctrl-D / shell exit). One action: start a new shell.
