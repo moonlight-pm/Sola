@@ -77,7 +77,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
 | `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Tokens + `skipped.json` + `liked.json` under `~/.local/state/sola/spotify/`; settings (last page + last track + last playlist + Back/Forward stack, max 20 back) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
-| `crates/solactl` | Operator CLI (`compositor`, `session`, `workspaces`, `browser`, emit, logs, …) |
+| `crates/solactl` | Operator CLI (`compositor`, `session`, `workspaces`, `browser`, `bots`, emit, logs, …) |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |

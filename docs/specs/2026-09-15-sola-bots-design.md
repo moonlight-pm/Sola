@@ -7,7 +7,7 @@
 | | |
 |--|--|
 | **Implementation** | `crates/sola-bots` (`sola-botsd` + iced HTTP/SSE client); HTTP `:27419` + SSE `GET /events`; iOS `~/Workspace/SolaBot` on Ember (scheme **SolaBot-Release** default); `solactl bots` on sola-call; seat guards |
-| **Dogfood** | desk + phone used; ACP dies on `cargo make install bots` |
+| **Dogfood** | desk + phone used; write-fence escape **installed** 2026-09-21; ACP dies on `cargo make install bots` |
 | **Gaps** | session-roll; Grok not tmux-backed (child of daemon); iOS SSH codesign flaky |
 
 ---
@@ -153,9 +153,8 @@ Do not install without express permission.
 
 1. **Roll trigger** — token/compaction threshold vs a `CURRENT.md` “start fresh”
    convention vs calendar. Implement after a real Suno-class transcript exists.
-2. **HTTP bind** — loopback default vs LAN (`0.0.0.0`) behind the token.
-3. **iOS auth storage** — Keychain token; how the operator pastes it once.
-4. **Second vendor** — after Grok ACP is boring.
+2. **iOS auth storage** — Keychain token; how the operator pastes it once.
+3. **Second vendor** — after Grok ACP is boring.
 
 ---
 
@@ -164,4 +163,5 @@ Do not install without express permission.
 | Date | Decision |
 |------|----------|
 | 2026-09-15 | Yolo all tools. Informational, not coding. One long dialog; hide compaction. Per-bot `~/Bots/<slug>/`. No Workspace/worktree overlap. Native iOS, not PWA-first. Crate **Bots**. Soft write fence via foundation prompt. This computer is the sandbox; browser via `solactl browser`. |
+| 2026-09-16 | HTTP binds `0.0.0.0:27419` behind the compiled bearer token. Public name is `https://bot.sola.computer`. |
 | 2026-09-17 | Write fence stays **default home-only**. Joshua can explicitly order an escape (whole computer / drop the fence / a named path outside home). Seat steal still forbidden. |
