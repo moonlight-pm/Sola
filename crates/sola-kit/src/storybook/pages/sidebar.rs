@@ -24,6 +24,7 @@ pub enum Msg {
     Select(String),
     ToggleGroup(String),
     EditGroup(String),
+    EditItem(String),
     RenameInput(String),
     RenameCommit,
     OpenColor(String),
@@ -129,6 +130,33 @@ impl Default for State {
     }
 }
 
+fn demo_item_row<'a>(it: &'a DemoItem, state: &'a State) -> SidebarItem<'a, Msg> {
+    let renaming = state.renaming.as_ref().is_some_and(|(id, _)| id == &it.id);
+    let mut item = SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
+        .id(it.id.clone())
+        .active(state.selected == it.id);
+    if renaming {
+        let draft = state
+            .renaming
+            .as_ref()
+            .map(|(_, d)| d.as_str())
+            .unwrap_or("");
+        let field = text_input("Name", draft)
+            .size(12)
+            .font(sola_kit::fonts::ui())
+            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+            .on_input(Msg::RenameInput)
+            .on_submit(Msg::RenameCommit)
+            .style(sola_kit::components::text_input::style)
+            .padding(Padding::from([1, 4]))
+            .width(Length::Fill);
+        item = item.content(field);
+    } else {
+        item = item.on_edit(Msg::EditItem(it.id.clone()));
+    }
+    item
+}
+
 fn items(rows: &[(&str, &str)]) -> Vec<DemoItem> {
     rows.iter()
         .map(|(id, label)| DemoItem {
@@ -157,6 +185,7 @@ impl State {
                 self.renaming = Some((id, name));
                 self.color_picker = None;
             }
+            Msg::EditItem(id) => self.begin_item_rename(&id),
             Msg::RenameInput(s) => {
                 if let Some((_, draft)) = &mut self.renaming {
                     *draft = s;
@@ -164,10 +193,12 @@ impl State {
             }
             Msg::RenameCommit => {
                 if let Some((id, name)) = self.renaming.take() {
-                    if let Some(g) = self.group_mut(&id) {
-                        let name = name.trim();
-                        if !name.is_empty() {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        if let Some(g) = self.group_mut(&id) {
                             g.name = name.to_string();
+                        } else if let Some(it) = self.item_mut(&id) {
+                            it.label = name.to_string();
                         }
                     }
                 }
@@ -217,6 +248,45 @@ impl State {
         })
     }
 
+    fn item_mut(&mut self, id: &str) -> Option<&mut DemoItem> {
+        for block in &mut self.blocks {
+            match block {
+                Block::Group(g) => {
+                    if let Some(it) = g.items.iter_mut().find(|it| it.id == id) {
+                        return Some(it);
+                    }
+                }
+                Block::Item(it) if it.id == id => return Some(it),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn item_label(&self, id: &str) -> Option<String> {
+        for block in &self.blocks {
+            match block {
+                Block::Group(g) => {
+                    if let Some(it) = g.items.iter().find(|it| it.id == id) {
+                        return Some(it.label.clone());
+                    }
+                }
+                Block::Item(it) if it.id == id => return Some(it.label.clone()),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn begin_item_rename(&mut self, id: &str) {
+        let Some(label) = self.item_label(id) else {
+            return;
+        };
+        self.renaming = Some((id.to_string(), label));
+        self.color_picker = None;
+        self.selected = id.to_string();
+    }
+
     fn toggle_group(&mut self, id: &str) {
         for block in &mut self.blocks {
             if let Block::Group(g) = block {
@@ -232,6 +302,7 @@ impl State {
         match ev {
             SidebarEvent::Activate { id } => self.selected = id,
             SidebarEvent::ToggleSection { id } => self.toggle_group(&id),
+            SidebarEvent::Edit { id } => self.begin_item_rename(&id),
             SidebarEvent::Resize { width } => self.width = width,
             SidebarEvent::Drop(drop) => self.apply_drop(drop),
         }
@@ -365,15 +436,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         match block {
             Block::Group(g) => {
                 let n = g.items.len();
-                let rows: Vec<SidebarItem<Msg>> = g
-                    .items
-                    .iter()
-                    .map(|it| {
-                        SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
-                            .id(it.id.clone())
-                            .active(state.selected == it.id)
-                    })
-                    .collect();
+                let rows: Vec<SidebarItem<Msg>> =
+                    g.items.iter().map(|it| demo_item_row(it, state)).collect();
                 let mut section = SidebarSection::new(g.name.clone(), rows)
                     .id(g.id.clone())
                     .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
@@ -413,10 +477,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
                 sections.push(section);
             }
             Block::Item(it) => {
-                let row = SidebarItem::new(it.label.clone(), Msg::Select(it.id.clone()))
-                    .id(it.id.clone())
-                    .active(state.selected == it.id);
-                sections.push(SidebarSection::unlabeled(vec![row]));
+                sections.push(SidebarSection::unlabeled(vec![demo_item_row(it, state)]));
             }
         }
     }
@@ -444,8 +505,13 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
             "Morphing-hole reorder (Scratch morph2). Click a group title \
              to fold it; drag it to move the whole group. 2px before the \
              drag starts. Hover a group header for a pencil — edit mode \
-             shows a color swatch and a check to save. Selected rows lift \
-             the column or pocket (plus a 1px lip); ink follows the fill."
+             shows a color swatch and a check to save. Hover a row for a \
+             pencil, or double-click, to rename it. `.reorder_within_sections()` \
+             keeps items in their group (Workspaces); `.reorderable()` still \
+             lets tabs join, leave, and mix with loose rows (browser). \
+             Labeled (non-pocket) section headers are also strip rows so \
+             project groups can drag. Selected rows lift the column or \
+             pocket (plus a 1px lip); ink follows the fill."
         )
         .style(muted),
         demo,

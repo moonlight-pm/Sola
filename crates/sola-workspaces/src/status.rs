@@ -3,6 +3,8 @@
 //! Hooks (Grok and Codex) and OSC 9999 write this. Process-tree only names
 //! *who*. Never infer from OSC 0/2 titles.
 
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -72,11 +74,11 @@ pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Opt
         .or_else(|| panes.first().and_then(|p| p.agent.clone()))
 }
 
-/// Quiet `×N` on the workspace row: loudest Grok session in the tab.
-pub fn grok_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
+/// Quiet `×N` on the workspace row: loudest Grok or Codex session in the tab.
+pub fn rail_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
     panes
         .into_iter()
-        .filter(|p| p.is_grok())
+        .filter(|p| p.shows_compaction())
         .map(|p| p.compaction_count)
         .max()
         .unwrap_or(0)
@@ -92,14 +94,23 @@ pub struct PaneStatus {
     /// `SOLA_PANE_ID` carries a different session id and must not `done` us.
     pub owner_session: Option<String>,
     pub restored_unconfirmed: bool,
-    /// Grok `signals.json` `compactionCount` for `owner_session`.
+    /// Compaction count for `owner_session` (Grok session dir or Codex
+    /// rollout `type: compacted` records).
     pub compaction_count: u32,
+    /// Last Codex rollout length counted — presence ticks skip a rescan
+    /// of a multi-megabyte jsonl when the file has not grown.
+    pub codex_scan_len: u64,
 }
 
 impl PaneStatus {
     pub fn apply_hook(&mut self, incoming: &Incoming) {
         let sid = incoming.mapped.session_id.as_deref();
-        // SessionStart / UserPromptSubmit are lead events for the grok
+        let who = if incoming.agent.is_empty() {
+            "grok".to_string()
+        } else {
+            incoming.agent.clone()
+        };
+        // SessionStart / UserPromptSubmit are lead events for the agent
         // in this pane. They must reclaim after `/new`, `grok -r`, or a
         // child CLI that inherited SOLA_PANE_ID — otherwise the mark
         // freezes on the previous session. Grok does not fire those
@@ -108,8 +119,8 @@ impl PaneStatus {
             if let Some(sid) = incoming.mapped.session_id.clone() {
                 self.owner_session = Some(sid);
             }
-            // SessionStart is grok in this pane even before presence ticks.
-            self.agent = Some("grok".into());
+            // SessionStart names this pane even before presence ticks.
+            self.agent = Some(who.clone());
         } else if self.is_foreign(sid) {
             return;
         } else if let Some(sid) = incoming.mapped.session_id.clone() {
@@ -127,11 +138,6 @@ impl PaneStatus {
                 return;
             }
         }
-        let who = if incoming.agent.is_empty() {
-            "grok".to_string()
-        } else {
-            incoming.agent.clone()
-        };
         if incoming.mapped.compacted {
             self.agent = Some(who.clone());
         }
@@ -182,26 +188,46 @@ impl PaneStatus {
         }
     }
 
-    /// Refresh `compaction_count` from the pane's Grok session dir.
+    /// Refresh `compaction_count` from the pane's session artifacts.
     ///
-    /// Only a pane whose presence is Grok gets a count — a sibling
-    /// shell must not inherit the newest session under this cwd.
-    /// `signals.json` `compactionCount` is preferred when it is ahead,
-    /// but Grok often leaves that field at 0 after a compact; segment
-    /// files and checkpoints are the durable record. No owner session
-    /// yet → newest session under this cwd.
+    /// Only a Grok or Codex pane gets a count — a sibling shell must
+    /// not inherit the newest session under this cwd. Grok: session dir
+    /// segments/checkpoints, then `signals.json` `compactionCount`
+    /// (that field often stays 0). Codex: `type: compacted` records in
+    /// `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. No Grok
+    /// owner session yet → newest session under this cwd. Codex needs
+    /// `owner_session`; a missed file keeps the hook-incremented count.
     pub fn refresh_compaction(&mut self, cwd: &Path) {
         if !self.shows_compaction() {
             self.compaction_count = 0;
+            self.codex_scan_len = 0;
             return;
         }
-        if let Some(n) = read_compaction_count(cwd, self.owner_session.as_deref()) {
-            self.compaction_count = n;
+        if self.is_grok() {
+            if let Some(n) = read_compaction_count(cwd, self.owner_session.as_deref()) {
+                self.compaction_count = n;
+            }
+            return;
+        }
+        if self.is_codex() {
+            if let Some((n, len)) = read_codex_compaction_in(
+                &codex_home(),
+                self.owner_session.as_deref(),
+                self.codex_scan_len,
+                self.compaction_count,
+            ) {
+                self.compaction_count = n;
+                self.codex_scan_len = len;
+            }
         }
     }
 
     pub fn is_grok(&self) -> bool {
         self.agent.as_deref() == Some("grok")
+    }
+
+    pub fn is_codex(&self) -> bool {
+        self.agent.as_deref() == Some("codex")
     }
 
     /// Session to `grok -r` after a lost tmux. Needs Grok still named on
@@ -221,9 +247,8 @@ impl PaneStatus {
             .is_some_and(crate::cli::is_first_class)
     }
 
-
     fn shows_compaction(&self) -> bool {
-        self.is_grok()
+        self.is_grok() || self.is_codex()
     }
 
     /// Presence names who is here. It never *raises* working/waiting/done
@@ -272,6 +297,17 @@ fn grok_home() -> PathBuf {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".grok")
+        })
+}
+
+fn codex_home() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".codex")
         })
 }
 
@@ -367,6 +403,113 @@ fn parse_compaction_count(text: &str) -> Option<u32> {
         .or_else(|| v.get("compaction_count"))
         .and_then(|n| n.as_u64())
         .map(|n| n as u32)
+}
+
+fn read_codex_compaction_in(
+    home: &Path,
+    session_id: Option<&str>,
+    last_len: u64,
+    last_count: u32,
+) -> Option<(u32, u64)> {
+    let sid = session_id.filter(|s| is_session_id(s))?;
+    let path = find_codex_rollout(home, sid)?;
+    let len = std::fs::metadata(&path).ok()?.len();
+    if len == last_len && last_count > 0 {
+        return Some((last_count, len));
+    }
+    Some((count_codex_compactions(&path), len))
+}
+
+/// `~/.codex/sessions/YYYY/MM/DD/rollout-{ts}-{session_id}.jsonl`
+fn find_codex_rollout(home: &Path, session_id: &str) -> Option<PathBuf> {
+    if !is_session_id(session_id) {
+        return None;
+    }
+    let needle = format!("-{session_id}.jsonl");
+    find_rollout_under(&home.join("sessions"), &needle, 4)
+}
+
+fn find_rollout_under(dir: &Path, suffix: &str, depth: u8) -> Option<PathBuf> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut dirs = Vec::new();
+    for ent in rd.filter_map(|e| e.ok()) {
+        let path = ent.path();
+        let Ok(ft) = ent.file_type() else {
+            continue;
+        };
+        if ft.is_file() {
+            let name = path.file_name()?.to_string_lossy();
+            if name.starts_with("rollout-") && name.ends_with(suffix) {
+                return Some(path);
+            }
+        } else if ft.is_dir() && depth > 0 {
+            dirs.push(path);
+        }
+    }
+    for d in dirs {
+        if let Some(found) = find_rollout_under(&d, suffix, depth.saturating_sub(1)) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Count jsonl records whose top-level `type` is `compacted`.
+/// Compact payloads are huge; only the first bytes of each line are
+/// inspected, then the rest of the line is skipped without buffering it.
+fn count_codex_compactions(path: &Path) -> u32 {
+    let Ok(file) = File::open(path) else {
+        return 0;
+    };
+    let mut reader = BufReader::new(file);
+    let mut n = 0u32;
+    loop {
+        let peek = match reader.fill_buf() {
+            Ok(buf) if !buf.is_empty() => buf,
+            _ => break,
+        };
+        let nl = peek.iter().position(|&b| b == b'\n');
+        let head_end = nl.unwrap_or(peek.len()).min(192);
+        let compacted = line_is_codex_compacted(&peek[..head_end]);
+        match nl {
+            Some(i) => reader.consume(i + 1),
+            None => {
+                let used = peek.len();
+                reader.consume(used);
+                skip_until_newline(&mut reader);
+            }
+        }
+        if compacted {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn skip_until_newline(reader: &mut impl BufRead) {
+    loop {
+        let peek = match reader.fill_buf() {
+            Ok(buf) if !buf.is_empty() => buf,
+            _ => return,
+        };
+        if let Some(i) = peek.iter().position(|&b| b == b'\n') {
+            reader.consume(i + 1);
+            return;
+        }
+        let n = peek.len();
+        reader.consume(n);
+    }
+}
+
+fn line_is_codex_compacted(head: &[u8]) -> bool {
+    let end = head
+        .iter()
+        .position(|&b| b == b'\n' || b == b'\r')
+        .unwrap_or(head.len());
+    let Ok(s) = std::str::from_utf8(&head[..end]) else {
+        return false;
+    };
+    s.contains(r#""type":"compacted""#) || s.contains(r#""type": "compacted""#)
 }
 
 fn last_status_path() -> PathBuf {
@@ -706,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn grok_compaction_takes_max() {
+    fn rail_compaction_takes_max_grok_or_codex() {
         let a = PaneStatus {
             agent: Some("grok".into()),
             compaction_count: 2,
@@ -721,8 +864,15 @@ mod tests {
             compaction_count: 9,
             ..PaneStatus::default()
         };
-        assert_eq!(grok_compaction([&a, &b, &shell]), 5);
-        assert_eq!(grok_compaction([&shell]), 0);
+        let codex = PaneStatus {
+            agent: Some("codex".into()),
+            compaction_count: 7,
+            ..PaneStatus::default()
+        };
+        assert_eq!(rail_compaction([&a, &b, &shell]), 5);
+        assert_eq!(rail_compaction([&shell]), 0);
+        assert_eq!(rail_compaction([&a, &codex, &shell]), 7);
+        assert_eq!(rail_compaction([&codex]), 7);
     }
 
     #[test]
@@ -817,6 +967,99 @@ mod tests {
         pane.compaction_count = 4;
         pane.refresh_compaction(Path::new("/tmp/not-a-session"));
         assert_eq!(pane.compaction_count, 0);
+    }
+
+    #[test]
+    fn codex_pane_keeps_count_when_rollout_missing() {
+        let mut pane = PaneStatus {
+            agent: Some("codex".into()),
+            owner_session: Some("01a0missing-session".into()),
+            compaction_count: 4,
+            ..PaneStatus::default()
+        };
+        pane.refresh_compaction(Path::new("/tmp/not-a-session"));
+        assert_eq!(pane.compaction_count, 4);
+    }
+
+    fn write_codex_rollout(home: &Path, sid: &str, compacted: u32, decoy: bool) {
+        let dir = home.join("sessions").join("2026").join("09").join("21");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("rollout-2026-09-21T12-00-00-{sid}.jsonl"));
+        let mut text = format!(
+            "{{\"timestamp\":\"t\",\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{{\"session_id\":\"{sid}\"}}}}\n"
+        );
+        for i in 0..compacted {
+            text.push_str(&format!(
+                "{{\"timestamp\":\"t\",\"ordinal\":{},\"type\":\"compacted\",\"payload\":{{\"message\":\"\",\"replacement_history\":[]}}}}\n",
+                i + 1
+            ));
+        }
+        if decoy {
+            text.push_str(
+                "{\"timestamp\":\"t\",\"ordinal\":99,\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"talk about compacted context\"}}\n",
+            );
+        }
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn codex_compaction_counts_compacted_records() {
+        let root = std::env::temp_dir().join(format!(
+            "sola-ws-codex-compact-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sid = "01a0codex-count-sid";
+        write_codex_rollout(&root, sid, 3, true);
+        let path = find_codex_rollout(&root, sid).unwrap();
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(read_codex_compaction_in(&root, Some(sid), 0, 0), Some((3, len)));
+        // Unchanged length keeps the previous count (no rescan).
+        assert_eq!(
+            read_codex_compaction_in(&root, Some(sid), len, 99),
+            Some((99, len))
+        );
+        assert_eq!(count_codex_compactions(&path), 3);
+        // A megabyte-class compacted line still counts once (type is in
+        // the first bytes; later `"type":"compacted"` in the payload is
+        // the same record).
+        let long = root.join("sessions/2026/09/21").join(format!(
+            "rollout-2026-09-21T12-00-01-01a0codex-long-sid.jsonl"
+        ));
+        let mut long_line = String::from(
+            r#"{"timestamp":"t","ordinal":1,"type":"compacted","payload":{"message":""#,
+        );
+        long_line.push_str(&"x".repeat(800));
+        long_line.push_str(r#"","note":"\"type\":\"compacted\" decoy"}}"#);
+        long_line.push('\n');
+        std::fs::write(&long, long_line).unwrap();
+        assert_eq!(count_codex_compactions(&long), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_hook_session_start_names_codex() {
+        let mut pane = PaneStatus::default();
+        let incoming = Incoming {
+            pane_id: "p".into(),
+            agent: "codex".into(),
+            mapped: MappedHook {
+                status: None,
+                clear_turn: true,
+                claim: true,
+                session_end: false,
+                compacted: false,
+                prompt: None,
+                tool: None,
+                session_id: Some("c-sid".into()),
+            },
+        };
+        pane.apply_hook(&incoming);
+        assert_eq!(pane.agent.as_deref(), Some("codex"));
+        assert_eq!(pane.owner_session.as_deref(), Some("c-sid"));
+        assert_eq!(pane.status, AgentStatus::Idle);
     }
 
     #[test]

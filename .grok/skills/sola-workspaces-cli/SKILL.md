@@ -35,7 +35,7 @@ stay put.
 ## Intent → verb
 
 Resolve project/parent with `whoami` (or `ps`) when you are in a Workspaces
-pane. `--name` is the rail slug and `.worktrees/<name>`.
+pane. `--name` is the `.worktrees/<name>` folder (rail default). `--title` is the rail label.
 
 | User says | Do |
 |---|---|
@@ -48,7 +48,10 @@ pane. `--name` is the rail slug and `.worktrees/<name>`.
 | clean up this worktree / merge and clean up this worktree | Merge to master, then remove the git worktree **and** close the tab (below). |
 | remove this worktree, don't merge / toss this worktree | Do **not** merge. Remove the git worktree **and** close the tab. |
 | drop / close that workspace | `workspace.rm` only — leave the git worktree |
-| rename this worktree / promote to ticket *N* | `workspace.set --name SLUG` (moves `.worktrees/<name>`). Add `--title` and `--branch` for the ticket label / git branch. Do not `git worktree move` by hand. |
+| rename this worktree / promote to ticket *N* | `workspace.set --name SLUG` (moves `.worktrees/<name>`). Add `--title` for the rail label and `--branch` for the git branch. Do not `git worktree move` by hand. |
+| rename this tab / change the label | `workspace.set --title '…'` (empty clears; rail falls back to the slug). Does not move the folder. |
+| reorder this tab / move it before *name* | `workspace.set --workspace SLUG --before OTHER` (`end` = last in the project). Same project only. |
+| reorder this project / move the group | `project.reorder --project NAME [--before OTHER]` |
 
 ## Fan-out a ticket (stay here)
 
@@ -94,9 +97,10 @@ A workspace name prefers the **Grok** leaf (or the Codex leaf when
 
 ## Promote an ad hoc tab
 
-`--name` is the rail slug **and** the `.worktrees/<name>` folder. The
-catalog id does not change. `--branch` is optional (`git branch -m`);
-omit it to keep the current branch.
+`--name` is the `.worktrees/<name>` folder. The catalog id does not
+change. `--title` is the rail label (not prefixed with the slug).
+`--branch` is optional (`git branch -m`); omit it to keep the current
+branch.
 
 ```bash
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
@@ -140,7 +144,7 @@ Resolve names (`whoami`, then `project.list` / `ps`):
 
 | Var | From |
 |---|---|
-| `$NAME` | rail slug and `.worktrees/<name>` |
+| `$NAME` | worktree slug / `.worktrees/<name>` |
 | `$BRANCH` | git (may differ from `$NAME`) |
 | `$PROJECT` | project's `root` — not `whoami.path` |
 

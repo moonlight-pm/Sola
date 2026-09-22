@@ -93,6 +93,10 @@ Grok or Codex pane in that tab (waiting beats working beats done beats idle).
 Mark slot is always 12×12 so titles do not shift. Groups stack at the
 top; a lone project may fill to scroll. Group `+` opens a name-only
 modal (worktree + branch). The new pane is a shell — start grok yourself.
+Drag a worktree row to reorder it inside that project; drag a project
+header to reorder groups. Hover a worktree for a pencil (or double-click)
+to rename — same as `workspace.set --name` (slug + worktree move). Root
+has no pencil. Escape cancels the field.
 
 ## Shapes
 
@@ -107,9 +111,11 @@ Motion is state only (the working ring). No page-load choreography.
 ## Components
 
 Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Section labels
-toggle collapse; section `+` opens the name modal. Hover close is kit
-`SidebarItem::on_close` (not the session-card trash). App-local: catalog,
-modal. Do not restyle mail / settings / terminal.
+toggle collapse; section `+` opens the name modal. The panel is
+`.reorder_within_sections()` so a tab cannot join another project.
+Hover close is kit `SidebarItem::on_close`; hover pencil is `on_edit`
+(worktrees). App-local: catalog, modal. Do not restyle mail / settings /
+terminal.
 
 ## Do's and Don'ts
 
@@ -126,12 +132,13 @@ modal. Do not restyle mail / settings / terminal.
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches
   every live leaf).
-- Do show a quiet `×N` on the workspace row when a Grok pane in that
-  tab has compacted (loudest session: `compaction/segment_*.md`,
-  checkpoints, then `signals.json` `compactionCount` — Grok often
-  leaves the signal at 0). Shell panes do not contribute.
+- Do show a quiet `×N` on the workspace row when a Grok or Codex pane
+  in that tab has compacted (loudest session). Grok: `compaction/segment_*.md`,
+  checkpoints, then `signals.json` `compactionCount` (often stays 0).
+  Codex: `type: compacted` records in `~/.codex/sessions/**/rollout-*-{id}.jsonl`.
+  Shell panes do not contribute.
 - Do keep splits off the rail. One row per workspace; the mark watches
-  every Grok pane in the tab. Waiting (needs attention) beats working
+  every Grok or Codex pane in the tab. Waiting (needs attention) beats working
   beats done beats idle. A grok+shell split looks like a single pane.
 - Do return the mark to idle (grey disc) when no Grok pane is live
   (every leaf is a shell). `/exit` / process gone is idle, not a stuck
@@ -140,12 +147,18 @@ modal. Do not restyle mail / settings / terminal.
   (tmux gone) attach with `grok -r <id>` when that session is still on
   disk. A shell after `/exit` does not resume.
 - Do put `+` on the project group, not a form in the rail.
+- Do rename a worktree tab with the hover pencil or a double-click
+  (`workspace.set --title`). The rail is that label, defaulting to the
+  worktree slug — do not prefix the slug onto a custom title. Root has
+  no pencil. Drag stays inside the project; drag a group header to
+  reorder projects. `--name` still moves `.worktrees/<slug>`.
 - Do notify done and waiting only when unfocused (desk card, not
   menubar whisper): title `{project} · {tab}`, body `grok is done` /
   `grok needs attention`. Tab is the rail label (`root`, slug, or
-  `slug · title`).
+  `root`, the worktree slug, or `--title` when set).
 - Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
   right, ⌘W close pane.
 - Don't infer status from OSC 0/2 titles.
+- Don't let a tab drag into another project.
 - Don't cargo-cult Orca worktree cards or amber-everything dots.
 - Don't put siblings anywhere but `<root>/.worktrees/<slug>`.
