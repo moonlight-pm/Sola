@@ -14,8 +14,9 @@
 
 ## Intent
 
-Workspaces (Grok / Codex in PTYs) is the agent product. sola-browser is
-the human browser. Agents **call** the browser; they do not live in it.
+Workspaces (Grok / Codex in PTYs) is the **coding** agent product. Bots
+are informational named sessions on the same desk. sola-browser is the
+human browser. Both **call** the browser; they do not live in it.
 
 The browser exposes, over the call plane, **user-equivalent actions**:
 anything a person can do in chrome or on the page, an agent can do through

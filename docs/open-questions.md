@@ -18,8 +18,10 @@ Progress model: [`progress-model.md`](progress-model.md).
 ### D1 — Permission fan-out when multiple agents attach — **closed (2026-08-28)**
 
 **Answered:** `crates/sola-agent` is retired (unused iced ACP/Grok-leader GUI).
-Daily agent work is Workspaces (`grok` CLI in PTYs). No multi-client ACP GUI;
-do not rebuild one. Permission fan-out for ACP clients is moot.
+Coding agent work is Workspaces (`grok` CLI in PTYs). Informational named
+sessions are **Bots** (2026-09-15 freeze): daemon owns `grok agent stdio`;
+UIs are dialog viewers, not that GUI. Do not rebuild `sola-agent`. Permission
+fan-out for a multi-client ACP *coding* GUI is moot; Bots yolo all tools.
 
 **Related:** `agent` capability (retired); historical ACP freezes.
 
@@ -94,6 +96,8 @@ Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-09-17 | Bots | Write fence default remains the bot home. Joshua can explicitly order an escape (whole computer / drop the fence / a path outside home). Seat steal stays forbidden. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks |
+| 2026-09-15 | Bots | Informational named sessions (not coding). Yolo. Per-bot `~/Bots/<slug>/`. Dialog UI hides compaction. Native iOS. Daemon + ACP Grok. Soft write fence via foundation prompt. This computer is the sandbox; `solactl browser` for web. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks, capabilities |
 | 2026-09-11 | Browser page snapshot | Agent-facing page is a **Playwright aria-snapshot YAML** (pruned AX tree + opaque refs), not JSON. Pipeline: `getFullAXTree` → Puppeteer interestingOnly → collapse nameless generic → ref=`backendDOMNodeId` (stale fails). `snapshot` vs later `read`; screenshot is fallback. Confirm still **D3**. | [freeze](specs/2026-09-11-sola-browser-agent-control-design.md), CURRENT locks |
 | 2026-09-11 | Browser agent control | Confirmed: agent stays in Workspaces; browser is a **user-equivalent** control plane (`solactl browser`). Same strip / profile; isolation is an ordinary group; **Agent** pocket is a skill convention (chrome does not special-case it). Aside is a loose oracle for the page harness, not the product. Method catalog shipped; confirm still **D3**. | [freeze](specs/2026-09-11-sola-browser-agent-control-design.md), CURRENT locks, capabilities |
 | 2026-09-09 | Browser agent control | Agent uses the **same** tabs as the human. It may create a normal tab group for its own work. No agent-only tab type or second profile. Chrome ships generic tab/group/page verbs; particular workflows (pocket, don’t steal the seat) are an agent skill. Face when built: `solactl browser`. Confirm still **D3**. | CURRENT locks, capabilities gap — **amended 2026-09-11** (freeze) |

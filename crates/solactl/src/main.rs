@@ -1,6 +1,6 @@
 //! solactl — operator CLI for Sola.
 //!
-//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`) are a
+//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`, `bots`) are a
 //! real clap tree. Other live owners appear as `solactl <app-id>` from the
 //! call registry.
 
@@ -49,6 +49,13 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Bots: named informational LLM sessions (daemon must be running).
+    #[command(disable_help_flag = true)]
+    Bots {
+        /// Method and flags. Omit to list advertised methods.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 
     /// Tail an app's log file at `/opt/sola/log/<app>.log`.
     Logs {
@@ -92,6 +99,11 @@ fn main() {
             all.extend(args);
             dynamic::run(all)
         }
+        Command::Bots { args } => {
+            let mut all = vec!["bots".into()];
+            all.extend(args);
+            dynamic::run(all)
+        }
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),
@@ -120,6 +132,10 @@ mod tests {
         assert!(
             help.contains("browser"),
             "solactl help must list browser:\n{help}"
+        );
+        assert!(
+            help.contains("bots"),
+            "solactl help must list bots:\n{help}"
         );
     }
 }
