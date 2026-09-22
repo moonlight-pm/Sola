@@ -152,7 +152,7 @@ fn workspace_row<'a>(
         .active(ws.id == selected)
         .indicator(ws.status.indicator())
         .id(ws.id.clone());
-    let n = crate::status::grok_compaction(panes);
+    let n = crate::status::rail_compaction(panes);
     if n > 0 {
         item = item.secondary(format!("×{n}"));
     }

@@ -52,7 +52,7 @@ spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spaw
 is background unless `--select`; can pass `--agent grok|codex` + `--prompt` /
 `--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok and
 Codex hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok
-panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+and Codex panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws` (a Grok pane’s session id is in

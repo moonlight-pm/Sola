@@ -132,12 +132,13 @@ terminal.
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches
   every live leaf).
-- Do show a quiet `×N` on the workspace row when a Grok pane in that
-  tab has compacted (loudest session: `compaction/segment_*.md`,
-  checkpoints, then `signals.json` `compactionCount` — Grok often
-  leaves the signal at 0). Shell panes do not contribute.
+- Do show a quiet `×N` on the workspace row when a Grok or Codex pane
+  in that tab has compacted (loudest session). Grok: `compaction/segment_*.md`,
+  checkpoints, then `signals.json` `compactionCount` (often stays 0).
+  Codex: `type: compacted` records in `~/.codex/sessions/**/rollout-*-{id}.jsonl`.
+  Shell panes do not contribute.
 - Do keep splits off the rail. One row per workspace; the mark watches
-  every Grok pane in the tab. Waiting (needs attention) beats working
+  every Grok or Codex pane in the tab. Waiting (needs attention) beats working
   beats done beats idle. A grok+shell split looks like a single pane.
 - Do return the mark to idle (grey disc) when no Grok pane is live
   (every leaf is a shell). `/exit` / process gone is idle, not a stuck
