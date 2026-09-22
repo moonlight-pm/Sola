@@ -155,9 +155,14 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "click",
-            "Click a snapshot ref, or CSS-pixel coords in that tab",
+            "Click a snapshot ref, a control label, or CSS-pixel coords",
             &[
                 opt_s("ref", Some('r'), "Ref from snapshot (e12 / f1e3)"),
+                opt_s(
+                    "text",
+                    None,
+                    "Accessible name from the last snapshot (unique)",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
                 opt(
                     "x",
@@ -176,9 +181,14 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "hover",
-            "Hover a snapshot ref, or CSS-pixel coords in that tab",
+            "Hover a snapshot ref, a control label, or CSS-pixel coords",
             &[
                 opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s(
+                    "text",
+                    None,
+                    "Accessible name from the last snapshot (unique)",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
                 opt(
                     "x",
@@ -392,6 +402,7 @@ mod tests {
         );
         assert!(click.args.iter().any(|a| a.name == "x"));
         assert!(click.args.iter().any(|a| a.name == "y"));
+        assert!(click.args.iter().any(|a| a.name == "text"));
         let key = methods.iter().find(|m| m.name == "key").unwrap();
         assert!(
             key.args

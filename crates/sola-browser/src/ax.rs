@@ -70,8 +70,33 @@ impl Snapshot {
         if self.dialog_open {
             out.push_str("dialog: open\n");
         }
+        let actions = self.action_lines();
+        if !actions.is_empty() {
+            out.push_str("actions:\n");
+            for line in actions {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
         out.push_str(&self.yaml);
         out
+    }
+
+    /// Compact control index. Agents should click these refs (or `--text`).
+    fn action_lines(&self) -> Vec<String> {
+        self.refs
+            .iter()
+            .filter(|r| is_control(&r.role))
+            .take(80)
+            .map(|r| {
+                if r.name.is_empty() {
+                    format!("- {} {}", r.r#ref, r.role)
+                } else {
+                    format!("- {} {} \"{}\"", r.r#ref, r.role, r.name.replace('"', "'"))
+                }
+            })
+            .collect()
     }
 
     pub fn as_debug_json(&self) -> serde_json::Value {
@@ -148,9 +173,8 @@ pub fn snapshot_from_cdp(nodes: &[CdpAxNode], opts: SnapshotOpts) -> Result<Snap
         return Err("empty accessibility tree".into());
     };
     let root = if let Some(backend) = opts.subtree_backend {
-        find_backend(&root, backend).ok_or_else(|| {
-            "subtree ref not in this tree; snapshot again".to_string()
-        })?
+        find_backend(&root, backend)
+            .ok_or_else(|| "subtree ref not in this tree; snapshot again".to_string())?
     } else {
         root
     };
@@ -192,14 +216,69 @@ pub fn snapshot_from_cdp(nodes: &[CdpAxNode], opts: SnapshotOpts) -> Result<Snap
 }
 
 pub fn parse_cdp_nodes(json: &str) -> Result<Vec<CdpAxNode>, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("ax json: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("ax json: {e}"))?;
     let nodes = v
         .get("nodes")
         .cloned()
         .or_else(|| v.as_array().cloned().map(serde_json::Value::Array))
         .ok_or_else(|| "ax result missing nodes".to_string())?;
     serde_json::from_value(nodes).map_err(|e| format!("ax nodes: {e}"))
+}
+
+/// Pick one control from the last snapshot by accessible name.
+/// Exact name wins. One substring match is enough. Several matches fail
+/// with the refs so the agent can pass `--ref`.
+pub fn match_control<'a>(refs: &'a [RefEntry], query: &str) -> Result<&'a RefEntry, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Err("empty control name".into());
+    }
+    let ql = q.to_ascii_lowercase();
+    let pool: Vec<&RefEntry> = refs
+        .iter()
+        .filter(|r| is_control(&r.role) || is_named_container(&r.role))
+        .filter(|r| !r.name.is_empty())
+        .collect();
+    let exact: Vec<&RefEntry> = pool
+        .iter()
+        .copied()
+        .filter(|r| r.name.eq_ignore_ascii_case(q))
+        .collect();
+    if exact.len() == 1 {
+        return Ok(exact[0]);
+    }
+    if exact.len() > 1 {
+        return Err(ambiguous_controls(q, &exact));
+    }
+    let sub: Vec<&RefEntry> = pool
+        .iter()
+        .copied()
+        .filter(|r| r.name.to_ascii_lowercase().contains(&ql))
+        .collect();
+    if sub.len() == 1 {
+        return Ok(sub[0]);
+    }
+    if sub.is_empty() {
+        return Err(format!(
+            "no control matching \"{q}\" in the last snapshot. Run snapshot (or snapshot --interactive) and click --ref eN from the actions list."
+        ));
+    }
+    Err(ambiguous_controls(q, &sub))
+}
+
+fn ambiguous_controls(query: &str, hits: &[&RefEntry]) -> String {
+    let mut msg = format!(
+        "\"{query}\" matches {} controls; pass --ref one of:\n",
+        hits.len()
+    );
+    for r in hits.iter().take(12) {
+        msg.push_str(&format!("- {} {} \"{}\"\n", r.r#ref, r.role, r.name));
+    }
+    msg
+}
+
+fn is_named_container(role: &str) -> bool {
+    matches!(role, "generic" | "group")
 }
 
 pub fn find_in_yaml(yaml: &str, query: &str) -> Vec<String> {
@@ -288,6 +367,7 @@ fn node_from_cdp(n: &CdpAxNode) -> Node {
             "required" => node.required = as_bool(val),
             "readonly" => node.readonly = as_bool(val),
             "level" => node.level = as_i64(val),
+            "description" if node.name.is_empty() => node.name = as_str(val),
             _ => {}
         }
     }
@@ -296,7 +376,9 @@ fn node_from_cdp(n: &CdpAxNode) -> Node {
 }
 
 fn ax_string(v: &Option<CdpAxValue>) -> String {
-    v.as_ref().map(|v| as_str(Some(&v.value))).unwrap_or_default()
+    v.as_ref()
+        .map(|v| as_str(Some(&v.value)))
+        .unwrap_or_default()
 }
 
 fn as_str(v: Option<&serde_json::Value>) -> String {
@@ -371,6 +453,7 @@ fn is_control(role: &str) -> bool {
             | "switch"
             | "tab"
             | "textbox"
+            | "option"
             | "tree"
             | "treeitem"
             | "link"
@@ -429,6 +512,11 @@ fn is_interesting(n: &Node, inside_control: bool) -> bool {
     if is_control(&n.role) {
         return true;
     }
+    // A labeled generic/group is often the click target (div + aria-label,
+    // no role=button). Dropping it removes the only name the agent can use.
+    if !n.name.is_empty() && matches!(n.role.as_str(), "generic" | "group") {
+        return true;
+    }
     if inside_control {
         return false;
     }
@@ -464,8 +552,10 @@ fn serialize_interesting(n: &Node, keep: &[i32]) -> Node {
 }
 
 fn is_wrapper(n: &Node) -> bool {
-    matches!(n.role.as_str(), "generic" | "none" | "group" | "InlineTextBox")
-        && n.name.is_empty()
+    matches!(
+        n.role.as_str(),
+        "generic" | "none" | "group" | "InlineTextBox"
+    ) && n.name.is_empty()
         && !n.focusable
         && !is_control(&n.role)
         && !n.modal
@@ -497,9 +587,7 @@ fn filter_interactive(n: &mut Node) {
 }
 
 fn has_interactive(n: &Node) -> bool {
-    is_control(&n.role)
-        || n.focusable
-        || n.children.iter().any(has_interactive)
+    is_control(&n.role) || n.focusable || n.children.iter().any(has_interactive)
 }
 
 fn cap_depth(n: &mut Node, depth: usize) {
@@ -563,7 +651,9 @@ fn yaml_escape(s: &str) -> String {
     if s.is_empty() {
         return String::new();
     }
-    if s.chars().any(|c| c.is_whitespace() || matches!(c, '"' | ':' | '#' | '[' | ']')) {
+    if s.chars()
+        .any(|c| c.is_whitespace() || matches!(c, '"' | ':' | '#' | '[' | ']'))
+    {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         format!("\"{s}\"")
@@ -683,7 +773,10 @@ mod tests {
         assert!(text.contains("heading \"Checkout\""));
         assert!(text.contains("textbox \"Email\""));
         assert!(text.contains("button \"Pay now\""));
-        assert!(!text.contains("generic"), "nameless generic collapsed:\n{text}");
+        assert!(
+            !text.contains("generic"),
+            "nameless generic collapsed:\n{text}"
+        );
         assert!(
             !text.to_ascii_lowercase().contains("- ignored"),
             "ignored node kept:\n{text}"
@@ -695,6 +788,52 @@ mod tests {
             .expect("pay ref");
         assert_eq!(pay.backend_node_id, 8);
         assert!(pay.r#ref.starts_with('e'));
+        assert!(text.contains("actions:"));
+        assert!(text.contains("button \"Pay now\""));
+    }
+
+    #[test]
+    fn named_generic_stays_clickable() {
+        let json = r#"{
+          "nodes": [
+            {"nodeId":"1","role":{"value":"RootWebArea"},"name":{"value":"Suno"},"childIds":["2"],"backendDOMNodeId":1},
+            {"nodeId":"2","role":{"value":"generic"},"name":{"value":"Create"},"childIds":[],"backendDOMNodeId":2}
+          ]
+        }"#;
+        let nodes = parse_cdp_nodes(json).unwrap();
+        let snap = snapshot_from_cdp(&nodes, SnapshotOpts::default()).unwrap();
+        assert!(
+            snap.yaml.contains("generic \"Create\""),
+            "labeled generic dropped:\n{}",
+            snap.yaml
+        );
+        let hit = match_control(&snap.refs, "Create").unwrap();
+        assert_eq!(hit.backend_node_id, 2);
+    }
+
+    #[test]
+    fn match_control_is_exact_then_unique_substring() {
+        let refs = vec![
+            RefEntry {
+                r#ref: "e1".into(),
+                backend_node_id: 1,
+                role: "button".into(),
+                name: "Submit".into(),
+                frame: 0,
+            },
+            RefEntry {
+                r#ref: "e2".into(),
+                backend_node_id: 2,
+                role: "button".into(),
+                name: "Submit order".into(),
+                frame: 0,
+            },
+        ];
+        assert_eq!(match_control(&refs, "Submit").unwrap().r#ref, "e1");
+        let err = match_control(&refs, "Sub").unwrap_err();
+        assert!(err.contains("e1"), "{err}");
+        assert!(err.contains("e2"), "{err}");
+        assert!(match_control(&refs, "missing").is_err());
     }
 
     #[test]
@@ -749,7 +888,10 @@ mod tests {
     fn parses_role_without_value_field() {
         let json = r#"{"nodes":[{"nodeId":"1","role":{"type":"internalRole"},"childIds":[],"backendDOMNodeId":1}]}"#;
         let nodes = parse_cdp_nodes(json).unwrap();
-        assert_eq!(nodes[0].role.as_ref().unwrap().value, serde_json::Value::Null);
+        assert_eq!(
+            nodes[0].role.as_ref().unwrap().value,
+            serde_json::Value::Null
+        );
     }
 
     #[test]

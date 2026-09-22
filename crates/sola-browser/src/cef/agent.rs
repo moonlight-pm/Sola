@@ -30,7 +30,6 @@ enum Phase {
     AxTree,
     Resolve { next: AfterResolve },
     CallJs,
-    BoxModel,
     Mouse { x: i32, y: i32, step: u8 },
     Keys { events: Vec<CdpKeyEvent>, i: usize },
     Wheel,
@@ -43,7 +42,6 @@ enum AfterResolve {
         role: String,
         name: String,
     },
-    #[allow(dead_code)]
     Hover {
         role: String,
         name: String,
@@ -103,18 +101,16 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
             );
         }
         AgentOp::Hover {
-            backend_node_id, ..
+            backend_node_id,
+            role,
+            name,
         } => {
-            let mut params = dict();
-            set_int(&mut params, "backendNodeId", backend_node_id);
-            let mid = cdp(host, "DOM.getBoxModel", Some(&mut params));
-            put(
+            resolve(
+                host,
                 browser_id,
-                mid,
-                Job {
-                    req,
-                    phase: Phase::BoxModel,
-                },
+                req,
+                backend_node_id,
+                AfterResolve::Hover { role, name },
             );
         }
         AgentOp::ClickAt { x, y } => {
@@ -387,11 +383,25 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
                     emit(AgentReply::fail(
                         job.req.id,
                         job.req.tab,
-                        "stale ref; snapshot again",
+                        "stale ref; the node is gone. Run snapshot again and use a ref from the actions list.",
+                    ));
+                    return;
+                }
+                Ok(v) if v.get("disabled").and_then(|c| c.as_bool()) == Some(true) => {
+                    emit(AgentReply::fail(
+                        job.req.id,
+                        job.req.tab,
+                        "control is disabled",
                     ));
                     return;
                 }
                 Ok(v) => {
+                    if matches!(job.req.op, AgentOp::Hover { .. }) {
+                        if let Some((x, y)) = pointer_target(&v) {
+                            queue_mouse(&host, browser_id, job.req, x, y, "mouseMoved", false, 3);
+                            return;
+                        }
+                    }
                     if matches!(job.req.op, AgentOp::Click { .. }) {
                         if v.get("clicked").and_then(|c| c.as_bool()) != Some(true) {
                             if let Some((x, y)) = pointer_target(&v) {
@@ -416,17 +426,6 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
                 }
             }
             emit_ok(job.req.id, job.req.tab, None);
-        }
-        Phase::BoxModel => {
-            let Some((x, y)) = box_center(result) else {
-                emit(AgentReply::fail(
-                    job.req.id,
-                    job.req.tab,
-                    "element has no box (hidden?); snapshot again",
-                ));
-                return;
-            };
-            queue_mouse(&host, browser_id, job.req, x, y, "mouseMoved", false, 3);
         }
         Phase::Mouse { x, y, step } => match step {
             1 => queue_mouse(&host, browser_id, job.req, x, y, "mousePressed", true, 2),
@@ -530,23 +529,6 @@ fn object_id(json: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn box_center(json: &str) -> Option<(i32, i32)> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let content = v.get("model")?.get("content")?.as_array()?;
-    let xs: Vec<f64> = (0..4)
-        .filter_map(|i| content.get(i * 2)?.as_f64())
-        .collect();
-    let ys: Vec<f64> = (0..4)
-        .filter_map(|i| content.get(i * 2 + 1)?.as_f64())
-        .collect();
-    if xs.len() != 4 || ys.len() != 4 {
-        return None;
-    }
-    let x = xs.iter().sum::<f64>() / 4.0;
-    let y = ys.iter().sum::<f64>() / 4.0;
-    Some((x.round() as i32, y.round() as i32))
-}
-
 fn write_png(json: &str, path: &Path) -> Result<(), String> {
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("screenshot json: {e}"))?;
@@ -568,18 +550,16 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
     match next {
         AfterResolve::Click { role, name } => (
             format!(
-                "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if ({stale}) return {{stale:true}}; el.scrollIntoView({{block:'center',inline:'nearest'}}); const href = (el.href || (el.getAttribute && el.getAttribute('href')) || ''); const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) {{ if (href && href.indexOf('javascript:') !== 0) return {{ok:true, href: href}}; if (typeof el.click === 'function') el.click(); return {{ok:true, clicked:true}}; }} return {{ok:true, x: r.left + r.width/2, y: r.top + r.height/2, href: href}}; }}",
+                "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if (el.disabled || (el.getAttribute && el.getAttribute('aria-disabled')==='true')) return {{disabled:true}}; function point(r) {{ return {{x: r.left + r.width/2, y: r.top + r.height/2}}; }} function covered(x,y) {{ const hit = document.elementFromPoint(x,y); if (!hit) return true; return hit!==el && !el.contains(hit) && !hit.contains(el); }} el.scrollIntoView({{block:'center',inline:'nearest'}}); let r = el.getBoundingClientRect(); if (r.width>=1 && r.height>=1) {{ let p = point(r); if (!covered(p.x,p.y)) return {{ok:true, x:p.x, y:p.y}}; }} el.scrollIntoView({{block:'start',inline:'nearest'}}); r = el.getBoundingClientRect(); if (r.width>=1 && r.height>=1) {{ const p = point(r); if (!covered(p.x,p.y)) return {{ok:true, x:p.x, y:p.y}}; }} const href = (el.href || (el.getAttribute && el.getAttribute('href')) || ''); if (href && href.indexOf('javascript:')!==0 && r.width<1) return {{ok:true, href: href}}; if (typeof el.click==='function') el.click(); return {{ok:true, clicked:true}}; }}",
                 pick = pick_el(),
-                stale = stale_check(name, role),
             ),
             role.clone(),
             name.clone(),
         ),
         AfterResolve::Hover { role, name } => (
             format!(
-                "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if ({stale}) return {{stale:true}}; el.scrollIntoView({{block:'center',inline:'nearest'}}); el.dispatchEvent(new MouseEvent('mouseover',{{bubbles:true}})); return {{ok:true}}; }}",
+                "function() {{ const el = {pick}; if (!el) return {{stale:true}}; el.scrollIntoView({{block:'center',inline:'nearest'}}); const r = el.getBoundingClientRect(); if (r.width>=1 && r.height>=1) return {{ok:true, x: r.left+r.width/2, y: r.top+r.height/2}}; el.dispatchEvent(new MouseEvent('mouseover',{{bubbles:true}})); return {{ok:true}}; }}",
                 pick = pick_el(),
-                stale = stale_check(name, role),
             ),
             role.clone(),
             name.clone(),
@@ -598,9 +578,8 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
             };
             (
                 format!(
-                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if ({stale}) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); {enter} return {{ok:true}}; }}",
+                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); {enter} return {{ok:true}}; }}",
                     pick = pick_el(),
-                    stale = stale_check(name, role),
                     set = native_set(true),
                     enter = enter,
                 ),
@@ -612,9 +591,8 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
             let lit = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
             (
                 format!(
-                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if ({stale}) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return {{ok:true}}; }}",
+                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return {{ok:true}}; }}",
                     pick = pick_el(),
-                    stale = stale_check(name, role),
                     set = native_set(false),
                 ),
                 role.clone(),
@@ -625,9 +603,8 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
             let lit = serde_json::to_string(values).unwrap_or_else(|_| "[]".into());
             (
                 format!(
-                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; if ({stale}) return {{stale:true}}; const wanted = new Set({lit}); if (el.options) {{ for (const o of el.options) o.selected = wanted.has(o.value) || wanted.has(o.text); el.dispatchEvent(new Event('change',{{bubbles:true}})); }} return {{ok:true}}; }}",
+                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const wanted = new Set({lit}); if (el.options) {{ for (const o of el.options) o.selected = wanted.has(o.value) || wanted.has(o.text); el.dispatchEvent(new Event('change',{{bubbles:true}})); }} return {{ok:true}}; }}",
                     pick = pick_el(),
-                    stale = stale_check(name, role),
                 ),
                 role.clone(),
                 name.clone(),
@@ -646,14 +623,6 @@ fn native_set(append: bool) -> &'static str {
     } else {
         "if (el.isContentEditable) { el.textContent = v; } else { const proto = (el.tagName === 'TEXTAREA') ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const desc = Object.getOwnPropertyDescriptor(proto, 'value'); if (desc && desc.set) desc.set.call(el, v); else if ('value' in el) el.value = v; }"
     }
-}
-
-fn stale_check(name: &str, role: &str) -> String {
-    let name_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".into());
-    let role_lit = serde_json::to_string(role).unwrap_or_else(|_| "\"\"".into());
-    format!(
-        "(function(){{ const n = {name_lit}.trim(); const role = {role_lit}; const label = el.labels && el.labels[0] ? el.labels[0].innerText : ''; const raw = ((el.getAttribute && el.getAttribute('aria-label')) || el.innerText || label || ((role === 'textbox' || role === 'searchbox') ? el.value : '') || el.textContent || '').trim(); const got = raw.toLowerCase(); const want = n.toLowerCase(); if (want && got && got.indexOf(want) === -1 && want.indexOf(got) === -1) return true; if (role === 'link' && !(el.closest && el.closest('a,[role=\"link\"]'))) return true; if (role === 'button' && !(el.closest && el.closest('button,[role=\"button\"],input[type=\"button\"],input[type=\"submit\"]'))) return true; return false; }})()"
-    )
 }
 
 fn emit_ok(id: u64, tab: u64, path: Option<String>) {
