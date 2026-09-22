@@ -146,6 +146,12 @@ in-Arcade “Hide Steam” toggle.
 - Host resize + letterbox can still stress mouse mapping on some titles.
   **Fit to window** retargets nested size after Play; titles that ignore
   RandR still letterbox. Keep the game fullscreen for Fit.
+- Titles that **flip** mouse-look (hidden / relative) and a visible inspect
+  cursor (Unity hardware `SetCursor` — e.g. The Séance of Blake Manor) can
+  fight the host pointer. The nest always downsamples via
+  `--cursor-scale-height` and never passes `--force-grab-cursor` (that flag
+  is always-relative and breaks inspect UI). There is no per-title cursor
+  override yet.
 
 ## Related
 

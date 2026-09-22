@@ -162,7 +162,9 @@ obvious — not because Omakade has a patch to copy.
 
 17. **`--cursor-scale-height` not desk-smoked** (capability gap). Factorio
     was the motivation; confirm on a second title and on Fit after host
-    resize (scale height is initial `-H`, not live).
+    resize (scale height is initial `-H`, not live). **Counter-example:**
+    lock/unlock inspect titles (item 21) — do not treat Factorio downsample
+    as universal.
 
 18. **No `-e`.** gamescope Steam integration held first-frame forever on
     River. Overlay / steam-mode remains unsolved. Do not flip `-e` on
@@ -176,6 +178,60 @@ obvious — not because Omakade has a patch to copy.
 20. **Fit DISPLAY confusion** is already guarded (skip gamescope argv0,
     skip host `:0`). Keep that test; any new poke path must not touch
     host Xwayland (that aborted gamescope’s input thread).
+
+21. **Lock/unlock + custom cursor titles (The Séance of Blake Manor, 1395520).**  
+    Research 2026-09-15; placing under Arcade. Unity 6 (`6000.0.66f2`) native
+    Linux (`-force-vulkan`) + Windows; Deck Verified. First-person detective
+    that **flips** mouse-look (cursor hidden, relative) ↔ investigation UI
+    (visible comic `SetCursor`, absolute). That class fights a nested
+    gamescope on Sola; there is **no** named ProtonDB/gamescope ticket for
+    this title.
+
+    **This title (Linux):**
+    - [linux_gaming](https://www.reddit.com/r/linux_gaming/comments/1p2x165/what_finally_fixed_mouse_escapes_game_to_2nd/)
+      names Blake Manor + Blue Prince: unlock for inspect → pointer escapes;
+      in-game menu + click once re-grabs. `PROTON_ENABLE_WAYLAND=1` +
+      `--force-grab-cursor` helped somewhat, never 100%. GNOME fractional
+      scale worse; KDE cleaner.
+    - Native Linux **quits on focus loss** (alt-tab, volume OSD, overlay).
+    - Support has told a player the Linux build is **Deck / SteamOS**;
+      workaround that stuck: **force Proton Hotfix** (Windows depot).
+      Logs: `~/.config/unity3d/Spooky Doorway/The Seance of Blake Manor`
+      (SIGSEGV). Black-screen on Deck/Linux patched 2026-02.
+    - ProtonDB Platinum “OOTB” is Deck / Bazzite / Ubuntu — not windowed
+      gamescope-wl on River.
+
+    **Why Arcade’s nest makes it worse (do not flip globals):**
+    - Nest always passes `--cursor-scale-height` = `-H` (Factorio-sized
+      host pointer). Gamescope then sets `XCURSOR_SIZE=256` in the nest so
+      it can downsample. Unity 6 hardware cursors follow OS size, then
+      gamescope scales the **comic** bitmap again → wrong size/hotspot,
+      or dual cursor (software sprite + `wl_pointer` + River McMojave).
+    - `--force-grab-cursor` is **always relative**, not “flip with
+      visibility” (gamescope help). Right for FPS; **wrong** for inspect
+      UI. Fallout: invisible after first click
+      ([gamescope#2180](https://github.com/ValveSoftware/gamescope/issues/2180)),
+      grab lost after focus change
+      ([#1285](https://github.com/ValveSoftware/gamescope/issues/1285)).
+    - Unlock → pointer leaves the nest; River owns McMojave while the game
+      still thinks it has input. `-S fit` letterbox already stresses click
+      mapping (item 16); this title’s inspect cursor is extra-sensitive.
+    - Nested Steam already forces `SDL_VIDEODRIVER=x11`. Keep that.
+
+    **Desk experiments (title still fullscreen in-nest):**
+    1. Current Arcade nest (control).
+    2. Omit `--cursor-scale-height` for this title only (size/shape).
+    3. Do **not** start with `--force-grab-cursor`; try only if inspect
+       escapes, and drop it if the comic cursor vanishes after click.
+    4. Force Proton Hotfix / 10.0-3 (Windows build).
+    5. Native: `-window-mode exclusive` (dev-suggested). Controller sidesteps
+       the stack (Deck Verified; secondary options on mouse wheel).
+
+    **Product shape if we carry it:** per-title nest policy in
+    `arcade-nest.json` (cursor-scale on/off, force-grab on/off) — not a
+    global flag change. Factorio wants downsample + no force-grab; FPS
+    wants force-grab; Blake Manor wants **no force-grab** and probably
+    **no** `--cursor-scale-height`.
 
 ---
 
