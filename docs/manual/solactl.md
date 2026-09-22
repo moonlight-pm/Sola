@@ -108,8 +108,11 @@ Needs **sola-browser** running (owner `browser`). Fails if chrome or
 the human; an **Agent** group is an ordinary group a skill may create.
 
 `tab.open` appends and does **not** focus unless `--select`. Page verbs
-use a pruned accessibility YAML snapshot and opaque refs (`e12`). Stale
-refs fail; snapshot again. `click` / `hover` also take CSS-pixel `--x`
+use a pruned accessibility YAML snapshot and opaque refs (`e12`). The
+snapshot starts with an `actions:` list (role, name, ref) — click those.
+`click --text "Pay now"` uses the last snapshot and fails with the
+candidate refs when more than one control matches. Stale refs fail
+(node gone); snapshot again. `click` / `hover` also take CSS-pixel `--x`
 `--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
 not the compositor seat). `key --chord` (e.g. `Return`, `Control+Enter`)
 and `scroll --dx --dy` go to the same tab. Screenshot is a fallback when
@@ -136,6 +139,7 @@ solactl browser goto --url https://example.com/path --tab 3
 solactl browser snapshot [--tab 3] [--interactive] [--ref e8]
 solactl browser find --text Submit
 solactl browser click --ref e12
+solactl browser click --tab 3 --text "Pay now"
 solactl browser click --tab 3 --x 120 --y 80
 solactl browser fill --ref e5 --text user@example.com
 solactl browser type --ref e5 --text more --submit

@@ -160,6 +160,9 @@ pub struct DownloadEvent {
     /// 0..=100, or `-1` if CEF does not know the size.
     pub percent: i32,
     pub state: DownloadPhase,
+    /// Set on `Failed` (interrupt reason). Empty otherwise.
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -399,6 +402,7 @@ mod tests {
                 total: 100,
                 percent: 10,
                 state: DownloadPhase::Progress,
+                error: String::new(),
             }),
         )
         .unwrap();

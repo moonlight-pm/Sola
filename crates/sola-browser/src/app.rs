@@ -2179,6 +2179,7 @@ impl<E: Engine> App<E> {
                             total: e.total.map(|t| t as i64).unwrap_or(-1),
                             percent: e.percent.map(|p| (p * 100.0) as i32).unwrap_or(-1),
                             state: crate::cef::ipc::DownloadPhase::Canceled,
+                            error: String::new(),
                         },
                         self.downloads_panel_open,
                     );
@@ -6545,7 +6546,13 @@ impl<E: Engine> App<E> {
                         .filter(|n| *n > 0)
                         .map(format_bytes)
                         .unwrap_or_default(),
-                    DownloadStatus::Failed => "Failed".into(),
+                    DownloadStatus::Failed => {
+                        if e.error.is_empty() {
+                            "Failed".into()
+                        } else {
+                            format!("Failed · {}", e.error)
+                        }
+                    }
                 };
                 let failed = e.status == DownloadStatus::Failed;
                 let meta_el = caption(meta, failed);

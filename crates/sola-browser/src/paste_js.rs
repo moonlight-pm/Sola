@@ -105,15 +105,36 @@ pub fn paste_image_script(mime: &str, filename: &str, bytes: &[u8]) -> String {
     )
 }
 
-/// IIFE that inserts `text` at the caret of the focused input / textarea /
-/// contenteditable. Values are JSON-string-literal escaped.
+/// IIFE that pastes `text` into the focused field.
+///
+/// Windowless CEF has no Wayland clipboard, so chrome injects. Editors
+/// (Suno lyrics, Lexical, ProseMirror) listen for `paste` + `text/plain`
+/// and split on newlines. `execCommand('insertText')` in Chromium
+/// **collapses `\n` to spaces** in contenteditable — do not use it as
+/// the only path. Fire a real `ClipboardEvent` first (same shape as
+/// image paste); if the page does not `preventDefault`, fall back to
+/// a textarea value splice or `insertLineBreak` between lines.
 pub fn paste_into_focused_script(text: &str) -> String {
     let t = js_string_literal(text);
     format!(
         r#"(function(){{
   var t={t};
-  var el=document.activeElement;
+  var el=document.activeElement||document.body;
   if(!el) return false;
+  function htmlPlain(s){{
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\r\n|\n|\r/g,'<br>');
+  }}
+  function firePaste(target){{
+    var dt=new DataTransfer();
+    try{{
+      dt.setData('text/plain', t);
+      dt.setData('text/html', htmlPlain(t));
+    }}catch(e){{ return false; }}
+    var ev=new ClipboardEvent('paste',{{bubbles:true,cancelable:true,composed:true,clipboardData:dt}});
+    try{{ Object.defineProperty(ev,'clipboardData',{{value:dt}}); }}catch(e){{}}
+    try{{ return !target.dispatchEvent(ev); }}catch(e){{ return false; }}
+  }}
+  if(firePaste(el)) return true;
   var tag=(el.tagName||'').toLowerCase();
   if(tag==='input'||tag==='textarea'){{
     var start=typeof el.selectionStart==='number'?el.selectionStart: (el.value||'').length;
@@ -130,7 +151,18 @@ pub fn paste_into_focused_script(text: &str) -> String {
     return true;
   }}
   if(el.isContentEditable){{
-    try{{ return !!document.execCommand('insertText',false,t); }}catch(e){{}}
+    var lines=String(t).split(/\r\n|\n|\r/);
+    for(var i=0;i<lines.length;i++){{
+      if(i){{
+        try{{ document.execCommand('insertLineBreak'); }}catch(e){{
+          try{{ document.execCommand('insertHTML',false,'<br>'); }}catch(e2){{}}
+        }}
+      }}
+      if(lines[i]){{
+        try{{ document.execCommand('insertText',false,lines[i]); }}catch(e){{}}
+      }}
+    }}
+    return true;
   }}
   return false;
 }})();"#
@@ -238,6 +270,19 @@ mod tests {
         let s = paste_into_focused_script(r#"a"b"#);
         assert!(s.contains(r#"a\"b"#));
         assert!(!s.contains('\0'));
+    }
+
+    #[test]
+    fn paste_text_fires_clipboard_event_and_keeps_newlines() {
+        let s = paste_into_focused_script("verse one\nverse two");
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("text/plain"));
+        assert!(s.contains("insertLineBreak"));
+        assert!(s.contains(r#"verse one\nverse two"#), "{s}");
+        assert!(
+            !s.contains("insertText',false,t)"),
+            "must not insertText the whole payload (Chromium flattens \\n)"
+        );
     }
 
     #[test]

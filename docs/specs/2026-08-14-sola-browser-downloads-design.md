@@ -64,7 +64,7 @@ download shelf, `chrome://downloads`.
 | Item | Status |
 |------|--------|
 | Freeze | **this document** |
-| Helper `DownloadHandler` + IPC | **done** |
+| Helper `DownloadHandler` + IPC | **done** — progress does not re-copy the URL; leftover `.crdownload` is not reused; parallel range downloads disabled; interrupt reason on the failed row |
 | Chrome list + persist + panel + icon | **done** |
 | Dogfood | local 2026-08-15 |
 

@@ -616,7 +616,7 @@ impl<E: Engine> App<E> {
                     .and_then(|r| self.lookup_ref(tab, &r).map(|e| e.backend_node_id));
                 if param_str(params, "ref").is_some() && subtree.is_none() {
                     return CallOut::Reply(Err(
-                        "ref not found in the current page snapshot. Try capturing new snapshot."
+                        "ref not in the last snapshot for this tab. Run snapshot again, then use --ref from the actions list."
                             .into(),
                     ));
                 }
@@ -640,11 +640,9 @@ impl<E: Engine> App<E> {
     fn cli_find_snap(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
         let q = param_str(params, "text").ok_or_else(|| "missing text".to_string())?;
         let tab = self.resolve_tab(param_str(params, "tab").as_deref())?;
-        let snap = self
-            .agent
-            .snaps
-            .get(&tab)
-            .ok_or_else(|| "no snapshot for this tab; run snapshot first".to_string())?;
+        let snap = self.agent.snaps.get(&tab).ok_or_else(|| {
+            "no snapshot for this tab. Run: solactl browser snapshot --tab <id>".to_string()
+        })?;
         let hits = ax::find_in_yaml(&snap.yaml, &q);
         Ok(serde_json::json!({ "tab": tab.0, "hits": hits }))
     }
@@ -654,13 +652,35 @@ impl<E: Engine> App<E> {
             Ok(t) => t,
             Err(e) => return CallOut::Reply(Err(e)),
         };
-        let r = param_str(params, "ref");
+        let mut r = param_str(params, "ref");
         let x = param_i64(params, "x").and_then(|n| i32::try_from(n).ok());
         let y = param_i64(params, "y").and_then(|n| i32::try_from(n).ok());
         if r.is_none() && matches!(method, "click" | "hover") {
+            if let Some(label) = param_str(params, "text") {
+                if x.is_some() || y.is_some() {
+                    return CallOut::Reply(Err("pass --text or --x/--y, not both".into()));
+                }
+                let snap = match self.agent.snaps.get(&tab) {
+                    Some(s) => s,
+                    None => {
+                        return CallOut::Reply(Err(
+                            "no snapshot for this tab. Run snapshot, then click --text or --ref."
+                                .into(),
+                        ));
+                    }
+                };
+                let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                match ax::match_control(&refs, &label) {
+                    Ok(hit) => r = Some(hit.r#ref.clone()),
+                    Err(e) => return CallOut::Reply(Err(e)),
+                }
+            }
+        }
+        if r.is_none() && matches!(method, "click" | "hover") {
             let (Some(x), Some(y)) = (x, y) else {
                 return CallOut::Reply(Err(
-                    "missing --ref, or both --x and --y (CSS px in the tab)".into(),
+                    "click needs --ref eN (actions list), --text \"Label\", or both --x and --y"
+                        .into(),
                 ));
             };
             let id = self.agent.next_id;
@@ -680,7 +700,7 @@ impl<E: Engine> App<E> {
             Some(e) => e.clone(),
             None => {
                 return CallOut::Reply(Err(
-                    "ref not found in the current page snapshot. Try capturing new snapshot."
+                    "ref not in the last snapshot for this tab. Run snapshot again and use --ref from the actions list."
                         .into(),
                 ));
             }

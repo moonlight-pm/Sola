@@ -445,6 +445,9 @@ struct CefThreadState {
     pending_created_title: RefCell<String>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
     download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
+    /// Path / name / truncated URL captured once. Progress ticks must not
+    /// re-copy a multi-megabyte `data:` URL onto the UI thread.
+    download_meta: RefCell<std::collections::HashMap<u32, DownloadMeta>>,
     /// ⌘/Ctrl+left-press: JS href fallback. If Chromium already opened a
     /// tab via `on_before_popup`, this is ignored so we do not double-open.
     pending_new_tab_click: Cell<Option<(i32, i32, u32, u32)>>,
@@ -622,6 +625,7 @@ pub(super) fn run_worker(
         pending_created_url: RefCell::new(String::new()),
         pending_created_title: RefCell::new(String::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
+        download_meta: RefCell::new(std::collections::HashMap::new()),
         pending_new_tab_click: Cell::new(None),
         new_tab_click_armed: Cell::new(false),
         cmd_click_opened: Cell::new(false),
@@ -779,6 +783,14 @@ cef::wrap_app! {
                 let autoplay_key = CefString::from("autoplay-policy");
                 let autoplay_val = CefString::from("no-user-gesture-required");
                 cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
+
+                // Sliced/parallel downloads fail or stall on large files
+                // when the server mishandles range requests (FILE_TOO_SHORT
+                // / hash mismatch / restart from zero). One stream is slower
+                // and finishes.
+                let no_parallel = CefString::from("disable-features");
+                let no_parallel_val = CefString::from("ParallelDownloading");
+                cmd.append_switch_with_value(Some(&no_parallel), Some(&no_parallel_val));
 
                 // Chrome-runtime CEF 147 often ignores Settings.remote_debugging_port
                 // unless the switch is also on the command line. Subprocesses get 0.
@@ -1858,12 +1870,19 @@ cef::wrap_download_handler! {
                 let path = cef::CefString::from(dest_s.as_str());
                 cb.cont(Some(&path), 0);
             }
-            let ev = download_event_from_item(
+            let url = download_url(item);
+            let filename = dest
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&suggested)
+                .to_string();
+            remember_download(item.id(), &dest_s, &filename, &url);
+            emit_download(download_event_from_item(
                 item,
                 crate::cef::ipc::DownloadPhase::Progress,
                 Some(&dest_s),
-            );
-            emit_download(ev);
+            ));
+            tracing::info!(id = item.id(), path = %dest_s, "download started");
             1
         }
 
@@ -1881,8 +1900,14 @@ cef::wrap_download_handler! {
             }
             let id = item.id();
             let state = cef_state();
+            // Called on every received chunk. Cloning the callback each
+            // time stalls the UI thread for a large file and slows the
+            // download that is pumped on that same loop.
             if let Some(cb) = callback {
-                state.download_cbs.borrow_mut().insert(id, cb.clone());
+                let mut cbs = state.download_cbs.borrow_mut();
+                if !cbs.contains_key(&id) {
+                    cbs.insert(id, cb.clone());
+                }
             }
             let phase = if item.is_complete() != 0 {
                 DownloadPhase::Complete
@@ -1893,19 +1918,67 @@ cef::wrap_download_handler! {
             } else {
                 DownloadPhase::Progress
             };
-            if phase == DownloadPhase::Progress && !should_emit_progress(&state, id, item.percent_complete()) {
+            if phase == DownloadPhase::Progress
+                && !should_emit_progress(&state, id, item.percent_complete())
+            {
                 return;
+            }
+            if phase == DownloadPhase::Failed {
+                let reason = item.interrupt_reason();
+                tracing::warn!(
+                    id,
+                    reason = ?reason,
+                    received = item.received_bytes(),
+                    total = item.total_bytes(),
+                    "download interrupted"
+                );
             }
             if phase != DownloadPhase::Progress {
                 state.download_cbs.borrow_mut().remove(&id);
                 state.download_last.borrow_mut().remove(&id);
             }
             emit_download(download_event_from_item(item, phase, None));
+            if phase != DownloadPhase::Progress {
+                state.download_meta.borrow_mut().remove(&id);
+            }
         }
     }
 }
 
 use crate::cef::ipc::{DownloadEvent, DownloadPhase};
+
+#[derive(Clone)]
+struct DownloadMeta {
+    filename: String,
+    path: String,
+    url: String,
+}
+
+fn remember_download(id: u32, path: &str, filename: &str, url: &str) {
+    cef_state().download_meta.borrow_mut().insert(
+        id,
+        DownloadMeta {
+            filename: filename.to_string(),
+            path: path.to_string(),
+            url: url.to_string(),
+        },
+    );
+}
+
+/// CEF `url()` on a `data:` download is the file. Never copy that on the
+/// progress path or onto the control socket.
+fn download_url(item: &mut cef::DownloadItem) -> String {
+    use cef::ImplDownloadItem;
+    let raw = cef_string_userfree_display(&item.url());
+    const MAX: usize = 512;
+    if raw.len() <= MAX {
+        raw
+    } else {
+        let mut s = raw.chars().take(MAX).collect::<String>();
+        s.push('…');
+        s
+    }
+}
 
 fn download_event_from_item(
     item: &mut cef::DownloadItem,
@@ -1913,30 +1986,80 @@ fn download_event_from_item(
     path_override: Option<&str>,
 ) -> DownloadEvent {
     use cef::ImplDownloadItem;
-    let path = path_override
+    let id = item.id();
+    let cached = cef_state().download_meta.borrow().get(&id).cloned();
+    // CEF's in-progress path is `file.crdownload`. The name we continue()d
+    // with is the finished file. Prefer a non-empty live path, then cache.
+    let live = path_override
         .map(str::to_string)
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| cef_string_userfree_display(&item.full_path()));
+    let path = strip_crdownload(&if live.is_empty() {
+        cached.as_ref().map(|m| m.path.clone()).unwrap_or_default()
+    } else {
+        live
+    });
     let filename = std::path::Path::new(&path)
         .file_name()
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
-    let filename = if filename.is_empty() {
-        crate::downloads::sanitize_filename("download")
+        .or_else(|| cached.as_ref().map(|m| m.filename.clone()))
+        .unwrap_or_else(|| crate::downloads::sanitize_filename("download"));
+    let url = cached
+        .map(|m| m.url)
+        .unwrap_or_else(|| download_url(item));
+    let error = if state == DownloadPhase::Failed {
+        interrupt_label(item.interrupt_reason())
     } else {
-        filename
+        String::new()
     };
     DownloadEvent {
-        id: item.id(),
+        id,
         filename,
         path,
-        url: cef_string_userfree_display(&item.url()),
+        url,
         received: item.received_bytes(),
         total: item.total_bytes(),
         percent: item.percent_complete(),
         state,
+        error,
     }
+}
+
+fn strip_crdownload(path: &str) -> String {
+    path.strip_suffix(".crdownload").unwrap_or(path).to_string()
+}
+
+fn interrupt_label(reason: cef::DownloadInterruptReason) -> String {
+    use cef::DownloadInterruptReason as R;
+    if reason == R::NONE {
+        return String::new();
+    }
+    let label = if reason == R::FILE_NO_SPACE {
+        "no space"
+    } else if reason == R::FILE_ACCESS_DENIED {
+        "access denied"
+    } else if reason == R::FILE_TOO_LARGE {
+        "file too large"
+    } else if reason == R::FILE_NAME_TOO_LONG {
+        "name too long"
+    } else if reason == R::FILE_FAILED || reason == R::FILE_TRANSIENT_ERROR {
+        "could not write file"
+    } else if reason == R::FILE_TOO_SHORT || reason == R::FILE_HASH_MISMATCH {
+        "incomplete"
+    } else if reason == R::FILE_BLOCKED || reason == R::FILE_VIRUS_INFECTED {
+        "blocked"
+    } else if reason == R::NETWORK_TIMEOUT {
+        "timed out"
+    } else if reason == R::NETWORK_DISCONNECTED {
+        "disconnected"
+    } else if reason == R::NETWORK_FAILED || reason == R::NETWORK_SERVER_DOWN {
+        "network error"
+    } else {
+        return format!("interrupted ({reason:?})");
+    };
+    label.to_string()
 }
 
 fn should_emit_progress(state: &CefThreadState, id: u32, percent: i32) -> bool {

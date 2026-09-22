@@ -214,8 +214,10 @@ There is no F12 binding (media-key keyboards).
 
 Toolbar **download** icon (right of vault) is always there.
 
-- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists
-  the next file is `report (1).pdf`. There is no Save dialog.
+- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists,
+  or a leftover `report.pdf.crdownload` is still there, the next file is
+  `report (1).pdf`. There is no Save dialog. A failed row names the reason
+  (no space, timed out, incomplete).
 - While a file is coming in, the icon goes accent and a thin progress line
   grows on the button. The panel does not open by itself.
 - Click the icon for the list (flat rows). Long hash names shorten in the
@@ -331,8 +333,10 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 extracts the selection in the engine helper and writes the system
 clipboard; paste reads the compositor clipboard and inserts **once** into
 the focused field. An image offer (`image/png` and siblings) is a `File`
-paste event (so Slack and similar composers accept a screenshot); text
-is inserted as before. Chromium’s own clipboard never reaches Wayland.
+paste event (so Slack and similar composers accept a screenshot). Text
+is a `paste` event with `text/plain` (newlines kept in contenteditable
+lyrics); if the page does not handle it, a textarea gets the value and
+a contenteditable gets a line break between lines. Chromium’s own clipboard never reaches Wayland.
 In-page **Copy** buttons (`navigator.clipboard.writeText` and
 `document.execCommand('copy')`) are hooked the same way. Newlines in the
 copied text are kept. Triple-click selects a line / field the way
