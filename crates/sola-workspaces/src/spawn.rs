@@ -8,6 +8,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+
+/// Serialize `git worktree add|move|remove`. Off-thread removes would
+/// otherwise race each other (and a live spawn) on `.git/*.lock`.
+fn git_worktree_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
 
 /// Folder name under the project root. Locked (D4.2).
 pub const WORKTREE_DIR: &str = ".worktrees";
@@ -109,6 +119,7 @@ pub fn add_worktree_at(
             ));
         }
     }
+    let _lock = git_worktree_lock();
     let dest = worktree_path(root, slug);
     if dest.exists() {
         return Err(format!("{} already exists", dest.display()));
@@ -166,6 +177,7 @@ pub fn move_worktree(root: &Path, from: &Path, slug: &str) -> Result<PathBuf, St
     if !is_git_checkout(root) {
         return Err("project root is not a git checkout".into());
     }
+    let _lock = git_worktree_lock();
     let dest = worktree_path(root, slug);
     if path_eq(from, &dest) {
         return Ok(dest);
@@ -227,6 +239,7 @@ fn path_eq(a: &Path, b: &Path) -> bool {
 /// `git worktree remove` at `dest`. Already-gone paths prune leftover
 /// git metadata and succeed. `force` is `--force` (dirty / toss).
 pub fn remove_worktree(root: &Path, dest: &Path, force: bool) -> Result<(), String> {
+    let _lock = git_worktree_lock();
     if !dest.exists() {
         if is_git_checkout(root) {
             let _ = git_ok(root, &["worktree", "prune"]);
