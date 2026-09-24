@@ -48,14 +48,17 @@ pub fn parse_chord(raw: &str) -> Result<Vec<CdpKeyEvent>, String> {
     } else {
         printable
     };
+    // `keyDown` with `text` already inserts a character. Sending that
+    // *and* a `char` event types twice (Suno lyrics, contenteditable).
+    // `rawKeyDown` does not insert; one `char` does.
     let mut out = Vec::with_capacity(3);
     out.push(CdpKeyEvent {
-        ty: "keyDown".into(),
+        ty: "rawKeyDown".into(),
         key: key.clone(),
         code: code.clone(),
         vk,
         modifiers,
-        text: text.clone(),
+        text: String::new(),
     });
     if !text.is_empty() {
         out.push(CdpKeyEvent {
@@ -64,7 +67,7 @@ pub fn parse_chord(raw: &str) -> Result<Vec<CdpKeyEvent>, String> {
             code: code.clone(),
             vk,
             modifiers,
-            text: text.clone(),
+            text,
         });
     }
     out.push(CdpKeyEvent {
@@ -129,17 +132,41 @@ mod tests {
     #[test]
     fn return_is_enter() {
         let ev = parse_chord("Return").unwrap();
-        assert_eq!(ev[0].ty, "keyDown");
+        assert_eq!(ev[0].ty, "rawKeyDown");
         assert_eq!(ev[0].key, "Enter");
         assert_eq!(ev[0].vk, 0x0D);
+        assert_eq!(ev[0].text, "");
         assert_eq!(ev[1].ty, "char");
+        assert_eq!(ev[1].text, "\r");
         assert_eq!(ev[2].ty, "keyUp");
+        assert_eq!(ev[2].text, "");
+        assert_eq!(ev.iter().filter(|e| e.ty == "char").count(), 1);
+    }
+
+    #[test]
+    fn letter_is_inserted_once() {
+        let ev = parse_chord("a").unwrap();
+        assert_eq!(ev[0].ty, "rawKeyDown");
+        assert_eq!(ev[0].text, "");
+        assert_eq!(ev[1].ty, "char");
+        assert_eq!(ev[1].text, "a");
+        assert_eq!(ev[2].ty, "keyUp");
+        assert_eq!(ev.iter().filter(|e| !e.text.is_empty()).count(), 1);
+    }
+
+    #[test]
+    fn space_is_inserted_once() {
+        let ev = parse_chord("Space").unwrap();
+        assert_eq!(ev.iter().filter(|e| e.ty == "char").count(), 1);
+        assert_eq!(ev[1].text, " ");
+        assert!(ev[0].text.is_empty());
     }
 
     #[test]
     fn control_enter_has_no_char() {
         let ev = parse_chord("Control+Enter").unwrap();
         assert_eq!(ev.len(), 2);
+        assert_eq!(ev[0].ty, "rawKeyDown");
         assert_eq!(ev[0].modifiers, CTRL);
         assert_eq!(ev[0].key, "Enter");
         assert_eq!(ev[1].ty, "keyUp");
@@ -149,6 +176,7 @@ mod tests {
     fn escape_chord() {
         let ev = parse_chord("Escape").unwrap();
         assert_eq!(ev[0].vk, 0x1B);
+        assert_eq!(ev[0].ty, "rawKeyDown");
         assert!(ev.iter().all(|e| e.ty != "char"));
     }
 }
