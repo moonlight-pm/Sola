@@ -52,7 +52,7 @@ spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spaw
 is background unless `--select`; can pass `--agent grok|codex` + `--prompt` /
 `--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok and
 Codex hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok
-panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+and Codex panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws` (a Grok pane’s session id is in
@@ -60,9 +60,12 @@ tmux persist on socket `sola-ws` (a Grok pane’s session id is in
 was still running and the session dir exists), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `codex is done` /
 `needs attention`),
-`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
-`workspace.set --name` (rail slug + `git worktree move` to `.worktrees/<name>`;
-`--branch` is `git branch -m`).
+`workspace.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
+`workspace.set --name` (`git worktree move` to `.worktrees/<name>`;
+`--title` is the rail label, defaulting to that slug; `--branch` is
+`git branch -m`; `--before` reorders in the project).
+Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
+tabs inside a project and project groups (`project.reorder`).
 
 **First-class CLI:** **Grok and Codex.** Implement and test Grok first whenever
 adding agent support. Claude / OpenCode stay presence-only (D4).

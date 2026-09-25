@@ -124,12 +124,14 @@ pub fn run(cmd: Command) -> i32 {
                 timeout,
             )
         }
-        Command::Sample { size, timeout } => call::run(
-            OWNER_COMPOSITOR,
-            "sample",
-            serde_json::json!({ "size": size }),
-            timeout,
-        ),
+        Command::Sample { size, timeout } => {
+            call::run(
+                OWNER_COMPOSITOR,
+                "sample",
+                serde_json::json!({ "size": size }),
+                timeout,
+            )
+        }
         Command::Windows => call::run(OWNER_COMPOSITOR, "windows", serde_json::json!({}), 5),
         Command::Input(input) => run_input(input),
     }

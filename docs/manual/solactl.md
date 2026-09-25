@@ -9,7 +9,7 @@ the **bus** only for `emit`.
 solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
 solactl compositor sample [--size N]
 solactl compositor windows
-solactl compositor input click|move|scroll|key …
+solactl compositor input click|move|scroll|key …   # rejected when SOLA_BOT=1
 solactl session launch <app_id> [--command CMD]
 solactl session close  <app_id>
 ```
@@ -23,9 +23,56 @@ is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
 shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
 copy to the clipboard instead of writing this file.
 
-`workspaces` and `browser` are first-class subcommands (`solactl` /
+`workspaces`, `browser`, and `bots` are first-class subcommands (`solactl` /
 `solactl --help`). Other running apps that have advertised methods:
 `solactl <app-id>` lists them; `solactl <app-id> <method> …` invokes.
+
+## Bots (`solactl bots`)
+
+Needs **sola-botsd** (owner `bots`). Fails if the daemon or `sola-call`
+is down — it does not launch a window.
+
+```text
+solactl bots                         # list methods
+solactl bots list
+solactl bots new --name Suno
+solactl bots send --bot suno --text 'hello'
+solactl bots transcript --bot suno
+solactl bots rm --bot suno
+solactl bots cancel --bot suno
+```
+
+Phone API: daemon binds HTTP `0.0.0.0:27419`. Public name is
+`https://bot.sola.computer` (TLS at the proxy). Open **27419/tcp** to the
+desk for that proxy:
+
+```text
+GET  /health
+GET  /bots
+GET  /events                 # SSE: snapshot, bots, transcript, delta, removed
+GET  /poll?bot={id}          # one-shot snapshot (debug); the phone uses /events
+GET  /bots/{id}/transcript
+POST /bots                 { "name": "Suno" }
+DELETE /bots/{id}
+POST /bots/{id}/send     { "text": "…" }
+POST /bots/{id}/cancel
+Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
+```
+
+`GET /events` is `text/event-stream` (chunked). Keepalive comments every 15s.
+The iced **Bots** window uses the same HTTP/SSE on `127.0.0.1:27419`
+(list/send/create/delete + live events). `solactl bots` still uses
+sola-call. The TLS proxy must not buffer the body (`proxy_buffering off`,
+honor `X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with
+a long `proxy_read_timeout`.
+
+Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
+(introduction; the orientation prompt is not shown as a user message).
+`rm` deletes the catalog row, the home directory, and the Grok session.
+Write fence is prompt-only: **default that home**; say “drop the write
+fence” / “work on the whole computer” / name a path outside the home to
+open it for that task. Seat steal is still refused. Not a coding agent;
+not Workspaces unless you ask for that rail.
 
 ## Workspaces (`solactl workspaces`)
 
@@ -40,13 +87,14 @@ solactl workspaces project.add --path ~/Workspace/Sola
 solactl workspaces project.startup --project Illuno
 solactl workspaces project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
 solactl workspaces project.rm --project Sola
+solactl workspaces project.reorder --project Sola [--before Illuno]
 solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
     [--agent grok|codex] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
-    [--title 'fix login'] [--branch joshua/sc-1234/fix]
+    [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
 solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex] [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
 solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
@@ -57,17 +105,23 @@ solactl workspaces pane.wait [--pane ticket-123] [--status done] [--timeout 300]
 solactl workspaces whoami                  # from a Workspaces pane; or --pane / --path
 ```
 
-`--name` is the rail slug and `.worktrees/<name>` folder. `--branch`
-defaults to that name; `--base-branch` defaults to HEAD. `--title` is a
-rail subtitle (`sc-1234 · fix login`). Spawn is background: the new
-row appears, the rail/grid stay on the caller. `--select` jumps
-(same as the UI + / ⌘T). `workspace.exec` does not select.
-`workspace.set --name` slugs the rail label and `git worktree move`s
-to `.worktrees/<name>` (id stays so tmux sessions keep working; live
-or dirty checkouts are forced). The project root cannot be renamed.
+`--name` is the `.worktrees/<name>` folder (and the rail **default**).
+`--branch` defaults to that name; `--base-branch` defaults to HEAD.
+`--title` is the rail label. Empty `--title` (or a title equal to
+`--name`) falls back to the folder slug — the slug is not prefixed onto
+a custom title. Spawn is background: the new row appears, the rail/grid
+stay on the caller. `--select` jumps (same as the UI + / ⌘T).
+`workspace.exec` does not select.
+`workspace.set --name` `git worktree move`s to `.worktrees/<name>` (id
+stays so tmux sessions keep working; live or dirty checkouts are
+forced). The project root cannot be renamed.
 `--branch` is `git branch -m` in that checkout and does not move the
 folder. Promote an ad hoc tab with both: `--name sc-1234 --branch
-joshua/sc-1234/fix --title '…'`. Target by id if the old slug is gone.
+joshua/sc-1234/fix --title '…'`. Target by id, slug, path, or rail
+label. `--before` reorders that workspace in its project (`end` = last).
+The rail also does this with drag-drop; hover pencil / double-click on a
+worktree tab is `--title` (the label, not the folder). `project.reorder`
+moves a project group (`--before` another project, or omit / `end` for last).
 
 Lists include `path`, `kind`, and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also
@@ -92,8 +146,10 @@ the TUI to trust the Sola status hook. `pane.wait` holds until status
 matches (`--fresh` waits for a transition). Drop unregisters; it does not
 `git worktree remove` unless
 you pass `--worktree` (add `--force` to toss a dirty checkout).
-`workspace.rm` replies, then closes the tab on the next tick, so a
-call from inside that pane can finish instead of hanging. Do **not**
+`workspace.rm` replies, then drops the tab on the next tick, so a
+call from inside that pane can finish instead of hanging. `tmux
+kill-session` and `git worktree remove` run off the iced thread after
+that (the rest of Workspaces stays live). Do **not**
 `git worktree remove` first from inside that pane — the cwd vanishes and
 the next tool cannot run. Use `--worktree` instead. If the checkout is
 already gone, Workspaces reaps the tab (no leftover working spinner).
@@ -160,6 +216,12 @@ name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
 `wait` / `wait --load` returns when `document.readyState` is `complete` on
 a committed URL (not the tab-strip spinner). `wait --text` snapshots until
 that string appears.
+
+Snapshot, click, fill, type, and `browser screenshot` target **that tab’s
+CEF document** — they work when the tab is in the background and do not
+raise it. `tab.open` does not focus. Bots (`SOLA_BOT=1`) **must** pass
+`--tab`, and are refused `tab.focus`, `tab.open --select`, and compositor
+screenshot/input.
 
 ## Not calls
 

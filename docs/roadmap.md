@@ -50,9 +50,10 @@ rows for feature-level progress.
   paint (first pass), scope (first pass), spotify (first pass, on master),
   calendar (first pass, this worktree)  
 - `sola-call` + `sola-workspaces` persist/spawn/call methods on master
-- `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the agent product)
+- `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Workspaces is the coding agent product)
+- **Bots** (this worktree): daemon + iced HTTP/SSE + iOS SolaBot + `solactl bots` **partial** (session-roll still open)
 
-**Remaining:** Workspaces dogfood + UI rename modal / recolor / reorder; browser chrome
+**Remaining:** Workspaces dogfood + project recolor (rail rename / reorder **installed**, unsmoked); browser chrome
 completeness; browser agent control (`solactl browser` — [frozen](specs/2026-09-11-sola-browser-agent-control-design.md), desk-smoked on Tertius); mail polish; calendar Settings accounts desk smoke; kvm input ACL permanence; preview
 zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
 

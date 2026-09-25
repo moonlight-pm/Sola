@@ -4,6 +4,7 @@
 //! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -154,7 +155,9 @@ enum Msg {
     TitleResize(iced::window::Direction),
     TitleClose,
     SelectWorkspace(String),
-    ToggleProject(String),
+    BeginRename(String),
+    RenameInput(String),
+    RenameCommit,
     OpenSpawn(String),
     OpenAdd,
     StartupAction(iced::widget::text_editor::Action),
@@ -171,6 +174,11 @@ enum Msg {
         force: bool,
     },
     DropProject(String),
+    /// `git worktree remove` failed after the tab was already closed.
+    GitRmFailed {
+        id: String,
+        error: String,
+    },
     RestartShell(String),
     PaneFocused(String),
     SplitDividerPress(String),
@@ -180,6 +188,61 @@ enum Msg {
     PresenceTick,
     Call(sola_call::Incoming),
     WindowFocus(bool),
+}
+
+/// PTY taken off the iced state so `tmux kill-session` / `git worktree remove`
+/// can run off the UI thread. `close()` matches [`App::teardown_pane`].
+struct DetachedPane {
+    backend: Option<PtyBackend>,
+    session: String,
+}
+
+impl DetachedPane {
+    fn close(self) {
+        if let Some(backend) = self.backend {
+            backend.close();
+        } else {
+            tmux::kill_session(&self.session);
+        }
+    }
+}
+
+/// Kill tmux (and optionally `git worktree remove`) after the rail has
+/// already dropped the tab. Both wait on subprocesses; doing them in
+/// `update` freezes every other pane.
+fn close_io_task(
+    panes: Vec<DetachedPane>,
+    checkout: Option<(PathBuf, PathBuf, bool)>,
+    workspace_id: String,
+) -> Task<Msg> {
+    Task::perform(
+        async move {
+            match tokio::task::spawn_blocking(move || {
+                for pane in panes {
+                    pane.close();
+                }
+                match checkout {
+                    Some((root, path, force)) => spawn::remove_worktree(&root, &path, force),
+                    None => Ok(()),
+                }
+            })
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(%e, "workspace teardown worker panicked");
+                    Ok(())
+                }
+            }
+        },
+        move |result| match result {
+            Ok(()) => Msg::Ignore,
+            Err(error) => Msg::GitRmFailed {
+                id: workspace_id,
+                error,
+            },
+        },
+    )
 }
 
 impl App {
@@ -442,13 +505,6 @@ impl App {
                 self.dragging_split = Some(id);
                 Task::none()
             }
-            Msg::ToggleProject(id) => {
-                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
-                    p.collapsed = !p.collapsed;
-                    self.persist_catalog();
-                }
-                Task::none()
-            }
             Msg::OpenSpawn(project_id) => self.open_spawn(&project_id),
             Msg::OpenAdd => self.open_add(),
             Msg::StartupAction(action) => {
@@ -460,6 +516,7 @@ impl App {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
                 self.startup = sidebar::StartupDraft::default();
+                self.sidebar.renaming = None;
                 Task::none()
             }
             Msg::SpawnName(s) => {
@@ -477,16 +534,26 @@ impl App {
             Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
             Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
+            Msg::GitRmFailed { id, error } => {
+                tracing::warn!(workspace = %id, %error, "git worktree remove failed");
+                self.emit_notice("Worktree leftover".into(), error, format!("git-rm-{id}"));
+                Task::none()
+            }
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
-                if let Some(sola_kit::components::SidebarEvent::Resize { width }) =
-                    self.sidebar.gestures.update(m)
-                {
-                    self.sidebar.width = width;
-                    self.resize_all_panes();
+                if let Some(ev) = self.sidebar.gestures.update(m) {
+                    return self.on_sidebar_event(ev);
                 }
                 Task::none()
             }
+            Msg::BeginRename(id) => self.begin_rename(id),
+            Msg::RenameInput(s) => {
+                if let Some((_, draft)) = &mut self.sidebar.renaming {
+                    *draft = s;
+                }
+                Task::none()
+            }
+            Msg::RenameCommit => self.commit_rename(),
             Msg::PtyOutput(id) => {
                 if let Some(rt) = self.runtimes.get(&id) {
                     rt.cache.clear();
@@ -497,6 +564,13 @@ impl App {
                 tracing::info!(pane = %id, "pane PTY exited");
                 // Drop the client without `close()` (plain Drop keeps tmux).
                 self.runtimes.remove(&id);
+                // Tab already dropped (CLI / hover). The session is being
+                // killed off-thread — do not list-sessions or reattach.
+                if self.workspace_for_pane(&id).is_none() {
+                    self.pane_status.remove(&id);
+                    status::persist_all(&self.pane_status);
+                    return Task::none();
+                }
                 let want = tmux::session_name(&id);
                 let live = tmux::list_sessions().unwrap_or_default();
                 if live.iter().any(|s| s == &want) {
@@ -969,12 +1043,118 @@ impl App {
         });
     }
 
+    fn on_sidebar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
+        use sola_kit::components::{Dest, SidebarEvent};
+        match ev {
+            SidebarEvent::Activate { id } => self.select_workspace(&id),
+            SidebarEvent::ToggleSection { id } => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.collapsed = !p.collapsed;
+                    self.persist_catalog();
+                }
+                Task::none()
+            }
+            SidebarEvent::Edit { id } => self.begin_rename(id),
+            SidebarEvent::Resize { width } => {
+                self.sidebar.width = width;
+                self.resize_all_panes();
+                Task::none()
+            }
+            SidebarEvent::Drop(drop) => {
+                match drop.dest {
+                    Dest::Join { before, .. } => {
+                        if let Err(e) = workspace::move_workspace_before(
+                            &mut self.workspaces,
+                            &drop.id,
+                            before.as_deref(),
+                        ) {
+                            tracing::warn!("rail drop: {e}");
+                        } else {
+                            self.persist_catalog();
+                        }
+                    }
+                    Dest::BlockBefore { before } => {
+                        let before = self.project_before_target(before.as_deref());
+                        if let Err(e) = workspace::move_project_before(
+                            &mut self.projects,
+                            &drop.id,
+                            before.as_deref(),
+                        ) {
+                            tracing::warn!("project drop: {e}");
+                        } else {
+                            self.persist_catalog();
+                        }
+                    }
+                    Dest::Loose { .. } | Dest::BeforeGroup { .. } | Dest::Sections(_) => {}
+                }
+                Task::none()
+            }
+        }
+    }
+
+    fn project_before_target(&self, before: Option<&str>) -> Option<String> {
+        let id = before?;
+        if self.projects.iter().any(|p| p.id == id) {
+            return Some(id.to_string());
+        }
+        self.workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.project_id.clone())
+    }
+
+    fn begin_rename(&mut self, id: String) -> Task<Msg> {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+            return Task::none();
+        };
+        if !workspace::can_close(ws) {
+            return Task::none();
+        }
+        self.sidebar.renaming = Some((id, cli::rail_label(ws)));
+        Task::batch([
+            iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::RENAME_INPUT_ID)),
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                    iced::widget::Id::new(sidebar::RENAME_INPUT_ID),
+                ),
+            ),
+        ])
+    }
+
+    fn commit_rename(&mut self) -> Task<Msg> {
+        let Some((id, name)) = self.sidebar.renaming.take() else {
+            return Task::none();
+        };
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+            if !workspace::can_close(ws) {
+                return Task::none();
+            }
+            cli::apply_rail_title(ws, &name);
+            self.persist_catalog();
+        }
+        Task::none()
+    }
+
+    fn select_workspace(&mut self, id: &str) -> Task<Msg> {
+        if self.workspaces.iter().all(|w| w.id != id) {
+            return Task::none();
+        }
+        self.sidebar.renaming = None;
+        self.selected = id.to_string();
+        if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
+            self.focused = ws.active_pane_id();
+        }
+        self.persist_catalog();
+        self.attach_workspace(id)
+    }
+
     fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
         if !self.projects.iter().any(|p| p.id == project_id) {
             return Task::none();
         }
         self.add = sidebar::AddDraft::default();
         self.startup = sidebar::StartupDraft::default();
+        self.sidebar.renaming = None;
         self.spawn = sidebar::SpawnDraft::open(project_id);
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::SPAWN_INPUT_ID))
     }
@@ -982,6 +1162,7 @@ impl App {
     fn open_add(&mut self) -> Task<Msg> {
         self.spawn = sidebar::SpawnDraft::default();
         self.startup = sidebar::StartupDraft::default();
+        self.sidebar.renaming = None;
         self.add = sidebar::AddDraft {
             open: true,
             path: String::new(),
@@ -1311,7 +1492,17 @@ impl App {
                         params.get("name").and_then(|v| v.as_str()),
                         params.get("title").and_then(|v| v.as_str()),
                         params.get("branch").and_then(|v| v.as_str()),
+                        param_before(params, "before"),
                     ),
+                    Task::none(),
+                )
+            }
+            "project.reorder" => {
+                let Some(q) = param_str(params, "project") else {
+                    return (Err("missing project".into()), Task::none());
+                };
+                (
+                    self.cli_reorder_project(&q, param_before(params, "before")),
                     Task::none(),
                 )
             }
@@ -1507,6 +1698,7 @@ impl App {
         name: Option<&str>,
         title: Option<&str>,
         branch: Option<&str>,
+        before: Option<Option<String>>,
     ) -> Result<serde_json::Value, String> {
         let id = workspace::resolve_workspace(&self.workspaces, q)?
             .id
@@ -1526,12 +1718,26 @@ impl App {
         }
         if let Some(raw) = title {
             if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
-                let t = raw.trim();
-                ws.title = if t.is_empty() {
-                    None
-                } else {
-                    Some(t.to_string())
+                cli::apply_rail_title(ws, raw);
+            }
+        }
+        if err.is_none() {
+            if let Some(before) = before {
+                let before_id = match before.as_deref() {
+                    None => None,
+                    Some(q) => Some(
+                        workspace::resolve_workspace(&self.workspaces, q)?
+                            .id
+                            .clone(),
+                    ),
                 };
+                if let Err(e) = workspace::move_workspace_before(
+                    &mut self.workspaces,
+                    &id,
+                    before_id.as_deref(),
+                ) {
+                    err = Some(e);
+                }
             }
         }
         self.persist_catalog();
@@ -1540,6 +1746,26 @@ impl App {
         }
         let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
         Ok(cli::workspace_json(ws, Some(&self.selected)))
+    }
+
+    fn cli_reorder_project(
+        &mut self,
+        q: &str,
+        before: Option<Option<String>>,
+    ) -> Result<serde_json::Value, String> {
+        let id = workspace::resolve_project(&self.projects, q)?.id.clone();
+        let before_id = match before {
+            None => None,
+            Some(None) => None,
+            Some(Some(q)) => Some(workspace::resolve_project(&self.projects, &q)?.id.clone()),
+        };
+        // Missing --before still moves to end when the method is called.
+        workspace::move_project_before(&mut self.projects, &id, before_id.as_deref())?;
+        self.persist_catalog();
+        Ok(cli::project_json(workspace::resolve_project(
+            &self.projects,
+            &id,
+        )?))
     }
 
     /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
@@ -1952,13 +2178,20 @@ impl App {
     }
 
     fn teardown_pane(&mut self, id: &str) {
-        if let Some(rt) = self.runtimes.remove(id) {
-            rt.backend.close();
-        } else {
-            tmux::kill_session(&tmux::session_name(id));
-        }
+        self.detach_pane(id).close();
+    }
+
+    /// Stop drawing this pane. Caller must `close()` the result (on the
+    /// iced thread only when the tmux session name may be reused next,
+    /// e.g. last-leaf ⌘W).
+    fn detach_pane(&mut self, id: &str) -> DetachedPane {
+        let backend = self.runtimes.remove(id).map(|rt| rt.backend);
         self.pane_status.remove(id);
         self.pane_grids.remove(id);
+        DetachedPane {
+            backend,
+            session: tmux::session_name(id),
+        }
     }
 
     fn attach_selected_if_needed(&mut self) -> Task<Msg> {
@@ -1976,6 +2209,10 @@ impl App {
     /// Close a sibling tab. `checkout` also `git worktree remove`s (after
     /// tmux dies so the pane is not sitting in that cwd). Hover × leaves
     /// the folder. A gone path just prunes git metadata.
+    ///
+    /// The rail and catalog update here; `tmux kill-session` and git run
+    /// off the iced thread so a `solactl` rm (or hover ×) does not freeze
+    /// every other pane.
     fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
         let Some((panes, path, project_id)) =
             self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
@@ -1986,9 +2223,7 @@ impl App {
             return Task::none();
         };
         tracing::info!(workspace = %id, checkout, "closing workspace");
-        for pane in &panes {
-            self.teardown_pane(pane);
-        }
+        let detached: Vec<DetachedPane> = panes.iter().map(|pane| self.detach_pane(pane)).collect();
         self.workspaces.retain(|w| w.id != id);
         for w in &mut self.workspaces {
             if w.parent.as_deref() == Some(id) {
@@ -2004,20 +2239,16 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        if checkout {
-            if let Some(root) = self
-                .projects
-                .iter()
-                .find(|p| p.id == project_id)
-                .map(|p| p.root.clone())
-            {
-                if let Err(e) = spawn::remove_worktree(&root, &path, force) {
-                    tracing::warn!(workspace = %id, %e, "git worktree remove failed");
-                    self.emit_notice("Worktree leftover".into(), e, format!("git-rm-{id}"));
-                }
-            }
-        }
-        self.attach_selected_if_needed()
+        let git = checkout
+            .then(|| {
+                self.projects
+                    .iter()
+                    .find(|p| p.id == project_id)
+                    .map(|p| (p.root.clone(), path.clone(), force))
+            })
+            .flatten();
+        let attach = self.attach_selected_if_needed();
+        Task::batch([attach, close_io_task(detached, git, id.to_string())])
     }
 
     /// If a sibling's checkout is already gone (`git worktree remove` from
@@ -2060,15 +2291,17 @@ impl App {
         self.projects = catalog.projects;
         self.workspaces = catalog.workspaces;
         self.selected = catalog.selected.unwrap_or_default();
-        for id in pane_ids {
-            self.teardown_pane(&id);
-        }
+        let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
         if removed.is_empty() {
-            return Task::none();
+            return close_io_task(detached, None, project_id.to_string());
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        self.attach_selected_if_needed()
+        let attach = self.attach_selected_if_needed();
+        Task::batch([
+            attach,
+            close_io_task(detached, None, project_id.to_string()),
+        ])
     }
 
     fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {
@@ -2224,6 +2457,12 @@ impl App {
         if self.add.open && !self.add.path.is_empty() {
             return iced::clipboard::write(self.add.path.clone());
         }
+        if let Some((_, draft)) = &self.sidebar.renaming {
+            if !draft.is_empty() {
+                return iced::clipboard::write(draft.clone());
+            }
+            return Task::none();
+        }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
         };
@@ -2258,6 +2497,10 @@ impl App {
             self.add.path.push_str(&text.replace('\n', ""));
             return Task::none();
         }
+        if let Some((_, draft)) = &mut self.sidebar.renaming {
+            draft.push_str(&text.replace('\n', ""));
+            return Task::none();
+        }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
         };
@@ -2288,6 +2531,10 @@ impl App {
             ..
         }) = &event
         {
+            if self.sidebar.renaming.is_some() {
+                self.sidebar.renaming = None;
+                return Task::none();
+            }
             if self.dialog_open() {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
@@ -2295,7 +2542,7 @@ impl App {
                 return Task::none();
             }
         }
-        if self.dialog_open() {
+        if self.dialog_open() || self.sidebar.renaming.is_some() {
             return Task::none();
         }
 
@@ -2408,6 +2655,16 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// `None` = key omitted. `Some(None)` = empty / `end` (append).
+fn param_before(params: &serde_json::Value, key: &str) -> Option<Option<String>> {
+    let raw = params.get(key)?.as_str()?.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("end") {
+        Some(None)
+    } else {
+        Some(Some(raw.to_string()))
+    }
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> bool {

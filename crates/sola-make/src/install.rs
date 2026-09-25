@@ -24,6 +24,7 @@ const NIX_DIR: &str = "/opt/sola/nix";
 const INSTALL_RESTART_ORDER: &[&str] = &[
     "sola-bus",
     "sola-call",
+    "sola-botsd",
     "sola-river",
     "sola-shell",
     "sola-session",
@@ -483,10 +484,18 @@ pub fn install(apps: &[String], release: bool) {
         out.dedup();
         out
     };
-    // Build packages in CLI/discovery order (cargo doesn't care); sort only
-    // for the copy loop so on-disk replaces — and thus sola's restart
-    // watcher — fire bus → river → shell → … with a settle gap between.
-    let build_packages = binaries.clone();
+    // Cargo `-p` wants package names. A crate may ship several bins
+    // (`sola-bots` + `sola-botsd`); copy still uses the bin list.
+    let build_packages: Vec<String> = if apps.is_empty() {
+        Vec::new()
+    } else {
+        let mut pkgs: Vec<String> = apps.iter().map(|n| super::resolve_crate_name(n)).collect();
+        pkgs.sort();
+        pkgs.dedup();
+        pkgs
+    };
+    // Sort only for the copy loop so on-disk replaces — and thus sola's
+    // restart watcher — fire bus → river → shell → … with a settle gap.
     sort_binaries_for_restart(&mut binaries);
 
     let profile = if release { "release" } else { "debug" };

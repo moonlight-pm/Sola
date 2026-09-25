@@ -1587,7 +1587,7 @@ impl App {
                 self.republish_menu();
                 Task::none()
             }
-            SidebarEvent::ToggleSection { .. } => Task::none(),
+            SidebarEvent::ToggleSection { .. } | SidebarEvent::Edit { .. } => Task::none(),
         }
     }
 }

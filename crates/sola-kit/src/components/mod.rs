@@ -80,7 +80,9 @@ pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use json::{line as json_line, pretty as json_pretty};
 pub use number_input::number_input;
 pub use popover::{Placement, popover, popover_anchored};
-pub use prose::{ProseBlock, ProseRun, flatten as flatten_prose, parse_plain, prose};
+pub use prose::{
+    ProseBlock, ProseRun, flatten as flatten_prose, parse_markdown, parse_plain, prose,
+};
 pub use readable::readable;
 pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use sidebar::{
