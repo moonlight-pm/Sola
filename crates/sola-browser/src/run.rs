@@ -18,15 +18,15 @@
 
 use std::hash::Hash;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use iced::Subscription;
 use iced::futures::{SinkExt, Stream, StreamExt as _};
 use iced::stream;
+use iced::Subscription;
 use iced_futures::subscription::{self, EventStream, Recipe};
 
-use crate::app::{App, DEFAULT_URL, Msg, VIEW_H, VIEW_W};
+use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
 use crate::engine::{AbsorbDamage, ActiveHandle, Engine, FrameReceiver, FrameSlot};
 
 // ---------------------------------------------------------------------------
@@ -51,16 +51,14 @@ pub fn frame_stream<E: Engine>(
         let frames_thread = frames.clone();
         std::thread::Builder::new()
             .name("browser-frames".into())
-            .spawn(move || {
-                loop {
-                    match frames_thread.recv() {
-                        Ok(f) => {
-                            if tx.send(f).is_err() {
-                                break;
-                            }
+            .spawn(move || loop {
+                match frames_thread.recv() {
+                    Ok(f) => {
+                        if tx.send(f).is_err() {
+                            break;
                         }
-                        Err(()) => break,
                     }
+                    Err(()) => break,
                 }
             })
             .expect("spawn browser-frames thread");
@@ -330,9 +328,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     .title(move |app: &App<E>| {
         let profile = crate::profiles::active().name;
         match app.active_tab_info() {
-            Some(t) if !t.title.is_empty() => format!("{profile} — {}", t.title),
-            Some(t) if !t.url.is_empty() => format!("{profile} — {}", t.url),
-            _ => profile,
+            Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
+            None => crate::util::browser_window_title(&profile, "", ""),
         }
     })
     .subscription(App::<E>::subscription)

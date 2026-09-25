@@ -7,11 +7,11 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
 use crate::cef::paint::{self, DirtyRect, PixelRing};
@@ -2006,9 +2006,7 @@ fn download_event_from_item(
         .map(str::to_string)
         .or_else(|| cached.as_ref().map(|m| m.filename.clone()))
         .unwrap_or_else(|| crate::downloads::sanitize_filename("download"));
-    let url = cached
-        .map(|m| m.url)
-        .unwrap_or_else(|| download_url(item));
+    let url = cached.map(|m| m.url).unwrap_or_else(|| download_url(item));
     let error = if state == DownloadPhase::Failed {
         interrupt_label(item.interrupt_reason())
     } else {
@@ -2247,7 +2245,9 @@ cef::wrap_navigation_entry_visitor! {
             self.entries.borrow_mut().push(HistoryEntry {
                 index,
                 url: cef_string_userfree_display(&entry.url()),
-                title: cef_string_userfree_display(&entry.title()),
+                title: crate::util::wayland_title_text(&cef_string_userfree_display(
+                    &entry.title(),
+                )),
             });
             if current != 0 {
                 self.current.set(index);
@@ -3933,6 +3933,8 @@ fn set_tab_url_title_by_browser_id(
     url: Option<String>,
     title: Option<String>,
 ) -> bool {
+    // Wayland set_title panics on NUL. Strip before the snapshot reaches chrome.
+    let title = title.map(|t| crate::util::wayland_title_text(&t));
     for tab in state.tabs.borrow().iter() {
         if tab.browser_id == browser_id {
             if let Some(u) = url {
@@ -4937,7 +4939,7 @@ fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
 #[allow(dead_code)]
 fn cef_evict_parks(state: &CefThreadState) {
     use crate::engine::TabInfo;
-    use crate::tab_cache::{WorkspaceSnapshot, eviction_victims};
+    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
     use std::collections::HashMap;
     use std::time::Instant;
 
@@ -4969,6 +4971,7 @@ fn cef_evict_parks(state: &CefThreadState) {
 }
 
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {
+    let initial_title = crate::util::wayland_title_text(&initial_title);
     let mut window_info = cef::WindowInfo::default();
     let (w, h) = *state.size.lock().unwrap();
     apply_osr_window_info(&mut window_info, w, h);
