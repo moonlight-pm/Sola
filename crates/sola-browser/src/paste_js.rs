@@ -105,6 +105,71 @@ pub fn paste_image_script(mime: &str, filename: &str, bytes: &[u8]) -> String {
     )
 }
 
+/// JS statement: write `v` into already-focused `el`.
+///
+/// `append` is `type` (caret at end). Otherwise `fill` replaces.
+/// Contenteditable / ProseMirror (Suno lyrics) ignore `textContent`
+/// writes — they listen for `paste` + `text/plain`. Do not
+/// `execCommand('insertText')` the whole payload (Chromium flattens
+/// `\n` to spaces).
+pub fn editor_write_js(append: bool) -> String {
+    let append_js = if append { "true" } else { "false" };
+    format!(
+        r#"(function(el,v,append){{
+  function htmlPlain(s){{
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\r\n|\n|\r/g,'<br>');
+  }}
+  function firePaste(target,text){{
+    var dt=new DataTransfer();
+    try{{
+      dt.setData('text/plain', text);
+      dt.setData('text/html', htmlPlain(text));
+    }}catch(e){{ return false; }}
+    var ev=new ClipboardEvent('paste',{{bubbles:true,cancelable:true,composed:true,clipboardData:dt}});
+    try{{ Object.defineProperty(ev,'clipboardData',{{value:dt}}); }}catch(e){{}}
+    try{{ return !target.dispatchEvent(ev); }}catch(e){{ return false; }}
+  }}
+  function nativeValue(target,next){{
+    var tag=(target.tagName||'').toLowerCase();
+    var proto=(tag==='textarea'?window.HTMLTextAreaElement:window.HTMLInputElement);
+    proto=proto&&proto.prototype;
+    var desc=proto&&Object.getOwnPropertyDescriptor(proto,'value');
+    if(desc&&desc.set) desc.set.call(target,next); else if('value' in target) target.value=next;
+  }}
+  function insertLines(target,text){{
+    var lines=String(text).split(/\r\n|\n|\r/);
+    for(var i=0;i<lines.length;i++){{
+      if(i){{
+        try{{ document.execCommand('insertLineBreak'); }}catch(e){{
+          try{{ document.execCommand('insertHTML',false,'<br>'); }}catch(e2){{}}
+        }}
+      }}
+      if(lines[i]){{
+        try{{ document.execCommand('insertText',false,lines[i]); }}catch(e){{}}
+      }}
+    }}
+  }}
+  var tag=(el.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='textarea'){{
+    var cur=String(el.value||'');
+    nativeValue(el, append? cur+v : v);
+    try{{ el.selectionStart=el.selectionEnd=(append?cur.length:0)+String(v).length; }}catch(e){{}}
+    return;
+  }}
+  if(el.isContentEditable){{
+    var sel=window.getSelection();
+    var range=document.createRange();
+    range.selectNodeContents(el);
+    if(append) range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if(firePaste(el, v)) return;
+    insertLines(el, v);
+  }}
+}})(el,v,{append_js});"#
+    )
+}
+
 /// IIFE that pastes `text` into the focused field.
 ///
 /// Windowless CEF has no Wayland clipboard, so chrome injects. Editors
@@ -270,6 +335,29 @@ mod tests {
         let s = paste_into_focused_script(r#"a"b"#);
         assert!(s.contains(r#"a\"b"#));
         assert!(!s.contains('\0'));
+    }
+
+    #[test]
+    fn editor_write_fill_uses_paste_not_textcontent() {
+        let s = editor_write_js(false);
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("text/plain"));
+        assert!(s.contains("selectNodeContents"));
+        assert!(s.contains("insertLineBreak"));
+        assert!(
+            !s.contains("textContent"),
+            "ProseMirror reverts textContent writes"
+        );
+        assert!(s.contains("false"), "{s}");
+        assert!(!s.contains("range.collapse(false)") || s.contains("if(append) range.collapse"));
+    }
+
+    #[test]
+    fn editor_write_type_appends_at_end() {
+        let s = editor_write_js(true);
+        assert!(s.contains("if(append) range.collapse(false)"));
+        assert!(s.contains("true"));
+        assert!(s.contains("ClipboardEvent"));
     }
 
     #[test]

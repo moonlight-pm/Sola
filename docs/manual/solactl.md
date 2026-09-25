@@ -170,8 +170,14 @@ snapshot starts with an `actions:` list (role, name, ref) — click those.
 candidate refs when more than one control matches. Stale refs fail
 (node gone); snapshot again. `click` / `hover` also take CSS-pixel `--x`
 `--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
-not the compositor seat). `key --chord` (e.g. `Return`, `Control+Enter`)
-and `scroll --dx --dy` go to the same tab. Screenshot is a fallback when
+not the compositor seat). `fill` / `type` write a contenteditable /
+ProseMirror editor with one `paste` of the whole string (newlines kept);
+they do not assign `textContent`. `key --chord` (e.g. `Return`, `Control+Enter`)
+inserts once (one `char` event; not keyDown-with-text plus char).
+`scroll --dx --dy` go to the same tab. If `tabs` / `tab.open` time out
+while the sola-browser window is still up, the call plane is wedged:
+close the window (X or Flower) and launch it again — do not kill the
+process from a bot. Screenshot is a fallback when
 the tree is empty (canvas / maps) and captures **that tab’s** document
 even when backgrounded. Vault fill / confirm gates are not on this plane
 (**D3**).

@@ -228,7 +228,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "type",
-            "Type into a snapshot ref (appends)",
+            "Type into a snapshot ref (appends; contenteditable keeps newlines)",
             &[
                 req_s("ref", Some('r'), "Ref from snapshot"),
                 req_s("text", Some('x'), "Text to type"),
@@ -239,7 +239,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "fill",
-            "Replace the value of a snapshot ref",
+            "Replace the value of a snapshot ref (contenteditable / ProseMirror paste)",
             &[
                 req_s("ref", Some('r'), "Ref from snapshot"),
                 req_s("text", Some('x'), "New value"),
@@ -386,6 +386,13 @@ mod tests {
         assert!(snap.args.iter().any(|a| a.name == "interactive"));
         let wait = methods.iter().find(|m| m.name == "wait").unwrap();
         assert!(wait.args.iter().any(|a| a.name == "load"));
+        let fill = methods.iter().find(|m| m.name == "fill").unwrap();
+        assert!(
+            fill.summary.to_lowercase().contains("contenteditable")
+                || fill.summary.to_lowercase().contains("prosemirror"),
+            "{}",
+            fill.summary
+        );
         assert!(matches!(
             wait.args.iter().find(|a| a.name == "load").unwrap().ty,
             ArgType::Bool

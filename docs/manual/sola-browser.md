@@ -336,7 +336,9 @@ the focused field. An image offer (`image/png` and siblings) is a `File`
 paste event (so Slack and similar composers accept a screenshot). Text
 is a `paste` event with `text/plain` (newlines kept in contenteditable
 lyrics); if the page does not handle it, a textarea gets the value and
-a contenteditable gets a line break between lines. Chromium’s own clipboard never reaches Wayland.
+a contenteditable gets a line break between lines. `solactl browser fill`
+and `type` use that same paste into the snapshot ref (including a
+ProseMirror editor nested under the AX node). `key --chord` inserts once. Chromium’s own clipboard never reaches Wayland.
 In-page **Copy** buttons (`navigator.clipboard.writeText` and
 `document.execCommand('copy')`) are hooked the same way. Newlines in the
 copied text are kept. Triple-click selects a line / field the way

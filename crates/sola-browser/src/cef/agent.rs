@@ -580,7 +580,7 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
                 format!(
                     "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); {enter} return {{ok:true}}; }}",
                     pick = pick_el(),
-                    set = native_set(true),
+                    set = crate::paste_js::editor_write_js(true),
                     enter = enter,
                 ),
                 role.clone(),
@@ -593,7 +593,7 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
                 format!(
                     "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return {{ok:true}}; }}",
                     pick = pick_el(),
-                    set = native_set(false),
+                    set = crate::paste_js::editor_write_js(false),
                 ),
                 role.clone(),
                 name.clone(),
@@ -614,15 +614,9 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
 }
 
 fn pick_el() -> &'static str {
-    "(function(n){ let el = n; if (el && el.nodeType === 3) el = el.parentElement; if (!el) return null; return (el.closest && el.closest('a,button,input,select,textarea,summary,[role=\"link\"],[role=\"button\"]')) || el; })(this)"
-}
-
-fn native_set(append: bool) -> &'static str {
-    if append {
-        "if (el.isContentEditable) { el.textContent = (el.textContent||'') + v; } else { const proto = (el.tagName === 'TEXTAREA') ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const desc = Object.getOwnPropertyDescriptor(proto, 'value'); const next = String(el.value||'') + v; if (desc && desc.set) desc.set.call(el, next); else if ('value' in el) el.value = next; }"
-    } else {
-        "if (el.isContentEditable) { el.textContent = v; } else { const proto = (el.tagName === 'TEXTAREA') ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const desc = Object.getOwnPropertyDescriptor(proto, 'value'); if (desc && desc.set) desc.set.call(el, v); else if ('value' in el) el.value = v; }"
-    }
+    // AX textbox is often a wrapper *around* ProseMirror. `closest` only
+    // walks ancestors; also query a contenteditable descendant.
+    "(function(n){ let el = n; if (el && el.nodeType === 3) el = el.parentElement; if (!el) return null; const sel='[contenteditable=\"true\"],[contenteditable=\"plaintext-only\"],[contenteditable=\"\"]'; const up = el.closest && el.closest(sel); if (up) return up; if (el.isContentEditable) { let p = el; while (p.parentElement && p.parentElement.isContentEditable) p = p.parentElement; return p; } const down = el.querySelector && el.querySelector(sel); if (down) return down; return (el.closest && el.closest('a,button,input,select,textarea,summary,[role=\"link\"],[role=\"button\"]')) || el; })(this)"
 }
 
 fn emit_ok(id: u64, tab: u64, path: Option<String>) {
@@ -826,6 +820,36 @@ mod tests {
         let v = serde_json::json!({"stale": true});
         assert!(is_stale_value(&v));
         assert!(!is_stale_value(&serde_json::json!({"ok": true})));
+    }
+
+    #[test]
+    fn fill_js_pastes_into_contenteditable() {
+        let (js, _, _) = js_for(&AfterResolve::Fill {
+            role: "textbox".into(),
+            name: "Lyrics".into(),
+            text: "verse one\n\nverse two".into(),
+        });
+        assert!(js.contains("querySelector"), "{js}");
+        assert!(js.contains("contenteditable"), "{js}");
+        assert!(js.contains("ClipboardEvent"), "{js}");
+        assert!(js.contains("insertLineBreak"), "{js}");
+        assert!(
+            !js.contains("el.textContent"),
+            "must not assign textContent (ProseMirror reverts it): {js}"
+        );
+        assert!(js.contains(r#"verse one\n\nverse two"#), "{js}");
+    }
+
+    #[test]
+    fn type_js_appends_via_paste() {
+        let (js, _, _) = js_for(&AfterResolve::Type {
+            role: "textbox".into(),
+            name: "Lyrics".into(),
+            text: "more".into(),
+            submit: false,
+        });
+        assert!(js.contains("if(append) range.collapse(false)"), "{js}");
+        assert!(js.contains("ClipboardEvent"), "{js}");
     }
 
     #[test]
