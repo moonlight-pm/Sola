@@ -4,6 +4,7 @@
 //! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -173,6 +174,11 @@ enum Msg {
         force: bool,
     },
     DropProject(String),
+    /// `git worktree remove` failed after the tab was already closed.
+    GitRmFailed {
+        id: String,
+        error: String,
+    },
     RestartShell(String),
     PaneFocused(String),
     SplitDividerPress(String),
@@ -182,6 +188,61 @@ enum Msg {
     PresenceTick,
     Call(sola_call::Incoming),
     WindowFocus(bool),
+}
+
+/// PTY taken off the iced state so `tmux kill-session` / `git worktree remove`
+/// can run off the UI thread. `close()` matches [`App::teardown_pane`].
+struct DetachedPane {
+    backend: Option<PtyBackend>,
+    session: String,
+}
+
+impl DetachedPane {
+    fn close(self) {
+        if let Some(backend) = self.backend {
+            backend.close();
+        } else {
+            tmux::kill_session(&self.session);
+        }
+    }
+}
+
+/// Kill tmux (and optionally `git worktree remove`) after the rail has
+/// already dropped the tab. Both wait on subprocesses; doing them in
+/// `update` freezes every other pane.
+fn close_io_task(
+    panes: Vec<DetachedPane>,
+    checkout: Option<(PathBuf, PathBuf, bool)>,
+    workspace_id: String,
+) -> Task<Msg> {
+    Task::perform(
+        async move {
+            match tokio::task::spawn_blocking(move || {
+                for pane in panes {
+                    pane.close();
+                }
+                match checkout {
+                    Some((root, path, force)) => spawn::remove_worktree(&root, &path, force),
+                    None => Ok(()),
+                }
+            })
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(%e, "workspace teardown worker panicked");
+                    Ok(())
+                }
+            }
+        },
+        move |result| match result {
+            Ok(()) => Msg::Ignore,
+            Err(error) => Msg::GitRmFailed {
+                id: workspace_id,
+                error,
+            },
+        },
+    )
 }
 
 impl App {
@@ -473,6 +534,11 @@ impl App {
             Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
             Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
+            Msg::GitRmFailed { id, error } => {
+                tracing::warn!(workspace = %id, %error, "git worktree remove failed");
+                self.emit_notice("Worktree leftover".into(), error, format!("git-rm-{id}"));
+                Task::none()
+            }
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
                 if let Some(ev) = self.sidebar.gestures.update(m) {
@@ -498,6 +564,13 @@ impl App {
                 tracing::info!(pane = %id, "pane PTY exited");
                 // Drop the client without `close()` (plain Drop keeps tmux).
                 self.runtimes.remove(&id);
+                // Tab already dropped (CLI / hover). The session is being
+                // killed off-thread — do not list-sessions or reattach.
+                if self.workspace_for_pane(&id).is_none() {
+                    self.pane_status.remove(&id);
+                    status::persist_all(&self.pane_status);
+                    return Task::none();
+                }
                 let want = tmux::session_name(&id);
                 let live = tmux::list_sessions().unwrap_or_default();
                 if live.iter().any(|s| s == &want) {
@@ -2105,13 +2178,20 @@ impl App {
     }
 
     fn teardown_pane(&mut self, id: &str) {
-        if let Some(rt) = self.runtimes.remove(id) {
-            rt.backend.close();
-        } else {
-            tmux::kill_session(&tmux::session_name(id));
-        }
+        self.detach_pane(id).close();
+    }
+
+    /// Stop drawing this pane. Caller must `close()` the result (on the
+    /// iced thread only when the tmux session name may be reused next,
+    /// e.g. last-leaf ⌘W).
+    fn detach_pane(&mut self, id: &str) -> DetachedPane {
+        let backend = self.runtimes.remove(id).map(|rt| rt.backend);
         self.pane_status.remove(id);
         self.pane_grids.remove(id);
+        DetachedPane {
+            backend,
+            session: tmux::session_name(id),
+        }
     }
 
     fn attach_selected_if_needed(&mut self) -> Task<Msg> {
@@ -2129,6 +2209,10 @@ impl App {
     /// Close a sibling tab. `checkout` also `git worktree remove`s (after
     /// tmux dies so the pane is not sitting in that cwd). Hover × leaves
     /// the folder. A gone path just prunes git metadata.
+    ///
+    /// The rail and catalog update here; `tmux kill-session` and git run
+    /// off the iced thread so a `solactl` rm (or hover ×) does not freeze
+    /// every other pane.
     fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
         let Some((panes, path, project_id)) =
             self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
@@ -2139,9 +2223,7 @@ impl App {
             return Task::none();
         };
         tracing::info!(workspace = %id, checkout, "closing workspace");
-        for pane in &panes {
-            self.teardown_pane(pane);
-        }
+        let detached: Vec<DetachedPane> = panes.iter().map(|pane| self.detach_pane(pane)).collect();
         self.workspaces.retain(|w| w.id != id);
         for w in &mut self.workspaces {
             if w.parent.as_deref() == Some(id) {
@@ -2157,20 +2239,16 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        if checkout {
-            if let Some(root) = self
-                .projects
-                .iter()
-                .find(|p| p.id == project_id)
-                .map(|p| p.root.clone())
-            {
-                if let Err(e) = spawn::remove_worktree(&root, &path, force) {
-                    tracing::warn!(workspace = %id, %e, "git worktree remove failed");
-                    self.emit_notice("Worktree leftover".into(), e, format!("git-rm-{id}"));
-                }
-            }
-        }
-        self.attach_selected_if_needed()
+        let git = checkout
+            .then(|| {
+                self.projects
+                    .iter()
+                    .find(|p| p.id == project_id)
+                    .map(|p| (p.root.clone(), path.clone(), force))
+            })
+            .flatten();
+        let attach = self.attach_selected_if_needed();
+        Task::batch([attach, close_io_task(detached, git, id.to_string())])
     }
 
     /// If a sibling's checkout is already gone (`git worktree remove` from
@@ -2213,15 +2291,17 @@ impl App {
         self.projects = catalog.projects;
         self.workspaces = catalog.workspaces;
         self.selected = catalog.selected.unwrap_or_default();
-        for id in pane_ids {
-            self.teardown_pane(&id);
-        }
+        let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
         if removed.is_empty() {
-            return Task::none();
+            return close_io_task(detached, None, project_id.to_string());
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        self.attach_selected_if_needed()
+        let attach = self.attach_selected_if_needed();
+        Task::batch([
+            attach,
+            close_io_task(detached, None, project_id.to_string()),
+        ])
     }
 
     fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {

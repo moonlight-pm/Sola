@@ -146,8 +146,10 @@ the TUI to trust the Sola status hook. `pane.wait` holds until status
 matches (`--fresh` waits for a transition). Drop unregisters; it does not
 `git worktree remove` unless
 you pass `--worktree` (add `--force` to toss a dirty checkout).
-`workspace.rm` replies, then closes the tab on the next tick, so a
-call from inside that pane can finish instead of hanging. Do **not**
+`workspace.rm` replies, then drops the tab on the next tick, so a
+call from inside that pane can finish instead of hanging. `tmux
+kill-session` and `git worktree remove` run off the iced thread after
+that (the rest of Workspaces stays live). Do **not**
 `git worktree remove` first from inside that pane — the cwd vanishes and
 the next tool cannot run. Use `--worktree` instead. If the checkout is
 already gone, Workspaces reaps the tab (no leftover working spinner).
