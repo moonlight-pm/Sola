@@ -35,6 +35,7 @@ enum Phase {
     Wheel,
     Ready,
     Shot { path: String },
+    PageData,
 }
 
 enum AfterResolve {
@@ -61,6 +62,10 @@ enum AfterResolve {
         role: String,
         name: String,
         values: Vec<String>,
+    },
+    Get {
+        role: String,
+        name: String,
     },
 }
 
@@ -185,6 +190,63 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
                 AfterResolve::Select { role, name, values },
             );
         }
+        AgentOp::Get {
+            backend_node_id,
+            role,
+            name,
+        } => {
+            resolve(
+                host,
+                browser_id,
+                req,
+                backend_node_id,
+                AfterResolve::Get { role, name },
+            );
+        }
+        AgentOp::Links => {
+            let mut params = dict();
+            set_str(&mut params, "expression", LINKS_JS);
+            set_bool(&mut params, "returnByValue", true);
+            let mid = cdp(host, "Runtime.evaluate", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req,
+                    phase: Phase::PageData,
+                },
+            );
+        }
+        AgentOp::FillQuery { query, text } => {
+            let expr = crate::paste_js::editor_query_script(&query, Some(&text));
+            let mut params = dict();
+            set_str(&mut params, "expression", &expr);
+            set_bool(&mut params, "returnByValue", true);
+            let mid = cdp(host, "Runtime.evaluate", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req,
+                    phase: Phase::PageData,
+                },
+            );
+        }
+        AgentOp::GetQuery { query } => {
+            let expr = crate::paste_js::editor_query_script(&query, None);
+            let mut params = dict();
+            set_str(&mut params, "expression", &expr);
+            set_bool(&mut params, "returnByValue", true);
+            let mid = cdp(host, "Runtime.evaluate", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req,
+                    phase: Phase::PageData,
+                },
+            );
+        }
         AgentOp::Screenshot { path } => {
             let mut params = dict();
             set_str(&mut params, "format", "png");
@@ -217,21 +279,7 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
             );
         }
         AgentOp::Nav(_) | AgentOp::FindPage { .. } => {
-            emit(AgentReply {
-                id,
-                tab,
-                ok: true,
-                error: None,
-                yaml: None,
-                refs: Vec::new(),
-                url: None,
-                title: None,
-                focused: None,
-                dialog_open: false,
-                json: false,
-                path: None,
-                ready: None,
-            });
+            emit_ok(id, tab, None);
         }
     }
 }
@@ -423,6 +471,13 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
                             }
                         }
                     }
+                    if let Some(data) = fill_or_get_data(&job.req.op, &v) {
+                        match data {
+                            Ok(v) => emit(AgentReply::ok_data(job.req.id, job.req.tab, v)),
+                            Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
+                        }
+                        return;
+                    }
                 }
             }
             emit_ok(job.req.id, job.req.tab, None);
@@ -457,7 +512,26 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
                     json: false,
                     path: None,
                     ready: Some(ready),
+                    data: None,
                 });
+            }
+            Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
+        },
+        Phase::PageData => match cdp_js_value(result) {
+            Ok(v) if is_stale_value(&v) => emit(AgentReply::fail(
+                job.req.id,
+                job.req.tab,
+                "no matching contenteditable/input for that --control name",
+            )),
+            Ok(v) => {
+                if let Some(data) = fill_or_get_data(&job.req.op, &v) {
+                    match data {
+                        Ok(v) => emit(AgentReply::ok_data(job.req.id, job.req.tab, v)),
+                        Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
+                    }
+                } else {
+                    emit(AgentReply::ok_data(job.req.id, job.req.tab, v));
+                }
             }
             Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
         },
@@ -518,6 +592,7 @@ fn finish_snapshot(req: AgentRequest, json: &str) {
         json: as_json,
         path: None,
         ready: None,
+        data: None,
     });
 }
 
@@ -578,10 +653,11 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
             };
             (
                 format!(
-                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); {enter} return {{ok:true}}; }}",
+                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); {enter} const got = {got}; return {{ok:true, value: got}}; }}",
                     pick = pick_el(),
                     set = crate::paste_js::editor_write_js(true),
                     enter = enter,
+                    got = crate::paste_js::editor_value_js(),
                 ),
                 role.clone(),
                 name.clone(),
@@ -591,14 +667,24 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
             let lit = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
             (
                 format!(
-                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return {{ok:true}}; }}",
+                    "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const v = {lit}; el.focus(); {set} el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); const got = {got}; return {{ok:true, value: got}}; }}",
                     pick = pick_el(),
                     set = crate::paste_js::editor_write_js(false),
+                    got = crate::paste_js::editor_value_js(),
                 ),
                 role.clone(),
                 name.clone(),
             )
         }
+        AfterResolve::Get { role, name } => (
+            format!(
+                "function() {{ const el = {pick}; if (!el) return {{stale:true}}; const value = {got}; const href = el.href || (el.getAttribute && el.getAttribute('href')) || ''; return {{ok:true, value: value, href: href}}; }}",
+                pick = pick_el(),
+                got = crate::paste_js::editor_value_js(),
+            ),
+            role.clone(),
+            name.clone(),
+        ),
         AfterResolve::Select { role, name, values } => {
             let lit = serde_json::to_string(values).unwrap_or_else(|_| "[]".into());
             (
@@ -610,6 +696,48 @@ fn js_for(next: &AfterResolve) -> (String, String, String) {
                 name.clone(),
             )
         }
+    }
+}
+
+const LINKS_JS: &str = r#"(function(){
+  function txt(n){ return String((n && (n.innerText || n.textContent)) || '').trim().slice(0,200); }
+  var links = Array.prototype.map.call(document.querySelectorAll('a[href]'), function(a){
+    return { text: txt(a), href: a.href };
+  }).filter(function(x){ return x.href && x.href.indexOf('javascript:') !== 0; });
+  var media = Array.prototype.map.call(document.querySelectorAll('audio,video'), function(m){
+    var d = m.duration;
+    return { src: m.currentSrc || m.src || '', duration: (isFinite(d) && d > 0) ? d : null };
+  });
+  return { links: links, media: media };
+})()"#;
+
+fn fill_or_get_data(
+    op: &AgentOp,
+    v: &serde_json::Value,
+) -> Option<Result<serde_json::Value, String>> {
+    match op {
+        AgentOp::Fill { text, .. }
+        | AgentOp::Type { text, .. }
+        | AgentOp::FillQuery { text, .. } => {
+            let got = v.get("value").and_then(|s| s.as_str()).unwrap_or("");
+            let append = matches!(op, AgentOp::Type { .. });
+            if !crate::paste_js::text_stuck(text, got, append) {
+                let preview: String = got.chars().take(80).collect();
+                let verb = if append { "type" } else { "fill" };
+                return Some(Err(format!(
+                    "{verb} did not stick (wanted {} chars, got {} chars: {preview:?})",
+                    text.chars().count(),
+                    got.chars().count()
+                )));
+            }
+            Some(Ok(serde_json::json!({
+                "ok": true,
+                "value": got,
+                "matched": true,
+            })))
+        }
+        AgentOp::Get { .. } | AgentOp::GetQuery { .. } => Some(Ok(v.clone())),
+        _ => None,
     }
 }
 
@@ -634,6 +762,7 @@ fn emit_ok(id: u64, tab: u64, path: Option<String>) {
         json: false,
         path,
         ready: None,
+        data: None,
     });
 }
 
@@ -834,10 +963,11 @@ mod tests {
         assert!(js.contains("ClipboardEvent"), "{js}");
         assert!(js.contains("insertLineBreak"), "{js}");
         assert!(
-            !js.contains("el.textContent"),
+            !js.contains("el.textContent ="),
             "must not assign textContent (ProseMirror reverts it): {js}"
         );
         assert!(js.contains(r#"verse one\n\nverse two"#), "{js}");
+        assert!(js.contains("value: got"), "{js}");
     }
 
     #[test]

@@ -99,6 +99,8 @@ fn bot_browser_policy(
         "hover",
         "type",
         "fill",
+        "get",
+        "links",
         "select",
         "wait",
         "screenshot",

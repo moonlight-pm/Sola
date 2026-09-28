@@ -239,12 +239,36 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "fill",
-            "Replace the value of a snapshot ref (contenteditable / ProseMirror paste)",
+            "Replace a control's value (contenteditable / ProseMirror paste; read back)",
             &[
-                req_s("ref", Some('r'), "Ref from snapshot"),
-                req_s("text", Some('x'), "New value"),
+                opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s("control", None, "Actions-list name (when --ref is omitted)"),
+                opt_s("text", Some('x'), "New value (exclusive with --file)"),
+                opt(
+                    "file",
+                    Some('f'),
+                    ArgType::Path,
+                    "Read the value from this file",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
             ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "get",
+            "Read a control's current text, value, and href",
+            &[
+                opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s("control", None, "Actions-list name"),
+                opt_s("text", Some('x'), "Same as --control"),
+                opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
+            ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "links",
+            "List page <a href> and audio/video duration (DOM, not AX)",
+            &[opt_s("tab", Some('t'), "Tab (default: focused)")],
             PAGE_TIMEOUT_MS,
         ),
         method_ms(
@@ -263,14 +287,15 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "wait",
-            "Wait until a tab finishes loading, or text appears",
+            "Wait until a named control exists, text appears, or the document loads",
             &[
                 opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)"),
+                opt_s("control", None, "Wait until this actions-list control exists"),
                 opt_s("text", Some('q'), "Wait until this appears in a snapshot"),
                 flag(
                     "load",
                     'l',
-                    "Wait for document load (default when --text is omitted)",
+                    "Wait for document load (default when --text/--control omitted)",
                 ),
                 opt("timeout", None, ArgType::Int, "Seconds (default 30)"),
             ],
@@ -371,6 +396,8 @@ mod tests {
             "scroll",
             "type",
             "fill",
+            "get",
+            "links",
             "select",
             "wait",
             "screenshot",
@@ -386,6 +413,7 @@ mod tests {
         assert!(snap.args.iter().any(|a| a.name == "interactive"));
         let wait = methods.iter().find(|m| m.name == "wait").unwrap();
         assert!(wait.args.iter().any(|a| a.name == "load"));
+        assert!(wait.args.iter().any(|a| a.name == "control"));
         let fill = methods.iter().find(|m| m.name == "fill").unwrap();
         assert!(
             fill.summary.to_lowercase().contains("contenteditable")
@@ -393,6 +421,11 @@ mod tests {
             "{}",
             fill.summary
         );
+        assert!(!fill.args.iter().find(|a| a.name == "text").unwrap().required);
+        assert!(fill.args.iter().any(|a| a.name == "file"));
+        assert!(fill.args.iter().any(|a| a.name == "control"));
+        let get = methods.iter().find(|m| m.name == "get").unwrap();
+        assert!(get.args.iter().any(|a| a.name == "ref"));
         assert!(matches!(
             wait.args.iter().find(|a| a.name == "load").unwrap().ty,
             ArgType::Bool

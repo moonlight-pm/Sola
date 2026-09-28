@@ -3588,6 +3588,7 @@ fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
                         json: false,
                         path: None,
                         ready: None,
+                        data: None,
                     },
                 ));
             }
@@ -3617,6 +3618,7 @@ fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
                         json: false,
                         path: None,
                         ready: None,
+                        data: None,
                     },
                 ));
             }

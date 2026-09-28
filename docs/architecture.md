@@ -116,7 +116,7 @@ to the bus and tolerate compositor restarts.
 | Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
 | Workspaces last-status | `~/.config/sola/workspaces/last-status.json` (per-pane status / agent / Grok `session_id`; a new tmux after reboot execs `grok -r`) |
 | Workspaces calls | sola-call owner `workspaces` (`solactl workspaces …`). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) |
-| Browser calls | sola-call owner `browser` (`solactl browser …`). Snapshot/act by `--tab`; CSS-pixel click/hover; `fill`/`type` paste into contenteditable; `key --chord` (one char); `scroll`. A timeout while the owner is still advertised is a wedged chrome (close X / Flower, relaunch). First-class: [`2026-09-11-sola-browser-agent-control-design.md`](specs/2026-09-11-sola-browser-agent-control-design.md) |
+| Browser calls | sola-call owner `browser` (`solactl browser …`). Snapshot/act by `--tab`; CSS-pixel click/hover; `fill --file` / `get` / `links`; `wait --control`; `fill`/`type` paste into contenteditable; `key --chord` (one char); `scroll`. A timeout while the owner is still advertised is a wedged chrome (close X / Flower, relaunch). First-class: [`2026-09-11-sola-browser-agent-control-design.md`](specs/2026-09-11-sola-browser-agent-control-design.md) |
 | Grok sessions | `~/.grok/sessions/` (Workspaces compaction `×N` + reboot resume; not an ACP leader socket) |
 | Codex sessions | `~/.codex/sessions/YYYY/MM/DD/rollout-*-{id}.jsonl` (Workspaces compaction `×N`; `CODEX_HOME` override) |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |

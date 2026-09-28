@@ -172,7 +172,13 @@ candidate refs when more than one control matches. Stale refs fail
 `--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
 not the compositor seat). `fill` / `type` write a contenteditable /
 ProseMirror editor with one `paste` of the whole string (newlines kept);
-they do not assign `textContent`. `key --chord` (e.g. `Return`, `Control+Enter`)
+they do not assign `textContent`. `fill --file PATH` reads the string from
+disk. The reply includes `value` and `matched: true`, or an error if the
+field did not keep the text. `get` reads the current value/href of a ref
+or `--control` name (DOM aria-label if the AX tree misses it). `links`
+lists `<a href>` and audio/video `duration` from the DOM. `wait --control
+Create` succeeds only when that named control exists in a snapshot (not
+when CEF fires load). `key --chord` (e.g. `Return`, `Control+Enter`)
 inserts once (one `char` event; not keyDown-with-text plus char).
 `scroll --dx --dy` go to the same tab. If `tabs` / `tab.open` time out
 while the sola-browser window is still up, the call plane is wedged:
@@ -204,6 +210,9 @@ solactl browser click --ref e12
 solactl browser click --tab 3 --text "Pay now"
 solactl browser click --tab 3 --x 120 --y 80
 solactl browser fill --ref e5 --text user@example.com
+solactl browser fill --tab 3 --control lyrics --file /path/lyrics.txt
+solactl browser get --tab 3 --control lyrics
+solactl browser links --tab 3
 solactl browser type --ref e5 --text more --submit
 solactl browser hover --ref e12
 solactl browser hover --tab 3 --x 120 --y 80
@@ -211,7 +220,7 @@ solactl browser key --tab 3 --chord Return
 solactl browser key --tab 3 --chord Control+Enter
 solactl browser scroll --tab 3 --dy 400
 solactl browser select --ref e9 --values OptionA,OptionB
-solactl browser wait [--load] [--text done] [--timeout 30]
+solactl browser wait [--load] [--text done] [--control Create] [--timeout 30]
 solactl browser screenshot --tab 3 [-o PATH]
 solactl browser back|forward|reload|stop [--tab 3]
 solactl browser find.page --text needle
@@ -221,7 +230,8 @@ solactl browser find.page --text needle
 name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
 `wait` / `wait --load` returns when `document.readyState` is `complete` on
 a committed URL (not the tab-strip spinner). `wait --text` snapshots until
-that string appears.
+that string appears. `wait --control Create` snapshots until that named
+control is in the actions list (or times out naming the missing control).
 
 Snapshot, click, fill, type, and `browser screenshot` target **that tab’s
 CEF document** — they work when the tab is in the background and do not
