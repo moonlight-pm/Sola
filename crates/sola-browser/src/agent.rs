@@ -89,6 +89,21 @@ pub enum AgentOp {
     },
     /// `document.readyState` + `location.href` (wait --load).
     ReadyState,
+    Get {
+        backend_node_id: i32,
+        role: String,
+        name: String,
+    },
+    /// DOM `a[href]` + audio/video duration (not the AX tree).
+    Links,
+    /// Find a contenteditable/input by accessible name in the DOM (AX miss).
+    FillQuery {
+        query: String,
+        text: String,
+    },
+    GetQuery {
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +132,9 @@ pub struct AgentReply {
     /// `document.readyState` from a `ReadyState` probe (`complete` / `interactive` / `loading`).
     #[serde(default)]
     pub ready: Option<String>,
+    /// Fill/get/links payload (`value`, `href`, `links`, `media`).
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 pub type AgentHandle = std::sync::Arc<std::sync::Mutex<Vec<AgentReply>>>;
@@ -131,6 +149,7 @@ struct PendingWait {
     inc: Incoming,
     tab: TabId,
     text: Option<String>,
+    control: Option<String>,
     deadline: Instant,
     awaiting_snap: bool,
     probed: bool,
@@ -199,6 +218,41 @@ fn param_i64(params: &serde_json::Value, key: &str) -> Option<i64> {
             .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
             .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     })
+}
+
+fn fill_text(params: &serde_json::Value) -> Result<String, String> {
+    let text = param_str(params, "text");
+    let file = param_str(params, "file");
+    match (text, file) {
+        (Some(_), Some(_)) => Err("--text and --file are exclusive".into()),
+        (Some(t), None) => Ok(t),
+        (None, Some(path)) => {
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|e| format!("read --file {path}: {e}"))?;
+            if raw.len() > 100_000 {
+                return Err("fill --file is over 100000 bytes".into());
+            }
+            Ok(raw)
+        }
+        (None, None) => Err("missing --text or --file".into()),
+    }
+}
+
+fn wait_timeout_err(w: &PendingWait, snap: Option<&LastSnap>) -> String {
+    if let Some(control) = &w.control {
+        let preview = snap
+            .map(|s| {
+                let refs: Vec<RefEntry> = s.refs.values().cloned().collect();
+                ax::actions_preview(&refs)
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "no named controls".into());
+        format!("wait timed out: control \"{control}\" not present (last snapshot: {preview})")
+    } else if let Some(text) = &w.text {
+        format!("wait timed out: text \"{text}\" not in snapshot")
+    } else {
+        "wait timed out".into()
+    }
 }
 
 impl<E: Engine> App<E> {
@@ -363,6 +417,14 @@ impl<E: Engine> App<E> {
                 .ok(serde_json::json!({ "ok": true, "path": path }));
             return;
         }
+        if let Some(mut data) = r.data {
+            if let Some(map) = data.as_object_mut() {
+                map.entry("ok").or_insert(serde_json::json!(true));
+                map.insert("tab".into(), serde_json::json!(r.tab));
+            }
+            inc.reply.ok(data);
+            return;
+        }
         inc.reply.ok(serde_json::json!({ "ok": true }));
     }
 
@@ -393,7 +455,10 @@ impl<E: Engine> App<E> {
             "find.page" => self.cli_find_page(params),
             "snapshot" => self.cli_snapshot(params),
             "find" => CallOut::Reply(self.cli_find_snap(params)),
-            "click" | "hover" | "type" | "fill" | "select" => self.cli_act(method, params),
+            "click" | "hover" | "type" | "fill" | "select" | "get" => {
+                self.cli_act(method, params)
+            }
+            "links" => self.cli_links(params),
             "key" => self.cli_key(params),
             "scroll" => self.cli_scroll(params),
             "screenshot" => self.cli_screenshot(params),
@@ -655,24 +720,43 @@ impl<E: Engine> App<E> {
         let mut r = param_str(params, "ref");
         let x = param_i64(params, "x").and_then(|n| i32::try_from(n).ok());
         let y = param_i64(params, "y").and_then(|n| i32::try_from(n).ok());
-        if r.is_none() && matches!(method, "click" | "hover") {
-            if let Some(label) = param_str(params, "text") {
-                if x.is_some() || y.is_some() {
+        let control_label = param_str(params, "control").or_else(|| {
+            if matches!(method, "click" | "hover" | "get") {
+                param_str(params, "text")
+            } else {
+                None
+            }
+        });
+        if r.is_none() {
+            if let Some(label) = control_label {
+                if matches!(method, "click" | "hover") && (x.is_some() || y.is_some()) {
                     return CallOut::Reply(Err("pass --text or --x/--y, not both".into()));
                 }
-                let snap = match self.agent.snaps.get(&tab) {
-                    Some(s) => s,
-                    None => {
-                        return CallOut::Reply(Err(
-                            "no snapshot for this tab. Run snapshot, then click --text or --ref."
-                                .into(),
-                        ));
+                if matches!(method, "click" | "hover") {
+                    let snap = match self.agent.snaps.get(&tab) {
+                        Some(s) => s,
+                        None => {
+                            return CallOut::Reply(Err(
+                                "no snapshot for this tab. Run snapshot, then use --ref or --text."
+                                    .into(),
+                            ));
+                        }
+                    };
+                    let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                    match ax::match_control(&refs, &label) {
+                        Ok(hit) => r = Some(hit.r#ref.clone()),
+                        Err(e) => return CallOut::Reply(Err(e)),
                     }
-                };
-                let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
-                match ax::match_control(&refs, &label) {
-                    Ok(hit) => r = Some(hit.r#ref.clone()),
-                    Err(e) => return CallOut::Reply(Err(e)),
+                } else if matches!(method, "fill" | "get") {
+                    if let Some(snap) = self.agent.snaps.get(&tab) {
+                        let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                        if let Ok(hit) = ax::match_control(&refs, &label) {
+                            r = Some(hit.r#ref.clone());
+                        }
+                    }
+                    if r.is_none() {
+                        return self.cli_query_act(method, params, tab, label);
+                    }
                 }
             }
         }
@@ -694,7 +778,9 @@ impl<E: Engine> App<E> {
             return CallOut::Engine(AgentRequest { id, tab: tab.0, op });
         }
         let Some(r) = r else {
-            return CallOut::Reply(Err("missing ref".into()));
+            return CallOut::Reply(Err(
+                "missing --ref or --control (actions-list name or DOM aria-label)".into(),
+            ));
         };
         let entry = match self.lookup_ref(tab, &r) {
             Some(e) => e.clone(),
@@ -732,8 +818,9 @@ impl<E: Engine> App<E> {
                 }
             }
             "fill" => {
-                let Some(text) = param_str(params, "text") else {
-                    return CallOut::Reply(Err("missing text".into()));
+                let text = match fill_text(params) {
+                    Ok(t) => t,
+                    Err(e) => return CallOut::Reply(Err(e)),
                 };
                 AgentOp::Fill {
                     backend_node_id: entry.backend_node_id,
@@ -742,6 +829,11 @@ impl<E: Engine> App<E> {
                     text,
                 }
             }
+            "get" => AgentOp::Get {
+                backend_node_id: entry.backend_node_id,
+                role: entry.role.clone(),
+                name: entry.name.clone(),
+            },
             "select" => {
                 let Some(raw) = param_str(params, "values") else {
                     return CallOut::Reply(Err("missing values".into()));
@@ -834,6 +926,47 @@ impl<E: Engine> App<E> {
         }
     }
 
+    fn cli_query_act(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        tab: TabId,
+        query: String,
+    ) -> CallOut {
+        let op = match method {
+            "fill" => match fill_text(params) {
+                Ok(text) => AgentOp::FillQuery { query, text },
+                Err(e) => return CallOut::Reply(Err(e)),
+            },
+            "get" => AgentOp::GetQuery { query },
+            other => return CallOut::Reply(Err(format!("unknown act {other}"))),
+        };
+        let id = self.agent.next_id;
+        self.agent.next_id += 1;
+        self.agent.last_tab = Some(tab);
+        CallOut::Engine(AgentRequest {
+            id,
+            tab: tab.0,
+            op,
+        })
+    }
+
+    fn cli_links(&mut self, params: &serde_json::Value) -> CallOut {
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Links,
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
+    }
+
     fn cli_wait(&mut self, inc: Incoming) -> Task<Msg> {
         let tab = match self.resolve_tab(param_str(&inc.params, "tab").as_deref()) {
             Ok(t) => t,
@@ -846,11 +979,13 @@ impl<E: Engine> App<E> {
             .and_then(|n| u64::try_from(n).ok())
             .unwrap_or(crate::calls::WAIT_DEFAULT_SECS);
         let text = param_str(&inc.params, "text");
+        let control = param_str(&inc.params, "control");
         let pending_nav = self.agent.pending_nav.remove(&tab);
         self.agent.waits.push(PendingWait {
             inc,
             tab,
             text,
+            control,
             deadline: Instant::now() + Duration::from_secs(secs.max(1)),
             awaiting_snap: false,
             probed: false,
@@ -866,8 +1001,10 @@ impl<E: Engine> App<E> {
         let mut i = 0;
         while i < self.agent.waits.len() {
             if now >= self.agent.waits[i].deadline {
+                let snap = self.agent.snaps.get(&self.agent.waits[i].tab);
+                let err = wait_timeout_err(&self.agent.waits[i], snap);
                 let w = self.agent.waits.remove(i);
-                w.inc.reply.err("wait timed out");
+                w.inc.reply.err(err);
                 continue;
             }
             let tab = self.agent.waits[i].tab;
@@ -877,7 +1014,38 @@ impl<E: Engine> App<E> {
                 .find(|t| t.id == tab)
                 .map(|t| t.is_loading)
                 .unwrap_or(true);
-            if let Some(text) = self.agent.waits[i].text.clone() {
+            if let Some(control) = self.agent.waits[i].control.clone() {
+                if self.agent.waits[i].probed {
+                    if let Some(snap) = self.agent.snaps.get(&tab) {
+                        let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                        if ax::control_present(&refs, &control) {
+                            let w = self.agent.waits.remove(i);
+                            w.inc.reply.ok(serde_json::json!({
+                                "ok": true,
+                                "tab": tab.0,
+                                "control": control,
+                            }));
+                            continue;
+                        }
+                    }
+                }
+                if !self.agent.waits[i].awaiting_snap {
+                    self.agent.waits[i].awaiting_snap = true;
+                    let id = self.agent.next_id;
+                    self.agent.next_id += 1;
+                    self.agent.last_tab = Some(tab);
+                    self.agent.wait_snaps.insert(id, tab);
+                    let _ = self.cmd_tx.send(Cmd::Agent(AgentRequest {
+                        id,
+                        tab: tab.0,
+                        op: AgentOp::Snapshot {
+                            interactive: false,
+                            subtree_backend: None,
+                            json: false,
+                        },
+                    }));
+                }
+            } else if let Some(text) = self.agent.waits[i].text.clone() {
                 if self.agent.waits[i].probed {
                     if let Some(snap) = self.agent.snaps.get(&tab) {
                         if !ax::find_in_yaml(&snap.yaml, &text).is_empty() {
@@ -1053,6 +1221,26 @@ impl AgentReply {
             json: false,
             path: None,
             ready: None,
+            data: None,
+        }
+    }
+
+    pub fn ok_data(id: u64, tab: u64, data: serde_json::Value) -> Self {
+        Self {
+            id,
+            tab,
+            ok: true,
+            error: None,
+            yaml: None,
+            refs: Vec::new(),
+            url: None,
+            title: None,
+            focused: None,
+            dialog_open: false,
+            json: false,
+            path: None,
+            ready: None,
+            data: Some(data),
         }
     }
 }

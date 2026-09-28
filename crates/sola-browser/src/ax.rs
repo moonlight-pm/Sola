@@ -266,6 +266,35 @@ pub fn match_control<'a>(refs: &'a [RefEntry], query: &str) -> Result<&'a RefEnt
     Err(ambiguous_controls(q, &sub))
 }
 
+/// True when at least one actions-list control matches `query` (exact or
+/// substring). Several matches still count as present — unlike
+/// [`match_control`], which errors on ambiguous names.
+pub fn control_present(refs: &[RefEntry], query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    let ql = q.to_ascii_lowercase();
+    refs.iter().any(|r| {
+        if r.name.is_empty() {
+            return false;
+        }
+        if !(is_control(&r.role) || is_named_container(&r.role)) {
+            return false;
+        }
+        r.name.eq_ignore_ascii_case(q) || r.name.to_ascii_lowercase().contains(&ql)
+    })
+}
+
+pub fn actions_preview(refs: &[RefEntry]) -> String {
+    refs.iter()
+        .filter(|r| is_control(&r.role) && !r.name.is_empty())
+        .take(24)
+        .map(|r| format!("{} \"{}\"", r.role, r.name.replace('"', "'")))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn ambiguous_controls(query: &str, hits: &[&RefEntry]) -> String {
     let mut msg = format!(
         "\"{query}\" matches {} controls; pass --ref one of:\n",
@@ -834,6 +863,29 @@ mod tests {
         assert!(err.contains("e1"), "{err}");
         assert!(err.contains("e2"), "{err}");
         assert!(match_control(&refs, "missing").is_err());
+    }
+
+    #[test]
+    fn control_present_allows_ambiguous() {
+        let refs = vec![
+            RefEntry {
+                r#ref: "e1".into(),
+                backend_node_id: 1,
+                role: "button".into(),
+                name: "Create".into(),
+                frame: 0,
+            },
+            RefEntry {
+                r#ref: "e2".into(),
+                backend_node_id: 2,
+                role: "button".into(),
+                name: "Create".into(),
+                frame: 0,
+            },
+        ];
+        assert!(control_present(&refs, "Create"));
+        assert!(match_control(&refs, "Create").is_err());
+        assert!(!control_present(&refs, "Lyrics"));
     }
 
     #[test]

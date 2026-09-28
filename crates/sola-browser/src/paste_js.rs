@@ -149,6 +149,21 @@ pub fn editor_write_js(append: bool) -> String {
       }}
     }}
   }}
+  function editorValue(target){{
+    var t=(target.tagName||'').toLowerCase();
+    if(t==='input'||t==='textarea') return String(target.value||'');
+    return String(target.innerText||target.textContent||'');
+  }}
+  function norm(s){{
+    return String(s).replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/[\u200b\u200c\u200d\ufeff]/g,'').replace(/\s+$/,'');
+  }}
+  function stuck(got, want, append){{
+    var g=norm(got), w=norm(want);
+    if(!w) return true;
+    if(g===w) return true;
+    if(append) return g.indexOf(w)!==-1;
+    return g.indexOf(w)!==-1 && g.length+32>=w.length;
+  }}
   var tag=(el.tagName||'').toLowerCase();
   if(tag==='input'||tag==='textarea'){{
     var cur=String(el.value||'');
@@ -163,11 +178,92 @@ pub fn editor_write_js(append: bool) -> String {
     if(append) range.collapse(false);
     sel.removeAllRanges();
     sel.addRange(range);
-    if(firePaste(el, v)) return;
-    insertLines(el, v);
+    firePaste(el, v);
+    if(!stuck(editorValue(el), v, append)) insertLines(el, v);
   }}
 }})(el,v,{append_js});"#
     )
+}
+
+/// Find a field by aria-label / placeholder / name and optionally write `text`.
+pub fn editor_query_script(query: &str, write: Option<&str>) -> String {
+    let q = serde_json::to_string(query).unwrap_or_else(|_| "\"\"".into());
+    let write_js = match write {
+        Some(text) => {
+            let lit = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+            format!(
+                "const v = {lit}; el.focus(); {}; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}}));",
+                editor_write_js(false)
+            )
+        }
+        None => String::new(),
+    };
+    format!(
+        r#"(function(){{
+  var want = {q}.toLowerCase();
+  function bits(el){{
+    return [
+      el.getAttribute && el.getAttribute('aria-label'),
+      el.getAttribute && el.getAttribute('placeholder'),
+      el.getAttribute && el.getAttribute('name'),
+      el.id,
+      el.getAttribute && el.getAttribute('data-placeholder')
+    ].join(' ').toLowerCase();
+  }}
+  var nodes = document.querySelectorAll('textarea,input,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"]');
+  var el = null;
+  for (var i=0;i<nodes.length;i++){{
+    if (bits(nodes[i]).indexOf(want)!==-1) {{ el = nodes[i]; break; }}
+  }}
+  if (!el) {{
+    for (var j=0;j<nodes.length;j++){{
+      var n = nodes[j];
+      var lab = n.getAttribute && n.getAttribute('aria-label');
+      var near = (n.previousElementSibling && n.previousElementSibling.textContent) || '';
+      var parent = (n.parentElement && n.parentElement.innerText) || '';
+      var hay = (lab||'') + ' ' + near + ' ' + parent.slice(0,200);
+      if (hay.toLowerCase().indexOf(want)!==-1) {{ el = n; break; }}
+    }}
+  }}
+  if (!el && nodes.length===1) el = nodes[0];
+  if (!el) return {{stale:true}};
+  {write_js}
+  var value = {got};
+  var href = el.href || (el.getAttribute && el.getAttribute('href')) || '';
+  return {{ok:true, value: value, href: href}};
+}})()"#,
+        got = editor_value_js(),
+    )
+}
+
+/// Current value of `el` (input/textarea value, else innerText).
+pub fn editor_value_js() -> &'static str {
+    "(function(el){ var t=(el.tagName||'').toLowerCase(); if(t==='input'||t==='textarea') return String(el.value||''); return String(el.innerText||el.textContent||''); })(el)"
+}
+
+/// Lyrics / field compare: line endings, trailing space, zero-width.
+pub fn normalize_field_text(s: &str) -> String {
+    s.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace(['\u{200b}', '\u{200c}', '\u{200d}', '\u{feff}'], "")
+        .trim_end()
+        .to_string()
+}
+
+/// `append` is `type` (needle may already be in the field).
+pub fn text_stuck(want: &str, got: &str, append: bool) -> bool {
+    let w = normalize_field_text(want);
+    let g = normalize_field_text(got);
+    if w.is_empty() {
+        return true;
+    }
+    if g == w {
+        return true;
+    }
+    if append {
+        return g.contains(&w);
+    }
+    g.contains(&w) && g.len() + 32 >= w.len()
 }
 
 /// IIFE that pastes `text` into the focused field.
@@ -345,11 +441,34 @@ mod tests {
         assert!(s.contains("selectNodeContents"));
         assert!(s.contains("insertLineBreak"));
         assert!(
-            !s.contains("textContent"),
+            !s.contains("textContent ="),
             "ProseMirror reverts textContent writes"
+        );
+        assert!(
+            s.contains("if(!stuck(editorValue(el), v, append)) insertLines"),
+            "paste preventDefault with empty clipboardData must still insertLines"
         );
         assert!(s.contains("false"), "{s}");
         assert!(!s.contains("range.collapse(false)") || s.contains("if(append) range.collapse"));
+    }
+
+    #[test]
+    fn editor_query_finds_aria_label() {
+        let s = editor_query_script("lyrics", Some("verse\n\ntwo"));
+        assert!(s.contains("aria-label"));
+        assert!(s.contains("contenteditable"));
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("verse"));
+    }
+
+    #[test]
+    fn field_text_stuck_requires_the_payload() {
+        let lyrics = "Delilah\n\nLet me die with the kings tonight";
+        assert!(text_stuck(lyrics, lyrics, false));
+        assert!(text_stuck(lyrics, &format!("{lyrics}\n"), false));
+        assert!(!text_stuck(lyrics, "with something to see", false));
+        assert!(!text_stuck(lyrics, "", false));
+        assert!(text_stuck("more", "verse\nmore", true));
     }
 
     #[test]

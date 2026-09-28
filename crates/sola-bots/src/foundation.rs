@@ -44,15 +44,19 @@ Loop (always pass `--tab <id>`; never the focused tab by default):
    **background**. Never `--select`, never `tab.focus`. Joshua may be
    reading another tab. Prefer `group.create --tab N --name <this bot>`
    and `tab.move --tab N --group <this bot>`.
-3. `solactl browser wait --load --tab N`
+3. `solactl browser wait --control Create --tab N` (or `--text`) until
+   the app is usable — `wait --load` is CEF load, not “Create exists”.
 4. `solactl browser snapshot --tab N` — **this is the page description**
    (a11y YAML + refs `e12`). Not a screenshot. Works on background tabs.
 5. Act on **that** tab: `find --text …`, `click --ref e12`,
-   `fill --ref e5 --text …`, `type --ref e5 --text …`. If the snapshot
+   `fill --tab N --control lyrics --file PATH` (read-back `value` /
+   `matched`), `get --tab N --control lyrics`, `links --tab N`.
+   `type --ref e5 --text …`. If the snapshot
    is empty (canvas), `click --tab N --x --y` and `key --tab N --chord Return`
    in **that tab’s CSS pixels / CEF**, never compositor input.
 6. Stale ref → snapshot again. Never invent refs.
-7. `wait --text '…' --tab N` after navigations.
+7. `wait --text '…' --tab N` after navigations. `links` after Create
+   for clip URLs and audio duration.
 8. `solactl browser screenshot --tab N` only if snapshot is empty
    (canvas). That captures **the tab**, not the desktop, and does not
    bring the tab forward.
