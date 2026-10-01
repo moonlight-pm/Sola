@@ -14,7 +14,7 @@ use bitwarden_core::{
     Client, ClientSettings, DeviceType, FromClient, UserId,
     auth::{ClientManagedTokens, JwtToken},
     key_management::{
-        BLOB_SECURITY_VERSION, MasterPasswordUnlockData, SymmetricKeySlotId,
+        MasterPasswordUnlockData, SymmetricKeySlotId,
         account_cryptographic_state::WrappedAccountCryptographicState,
         crypto::{InitUserCryptoMethod, InitUserCryptoRequest},
     },
@@ -513,13 +513,11 @@ pub async fn initialize_user_crypto(
         })
         .await
         .map_err(|e| format!("crypto init: {e}"))?;
-    // V1 init leaves security-state at 1. Official clients are on blob
-    // encryption (v2); a legacy PUT on those items is rejected as
-    // "Update to the latest version of Bitwarden".
-    client
-        .internal
-        .get_key_store()
-        .set_security_state_version(BLOB_SECURITY_VERSION);
+    // V1 init leaves security-state at 1. Leave it there.
+    // Version >= 2 makes decrypt drop login URIs that have no checksum,
+    // so the current-page Autofill list comes back empty while search
+    // still finds the item by name. Personal writes raise the version
+    // only for `ciphers().encrypt` (`BlobCipherWrites`).
     Ok(())
 }
 
