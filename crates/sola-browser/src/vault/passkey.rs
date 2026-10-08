@@ -369,10 +369,15 @@ pub async fn authenticate(
     // extra=None (CustomHash path), so signature and returned JSON match.
     let client_data = web_client_data(origin, public_key_json, "webauthn.get")?;
 
-    let result = client
-        .authenticate(Origin::Web(origin.to_string()), request, client_data)
-        .await
-        .map_err(|e| VaultError::Other(format!("passkey authenticate failed: {e}")))?;
+    // `get_all` above must stay at security-state 1. `authenticate`
+    // encrypts the updated cipher internally.
+    let result = {
+        let _blob = super::client::BlobCipherWrites::enter(&svc.client.0);
+        client
+            .authenticate(Origin::Web(origin.to_string()), request, client_data)
+            .await
+    }
+    .map_err(|e| VaultError::Other(format!("passkey authenticate failed: {e}")))?;
 
     if let Some(ctx) = store.saved.lock().unwrap().take() {
         if let Err(e) = svc.persist_encryption_context(ctx).await {
@@ -464,10 +469,15 @@ pub async fn register(
     let request = format!(r#"{{"publicKey":{public_key_json}}}"#);
     let client_data = web_client_data(origin, public_key_json, "webauthn.create")?;
 
-    let result = client
-        .register(Origin::Web(origin.to_string()), request, client_data)
-        .await
-        .map_err(|e| VaultError::Other(format!("passkey register failed: {e}")))?;
+    // `get_all` above must stay at security-state 1. `register` encrypts
+    // the new or updated cipher internally.
+    let result = {
+        let _blob = super::client::BlobCipherWrites::enter(&svc.client.0);
+        client
+            .register(Origin::Web(origin.to_string()), request, client_data)
+            .await
+    }
+    .map_err(|e| VaultError::Other(format!("passkey register failed: {e}")))?;
 
     let saved = store
         .saved

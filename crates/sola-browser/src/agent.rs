@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{App, BLANK_URL, Msg};
 use crate::ax::{self, RefEntry};
+use crate::chord::{self, CdpKeyEvent};
 use crate::engine::{Cmd, Engine, NavCmd, TabId, TabInfo};
 use crate::groups::TabGroup;
 use iced::Task;
@@ -39,6 +40,24 @@ pub enum AgentOp {
         backend_node_id: i32,
         role: String,
         name: String,
+    },
+    /// CSS-pixel click in the tab viewport (`Input.dispatchMouseEvent`).
+    ClickAt {
+        x: i32,
+        y: i32,
+    },
+    HoverAt {
+        x: i32,
+        y: i32,
+    },
+    Key {
+        events: Vec<CdpKeyEvent>,
+    },
+    Scroll {
+        dx: i32,
+        dy: i32,
+        x: i32,
+        y: i32,
     },
     Type {
         backend_node_id: i32,
@@ -70,6 +89,21 @@ pub enum AgentOp {
     },
     /// `document.readyState` + `location.href` (wait --load).
     ReadyState,
+    Get {
+        backend_node_id: i32,
+        role: String,
+        name: String,
+    },
+    /// DOM `a[href]` + audio/video duration (not the AX tree).
+    Links,
+    /// Find a contenteditable/input by accessible name in the DOM (AX miss).
+    FillQuery {
+        query: String,
+        text: String,
+    },
+    GetQuery {
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +132,9 @@ pub struct AgentReply {
     /// `document.readyState` from a `ReadyState` probe (`complete` / `interactive` / `loading`).
     #[serde(default)]
     pub ready: Option<String>,
+    /// Fill/get/links payload (`value`, `href`, `links`, `media`).
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 pub type AgentHandle = std::sync::Arc<std::sync::Mutex<Vec<AgentReply>>>;
@@ -112,6 +149,7 @@ struct PendingWait {
     inc: Incoming,
     tab: TabId,
     text: Option<String>,
+    control: Option<String>,
     deadline: Instant,
     awaiting_snap: bool,
     probed: bool,
@@ -171,10 +209,7 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> bool {
-    params
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    params.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 fn param_i64(params: &serde_json::Value, key: &str) -> Option<i64> {
@@ -183,6 +218,41 @@ fn param_i64(params: &serde_json::Value, key: &str) -> Option<i64> {
             .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
             .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     })
+}
+
+fn fill_text(params: &serde_json::Value) -> Result<String, String> {
+    let text = param_str(params, "text");
+    let file = param_str(params, "file");
+    match (text, file) {
+        (Some(_), Some(_)) => Err("--text and --file are exclusive".into()),
+        (Some(t), None) => Ok(t),
+        (None, Some(path)) => {
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|e| format!("read --file {path}: {e}"))?;
+            if raw.len() > 100_000 {
+                return Err("fill --file is over 100000 bytes".into());
+            }
+            Ok(raw)
+        }
+        (None, None) => Err("missing --text or --file".into()),
+    }
+}
+
+fn wait_timeout_err(w: &PendingWait, snap: Option<&LastSnap>) -> String {
+    if let Some(control) = &w.control {
+        let preview = snap
+            .map(|s| {
+                let refs: Vec<RefEntry> = s.refs.values().cloned().collect();
+                ax::actions_preview(&refs)
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "no named controls".into());
+        format!("wait timed out: control \"{control}\" not present (last snapshot: {preview})")
+    } else if let Some(text) = &w.text {
+        format!("wait timed out: text \"{text}\" not in snapshot")
+    } else {
+        "wait timed out".into()
+    }
 }
 
 impl<E: Engine> App<E> {
@@ -271,10 +341,7 @@ impl<E: Engine> App<E> {
         for e in &r.refs {
             refs.insert(e.r#ref.clone(), e.clone());
         }
-        self.agent.snaps.insert(
-            tab,
-            LastSnap { yaml, refs },
-        );
+        self.agent.snaps.insert(tab, LastSnap { yaml, refs });
         self.agent.last_tab = Some(tab);
         for w in &mut self.agent.waits {
             if w.tab == tab {
@@ -286,7 +353,8 @@ impl<E: Engine> App<E> {
 
     fn finish_engine_reply(&mut self, inc: Incoming, r: AgentReply) {
         if !r.ok {
-            inc.reply.err(r.error.unwrap_or_else(|| "engine error".into()));
+            inc.reply
+                .err(r.error.unwrap_or_else(|| "engine error".into()));
             return;
         }
         if let Some(yaml) = r.yaml.clone() {
@@ -345,7 +413,16 @@ impl<E: Engine> App<E> {
             return;
         }
         if let Some(path) = r.path {
-            inc.reply.ok(serde_json::json!({ "ok": true, "path": path }));
+            inc.reply
+                .ok(serde_json::json!({ "ok": true, "path": path }));
+            return;
+        }
+        if let Some(mut data) = r.data {
+            if let Some(map) = data.as_object_mut() {
+                map.entry("ok").or_insert(serde_json::json!(true));
+                map.insert("tab".into(), serde_json::json!(r.tab));
+            }
+            inc.reply.ok(data);
             return;
         }
         inc.reply.ok(serde_json::json!({ "ok": true }));
@@ -378,7 +455,12 @@ impl<E: Engine> App<E> {
             "find.page" => self.cli_find_page(params),
             "snapshot" => self.cli_snapshot(params),
             "find" => CallOut::Reply(self.cli_find_snap(params)),
-            "click" | "hover" | "type" | "fill" | "select" => self.cli_act(method, params),
+            "click" | "hover" | "type" | "fill" | "select" | "get" => {
+                self.cli_act(method, params)
+            }
+            "links" => self.cli_links(params),
+            "key" => self.cli_key(params),
+            "scroll" => self.cli_scroll(params),
             "screenshot" => self.cli_screenshot(params),
             other => CallOut::Reply(Err(format!("unknown method {other}"))),
         }
@@ -419,16 +501,18 @@ impl<E: Engine> App<E> {
         let url = param_str(params, "url").ok_or_else(|| "missing url".to_string())?;
         let select = param_bool(params, "select");
         self.open_tab(url.clone(), select);
-        let id = self.cached_tabs.last().map(|t| t.id).unwrap_or(self.cached_active);
+        let id = self
+            .cached_tabs
+            .last()
+            .map(|t| t.id)
+            .unwrap_or(self.cached_active);
         if let Some(g) = param_str(params, "group") {
             let gid = self.resolve_group(&g)?;
             self.groups.add_to(id, &gid);
             self.groups.normalize(&mut self.cached_tabs);
             self.persist_session();
         }
-        self.agent
-            .pending_nav
-            .insert(id, PendingNav::Url(url));
+        self.agent.pending_nav.insert(id, PendingNav::Url(url));
         Ok(serde_json::json!({ "id": id.0, "selected": select }))
     }
 
@@ -481,7 +565,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "ok": true, "id": id.0 }))
     }
 
-    fn cli_group_create(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_create(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let id = self.resolve_tab(param_str(params, "tab").as_deref())?;
         let gid = self.groups.new_group(id);
         if let Some(name) = param_str(params, "name") {
@@ -492,7 +579,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "id": gid, "tab": id.0 }))
     }
 
-    fn cli_group_rename(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_rename(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
         let name = param_str(params, "name").ok_or_else(|| "missing name".to_string())?;
         self.groups.rename(&gid, name);
@@ -500,7 +590,10 @@ impl<E: Engine> App<E> {
         Ok(serde_json::json!({ "ok": true, "id": gid }))
     }
 
-    fn cli_group_recolor(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn cli_group_recolor(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
         let color = param_str(params, "color");
         self.groups.set_color(&gid, color);
@@ -513,7 +606,8 @@ impl<E: Engine> App<E> {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
-        self.groups.set_collapsed(&gid, param_bool(params, "collapsed"));
+        self.groups
+            .set_collapsed(&gid, param_bool(params, "collapsed"));
         self.persist_session();
         Ok(serde_json::json!({ "ok": true, "id": gid }))
     }
@@ -583,12 +677,11 @@ impl<E: Engine> App<E> {
     fn cli_snapshot(&mut self, params: &serde_json::Value) -> CallOut {
         match self.resolve_tab(param_str(params, "tab").as_deref()) {
             Ok(tab) => {
-                let subtree = param_str(params, "ref").and_then(|r| {
-                    self.lookup_ref(tab, &r).map(|e| e.backend_node_id)
-                });
+                let subtree = param_str(params, "ref")
+                    .and_then(|r| self.lookup_ref(tab, &r).map(|e| e.backend_node_id));
                 if param_str(params, "ref").is_some() && subtree.is_none() {
                     return CallOut::Reply(Err(
-                        "ref not found in the current page snapshot. Try capturing new snapshot."
+                        "ref not in the last snapshot for this tab. Run snapshot again, then use --ref from the actions list."
                             .into(),
                     ));
                 }
@@ -612,28 +705,88 @@ impl<E: Engine> App<E> {
     fn cli_find_snap(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
         let q = param_str(params, "text").ok_or_else(|| "missing text".to_string())?;
         let tab = self.resolve_tab(param_str(params, "tab").as_deref())?;
-        let snap = self
-            .agent
-            .snaps
-            .get(&tab)
-            .ok_or_else(|| "no snapshot for this tab; run snapshot first".to_string())?;
+        let snap = self.agent.snaps.get(&tab).ok_or_else(|| {
+            "no snapshot for this tab. Run: solactl browser snapshot --tab <id>".to_string()
+        })?;
         let hits = ax::find_in_yaml(&snap.yaml, &q);
         Ok(serde_json::json!({ "tab": tab.0, "hits": hits }))
     }
 
     fn cli_act(&mut self, method: &str, params: &serde_json::Value) -> CallOut {
-        let Some(r) = param_str(params, "ref") else {
-            return CallOut::Reply(Err("missing ref".into()));
-        };
         let tab = match self.resolve_tab_or_last(param_str(params, "tab").as_deref()) {
             Ok(t) => t,
             Err(e) => return CallOut::Reply(Err(e)),
+        };
+        let mut r = param_str(params, "ref");
+        let x = param_i64(params, "x").and_then(|n| i32::try_from(n).ok());
+        let y = param_i64(params, "y").and_then(|n| i32::try_from(n).ok());
+        let control_label = param_str(params, "control").or_else(|| {
+            if matches!(method, "click" | "hover" | "get") {
+                param_str(params, "text")
+            } else {
+                None
+            }
+        });
+        if r.is_none() {
+            if let Some(label) = control_label {
+                if matches!(method, "click" | "hover") && (x.is_some() || y.is_some()) {
+                    return CallOut::Reply(Err("pass --text or --x/--y, not both".into()));
+                }
+                if matches!(method, "click" | "hover") {
+                    let snap = match self.agent.snaps.get(&tab) {
+                        Some(s) => s,
+                        None => {
+                            return CallOut::Reply(Err(
+                                "no snapshot for this tab. Run snapshot, then use --ref or --text."
+                                    .into(),
+                            ));
+                        }
+                    };
+                    let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                    match ax::match_control(&refs, &label) {
+                        Ok(hit) => r = Some(hit.r#ref.clone()),
+                        Err(e) => return CallOut::Reply(Err(e)),
+                    }
+                } else if matches!(method, "fill" | "get") {
+                    if let Some(snap) = self.agent.snaps.get(&tab) {
+                        let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                        if let Ok(hit) = ax::match_control(&refs, &label) {
+                            r = Some(hit.r#ref.clone());
+                        }
+                    }
+                    if r.is_none() {
+                        return self.cli_query_act(method, params, tab, label);
+                    }
+                }
+            }
+        }
+        if r.is_none() && matches!(method, "click" | "hover") {
+            let (Some(x), Some(y)) = (x, y) else {
+                return CallOut::Reply(Err(
+                    "click needs --ref eN (actions list), --text \"Label\", or both --x and --y"
+                        .into(),
+                ));
+            };
+            let id = self.agent.next_id;
+            self.agent.next_id += 1;
+            self.agent.last_tab = Some(tab);
+            let op = if method == "hover" {
+                AgentOp::HoverAt { x, y }
+            } else {
+                AgentOp::ClickAt { x, y }
+            };
+            return CallOut::Engine(AgentRequest { id, tab: tab.0, op });
+        }
+        let Some(r) = r else {
+            return CallOut::Reply(Err(
+                "missing --ref or --control (actions-list name or DOM aria-label)".into(),
+            ));
         };
         let entry = match self.lookup_ref(tab, &r) {
             Some(e) => e.clone(),
             None => {
                 return CallOut::Reply(Err(
-                    "ref not found in the current page snapshot. Try capturing new snapshot."
+                    "ref not in the last snapshot for this tab. Run snapshot again and use --ref from the actions list."
                         .into(),
                 ));
             }
@@ -665,8 +818,9 @@ impl<E: Engine> App<E> {
                 }
             }
             "fill" => {
-                let Some(text) = param_str(params, "text") else {
-                    return CallOut::Reply(Err("missing text".into()));
+                let text = match fill_text(params) {
+                    Ok(t) => t,
+                    Err(e) => return CallOut::Reply(Err(e)),
                 };
                 AgentOp::Fill {
                     backend_node_id: entry.backend_node_id,
@@ -675,6 +829,11 @@ impl<E: Engine> App<E> {
                     text,
                 }
             }
+            "get" => AgentOp::Get {
+                backend_node_id: entry.backend_node_id,
+                role: entry.role.clone(),
+                name: entry.name.clone(),
+            },
             "select" => {
                 let Some(raw) = param_str(params, "values") else {
                     return CallOut::Reply(Err("missing values".into()));
@@ -693,11 +852,61 @@ impl<E: Engine> App<E> {
             }
             other => return CallOut::Reply(Err(format!("unknown act {other}"))),
         };
-        CallOut::Engine(AgentRequest {
-            id,
-            tab: tab.0,
-            op,
-        })
+        CallOut::Engine(AgentRequest { id, tab: tab.0, op })
+    }
+
+    fn cli_key(&mut self, params: &serde_json::Value) -> CallOut {
+        let Some(raw) = param_str(params, "chord") else {
+            return CallOut::Reply(Err("missing chord".into()));
+        };
+        let events = match chord::parse_chord(&raw) {
+            Ok(e) => e,
+            Err(e) => return CallOut::Reply(Err(e)),
+        };
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Key { events },
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
+    }
+
+    fn cli_scroll(&mut self, params: &serde_json::Value) -> CallOut {
+        let dx = param_i64(params, "dx")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(0);
+        let dy = param_i64(params, "dy")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(0);
+        if dx == 0 && dy == 0 {
+            return CallOut::Reply(Err("missing --dx or --dy".into()));
+        }
+        let x = param_i64(params, "x")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(100);
+        let y = param_i64(params, "y")
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(100);
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Scroll { dx, dy, x, y },
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
     }
 
     fn cli_screenshot(&mut self, params: &serde_json::Value) -> CallOut {
@@ -717,6 +926,47 @@ impl<E: Engine> App<E> {
         }
     }
 
+    fn cli_query_act(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        tab: TabId,
+        query: String,
+    ) -> CallOut {
+        let op = match method {
+            "fill" => match fill_text(params) {
+                Ok(text) => AgentOp::FillQuery { query, text },
+                Err(e) => return CallOut::Reply(Err(e)),
+            },
+            "get" => AgentOp::GetQuery { query },
+            other => return CallOut::Reply(Err(format!("unknown act {other}"))),
+        };
+        let id = self.agent.next_id;
+        self.agent.next_id += 1;
+        self.agent.last_tab = Some(tab);
+        CallOut::Engine(AgentRequest {
+            id,
+            tab: tab.0,
+            op,
+        })
+    }
+
+    fn cli_links(&mut self, params: &serde_json::Value) -> CallOut {
+        match self.resolve_tab(param_str(params, "tab").as_deref()) {
+            Ok(tab) => {
+                let id = self.agent.next_id;
+                self.agent.next_id += 1;
+                self.agent.last_tab = Some(tab);
+                CallOut::Engine(AgentRequest {
+                    id,
+                    tab: tab.0,
+                    op: AgentOp::Links,
+                })
+            }
+            Err(e) => CallOut::Reply(Err(e)),
+        }
+    }
+
     fn cli_wait(&mut self, inc: Incoming) -> Task<Msg> {
         let tab = match self.resolve_tab(param_str(&inc.params, "tab").as_deref()) {
             Ok(t) => t,
@@ -729,11 +979,13 @@ impl<E: Engine> App<E> {
             .and_then(|n| u64::try_from(n).ok())
             .unwrap_or(crate::calls::WAIT_DEFAULT_SECS);
         let text = param_str(&inc.params, "text");
+        let control = param_str(&inc.params, "control");
         let pending_nav = self.agent.pending_nav.remove(&tab);
         self.agent.waits.push(PendingWait {
             inc,
             tab,
             text,
+            control,
             deadline: Instant::now() + Duration::from_secs(secs.max(1)),
             awaiting_snap: false,
             probed: false,
@@ -749,8 +1001,10 @@ impl<E: Engine> App<E> {
         let mut i = 0;
         while i < self.agent.waits.len() {
             if now >= self.agent.waits[i].deadline {
+                let snap = self.agent.snaps.get(&self.agent.waits[i].tab);
+                let err = wait_timeout_err(&self.agent.waits[i], snap);
                 let w = self.agent.waits.remove(i);
-                w.inc.reply.err("wait timed out");
+                w.inc.reply.err(err);
                 continue;
             }
             let tab = self.agent.waits[i].tab;
@@ -760,12 +1014,45 @@ impl<E: Engine> App<E> {
                 .find(|t| t.id == tab)
                 .map(|t| t.is_loading)
                 .unwrap_or(true);
-            if let Some(text) = self.agent.waits[i].text.clone() {
+            if let Some(control) = self.agent.waits[i].control.clone() {
+                if self.agent.waits[i].probed {
+                    if let Some(snap) = self.agent.snaps.get(&tab) {
+                        let refs: Vec<RefEntry> = snap.refs.values().cloned().collect();
+                        if ax::control_present(&refs, &control) {
+                            let w = self.agent.waits.remove(i);
+                            w.inc.reply.ok(serde_json::json!({
+                                "ok": true,
+                                "tab": tab.0,
+                                "control": control,
+                            }));
+                            continue;
+                        }
+                    }
+                }
+                if !self.agent.waits[i].awaiting_snap {
+                    self.agent.waits[i].awaiting_snap = true;
+                    let id = self.agent.next_id;
+                    self.agent.next_id += 1;
+                    self.agent.last_tab = Some(tab);
+                    self.agent.wait_snaps.insert(id, tab);
+                    let _ = self.cmd_tx.send(Cmd::Agent(AgentRequest {
+                        id,
+                        tab: tab.0,
+                        op: AgentOp::Snapshot {
+                            interactive: false,
+                            subtree_backend: None,
+                            json: false,
+                        },
+                    }));
+                }
+            } else if let Some(text) = self.agent.waits[i].text.clone() {
                 if self.agent.waits[i].probed {
                     if let Some(snap) = self.agent.snaps.get(&tab) {
                         if !ax::find_in_yaml(&snap.yaml, &text).is_empty() {
                             let w = self.agent.waits.remove(i);
-                            w.inc.reply.ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
+                            w.inc
+                                .reply
+                                .ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
                             continue;
                         }
                     }
@@ -793,7 +1080,9 @@ impl<E: Engine> App<E> {
                 self.agent.waits[i].saw_busy,
             ) {
                 let w = self.agent.waits.remove(i);
-                w.inc.reply.ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
+                w.inc
+                    .reply
+                    .ok(serde_json::json!({ "ok": true, "tab": tab.0 }));
                 continue;
             } else if !self.agent.waits[i].awaiting_snap {
                 self.agent.waits[i].awaiting_snap = true;
@@ -872,7 +1161,9 @@ impl<E: Engine> App<E> {
             .groups
             .groups
             .iter()
-            .filter(|g| g.name.to_ascii_lowercase() == ql || g.name.to_ascii_lowercase().contains(&ql))
+            .filter(|g| {
+                g.name.to_ascii_lowercase() == ql || g.name.to_ascii_lowercase().contains(&ql)
+            })
             .collect();
         match hits.len() {
             1 => Ok(hits[0].id.clone()),
@@ -930,6 +1221,26 @@ impl AgentReply {
             json: false,
             path: None,
             ready: None,
+            data: None,
+        }
+    }
+
+    pub fn ok_data(id: u64, tab: u64, data: serde_json::Value) -> Self {
+        Self {
+            id,
+            tab,
+            ok: true,
+            error: None,
+            yaml: None,
+            refs: Vec::new(),
+            url: None,
+            title: None,
+            focused: None,
+            dialog_open: false,
+            json: false,
+            path: None,
+            ready: None,
+            data: Some(data),
         }
     }
 }
@@ -946,9 +1257,7 @@ fn url_matches_pending(ready: &str, want: &str) -> bool {
 }
 
 fn normalize_wait_url(url: &str) -> String {
-    url.trim()
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
 /// Wait --load: trust `document.readyState` once the helper has sampled it.
@@ -1009,7 +1318,12 @@ mod tests {
             None,
             false
         ));
-        assert!(!load_wait_done(true, Some(&ready("complete", "")), None, false));
+        assert!(!load_wait_done(
+            true,
+            Some(&ready("complete", "")),
+            None,
+            false
+        ));
     }
 
     #[test]

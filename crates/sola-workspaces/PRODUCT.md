@@ -60,7 +60,7 @@ tmux persist on socket `sola-ws` (a Grok pane’s session id is in
 was still running and the session dir exists), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `codex is done` /
 `needs attention`),
-`workspace.rm --worktree` (tab then git checkout; gone paths reap the tab),
+`workspace.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
 `workspace.set --name` (`git worktree move` to `.worktrees/<name>`;
 `--title` is the rail label, defaulting to that slug; `--branch` is
 `git branch -m`; `--before` reorders in the project).

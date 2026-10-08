@@ -106,6 +106,39 @@ pub fn usable_clipboard_text(text: Option<String>) -> Option<String> {
     }
 }
 
+/// Text safe for Wayland `xdg_toplevel.set_title`.
+///
+/// winit builds a `CString` and unwraps. An interior NUL — seen on a
+/// restored page title (`magick-tg-…\0` from a download viewer) — aborts
+/// the whole chrome process, including on the next launch.
+pub fn wayland_title_text(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Chrome window title: `Profile — page`. Empty page title falls back to
+/// the URL. Every piece is [`wayland_title_text`].
+pub fn browser_window_title(profile: &str, page_title: &str, page_url: &str) -> String {
+    let profile = wayland_title_text(profile);
+    let profile = if profile.is_empty() {
+        "Browser".to_string()
+    } else {
+        profile
+    };
+    let page = {
+        let title = wayland_title_text(page_title);
+        if title.is_empty() {
+            wayland_title_text(page_url)
+        } else {
+            title
+        }
+    };
+    if page.is_empty() {
+        profile
+    } else {
+        format!("{profile} — {page}")
+    }
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -475,6 +508,26 @@ mod tests {
         assert!(!href_is_new_tab_target("   "));
         assert!(!href_is_new_tab_target("javascript:void(0)"));
         assert!(!href_is_new_tab_target("data:text/html,hi"));
+    }
+
+    #[test]
+    fn window_title_strips_interior_nul() {
+        let raw = "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM\0";
+        let title = browser_window_title(
+            "Primary",
+            raw,
+            "https://digitalarchives.wa.gov/DigitalObject/Download/abc",
+        );
+        assert_eq!(title, "Primary — magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM");
+        assert!(std::ffi::CString::new(title).is_ok());
+    }
+
+    #[test]
+    fn window_title_nul_only_falls_back_to_url() {
+        let title = browser_window_title("Primary", "\0", "https://example.com/a");
+        assert_eq!(title, "Primary — https://example.com/a");
+        assert!(std::ffi::CString::new(title.clone()).is_ok());
+        assert!(std::ffi::CString::new(browser_window_title("\0", "", "")).is_ok());
     }
 
     #[test]

@@ -28,7 +28,11 @@ pub fn methods() -> Vec<MethodSpec> {
         method(
             "tab.close",
             "Close a tab (never drops the last tab)",
-            &[opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)")],
+            &[opt_s(
+                "tab",
+                Some('t'),
+                "Tab id, url, or title (default: focused)",
+            )],
         ),
         method(
             "tab.focus",
@@ -43,11 +47,7 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s("group", Some('g'), "Group id or name"),
             ],
         ),
-        method(
-            "group.list",
-            "List tab groups",
-            &[],
-        ),
+        method("group.list", "List tab groups", &[]),
         method(
             "group.create",
             "Wrap a listed tab in a new group (ordinary pocket)",
@@ -93,12 +93,20 @@ pub fn methods() -> Vec<MethodSpec> {
         method(
             "back",
             "History back",
-            &[opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)")],
+            &[opt_s(
+                "tab",
+                Some('t'),
+                "Tab id, url, or title (default: focused)",
+            )],
         ),
         method(
             "forward",
             "History forward",
-            &[opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)")],
+            &[opt_s(
+                "tab",
+                Some('t'),
+                "Tab id, url, or title (default: focused)",
+            )],
         ),
         method(
             "reload",
@@ -111,7 +119,11 @@ pub fn methods() -> Vec<MethodSpec> {
         method(
             "stop",
             "Stop loading",
-            &[opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)")],
+            &[opt_s(
+                "tab",
+                Some('t'),
+                "Tab id, url, or title (default: focused)",
+            )],
         ),
         method(
             "find.page",
@@ -143,25 +155,80 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "click",
-            "Click a snapshot ref",
+            "Click a snapshot ref, a control label, or CSS-pixel coords",
             &[
-                req_s("ref", Some('r'), "Ref from snapshot (e12 / f1e3)"),
+                opt_s("ref", Some('r'), "Ref from snapshot (e12 / f1e3)"),
+                opt_s(
+                    "text",
+                    None,
+                    "Accessible name from the last snapshot (unique)",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
+                opt(
+                    "x",
+                    None,
+                    ArgType::Int,
+                    "CSS px in the tab viewport (with --y)",
+                ),
+                opt(
+                    "y",
+                    None,
+                    ArgType::Int,
+                    "CSS px in the tab viewport (with --x)",
+                ),
             ],
             PAGE_TIMEOUT_MS,
         ),
         method_ms(
             "hover",
-            "Hover a snapshot ref",
+            "Hover a snapshot ref, a control label, or CSS-pixel coords",
             &[
-                req_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s(
+                    "text",
+                    None,
+                    "Accessible name from the last snapshot (unique)",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
+                opt(
+                    "x",
+                    None,
+                    ArgType::Int,
+                    "CSS px in the tab viewport (with --y)",
+                ),
+                opt(
+                    "y",
+                    None,
+                    ArgType::Int,
+                    "CSS px in the tab viewport (with --x)",
+                ),
+            ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "key",
+            "Dispatch a key chord into that tab (CEF, not the seat)",
+            &[
+                req_s("chord", Some('c'), "Chord (Return, Escape, Control+Enter)"),
+                opt_s("tab", Some('t'), "Tab (default: focused)"),
+            ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "scroll",
+            "Scroll that tab by CSS pixels (CEF wheel, not the seat)",
+            &[
+                opt_s("tab", Some('t'), "Tab (default: focused)"),
+                opt("dx", None, ArgType::Int, "Horizontal delta (CSS px)"),
+                opt("dy", None, ArgType::Int, "Vertical delta (CSS px)"),
+                opt("x", None, ArgType::Int, "Wheel origin CSS x (default 100)"),
+                opt("y", None, ArgType::Int, "Wheel origin CSS y (default 100)"),
             ],
             PAGE_TIMEOUT_MS,
         ),
         method_ms(
             "type",
-            "Type into a snapshot ref (appends)",
+            "Type into a snapshot ref (appends; contenteditable keeps newlines)",
             &[
                 req_s("ref", Some('r'), "Ref from snapshot"),
                 req_s("text", Some('x'), "Text to type"),
@@ -172,12 +239,36 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "fill",
-            "Replace the value of a snapshot ref",
+            "Replace a control's value (contenteditable / ProseMirror paste; read back)",
             &[
-                req_s("ref", Some('r'), "Ref from snapshot"),
-                req_s("text", Some('x'), "New value"),
+                opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s("control", None, "Actions-list name (when --ref is omitted)"),
+                opt_s("text", Some('x'), "New value (exclusive with --file)"),
+                opt(
+                    "file",
+                    Some('f'),
+                    ArgType::Path,
+                    "Read the value from this file",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
             ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "get",
+            "Read a control's current text, value, and href",
+            &[
+                opt_s("ref", Some('r'), "Ref from snapshot"),
+                opt_s("control", None, "Actions-list name"),
+                opt_s("text", Some('x'), "Same as --control"),
+                opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
+            ],
+            PAGE_TIMEOUT_MS,
+        ),
+        method_ms(
+            "links",
+            "List page <a href> and audio/video duration (DOM, not AX)",
+            &[opt_s("tab", Some('t'), "Tab (default: focused)")],
             PAGE_TIMEOUT_MS,
         ),
         method_ms(
@@ -185,18 +276,27 @@ pub fn methods() -> Vec<MethodSpec> {
             "Select option(s) on a snapshot ref",
             &[
                 req_s("ref", Some('r'), "Ref from snapshot"),
-                req_s("values", Some('v'), "Comma-separated option labels or values"),
+                req_s(
+                    "values",
+                    Some('v'),
+                    "Comma-separated option labels or values",
+                ),
                 opt_s("tab", Some('t'), "Tab (default: last snapshot tab)"),
             ],
             PAGE_TIMEOUT_MS,
         ),
         method_ms(
             "wait",
-            "Wait until a tab finishes loading, or text appears",
+            "Wait until a named control exists, text appears, or the document loads",
             &[
                 opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)"),
+                opt_s("control", None, "Wait until this actions-list control exists"),
                 opt_s("text", Some('q'), "Wait until this appears in a snapshot"),
-                flag("load", 'l', "Wait for document load (default when --text is omitted)"),
+                flag(
+                    "load",
+                    'l',
+                    "Wait for document load (default when --text/--control omitted)",
+                ),
                 opt("timeout", None, ArgType::Int, "Seconds (default 30)"),
             ],
             WAIT_TIMEOUT_MS,
@@ -206,7 +306,12 @@ pub fn methods() -> Vec<MethodSpec> {
             "Page PNG when the AX tree is empty (fallback)",
             &[
                 opt_s("tab", Some('t'), "Tab id, url, or title (default: focused)"),
-                opt("path", Some('o'), ArgType::Path, "Write PNG here (default: cache)"),
+                opt(
+                    "path",
+                    Some('o'),
+                    ArgType::Path,
+                    "Write PNG here (default: cache)",
+                ),
             ],
             PAGE_TIMEOUT_MS,
         ),
@@ -287,8 +392,12 @@ mod tests {
             "find",
             "click",
             "hover",
+            "key",
+            "scroll",
             "type",
             "fill",
+            "get",
+            "links",
             "select",
             "wait",
             "screenshot",
@@ -304,10 +413,46 @@ mod tests {
         assert!(snap.args.iter().any(|a| a.name == "interactive"));
         let wait = methods.iter().find(|m| m.name == "wait").unwrap();
         assert!(wait.args.iter().any(|a| a.name == "load"));
+        assert!(wait.args.iter().any(|a| a.name == "control"));
+        let fill = methods.iter().find(|m| m.name == "fill").unwrap();
+        assert!(
+            fill.summary.to_lowercase().contains("contenteditable")
+                || fill.summary.to_lowercase().contains("prosemirror"),
+            "{}",
+            fill.summary
+        );
+        assert!(!fill.args.iter().find(|a| a.name == "text").unwrap().required);
+        assert!(fill.args.iter().any(|a| a.name == "file"));
+        assert!(fill.args.iter().any(|a| a.name == "control"));
+        let get = methods.iter().find(|m| m.name == "get").unwrap();
+        assert!(get.args.iter().any(|a| a.name == "ref"));
         assert!(matches!(
             wait.args.iter().find(|a| a.name == "load").unwrap().ty,
             ArgType::Bool
         ));
         assert!(!names.iter().any(|n| n.contains("vault")));
+        let click = methods.iter().find(|m| m.name == "click").unwrap();
+        assert!(
+            !click
+                .args
+                .iter()
+                .find(|a| a.name == "ref")
+                .unwrap()
+                .required
+        );
+        assert!(click.args.iter().any(|a| a.name == "x"));
+        assert!(click.args.iter().any(|a| a.name == "y"));
+        assert!(click.args.iter().any(|a| a.name == "text"));
+        let key = methods.iter().find(|m| m.name == "key").unwrap();
+        assert!(
+            key.args
+                .iter()
+                .find(|a| a.name == "chord")
+                .unwrap()
+                .required
+        );
+        let scroll = methods.iter().find(|m| m.name == "scroll").unwrap();
+        assert!(scroll.args.iter().any(|a| a.name == "dx"));
+        assert!(scroll.args.iter().any(|a| a.name == "dy"));
     }
 }

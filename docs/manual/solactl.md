@@ -9,7 +9,7 @@ the **bus** only for `emit`.
 solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
 solactl compositor sample [--size N]
 solactl compositor windows
-solactl compositor input click|move|scroll|key …
+solactl compositor input click|move|scroll|key …   # rejected when SOLA_BOT=1
 solactl session launch <app_id> [--command CMD]
 solactl session close  <app_id>
 ```
@@ -23,9 +23,56 @@ is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
 shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
 copy to the clipboard instead of writing this file.
 
-`workspaces` and `browser` are first-class subcommands (`solactl` /
+`workspaces`, `browser`, and `bots` are first-class subcommands (`solactl` /
 `solactl --help`). Other running apps that have advertised methods:
 `solactl <app-id>` lists them; `solactl <app-id> <method> …` invokes.
+
+## Bots (`solactl bots`)
+
+Needs **sola-botsd** (owner `bots`). Fails if the daemon or `sola-call`
+is down — it does not launch a window.
+
+```text
+solactl bots                         # list methods
+solactl bots list
+solactl bots new --name Suno
+solactl bots send --bot suno --text 'hello'
+solactl bots transcript --bot suno
+solactl bots rm --bot suno
+solactl bots cancel --bot suno
+```
+
+Phone API: daemon binds HTTP `0.0.0.0:27419`. Public name is
+`https://bot.sola.computer` (TLS at the proxy). Open **27419/tcp** to the
+desk for that proxy:
+
+```text
+GET  /health
+GET  /bots
+GET  /events                 # SSE: snapshot, bots, transcript, delta, removed
+GET  /poll?bot={id}          # one-shot snapshot (debug); the phone uses /events
+GET  /bots/{id}/transcript
+POST /bots                 { "name": "Suno" }
+DELETE /bots/{id}
+POST /bots/{id}/send     { "text": "…" }
+POST /bots/{id}/cancel
+Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
+```
+
+`GET /events` is `text/event-stream` (chunked). Keepalive comments every 15s.
+The iced **Bots** window uses the same HTTP/SSE on `127.0.0.1:27419`
+(list/send/create/delete + live events). `solactl bots` still uses
+sola-call. The TLS proxy must not buffer the body (`proxy_buffering off`,
+honor `X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with
+a long `proxy_read_timeout`.
+
+Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
+(introduction; the orientation prompt is not shown as a user message).
+`rm` deletes the catalog row, the home directory, and the Grok session.
+Write fence is prompt-only: **default that home**; say “drop the write
+fence” / “work on the whole computer” / name a path outside the home to
+open it for that task. Seat steal is still refused. Not a coding agent;
+not Workspaces unless you ask for that rail.
 
 ## Workspaces (`solactl workspaces`)
 
@@ -99,8 +146,10 @@ the TUI to trust the Sola status hook. `pane.wait` holds until status
 matches (`--fresh` waits for a transition). Drop unregisters; it does not
 `git worktree remove` unless
 you pass `--worktree` (add `--force` to toss a dirty checkout).
-`workspace.rm` replies, then closes the tab on the next tick, so a
-call from inside that pane can finish instead of hanging. Do **not**
+`workspace.rm` replies, then drops the tab on the next tick, so a
+call from inside that pane can finish instead of hanging. `tmux
+kill-session` and `git worktree remove` run off the iced thread after
+that (the rest of Workspaces stays live). Do **not**
 `git worktree remove` first from inside that pane — the cwd vanishes and
 the next tool cannot run. Use `--worktree` instead. If the checkout is
 already gone, Workspaces reaps the tab (no leftover working spinner).
@@ -115,9 +164,34 @@ Needs **sola-browser** running (owner `browser`). Fails if chrome or
 the human; an **Agent** group is an ordinary group a skill may create.
 
 `tab.open` appends and does **not** focus unless `--select`. Page verbs
-use a pruned accessibility YAML snapshot and opaque refs (`e12`). Stale
-refs fail; snapshot again. Screenshot is a fallback when the tree is
-empty. Vault fill / confirm gates are not on this plane (**D3**).
+use a pruned accessibility YAML snapshot and opaque refs (`e12`). The
+snapshot starts with an `actions:` list (role, name, ref) — click those.
+`click --text "Pay now"` uses the last snapshot and fails with the
+candidate refs when more than one control matches. Stale refs fail
+(node gone); snapshot again. `click` / `hover` also take CSS-pixel `--x`
+`--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
+not the compositor seat). `fill` / `type` write a contenteditable /
+ProseMirror editor with one `paste` of the whole string (newlines kept);
+they do not assign `textContent`. `fill --file PATH` reads the string from
+disk. The reply includes `value` and `matched: true`, or an error if the
+field did not keep the text. `get` reads the current value/href of a ref
+or `--control` name (DOM aria-label if the AX tree misses it). `links`
+lists `<a href>` and audio/video `duration` from the DOM. `wait --control
+Create` succeeds only when that named control exists in a snapshot (not
+when CEF fires load). `key --chord` (e.g. `Return`, `Control+Enter`)
+inserts once (one `char` event; not keyDown-with-text plus char).
+`scroll --dx --dy` go to the same tab. If `tabs` / `tab.open` time out
+while the sola-browser window is still up, the call plane is wedged:
+close the window (X or Flower) and launch it again — do not kill the
+process from a bot. Screenshot is a fallback when
+the tree is empty (canvas / maps) and captures **that tab’s** document
+even when backgrounded. Vault fill / confirm gates are not on this plane
+(**D3**).
+
+With `SOLA_BOT=1` (named informational bots): `--select` and `tab.focus`
+are refused; page verbs require `--tab` (never default to the focused
+tab); `solactl compositor input` / `screenshot` / `sample` are refused.
+The web path is `solactl browser` only.
 
 ```text
 solactl browser                         # list methods
@@ -133,12 +207,21 @@ solactl browser goto --url https://example.com/path --tab 3
 solactl browser snapshot [--tab 3] [--interactive] [--ref e8]
 solactl browser find --text Submit
 solactl browser click --ref e12
+solactl browser click --tab 3 --text "Pay now"
+solactl browser click --tab 3 --x 120 --y 80
 solactl browser fill --ref e5 --text user@example.com
+solactl browser fill --tab 3 --control lyrics --file /path/lyrics.txt
+solactl browser get --tab 3 --control lyrics
+solactl browser links --tab 3
 solactl browser type --ref e5 --text more --submit
 solactl browser hover --ref e12
+solactl browser hover --tab 3 --x 120 --y 80
+solactl browser key --tab 3 --chord Return
+solactl browser key --tab 3 --chord Control+Enter
+solactl browser scroll --tab 3 --dy 400
 solactl browser select --ref e9 --values OptionA,OptionB
-solactl browser wait [--load] [--text done] [--timeout 30]
-solactl browser screenshot [-o PATH]
+solactl browser wait [--load] [--text done] [--control Create] [--timeout 30]
+solactl browser screenshot --tab 3 [-o PATH]
 solactl browser back|forward|reload|stop [--tab 3]
 solactl browser find.page --text needle
 ```
@@ -147,7 +230,14 @@ solactl browser find.page --text needle
 name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
 `wait` / `wait --load` returns when `document.readyState` is `complete` on
 a committed URL (not the tab-strip spinner). `wait --text` snapshots until
-that string appears.
+that string appears. `wait --control Create` snapshots until that named
+control is in the actions list (or times out naming the missing control).
+
+Snapshot, click, fill, type, and `browser screenshot` target **that tab’s
+CEF document** — they work when the tab is in the background and do not
+raise it. `tab.open` does not focus. Bots (`SOLA_BOT=1`) **must** pass
+`--tab`, and are refused `tab.focus`, `tab.open --select`, and compositor
+screenshot/input.
 
 ## Not calls
 

@@ -1,7 +1,7 @@
 # sola-browser vault — edit item
 
 **Date:** 2026-09-11  
-**Status:** **Frozen** — implemented; **installed** `browser` release 2026-09-11; Save syncs before PUT; `Bitwarden-Client-Version` is `2026.8.0` (not crate `0.1.0`) and personal items encrypt as blob; desk smoke pending  
+**Status:** **Frozen** — implemented; **installed** `browser` release 2026-09-11; Save syncs before PUT; `Bitwarden-Client-Version` is `2026.8.0` (not crate `0.1.0`) and personal items encrypt as blob only while the write holds security-state 2 (reads stay at 1 so checksum-less login URIs still match the current page — **installed** `browser` release 2026-09-30, unsmoked); desk smoke pending  
 **Related:** [unified panel](2026-08-28-sola-browser-vault-panel-design.md); [create login](2026-08-13-sola-browser-vault-create-login-design.md); [manual](../manual/sola-browser.md)
 
 ## Intent

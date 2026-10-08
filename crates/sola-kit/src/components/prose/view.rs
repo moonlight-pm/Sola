@@ -27,7 +27,7 @@ const DRAG_SLOP: f32 = 3.0;
 const MULTI_CLICK: Duration = Duration::from_millis(400);
 const LINE_HEIGHT: LineHeight = LineHeight::Relative(1.45);
 
-/// Letter column: paragraphs, quotes, inline links. Selection is local
+/// Letter / chat column: paragraphs, quotes, markdown, inline links. Selection is local
 /// unless [`prose_selectable`] is used.
 pub fn prose<'a, Message: Clone + 'a>(
     blocks: impl IntoIterator<Item = ProseBlock>,
@@ -194,8 +194,12 @@ where
                 self.link,
                 self.sel_bg,
             );
-            let para = layout_paragraph(renderer, line_w, &spans);
-            let size = para.min_bounds();
+            let para = layout_paragraph(renderer, line_w, line, &spans);
+            let mut size = para.min_bounds();
+            let min_h = line_size(line) * 1.35;
+            if size.height < min_h * 0.6 {
+                size.height = min_h;
+            }
             state.lines.push(LineState {
                 paragraph: para,
                 spans,
@@ -555,18 +559,45 @@ fn offset_in_line<P: text::Paragraph>(
     }
 }
 
+fn line_size(line: &LayoutLine) -> f32 {
+    match line.heading {
+        1 => 22.0,
+        2 => 18.0,
+        3 => 16.0,
+        4..=6 => 15.0,
+        _ => PROSE_SIZE,
+    }
+}
+
+fn line_height_for(line: &LayoutLine) -> LineHeight {
+    if line.heading > 0 {
+        LineHeight::Relative(1.25)
+    } else if line.code || line.verse {
+        LineHeight::Relative(1.35)
+    } else {
+        LINE_HEIGHT
+    }
+}
+
 fn layout_paragraph<Renderer: text::Renderer<Font = iced::Font>>(
     _renderer: &Renderer,
     width: f32,
+    line: &LayoutLine,
     spans: &[Span<'static, String, Renderer::Font>],
 ) -> Renderer::Paragraph {
-    let size = Pixels(PROSE_SIZE);
-    let font = fonts::ui();
+    let size = Pixels(line_size(line));
+    let font = if line.code {
+        fonts::mono()
+    } else if line.heading > 0 {
+        fonts::ui_medium()
+    } else {
+        fonts::ui()
+    };
     Renderer::Paragraph::with_spans(Text {
         content: spans,
         bounds: Size::new(width, f32::INFINITY),
         size,
-        line_height: LINE_HEIGHT,
+        line_height: line_height_for(line),
         font,
         align_x: text::Alignment::Default,
         align_y: iced::alignment::Vertical::Top,
@@ -590,7 +621,16 @@ fn spans_for_line(
     });
     let mut out = Vec::new();
     let mut cur = line.start;
+    let size = line_size(line);
+    let lh = line_height_for(line);
     if line.runs.is_empty() {
+        out.push(
+            Span::new(" ".to_string())
+                .font(fonts::ui())
+                .size(size)
+                .line_height(lh)
+                .color(ink),
+        );
         return out;
     }
     for run in &line.runs {
@@ -604,34 +644,63 @@ fn spans_for_line(
                 let a = snap_byte(&run.text, a);
                 let b = snap_byte(&run.text, b);
                 if a > 0 {
-                    out.push(styled_span(&run.text[..a], run, ink, link, None));
+                    out.push(styled_span(&run.text[..a], run, line, ink, link, None));
                 }
                 if b > a {
-                    out.push(styled_span(&run.text[a..b], run, ink, link, Some(sel_bg)));
+                    out.push(styled_span(
+                        &run.text[a..b],
+                        run,
+                        line,
+                        ink,
+                        link,
+                        Some(sel_bg),
+                    ));
                 }
                 if b < run.text.len() {
-                    out.push(styled_span(&run.text[b..], run, ink, link, None));
+                    out.push(styled_span(&run.text[b..], run, line, ink, link, None));
                 }
             }
-            _ => out.push(styled_span(&run.text, run, ink, link, None)),
+            _ => out.push(styled_span(&run.text, run, line, ink, link, None)),
         }
     }
     out
 }
 
+fn run_font(run: &ProseRun, line: &LayoutLine) -> iced::Font {
+    if run.code || line.code {
+        return fonts::mono();
+    }
+    let mut font = if run.bold || line.heading > 0 {
+        fonts::ui_medium()
+    } else {
+        fonts::ui()
+    };
+    if run.italic {
+        font.style = iced::font::Style::Italic;
+    }
+    if run.bold {
+        font.weight = iced::font::Weight::Bold;
+    }
+    font
+}
+
 fn styled_span(
     text: &str,
     run: &ProseRun,
+    line: &LayoutLine,
     ink: Color,
     link: Color,
     highlight: Option<Color>,
 ) -> Span<'static, String, iced::Font> {
+    let size = line_size(line);
     let mut s = Span::new(text.to_string())
-        .font(fonts::ui())
-        .size(PROSE_SIZE)
-        .line_height(LINE_HEIGHT);
+        .font(run_font(run, line))
+        .size(size)
+        .line_height(line_height_for(line));
     if run.url.is_some() {
         s = s.link(run.url.clone().unwrap()).underline(true).color(link);
+    } else if run.code || line.code {
+        s = s.color(ink);
     } else {
         s = s.color(ink);
     }

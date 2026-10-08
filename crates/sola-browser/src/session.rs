@@ -116,7 +116,10 @@ impl BrowserSession {
 
     pub fn load_from(path: &Path) -> Self {
         match sola_core::config::load_json_or_default::<Self>(path) {
-            Ok(s) => {
+            Ok(mut s) => {
+                // A stored NUL title becomes the xdg toplevel title on the
+                // first frame and aborts chrome before any page can replace it.
+                scrub_control_chars(&mut s);
                 if path.exists() {
                     tracing::info!(path = %path.display(), "restored session");
                 }
@@ -159,6 +162,7 @@ impl BrowserSession {
             .sidebar_w
             .clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX);
 
+        scrub_control_chars(&mut self);
         self.tabs
             .retain(|t| !t.url.trim().is_empty() && !is_spurious_switch_url(&t.url));
 
@@ -272,12 +276,31 @@ pub fn session_from_tabs(
         .position(|t| t.id == active)
         .unwrap_or(0)
         .min(session_tabs.len().saturating_sub(1));
-    BrowserSession {
+    let mut session = BrowserSession {
         tabs: session_tabs,
         active_index,
         sidebar_w: sidebar_w.clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX),
         groups: groups.to_session(),
         closed: closed.to_vec(),
+    };
+    scrub_control_chars(&mut session);
+    session
+}
+
+/// Drop ASCII/Unicode controls (including NUL) from titles that can become
+/// the Wayland toplevel title or a restored tab label.
+fn scrub_control_chars(session: &mut BrowserSession) {
+    for tab in &mut session.tabs {
+        tab.title = crate::util::wayland_title_text(&tab.title);
+        for entry in &mut tab.history {
+            entry.title = crate::util::wayland_title_text(&entry.title);
+        }
+    }
+    for closed in &mut session.closed {
+        closed.title = crate::util::wayland_title_text(&closed.title);
+        for entry in &mut closed.history {
+            entry.title = crate::util::wayland_title_text(&entry.title);
+        }
     }
 }
 
@@ -329,6 +352,37 @@ pub fn fingerprint(session: &BrowserSession) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_strips_nul_from_restored_titles() {
+        let session = BrowserSession {
+            tabs: vec![SessionTab {
+                url: "https://digitalarchives.wa.gov/DigitalObject/Download/abc".into(),
+                title: "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM\0".into(),
+                history: vec![SessionHistory {
+                    url: "https://digitalarchives.wa.gov/DigitalObject/Download/abc".into(),
+                    title: "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM\0".into(),
+                }],
+                history_index: 0,
+                ..SessionTab::default()
+            }],
+            active_index: 0,
+            sidebar_w: 200.0,
+            groups: Vec::new(),
+            closed: vec![ClosedTab {
+                url: "https://example.com/".into(),
+                title: "closed\0".into(),
+                ..ClosedTab::default()
+            }],
+        };
+        let (tabs, _, _) = session.bootstrap(None, "about:blank");
+        assert_eq!(tabs[0].title, "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM");
+        assert_eq!(
+            tabs[0].history[0].title,
+            "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM"
+        );
+        assert!(!tabs[0].title.contains('\0'));
+    }
 
     #[test]
     fn bootstrap_empty_uses_default() {
@@ -392,6 +446,30 @@ mod tests {
         assert_eq!(active, 0);
         assert!(!is_cli_open_url("--password-store=basic"));
         assert!(is_cli_open_url("https://example.com"));
+    }
+
+    #[test]
+    fn save_snapshot_strips_nul_titles() {
+        let tab = crate::engine::TabInfo::chrome(
+            crate::engine::TabId(1),
+            "https://example.com/",
+            "bad\0title",
+        );
+        let closed = ClosedTab {
+            url: "https://example.com/c".into(),
+            title: "closed\0".into(),
+            ..ClosedTab::default()
+        };
+        let session = session_from_tabs(
+            &[tab],
+            crate::engine::TabId(1),
+            200.0,
+            &crate::groups::Groups::default(),
+            &[closed],
+        );
+        assert_eq!(session.tabs[0].title, "badtitle");
+        assert_eq!(session.closed[0].title, "closed");
+        assert!(!session.tabs[0].title.contains('\0'));
     }
 
     #[test]

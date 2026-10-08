@@ -105,15 +105,197 @@ pub fn paste_image_script(mime: &str, filename: &str, bytes: &[u8]) -> String {
     )
 }
 
-/// IIFE that inserts `text` at the caret of the focused input / textarea /
-/// contenteditable. Values are JSON-string-literal escaped.
+/// JS statement: write `v` into already-focused `el`.
+///
+/// `append` is `type` (caret at end). Otherwise `fill` replaces.
+/// Contenteditable / ProseMirror (Suno lyrics) ignore `textContent`
+/// writes — they listen for `paste` + `text/plain`. Do not
+/// `execCommand('insertText')` the whole payload (Chromium flattens
+/// `\n` to spaces).
+pub fn editor_write_js(append: bool) -> String {
+    let append_js = if append { "true" } else { "false" };
+    format!(
+        r#"(function(el,v,append){{
+  function htmlPlain(s){{
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\r\n|\n|\r/g,'<br>');
+  }}
+  function firePaste(target,text){{
+    var dt=new DataTransfer();
+    try{{
+      dt.setData('text/plain', text);
+      dt.setData('text/html', htmlPlain(text));
+    }}catch(e){{ return false; }}
+    var ev=new ClipboardEvent('paste',{{bubbles:true,cancelable:true,composed:true,clipboardData:dt}});
+    try{{ Object.defineProperty(ev,'clipboardData',{{value:dt}}); }}catch(e){{}}
+    try{{ return !target.dispatchEvent(ev); }}catch(e){{ return false; }}
+  }}
+  function nativeValue(target,next){{
+    var tag=(target.tagName||'').toLowerCase();
+    var proto=(tag==='textarea'?window.HTMLTextAreaElement:window.HTMLInputElement);
+    proto=proto&&proto.prototype;
+    var desc=proto&&Object.getOwnPropertyDescriptor(proto,'value');
+    if(desc&&desc.set) desc.set.call(target,next); else if('value' in target) target.value=next;
+  }}
+  function insertLines(target,text){{
+    var lines=String(text).split(/\r\n|\n|\r/);
+    for(var i=0;i<lines.length;i++){{
+      if(i){{
+        try{{ document.execCommand('insertLineBreak'); }}catch(e){{
+          try{{ document.execCommand('insertHTML',false,'<br>'); }}catch(e2){{}}
+        }}
+      }}
+      if(lines[i]){{
+        try{{ document.execCommand('insertText',false,lines[i]); }}catch(e){{}}
+      }}
+    }}
+  }}
+  function editorValue(target){{
+    var t=(target.tagName||'').toLowerCase();
+    if(t==='input'||t==='textarea') return String(target.value||'');
+    return String(target.innerText||target.textContent||'');
+  }}
+  function norm(s){{
+    return String(s).replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/[\u200b\u200c\u200d\ufeff]/g,'').replace(/\s+$/,'');
+  }}
+  function stuck(got, want, append){{
+    var g=norm(got), w=norm(want);
+    if(!w) return true;
+    if(g===w) return true;
+    if(append) return g.indexOf(w)!==-1;
+    return g.indexOf(w)!==-1 && g.length+32>=w.length;
+  }}
+  var tag=(el.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='textarea'){{
+    var cur=String(el.value||'');
+    nativeValue(el, append? cur+v : v);
+    try{{ el.selectionStart=el.selectionEnd=(append?cur.length:0)+String(v).length; }}catch(e){{}}
+    return;
+  }}
+  if(el.isContentEditable){{
+    var sel=window.getSelection();
+    var range=document.createRange();
+    range.selectNodeContents(el);
+    if(append) range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    firePaste(el, v);
+    if(!stuck(editorValue(el), v, append)) insertLines(el, v);
+  }}
+}})(el,v,{append_js});"#
+    )
+}
+
+/// Find a field by aria-label / placeholder / name and optionally write `text`.
+pub fn editor_query_script(query: &str, write: Option<&str>) -> String {
+    let q = serde_json::to_string(query).unwrap_or_else(|_| "\"\"".into());
+    let write_js = match write {
+        Some(text) => {
+            let lit = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+            format!(
+                "const v = {lit}; el.focus(); {}; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}}));",
+                editor_write_js(false)
+            )
+        }
+        None => String::new(),
+    };
+    format!(
+        r#"(function(){{
+  var want = {q}.toLowerCase();
+  function bits(el){{
+    return [
+      el.getAttribute && el.getAttribute('aria-label'),
+      el.getAttribute && el.getAttribute('placeholder'),
+      el.getAttribute && el.getAttribute('name'),
+      el.id,
+      el.getAttribute && el.getAttribute('data-placeholder')
+    ].join(' ').toLowerCase();
+  }}
+  var nodes = document.querySelectorAll('textarea,input,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"]');
+  var el = null;
+  for (var i=0;i<nodes.length;i++){{
+    if (bits(nodes[i]).indexOf(want)!==-1) {{ el = nodes[i]; break; }}
+  }}
+  if (!el) {{
+    for (var j=0;j<nodes.length;j++){{
+      var n = nodes[j];
+      var lab = n.getAttribute && n.getAttribute('aria-label');
+      var near = (n.previousElementSibling && n.previousElementSibling.textContent) || '';
+      var parent = (n.parentElement && n.parentElement.innerText) || '';
+      var hay = (lab||'') + ' ' + near + ' ' + parent.slice(0,200);
+      if (hay.toLowerCase().indexOf(want)!==-1) {{ el = n; break; }}
+    }}
+  }}
+  if (!el && nodes.length===1) el = nodes[0];
+  if (!el) return {{stale:true}};
+  {write_js}
+  var value = {got};
+  var href = el.href || (el.getAttribute && el.getAttribute('href')) || '';
+  return {{ok:true, value: value, href: href}};
+}})()"#,
+        got = editor_value_js(),
+    )
+}
+
+/// Current value of `el` (input/textarea value, else innerText).
+pub fn editor_value_js() -> &'static str {
+    "(function(el){ var t=(el.tagName||'').toLowerCase(); if(t==='input'||t==='textarea') return String(el.value||''); return String(el.innerText||el.textContent||''); })(el)"
+}
+
+/// Lyrics / field compare: line endings, trailing space, zero-width.
+pub fn normalize_field_text(s: &str) -> String {
+    s.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace(['\u{200b}', '\u{200c}', '\u{200d}', '\u{feff}'], "")
+        .trim_end()
+        .to_string()
+}
+
+/// `append` is `type` (needle may already be in the field).
+pub fn text_stuck(want: &str, got: &str, append: bool) -> bool {
+    let w = normalize_field_text(want);
+    let g = normalize_field_text(got);
+    if w.is_empty() {
+        return true;
+    }
+    if g == w {
+        return true;
+    }
+    if append {
+        return g.contains(&w);
+    }
+    g.contains(&w) && g.len() + 32 >= w.len()
+}
+
+/// IIFE that pastes `text` into the focused field.
+///
+/// Windowless CEF has no Wayland clipboard, so chrome injects. Editors
+/// (Suno lyrics, Lexical, ProseMirror) listen for `paste` + `text/plain`
+/// and split on newlines. `execCommand('insertText')` in Chromium
+/// **collapses `\n` to spaces** in contenteditable — do not use it as
+/// the only path. Fire a real `ClipboardEvent` first (same shape as
+/// image paste); if the page does not `preventDefault`, fall back to
+/// a textarea value splice or `insertLineBreak` between lines.
 pub fn paste_into_focused_script(text: &str) -> String {
     let t = js_string_literal(text);
     format!(
         r#"(function(){{
   var t={t};
-  var el=document.activeElement;
+  var el=document.activeElement||document.body;
   if(!el) return false;
+  function htmlPlain(s){{
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\r\n|\n|\r/g,'<br>');
+  }}
+  function firePaste(target){{
+    var dt=new DataTransfer();
+    try{{
+      dt.setData('text/plain', t);
+      dt.setData('text/html', htmlPlain(t));
+    }}catch(e){{ return false; }}
+    var ev=new ClipboardEvent('paste',{{bubbles:true,cancelable:true,composed:true,clipboardData:dt}});
+    try{{ Object.defineProperty(ev,'clipboardData',{{value:dt}}); }}catch(e){{}}
+    try{{ return !target.dispatchEvent(ev); }}catch(e){{ return false; }}
+  }}
+  if(firePaste(el)) return true;
   var tag=(el.tagName||'').toLowerCase();
   if(tag==='input'||tag==='textarea'){{
     var start=typeof el.selectionStart==='number'?el.selectionStart: (el.value||'').length;
@@ -130,7 +312,18 @@ pub fn paste_into_focused_script(text: &str) -> String {
     return true;
   }}
   if(el.isContentEditable){{
-    try{{ return !!document.execCommand('insertText',false,t); }}catch(e){{}}
+    var lines=String(t).split(/\r\n|\n|\r/);
+    for(var i=0;i<lines.length;i++){{
+      if(i){{
+        try{{ document.execCommand('insertLineBreak'); }}catch(e){{
+          try{{ document.execCommand('insertHTML',false,'<br>'); }}catch(e2){{}}
+        }}
+      }}
+      if(lines[i]){{
+        try{{ document.execCommand('insertText',false,lines[i]); }}catch(e){{}}
+      }}
+    }}
+    return true;
   }}
   return false;
 }})();"#
@@ -238,6 +431,65 @@ mod tests {
         let s = paste_into_focused_script(r#"a"b"#);
         assert!(s.contains(r#"a\"b"#));
         assert!(!s.contains('\0'));
+    }
+
+    #[test]
+    fn editor_write_fill_uses_paste_not_textcontent() {
+        let s = editor_write_js(false);
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("text/plain"));
+        assert!(s.contains("selectNodeContents"));
+        assert!(s.contains("insertLineBreak"));
+        assert!(
+            !s.contains("textContent ="),
+            "ProseMirror reverts textContent writes"
+        );
+        assert!(
+            s.contains("if(!stuck(editorValue(el), v, append)) insertLines"),
+            "paste preventDefault with empty clipboardData must still insertLines"
+        );
+        assert!(s.contains("false"), "{s}");
+        assert!(!s.contains("range.collapse(false)") || s.contains("if(append) range.collapse"));
+    }
+
+    #[test]
+    fn editor_query_finds_aria_label() {
+        let s = editor_query_script("lyrics", Some("verse\n\ntwo"));
+        assert!(s.contains("aria-label"));
+        assert!(s.contains("contenteditable"));
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("verse"));
+    }
+
+    #[test]
+    fn field_text_stuck_requires_the_payload() {
+        let lyrics = "Delilah\n\nLet me die with the kings tonight";
+        assert!(text_stuck(lyrics, lyrics, false));
+        assert!(text_stuck(lyrics, &format!("{lyrics}\n"), false));
+        assert!(!text_stuck(lyrics, "with something to see", false));
+        assert!(!text_stuck(lyrics, "", false));
+        assert!(text_stuck("more", "verse\nmore", true));
+    }
+
+    #[test]
+    fn editor_write_type_appends_at_end() {
+        let s = editor_write_js(true);
+        assert!(s.contains("if(append) range.collapse(false)"));
+        assert!(s.contains("true"));
+        assert!(s.contains("ClipboardEvent"));
+    }
+
+    #[test]
+    fn paste_text_fires_clipboard_event_and_keeps_newlines() {
+        let s = paste_into_focused_script("verse one\nverse two");
+        assert!(s.contains("ClipboardEvent"));
+        assert!(s.contains("text/plain"));
+        assert!(s.contains("insertLineBreak"));
+        assert!(s.contains(r#"verse one\nverse two"#), "{s}");
+        assert!(
+            !s.contains("insertText',false,t)"),
+            "must not insertText the whole payload (Chromium flattens \\n)"
+        );
     }
 
     #[test]

@@ -200,7 +200,13 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
         .spawn(move || {
             while let Ok(msg) = event_rx.recv() {
                 let mut g = writer_e.lock().unwrap();
-                if ipc::write_msg(&mut g, &msg).is_err() {
+                if let Err(e) = ipc::write_msg(&mut g, &msg) {
+                    // One oversized payload (a data: URL on a download
+                    // progress event) must not tear down the helper channel.
+                    if e.kind() == std::io::ErrorKind::InvalidData {
+                        tracing::warn!(error = %e, "engine ipc event dropped");
+                        continue;
+                    }
                     break;
                 }
             }

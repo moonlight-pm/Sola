@@ -5,8 +5,11 @@ use std::sync::Arc;
 
 use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_core::auth::login::TwoFactorEmailRequest;
-use bitwarden_core::key_management::MasterPasswordAuthenticationData;
-use bitwarden_core::{ClientSettings, DeviceType};
+use bitwarden_core::key_management::{
+    BLOB_SECURITY_VERSION, KeySlotIds, MasterPasswordAuthenticationData,
+};
+use bitwarden_core::{Client, ClientSettings, DeviceType};
+use bitwarden_crypto::KeyStore;
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncRequest};
 use bitwarden_vault::{
@@ -167,6 +170,36 @@ pub enum VaultError {
 /// Protocol version advertised as `Bitwarden-Client-Version`. Must match the
 /// official desktop `YYYY.M.P` shape; this SDK pin is the 2026.8 line.
 const BITWARDEN_CLIENT_VERSION: &str = "2026.8.0";
+
+/// Keystore version after V1 account init. Decrypt enforces a login-URI
+/// checksum only when that cipher has its own key.
+const READ_SECURITY_STATE_VERSION: u64 = 1;
+
+/// While alive, personal cipher writes use blob encryption (security-state 2).
+/// Drop restores [`READ_SECURITY_STATE_VERSION`].
+///
+/// State 2 also makes decrypt discard login URIs that lack a checksum.
+/// Official clients only do that when the cipher has its own key. Hold this
+/// across `ciphers().encrypt` (and the FIDO calls that encrypt inside the
+/// SDK). Do not hold it across `get` / `get_all` / sync.
+pub(crate) struct BlobCipherWrites {
+    store: KeyStore<KeySlotIds>,
+}
+
+impl BlobCipherWrites {
+    pub(crate) fn enter(client: &Client) -> Self {
+        let store = client.internal.get_key_store().clone();
+        store.set_security_state_version(BLOB_SECURITY_VERSION);
+        Self { store }
+    }
+}
+
+impl Drop for BlobCipherWrites {
+    fn drop(&mut self) {
+        self.store
+            .set_security_state_version(READ_SECURITY_STATE_VERSION);
+    }
+}
 
 /// In-process Bitwarden password-manager client (official cloud).
 pub struct VaultService {
@@ -617,6 +650,20 @@ impl VaultService {
             return Err(VaultError::Locked);
         }
 
+        let version = self
+            .client
+            .0
+            .internal
+            .get_key_store()
+            .context()
+            .get_security_state_version();
+        if version > READ_SECURITY_STATE_VERSION {
+            tracing::error!(
+                version,
+                "vault: security-state would drop checksum-less login URIs"
+            );
+        }
+
         let listed = self
             .client
             .vault()
@@ -700,13 +747,11 @@ impl VaultService {
         }
 
         let view = new_login_view(name, username.clone(), password.clone(), uri);
-        let ctx = self
-            .client
-            .vault()
-            .ciphers()
-            .encrypt(view)
-            .await
-            .map_err(|e| VaultError::Other(format!("encrypt login: {e}")))?;
+        let ctx = {
+            let _blob = BlobCipherWrites::enter(&self.client.0);
+            self.client.vault().ciphers().encrypt(view).await
+        }
+        .map_err(|e| VaultError::Other(format!("encrypt login: {e}")))?;
         let id = self.persist_encryption_context(ctx).await?;
 
         Ok((id, FillMaterial { username, password }))
@@ -735,13 +780,13 @@ impl VaultService {
         apply_draft(&mut view, &draft).map_err(VaultError::Other)?;
         view.revision_date = revision;
         let record = record_from_view(view.clone()).ok_or(VaultError::NotFound)?;
-        let ctx = self
-            .client
-            .vault()
-            .ciphers()
-            .encrypt(view)
-            .await
-            .map_err(|e| VaultError::Other(format!("encrypt item: {e}")))?;
+        let ctx = {
+            // `get` above ran at version 1 so checksum-less URIs are still
+            // on the view. Raise only for the encrypt.
+            let _blob = BlobCipherWrites::enter(&self.client.0);
+            self.client.vault().ciphers().encrypt(view).await
+        }
+        .map_err(|e| VaultError::Other(format!("encrypt item: {e}")))?;
         self.persist_encryption_context(ctx).await?;
         Ok(record)
     }
@@ -1095,6 +1140,27 @@ mod tests {
             Some("12/28")
         );
         assert_eq!(card_exp_display(Some("12"), None), None);
+    }
+
+    #[test]
+    fn blob_cipher_writes_raise_security_state_only_while_held() {
+        let client = Client::new(None);
+        let store = client.internal.get_key_store().clone();
+        assert_eq!(
+            store.context().get_security_state_version(),
+            READ_SECURITY_STATE_VERSION
+        );
+        {
+            let _blob = BlobCipherWrites::enter(&client);
+            assert_eq!(
+                store.context().get_security_state_version(),
+                BLOB_SECURITY_VERSION
+            );
+        }
+        assert_eq!(
+            store.context().get_security_state_version(),
+            READ_SECURITY_STATE_VERSION
+        );
     }
 
     #[test]
