@@ -2,10 +2,10 @@
 //!
 //! Alacritty already rotates `term.selection` when the engine scrolls
 //! (`scroll_up` / `scroll_down`). That covers a real newline at the bottom.
-//! Workspaces PTYs sit behind tmux with `smcup@` (no outer alt-screen), so a
-//! TUI that "scrolls" (Grok, less, …) typically CUP-rewrites the live grid
-//! in place. Buffer line numbers stay put and the highlight would otherwise
-//! sit still while the glyphs move underneath.
+//! A fullscreen TUI (Grok, Codex, less) CUP-rewrites the live grid in place,
+//! on the alternate screen once `smcup` has been forwarded. Buffer line
+//! numbers stay put and the highlight would otherwise sit still while the
+//! glyphs move underneath.
 //!
 //! On each follow we compare fingerprints of the live viewport to the ones
 //! captured on the last pass. A majority shift of unique rows rotates the

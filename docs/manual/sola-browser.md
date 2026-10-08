@@ -20,12 +20,14 @@ The location bar is **plain text** on the chrome until you click it (or
 `⌘L`); then it is an edit field. While idle, `https://` and the query
 string are omitted (the path stays). Typing searches **visit history**
 (top five matches as a list under the chrome — the field is not
-autocompleted and **keeps focus**). ↓ / `Ctrl+N` and ↑ / `Ctrl+P` (or a
-click) only highlight a row. Enter loads the highlighted row, or a
-typed URL (switching to a tab already on that site), or Kagi’s first
-result for a search. **Shift+Enter** always loads the Kagi results
-page. Further typing refines the list. Jumping from a new tab to a
-site already open closes the unused blank tab.
+autocompleted and **keeps focus**). The first row is not selected for
+you. ↓ / `Ctrl+N` and ↑ / `Ctrl+P`, or a click, highlight a row. Enter
+loads that highlighted row, or the URL you typed in this tab, or Kagi’s
+first result for a search.
+**Shift+Enter** always loads the Kagi results page. Further typing
+refines the list. A new blank tab that names a site already open
+switches to that tab and closes the blank. The exact URL of another
+open tab is focused instead of loaded again.
 `⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
 `⌘R` reloads; `⌘⇧R` (Browser → **Hard Reload**) bypasses HTTP cache for
 this navigation. Shift-click the reload button does the same. It does

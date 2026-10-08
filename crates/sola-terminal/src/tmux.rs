@@ -84,7 +84,20 @@ pub fn reload_config() {
 // update-environment pulls the client-side values into the session on
 // create/attach; set-environment -g seeds the global env for new panes even
 // when a session already exists.
+//
+// smcup/rmcup are forwarded. tmux sends smcup when a client attaches, so
+// the outer grid is on the alternate screen for the whole session. That
+// grid keeps a real scrollback (see `arm_alternate_scrollback`). Codex
+// writes the transcript with a scroll region and scroll-up; the wheel
+// moves that buffer. Cursor keys stay with the app (command history).
+// Stripping smcup left the outer grid on the primary screen while tmux
+// drew the pane with cursor addressing, so the wheel had nothing to show.
+//
+// `set -gu terminal-overrides` drops a sticky `*:smcup@:rmcup@` left on a
+// server that was started from an older config. `source-file` does not
+// delete an option this file no longer mentions.
 const TMUX_CONF: &str = "\
+set -gu terminal-overrides
 set -g status off
 set -g prefix None
 unbind -a
@@ -95,7 +108,6 @@ set -g escape-time 0
 set -g extended-keys always
 set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
-set -ga terminal-overrides ',*:smcup@:rmcup@'
 set -g set-titles off
 set -g allow-passthrough on
 set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM'
@@ -755,6 +767,10 @@ mod tests {
         assert!(TMUX_CONF.contains("extended-keys always"));
         assert!(TMUX_CONF.contains("extended-keys-format csi-u"));
         assert!(TMUX_CONF.contains("xterm*:extkeys"));
+        // Alt-screen enter/exit must reach the outer grid. See TMUX_CONF.
+        assert!(TMUX_CONF.contains("set -gu terminal-overrides"));
+        assert!(!TMUX_CONF.contains("smcup@"));
+        assert!(!TMUX_CONF.contains("rmcup@"));
     }
 
     #[test]

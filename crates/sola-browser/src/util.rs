@@ -402,8 +402,9 @@ pub fn is_kagi_search_url(url: &str) -> bool {
 
 /// Enter / Shift+Enter target for the location bar.
 ///
-/// Highlighted history row wins on Enter. Otherwise a URL-like token
-/// navigates, and a search query uses Kagi lucky (first result).
+/// `highlighted` is a history row the user actually selected. Pass `None`
+/// otherwise — the first search hit must not replace the typed URL.
+/// A URL-like token navigates, and a search query uses Kagi lucky.
 /// Shift+Enter (`search_results`) always opens the Kagi results page.
 pub fn omnibox_submit_url(typed: &str, highlighted: Option<&str>, search_results: bool) -> String {
     let typed = typed.trim();

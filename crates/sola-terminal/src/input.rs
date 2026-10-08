@@ -838,38 +838,44 @@ pub fn encode_mouse_sgr(
 
 /// What a mouse-wheel notch should do, given the terminal's current mode.
 ///
-/// Under sola's tmux config the *outer* emulator never enters the alternate
-/// screen (tmux strips `smcup`/`rmcup`), so the classic "alt-screen +
-/// ALTERNATE_SCROLL → arrow keys" branch alacritty uses never fires here and is
-/// deliberately omitted. Only two outcomes matter: forward the wheel to a
-/// mouse-tracking app, or scroll our own scrollback.
+/// Mouse tracking sends one report. Everything else scrolls our buffer,
+/// including the alternate screen. Shift forces that local scroll when an
+/// app is tracking the mouse. Cursor keys stay with the application:
+/// Up/Down in Codex and in the shell is command history, and the transcript
+/// lives in scrollback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WheelAction {
-    /// Forward the wheel to the application as a mouse report (already encoded).
-    /// Emitted when the app has enabled mouse tracking and Shift is not held.
-    /// Exactly **one** SGR/X10 report per wheel event — xterm-style. Multiplying
-    /// by local-scroll line counts flooded mouse-tracking TUIs (Grok, etc.)
-    /// into full-redraw storms that locked the UI.
+    /// One SGR or X10 mouse report for the PTY.
+    ///
+    /// Mouse tracking stays **one** report per wheel event. Multiplying by
+    /// the local-scroll line count flooded mouse-tracking TUIs (Grok) into
+    /// full-redraw storms.
     Report(Vec<u8>),
     /// Scroll the emulator's own scrollback by this many lines (positive = up
     /// into history, matching `alacritty_terminal::grid::Scroll::Delta`). The
-    /// default, and the Shift override even under mouse tracking. Uses the full
+    /// default, on the primary buffer and on the alternate screen. Shift
+    /// selects it even while the app is tracking the mouse. Uses the full
     /// line-count multiplier so host history still tracks the wheel.
     Scroll(i32),
 }
 
-/// Route a mouse-wheel notch count to either a PTY mouse report or a local
-/// scrollback scroll, mirroring alacritty's `scroll_terminal` priority ladder
-/// (minus the dead alt-screen branch — see [`WheelAction`]).
+/// Route a mouse-wheel notch count.
 ///
 /// `notches` is signed: positive scrolls up (into history / wheel-up). `col`
-/// and `row` are the 1-based cell under the pointer, used as the report's
-/// position. When the app has mouse tracking on (`TermMode::MOUSE_MODE`) and
-/// Shift is not held, **one** report is emitted for the event (SGR when the app
-/// negotiated `SGR_MOUSE`, else legacy X10) — not one per local-scroll line.
-/// Otherwise (or with Shift held) the wheel scrolls our own buffer by `notches`.
+/// and `row` are the 1-based cell under the pointer, used as the mouse
+/// report's position.
 ///
-/// Callers must skip zero `notches` (no event).
+/// 1. Mouse tracking on and Shift not held → one SGR (or X10) report.
+/// 2. Otherwise, including the alternate screen and Shift, scroll our own
+///    buffer by `notches`.
+///
+/// DEC 1007 (`ALTERNATE_SCROLL`) asks a terminal to turn the wheel into
+/// cursor keys. Those keys are command history in Codex and in the shell.
+/// The transcript is the scrollback Codex writes with a scroll region, so
+/// the wheel moves that buffer instead.
+///
+/// Callers must skip zero `notches` (no event). A zero still returns
+/// [`WheelAction::Scroll`]`(0)`.
 pub fn wheel_dispatch(mode: TermMode, mods: Mods, notches: i32, col: u16, row: u16) -> WheelAction {
     if notches == 0 {
         return WheelAction::Scroll(0);
@@ -1779,6 +1785,55 @@ mod tests {
         let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
         let action = wheel_dispatch(mode, Mods::NONE, -1, 4, 8);
         assert_eq!(action, WheelAction::Report(b"\x1b[<65;4;8M".to_vec()));
+    }
+
+    #[test]
+    fn wheel_alt_screen_alternate_scroll_scrolls_buffer_up() {
+        // DEC 1007 is on, and so is the alt screen. Up/Down would walk Codex
+        // command history. The wheel scrolls the terminal buffer instead.
+        let mode = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL;
+        let action = wheel_dispatch(mode, Mods::NONE, 2, 9, 9);
+        assert_eq!(action, WheelAction::Scroll(2));
+    }
+
+    #[test]
+    fn wheel_alt_screen_alternate_scroll_scrolls_buffer_down() {
+        let mode = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL;
+        let action = wheel_dispatch(mode, Mods::NONE, -1, 1, 1);
+        assert_eq!(action, WheelAction::Scroll(-1));
+    }
+
+    #[test]
+    fn wheel_alternate_scroll_without_alt_screen_stays_local() {
+        // TermMode::default includes ALTERNATE_SCROLL. A shell must still
+        // scroll our buffer until the app actually enters the alt screen.
+        let action = wheel_dispatch(TermMode::ALTERNATE_SCROLL, Mods::NONE, 3, 1, 1);
+        assert_eq!(action, WheelAction::Scroll(3));
+    }
+
+    #[test]
+    fn wheel_alt_screen_without_alternate_scroll_stays_local() {
+        let action = wheel_dispatch(TermMode::ALT_SCREEN, Mods::NONE, 3, 1, 1);
+        assert_eq!(action, WheelAction::Scroll(3));
+    }
+
+    #[test]
+    fn wheel_shift_on_alt_screen_scrolls_local() {
+        let mode = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL;
+        let action = wheel_dispatch(mode, Mods::SHIFT, 4, 1, 1);
+        assert_eq!(action, WheelAction::Scroll(4));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_beats_alternate_scroll() {
+        // Grok tracks the mouse and also uses the alt screen. The wheel
+        // stays one SGR report so the TUI scrolls its own transcript.
+        let mode = TermMode::ALT_SCREEN
+            | TermMode::ALTERNATE_SCROLL
+            | TermMode::MOUSE_REPORT_CLICK
+            | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, 2, 3, 4);
+        assert_eq!(action, WheelAction::Report(b"\x1b[<64;3;4M".to_vec()));
     }
 
     // ── Fix 1: Ctrl-? = DEL (0x7f), Ctrl-/ has no special mapping ────
