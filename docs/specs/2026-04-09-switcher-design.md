@@ -13,7 +13,7 @@ The app switcher is the first shell app for Sola. It lets the user cycle through
 3. Apps are ordered by most recent use. The current app is at position 0.
 4. Position 1 (if it exists) is highlighted.
 5. Continued Tab presses advance the selection, cycling at the end.
-6. Mouse motion over an app sets it as the current selection.
+6. Mouse motion over an app sets it as the current selection. A pointer already resting on an icon when the switcher opens does not change the preselected app until the pointer moves.
 7. Left/Right arrow keys move the selection.
 8. **Releasing Super** raises all windows of the selected app and hides the switcher.
 
