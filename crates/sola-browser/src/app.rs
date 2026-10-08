@@ -530,6 +530,11 @@ pub struct App<E: Engine> {
     visits: crate::visit_history::VisitHistory,
     /// Highlight in the omnibox history list (`None` = none yet).
     omnibox_sel: Option<usize>,
+    /// Set only by ↓ / ↑ / Ctrl+N / Ctrl+P or a click on a history row.
+    /// Enter ignores the list until this is set — the first hit is not implied.
+    omnibox_armed: bool,
+    /// Load we asked for, held until the engine leaves the previous URL.
+    pending_nav: Option<PendingNav>,
     find_open: bool,
     find_query: String,
     find_count: i32,
@@ -718,6 +723,8 @@ impl<E: Engine> App<E> {
             url_bar_activating: false,
             visits: crate::visit_history::VisitHistory::load(),
             omnibox_sel: None,
+            omnibox_armed: false,
+            pending_nav: None,
             find_open: false,
             find_query: String::new(),
             find_count: 0,
@@ -860,6 +867,7 @@ impl<E: Engine> App<E> {
         URL_BAR_FOCUSED.store(on, Ordering::Relaxed);
         if !on {
             self.omnibox_sel = None;
+            self.omnibox_armed = false;
         }
     }
 
@@ -874,37 +882,21 @@ impl<E: Engine> App<E> {
         self.visits.record(url, title);
     }
 
-    fn tab_already_at(&self, url: &str) -> Option<TabId> {
-        let want = crate::util::normalize_url(url);
-        if let Some(t) = self
-            .cached_tabs
-            .iter()
-            .find(|t| crate::util::normalize_url(&t.url) == want)
-        {
-            return Some(t.id);
-        }
-        // Lucky / SERP URLs share kagi.com with any previous search — switching
-        // would skip the new query.
-        if crate::util::is_kagi_search_url(&want) {
-            return None;
-        }
-        let on_site: Vec<TabId> = self
-            .cached_tabs
-            .iter()
-            .filter(|t| crate::util::same_site(&t.url, url))
-            .map(|t| t.id)
-            .collect();
-        if on_site.iter().any(|id| *id == self.cached_active) {
-            return Some(self.cached_active);
-        }
-        on_site.first().copied()
-    }
-
     fn open_omnibox_url(&mut self, url: String) -> Task<Msg> {
         if url.is_empty() {
             return Task::none();
         }
-        if let Some(id) = self.tab_already_at(&url) {
+        let scratch = self
+            .cached_tabs
+            .iter()
+            .find(|t| t.id == self.cached_active)
+            .is_some_and(tab_is_scratch_blank);
+        if let Some(id) = omnibox_existing_tab(
+            self.cached_tabs.iter().map(|t| (t.id, t.url.as_str())),
+            self.cached_active,
+            scratch,
+            &url,
+        ) {
             let leaving = self.cached_active;
             if id != leaving {
                 self.switch_active_tab(id);
@@ -947,6 +939,14 @@ impl<E: Engine> App<E> {
         if url.is_empty() {
             return Task::none();
         }
+        let previous = self
+            .active_tab_info()
+            .map(|t| t.url.clone())
+            .unwrap_or_default();
+        self.pending_nav = Some(PendingNav {
+            previous,
+            requested: url.clone(),
+        });
         self.url_field = url.clone();
         self.last_seen_url = url.clone();
         self.set_url_bar_focused(false);
@@ -971,12 +971,46 @@ impl<E: Engine> App<E> {
             return Task::none();
         }
         let hits = self.visits.search(&typed);
-        let highlighted = self
-            .omnibox_sel
-            .and_then(|i| hits.get(i).map(|v| v.url.as_str()));
+        let highlighted = chosen_history_url(
+            hits.iter().map(|v| v.url.as_str()),
+            self.omnibox_sel,
+            self.omnibox_armed,
+        );
         let url = crate::util::omnibox_submit_url(&typed, highlighted, search_results);
+        tracing::debug!(
+            %typed,
+            selected = ?self.omnibox_sel,
+            armed = self.omnibox_armed,
+            history = highlighted.is_some(),
+            %url,
+            "omnibox submit"
+        );
         self.omnibox_sel = None;
+        self.omnibox_armed = false;
         self.open_omnibox_url(url)
+    }
+
+    /// Keep a submitted URL on the active tab while the engine is still
+    /// reporting the page we left. A redirect (engine URL is neither) shows.
+    fn hold_pending_navigation(&mut self) {
+        let Some(pending) = self.pending_nav.clone() else {
+            return;
+        };
+        let Some(tab) = self
+            .cached_tabs
+            .iter_mut()
+            .find(|t| t.id == self.cached_active)
+        else {
+            self.pending_nav = None;
+            return;
+        };
+        match held_navigation_url(&tab.url, &pending) {
+            Some(hold) => {
+                tab.url = hold;
+                tab.is_loading = true;
+            }
+            None => self.pending_nav = None,
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -2215,6 +2249,8 @@ impl<E: Engine> App<E> {
             }
             Msg::UrlBarActivate => {
                 self.set_url_bar_focused(true);
+                self.omnibox_sel = None;
+                self.omnibox_armed = false;
                 self.url_bar_activating = true;
                 let _ = self.cmd_tx.send(Cmd::Focus(false));
                 return Task::batch([
@@ -2390,6 +2426,7 @@ impl<E: Engine> App<E> {
                 self.url_field = s;
                 self.set_url_bar_focused(true);
                 self.omnibox_sel = None;
+                self.omnibox_armed = false;
                 return crate::integration::focus_url_bar();
             }
             Msg::UrlSubmit => {
@@ -2407,6 +2444,7 @@ impl<E: Engine> App<E> {
                     None => 0,
                     Some(i) => (i + 1).min(n - 1),
                 });
+                self.omnibox_armed = true;
                 return crate::integration::focus_url_bar();
             }
             Msg::OmniboxSelectPrev => {
@@ -2414,12 +2452,14 @@ impl<E: Engine> App<E> {
                     None | Some(0) => None,
                     Some(i) => Some(i - 1),
                 };
+                self.omnibox_armed = self.omnibox_sel.is_some();
                 return crate::integration::focus_url_bar();
             }
             Msg::OmniboxPick(i) => {
                 let n = self.omnibox_hits().len();
                 if i < n {
                     self.omnibox_sel = Some(i);
+                    self.omnibox_armed = true;
                 }
                 return crate::integration::focus_url_bar();
             }
@@ -2587,6 +2627,7 @@ impl<E: Engine> App<E> {
                 {
                     self.cached_active = candidate;
                 }
+                self.hold_pending_navigation();
                 let active_url = self.active_tab_info().map(|t| t.url.clone());
                 if let Some(url) = active_url {
                     let (field, seen) = apply_omnibar_url(
@@ -3199,6 +3240,7 @@ impl<E: Engine> App<E> {
         self.cached_active = id;
         // Optimistic: worker frame filter reads this before SetActiveTab is
         // pumped. Without this, every buffer-rendered is drop_bg → black page.
+        self.pending_nav = None;
         self.active_handle
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Same-size park → pending this frame. Miss → blank now (do not
@@ -7283,6 +7325,72 @@ fn tab_is_scratch_blank(t: &TabInfo) -> bool {
     is_transient_nav_url(&t.url) && t.history.iter().all(|e| is_transient_nav_url(&e.url))
 }
 
+/// Tab to focus instead of loading `url`. `None` means load it here.
+///
+/// An exact URL focuses that tab. A different path on the same site loads
+/// in the current tab — matching only the host used to unfocus and leave
+/// the page where it was. A fresh blank tab still jumps to a tab already
+/// on that site (⌘T). Kagi search URLs always load, so a new query is not
+/// dropped onto an older results tab.
+fn omnibox_existing_tab<'a, I>(
+    tabs: I,
+    active: TabId,
+    active_is_scratch: bool,
+    url: &str,
+) -> Option<TabId>
+where
+    I: IntoIterator<Item = (TabId, &'a str)>,
+{
+    let tabs: Vec<(TabId, &str)> = tabs.into_iter().collect();
+    let want = crate::util::normalize_url(url);
+    if let Some((id, _)) = tabs
+        .iter()
+        .find(|(_, tab_url)| crate::util::normalize_url(tab_url) == want)
+    {
+        return Some(*id);
+    }
+    if !active_is_scratch || crate::util::is_kagi_search_url(&want) {
+        return None;
+    }
+    tabs.into_iter()
+        .find(|(id, tab_url)| *id != active && crate::util::same_site(tab_url, url))
+        .map(|(id, _)| id)
+}
+
+/// Visit-history URL for Enter. `None` unless the user highlighted a row
+/// after the current text (`armed`). The first search hit is not implied.
+fn chosen_history_url<'a, I>(hits: I, selected: Option<usize>, armed: bool) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    if !armed {
+        return None;
+    }
+    let hits: Vec<&str> = hits.into_iter().collect();
+    selected
+        .and_then(|index| hits.get(index).copied())
+        .filter(|url| !url.is_empty())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingNav {
+    previous: String,
+    requested: String,
+}
+
+/// URL to keep showing while `pending` is in flight.
+/// `None` means the engine has arrived or gone elsewhere — show its URL.
+fn held_navigation_url(engine_url: &str, pending: &PendingNav) -> Option<String> {
+    if engine_url == pending.requested {
+        return None;
+    }
+    if is_transient_nav_url(engine_url) || engine_url == pending.previous {
+        Some(pending.requested.clone())
+    } else {
+        None
+    }
+}
+
 /// Apply an engine URL to the omnibar. Never blanks a committed field, and
 /// never overwrites while the user is typing.
 fn apply_omnibar_url(
@@ -7436,6 +7544,51 @@ mod tests {
         assert!(!front_matches_active("", "tertius"));
         assert!(!front_matches_active("primary", "tertius"));
         assert!(front_matches_active("tertius", "tertius"));
+    }
+
+    #[test]
+    fn omnibox_edit_loads_a_new_path_on_the_same_site() {
+        let tabs = [
+            (TabId(1), "https://exitgroup.dev/home"),
+            (TabId(2), "https://github.com/sola/app"),
+        ];
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/pricing"),
+            None
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://example.com/"),
+            None
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/home"),
+            Some(TabId(1))
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://github.com/sola/app"),
+            Some(TabId(2))
+        );
+    }
+
+    #[test]
+    fn omnibox_blank_tab_jumps_to_an_open_site() {
+        let tabs = [
+            (TabId(1), "about:blank"),
+            (TabId(2), "https://github.com/sola/app"),
+        ];
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), true, "https://github.com/other"),
+            Some(TabId(2))
+        );
+        assert_eq!(
+            omnibox_existing_tab(
+                tabs,
+                TabId(1),
+                true,
+                "https://kagi.com/search?q=%5Cweather"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -7621,5 +7774,52 @@ mod tests {
         let (field, seen) = apply_omnibar_url("exa", BLANK_URL, "https://elsewhere.example/", true);
         assert_eq!(field, "exa");
         assert_eq!(seen, BLANK_URL);
+    }
+
+    #[test]
+    fn enter_ignores_the_first_history_hit_until_a_row_is_chosen() {
+        let hits = [
+            "https://exitgroup.dev/login/magic",
+            "https://exitgroup.dev/home",
+        ];
+        let typed = "https://exitgroup.dev/admin";
+        assert_eq!(chosen_history_url(hits, None, false), None);
+        assert_eq!(chosen_history_url(hits, Some(0), false), None);
+        assert_eq!(
+            crate::util::omnibox_submit_url(typed, chosen_history_url(hits, Some(0), false), false),
+            typed
+        );
+        assert_eq!(
+            chosen_history_url(hits, Some(0), true),
+            Some("https://exitgroup.dev/login/magic")
+        );
+        assert_eq!(
+            crate::util::omnibox_submit_url(typed, chosen_history_url(hits, Some(1), true), false),
+            "https://exitgroup.dev/home"
+        );
+    }
+
+    #[test]
+    fn submitted_url_stays_until_the_engine_leaves_the_previous_page() {
+        let pending = PendingNav {
+            previous: "https://exitgroup.dev/login/magic".into(),
+            requested: "https://exitgroup.dev/admin".into(),
+        };
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/login/magic", &pending).as_deref(),
+            Some("https://exitgroup.dev/admin")
+        );
+        assert_eq!(
+            held_navigation_url("about:blank", &pending).as_deref(),
+            Some("https://exitgroup.dev/admin")
+        );
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/admin", &pending),
+            None
+        );
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/login/magic?next=1", &pending),
+            None
+        );
     }
 }
