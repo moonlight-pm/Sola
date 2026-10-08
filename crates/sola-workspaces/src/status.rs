@@ -2,9 +2,16 @@
 //!
 //! Hooks (Grok and Codex) and OSC 9999 write this. Process-tree only names
 //! *who*. Never infer from OSC 0/2 titles.
+//!
+//! Codex sessions hosted by the app-server daemon do not deliver those
+//! hooks into the pane (the daemon is not that pane's process). For a
+//! pane whose process tree is Codex, `task_started` / `task_complete` in
+//! that cwd's rollout jsonl raise working / done. That is the same file
+//! the compaction count already reads.
 
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -100,6 +107,11 @@ pub struct PaneStatus {
     /// Last Codex rollout length counted — presence ticks skip a rescan
     /// of a multi-megabyte jsonl when the file has not grown.
     pub codex_scan_len: u64,
+    /// Offset in the bound rollout already folded into [`Self::codex_turn_open`].
+    pub codex_phase_len: u64,
+    /// `Some(true)` while a Codex turn is open. `None` until a
+    /// `task_started` or `task_complete` marker has been seen.
+    pub codex_turn_open: Option<bool>,
 }
 
 impl PaneStatus {
@@ -228,6 +240,64 @@ impl PaneStatus {
 
     pub fn is_codex(&self) -> bool {
         self.agent.as_deref() == Some("codex")
+    }
+
+    /// Bind this Codex pane to the live rollout for `cwd` and raise
+    /// working/done from `task_started` / `task_complete`.
+    ///
+    /// `taken` is session ids already bound to other panes. Our own
+    /// `owner_session` may be in that set; it is not skipped.
+    ///
+    /// Waiting (a hook asked the user something) is left alone while the
+    /// turn is open, and becomes done when the turn closes. Returns true
+    /// when status or the bound session changed.
+    pub fn observe_codex_turn(&mut self, cwd: &Path, taken: &HashSet<String>) -> bool {
+        self.observe_codex_turn_in(&codex_home(), cwd, taken)
+    }
+
+    fn observe_codex_turn_in(&mut self, home: &Path, cwd: &Path, taken: &HashSet<String>) -> bool {
+        if !self.is_codex() {
+            return false;
+        }
+        let Some((sid, path)) = locate_codex_rollout(home, cwd, self.owner_session.as_deref(), taken)
+        else {
+            return false;
+        };
+        let before = (self.status, self.owner_session.clone());
+        if self.owner_session.as_deref() != Some(sid.as_str()) {
+            self.owner_session = Some(sid);
+            self.codex_phase_len = 0;
+            self.codex_turn_open = None;
+            self.codex_scan_len = 0;
+        }
+        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let start = if self.codex_phase_len > len {
+            self.codex_turn_open = None;
+            0
+        } else {
+            self.codex_phase_len
+        };
+        if let Some((open, pos)) = fold_codex_turn(&path, start, self.codex_turn_open) {
+            self.codex_turn_open = open;
+            self.codex_phase_len = pos;
+        }
+        if let Some(open) = self.codex_turn_open {
+            self.status = if open {
+                if self.status == AgentStatus::Waiting {
+                    AgentStatus::Waiting
+                } else {
+                    AgentStatus::Working
+                }
+            } else if self.status == AgentStatus::Waiting
+                || self.status == AgentStatus::Working
+                || self.status == AgentStatus::Idle
+            {
+                AgentStatus::Done
+            } else {
+                self.status
+            };
+        }
+        before != (self.status, self.owner_session.clone())
     }
 
     /// Session to `grok -r` after a lost tmux. Needs Grok still named on
@@ -420,6 +490,11 @@ fn read_codex_compaction_in(
     Some((count_codex_compactions(&path), len))
 }
 
+/// True when `~/.codex/sessions/**/rollout-*-{session_id}.jsonl` exists.
+pub fn codex_rollout_exists(session_id: &str) -> bool {
+    find_codex_rollout(&codex_home(), session_id).is_some()
+}
+
 /// `~/.codex/sessions/YYYY/MM/DD/rollout-{ts}-{session_id}.jsonl`
 fn find_codex_rollout(home: &Path, session_id: &str) -> Option<PathBuf> {
     if !is_session_id(session_id) {
@@ -452,6 +527,192 @@ fn find_rollout_under(dir: &Path, suffix: &str, depth: u8) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Our bound rollout, or the newest rollout whose session cwd is `cwd`.
+fn locate_codex_rollout(
+    home: &Path,
+    cwd: &Path,
+    owner: Option<&str>,
+    taken: &HashSet<String>,
+) -> Option<(String, PathBuf)> {
+    let mut skip = taken.clone();
+    if let Some(sid) = owner {
+        skip.remove(sid);
+    }
+    if let Some(found) = newest_codex_rollout_for_cwd(home, cwd, &skip) {
+        return Some(found);
+    }
+    // Keep a session we already bound when its cwd is not in the head
+    // of the file (huge session_meta) or the tree walk misses it.
+    let sid = owner.filter(|s| is_session_id(s))?;
+    let path = find_codex_rollout(home, sid)?;
+    Some((sid.to_string(), path))
+}
+
+fn newest_codex_rollout_for_cwd(
+    home: &Path,
+    cwd: &Path,
+    skip: &HashSet<String>,
+) -> Option<(String, PathBuf)> {
+    let mut best: Option<(std::time::SystemTime, String, PathBuf)> = None;
+    let mut stack = vec![home.join("sessions")];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in rd.filter_map(|e| e.ok()) {
+            let path = ent.path();
+            let Ok(ft) = ent.file_type() else {
+                continue;
+            };
+            if ft.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
+                continue;
+            }
+            let Some(sid) = session_id_from_rollout_name(&name) else {
+                continue;
+            };
+            if skip.contains(&sid) {
+                continue;
+            }
+            let Ok(modified) = ent.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            let newer = best
+                .as_ref()
+                .map(|(t, _, _)| modified > *t)
+                .unwrap_or(true);
+            if !newer {
+                continue;
+            }
+            if !rollout_cwd_matches(&path, cwd) {
+                continue;
+            }
+            best = Some((modified, sid, path));
+        }
+    }
+    best.map(|(_, sid, path)| (sid, path))
+}
+
+/// `rollout-YYYY-MM-DDTHH-MM-SS-{session_id}.jsonl`
+fn session_id_from_rollout_name(name: &str) -> Option<String> {
+    let rest = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    let t = rest.find('T')?;
+    let after_t = &rest[t + 1..];
+    // `HH-MM-SS-` is 9 bytes. The session id follows.
+    let sid = after_t.get(9..)?;
+    if sid.is_empty() || !is_session_id(sid) {
+        return None;
+    }
+    Some(sid.to_string())
+}
+
+fn rollout_cwd_matches(path: &Path, cwd: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 4096];
+    let Ok(n) = file.read(&mut buf) else {
+        return false;
+    };
+    let Ok(head) = std::str::from_utf8(&buf[..n]) else {
+        return false;
+    };
+    let want = cwd.to_string_lossy();
+    let quoted = format!("\"cwd\":\"{want}\"");
+    let spaced = format!("\"cwd\": \"{want}\"");
+    head.contains(&quoted) || head.contains(&spaced)
+}
+
+/// Fold `task_started` / `task_complete` from `start` to the last complete
+/// line. A trailing partial line is left for the next tick (`pos` stops
+/// before it).
+fn fold_codex_turn(path: &Path, start: u64, mut open: Option<bool>) -> Option<(Option<bool>, u64)> {
+    let mut file = File::open(path).ok()?;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start)).ok()?;
+    }
+    let mut reader = BufReader::new(file);
+    let mut pos = start;
+    loop {
+        let (nl, head, full) = {
+            let peek = match reader.fill_buf() {
+                Ok(buf) if !buf.is_empty() => buf,
+                Ok(_) => break,
+                Err(_) => return None,
+            };
+            let nl = peek.iter().position(|&b| b == b'\n');
+            let head_len = nl.unwrap_or(peek.len()).min(240);
+            let head = peek[..head_len].to_vec();
+            (nl, head, peek.len())
+        };
+        let Some(nl) = nl else {
+            if full < 8 * 1024 {
+                break;
+            }
+            open = note_turn_marker(&head, open);
+            reader.consume(full);
+            pos += full as u64;
+            let (skipped, done) = skip_counted(&mut reader);
+            pos += skipped;
+            if done {
+                break;
+            }
+            continue;
+        };
+        open = note_turn_marker(&head, open);
+        reader.consume(nl + 1);
+        pos += (nl + 1) as u64;
+    }
+    Some((open, pos))
+}
+
+fn note_turn_marker(head: &[u8], open: Option<bool>) -> Option<bool> {
+    let end = head
+        .iter()
+        .position(|&b| b == b'\n' || b == b'\r')
+        .unwrap_or(head.len());
+    let Ok(s) = std::str::from_utf8(&head[..end]) else {
+        return open;
+    };
+    if s.contains(r#""payload":{"type":"task_started""#)
+        || s.contains(r#""payload": {"type": "task_started""#)
+    {
+        Some(true)
+    } else if s.contains(r#""payload":{"type":"task_complete""#)
+        || s.contains(r#""payload": {"type": "task_complete""#)
+    {
+        Some(false)
+    } else {
+        open
+    }
+}
+
+/// Bytes skipped, and whether EOF arrived before a newline.
+fn skip_counted(reader: &mut impl BufRead) -> (u64, bool) {
+    let mut n = 0u64;
+    loop {
+        let peek = match reader.fill_buf() {
+            Ok(buf) if !buf.is_empty() => buf,
+            _ => return (n, true),
+        };
+        if let Some(i) = peek.iter().position(|&b| b == b'\n') {
+            reader.consume(i + 1);
+            return (n + (i + 1) as u64, false);
+        }
+        let len = peek.len();
+        reader.consume(len);
+        n += len as u64;
+    }
 }
 
 /// Count jsonl records whose top-level `type` is `compacted`.
@@ -611,12 +872,15 @@ fn from_disk_pane(p: &DiskPane) -> PaneStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::hooks::map::MappedHook;
     use crate::hooks::server::Incoming;
 
     fn hook(session: &str, status: AgentStatus) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            cwd: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(status),
@@ -634,6 +898,7 @@ mod tests {
     fn session_start(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            cwd: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: None,
@@ -651,6 +916,7 @@ mod tests {
     fn prompt_submit(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            cwd: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Working),
@@ -668,6 +934,7 @@ mod tests {
     fn session_end(session: &str) -> Incoming {
         Incoming {
             pane_id: "p".into(),
+            cwd: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Done),
@@ -1040,10 +1307,75 @@ mod tests {
     }
 
     #[test]
+    fn codex_rollout_turn_markers_drive_status() {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sola-codex-turn-{n}"));
+        let cwd = PathBuf::from("/src/rimworld");
+        let sid = "01a0f83d-53ec-74f0-a240-ff826d500d8e";
+        let day = root.join("sessions/2026/10/01");
+        std::fs::create_dir_all(&day).unwrap();
+        let path = day.join(format!("rollout-2026-10-01T10-12-43-{sid}.jsonl"));
+        let started = r#"{"timestamp":"t","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}"#;
+        let done = r#"{"timestamp":"t","ordinal":2,"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}"#;
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\"}}}}\n{started}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+
+        let mut pane = PaneStatus {
+            agent: Some("codex".into()),
+            ..PaneStatus::default()
+        };
+        let taken = HashSet::new();
+        assert!(pane.observe_codex_turn_in(&root, &cwd, &taken));
+        assert_eq!(pane.status, AgentStatus::Working);
+        assert_eq!(pane.owner_session.as_deref(), Some(sid));
+        assert!(!pane.observe_codex_turn_in(&root, &cwd, &taken));
+
+        let mut waiting = pane.clone();
+        waiting.status = AgentStatus::Waiting;
+        waiting.codex_phase_len = 0;
+        waiting.codex_turn_open = None;
+        assert!(!waiting.observe_codex_turn_in(&root, &cwd, &taken));
+        assert_eq!(waiting.status, AgentStatus::Waiting);
+
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\"}}}}\n{started}\n{done}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+        // File was rewritten shorter than the previous offset; rescan.
+        assert!(pane.observe_codex_turn_in(&root, &cwd, &taken));
+        assert_eq!(pane.status, AgentStatus::Done);
+
+        let mut other = PaneStatus {
+            agent: Some("codex".into()),
+            ..PaneStatus::default()
+        };
+        let mut claimed = HashSet::new();
+        claimed.insert(sid.to_string());
+        assert!(!other.observe_codex_turn_in(&root, &cwd, &claimed));
+        assert!(other.owner_session.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn apply_hook_session_start_names_codex() {
         let mut pane = PaneStatus::default();
         let incoming = Incoming {
             pane_id: "p".into(),
+            cwd: None,
             agent: "codex".into(),
             mapped: MappedHook {
                 status: None,

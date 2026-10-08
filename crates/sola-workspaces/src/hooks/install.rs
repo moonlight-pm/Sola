@@ -182,9 +182,10 @@ payload=$({{ command -p cat 2>/dev/null || cat; }})
 if [ -z "$payload" ]; then
   exit 0
 fi
-if [ -z "$SOLA_PANE_ID" ]; then
-  exit 0
-fi
+# Pane id may be missing: Codex runs the session in a shared app-server
+# whose env is whichever pane started the daemon. The payload cwd is enough
+# for Workspaces to retarget. An empty header is fine.
+pane="${{SOLA_PANE_ID:-}}"
 sock="${{SOLA_WS_HOOKS_SOCK:-}}"
 if [ -z "$sock" ]; then
   sock="${{XDG_RUNTIME_DIR:-/tmp}}/sola-ws-hooks.sock"
@@ -195,7 +196,7 @@ fi
 printf '%s' "$payload" | curl -sS --unix-socket "$sock" -X POST "http://localhost/hook/{agent}" \
   --connect-timeout 0.5 --max-time 1.5 \
   -H "Content-Type: application/json" \
-  -H "X-Sola-Pane-Id: ${{SOLA_PANE_ID}}" \
+  -H "X-Sola-Pane-Id: ${{pane}}" \
   --data-binary @- >/dev/null 2>&1 || true
 exit 0
 "#

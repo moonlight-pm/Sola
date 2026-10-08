@@ -451,6 +451,18 @@ pub struct Emulator {
     parser: Processor,
 }
 
+/// Raise the alternate grid's history limit to `history_limit`.
+///
+/// `Term::new` builds that grid with limit 0 (xterm's alt screen has no
+/// scrollback). `swap_alt` is the public way onto it: enter, set the limit,
+/// leave. Entering resets the visible alt rows and does not clear the limit
+/// on the way back out.
+fn arm_alternate_scrollback(term: &mut Term<Listener>, history_limit: usize) {
+    term.swap_alt();
+    term.grid_mut().update_history(history_limit);
+    term.swap_alt();
+}
+
 impl Emulator {
     /// Construct a new emulator with a `cols × rows` grid.
     ///
@@ -473,7 +485,13 @@ impl Emulator {
         let mut config = Config::default();
         config.kitty_keyboard = true;
         config.semantic_escape_chars = SEMANTIC_ESCAPE_CHARS.to_owned();
-        let term = Term::new(config, &dims, listener);
+        let history_limit = config.scrolling_history;
+        let mut term = Term::new(config, &dims, listener);
+        // The alternate grid is born with history limit 0. tmux puts this
+        // terminal on that grid for the whole attach, and Codex's transcript
+        // arrives as scroll-up inside a top-aligned region. Give the alt
+        // grid the same limit as the primary so those lines stay scrollable.
+        arm_alternate_scrollback(&mut term, history_limit);
         Self {
             term: Arc::new(FairMutex::new(term)),
             cursor: Arc::new(RwLock::new(CursorSnap::default())),
@@ -636,5 +654,51 @@ mod tests {
             Some("API_KEY"),
             "double-click on key should select only the left-hand side"
         );
+    }
+
+    /// A top-aligned scroll on the alternate screen keeps the line that
+    /// rolled off, and the wheel's `scroll_display` can bring it back.
+    /// This is the shape tmux forwards for a Codex `insert_history` batch
+    /// (`CSI r` plus `CSI S`).
+    #[test]
+    fn alt_screen_scroll_keeps_the_line_that_rolled_off() {
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::grid::Scroll;
+        use alacritty_terminal::index::{Column, Line};
+        use alacritty_terminal::term::TermMode;
+
+        let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
+        let (ntx, _nrx) = mpsc::channel::<String>();
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut emulator = Emulator::new(40, 8, Listener::new("t".into(), ptx, ntx, ttx));
+
+        emulator.advance(b"\x1b[?1049h");
+        emulator.advance(b"AAAA\r\nBBBB\r\nCCCC\r\nDDDD\r\nEEEE\r\nFFFF\r\nGGGG\r\nHHHH");
+        // Region is rows 1-6. The bottom two rows stay put. SU rolls AAAA off.
+        emulator.advance(b"\x1b[1;6r\x1b[1S");
+
+        let term = emulator.term();
+        let mut term = term.lock();
+        assert!(
+            term.mode().contains(TermMode::ALT_SCREEN),
+            "smcup should leave the grid on the alternate screen"
+        );
+        let grid = term.grid();
+        let history_lines = grid.total_lines() - grid.screen_lines();
+        assert!(
+            history_lines >= 1,
+            "alt screen dropped the scrolled line (history {history_lines})"
+        );
+        term.scroll_display(Scroll::Delta(1));
+        let content = term.renderable_content();
+        let cells: Vec<_> = content.display_iter.collect();
+        // Viewport line 0 is buffer line `-display_offset`, so the rolled-off
+        // row sits at Line(-1) after one step into history.
+        let top: String = cells
+            .iter()
+            .filter(|indexed| indexed.point.line == Line(-1) && indexed.point.column < Column(4))
+            .map(|indexed| indexed.cell.c)
+            .collect();
+        assert_eq!(top, "AAAA", "scrolled-off line should be the first history row");
     }
 }
