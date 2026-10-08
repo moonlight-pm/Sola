@@ -91,11 +91,11 @@ solactl workspaces project.reorder --project Sola [--before Illuno]
 solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
-    [--agent grok|codex] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
+    [--agent grok|codex|claude] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
     [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
-solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex] [--prompt '…']
+solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex|claude] [--prompt '…']
 solactl workspaces workspace.select --workspace ticket-123
 solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
 solactl workspaces pane.list [--workspace ticket-123]
@@ -128,10 +128,11 @@ per-project script that runs in a new worktree after spawn (also
 **Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).
 `pane.list` and `whoami` include `session_id` when that pane’s Grok
-owner session is known (used to `grok -r` after a reboot loses tmux).
+or Claude owner session is known (used to `grok -r` or `claude --resume`
+after a reboot loses tmux).
 A workspace name prefers the
 Grok leaf when sending, reading, waiting, or exec-ing (Codex leaf when
-`--agent codex`). `pane.send`, `pane.read`, and
+`--agent codex`, Claude leaf when `--agent claude`). `pane.send`, `pane.read`, and
 `workspace.exec --prompt` address that workspace’s tmux session exactly
 (`=session:` current pane) so a split leaf `…-p` is not confused with
 the parent. `pane.send` and
@@ -141,8 +142,10 @@ the first newline and a long prompt is not truncated. A failed paste
 returns the tmux error (not a bare `send failed`). `--prompt` without
 `--agent` implies Grok. `--prompt` and `--prompt-file` are exclusive. Spawn
 parent defaults to `$SOLA_PANE_ID` when you run from a Workspaces pane.
-`--agent` is `grok` or `codex`. First Codex session may need `/hooks` in
-the TUI to trust the Sola status hook. `pane.wait` holds until status
+`--agent` is `grok`, `codex`, or `claude`. Other names error (OpenCode
+stays presence-only). First Codex session may need `/hooks` in
+the TUI to trust the Sola status hook. Claude hooks are merged into
+`~/.claude/settings.json` and apply to the next Claude session. `pane.wait` holds until status
 matches (`--fresh` waits for a transition). Drop unregisters; it does not
 `git worktree remove` unless
 you pass `--worktree` (add `--force` to toss a dirty checkout).

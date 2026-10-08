@@ -40,26 +40,29 @@ becoming this product.
 
 - Physical TTY → Sola desktop; this app is one window among kit apps
 - Sibling checkouts live under `<project-root>/.worktrees/<name>`
-- Agents are CLI TUIs in PTYs (Grok, Codex). Orca may be installed alongside; hooks
+- Agents are CLI TUIs in PTYs (Grok, Codex, Claude). Orca may be installed alongside; hooks
   must not fight (`sola-status.json` vs `orca-status.json`). Codex hooks merge
-  into `~/.codex/hooks.json` and leave Impeccable groups alone.
+  into `~/.codex/hooks.json` and leave Impeccable groups alone. Claude hooks
+  merge into `~/.claude/settings.json` and leave permissions, plugins, and
+  other hooks alone.
 - `sola-terminal` remains the untitled shell on tmux socket `sola`
 
 ## Capabilities and Constraints
 
 **In:** projects, workspaces (main / worktree / folder), agent-aware panes,
 spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
-is background unless `--select`; can pass `--agent grok|codex` + `--prompt` /
-`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok and
-Codex hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok
-and Codex panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+is background unless `--select`; can pass `--agent grok|codex|claude` + `--prompt` /
+`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok,
+Codex, and Claude hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok,
+Codex, and Claude panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
-tmux persist on socket `sola-ws` (a Grok pane’s session id is in
-`last-status.json`; a lost tmux after reboot runs `grok -r` when Grok
-was still running and the session dir exists), unfocused desk card
+tmux persist on socket `sola-ws` (a Grok or Claude pane’s session id is in
+`last-status.json`; a lost tmux after reboot runs `grok -r` or
+`claude --resume` when that agent was still running and the session
+is still on disk), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `codex is done` /
-`needs attention`),
+`claude is done` / `needs attention`),
 `workspace.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
 `workspace.set --name` (`git worktree move` to `.worktrees/<name>`;
 `--title` is the rail label, defaulting to that slug; `--branch` is
@@ -67,14 +70,14 @@ was still running and the session dir exists), unfocused desk card
 Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
 tabs inside a project and project groups (`project.reorder`).
 
-**First-class CLI:** **Grok and Codex.** Implement and test Grok first whenever
-adding agent support. Claude / OpenCode stay presence-only (D4).
+**First-class CLI:** **Grok, Codex, and Claude.** Implement and test Grok first whenever
+adding agent support. OpenCode stays presence-only.
 
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
-mailbox orchestration, 15 hook adapters.
+mailbox orchestration, 15 hook adapters. OpenCode `--agent`.
 
-**Undecided (do not invent):** Claude hook installer vs presence. App-down
-is fail (call plane). Codex is decided: first-class.
+**Undecided (do not invent):** App-down is fail (call plane). Codex and
+Claude are decided: first-class. D4 is closed.
 
 ## Brand Commitments
 

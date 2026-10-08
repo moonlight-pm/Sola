@@ -1,7 +1,7 @@
 //! Pane / workspace status vocabulary.
 //!
-//! Hooks (Grok and Codex) and OSC 9999 write this. Process-tree only names
-//! *who*. Never infer from OSC 0/2 titles.
+//! Hooks (Grok, Codex, and Claude) and OSC 9999 write this. Process-tree
+//! only names *who*. Never infer from OSC 0/2 titles.
 //!
 //! Codex sessions hosted by the app-server daemon do not deliver those
 //! hooks into the pane (the daemon is not that pane's process). For a
@@ -58,8 +58,8 @@ impl AgentStatus {
     }
 }
 
-/// Mark for a workspace tab: Grok and Codex panes. A sibling shell stays
-/// off the disc even if it still holds a leftover status.
+/// Mark for a workspace tab: Grok, Codex, and Claude panes. A sibling
+/// shell stays off the disc even if it still holds a leftover status.
 pub fn rollup_tracked<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> AgentStatus {
     AgentStatus::rollup(
         panes
@@ -81,7 +81,7 @@ pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Opt
         .or_else(|| panes.first().and_then(|p| p.agent.clone()))
 }
 
-/// Quiet `×N` on the workspace row: loudest Grok or Codex session in the tab.
+/// Quiet `×N` on the workspace row: loudest Grok, Codex, or Claude session.
 pub fn rail_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
     panes
         .into_iter()
@@ -112,6 +112,9 @@ pub struct PaneStatus {
     /// `Some(true)` while a Codex turn is open. `None` until a
     /// `task_started` or `task_complete` marker has been seen.
     pub codex_turn_open: Option<bool>,
+    /// Last Claude transcript length counted. Presence ticks skip a
+    /// rescan when the jsonl has not grown.
+    pub claude_scan_len: u64,
 }
 
 impl PaneStatus {
@@ -129,7 +132,7 @@ impl PaneStatus {
         // events for a subagent's own session.
         if incoming.mapped.claim || incoming.mapped.clear_turn {
             if let Some(sid) = incoming.mapped.session_id.clone() {
-                self.owner_session = Some(sid);
+                self.bind_owner(sid);
             }
             // SessionStart names this pane even before presence ticks.
             self.agent = Some(who.clone());
@@ -137,7 +140,7 @@ impl PaneStatus {
             return;
         } else if let Some(sid) = incoming.mapped.session_id.clone() {
             if self.owner_session.is_none() {
-                self.owner_session = Some(sid);
+                self.bind_owner(sid);
             }
         }
         if incoming.mapped.clear_turn {
@@ -202,17 +205,21 @@ impl PaneStatus {
 
     /// Refresh `compaction_count` from the pane's session artifacts.
     ///
-    /// Only a Grok or Codex pane gets a count — a sibling shell must
-    /// not inherit the newest session under this cwd. Grok: session dir
-    /// segments/checkpoints, then `signals.json` `compactionCount`
+    /// Only a Grok, Codex, or Claude pane gets a count — a sibling shell
+    /// must not inherit the newest session under this cwd. Grok: session
+    /// dir segments/checkpoints, then `signals.json` `compactionCount`
     /// (that field often stays 0). Codex: `type: compacted` records in
-    /// `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. No Grok
-    /// owner session yet → newest session under this cwd. Codex needs
-    /// `owner_session`; a missed file keeps the hook-incremented count.
+    /// `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. Claude:
+    /// `subtype: compact_boundary` in
+    /// `~/.claude/projects/<encoded-cwd>/<session_id>.jsonl`. No Grok or
+    /// Claude owner session yet → newest session under this cwd. Codex
+    /// needs `owner_session`; a missed file keeps the hook-incremented
+    /// count.
     pub fn refresh_compaction(&mut self, cwd: &Path) {
         if !self.shows_compaction() {
             self.compaction_count = 0;
             self.codex_scan_len = 0;
+            self.claude_scan_len = 0;
             return;
         }
         if self.is_grok() {
@@ -231,7 +238,30 @@ impl PaneStatus {
                 self.compaction_count = n;
                 self.codex_scan_len = len;
             }
+            return;
         }
+        if self.is_claude() {
+            if let Some((n, len)) = read_claude_compaction_in(
+                &claude_home(),
+                cwd,
+                self.owner_session.as_deref(),
+                self.claude_scan_len,
+                self.compaction_count,
+            ) {
+                self.compaction_count = n;
+                self.claude_scan_len = len;
+            }
+        }
+    }
+
+    fn bind_owner(&mut self, sid: String) {
+        if self.owner_session.as_deref() != Some(sid.as_str()) {
+            self.codex_scan_len = 0;
+            self.codex_phase_len = 0;
+            self.codex_turn_open = None;
+            self.claude_scan_len = 0;
+        }
+        self.owner_session = Some(sid);
     }
 
     pub fn is_grok(&self) -> bool {
@@ -240,6 +270,10 @@ impl PaneStatus {
 
     pub fn is_codex(&self) -> bool {
         self.agent.as_deref() == Some("codex")
+    }
+
+    pub fn is_claude(&self) -> bool {
+        self.agent.as_deref() == Some("claude")
     }
 
     /// Bind this Codex pane to the live rollout for `cwd` and raise
@@ -259,7 +293,8 @@ impl PaneStatus {
         if !self.is_codex() {
             return false;
         }
-        let Some((sid, path)) = locate_codex_rollout(home, cwd, self.owner_session.as_deref(), taken)
+        let Some((sid, path)) =
+            locate_codex_rollout(home, cwd, self.owner_session.as_deref(), taken)
         else {
             return false;
         };
@@ -300,10 +335,11 @@ impl PaneStatus {
         before != (self.status, self.owner_session.clone())
     }
 
-    /// Session to `grok -r` after a lost tmux. Needs Grok still named on
-    /// the pane (exited-to-shell is not a resume) and a non-empty id.
+    /// Session to resume after a lost tmux. Grok (`grok -r`) or Claude
+    /// (`claude --resume`). Needs that agent still named on the pane
+    /// (exited-to-shell is not a resume) and a non-empty id.
     pub fn resume_session_id(&self) -> Option<&str> {
-        if !self.is_grok() {
+        if !self.is_grok() && !self.is_claude() {
             return None;
         }
         self.owner_session
@@ -318,7 +354,7 @@ impl PaneStatus {
     }
 
     fn shows_compaction(&self) -> bool {
-        self.is_grok() || self.is_codex()
+        self.is_grok() || self.is_codex() || self.is_claude()
     }
 
     /// Presence names who is here. It never *raises* working/waiting/done
@@ -379,6 +415,26 @@ fn codex_home() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".codex")
         })
+}
+
+fn claude_home() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".claude")
+        })
+}
+
+/// Claude project dir: every non-alphanumeric byte of the cwd becomes `-`.
+/// `/home/joshua/Workspace/Exit` → `-home-joshua-Workspace-Exit`.
+pub fn encode_claude_project(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }
 
 /// True when `~/.grok/sessions/<cwd-encode>/<id>/` (any cwd group) exists.
@@ -587,10 +643,7 @@ fn newest_codex_rollout_for_cwd(
             let Ok(modified) = ent.metadata().and_then(|m| m.modified()) else {
                 continue;
             };
-            let newer = best
-                .as_ref()
-                .map(|(t, _, _)| modified > *t)
-                .unwrap_or(true);
+            let newer = best.as_ref().map(|(t, _, _)| modified > *t).unwrap_or(true);
             if !newer {
                 continue;
             }
@@ -773,6 +826,135 @@ fn line_is_codex_compacted(head: &[u8]) -> bool {
     s.contains(r#""type":"compacted""#) || s.contains(r#""type": "compacted""#)
 }
 
+/// True when `~/.claude/projects/*/<session_id>.jsonl` exists.
+pub fn claude_session_exists(session_id: &str) -> bool {
+    find_claude_transcript(&claude_home(), session_id).is_some()
+}
+
+fn find_claude_transcript(home: &Path, session_id: &str) -> Option<PathBuf> {
+    if !is_session_id(session_id) {
+        return None;
+    }
+    let name = format!("{session_id}.jsonl");
+    let rd = std::fs::read_dir(home.join("projects")).ok()?;
+    for ent in rd.filter_map(|e| e.ok()) {
+        if !ent.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let path = ent.path().join(&name);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn newest_claude_transcript(home: &Path, cwd: &Path) -> Option<PathBuf> {
+    let dir = home.join("projects").join(encode_claude_project(cwd));
+    let rd = std::fs::read_dir(&dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for ent in rd.filter_map(|e| e.ok()) {
+        if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let name = ent.file_name();
+        let name = name.to_string_lossy();
+        let Some(sid) = name.strip_suffix(".jsonl") else {
+            continue;
+        };
+        if !is_session_id(sid) {
+            continue;
+        }
+        let Ok(modified) = ent.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        let newer = best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true);
+        if newer {
+            best = Some((modified, ent.path()));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn claude_transcript_for(home: &Path, cwd: &Path, session_id: Option<&str>) -> Option<PathBuf> {
+    if let Some(sid) = session_id.filter(|s| is_session_id(s)) {
+        return find_claude_transcript(home, sid);
+    }
+    newest_claude_transcript(home, cwd)
+}
+
+fn read_claude_compaction_in(
+    home: &Path,
+    cwd: &Path,
+    session_id: Option<&str>,
+    last_len: u64,
+    last_count: u32,
+) -> Option<(u32, u64)> {
+    let path = claude_transcript_for(home, cwd, session_id)?;
+    let len = std::fs::metadata(&path).ok()?.len();
+    if len == last_len && last_len > 0 {
+        return Some((last_count, len));
+    }
+    Some((count_claude_compactions(&path), len))
+}
+
+/// `compact_boundary` rows, or `isCompactSummary` when an older transcript
+/// has no boundary. Both on the same compaction would double-count.
+fn count_claude_compactions(path: &Path) -> u32 {
+    let Ok(file) = File::open(path) else {
+        return 0;
+    };
+    let mut reader = BufReader::new(file);
+    let mut boundaries = 0u32;
+    let mut summaries = 0u32;
+    loop {
+        let peek = match reader.fill_buf() {
+            Ok(buf) if !buf.is_empty() => buf,
+            _ => break,
+        };
+        let nl = peek.iter().position(|&b| b == b'\n');
+        let head_end = nl.unwrap_or(peek.len()).min(384);
+        match line_claude_compact_kind(&peek[..head_end]) {
+            2 => boundaries += 1,
+            1 => summaries += 1,
+            _ => {}
+        }
+        match nl {
+            Some(i) => reader.consume(i + 1),
+            None => {
+                let used = peek.len();
+                reader.consume(used);
+                skip_until_newline(&mut reader);
+            }
+        }
+    }
+    if boundaries > 0 {
+        boundaries
+    } else {
+        summaries
+    }
+}
+
+/// 2 = `compact_boundary`, 1 = compact summary, 0 = neither.
+fn line_claude_compact_kind(head: &[u8]) -> u8 {
+    let end = head
+        .iter()
+        .position(|&b| b == b'\n' || b == b'\r')
+        .unwrap_or(head.len());
+    let Ok(s) = std::str::from_utf8(&head[..end]) else {
+        return 0;
+    };
+    if s.contains(r#""subtype":"compact_boundary""#)
+        || s.contains(r#""subtype": "compact_boundary""#)
+    {
+        return 2;
+    }
+    if s.contains(r#""isCompactSummary":true"#) || s.contains(r#""isCompactSummary": true"#) {
+        return 1;
+    }
+    0
+}
+
 fn last_status_path() -> PathBuf {
     crate::paths::config_dir().join("last-status.json")
 }
@@ -781,7 +963,8 @@ fn last_status_path() -> PathBuf {
 struct DiskPane {
     status: AgentStatus,
     agent: Option<String>,
-    /// Grok `owner_session`. Resume `grok -r` after a lost tmux.
+    /// Grok or Claude `owner_session`. Resume `grok -r` or
+    /// `claude --resume` after a lost tmux.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
 }
@@ -1084,10 +1267,19 @@ mod tests {
         };
         let other = PaneStatus {
             status: AgentStatus::Waiting,
-            agent: Some("claude".into()),
+            agent: Some("opencode".into()),
             ..PaneStatus::default()
         };
         assert_eq!(rollup_tracked([&grok, &shell, &other]), AgentStatus::Done);
+        let claude = PaneStatus {
+            status: AgentStatus::Waiting,
+            agent: Some("claude".into()),
+            ..PaneStatus::default()
+        };
+        assert_eq!(
+            rollup_tracked([&grok, &shell, &claude]),
+            AgentStatus::Waiting
+        );
         let codex = PaneStatus {
             status: AgentStatus::Waiting,
             agent: Some("codex".into()),
@@ -1140,6 +1332,66 @@ mod tests {
         assert_eq!(rail_compaction([&shell]), 0);
         assert_eq!(rail_compaction([&a, &codex, &shell]), 7);
         assert_eq!(rail_compaction([&codex]), 7);
+        let claude = PaneStatus {
+            agent: Some("claude".into()),
+            compaction_count: 11,
+            ..PaneStatus::default()
+        };
+        assert_eq!(rail_compaction([&a, &codex, &claude, &shell]), 11);
+    }
+
+    #[test]
+    fn claude_project_encoding_and_compaction_count() {
+        assert_eq!(
+            encode_claude_project(Path::new("/home/joshua/Workspace/Exit")),
+            "-home-joshua-Workspace-Exit"
+        );
+        assert_eq!(
+            encode_claude_project(Path::new(
+                "/home/joshua/Workspace/Sola/.worktrees/sola-workspaces"
+            )),
+            "-home-joshua-Workspace-Sola--worktrees-sola-workspaces"
+        );
+        let root = std::env::temp_dir().join(format!(
+            "sola-ws-claude-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cwd = Path::new("/tmp/proj");
+        let dir = root.join("projects").join(encode_claude_project(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sid = "11111111-2222-3333-4444-555555555555";
+        let path = dir.join(format!("{sid}.jsonl"));
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"user","message":{"content":"hi"}}"#,
+                "\n",
+                r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}"#,
+                "\n",
+                r#"{"type":"user","isCompactSummary":true,"message":{"content":"summary"}}"#,
+                "\n",
+                r#"{"parentUuid":"abc","type":"system","subtype":"compact_boundary"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        assert!(find_claude_transcript(&root, sid).is_some());
+        assert_eq!(count_claude_compactions(&path), 2);
+        let (n, len) = read_claude_compaction_in(&root, cwd, Some(sid), 0, 0).unwrap();
+        assert_eq!(n, 2);
+        assert!(len > 0);
+        let (cached, _) = read_claude_compaction_in(&root, cwd, Some(sid), len, n).unwrap();
+        assert_eq!(cached, n);
+        let (newest, _) = read_claude_compaction_in(&root, cwd, None, 0, 0).unwrap();
+        assert_eq!(newest, 2);
+        assert!(read_claude_compaction_in(&root, cwd, Some("missing-session"), 0, 0).is_none());
+        let old = dir.join("older-session.jsonl");
+        std::fs::write(&old, "{\"type\":\"user\",\"isCompactSummary\":true}\n").unwrap();
+        assert_eq!(count_claude_compactions(&old), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1282,7 +1534,10 @@ mod tests {
         write_codex_rollout(&root, sid, 3, true);
         let path = find_codex_rollout(&root, sid).unwrap();
         let len = std::fs::metadata(&path).unwrap().len();
-        assert_eq!(read_codex_compaction_in(&root, Some(sid), 0, 0), Some((3, len)));
+        assert_eq!(
+            read_codex_compaction_in(&root, Some(sid), 0, 0),
+            Some((3, len))
+        );
         // Unchanged length keeps the previous count (no rescan).
         assert_eq!(
             read_codex_compaction_in(&root, Some(sid), len, 99),
@@ -1402,6 +1657,10 @@ mod tests {
         assert_eq!(pane.resume_session_id(), None);
         pane.agent = Some("grok".into());
         assert_eq!(pane.resume_session_id(), Some("sid-a"));
+        pane.agent = Some("claude".into());
+        assert_eq!(pane.resume_session_id(), Some("sid-a"));
+        pane.agent = Some("codex".into());
+        assert_eq!(pane.resume_session_id(), None);
         pane.agent = None;
         pane.apply_presence(Presence::Shell);
         assert_eq!(pane.resume_session_id(), None);

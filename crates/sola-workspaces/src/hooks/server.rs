@@ -136,7 +136,9 @@ pub fn parse_buf(buf: &[u8]) -> std::io::Result<Option<Incoming>> {
 
 fn agent_from_request_line(headers: &str) -> Option<String> {
     let line = headers.lines().next().unwrap_or("");
-    if line.contains("/hook/codex") {
+    if line.contains("/hook/claude") {
+        Some("claude".into())
+    } else if line.contains("/hook/codex") {
         Some("codex".into())
     } else if line.contains("/hook/grok") {
         Some("grok".into())
@@ -227,15 +229,14 @@ pub fn resolve_hook_target(
         return header_matches;
     }
     let Some(cwd) = event_cwd else {
-        return header_pane
-            .filter(|id| !id.is_empty())
-            .map(str::to_string);
+        return header_pane.filter(|id| !id.is_empty()).map(str::to_string);
     };
-    let matches: Vec<&HookLeaf<'_>> = leaves.iter().filter(|leaf| paths_same(leaf.path, cwd)).collect();
+    let matches: Vec<&HookLeaf<'_>> = leaves
+        .iter()
+        .filter(|leaf| paths_same(leaf.path, cwd))
+        .collect();
     if matches.is_empty() {
-        return header_pane
-            .filter(|id| !id.is_empty())
-            .map(str::to_string);
+        return header_pane.filter(|id| !id.is_empty()).map(str::to_string);
     }
     if let Some(sid) = event_session.filter(|s| !s.is_empty()) {
         if let Some(leaf) = matches.iter().find(|leaf| leaf.session_id == Some(sid)) {
@@ -286,6 +287,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_claude_http_post() {
+        let body = br#"{"hook_event_name":"Stop","session_id":"sid","cwd":"/src/app"}"#;
+        let req = format!(
+            "POST /hook/claude HTTP/1.1\r\nX-Sola-Pane-Id: pane-k\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            std::str::from_utf8(body).unwrap()
+        );
+        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        assert_eq!(got.pane_id, "pane-k");
+        assert_eq!(got.agent, "claude");
+        assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Done));
+        assert_eq!(got.cwd.as_deref(), Some("/src/app"));
+    }
+
+    #[test]
     fn parses_codex_http_post() {
         let body = br#"{"hook_event_name":"PermissionRequest"}"#;
         let req = format!(
@@ -301,7 +317,8 @@ mod tests {
 
     #[test]
     fn parses_codex_cwd_without_pane_header() {
-        let body = br#"{"hookEventName":"UserPromptSubmit","cwd":"/src/rimworld","sessionId":"s1"}"#;
+        let body =
+            br#"{"hookEventName":"UserPromptSubmit","cwd":"/src/rimworld","sessionId":"s1"}"#;
         let req = format!(
             "POST /hook/codex HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

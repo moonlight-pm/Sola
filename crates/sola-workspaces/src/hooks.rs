@@ -1,6 +1,6 @@
-//! Grok + Codex hook installer + Unix-socket receiver.
+//! Grok, Codex, and Claude hook installer + Unix-socket receiver.
 //!
-//! Claude stays presence-only. Identity is `SOLA_PANE_ID`, not the hook file name.
+//! OpenCode stays presence-only. Identity is `SOLA_PANE_ID`, not the hook file name.
 
 use std::sync::{Mutex, OnceLock, mpsc};
 
@@ -36,7 +36,9 @@ pub fn start() -> HookPaths {
             grok_hooks = %paths.grok_hooks_dir.display(),
             codex_script = %paths.codex_script_path.display(),
             codex_hooks = %paths.codex_hooks_json.display(),
-            "installed grok and codex sola-status hooks"
+            claude_script = %paths.claude_script_path.display(),
+            claude_settings = %paths.claude_settings_json.display(),
+            "installed grok, codex, and claude sola-status hooks"
         );
     }
     match server::bind(&paths.socket_path) {

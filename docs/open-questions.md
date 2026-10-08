@@ -72,20 +72,24 @@ WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
 **CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
 comparison warrants a second engine.
 
-### D4 — sola-workspaces product forks (P2)
+### D4 — sola-workspaces product forks (P2) — **closed (2026-10-08)**
 
 **Context:** Freeze is in; persist + spawn landed. Call plane owns fail-if-down
-(was old D3.3). Remaining fork is Claude hooks.
+(was old D3.3). The last fork was Claude hooks.
 
 **Ask:**
 
 1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`.  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
-4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
+4. ~~Claude in v1~~ **decided 2026-10-08:** first-class, same path as Codex.
+   `--agent claude` on spawn/exec. Hooks merge into `~/.claude/settings.json`
+   (permissions, plugins, and other hooks stay). Rail rollup. Quiet `×N`
+   counts `compact_boundary` in the session jsonl. A new tmux after reboot
+   runs `claude --resume <id>` when that transcript is still on disk.
+   OpenCode stays presence-only.
 
-**Until decided:** use freeze **Interim** table for (4). Do not invent
-Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
+**Closed.** OpenCode is presence-only by design, not an open fork.
 
 **Related:** `workspaces` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
@@ -96,6 +100,7 @@ Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-08 | workspaces Claude | Claude is first-class alongside Grok and Codex (D4.4 closed): `--agent grok\|codex\|claude`, spawn/exec argv, hooks merged into `~/.claude/settings.json` (other settings kept), rail rollup, `×N` from `compact_boundary`, reboot `claude --resume`. OpenCode stays presence-only. | freeze, CLI freeze, CURRENT, capabilities, architecture, manual/solactl, PRODUCT, design law |
 | 2026-09-17 | Bots | Write fence default remains the bot home. Joshua can explicitly order an escape (whole computer / drop the fence / a path outside home). Seat steal stays forbidden. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks |
 | 2026-09-15 | Bots | Informational named sessions (not coding). Yolo. Per-bot `~/Bots/<slug>/`. Dialog UI hides compaction. Native iOS. Daemon + ACP Grok. Soft write fence via foundation prompt. This computer is the sandbox; `solactl browser` for web. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks, capabilities |
 | 2026-09-11 | Browser page snapshot | Agent-facing page is a **Playwright aria-snapshot YAML** (pruned AX tree + opaque refs), not JSON. Pipeline: `getFullAXTree` → Puppeteer interestingOnly → collapse nameless generic → ref=`backendDOMNodeId` (stale fails). `snapshot` vs later `read`; screenshot is fallback. Confirm still **D3**. | [freeze](specs/2026-09-11-sola-browser-agent-control-design.md), CURRENT locks |

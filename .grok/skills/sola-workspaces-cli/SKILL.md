@@ -65,8 +65,10 @@ solactl workspaces workspace.exec --workspace SLUG --prompt '…'
 # new (no --select):
 solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent grok \
   --prompt '…'
-# Codex sibling:
+# Codex or Claude sibling:
 # solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent codex \
+#   --prompt '…'
+# solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent claude \
 #   --prompt '…'
 # optional: --base-branch origin/dev --branch joshua/sc-1234/fix --title '…'
 # long brief: --prompt-file /tmp/brief.md  (not both)
@@ -75,7 +77,7 @@ solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent grok \
 Then **keep talking in this pane**. Do not `pane.wait` unless they asked.
 Do not `workspace.select`.
 
-`--prompt` without `--agent` implies grok. `--agent` is `grok` or `codex`.
+`--prompt` without `--agent` implies grok. `--agent` is `grok`, `codex`, or `claude`.
 Spawn parent defaults from `$SOLA_PANE_ID`. Do not fetch/checkout after
 spawn to “fix” the branch — pass `--branch` / `--base-branch` on spawn.
 
@@ -92,8 +94,8 @@ Long or multiline briefs: `--prompt-file`, not a giant `--prompt`. Send is
 a paste into the live agent (then Enter). Always pass `--enter` on
 `pane.send` when you mean submit — without it the text sits in the composer.
 
-A workspace name prefers the **Grok** leaf (or the Codex leaf when
-`--agent codex`). Pass a pane id from `pane.list` to pin a split.
+A workspace name prefers the **Grok** leaf (or that agent's leaf when
+`--agent codex` or `--agent claude`). Pass a pane id from `pane.list` to pin a split.
 
 ## Promote an ad hoc tab
 
@@ -180,7 +182,7 @@ Prefer the parent/root pane when it is already there.
 - `git worktree remove` from inside the pane being cleaned up (use
   `workspace.rm --worktree` instead)
 - `git worktree add` as the spawn verb (`workspace.spawn` instead)
-- `--agent claude` (rejected; presence-only). `--agent grok` or `--agent codex` only.
+- `--agent` other than `grok`, `codex`, or `claude` (OpenCode stays presence-only).
 - Build a mailbox / ask-reply / `worker_done`
 - Call `sat` (there is no such binary)
 - Wait out a sibling unless they want a report back

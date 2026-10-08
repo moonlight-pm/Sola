@@ -168,8 +168,8 @@ pub fn wait_timeout_secs(raw: Option<u64>) -> u64 {
     }
 }
 
-/// Spawn / exec first-class CLIs. Claude and others stay presence-only.
-pub const FIRST_CLASS: &[&str] = &["grok", "codex"];
+/// Spawn / exec first-class CLIs. OpenCode stays presence-only.
+pub const FIRST_CLASS: &[&str] = &["grok", "codex", "claude"];
 
 pub fn canonical_agent(name: &str) -> Option<&'static str> {
     FIRST_CLASS
@@ -269,6 +269,11 @@ pub fn grok_resume_argv(session_id: &str) -> Vec<String> {
     vec!["grok".into(), "-r".into(), session_id.to_string()]
 }
 
+/// Resume a known Claude Code session after tmux was lost (reboot).
+pub fn claude_resume_argv(session_id: &str) -> Vec<String> {
+    vec!["claude".into(), "--resume".into(), session_id.to_string()]
+}
+
 pub fn agent_shell_line(agent: &str, prompt: Option<&str>) -> String {
     match prompt {
         Some(p) if !p.trim().is_empty() => format!("{agent} {}", shell_single_quote(p)),
@@ -306,7 +311,7 @@ pub fn first_class_agent(agent: Option<&str>) -> Result<Option<&'static str>, St
         Some(name) => match canonical_agent(name) {
             Some(a) => Ok(Some(a)),
             None => Err(format!(
-                "only grok and codex are first-class; other agents are presence-only (got {name})"
+                "only grok, codex, and claude are first-class; other agents are presence-only (got {name})"
             )),
         },
     }
@@ -441,6 +446,10 @@ mod tests {
         );
         assert_eq!(grok_argv(Some("go")), vec!["grok", "go"]);
         assert_eq!(grok_resume_argv("sid-live"), vec!["grok", "-r", "sid-live"]);
+        assert_eq!(
+            claude_resume_argv("sid-live"),
+            vec!["claude", "--resume", "sid-live"]
+        );
         assert_eq!(agent_argv("codex", Some("go")), vec!["codex", "go"]);
         assert_eq!(agent_shell_line("codex", None), "codex");
         assert_eq!(
@@ -468,8 +477,9 @@ mod tests {
     }
 
     #[test]
-    fn first_class_rejects_claude() {
-        assert!(first_class_agent(Some("claude")).is_err());
+    fn first_class_accepts_claude() {
+        assert_eq!(first_class_agent(Some("claude")).unwrap(), Some("claude"));
+        assert_eq!(first_class_agent(Some("Claude")).unwrap(), Some("claude"));
         assert!(first_class_agent(Some("opencode")).is_err());
         assert_eq!(first_class_agent(Some("grok")).unwrap(), Some("grok"));
         assert_eq!(first_class_agent(Some("Codex")).unwrap(), Some("codex"));

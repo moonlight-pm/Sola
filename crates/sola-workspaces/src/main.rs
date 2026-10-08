@@ -917,12 +917,14 @@ impl App {
         // `grok -r <session>` restores the conversation. `-A` reattach
         // ignores exec, so a live tmux is left as-is.
         let resume = if exec.is_empty() && !tmux::has_session(&tmux_session) {
-            self.grok_resume_argv(id)
+            self.resume_argv(id)
         } else {
             None
         };
-        if let Some(sid) = resume.as_ref().and_then(|a| a.get(2)) {
-            tracing::info!(pane = %id, session = %sid, "resuming grok session");
+        if let Some(args) = resume.as_ref() {
+            if let (Some(bin), Some(sid)) = (args.first(), args.last()) {
+                tracing::info!(pane = %id, agent = %bin, session = %sid, "resuming agent session");
+            }
         }
         let exec_refs: Vec<&str> = match resume.as_ref() {
             Some(args) => args.iter().map(String::as_str).collect(),
@@ -978,19 +980,34 @@ impl App {
         Task::none()
     }
 
-    /// `grok -r <id>` when last-status named Grok with a session still on disk.
-    fn grok_resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
+    /// `grok -r` or `claude --resume` when last-status still names that
+    /// agent and the session is on disk. A live tmux is left as-is.
+    fn resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
         let st = self.pane_status.get(pane_id)?;
         let sid = st.resume_session_id()?;
-        if !status::grok_session_exists(sid) {
-            tracing::warn!(
-                pane = %pane_id,
-                session = %sid,
-                "stored grok session not on disk; starting a shell"
-            );
-            return None;
+        if st.is_grok() {
+            if !status::grok_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored grok session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::grok_resume_argv(sid));
         }
-        Some(cli::grok_resume_argv(sid))
+        if st.is_claude() {
+            if !status::claude_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored claude session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::claude_resume_argv(sid));
+        }
+        None
     }
 
     fn resolve_hook_pane(&self, incoming: &hooks::Incoming) -> Option<String> {
@@ -1319,13 +1336,7 @@ impl App {
         if slug.is_empty() {
             return Err("name needs a letter or number".into());
         }
-        if let Some(a) = agent {
-            if cli::canonical_agent(a).is_none() {
-                return Err(
-                    "only grok and codex are first-class; other agents are presence-only".into(),
-                );
-            }
-        }
+        let agent = cli::first_class_agent(agent)?;
         let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);
