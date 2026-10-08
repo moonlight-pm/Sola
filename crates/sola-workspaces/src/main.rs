@@ -342,9 +342,10 @@ impl App {
             }
             Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
-                let Some(id) = self.resolve_pane(&incoming.pane_id) else {
+                let Some(id) = self.resolve_hook_pane(&incoming) else {
                     tracing::debug!(
                         pane = %incoming.pane_id,
+                        cwd = ?incoming.cwd,
                         session = ?incoming.mapped.session_id,
                         "hook for unknown pane"
                     );
@@ -399,6 +400,20 @@ impl App {
                     .iter()
                     .flat_map(|w| w.layout().leaves())
                     .collect();
+                let mut claimed: HashSet<String> = HashSet::new();
+                for id in &ids {
+                    let Some(st) = self.pane_status.get(id) else {
+                        continue;
+                    };
+                    if !st.is_codex() {
+                        continue;
+                    }
+                    if let Some(sid) = st.owner_session.clone() {
+                        if status::codex_rollout_exists(&sid) {
+                            claimed.insert(sid);
+                        }
+                    }
+                }
                 let mut dirty = false;
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
@@ -407,6 +422,16 @@ impl App {
                     let st = self.pane_status.entry(id).or_default();
                     let before = (st.status, st.agent.clone());
                     st.apply_presence(who);
+                    if st.is_codex() {
+                        if let Some(cwd) = cwd.as_deref() {
+                            if st.observe_codex_turn(cwd, &claimed) {
+                                dirty = true;
+                            }
+                            if let Some(sid) = st.owner_session.clone() {
+                                claimed.insert(sid);
+                            }
+                        }
+                    }
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(cwd);
                     }
@@ -893,6 +918,55 @@ impl App {
             return None;
         }
         Some(cli::grok_resume_argv(sid))
+    }
+
+    fn resolve_hook_pane(&self, incoming: &hooks::Incoming) -> Option<String> {
+        let header = self.resolve_pane(&incoming.pane_id);
+        let header_path = header
+            .as_deref()
+            .and_then(|id| self.workspace_for_pane(id))
+            .map(|ws| ws.path.clone());
+        let located: Vec<(String, std::path::PathBuf)> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                let path = ws.path.clone();
+                ws.layout()
+                    .leaves()
+                    .into_iter()
+                    .map(move |id| (id, path.clone()))
+            })
+            .collect();
+        let owned: Vec<(String, std::path::PathBuf, Option<String>, Option<String>)> = located
+            .into_iter()
+            .map(|(id, path)| {
+                let st = self.pane_status.get(&id);
+                (
+                    id,
+                    path,
+                    st.and_then(|s| s.agent.clone()),
+                    st.and_then(|s| s.owner_session.clone()),
+                )
+            })
+            .collect();
+        let leaves: Vec<hooks::server::HookLeaf<'_>> = owned
+            .iter()
+            .map(|(id, path, agent, session)| hooks::server::HookLeaf {
+                id,
+                path,
+                agent: agent.as_deref(),
+                session_id: session.as_deref(),
+            })
+            .collect();
+        hooks::server::resolve_hook_target(
+            header.as_deref(),
+            header_path.as_deref(),
+            incoming.cwd.as_deref().map(std::path::Path::new),
+            incoming.mapped.session_id.as_deref(),
+            &incoming.agent,
+            &leaves,
+        )
+        .and_then(|id| self.resolve_pane(&id))
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
