@@ -996,7 +996,10 @@ impl Shell {
             self.switcher.active = true;
             // Start at index 1 so the second (next) app is pre-selected on
             // first press — mirrors the legacy macOS-style Alt+Tab feel.
+            // A pointer already on an icon must not replace this until it
+            // moves (`prepare_open` drops the previous hover gate).
             self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+            self.switcher.prepare_open();
             // Focus is applied in `CommitOverlayShow` once the iced swapchain
             // is live — focusing the parked 2×2 can unhide it.
             self.emit_registered_chords();
