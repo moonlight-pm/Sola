@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; letter Date is local day with local `HH:MM` under it; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers  
+**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; letter Date is local day with local `HH:MM` under it; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers; focusing the window re-lists the open folder immediately (same silent fetch as the 45s poll); a working ring beside the count shows while that fetch is in flight  
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
 **Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
@@ -281,7 +281,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 - On connect: apply `action == "move"` rules to the newest 500 INBOX envelopes, then start IDLE + keepalive.
 - On IDLE new mail: apply move rules to the newest page (`max(20, arrivals)`); emit `MailEvent::NewMail`.
 - From/To `equals` (and `address`) match the envelope address inside `Name <addr>`, not only the raw header string.
-- UI on `NewMail` (and optional focus/time-based refresh): re-list folders + current folder messages; do not spam toasts on refresh failure.
+- UI on `NewMail`, when the window becomes active, and on a 45s poll: re-list folders + current folder messages; do not spam toasts on refresh failure. A working ring beside the message count shows while that fetch is in flight. A search in progress is left alone. An in-flight folder fetch is already the check.
 
 ## Data flow (happy paths)
 
