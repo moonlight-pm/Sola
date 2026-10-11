@@ -33,8 +33,9 @@ use sola_kit::components::style::{
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
+use sola_kit::components::status_mark::{SidebarIndicator, status_mark, STATUS_MARK_SLOT};
 use sola_kit::components::{
-    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, readable, sidebar,
+    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, popover, readable, sidebar,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -114,6 +115,8 @@ pub enum Msg {
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
+    /// Keyboard focus entered or left this window.
+    WindowFocus(bool),
     /// After rapid delete/advance, load the body of the row we landed on.
     SettleSelect {
         id: MailId,
@@ -213,6 +216,11 @@ pub struct App {
     list_scroll_y: f32,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// Last keyboard-focus state. A refresh runs only on the rising edge.
+    window_focused: bool,
+    /// A silent re-list is in flight (focus, poll, IDLE, Get New Mail).
+    /// Folder switches use [`Self::folder_loading`] for the same mark.
+    checking: bool,
     /// Last inbox unread we published on `Topic::MailStatus`.
     published_inbox_unread: Option<u32>,
     picker: Option<(PickerKind, FilePicker)>,
@@ -290,6 +298,8 @@ impl Default for App {
             list_scroll_y: 0.0,
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            window_focused: false,
+            checking: false,
             published_inbox_unread: None,
             picker: None,
             last_picker_dir: None,
@@ -360,6 +370,8 @@ impl App {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed(key, modifiers))
                 }
+                Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
+                Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
                 _ => None,
             }),
             poll,
@@ -621,6 +633,22 @@ impl App {
                 }
                 Task::none()
             }
+            Msg::WindowFocus(focused) => {
+                let check = check_on_activate(
+                    self.window_focused,
+                    focused,
+                    self.connected,
+                    self.folder_loading,
+                    self.search_active,
+                );
+                self.window_focused = focused;
+                if check {
+                    // Same silent re-list as the 45s poll. The list-header
+                    // ring is the activity signal; do not cover the undo toast.
+                    self.refresh_all();
+                }
+                Task::none()
+            }
         }
     }
 
@@ -784,6 +812,7 @@ impl App {
                 self.connected = false;
                 self.not_configured = true;
                 self.loading = false;
+                self.checking = false;
                 self.folders.clear();
                 self.messages.clear();
                 self.publish_inbox_unread();
@@ -808,6 +837,11 @@ impl App {
                 let replace = self.folder_loading;
                 self.folder_loading = false;
                 self.is_loading_more = false;
+                // Offset 0 is the check (or a folder open). Load-more must
+                // not put the ring out while a newer check is still out.
+                if offset == 0 {
+                    self.checking = false;
+                }
                 let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
                 list_sync::prune_pending_gone(&mut self.pending_gone, &folder, &messages, offset);
                 self.total_messages = total.saturating_sub(hidden);
@@ -839,6 +873,7 @@ impl App {
             }
             MailEvent::SearchResults { messages, total } => {
                 self.folder_loading = false;
+                self.checking = false;
                 let folder = self.selected_folder.clone();
                 let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
                 self.messages = messages
@@ -919,6 +954,7 @@ impl App {
                 self.loading = false;
                 self.folder_loading = false;
                 self.is_loading_more = false;
+                self.checking = false;
                 if context == "empty_folder" {
                     self.load_folder(self.selected_folder.clone());
                 }
@@ -1064,6 +1100,7 @@ impl App {
         let limit = (self.messages.len() as u32)
             .saturating_add(self.pending_gone.len() as u32)
             .max(PAGE);
+        self.checking = true;
         mail_send(MailCmd::ListMessages {
             folder: self.selected_folder.clone(),
             offset: 0,
@@ -1866,7 +1903,11 @@ impl App {
             format_count(self.total_messages)
         };
 
-        let mut header = row![search, kit_text::caption(count).style(kit_text::muted),]
+        let mut header = row![
+            search,
+            check_mark(list_check_busy(self.checking, self.folder_loading)),
+            kit_text::caption(count).style(kit_text::muted),
+        ]
             .spacing(SPACE_MD)
             .align_y(iced::Alignment::Center);
         if !self.search_query.is_empty() || self.search_active {
@@ -2841,6 +2882,52 @@ fn compose_header_input_style(
     }
 }
 
+/// Rising-edge keyboard focus: re-list now instead of waiting for IDLE or
+/// the 45s poll. An in-flight folder fetch is already that check. Search
+/// stays put until the query is cleared.
+/// Working ring while a folder fetch is in flight. The slot stays
+/// reserved so the count does not jump when the ring appears.
+fn check_mark<'a>(busy: bool) -> Element<'a, Msg> {
+    let slot: Element<'a, Msg> = if busy {
+        let tip = container(kit_text::caption("Checking mail"))
+            .padding(Padding {
+                top: 5.0,
+                right: 8.0,
+                bottom: 5.0,
+                left: 8.0,
+            })
+            .style(popover::style);
+        iced::widget::tooltip(
+            status_mark(SidebarIndicator::Working),
+            tip,
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .gap(6)
+        .delay(Duration::from_millis(280))
+        .into()
+    } else {
+        Space::new()
+            .width(Length::Fixed(STATUS_MARK_SLOT))
+            .height(Length::Fixed(STATUS_MARK_SLOT))
+            .into()
+    };
+    container(slot)
+        .width(Length::Fixed(STATUS_MARK_SLOT))
+        .height(Length::Fixed(STATUS_MARK_SLOT))
+        .align_y(iced::Alignment::Center)
+        .into()
+}
+
+fn check_on_activate(
+    was_focused: bool,
+    focused: bool,
+    connected: bool,
+    folder_loading: bool,
+    search_active: bool,
+) -> bool {
+    focused && !was_focused && connected && !folder_loading && !search_active
+}
+
 fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
     let p = theme.extended_palette();
     let _ = status;
@@ -2858,4 +2945,40 @@ fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_edit
         value: p.background.base.text,
         selection: mix_white(p.background.weaker.color, 0.16),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_on_activate, list_check_busy};
+
+    #[test]
+    fn activate_checks_once_on_the_rising_edge() {
+        assert!(check_on_activate(false, true, true, false, false));
+        assert!(!check_on_activate(true, true, true, false, false));
+        assert!(!check_on_activate(true, false, true, false, false));
+        assert!(!check_on_activate(false, false, true, false, false));
+    }
+
+    #[test]
+    fn activate_waits_until_imap_is_up() {
+        assert!(!check_on_activate(false, true, false, false, false));
+    }
+
+    #[test]
+    fn activate_does_not_stack_on_a_fetch_or_search() {
+        assert!(!check_on_activate(false, true, true, true, false));
+        assert!(!check_on_activate(false, true, true, false, true));
+    }
+
+    #[test]
+    fn check_mark_tracks_a_fetch() {
+        // The ring is the busy argument. Idle keeps the same slot.
+        assert!(list_check_busy(true, false));
+        assert!(list_check_busy(false, true));
+        assert!(!list_check_busy(false, false));
+    }
+}
+
+fn list_check_busy(checking: bool, folder_loading: bool) -> bool {
+    checking || folder_loading
 }

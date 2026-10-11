@@ -39,6 +39,12 @@ until a row is selected.
   **u** undoes the last move.
 - On open, the last inbox list shows immediately. A card at the bottom
   right lists accounts still connecting (or that failed).
+- Switching to the Mail window checks the server immediately (the open
+  folder and the mailbox counts). New mail still arrives on its own
+  while Mail is in the background. A search stays until you clear it.
+- While Mail is fetching that folder, a small ring sits beside the
+  message count. Hover it: **Checking mail**. It leaves when the list
+  comes back. Moves and undo still use the toast.
 
 Links in the letter open in sola-browser.
 
