@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sola_bus::topics::google_calendar_client_secret;
 
-use crate::model::{CalEvent, Calendar, CalKind};
+use crate::model::{CalEvent, CalKind, Calendar};
 
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const API: &str = "https://www.googleapis.com/calendar/v3";
@@ -139,7 +139,11 @@ struct ApiEvent {
     description: Option<String>,
     #[serde(default)]
     location: Option<String>,
-    #[serde(default, rename = "hangoutLink", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "hangoutLink",
+        skip_serializing_if = "Option::is_none"
+    )]
     hangout_link: Option<String>,
     #[serde(default)]
     status: Option<String>,
@@ -258,11 +262,7 @@ pub async fn delete_event(
         urlencoding::encode(remote_cal),
         urlencoding::encode(remote_ev)
     );
-    let response = http
-        .delete(&url)
-        .bearer_auth(token)
-        .send()
-        .await?;
+    let response = http.delete(&url).bearer_auth(token).send().await?;
     if !response.status().is_success() && response.status().as_u16() != 404 {
         let text = response.text().await.unwrap_or_default();
         bail!("delete failed: {text}");
@@ -417,13 +417,7 @@ fn parse_when(
 
 fn sanitize_id(s: &str) -> String {
     s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
 

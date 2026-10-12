@@ -4,15 +4,15 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 use sola_bus::topics::{
-    calendar_url_label, google_calendar_client_id, normalize_calendar_url, CalendarAccount,
-    CalendarAccountKind, CalendarConfig,
+    CalendarAccount, CalendarAccountKind, CalendarConfig, calendar_url_label,
+    google_calendar_client_id, normalize_calendar_url,
 };
 use sola_core::Encrypted;
 
 use crate::bridge;
 use crate::ics;
 use crate::model::{
-    Account, CalEvent, CalKind, Calendar, Settings, Store, LOCAL_CAL_ID, new_id, next_palette,
+    Account, CalEvent, CalKind, Calendar, LOCAL_CAL_ID, Settings, Store, new_id, next_palette,
 };
 use crate::paths::AppDirs;
 use crate::{apple, google, store};
@@ -39,6 +39,12 @@ pub enum CalNotice {
     Status(String),
     Error(String),
     Toast(String),
+    /// Provider save finished. `requested_id` is the id Calendar sent;
+    /// `saved_id` is the id now in the store (Google may replace it).
+    EventSaved {
+        requested_id: String,
+        saved_id: String,
+    },
 }
 
 pub fn start() {
@@ -352,6 +358,7 @@ fn replace_calendar_events(store: &mut Store, calendar_id: &str, events: Vec<Cal
 }
 
 async fn save_event(state: &mut State, mut event: CalEvent) {
+    let requested_id = event.id.clone();
     let Some(cal) = state.store.calendar(&event.calendar_id).cloned() else {
         bridge::emit(CalNotice::Error("that calendar is gone".into()));
         return;
@@ -362,8 +369,13 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
     }
     match cal.kind {
         CalKind::Local => {
+            let saved_id = event.id.clone();
             upsert_event(&mut state.store, event);
             persist(state);
+            bridge::emit(CalNotice::EventSaved {
+                requested_id,
+                saved_id,
+            });
             bridge::emit(CalNotice::Toast("Saved".into()));
         }
         CalKind::Google => {
@@ -379,8 +391,13 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
                     };
                     match result {
                         Ok(saved) => {
+                            let saved_id = saved.id.clone();
                             upsert_event(&mut state.store, saved);
                             persist(state);
+                            bridge::emit(CalNotice::EventSaved {
+                                requested_id,
+                                saved_id,
+                            });
                             bridge::emit(CalNotice::Toast("Saved".into()));
                         }
                         Err(e) => bridge::emit(CalNotice::Error(format!("Google save: {e}"))),
@@ -404,13 +421,16 @@ async fn save_event(state: &mut State, mut event: CalEvent) {
                 Ok(href) => {
                     event.href = Some(href);
                     event.remote_id = event.remote_id.clone().or(Some(event.id.clone()));
+                    let saved_id = event.id.clone();
                     upsert_event(&mut state.store, event);
                     persist(state);
+                    bridge::emit(CalNotice::EventSaved {
+                        requested_id,
+                        saved_id,
+                    });
                     bridge::emit(CalNotice::Toast("Saved".into()));
                 }
-                Err(e) => {
-                    bridge::emit(CalNotice::Error(format!("{} save: {e}", cal.kind.label())))
-                }
+                Err(e) => bridge::emit(CalNotice::Error(format!("{} save: {e}", cal.kind.label()))),
             }
         }
         CalKind::Url => {
@@ -654,9 +674,11 @@ fn ensure_url_calendar(state: &mut State, account: &Account) {
     } else {
         account.label.trim().to_string()
     };
-    if let Some(cal) = state.store.calendars.iter_mut().find(|c| {
-        c.account_id.as_deref() == Some(account.id.as_str()) && c.kind == CalKind::Url
-    }) {
+    if let Some(cal) =
+        state.store.calendars.iter_mut().find(|c| {
+            c.account_id.as_deref() == Some(account.id.as_str()) && c.kind == CalKind::Url
+        })
+    {
         cal.name = name;
         cal.href = Some(url.clone());
         cal.remote_id = Some(url);
@@ -739,7 +761,10 @@ fn disconnect(state: &mut State, account_id: &str) {
         .filter(|c| c.account_id.as_deref() == Some(account_id))
         .map(|c| c.id.clone())
         .collect();
-    state.store.events.retain(|e| !cal_ids.contains(&e.calendar_id));
+    state
+        .store
+        .events
+        .retain(|e| !cal_ids.contains(&e.calendar_id));
     state
         .store
         .calendars

@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (count on the bell / no Clear / unseen accent) **installed** `shell` release 2026-09-03. Grouped pile (no cap 20; ≤4 list as rows; tag replace) + Super+Tab unseen count marks (bell/focus ack) **installed** `kit`+`shell` release 2026-09-03.  
+**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (count on the bell / no Clear / unseen accent) **installed** `shell` release 2026-09-03. Grouped pile (no cap 20; ≤4 list as rows; tag replace) + Super+Tab unseen count marks (bell/focus ack) **installed** `kit`+`shell` release 2026-09-03. `sola-persist:` stay-until-dismiss **smoked** `shell` release 2026-10-12.  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -31,7 +31,7 @@ process exit. Notifications: Workspaces done-while-unfocused, web
 | Origin | Tight overlay under the menubar, trailing edge with the clock cluster. Enters by dropping out of the bar (~180ms ease-out). |
 | Click | Raises the source app (and the tab, for browser). Removes from live and pile. |
 | × | Dismiss without raising. Not missed. |
-| Expire | ~6s with no interaction → retract into the bar → missed pile. |
+| Expire | ~6s with no interaction → retract into the bar → missed pile. A tag prefixed `sola-persist:` does not expire: the card stays until × or click. Those cards are not pushed into the pile by the live cap of 3; past six, the oldest folds into the bell. |
 | Stack | Max 3 live cards; older live overflow goes straight to the pile. |
 | Pile | Menubar `lucide/bell` + pile count in the right cluster (same glyph+numeral rhythm as the mail unread chip). Hidden at 0. Accent only while the pile is unseen; **clicking the bell returns it to normal chrome** (panel may stay open). Click opens a list under the chip (menu overlay). Session-only; **no item cap**. Overlay sizes to **visible groups**, up to the usable area under the menubar; the list scrolls if it still overflows. |
 | Pile grouping | Missed items group by `app_id`. Up to 4 from one app list as rows (bell count matches). Five or more collapse to an app header + count; click to expand (newest 30; “N more”). Header × dismisses that app’s pile, not a global Clear. Same (`app_id`, `tag`) replaces in the pile too. Super+Tab does **not** drain the pile. |

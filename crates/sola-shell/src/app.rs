@@ -795,6 +795,7 @@ impl Shell {
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
         let app_id = n.app_id.clone();
+        let persist = n.persists();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
         if self
@@ -804,9 +805,13 @@ impl Shell {
         {
             self.ack_notify_badge(&app_id);
         }
-        let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
-            Msg::NotifyExpire(generation)
-        });
+        let expire = if persist {
+            iced::Task::none()
+        } else {
+            iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
+                Msg::NotifyExpire(generation)
+            })
+        };
         iced::Task::batch([expire, self.notify_followup(now)])
     }
 

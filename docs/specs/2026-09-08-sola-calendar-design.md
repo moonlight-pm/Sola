@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
-**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked)  
-**Gaps:** no invites / RSVP; no alerts; Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app
+**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked). Reminders **smoked** `shell`+`calendar` release 2026-10-12  
+**Gaps:** no invites / RSVP; no provider alarm sync (reminders are local); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app; reminder delivery needs Calendar running
 
 ## Goal
 
@@ -29,7 +29,7 @@ Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a da
 ## Non-goals (v1)
 
 - Meeting invites, guests, RSVP
-- Alarms / notifications
+- Provider alarms (VALARM / Google reminders). Local reminders are in — see below
 - Attachments
 - Authenticated ICS URLs (plain GET only)
 - Menubar clock showing events from this app
@@ -56,3 +56,12 @@ Today is an accent disc on the day number, pinned to the top-start of the cell (
 |---|---|
 | `~/.config/sola/calendar/settings.json` | View, default calendar, sidebar width, inspector width |
 | `~/.local/state/sola/calendar/store.json` | Calendars + events (visibility / hidden). Accounts and shelf prefs live on `Topic::CalendarConfig` |
+| `~/.local/state/sola/calendar/reminders.json` | Local reminder offsets per event id. Sync does not rewrite this file |
+
+## Reminders
+
+The inspector (read-only and editable) has **Remind me**. Checking it adds one reminder. Quick sets add more; × removes one. Timed presets: at time, 5 / 10 / 15 / 30 minutes, 1 hour, 2 hours, 1 day, 1 week. The first check is 30 minutes before. All-day presets: morning of (9:00 local), 1 day before, 2 days before, 1 week before. The first check is morning of.
+
+Offsets are minutes before the anchor (event start, or 9:00 local on the start date when all-day). They are stored by event id, including read-only and remote events. A new event's reminders are written when the save returns the provider id.
+
+Calendar polls while it is open and emits `AppNotification` (`source` Calendar, `tag` `sola-persist:<event>:<offset>`, `url` = event id). The shell keeps that card up until × or click. Click raises Calendar and opens the event. If Calendar was quit, opening it still delivers a reminder whose event ended within the last 12 hours, and a reminder whose event is outside the visible sync window still fires from the last known start. Hidden calendars do not fire.
