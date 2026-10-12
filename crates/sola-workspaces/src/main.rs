@@ -403,9 +403,10 @@ impl App {
             }
             Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
-                let Some(id) = self.resolve_pane(&incoming.pane_id) else {
+                let Some(id) = self.resolve_hook_pane(&incoming) else {
                     tracing::debug!(
                         pane = %incoming.pane_id,
+                        cwd = ?incoming.cwd,
                         session = ?incoming.mapped.session_id,
                         "hook for unknown pane"
                     );
@@ -460,6 +461,20 @@ impl App {
                     .iter()
                     .flat_map(|w| w.layout().leaves())
                     .collect();
+                let mut claimed: HashSet<String> = HashSet::new();
+                for id in &ids {
+                    let Some(st) = self.pane_status.get(id) else {
+                        continue;
+                    };
+                    if !st.is_codex() {
+                        continue;
+                    }
+                    if let Some(sid) = st.owner_session.clone() {
+                        if status::codex_rollout_exists(&sid) {
+                            claimed.insert(sid);
+                        }
+                    }
+                }
                 let mut dirty = false;
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
@@ -468,6 +483,16 @@ impl App {
                     let st = self.pane_status.entry(id).or_default();
                     let before = (st.status, st.agent.clone());
                     st.apply_presence(who);
+                    if st.is_codex() {
+                        if let Some(cwd) = cwd.as_deref() {
+                            if st.observe_codex_turn(cwd, &claimed) {
+                                dirty = true;
+                            }
+                            if let Some(sid) = st.owner_session.clone() {
+                                claimed.insert(sid);
+                            }
+                        }
+                    }
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(cwd);
                     }
@@ -892,12 +917,14 @@ impl App {
         // `grok -r <session>` restores the conversation. `-A` reattach
         // ignores exec, so a live tmux is left as-is.
         let resume = if exec.is_empty() && !tmux::has_session(&tmux_session) {
-            self.grok_resume_argv(id)
+            self.resume_argv(id)
         } else {
             None
         };
-        if let Some(sid) = resume.as_ref().and_then(|a| a.get(2)) {
-            tracing::info!(pane = %id, session = %sid, "resuming grok session");
+        if let Some(args) = resume.as_ref() {
+            if let (Some(bin), Some(sid)) = (args.first(), args.last()) {
+                tracing::info!(pane = %id, agent = %bin, session = %sid, "resuming agent session");
+            }
         }
         let exec_refs: Vec<&str> = match resume.as_ref() {
             Some(args) => args.iter().map(String::as_str).collect(),
@@ -953,19 +980,83 @@ impl App {
         Task::none()
     }
 
-    /// `grok -r <id>` when last-status named Grok with a session still on disk.
-    fn grok_resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
+    /// `grok -r` or `claude --resume` when last-status still names that
+    /// agent and the session is on disk. A live tmux is left as-is.
+    fn resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
         let st = self.pane_status.get(pane_id)?;
         let sid = st.resume_session_id()?;
-        if !status::grok_session_exists(sid) {
-            tracing::warn!(
-                pane = %pane_id,
-                session = %sid,
-                "stored grok session not on disk; starting a shell"
-            );
-            return None;
+        if st.is_grok() {
+            if !status::grok_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored grok session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::grok_resume_argv(sid));
         }
-        Some(cli::grok_resume_argv(sid))
+        if st.is_claude() {
+            if !status::claude_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored claude session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::claude_resume_argv(sid));
+        }
+        None
+    }
+
+    fn resolve_hook_pane(&self, incoming: &hooks::Incoming) -> Option<String> {
+        let header = self.resolve_pane(&incoming.pane_id);
+        let header_path = header
+            .as_deref()
+            .and_then(|id| self.workspace_for_pane(id))
+            .map(|ws| ws.path.clone());
+        let located: Vec<(String, std::path::PathBuf)> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                let path = ws.path.clone();
+                ws.layout()
+                    .leaves()
+                    .into_iter()
+                    .map(move |id| (id, path.clone()))
+            })
+            .collect();
+        let owned: Vec<(String, std::path::PathBuf, Option<String>, Option<String>)> = located
+            .into_iter()
+            .map(|(id, path)| {
+                let st = self.pane_status.get(&id);
+                (
+                    id,
+                    path,
+                    st.and_then(|s| s.agent.clone()),
+                    st.and_then(|s| s.owner_session.clone()),
+                )
+            })
+            .collect();
+        let leaves: Vec<hooks::server::HookLeaf<'_>> = owned
+            .iter()
+            .map(|(id, path, agent, session)| hooks::server::HookLeaf {
+                id,
+                path,
+                agent: agent.as_deref(),
+                session_id: session.as_deref(),
+            })
+            .collect();
+        hooks::server::resolve_hook_target(
+            header.as_deref(),
+            header_path.as_deref(),
+            incoming.cwd.as_deref().map(std::path::Path::new),
+            incoming.mapped.session_id.as_deref(),
+            &incoming.agent,
+            &leaves,
+        )
+        .and_then(|id| self.resolve_pane(&id))
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
@@ -1245,13 +1336,7 @@ impl App {
         if slug.is_empty() {
             return Err("name needs a letter or number".into());
         }
-        if let Some(a) = agent {
-            if cli::canonical_agent(a).is_none() {
-                return Err(
-                    "only grok and codex are first-class; other agents are presence-only".into(),
-                );
-            }
-        }
+        let agent = cli::first_class_agent(agent)?;
         let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);

@@ -3,8 +3,9 @@
 //! A short centered horizontal strip of large app icons on a frosted
 //! pill backplate. Selection is a soft neutral plate under the icon;
 //! the selected app's name sits directly under that icon (other icons
-//! keep an empty caption slot so the row stays aligned). Click outside
-//! cancels.
+//! keep an empty caption slot so the row stays aligned). A pointer
+//! already resting on an icon does not take the selection until it
+//! moves. Click outside cancels.
 //!
 //! When `switcher.active` is false, returns an invisible placeholder so the
 //! surface stays mapped without drawing content.
@@ -145,6 +146,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 .align_x(Alignment::Center)
                 .into();
 
+            // Enter alone is not a choice: the surface appearing under
+            // a still pointer also enters. `SwitcherPointer` arms hover
+            // only after the cursor actually moves.
             mouse_area(cell)
                 .on_enter(Msg::SwitcherHover { index: i })
                 .into()
@@ -189,5 +193,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .center_y(Length::Fill)
         .into();
 
-    mouse_area(centered).on_press(Msg::SwitcherCancel).into()
+    // Full-overlay samples. The first is the cursor already sitting
+    // there (Wayland enter synthesizes a move); a later sample that
+    // travels arms hover selection.
+    mouse_area(centered)
+        .on_move(|point| Msg::SwitcherPointer {
+            x: point.x,
+            y: point.y,
+        })
+        .on_press(Msg::SwitcherCancel)
+        .into()
 }

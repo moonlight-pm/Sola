@@ -6,9 +6,9 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); the tab drops on the next tick, then `tmux kill-session` and `git worktree remove` run off the iced thread (the rail stays live); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; tmux pane/window `-t` is `=session:` (session commands stay `=session`); `pane.list` / `whoami` include `session_id` (Grok owner session; new tmux after reboot runs `grok -r`); `--agent grok|codex` on spawn/exec (Codex leaf when requested)
-**Dogfood:** split-tab `pane.read` smoked 2026-09-11; rest of `solactl workspaces` desk smoke pending; grok `-r` after reboot unsmoked; rm teardown off iced thread unsmoked  
-**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); Codex is first-class (`--agent grok|codex`); no project recolor; rail rename / reorder **installed** `kit`+`workspaces` release, unsmoked; grok `-r` after reboot unsmoked
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); the tab drops on the next tick, then `tmux kill-session` and `git worktree remove` run off the iced thread (the rail stays live); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; tmux pane/window `-t` is `=session:` (session commands stay `=session`); `pane.list` / `whoami` include `session_id` (Grok or Claude owner session; new tmux after reboot runs `grok -r` or `claude --resume`); `--agent grok|codex|claude` on spawn/exec (that agent's leaf when requested)
+**Dogfood:** split-tab `pane.read` smoked 2026-09-11; rest of `solactl workspaces` desk smoke pending; grok `-r` after reboot unsmoked; rm teardown off iced thread unsmoked; `--agent claude` **installed** `workspaces` release 2026-10-08, unsmoked  
+**Gaps:** confirm gates remain **D3** (do not invent); Claude is first-class (`--agent grok|codex|claude`) **installed** `workspaces` release 2026-10-08, unsmoked; OpenCode stays presence-only; no project recolor; rail rename / reorder **installed** `kit`+`workspaces` release, unsmoked; grok `-r` and `claude --resume` after reboot unsmoked
 
 ---
 
@@ -46,11 +46,11 @@ an agent needs to orchestrate is on the call plane.
 | Face | `solactl workspaces <method> [flags]`. Owner is `workspaces` (not `ws`). App or sola-call down → fail. No `sat` |
 | Audience | Operators **and** agents (a root Grok in a Workspaces pane) |
 | Fan-out | `workspace.spawn --prompt` / `--prompt-file` is the briefed sibling. No mailbox |
-| First-class CLI | **Grok and Codex** for `--agent`. Other names error |
-| Targeting | Explicit pane id wins. A workspace name prefers the Grok leaf, else the active leaf. `workspace.exec --agent codex` prefers the Codex leaf |
+| First-class CLI | **Grok, Codex, and Claude** for `--agent`. Other names error (OpenCode stays presence-only) |
+| Targeting | Explicit pane id wins. A workspace name prefers the Grok leaf, else the active leaf. `workspace.exec --agent codex` prefers the Codex leaf. `--agent claude` prefers the Claude leaf |
 | Parent | `--parent` accepts workspace id/name **or** pane id **or** path. `solactl` fills `--parent` from `SOLA_PANE_ID` when unset (so a sibling nests under the caller) |
 | Who am I | `whoami` reads `SOLA_PANE_ID` / `SOLA_WS_PATH` when flags are omitted |
-| Start an agent in an existing checkout | `workspace.exec` — reuse a leaf of that agent; else start `grok` or `codex` in the preferred pane |
+| Start an agent in an existing checkout | `workspace.exec` — reuse a leaf of that agent; else start `grok`, `codex`, or `claude` in the preferred pane |
 | Wait | `pane.wait` holds the call reply (does **not** block the iced thread). Default status `done`. `--fresh` waits for a *transition* onto that status |
 | Timeouts | MethodSpec may advertise `timeout_ms`. `solactl` uses that, or `timeout` arg + 2s slack. Spawn **60s**, add-project **15s**, wait default **300s** (arg overrides) |
 | Confirm | **D3** still open. Every live method is as privileged as the socket |
@@ -131,8 +131,8 @@ dedicated interrupt. Reply includes `selected: true|false`.
 
 ## Non-goals (this freeze)
 
-Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
-`--agent`. Split-from-CLI. Project recolor.
+Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI.
+OpenCode `--agent`. Split-from-CLI. Project recolor.
 
 ---
 

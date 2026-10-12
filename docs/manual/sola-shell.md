@@ -20,6 +20,10 @@ shell surfaces.
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
+Super+Tab opens with the previous app highlighted. An icon the pointer
+is already resting on stays unselected until the pointer moves.
+Releasing Super raises the highlighted app.
+
 The number pad types digits at session start (NumLock is turned on for
 each keyboard). Super+Numpad zoning still works if you turn NumLock off
 (the pad then sends Home / End / arrows). Press NumLock to toggle.

@@ -14,7 +14,8 @@ Promoted to freeze. Persist + spawn sibling into `<root>/.worktrees/`. Demo rows
 
 **Next:** desk-smoke `solactl workspaces`. CLI freeze:
 [`docs/specs/2026-08-18-workspaces-cli-design.md`](../specs/2026-08-18-workspaces-cli-design.md).
-No `sat` binary. Remaining D4: Claude hooks.
+No `sat` binary. D4 is closed (2026-10-08): Claude is first-class.
+OpenCode stays presence-only.
 
 **Decided here (not still a fork):**
 
@@ -365,7 +366,7 @@ These are product forks, not things to invent in an ideas file:
 2. **Main checkout as a workspace.** Is the project root itself a first-class workspace (probably yes), or only spawned worktrees?
 3. **Killing git worktrees.** Unregister-only vs offer `git worktree remove` in the same dialog?
 4. **`sat` when the app is down.** Fail, or launch the Wayland app?
-5. **Claude in v1.** Hook installer, or presence-only until Grok is solid?
+5. **Claude in v1.** **Decided 2026-10-08:** first-class (hooks, spawn, rail). OpenCode stays presence-only.
 6. **Name.** `sola-agent-terminal` is accurate and ugly. Fine for a crate; the window title can be shorter (`Agents`, `Workspaces`, …).
 
 ---

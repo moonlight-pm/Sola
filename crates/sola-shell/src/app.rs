@@ -2,8 +2,8 @@
 //! `bus.rs`; per-window handlers are filled in by tasks 5-10.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use sola_bus::topics::{
@@ -176,9 +176,15 @@ pub enum Msg {
     SwitcherNav {
         next: bool,
     },
-    /// Hover-select: mouse entered card at `index`.
+    /// Icon the pointer entered. Applied only after the pointer moves
+    /// (`SwitcherPointer`); the open-time enter is not a choice.
     SwitcherHover {
         index: usize,
+    },
+    /// Overlay-local pointer sample while the switcher is up.
+    SwitcherPointer {
+        x: f32,
+        y: f32,
     },
     /// Confirm selection: focus the MRU window of the selected app, deactivate.
     SwitcherConfirm,
@@ -605,6 +611,7 @@ impl Shell {
                 );
                 self.switcher.active = true;
                 self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+                self.switcher.prepare_open();
                 self.emit_registered_chords();
                 self.emit_composition();
                 iced::Task::none()
@@ -2502,7 +2509,11 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::SwitcherHover { index } => {
-                self.switcher.selected = index.min(self.switcher.apps.len().saturating_sub(1));
+                self.switcher.note_hover(index);
+                iced::Task::none()
+            }
+            Msg::SwitcherPointer { x, y } => {
+                self.switcher.note_pointer(x, y);
                 iced::Task::none()
             }
             Msg::SwitcherConfirm => {
