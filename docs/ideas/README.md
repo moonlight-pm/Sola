@@ -7,6 +7,7 @@ Do not implement from this folder without promotion.
 
 | Idea | Notes |
 |------|--------|
+| [desks](2026-10-12-desks.md) | Parked. A desk is a working mode: shell sidebar, one tiled plane of heterogeneous groups, panels are pages / terminals / agent sessions. Super+Tab cycles the plane against floats and fullscreen. Do not implement from the note. Forks (name, exclusive layers, where a new panel lands) are unsettled. Promoting this replaces zones and the app switcher as the spatial model. |
 | [osr-cpu-drag-mitigations](2026-09-14-osr-cpu-drag-mitigations.md) | Parked remainder. 2026-09-14 shipped unique last_frame, overlay ring, damage continuity, partial GPU on drag; Shortcut kanban dogfood good. Still parked: ghost shader quad, overlay restore-ghost + writer handback, `read_frame` recycle, wgpu 256-byte pad check, credits. Do not enable `accelerated_osr` or a 16 ms chrome timer. |
 | [omakade-arcade](2026-09-01-omakade-arcade.md) | Parked remainder. 2026-09-01 shipped watch, UserAppExited session, narrow Stop, singleton raise, refuse Play while Steam is open. Still parked: VDF caps, decode bounds, art cache, stale-install, nest/Fit/Portal. Do not steal Qt or URI-only Play. |
 | [ipc-contract-compat](2026-08-30-ipc-contract-compat.md) | Parked. Mixed worktree installs into `/opt/sola/bin` can silently remap bus `TopicKind`. Fail-fast preamble + contract hashes + exit 76; do not restart. Promote a slice before any code. |
