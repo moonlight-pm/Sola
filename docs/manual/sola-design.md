@@ -141,8 +141,8 @@ it, and the old link stops working. Agents get it with `solactl design share`.
 The link shows the canvas as it is right now, laid out and handled as in
 Design — the same artboard heights Design measured, no titles, no
 scrollbars: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
-frames everything (no element picking). On a phone, two fingers pan and
-pinch over a page, one finger pans the background. When a file changes, viewers' pages reload within a couple
+frames everything (no element picking). On a phone the pages are for
+looking only: one finger pans anywhere, a pinch zooms, and there is no hint. When a file changes, viewers' pages reload within a couple
 of seconds. A link only reaches its own canvas: its folder, shared files in
 `design/`, its `root` folder, and the project files its artboards load —
 nothing else in the project, and no dotfiles. Links work while Design is
