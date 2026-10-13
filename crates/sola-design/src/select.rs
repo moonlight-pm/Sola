@@ -1,7 +1,7 @@
-//! Select mode: what the human pointed at, so an agent can act on "this".
+//! Pick: what the human pointed at, so an agent can act on "this".
 //!
-//! A click runs [`pick_script`] in that board (`AgentOp::Eval`). The page
-//! answers with the element under the point; iced draws its outline.
+//! A Super+click runs [`pick_script`] in that board (`AgentOp::Eval`). The
+//! page answers with the element under the point; iced draws its outline.
 
 use serde::Deserialize;
 

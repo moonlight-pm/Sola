@@ -255,10 +255,17 @@ sees; `open` switches it.
 
 A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
 lists the artboards and each artboard is an HTML page beside it. Edit those
-files with ordinary tools. Design watches them and reloads, but the watcher
-is asynchronous — after an edit, run `reload` (it reloads and **waits**)
-before `screenshot` or `inspect`.
+files with ordinary tools. Design watches them (and any outside file a page
+loaded — `status` lists those as `linked`) and reloads. After an edit, `wait`
+or `reload` before `screenshot` / `inspect`: both make the boards show the
+files on disk (`wait` reloads when files are newer than the boards) and
+return once pages have loaded, web fonts are in, and `auto` heights are
+measured.
 
+`canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
+`--path`, default your current directory), registers the project if
+needed, and shows the canvas — it appears under the project in the rail.
+An existing canvas of that name is opened instead (`created: false`).
 `open` takes the canvas dir, its `canvas.toml`, or any file inside it, and
 registers the project if Design does not know it yet. It does not raise the
 window unless `--raise`. `--artboard` defaults to the artboard holding the
@@ -270,9 +277,11 @@ inspects the selected element. `selection` is what the human Super+clicked
 solactl design                               # list methods
 solactl design project.list                  # projects + canvases
 solactl design project.add --path ~/Workspace/Thoxa
+solactl design canvas.new onboarding         # design/onboarding/ in your cwd's project
+solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
-solactl design status                        # canvas, artboards, zoom, mode, selection
+solactl design status                        # canvas, artboards (src, url, error), linked files, zoom, selection
 solactl design selection
 solactl design view --fit
 solactl design view --artboard phone [--zoom 1]
@@ -282,6 +291,7 @@ solactl design reload [--artboard phone] [--timeout 15]
 solactl design screenshot [--artboard phone] [-o shot.png]
 solactl design pdf [--artboard landing] [-o landing.pdf]
 solactl design inspect [--artboard phone] [--selector 'main .card']
+solactl design inspect --artboard light --selector section --all   # every match's box
 ```
 
 `screenshot` captures the page as rendered (CDP, at the artboard's raster
@@ -291,8 +301,37 @@ Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
 `reload` also wait for a `height = "auto"` artboard to be measured. `inspect` replies with the viewport
 (the artboard size), the document size, `cut_off_below` (content taller than
 the artboard), the element's box and computed styles, and up to 25
-`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). There is no raw
+`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). `--all` instead
+lists every match (up to 300) as `{selector, tag, rect, text}`. In
+`status`, each artboard has `src` (what `canvas.toml` asks for), `url` (what
+its tab shows), and `error` (missing `src`, HTTP ≥ 400).
+`screenshot` reports the `scale` it used: each artboard renders at 2×, or
+1× when it is too big for 2× (over 4096 px on a side). Boards are served
+over http from the project root (`/` = project folder), not `file://`. There is no raw
 `eval` on this plane.
+
+## MCP (`solactl mcp`)
+
+An MCP server on stdio that exposes the call plane to agents that speak
+MCP. Every method a running app advertises is a tool named
+`<owner>_<method>` (dots become `_`): `design_screenshot`,
+`browser_tab_open`, `workspaces_pane_send`, … The list follows the apps
+that are up — start Design and its tools appear (the server sends
+`tools/list_changed`). Each tool takes the same arguments as the
+`solactl <owner> <method>` flags; path arguments may be relative to the
+agent's working directory. A reply with a `path` to a PNG / JPEG
+(screenshots) also returns the image inline (up to ~3.7 MB; larger ones
+return the path only).
+
+```text
+solactl mcp                      # every live owner
+solactl mcp --owner design       # only Design (repeat --owner for more)
+claude mcp add sola -- /opt/sola/bin/solactl mcp
+```
+
+It is an adapter over the same methods, not a second protocol: what a tool
+may do is what `solactl` may do (confirm policy is still **D3**).
+`SOLA_BOT=1` rules apply the same way.
 
 ## Not calls
 

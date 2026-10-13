@@ -234,6 +234,8 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
             let mut params = dict();
             set_str(&mut params, "expression", &expression);
             set_bool(&mut params, "returnByValue", true);
+            // An async expression (fonts.ready) resolves before the reply.
+            set_bool(&mut params, "awaitPromise", true);
             let mid = cdp(host, "Runtime.evaluate", Some(&mut params));
             put(
                 browser_id,

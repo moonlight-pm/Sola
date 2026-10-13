@@ -3,17 +3,21 @@
 //! [`subscription`] watches `design/` for the open canvas: its
 //! `canvas.toml` → re-layout; any other file in it, or a shared file
 //! outside every canvas (`design/tokens.css`) → reload the canvas's boards.
-//! Edits inside *other* canvases are ignored. Debounced so an editor's
-//! write-temp-then-rename lands as one change.
+//! Edits inside *other* canvases are ignored. Files the boards loaded from
+//! outside `design/` (a product stylesheet) are watched too. Debounced so an
+//! editor's write-temp-then-rename lands as one change.
+//!
+//! [`newest_input`] is the same set as file times, so `wait` can tell that
+//! the boards are older than the files before the watcher has acted.
 //!
 //! [`canvases`] rescans every project's `design/` for the rail and only
 //! messages iced when the list changed (agents create canvases too).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::futures::{SinkExt, StreamExt as _};
 use iced::{Subscription, stream};
@@ -31,21 +35,41 @@ const SCAN_EVERY: Duration = Duration::from_secs(2);
 
 pub type Canvases = HashMap<String, Vec<canvas::Entry>>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Change {
-    Layout,
-    Content,
+/// What one debounced burst touched. Both can be set (an agent rewrote
+/// `canvas.toml` and the CSS together).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Change {
+    pub layout: bool,
+    pub content: bool,
 }
 
+impl Change {
+    fn any(self) -> bool {
+        self.layout || self.content
+    }
+
+    fn merge(&mut self, other: Change) {
+        self.layout |= other.layout;
+        self.content |= other.content;
+    }
+}
+
+/// Watch `canvas`'s `design/` plus `linked` files (absolute, outside it).
 pub fn subscription<M: Send + 'static>(
-    dir: PathBuf,
+    canvas: PathBuf,
+    linked: Vec<PathBuf>,
     on_change: fn(PathBuf, Change) -> M,
 ) -> Subscription<M> {
-    subscription::from_recipe(WatchRecipe { dir, on_change })
+    subscription::from_recipe(WatchRecipe {
+        canvas,
+        linked,
+        on_change,
+    })
 }
 
 struct WatchRecipe<M> {
-    dir: PathBuf,
+    canvas: PathBuf,
+    linked: Vec<PathBuf>,
     on_change: fn(PathBuf, Change) -> M,
 }
 
@@ -54,20 +78,25 @@ impl<M: Send + 'static> Recipe for WatchRecipe<M> {
 
     fn hash(&self, state: &mut subscription::Hasher) {
         "design-watch".hash(state);
-        self.dir.hash(state);
+        self.canvas.hash(state);
+        self.linked.hash(state);
     }
 
     fn stream(self: Box<Self>, _input: EventStream) -> iced_futures::BoxStream<M> {
-        let Self { dir, on_change } = *self;
+        let Self {
+            canvas,
+            linked,
+            on_change,
+        } = *self;
         stream::channel(8, async move |mut output| {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Change>();
-            let canvas = dir.clone();
+            let watched = canvas.clone();
             std::thread::Builder::new()
                 .name("design-watch".into())
-                .spawn(move || run(&canvas, tx))
+                .spawn(move || run(&watched, &linked, tx))
                 .expect("spawn design-watch thread");
             while let Some(change) = rx.recv().await {
-                if output.send(on_change(dir.clone(), change)).await.is_err() {
+                if output.send(on_change(canvas.clone(), change)).await.is_err() {
                     break;
                 }
             }
@@ -76,8 +105,8 @@ impl<M: Send + 'static> Recipe for WatchRecipe<M> {
     }
 }
 
-fn run(canvas: &Path, tx: tokio::sync::mpsc::UnboundedSender<Change>) {
-    let Some(dir) = canvas.parent() else {
+fn run(canvas: &Path, linked: &[PathBuf], tx: tokio::sync::mpsc::UnboundedSender<Change>) {
+    let Some(design) = canvas.parent() else {
         return;
     };
     let (ev_tx, ev_rx) = mpsc::channel();
@@ -86,15 +115,24 @@ fn run(canvas: &Path, tx: tokio::sync::mpsc::UnboundedSender<Change>) {
     }) {
         Ok(w) => w,
         Err(e) => {
-            tracing::warn!(dir = %dir.display(), error = %e, "canvas watcher");
+            tracing::warn!(dir = %design.display(), error = %e, "canvas watcher");
             return;
         }
     };
-    if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
-        tracing::warn!(dir = %dir.display(), error = %e, "watch canvas dir");
+    if let Err(e) = watcher.watch(design, RecursiveMode::Recursive) {
+        tracing::warn!(dir = %design.display(), error = %e, "watch design dir");
         return;
     }
-    tracing::debug!(dir = %dir.display(), "watching canvas");
+    // A linked file's directory, not the file: editors replace files by
+    // rename, which drops a watch on the old inode.
+    let linked: BTreeSet<PathBuf> = linked.iter().cloned().collect();
+    let dirs: BTreeSet<&Path> = linked.iter().filter_map(|f| f.parent()).collect();
+    for dir in dirs {
+        if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
+            tracing::debug!(dir = %dir.display(), error = %e, "watch linked dir");
+        }
+    }
+    tracing::debug!(dir = %design.display(), linked = linked.len(), "watching canvas");
     loop {
         let first = match ev_rx.recv_timeout(IDLE_CHECK) {
             Ok(res) => res,
@@ -102,14 +140,10 @@ fn run(canvas: &Path, tx: tokio::sync::mpsc::UnboundedSender<Change>) {
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut seen = None;
+        let mut seen = Change::default();
         let mut note = |res: notify::Result<notify::Event>| {
-            if let Some(c) = res.ok().and_then(|ev| classify(&ev, canvas, dir)) {
-                seen = Some(if c == Change::Layout || seen == Some(Change::Layout) {
-                    Change::Layout
-                } else {
-                    Change::Content
-                });
+            if let Ok(ev) = res {
+                seen.merge(classify(&ev, canvas, design, &linked));
             }
         };
         note(first);
@@ -121,12 +155,49 @@ fn run(canvas: &Path, tx: tokio::sync::mpsc::UnboundedSender<Change>) {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        if let Some(change) = seen {
-            if tx.send(change).is_err() {
-                return;
+        if seen.any() && tx.send(seen).is_err() {
+            return;
+        }
+    }
+}
+
+/// Newest modification time over everything a reload would pick up: the
+/// canvas dir, shared files under `design/` (not other canvases), and the
+/// linked files. Symlinks are followed (the target's time counts). The
+/// canvas's own `canvas.toml` is left out: a layout edit re-lays out, it
+/// does not make the pages stale (a reload then would cancel a board's
+/// navigation to a new `src`).
+pub fn newest_input(canvas: &Path, linked: &[PathBuf]) -> Option<SystemTime> {
+    let design = canvas.parent()?;
+    let mut newest = None;
+    let mut bump = |path: &Path| {
+        if let Ok(t) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            newest = newest.max(Some(t));
+        }
+    };
+    let mut stack = vec![design.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            if e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                if path == canvas || !path.join(CANVAS_FILE).is_file() {
+                    stack.push(path);
+                }
+            } else if path != canvas.join(CANVAS_FILE) {
+                bump(&path);
             }
         }
     }
+    for f in linked {
+        bump(f);
+    }
+    newest
 }
 
 /// Canvas lists for `(project id, root)` pairs; first scan always reports.
@@ -190,28 +261,27 @@ impl<M: Send + 'static> Recipe for ScanRecipe<M> {
 }
 
 /// Writes, creates, removes, and renames count; reads do not. `canvas` is
-/// the open canvas dir, `design` its parent.
-fn classify(ev: &notify::Event, canvas: &Path, design: &Path) -> Option<Change> {
+/// the open canvas dir, `design` its parent, `linked` files outside it.
+fn classify(ev: &notify::Event, canvas: &Path, design: &Path, linked: &BTreeSet<PathBuf>) -> Change {
+    let mut out = Change::default();
     match ev.kind {
         EventKind::Access(AccessKind::Close(AccessMode::Write)) => {}
-        EventKind::Access(_) => return None,
+        EventKind::Access(_) => return out,
         _ => {}
     }
-    let mut out = None;
     for p in &ev.paths {
-        let change = if p.starts_with(canvas) {
+        if p.starts_with(canvas) {
             if p.parent() == Some(canvas) && p.file_name().is_some_and(|n| n == CANVAS_FILE) {
-                Change::Layout
+                out.layout = true;
             } else {
-                Change::Content
+                out.content = true;
             }
-        } else if in_other_canvas(p, canvas, design) {
-            continue;
-        } else {
-            Change::Content
-        };
-        if out != Some(Change::Layout) {
-            out = Some(change);
+        } else if p.starts_with(design) {
+            if !in_other_canvas(p, canvas, design) {
+                out.content = true;
+            }
+        } else if linked.contains(p) {
+            out.content = true;
         }
     }
     out
@@ -235,22 +305,35 @@ mod tests {
         notify::Event::new(kind).add_path(PathBuf::from(path))
     }
 
+    fn ch(layout: bool, content: bool) -> Change {
+        Change { layout, content }
+    }
+
     #[test]
     fn layout_vs_content_vs_reads() {
         let (canvas, design) = (Path::new("/d/home"), Path::new("/d"));
+        let none = BTreeSet::new();
         let toml = ev(EventKind::Modify(ModifyKind::Any), "/d/home/canvas.toml");
-        assert_eq!(classify(&toml, canvas, design), Some(Change::Layout));
+        assert_eq!(classify(&toml, canvas, design, &none), ch(true, false));
         let nested = ev(EventKind::Modify(ModifyKind::Any), "/d/home/old/canvas.toml");
-        assert_eq!(classify(&nested, canvas, design), Some(Change::Content));
+        assert_eq!(classify(&nested, canvas, design, &none), ch(false, true));
         let css = ev(EventKind::Create(CreateKind::File), "/d/home/site.css");
-        assert_eq!(classify(&css, canvas, design), Some(Change::Content));
+        assert_eq!(classify(&css, canvas, design, &none), ch(false, true));
         let read = ev(EventKind::Access(AccessKind::Open(AccessMode::Read)), "/d/home/a.html");
-        assert_eq!(classify(&read, canvas, design), None);
-        let wrote = ev(
-            EventKind::Access(AccessKind::Close(AccessMode::Write)),
-            "/d/home/a.html",
-        );
-        assert_eq!(classify(&wrote, canvas, design), Some(Change::Content));
+        assert_eq!(classify(&read, canvas, design, &none), ch(false, false));
+        let both = ev(EventKind::Modify(ModifyKind::Any), "/d/home/canvas.toml")
+            .add_path(PathBuf::from("/d/home/site.css"));
+        assert_eq!(classify(&both, canvas, design, &none), ch(true, true));
+    }
+
+    #[test]
+    fn linked_files_outside_design_reload() {
+        let (canvas, design) = (Path::new("/p/design/home"), Path::new("/p/design"));
+        let linked: BTreeSet<PathBuf> = [PathBuf::from("/p/web/foundation.css")].into();
+        let edit = ev(EventKind::Modify(ModifyKind::Any), "/p/web/foundation.css");
+        assert_eq!(classify(&edit, canvas, design, &linked), ch(false, true));
+        let other = ev(EventKind::Modify(ModifyKind::Any), "/p/web/other.css");
+        assert_eq!(classify(&other, canvas, design, &linked), ch(false, false));
     }
 
     #[test]
@@ -269,12 +352,27 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         std::fs::write(other.join(CANVAS_FILE), "").unwrap();
         let modify = |p: PathBuf| ev(EventKind::Modify(ModifyKind::Any), p.to_str().unwrap());
+        let none = BTreeSet::new();
         assert_eq!(
-            classify(&modify(design.join("tokens.css")), &canvas, &design),
-            Some(Change::Content)
+            classify(&modify(design.join("tokens.css")), &canvas, &design, &none),
+            ch(false, true)
         );
-        assert_eq!(classify(&modify(other.join("a.html")), &canvas, &design), None);
-        assert_eq!(classify(&modify(other.join(CANVAS_FILE)), &canvas, &design), None);
+        assert_eq!(classify(&modify(other.join("a.html")), &canvas, &design, &none), ch(false, false));
+        assert_eq!(
+            classify(&modify(other.join(CANVAS_FILE)), &canvas, &design, &none),
+            ch(false, false)
+        );
+
+        // newest_input: shared + own files count, other canvases do not.
+        std::fs::write(canvas.join("a.html"), "a").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(other.join("late.html"), "b").unwrap();
+        let own = std::fs::metadata(canvas.join("a.html")).unwrap().modified().unwrap();
+        assert_eq!(newest_input(&canvas, &[]), Some(own));
+        // A layout edit does not make the pages stale.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(canvas.join(CANVAS_FILE), "").unwrap();
+        assert_eq!(newest_input(&canvas, &[]), Some(own));
         let _ = std::fs::remove_dir_all(design);
     }
 }

@@ -271,6 +271,7 @@ impl canvas::Program<Event> for Overlay<'_> {
             ..p.background.base.text
         };
         let accent = p.primary.base.color;
+        let danger = p.danger.base.color;
 
         let mut frame = Frame::new(renderer, bounds.size());
         for (board, painted) in self.boards.iter().zip(&self.painted) {
@@ -289,11 +290,15 @@ impl canvas::Program<Event> for Overlay<'_> {
                 Point::new(r.x, r.y - 22.0),
                 Size::new(r.width.max(1.0), 20.0),
             );
+            let (title, color) = match &board.error {
+                Some(e) => (format!("{} — {e}", board.art.title), danger),
+                None => (board.art.title.clone(), label),
+            };
             frame.with_clip(title_box, |f| {
                 f.fill_text(Text {
-                    content: board.art.title.clone(),
+                    content: title,
                     position: Point::new(0.0, 16.0),
-                    color: label,
+                    color,
                     size: 12.0.into(),
                     font: fonts::ui(),
                     align_y: Vertical::Bottom,

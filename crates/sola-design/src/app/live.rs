@@ -1,7 +1,8 @@
 //! Live boards: open / re-layout / reload a canvas, track loads, measure
 //! `auto`-height artboards, and keep the canvas raster scale in force.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use serde_json::Value;
@@ -37,6 +38,8 @@ impl App {
         self.camera = Camera::default();
         self.fit_pending = true;
         self.user_camera = false;
+        self.board_links.clear();
+        self.mark_shown();
         self.relayout();
     }
 
@@ -70,6 +73,16 @@ impl App {
                 return;
             }
         };
+        let mut canvas = canvas;
+        let mut missing = HashMap::new();
+        for art in &mut canvas.artboards {
+            if let Some(file) = canvas::file_url_path(&art.url).filter(|f| !f.exists()) {
+                missing.insert(art.id.clone(), file.display().to_string());
+            }
+            if let Some(url) = self.served_url(&art.url, &art.id) {
+                art.url = url;
+            }
+        }
         let engine = &self.engine;
         let (boards, ops) = boards::sync(
             std::mem::take(&mut self.boards),
@@ -77,6 +90,15 @@ impl App {
             || engine.alloc_tab_id(),
         );
         self.boards = boards;
+        for b in &mut self.boards {
+            match missing.get(&b.art.id) {
+                Some(path) => b.error = Some(format!("src not found: {path}")),
+                None if b.error.as_deref().is_some_and(|e| e.starts_with("src not found")) => {
+                    b.error = None;
+                }
+                None => {}
+            }
+        }
         for op in ops {
             self.apply(op);
         }
@@ -105,7 +127,7 @@ impl App {
                 scale,
             } => {
                 self.frames.open(tab.0);
-                self.loads.begin(tab.0, self.is_auto(tab), now);
+                self.loads.begin(tab.0, now);
                 self.send(Cmd::OpenBoard {
                     id: tab,
                     url,
@@ -124,7 +146,7 @@ impl App {
                 // An `auto` board only resizes here when its width changed:
                 // its content height is stale.
                 if self.is_auto(tab) {
-                    self.loads.begin(tab.0, true, now);
+                    self.loads.begin(tab.0, now);
                 }
                 self.send(Cmd::SetBoard {
                     id: tab,
@@ -134,11 +156,41 @@ impl App {
                 });
             }
             Op::Load { tab, url } => {
-                self.loads.begin(tab.0, self.is_auto(tab), now);
+                self.loads.begin(tab.0, now);
                 self.agent(tab, AgentOp::Nav(NavCmd::LoadUrl(url)), None);
             }
             Op::Close { tab } => self.close_board(tab),
         }
+    }
+
+    /// A `file://` board URL as this project's served origin (its own
+    /// host). `None` keeps the URL (web `src`, no server, or outside the
+    /// project).
+    fn served_url(&self, url: &str, artboard: &str) -> Option<String> {
+        let server = self.serve.as_ref()?;
+        let open = self.open.as_ref()?;
+        let root = &self.catalog.project(&open.at.project)?.root;
+        let cut = url.find(['?', '#']).unwrap_or(url.len());
+        let (base, suffix) = url.split_at(cut);
+        let file = canvas::file_url_path(base)?;
+        server.url(&open.at.project, root, &file, suffix, artboard, &open.at.canvas)
+    }
+
+    /// The file a board resource URL names: a `file://` URL or this
+    /// app's served origin.
+    fn resource_path(&self, url: &str) -> Option<PathBuf> {
+        canvas::file_url_path(url).or_else(|| self.serve.as_ref()?.local_path(url))
+    }
+
+    /// URL each board tab is showing (helper snapshot).
+    pub(super) fn tab_urls(&self) -> HashMap<u64, String> {
+        self.engine
+            .tabs_handle()
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|t| (t.id.0, t.url.clone()))
+            .collect()
     }
 
     fn is_auto(&self, tab: TabId) -> bool {
@@ -151,6 +203,7 @@ impl App {
         self.frames.close(tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
+        self.board_links.remove(&tab.0);
         self.send(Cmd::CloseTab(tab));
     }
 
@@ -186,14 +239,20 @@ impl App {
         self.relayout();
     }
 
+    /// A watcher burst: re-layout for `canvas.toml`, reload for any other
+    /// file — unless the boards already show it (a `reload` / `wait` beat
+    /// the watcher to it).
     pub(super) fn on_canvas_change(&mut self, change: watch::Change) -> iced::Task<super::Msg> {
-        match change {
-            watch::Change::Layout => {
-                self.relayout();
-                self.requery_later()
-            }
-            watch::Change::Content => self.reload_boards(),
+        if change.layout {
+            self.relayout();
         }
+        if change.content && self.boards_stale() {
+            return self.reload_boards();
+        }
+        if change.layout {
+            return self.requery_later();
+        }
+        iced::Task::none()
     }
 
     pub(super) fn reload_boards(&mut self) -> iced::Task<super::Msg> {
@@ -202,44 +261,101 @@ impl App {
         self.requery_later()
     }
 
+    /// Files the boards loaded from outside `design/`, sorted.
+    pub(super) fn linked(&self) -> Vec<PathBuf> {
+        let all: BTreeSet<&PathBuf> = self.board_links.values().flatten().collect();
+        all.into_iter().cloned().collect()
+    }
+
+    /// Some input file is newer than what the boards loaded.
+    pub(super) fn boards_stale(&self) -> bool {
+        let Some(dir) = self.open.as_ref().map(|o| o.dir.clone()) else {
+            return false;
+        };
+        let newest = watch::newest_input(&dir, &self.linked());
+        newest.is_some() && newest > self.shown_at
+    }
+
+    /// The boards are about to read the files as they are now.
+    fn mark_shown(&mut self) {
+        self.shown_at = self
+            .open
+            .as_ref()
+            .and_then(|o| watch::newest_input(&o.dir, &self.linked()));
+    }
+
     /// Hard-reload `tabs` (bypass the cache: the files just changed).
+    /// A tab still on its intended URL hard-reloads; one showing anything
+    /// else (a navigation that was cancelled, a click in the page) loads the
+    /// intended URL — so a reload also repairs drift.
     pub(super) fn reload_tabs(&mut self, tabs: &[TabId]) {
         let now = Instant::now();
+        self.mark_shown();
+        let shown = self.tab_urls();
         for &tab in tabs {
-            self.loads.begin(tab.0, self.is_auto(tab), now);
-            self.agent(tab, AgentOp::Nav(NavCmd::ReloadIgnoreCache), None);
+            let Some(want) = self.boards.iter().find(|b| b.tab == tab).map(|b| b.art.url.clone())
+            else {
+                continue;
+            };
+            self.loads.begin(tab.0, now);
+            let nav = if shown.get(&tab.0) == Some(&want) {
+                NavCmd::ReloadIgnoreCache
+            } else {
+                NavCmd::LoadUrl(want)
+            };
+            self.agent(tab, AgentOp::Nav(nav), None);
         }
     }
 
-    // ── loads + auto height ───────────────────────────────────────
+    // ── loads + settle ────────────────────────────────────────────
 
     /// Fold the helper's tab snapshot into [`crate::loads::Loads`] and
-    /// measure `auto` boards whose load has settled.
+    /// settle boards whose load has finished (fonts ready, then height and
+    /// loaded files read back).
     pub(super) fn observe_loads(&mut self) {
         let loading = self.loading_map();
         self.loads
             .observe(&loading, self.boards.iter().map(|b| b.tab.0));
         let frames = &self.frames;
         let idle = |tab: u64| frames.is_painted(tab) && loading.get(&tab) == Some(&false);
-        for tab in self.loads.take_measures(Instant::now(), idle) {
+        for (tab, generation) in self.loads.take_settles(Instant::now(), idle) {
             let op = AgentOp::Eval {
-                expression: inspect::MEASURE_HEIGHT.to_string(),
+                expression: inspect::SETTLE.to_string(),
             };
-            self.agent(TabId(tab), op, Some(Pending::Measure { tab }));
+            self.agent(TabId(tab), op, Some(Pending::Settle { tab, generation }));
         }
     }
 
-    /// Content height back from an `auto` board: resize its viewport.
-    /// Measured once per load, so `vh`-based content cannot run away.
-    pub(super) fn on_measured(&mut self, tab: u64, reply: AgentReply) {
-        self.loads.measured(tab);
-        let height = reply
-            .ok
-            .then_some(reply.data.as_ref())
-            .flatten()
-            .and_then(Value::as_f64);
-        let Some(height) = height else {
-            tracing::warn!(tab, error = ?reply.error, "measure auto artboard");
+    /// A board settled: flag an HTTP error page, record the files it loaded
+    /// from outside `design/`, and resize an `auto` board to its content —
+    /// then settle once more (bounded: [`crate::loads::MAX_CONFIRMS`]), since
+    /// the new viewport can reflow the page. A reply for an earlier load of
+    /// the tab is ignored.
+    pub(super) fn on_settled(&mut self, tab: u64, generation: u64, reply: AgentReply) {
+        if !self.loads.settled(tab, generation) {
+            return;
+        }
+        let data = reply.ok.then_some(reply.data).flatten();
+        let Some(data) = data else {
+            tracing::warn!(tab, error = ?reply.error, "settle board");
+            return;
+        };
+        self.note_links(tab, &data);
+        let status = data.get("status").and_then(Value::as_u64).unwrap_or(0);
+        if let Some(b) = self.boards.iter_mut().find(|b| b.tab.0 == tab) {
+            if status >= 400 {
+                // A missing `src` (found at layout) says more than its 404.
+                if b.error.is_none() {
+                    let url = data.get("url").and_then(Value::as_str).unwrap_or_default();
+                    b.error = Some(format!("HTTP {status} for {url}"));
+                }
+                return;
+            }
+            if b.error.as_deref().is_some_and(|e| e.starts_with("HTTP ")) {
+                b.error = None;
+            }
+        }
+        let Some(height) = data.get("height").and_then(Value::as_f64) else {
             return;
         };
         let height = (height.ceil() as u32).clamp(1, canvas::MAX_SIDE);
@@ -256,29 +372,56 @@ impl App {
         self.boards[i].art.height = height;
         tracing::debug!(artboard = %self.boards[i].art.id, height, "auto artboard height");
         self.resize_boards(Some(tab));
+        self.loads.confirm(tab, Instant::now());
         if !self.user_camera {
             self.fit();
+        }
+    }
+
+    fn note_links(&mut self, tab: u64, data: &Value) {
+        let Some(design) = self.open.as_ref().and_then(|o| o.dir.parent().map(PathBuf::from)) else {
+            return;
+        };
+        let links: BTreeSet<PathBuf> = data
+            .get("resources")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(|u| self.resource_path(u))
+            .filter(|p| !p.starts_with(&design))
+            .collect();
+        if self.board_links.get(&tab) != Some(&links) {
+            tracing::debug!(tab, links = links.len(), "board linked files");
+            self.board_links.insert(tab, links);
         }
     }
 
     // ── raster scale ──────────────────────────────────────────────
 
     /// The canvas raster scale (2×, or 1× if some board cannot fit 2×).
-    fn canvas_scale(&self) -> f64 {
-        boards::canvas_scale(self.boards.iter().map(|b| (b.art.width, b.art.height)))
+    /// Raster scale per board (2×, or 1× when a board on the same host is
+    /// too big for 2×).
+    fn board_scales(&self) -> Vec<f64> {
+        let sizes: Vec<(&str, u32, u32)> = self
+            .boards
+            .iter()
+            .map(|b| (boards::url_host(&b.art.url), b.art.width, b.art.height))
+            .collect();
+        boards::host_scales(&sizes)
     }
 
-    /// Bring every board to the canvas scale (after a layout change).
+    /// Bring every board to its scale (after a layout change).
     pub(super) fn settle_rasters(&mut self) {
         self.resize_boards(None);
     }
 
-    /// Push the canvas scale to every board, plus a `SetBoard` for `also`
-    /// (a board whose size changed) even when its scale did not.
+    /// Push each board's scale, plus a `SetBoard` for `also` (a board whose
+    /// size changed) even when its scale did not.
     fn resize_boards(&mut self, also: Option<u64>) {
-        let scale = self.canvas_scale();
+        let scales = self.board_scales();
         let mut cmds = Vec::new();
-        for b in &mut self.boards {
+        for (b, scale) in self.boards.iter_mut().zip(scales) {
             if b.scale == scale && also != Some(b.tab.0) {
                 continue;
             }

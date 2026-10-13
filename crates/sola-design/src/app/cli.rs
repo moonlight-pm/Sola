@@ -61,6 +61,7 @@ impl App {
             "project.list" => Ok(self.projects_json()),
             "project.add" => self.call_project_add(&p),
             "open" => self.call_open(&p),
+            "canvas.new" => self.call_canvas_new(&p),
             "status" => Ok(self.status_json()),
             "selection" => Ok(self.selection.as_ref().map_or(Value::Null, |s| s.to_json())),
             "view" => self.call_view(&p),
@@ -149,6 +150,7 @@ impl App {
 
     pub(super) fn status_json(&self) -> Value {
         let loading = self.loading_map();
+        let shown = self.tab_urls();
         let artboards: Vec<Value> = self
             .boards
             .iter()
@@ -157,6 +159,10 @@ impl App {
                     "id": b.art.id,
                     "title": b.art.title,
                     "src": b.art.url,
+                    // What the tab is showing; differs from `src` while a
+                    // navigation is pending or after an in-page link.
+                    "url": shown.get(&b.tab.0),
+                    "error": b.error,
                     "x": b.art.x,
                     "y": b.art.y,
                     "width": b.art.width,
@@ -179,6 +185,8 @@ impl App {
         json!({
             "canvas": canvas,
             "artboards": artboards,
+            // Files the boards loaded from outside design/; edits reload too.
+            "linked": self.linked(),
             "zoom": self.camera.zoom,
             "selection": self.selection.as_ref().map(|s| s.to_json()),
         })
@@ -216,26 +224,65 @@ impl App {
                 path.display()
             )
         })?;
-        let known = self.catalog.projects.iter().find(|p| p.root == root);
-        let (project, added) = match known {
-            Some(p) => (p.id.clone(), false),
-            None => (self.catalog.add(&root.to_string_lossy())?, true),
-        };
-        if added {
-            tracing::info!(project = %project, "open registered design project");
-            self.persist();
+        let (project, added) = self.ensure_project(&root)?;
+        Ok(self.show(p, project, name, added, None))
+    }
+
+    /// `<project>/design/<slug(name)>/canvas.toml`, then open it. An existing
+    /// canvas of that name is opened, not replaced (`created: false`).
+    fn call_canvas_new(&mut self, p: &Value) -> Result<Value, String> {
+        let title = str_param(p, "name")?;
+        let raw = projects::expand_home(str_param(p, "path")?);
+        let root = raw
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", raw.display()))?;
+        if !root.is_dir() {
+            return Err(format!("{} is not a folder", root.display()));
         }
+        let slug = projects::slug(title);
+        let exists = canvas::canvas_dir(&root, &slug)
+            .join(canvas::CANVAS_FILE)
+            .is_file();
+        let name = if exists {
+            slug
+        } else {
+            canvas::create(&root, title)?
+        };
+        let (project, added) = self.ensure_project(&root)?;
+        Ok(self.show(p, project, name, added, Some(!exists)))
+    }
+
+    /// Project id for `root`, registering it if Design does not know it.
+    fn ensure_project(&mut self, root: &std::path::Path) -> Result<(String, bool), String> {
+        if let Some(p) = self.catalog.projects.iter().find(|p| p.root == root) {
+            return Ok((p.id.clone(), false));
+        }
+        let id = self.catalog.add(&root.to_string_lossy())?;
+        tracing::info!(project = %id, root = %root.display(), "call registered design project");
+        self.persist();
+        Ok((id, true))
+    }
+
+    /// Open `canvas` of `project` (raise on `--raise`) and report status.
+    fn show(
+        &mut self,
+        p: &Value,
+        project: String,
+        canvas: String,
+        added: bool,
+        created: Option<bool>,
+    ) -> Value {
         self.rescan();
-        self.open_canvas(CanvasRef {
-            project,
-            canvas: name,
-        });
+        self.open_canvas(CanvasRef { project, canvas });
         if bool_param(p, "raise") {
             self.raise();
         }
         let mut v = self.status_json();
         v["project_added"] = json!(added);
-        Ok(v)
+        if let Some(created) = created {
+            v["created"] = json!(created);
+        }
+        v
     }
 
     fn call_view(&mut self, p: &Value) -> Result<Value, String> {
@@ -346,7 +393,7 @@ impl App {
                 .map(|s| s.picked.selector.clone())
         });
         let op = AgentOp::Eval {
-            expression: inspect::script(selector.as_deref()),
+            expression: inspect::script(selector.as_deref(), bool_param(p, "all")),
         };
         let kind = CallKind::Inspect {
             artboard: b.art.id.clone(),
@@ -382,7 +429,10 @@ impl App {
             .unwrap_or(WAIT_DEFAULT_SECS)
             .max(1);
         let mut task = Task::none();
-        if reload {
+        // `wait` right after an edit: the watcher may not have acted yet.
+        // Boards older than the files are reloaded first, so the wait means
+        // "showing what is on disk".
+        if reload || self.boards_stale() {
             let ids: Vec<TabId> = tabs.iter().map(|(tab, _)| TabId(*tab)).collect();
             self.reload_tabs(&ids);
             task = self.requery_later();
@@ -421,7 +471,7 @@ impl App {
             let ready = |tab: u64| {
                 self.frames.is_painted(tab)
                     && loading.get(&tab) == Some(&false)
-                    && self.loads.is_measured(tab)
+                    && self.loads.is_settled(tab)
                     && (w.saw_loading.contains(&tab) || self.loads.is_loaded(tab) || grace)
             };
             let gone: Vec<&str> = w

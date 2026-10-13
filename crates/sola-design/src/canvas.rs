@@ -219,15 +219,23 @@ fn is_web_url(src: &str) -> bool {
     src.starts_with("http://") || src.starts_with("https://")
 }
 
+/// A path `src` becomes a `file://` URL; its `?query` / `#fragment` stay
+/// as written, so one page can show two states (`light.html?theme=dark`).
 fn resolve_src(dir: &Path, src: &str) -> String {
     if is_web_url(src) || src.starts_with("file://") {
         return src.to_string();
     }
-    file_url(&dir.join(src))
+    let (path, suffix) = split_suffix(src);
+    format!("{}{suffix}", file_url(&dir.join(path)))
+}
+
+/// `page.html?x=1#y` → (`page.html`, `?x=1#y`).
+fn split_suffix(src: &str) -> (&str, &str) {
+    src.split_at(src.find(['?', '#']).unwrap_or(src.len()))
 }
 
 fn file_stem(src: &str) -> Option<String> {
-    let stem = Path::new(src).file_stem()?.to_str()?.trim();
+    let stem = Path::new(split_suffix(src).0).file_stem()?.to_str()?.trim();
     (!stem.is_empty()).then(|| stem.to_string())
 }
 
@@ -235,6 +243,30 @@ fn dir_name(dir: &Path) -> String {
     dir.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Path of a `file://` URL (query / fragment dropped, `%XX` decoded).
+pub fn file_url_path(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    let (path, _) = split_suffix(rest);
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (bytes[i], bytes.get(i + 1).copied().and_then(hex), bytes.get(i + 2).copied().and_then(hex)) {
+            (b'%', Some(hi), Some(lo)) => {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    let path = PathBuf::from(String::from_utf8(out).ok()?);
+    path.is_absolute().then_some(path)
 }
 
 /// `file://` URL with each path byte outside the unreserved set escaped.
@@ -319,6 +351,31 @@ mod tests {
         assert!(parse(Path::new(DIR), url).unwrap_err().contains("needs an id"));
         let typo = "[[artboard]]\nsrc='a.html'\nwidht=10\nheight=10\n";
         assert!(parse(Path::new(DIR), typo).is_err());
+    }
+
+    #[test]
+    fn src_keeps_query_and_fragment() {
+        let c = parse(
+            Path::new(DIR),
+            "[[artboard]]\nsrc='sheet page.html?theme=dark#top'\nwidth=10\nheight=10\n",
+        )
+        .unwrap();
+        assert_eq!(c.artboards[0].id, "sheet page");
+        assert_eq!(
+            c.artboards[0].url,
+            "file:///w/proj/design/home/sheet%20page.html?theme=dark#top"
+        );
+    }
+
+    #[test]
+    fn file_urls_round_trip_to_paths() {
+        let p = Path::new("/a b/c#d.html");
+        assert_eq!(file_url_path(&file_url(p)).as_deref(), Some(p));
+        assert_eq!(
+            file_url_path("file:///w/x%20y.css?v=2#top").as_deref(),
+            Some(Path::new("/w/x y.css"))
+        );
+        assert_eq!(file_url_path("https://x.dev/a.css"), None);
     }
 
     #[test]

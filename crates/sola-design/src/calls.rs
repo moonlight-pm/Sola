@@ -38,8 +38,22 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
+            "canvas.new",
+            "Make a canvas (design/<name>/) in a project and show it; opens it if it exists",
+            &[
+                req_s("name", Some('n'), "Canvas name (the folder is its slug)"),
+                opt(
+                    "path",
+                    Some('p'),
+                    ArgType::Path,
+                    "Project folder (default: your working directory)",
+                ),
+                flag("raise", 'r', "Raise the Design window"),
+            ],
+        ),
+        method(
             "status",
-            "Open canvas, artboards (size, loading), zoom, selection",
+            "Open canvas, artboards (size, scale, loading), watched outside files, zoom, selection",
             &[],
         ),
         method(
@@ -58,7 +72,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "wait",
-            "Until the artboards have loaded and painted",
+            "Until the artboards show the files on disk (reloads them if files changed) and have settled",
             &[artboard(), timeout()],
             WAIT_TIMEOUT_MS,
         ),
@@ -70,7 +84,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "screenshot",
-            "PNG of an artboard as rendered (2× raster)",
+            "PNG of an artboard as rendered (canvas raster scale, reported as `scale`: 2×, or 1× when a board is too big)",
             &[
                 artboard(),
                 opt("out", Some('o'), ArgType::Path, "Write here (default: runtime dir)"),
@@ -92,6 +106,11 @@ pub fn methods() -> Vec<MethodSpec> {
             &[
                 artboard(),
                 opt_s("selector", Some('s'), "CSS selector (default: the selection's)"),
+                flag(
+                    "all",
+                    'A',
+                    "Every match as {selector, tag, rect, text} — no styles (default selector: body > *)",
+                ),
             ],
             PAGE_TIMEOUT_MS,
         ),
@@ -120,6 +139,10 @@ fn req(name: &str, short: Option<char>, ty: ArgType, help: &str) -> ArgSpec {
 
 fn opt(name: &str, short: Option<char>, ty: ArgType, help: &str) -> ArgSpec {
     arg(name, false, ty, short, help)
+}
+
+fn req_s(name: &str, short: Option<char>, help: &str) -> ArgSpec {
+    arg(name, true, ArgType::String, short, help)
 }
 
 fn opt_s(name: &str, short: Option<char>, help: &str) -> ArgSpec {
@@ -153,6 +176,7 @@ mod tests {
             "project.list",
             "project.add",
             "open",
+            "canvas.new",
             "status",
             "selection",
             "view",
