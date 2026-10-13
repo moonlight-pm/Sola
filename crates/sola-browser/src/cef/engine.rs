@@ -441,6 +441,9 @@ struct CefThreadState {
     /// `open_tab` sets this so `on_after_created` can adopt the browser
     /// with the chrome-chosen id. `None` means a `window.open` popup.
     pending_created_id: Cell<Option<TabId>>,
+    /// Board view of the browser `OpenBoard` is creating: its view rect and
+    /// screen info are asked for before the tab is in `tabs`.
+    pending_board: Cell<Option<BoardView>>,
     pending_created_url: RefCell<String>,
     pending_created_title: RefCell<String>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
@@ -539,6 +542,97 @@ struct CefTabState {
     /// Keeps the DevTools-protocol observer alive for agent snapshot/act.
     #[allow(dead_code)]
     agent_obs: RefCell<Option<cef::Registration>>,
+    /// sola-design artboard view. `None` for every browser / wrapper tab.
+    board: Cell<Option<BoardView>>,
+}
+
+/// A board tab's own viewport: CSS px plus raster scale. The OSR view is
+/// `width·scale × height·scale` pixels and the page is zoomed by `scale`, so
+/// the layout viewport stays `width × height` CSS px while text and images
+/// raster at full resolution. (This CEF's OSR ignores the device scale
+/// factor, so zoom is the scale.)
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BoardView {
+    width: u32,
+    height: u32,
+    scale: f64,
+}
+
+impl BoardView {
+    fn pixels(self) -> (u32, u32) {
+        let px = |css: u32| ((f64::from(css) * self.scale).round() as u32).max(1);
+        (px(self.width), px(self.height))
+    }
+
+    /// Chromium zoom level for this scale (`factor = 1.2^level`).
+    fn zoom_level(self) -> f64 {
+        self.scale.ln() / 1.2_f64.ln()
+    }
+
+    /// CSS px → view px for board input.
+    fn to_view(self, v: i32) -> i32 {
+        (f64::from(v) * self.scale).round() as i32
+    }
+}
+
+/// Keep a board page zoomed to its raster scale. Zoom is per host in
+/// Chromium, so all of one canvas's file:// boards share a scale.
+fn apply_board_zoom(host: &cef::BrowserHost, board: BoardView) {
+    let level = board.zoom_level();
+    if (host.zoom_level() - level).abs() > 1e-6 {
+        host.set_zoom_level(level);
+    }
+}
+
+/// Board-local CSS px → that board's view px.
+fn board_input(ev: InputEvent, b: BoardView) -> InputEvent {
+    match ev {
+        InputEvent::PointerMove { x, y, modifiers } => InputEvent::PointerMove {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            modifiers,
+        },
+        InputEvent::PointerButton {
+            down,
+            x,
+            y,
+            button,
+            modifiers,
+            click_count,
+        } => InputEvent::PointerButton {
+            down,
+            x: b.to_view(x),
+            y: b.to_view(y),
+            button,
+            modifiers,
+            click_count,
+        },
+        InputEvent::Scroll {
+            x,
+            y,
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        } => InputEvent::Scroll {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        },
+        InputEvent::PointerLeave { x, y, modifiers } => InputEvent::PointerLeave {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            modifiers,
+        },
+        InputEvent::DragCancel { x, y } => InputEvent::DragCancel {
+            x: b.to_view(x),
+            y: b.to_view(y),
+        },
+        other => other,
+    }
 }
 
 /// Windowless DevTools browser, attached to one page tab.
@@ -622,6 +716,7 @@ pub(super) fn run_worker(
         next_http_auth_id: Cell::new(1),
         http_auth_offered: RefCell::new(std::collections::HashSet::new()),
         pending_created_id: Cell::new(None),
+        pending_board: Cell::new(None),
         pending_created_url: RefCell::new(String::new()),
         pending_created_title: RefCell::new(String::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
@@ -866,6 +961,8 @@ cef::wrap_render_handler! {
             let state = cef_state();
             let (w, h) = osr_view_size(&state, browser.as_deref());
             if let Some(si) = screen_info {
+                // OSR here paints at 1× whatever the device scale says (even
+                // `--force-device-scale-factor`); boards raster via page zoom.
                 si.device_scale_factor = 1.0;
                 si.depth = 24;
                 si.depth_per_component = 8;
@@ -976,12 +1073,14 @@ cef::wrap_render_handler! {
             let Some(tab_id) = tab_by_browser_id(&state, bid) else {
                 return;
             };
-            if state.active.get() != tab_id {
-                return;
-            }
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
+            // sola-design artboards paint side by side; everything else
+            // paints only while it is the active tab.
+            if state.active.get() != tab_id && tab.board.get().is_none() {
+                return;
+            }
             if is_popup {
                 publish_popup_paint(&state, &tab, src, w, h, dirty);
             } else {
@@ -1436,7 +1535,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_url_title_by_browser_id(&state, bid, Some(s), None) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1449,7 +1548,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_load_progress_by_browser_id(&state, bid, progress as f32) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1483,7 +1582,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_url_title_by_browser_id(&state, bid, None, Some(s)) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1575,7 +1674,11 @@ cef::wrap_load_handler! {
                 can_go_back != 0,
                 can_go_forward != 0,
             ) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
+            }
+            // A navigation can land on another host's zoom: keep the board's.
+            if let (Some(board), Some(host)) = (board_view(&state, Some(browser)), browser.host()) {
+                apply_board_zoom(&host, board);
             }
         }
 
@@ -2886,6 +2989,14 @@ fn cmd_waiter(
     }
 }
 
+/// A CEF callback changed tab url / title / loading. Flush the snapshot on
+/// the next drain, and post one: an idle chrome (sola-design after a reload)
+/// sends no commands, and the snapshot only rebuilds after a drain.
+fn mark_snapshot_dirty(state: &CefThreadState) {
+    state.snapshot_dirty.set(true);
+    post_drain(&state.drain_posted);
+}
+
 fn post_drain(drain_posted: &AtomicBool) {
     if drain_posted
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -3120,7 +3231,7 @@ pub(super) fn conceal_agent_tab() {
     let state = cef_state();
     let still_front =
         tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
-    if still_front {
+    if still_front || is_board_browser(&state, bid) {
         return;
     }
     if let Some(host) = host_for_browser_id(bid) {
@@ -3432,6 +3543,49 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             activate_tab(state, id);
         }
+        Cmd::OpenBoard {
+            id,
+            url,
+            title,
+            width,
+            height,
+            scale,
+        } => {
+            let next = id.0.saturating_add(1);
+            if next > state.next_id.load(std::sync::atomic::Ordering::Relaxed) {
+                state
+                    .next_id
+                    .store(next, std::sync::atomic::Ordering::Relaxed);
+            }
+            let view = board_view_of(width, height, scale);
+            state.pending_board.set(Some(view));
+            open_tab(state, id, url, title);
+            state.pending_board.set(None);
+        }
+        Cmd::SetBoard {
+            id,
+            width,
+            height,
+            scale,
+        } => {
+            set_board(state, id, width, height, scale);
+        }
+        Cmd::BoardInput { id, input } => {
+            let target = tab_state_by_id(state, id)
+                .and_then(|t| Some((t.browser.host()?, t.board.get()?)));
+            if let Some((host, board)) = target {
+                dispatch_input(state, &host, board_input(input, board));
+            }
+        }
+        Cmd::BoardFocus { id, focused } => {
+            let host = tab_state_by_id(state, id).and_then(|t| t.browser.host());
+            if let Some(host) = host {
+                host.set_focus(if focused { 1 } else { 0 });
+                if focused {
+                    host.invalidate(cef::PaintElementType::VIEW);
+                }
+            }
+        }
         Cmd::ShowDevTools {
             panel,
             inspect_x,
@@ -3624,10 +3778,14 @@ fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
             }
         }
         _ => {
-            let needs_show = !matches!(
-                req.op,
-                crate::agent::AgentOp::Snapshot { .. } | crate::agent::AgentOp::ReadyState
-            );
+            // Board tabs are always shown; revealing one would also take focus.
+            let needs_show = tab.board.get().is_none()
+                && !matches!(
+                    req.op,
+                    crate::agent::AgentOp::Snapshot { .. }
+                        | crate::agent::AgentOp::ReadyState
+                        | crate::agent::AgentOp::Eval { .. }
+                );
             let browser_id = tab.browser_id;
             let host = tab.browser.host();
             drop(tab);
@@ -3769,7 +3927,22 @@ fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32
             return *state.devtools_size.lock().unwrap();
         }
     }
+    if let Some(board) = board_view(state, browser) {
+        return board.pixels();
+    }
     *state.size.lock().unwrap()
+}
+
+/// Board view for this browser, if it is a sola-design artboard. `try_borrow`
+/// because CEF may ask for the view rect while a tab list edit is in flight.
+fn board_view(state: &CefThreadState, browser: Option<&cef::Browser>) -> Option<BoardView> {
+    let bid = browser?.identifier();
+    let tabs = state.tabs.try_borrow().ok()?;
+    match tabs.iter().find(|t| t.browser_id == bid) {
+        Some(tab) => tab.board.get(),
+        // Mid-`OpenBoard`: the new browser is not in `tabs` yet.
+        None => state.pending_board.get(),
+    }
 }
 
 fn is_devtools_browser(state: &CefThreadState, browser_id: i32) -> bool {
@@ -3843,6 +4016,7 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(None),
+        board: Cell::new(None),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -4735,8 +4909,11 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
         if let Some(prev_tab) = tab_state_by_id(state, prev) {
             if let Some(host) = prev_tab.browser.host() {
                 // OSR multi-browser: hide inactive so CEF stops painting them
-                // and treats the next show as needing a full frame.
-                set_host_hidden(&host, true);
+                // and treats the next show as needing a full frame. Boards
+                // stay shown.
+                if prev_tab.board.get().is_none() {
+                    set_host_hidden(&host, true);
+                }
             }
         }
     }
@@ -4785,6 +4962,49 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
         }
     }
     tracing::debug!(?id, prev = ?prev, "CEF active tab");
+}
+
+/// Make `id` a sola-design artboard (or update its view). Shown, resized,
+/// and repainted at its own size and raster scale; never hidden by a tab
+/// switch. `notify_screen_info_changed` re-reads the device scale.
+fn board_view_of(width: u32, height: u32, scale: f64) -> BoardView {
+    BoardView {
+        width: width.max(1),
+        height: height.max(1),
+        scale: if scale.is_finite() && scale > 0.0 { scale } else { 1.0 },
+    }
+}
+
+fn set_board(state: &CefThreadState, id: TabId, width: u32, height: u32, scale: f64) {
+    let view = board_view_of(width, height, scale);
+    let host = {
+        let Some(tab) = tab_state_by_id(state, id) else {
+            tracing::warn!(?id, "SetBoard: unknown tab");
+            return;
+        };
+        let prev = tab.board.replace(Some(view));
+        if prev == Some(view) {
+            return;
+        }
+        tab.browser.host()
+    };
+    let Some(host) = host else {
+        return;
+    };
+    host.was_hidden(0);
+    host.set_windowless_frame_rate(60);
+    apply_board_zoom(&host, view);
+    host.was_resized();
+    host.invalidate(cef::PaintElementType::VIEW);
+    tracing::debug!(?id, width = view.width, height = view.height, scale = view.scale, "board view");
+}
+
+fn is_board_browser(state: &CefThreadState, browser_id: i32) -> bool {
+    state
+        .tabs
+        .borrow()
+        .iter()
+        .any(|t| t.browser_id == browser_id && t.board.get().is_some())
 }
 
 /// Absolute path string for CEF cache dirs (must be absolute per CEF docs).
@@ -4975,7 +5195,10 @@ fn cef_evict_parks(state: &CefThreadState) {
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {
     let initial_title = crate::util::wayland_title_text(&initial_title);
     let mut window_info = cef::WindowInfo::default();
-    let (w, h) = *state.size.lock().unwrap();
+    let (w, h) = match state.pending_board.get() {
+        Some(b) => (b.width, b.height),
+        None => *state.size.lock().unwrap(),
+    };
     apply_osr_window_info(&mut window_info, w, h);
 
     let mut browser_settings = cef::BrowserSettings::default();
@@ -5034,12 +5257,17 @@ fn push_tab(
     let title = Arc::new(Mutex::new(initial_title));
 
     // Background tabs start hidden so only the active OSR surface paints.
+    // A board (mid-`OpenBoard`) is born shown at its own view.
     let is_active = state.active.get() == id;
+    let board = state.pending_board.take();
     let agent_obs = if let Some(mut host) = browser.host() {
         // Even the "active" tab stays hidden until this helper is front.
         // (Prewarm / parked profiles must not composite.)
-        let show = is_active && state.is_front.get();
+        let show = (is_active || board.is_some()) && state.is_front.get();
         set_host_hidden(&host, !show);
+        if let Some(b) = board {
+            apply_board_zoom(&host, b);
+        }
         crate::cef::agent::attach(&mut host)
     } else {
         None
@@ -5059,6 +5287,7 @@ fn push_tab(
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(agent_obs),
+        board: Cell::new(board),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");

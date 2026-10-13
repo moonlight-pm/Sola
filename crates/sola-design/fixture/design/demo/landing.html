@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landing</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  section { padding: 96px 80px; border-bottom: 1px solid var(--line); }
+  .hero { background: var(--surface); }
+  h1 { font-size: 56px; line-height: 1.05; margin: 0 0 16px; max-width: 14ch; }
+  h2 { font-size: 32px; margin: 0 0 24px; }
+  p { color: var(--muted); font-size: 18px; max-width: 56ch; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .grid .card { min-height: 180px; }
+  .quote { font-size: 28px; color: var(--ink); max-width: 40ch; }
+  footer { padding: 40px 80px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+  <section class="hero">
+    <h1>Design in files, review on a canvas.</h1>
+    <p>This artboard has <code>height = "auto"</code>: its viewport grows to fit the page, so the whole landing page shows without scrolling.</p>
+    <button>Get started</button>
+  </section>
+  <section>
+    <h2>Why it works</h2>
+    <div class="grid">
+      <div class="card"><h3>Plain HTML</h3><p>Agents already write it well.</p></div>
+      <div class="card"><h3>Real viewports</h3><p>Media queries match each artboard.</p></div>
+      <div class="card"><h3>Live reload</h3><p>Save a file, see it.</p></div>
+    </div>
+  </section>
+  <section>
+    <p class="quote">“The canvas shows exactly what the browser renders, because it is the browser.”</p>
+  </section>
+  <section>
+    <h2>Pricing</h2>
+    <div class="grid">
+      <div class="card"><h3>Solo</h3><p>Free</p></div>
+      <div class="card"><h3>Team</h3><p>$12 / seat</p></div>
+      <div class="card"><h3>Studio</h3><p>Talk to us</p></div>
+    </div>
+  </section>
+  <footer>Fixture page for sola-design smoke tests.</footer>
+</body>
+</html>

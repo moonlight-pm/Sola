@@ -1,0 +1,268 @@
+//! Live artboards: one CEF board tab per `canvas.toml` artboard.
+//!
+//! [`sync`] diffs the open boards against a freshly read layout and says
+//! which tabs to open, resize, re-point, or close. Applying the ops to the
+//! engine is the app's job.
+
+use sola_browser::engine::TabId;
+
+use crate::canvas::Artboard;
+
+/// Raster scale every board renders at (through page zoom): crisp to 200%
+/// at output scale 1. Fixed and integer: zooming the canvas only scales
+/// textures (no re-raster pop), and text keeps one pixel grid.
+pub const RASTER_SCALE: f64 = 2.0;
+/// Largest texture side the plane uploads (wgpu default limit).
+const MAX_TEXTURE_SIDE: f64 = 8192.0;
+/// Frame budget under the helper → chrome frame IPC cap.
+const MAX_FRAME_BYTES: f64 = 160.0 * 1024.0 * 1024.0;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Board {
+    pub tab: TabId,
+    pub art: Artboard,
+    pub scale: f64,
+}
+
+impl Board {
+    pub fn rect(&self) -> iced::Rectangle {
+        iced::Rectangle::new(
+            iced::Point::new(self.art.x, self.art.y),
+            iced::Size::new(self.art.width as f32, self.art.height as f32),
+        )
+    }
+
+    /// Board-local CSS px for a canvas point, if the point is on the board.
+    pub fn local(&self, canvas: iced::Point) -> Option<(f32, f32)> {
+        let x = canvas.x - self.art.x;
+        let y = canvas.y - self.art.y;
+        let inside = x >= 0.0 && y >= 0.0 && x < self.art.width as f32 && y < self.art.height as f32;
+        inside.then_some((x, y))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
+    Open {
+        tab: TabId,
+        url: String,
+        title: String,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    View {
+        tab: TabId,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    Load {
+        tab: TabId,
+        url: String,
+    },
+    Close {
+        tab: TabId,
+    },
+}
+
+/// A `width × height` board at `scale` fits one plane texture and the
+/// frame budget.
+pub fn fits(width: u32, height: u32, scale: f64) -> bool {
+    let (w, h) = (f64::from(width) * scale, f64::from(height) * scale);
+    w <= MAX_TEXTURE_SIDE && h <= MAX_TEXTURE_SIDE && w * h * 4.0 <= MAX_FRAME_BYTES
+}
+
+/// The canvas's raster scale: [`RASTER_SCALE`] when every board fits, else
+/// 1. One scale for all: page zoom is per host in Chromium.
+pub fn canvas_scale(sizes: impl IntoIterator<Item = (u32, u32)>) -> f64 {
+    let all_fit = sizes
+        .into_iter()
+        .all(|(w, h)| fits(w, h, RASTER_SCALE));
+    if all_fit { RASTER_SCALE } else { 1.0 }
+}
+
+/// Diff `current` against `next`. Boards keep their tab (and texture) when
+/// the id survives; a changed URL re-points the tab instead of reopening.
+/// A surviving board keeps its raster scale (the app re-checks the canvas
+/// scale after a layout), and an `auto` board keeps its measured height.
+pub fn sync(
+    current: Vec<Board>,
+    next: &[Artboard],
+    mut alloc: impl FnMut() -> TabId,
+) -> (Vec<Board>, Vec<Op>) {
+    let mut ops = Vec::new();
+    let mut old = current;
+    let mut boards = Vec::with_capacity(next.len());
+    for art in next {
+        match old.iter().position(|b| b.art.id == art.id) {
+            Some(i) => {
+                let prev = old.swap_remove(i);
+                let tab = prev.tab;
+                let mut art = art.clone();
+                if art.auto_height && prev.art.auto_height {
+                    art.height = prev.art.height;
+                }
+                if prev.art.url != art.url {
+                    ops.push(Op::Load {
+                        tab,
+                        url: art.url.clone(),
+                    });
+                }
+                let resized = (prev.art.width, prev.art.height) != (art.width, art.height);
+                let scale = prev.scale;
+                if resized {
+                    ops.push(Op::View {
+                        tab,
+                        width: art.width,
+                        height: art.height,
+                        scale,
+                    });
+                }
+                boards.push(Board { tab, art, scale });
+            }
+            None => {
+                let scale = RASTER_SCALE;
+                let tab = alloc();
+                ops.push(Op::Open {
+                    tab,
+                    url: art.url.clone(),
+                    title: art.title.clone(),
+                    width: art.width,
+                    height: art.height,
+                    scale,
+                });
+                boards.push(Board {
+                    tab,
+                    art: art.clone(),
+                    scale,
+                });
+            }
+        }
+    }
+    for gone in old {
+        ops.push(Op::Close { tab: gone.tab });
+    }
+    (boards, ops)
+}
+
+/// Topmost board under a canvas point (later artboards draw on top).
+pub fn hit(boards: &[Board], canvas: iced::Point) -> Option<(&Board, (f32, f32))> {
+    boards
+        .iter()
+        .rev()
+        .find_map(|b| b.local(canvas).map(|local| (b, local)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn art(id: &str, url: &str, w: u32, h: u32) -> Artboard {
+        Artboard {
+            id: id.into(),
+            title: id.into(),
+            url: url.into(),
+            x: 0.0,
+            y: 0.0,
+            width: w,
+            height: h,
+            auto_height: false,
+        }
+    }
+
+    fn ids() -> impl FnMut() -> TabId {
+        let mut n = 100;
+        move || {
+            n += 1;
+            TabId(n)
+        }
+    }
+
+    #[test]
+    fn canvas_is_2x_unless_a_board_cannot_fit() {
+        assert_eq!(canvas_scale([(1440, 900), (390, 844), (1280, 4000)]), 2.0);
+        // Over the texture side at 2× (and over the frame budget).
+        assert!(!fits(1440, 6000, 2.0));
+        assert_eq!(canvas_scale([(390, 844), (1440, 6000)]), 1.0);
+        assert_eq!(canvas_scale(std::iter::empty()), 2.0);
+    }
+
+    #[test]
+    fn resync_keeps_scale_and_measured_auto_height() {
+        let mut alloc = ids();
+        let mut a = art("a", "file:///a", 100, 900);
+        a.auto_height = true;
+        let (mut boards, _) = sync(Vec::new(), &[a.clone()], &mut alloc);
+        boards[0].scale = 3.0;
+        boards[0].art.height = 2400;
+        let (boards, ops) = sync(boards, &[a], &mut alloc);
+        assert!(ops.is_empty(), "{ops:?}");
+        assert_eq!(boards[0].art.height, 2400);
+        assert_eq!(boards[0].scale, 3.0);
+    }
+
+    #[test]
+    fn first_sync_opens_everything() {
+        let next = [art("a", "file:///a", 100, 100), art("b", "file:///b", 50, 50)];
+        let (boards, ops) = sync(Vec::new(), &next, ids());
+        assert_eq!(boards.len(), 2);
+        assert!(matches!(ops[0], Op::Open { tab: TabId(101), .. }));
+        assert!(matches!(ops[1], Op::Open { tab: TabId(102), .. }));
+    }
+
+    #[test]
+    fn resync_resizes_repoints_and_closes() {
+        let mut alloc = ids();
+        let first = [art("a", "file:///a", 100, 100), art("b", "file:///b", 50, 50)];
+        let (boards, _) = sync(Vec::new(), &first, &mut alloc);
+        let next = [art("a", "file:///a2", 100, 200), art("c", "file:///c", 10, 10)];
+        let (boards, ops) = sync(boards, &next, &mut alloc);
+        assert_eq!(boards[0].tab, TabId(101));
+        assert_eq!(
+            ops,
+            vec![
+                Op::Load {
+                    tab: TabId(101),
+                    url: "file:///a2".into()
+                },
+                Op::View {
+                    tab: TabId(101),
+                    width: 100,
+                    height: 200,
+                    scale: 2.0
+                },
+                Op::Open {
+                    tab: TabId(103),
+                    url: "file:///c".into(),
+                    title: "c".into(),
+                    width: 10,
+                    height: 10,
+                    scale: 2.0
+                },
+                Op::Close { tab: TabId(102) },
+            ]
+        );
+    }
+
+    #[test]
+    fn unchanged_layout_is_quiet() {
+        let next = [art("a", "file:///a", 100, 100)];
+        let (boards, _) = sync(Vec::new(), &next, ids());
+        let (_, ops) = sync(boards, &next, ids());
+        assert!(ops.is_empty());
+    }
+
+    #[test]
+    fn hit_prefers_the_later_board() {
+        let mut a = art("a", "u", 100, 100);
+        let mut b = art("b", "u", 100, 100);
+        a.x = 0.0;
+        b.x = 50.0;
+        let (boards, _) = sync(Vec::new(), &[a, b], ids());
+        let (board, local) = hit(&boards, iced::Point::new(60.0, 10.0)).unwrap();
+        assert_eq!(board.art.id, "b");
+        assert_eq!(local, (10.0, 10.0));
+        assert!(hit(&boards, iced::Point::new(200.0, 10.0)).is_none());
+    }
+}

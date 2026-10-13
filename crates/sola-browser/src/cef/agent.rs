@@ -36,6 +36,12 @@ enum Phase {
     Ready,
     Shot { path: String },
     PageData,
+    /// Screen media is set; print next.
+    PdfMedia { path: String, width_in: f64, height_in: f64 },
+    /// PDF bytes are back; write them, then restore print media.
+    Pdf { path: String },
+    /// Media restored; report the write result.
+    PdfReset { path: String, written: Result<(), String> },
 }
 
 enum AfterResolve {
@@ -203,6 +209,41 @@ pub fn begin(host: &BrowserHost, browser_id: i32, req: AgentRequest) {
                 AfterResolve::Get { role, name },
             );
         }
+        AgentOp::Pdf {
+            path,
+            width_in,
+            height_in,
+        } => {
+            let mut params = dict();
+            set_str(&mut params, "media", "screen");
+            let mid = cdp(host, "Emulation.setEmulatedMedia", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    phase: Phase::PdfMedia {
+                        path,
+                        width_in,
+                        height_in,
+                    },
+                    req,
+                },
+            );
+        }
+        AgentOp::Eval { expression } => {
+            let mut params = dict();
+            set_str(&mut params, "expression", &expression);
+            set_bool(&mut params, "returnByValue", true);
+            let mid = cdp(host, "Runtime.evaluate", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req,
+                    phase: Phase::PageData,
+                },
+            );
+        }
         AgentOp::Links => {
             let mut params = dict();
             set_str(&mut params, "expression", LINKS_JS);
@@ -353,6 +394,11 @@ fn set_int(d: &mut DictionaryValue, k: &str, v: i32) {
 fn set_bool(d: &mut DictionaryValue, k: &str, v: bool) {
     let key = CefString::from(k);
     let _ = d.set_bool(Some(&key), v as _);
+}
+
+fn set_f64(d: &mut DictionaryValue, k: &str, v: f64) {
+    let key = CefString::from(k);
+    let _ = d.set_double(Some(&key), v);
 }
 
 fn emit(r: AgentReply) {
@@ -536,12 +582,53 @@ fn on_result(browser_id: i32, message_id: i32, success: bool, result: &str) {
             Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
         },
         Phase::Shot { path } => {
-            if let Err(e) = write_png(result, Path::new(&path)) {
+            if let Err(e) = write_b64_data(result, Path::new(&path)) {
                 emit(AgentReply::fail(job.req.id, job.req.tab, e));
                 return;
             }
             emit_ok(job.req.id, job.req.tab, Some(path));
         }
+        Phase::PdfMedia {
+            path,
+            width_in,
+            height_in,
+        } => {
+            let mut params = dict();
+            set_bool(&mut params, "printBackground", true);
+            set_bool(&mut params, "preferCSSPageSize", false);
+            set_f64(&mut params, "paperWidth", width_in);
+            set_f64(&mut params, "paperHeight", height_in);
+            for side in ["marginTop", "marginBottom", "marginLeft", "marginRight"] {
+                set_f64(&mut params, side, 0.0);
+            }
+            let mid = cdp(&host, "Page.printToPDF", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req: job.req,
+                    phase: Phase::Pdf { path },
+                },
+            );
+        }
+        Phase::Pdf { path } => {
+            let written = write_b64_data(result, Path::new(&path));
+            let mut params = dict();
+            set_str(&mut params, "media", "");
+            let mid = cdp(&host, "Emulation.setEmulatedMedia", Some(&mut params));
+            put(
+                browser_id,
+                mid,
+                Job {
+                    req: job.req,
+                    phase: Phase::PdfReset { path, written },
+                },
+            );
+        }
+        Phase::PdfReset { path, written } => match written {
+            Ok(()) => emit_ok(job.req.id, job.req.tab, Some(path)),
+            Err(e) => emit(AgentReply::fail(job.req.id, job.req.tab, e)),
+        },
     }
 }
 
@@ -604,21 +691,22 @@ fn object_id(json: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn write_png(json: &str, path: &Path) -> Result<(), String> {
+/// Decode a CDP reply's base64 `data` (screenshot PNG, printToPDF) to `path`.
+fn write_b64_data(json: &str, path: &Path) -> Result<(), String> {
     let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("screenshot json: {e}"))?;
+        serde_json::from_str(json).map_err(|e| format!("cdp json: {e}"))?;
     let b64 = v
         .get("data")
         .and_then(|d| d.as_str())
-        .ok_or_else(|| "screenshot missing data".to_string())?;
+        .ok_or_else(|| "cdp reply missing data".to_string())?;
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("screenshot b64: {e}"))?;
+        .map_err(|e| format!("cdp data b64: {e}"))?;
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    fs::write(path, bytes).map_err(|e| format!("write screenshot: {e}"))
+    fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 fn js_for(next: &AfterResolve) -> (String, String, String) {

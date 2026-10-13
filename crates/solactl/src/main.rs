@@ -1,8 +1,8 @@
 //! solactl — operator CLI for Sola.
 //!
-//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`, `bots`) are a
-//! real clap tree. Other live owners appear as `solactl <app-id>` from the
-//! call registry.
+//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`, `bots`,
+//! `design`) are a real clap tree. Other live owners appear as
+//! `solactl <app-id>` from the call registry.
 
 use clap::{Parser, Subcommand};
 
@@ -56,6 +56,13 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Design: open canvases, steer the view, screenshot / inspect artboards (app must be running).
+    #[command(disable_help_flag = true)]
+    Design {
+        /// Method and flags. Omit to list advertised methods.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 
     /// Tail an app's log file at `/opt/sola/log/<app>.log`.
     Logs {
@@ -104,6 +111,11 @@ fn main() {
             all.extend(args);
             dynamic::run(all)
         }
+        Command::Design { args } => {
+            let mut all = vec!["design".into()];
+            all.extend(args);
+            dynamic::run(all)
+        }
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),
@@ -136,6 +148,10 @@ mod tests {
         assert!(
             help.contains("bots"),
             "solactl help must list bots:\n{help}"
+        );
+        assert!(
+            help.contains("design"),
+            "solactl help must list design:\n{help}"
         );
     }
 }

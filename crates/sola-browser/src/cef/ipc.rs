@@ -13,8 +13,9 @@ use crate::cef::engine::InputEvent;
 use crate::cef::paint::DirtyRect;
 use crate::engine::{EditCmd, NavCmd, PageContext, TabInfo};
 
-/// Safety cap (4K BGRA ≈ 33 MiB). Larger is treated as a corrupt peer.
-const MAX_MSG: u32 = 64 * 1024 * 1024;
+/// Safety cap; larger is treated as a corrupt peer. A sola-design board
+/// frame can be up to 8192×5120 BGRA (160 MiB); a 4K page is ≈ 33 MiB.
+const MAX_MSG: u32 = 192 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToEngine {
@@ -93,6 +94,29 @@ pub enum ToEngine {
         clear: bool,
     },
     Agent(crate::agent::AgentRequest),
+    /// sola-design artboard (see `Cmd::OpenBoard` / `Cmd::SetBoard`).
+    OpenBoard {
+        id: u64,
+        url: String,
+        title: String,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    SetBoard {
+        id: u64,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    BoardInput {
+        id: u64,
+        input: InputEvent,
+    },
+    BoardFocus {
+        id: u64,
+        focused: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

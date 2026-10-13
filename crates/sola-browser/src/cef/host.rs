@@ -351,6 +351,40 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         },
         ToEngine::StopFind { clear } => Cmd::StopFind { clear },
         ToEngine::Agent(req) => Cmd::Agent(req),
+        ToEngine::OpenBoard {
+            id,
+            url,
+            title,
+            width,
+            height,
+            scale,
+        } => Cmd::OpenBoard {
+            id: TabId(id),
+            url,
+            title,
+            width,
+            height,
+            scale,
+        },
+        ToEngine::SetBoard {
+            id,
+            width,
+            height,
+            scale,
+        } => Cmd::SetBoard {
+            id: TabId(id),
+            width,
+            height,
+            scale,
+        },
+        ToEngine::BoardInput { id, input } => Cmd::BoardInput {
+            id: TabId(id),
+            input,
+        },
+        ToEngine::BoardFocus { id, focused } => Cmd::BoardFocus {
+            id: TabId(id),
+            focused,
+        },
         ToEngine::Shutdown => return None,
     })
 }

@@ -104,6 +104,19 @@ pub enum AgentOp {
     GetQuery {
         query: String,
     },
+    /// Evaluate a chrome-authored expression in the page (`returnByValue`)
+    /// and return its value as `data`. sola-design selection / inspect only;
+    /// not a `solactl browser` verb.
+    Eval {
+        expression: String,
+    },
+    /// One-page PDF of the viewport as it looks on screen (screen media,
+    /// backgrounds, no margins), written to `path`. sola-design export.
+    Pdf {
+        path: String,
+        width_in: f64,
+        height_in: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,11 +146,33 @@ pub struct AgentReply {
     #[serde(default)]
     pub ready: Option<String>,
     /// Fill/get/links payload (`value`, `href`, `links`, `media`).
-    #[serde(default)]
+    #[serde(default, with = "json_text")]
     pub data: Option<serde_json::Value>,
 }
 
 pub type AgentHandle = std::sync::Arc<std::sync::Mutex<Vec<AgentReply>>>;
+
+/// `Option<serde_json::Value>` carried as JSON text. Helper → chrome IPC is
+/// bincode, which cannot deserialize a `Value` (`deserialize_any`): a raw
+/// `Value` killed the router's reader and the helper was respawned.
+mod json_text {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        v: &Option<serde_json::Value>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        v.as_ref().map(|v| v.to_string()).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<serde_json::Value>, D::Error> {
+        Option::<String>::deserialize(d)?
+            .map(|t| serde_json::from_str(&t).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}
 
 #[derive(Clone)]
 struct LastSnap {
@@ -1296,6 +1331,18 @@ fn load_wait_done(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reply_data_survives_bincode() {
+        let data = serde_json::json!({"value": "hi", "links": [{"href": "/a"}], "n": 2});
+        let reply = AgentReply::ok_data(7, 3, data.clone());
+        let bytes = bincode::serialize(&reply).unwrap();
+        let back: AgentReply = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(back.data, Some(data));
+        let none = AgentReply::fail(8, 3, "x");
+        let back: AgentReply = bincode::deserialize(&bincode::serialize(&none).unwrap()).unwrap();
+        assert_eq!(back.data, None);
+    }
 
     fn ready(state: &str, url: &str) -> ReadyInfo {
         ReadyInfo {

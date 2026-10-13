@@ -23,9 +23,14 @@ is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
 shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
 copy to the clipboard instead of writing this file.
 
-`workspaces`, `browser`, and `bots` are first-class subcommands (`solactl` /
-`solactl --help`). Other running apps that have advertised methods:
-`solactl <app-id>` lists them; `solactl <app-id> <method> …` invokes.
+`workspaces`, `browser`, `bots`, and `design` are first-class subcommands
+(`solactl` / `solactl --help`). Other running apps that have advertised
+methods: `solactl <app-id>` lists them; `solactl <app-id> <method> …`
+invokes.
+
+Path arguments (`--path`, `--file`, `--out`, `--prompt-file`, …) are
+resolved by `solactl` before the call: `~` expands and a relative path is
+taken from **your** current directory, not the owner app's.
 
 ## Bots (`solactl bots`)
 
@@ -241,6 +246,53 @@ CEF document** — they work when the tab is in the background and do not
 raise it. `tab.open` does not focus. Bots (`SOLA_BOT=1`) **must** pass
 `--tab`, and are refused `tab.focus`, `tab.open --select`, and compositor
 screenshot/input.
+
+## Design (`solactl design`)
+
+Needs **sola-design** running (owner `design`). Fails if it or `sola-call`
+is down — it does not launch a window. Verbs act on the canvas the human
+sees; `open` switches it.
+
+A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
+lists the artboards and each artboard is an HTML page beside it. Edit those
+files with ordinary tools. Design watches them and reloads, but the watcher
+is asynchronous — after an edit, run `reload` (it reloads and **waits**)
+before `screenshot` or `inspect`.
+
+`open` takes the canvas dir, its `canvas.toml`, or any file inside it, and
+registers the project if Design does not know it yet. It does not raise the
+window unless `--raise`. `--artboard` defaults to the artboard holding the
+human's selection, else the only artboard. `inspect` without `--selector`
+inspects the selected element. `selection` is what the human Super+clicked
+(`null` when nothing).
+
+```text
+solactl design                               # list methods
+solactl design project.list                  # projects + canvases
+solactl design project.add --path ~/Workspace/Thoxa
+solactl design open design/onboarding        # relative to your cwd
+solactl design open design/onboarding/canvas.toml --raise
+solactl design status                        # canvas, artboards, zoom, mode, selection
+solactl design selection
+solactl design view --fit
+solactl design view --artboard phone [--zoom 1]
+solactl design view --zoom 0.5
+solactl design wait [--artboard phone] [--timeout 15]
+solactl design reload [--artboard phone] [--timeout 15]
+solactl design screenshot [--artboard phone] [-o shot.png]
+solactl design pdf [--artboard landing] [-o landing.pdf]
+solactl design inspect [--artboard phone] [--selector 'main .card']
+```
+
+`screenshot` captures the page as rendered (CDP, at the artboard's raster
+scale, normally 2×) and replies with `path`; `pdf` writes a one-page PDF of
+the artboard as it looks on screen (screen media, backgrounds, no margins).
+Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
+`reload` also wait for a `height = "auto"` artboard to be measured. `inspect` replies with the viewport
+(the artboard size), the document size, `cut_off_below` (content taller than
+the artboard), the element's box and computed styles, and up to 25
+`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). There is no raw
+`eval` on this plane.
 
 ## Not calls
 

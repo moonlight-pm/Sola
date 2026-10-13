@@ -17,7 +17,9 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Parse argv **after** `argv[0]`. Unknown flags fail (no `--url` in v1).
+/// Parse argv **after** `argv[0]`. Unknown flags fail (no `--url` in v1),
+/// except on the `--engine` helper: the router adds Chromium switches
+/// (`--password-store=basic`) that CEF reads itself.
 pub fn parse<I, S>(args: I) -> Result<Args, ParseError>
 where
     I: IntoIterator<Item = S>,
@@ -26,6 +28,7 @@ where
     let mut engine = false;
     let mut profile: Option<String> = None;
     let mut id: Option<String> = None;
+    let mut unknown: Option<String> = None;
     let mut iter = args.into_iter();
     while let Some(raw) = iter.next() {
         let a = raw.as_ref();
@@ -45,9 +48,8 @@ where
             continue;
         }
         if a.starts_with('-') {
-            return Err(ParseError(format!(
-                "unknown flag {a} (v1 identity is `sola-wrapper <id>`)"
-            )));
+            unknown.get_or_insert_with(|| a.to_string());
+            continue;
         }
         if id.is_some() {
             return Err(ParseError("expected a single id".into()));
@@ -60,6 +62,11 @@ where
             .ok_or_else(|| ParseError("sola-wrapper --engine requires --profile=<id>".into()))?;
         validate_id(&id)?;
         return Ok(Args::Engine { id });
+    }
+    if let Some(a) = unknown {
+        return Err(ParseError(format!(
+            "unknown flag {a} (v1 identity is `sola-wrapper <id>`)"
+        )));
     }
     let id = id.ok_or_else(|| ParseError("usage: sola-wrapper <id>".into()))?;
     validate_id(&id)?;
@@ -81,6 +88,15 @@ pub fn validate_id(id: &str) -> Result<(), ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_ignores_chromium_switches() {
+        match parse(["--engine", "--profile=slack", "--password-store=basic"]).unwrap() {
+            Args::Engine { id } => assert_eq!(id, "slack"),
+            other => panic!("{other:?}"),
+        }
+        assert!(parse(["slack", "--password-store=basic"]).is_err());
+    }
 
     #[test]
     fn chrome_id() {

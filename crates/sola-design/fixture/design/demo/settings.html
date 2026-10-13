@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  nav { border-right: 1px solid var(--line); padding: 24px 16px; }
+  nav a { display: block; padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; }
+  nav a.active, nav a:hover { background: var(--line); }
+  main { padding: 40px; max-width: 760px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 28px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  .viewport { position: fixed; right: 12px; bottom: 12px; font: 12px ui-monospace, monospace; color: var(--muted); }
+
+  /* Each artboard is its own viewport, so this really fires on the phone. */
+  @media (max-width: 600px) {
+    .shell { grid-template-columns: 1fr; }
+    nav { display: flex; gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; overflow-x: auto; }
+    main { padding: 20px; }
+    .row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav>
+    <a class="active" href="#">Profile</a>
+    <a href="#">Notifications</a>
+    <a href="#">Billing</a>
+  </nav>
+  <main>
+    <h1>Profile</h1>
+    <p class="lede">How you appear to the rest of the team.</p>
+    <div class="card">
+      <div class="row">
+        <div><label for="name">Name</label><input id="name" value="Joshua"></div>
+        <div><label for="email">Email</label><input id="email" placeholder="you@example.com"></div>
+      </div>
+      <div class="actions">
+        <button class="ghost">Cancel</button>
+        <button class="primary">Save changes</button>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="viewport"></div>
+<script>
+  // Shows the artboard's real viewport (and device scale) in the corner.
+  const v = document.querySelector('.viewport');
+  const show = () => v.textContent = `${innerWidth}×${innerHeight} @${devicePixelRatio}x`;
+  show();
+  addEventListener('resize', show);
+</script>
+</body>
+</html>

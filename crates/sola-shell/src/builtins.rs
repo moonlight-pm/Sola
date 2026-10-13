@@ -115,6 +115,15 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
+            app_id: "sola-design".into(),
+            label: "Design".into(),
+            command: kit_command("sola-design"),
+            // `frame` — artboards. Distinct from Paint (`brush`) and Kit
+            // (`palette`).
+            icon: "lucide/frame".into(),
+            ..Default::default()
+        },
+        Application {
             app_id: "sola-spotify".into(),
             label: "Spotify".into(),
             command: kit_command("sola-spotify"),
