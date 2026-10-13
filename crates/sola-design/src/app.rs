@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::widget::{Shader, canvas as iced_canvas, column, container, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme};
@@ -35,7 +35,9 @@ use crate::boards::Board;
 use crate::calls;
 use crate::camera::{self, Camera};
 use crate::canvas;
+use crate::detail::{self, Details};
 use crate::frames::{self, BoardFrames};
+use crate::glow::Glows;
 use crate::instance;
 use crate::loads::Loads;
 use crate::menu;
@@ -55,6 +57,11 @@ const SPAWN_H: u32 = 800;
 const REQUERY_DELAY: Duration = Duration::from_millis(400);
 /// Tick for `wait` deadlines and `auto` measures, only while one is pending.
 const PENDING_TICK: Duration = Duration::from_millis(200);
+/// Tick while a detail plan is due (see [`crate::detail::SETTLE`]).
+const DETAIL_TICK: Duration = Duration::from_millis(40);
+/// Board surfaces cover the plane in steps of this many px, so a window
+/// resize rarely resizes them.
+const SURFACE_STEP: u32 = 256;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -67,6 +74,12 @@ pub enum Msg {
     Call(Incoming),
     /// Re-check pending loads, measures, and `wait` deadlines.
     WaitTick,
+    /// Plan detail renders if the camera has rested.
+    DetailTick,
+    /// Animation frame while something glows.
+    Glow,
+    /// The window's output scale.
+    Scale(f32),
     Plane(overlay::Event),
     Sidebar(SidebarMsg),
     SelectCanvas(String),
@@ -138,17 +151,19 @@ struct OpenCanvas {
     dir: PathBuf,
     /// Last `canvas.toml` read failure; the previous layout stays up.
     error: Option<String>,
+    /// The canvas web root in force (`root` in `canvas.toml`).
+    web_root: Option<PathBuf>,
 }
 
 /// Agent calls waiting for a reply. Nav calls are fire-and-forget.
 enum Pending {
     Pick { at: CanvasRef, artboard: String, tab: u64 },
     Requery { tab: u64 },
-    /// A `solactl design` call answered by the page.
-    Call { inc: Incoming, kind: cli::CallKind },
+    /// A `solactl design` call answered by the page of board `tab`.
+    Call { inc: Incoming, kind: cli::CallKind, tab: u64 },
     /// A board's post-load settle: content height and loaded files, for
-    /// load generation `generation`.
-    Settle { tab: u64, generation: u64 },
+    /// load generation `generation` — or a later re-measure (`follow_up`).
+    Settle { tab: u64, generation: u64, follow_up: bool },
 }
 
 struct App {
@@ -171,10 +186,21 @@ struct App {
     shown_at: Option<SystemTime>,
     camera: Camera,
     plane_size: Option<Size>,
+    /// Window output scale (physical px per logical px).
+    scale_factor: f32,
+    /// Board surfaces are at least this many px (the plane, rounded up;
+    /// only grows).
+    surface_cap: (u32, u32),
+    details: Details,
     fit_pending: bool,
     /// The human (or `view`) moved the camera since the canvas opened;
     /// until then an `auto` board that grows re-fits the canvas.
     user_camera: bool,
+    /// The human moved the camera since the canvas opened: the view is
+    /// theirs, and an agent's `view` no longer moves it.
+    human_camera: bool,
+    /// Shimmer over what agents touch (overlay only).
+    glows: Glows,
     /// Board with the keyboard.
     focus: Option<u64>,
     selection: Option<Selection>,
@@ -205,8 +231,13 @@ impl App {
             shown_at: None,
             camera: Camera::default(),
             plane_size: None,
+            scale_factor: 1.0,
+            surface_cap: (0, 0),
+            details: Details::default(),
             fit_pending: false,
             user_camera: false,
+            human_camera: false,
+            glows: Glows::default(),
             focus: None,
             selection: None,
             next_req: 1,
@@ -224,7 +255,10 @@ impl App {
         if let Some(at) = app.catalog.selected.clone() {
             app.open_canvas(at);
         }
-        (app, Task::none())
+        let scale = iced::window::latest()
+            .and_then(iced::window::scale_factor)
+            .map(Msg::Scale);
+        (app, scale)
     }
 
     fn title(&self) -> String {
@@ -259,10 +293,31 @@ impl App {
         if !self.waits.is_empty() || self.loads.has_due() {
             subs.push(iced::time::every(PENDING_TICK).map(|_| Msg::WaitTick));
         }
+        if self.details.due.is_some() {
+            subs.push(iced::time::every(DETAIL_TICK).map(|_| Msg::DetailTick));
+        }
+        if self.glows.is_active() {
+            subs.push(iced::window::frames().map(|_| Msg::Glow));
+        }
+        subs.push(iced::event::listen_with(|event, _, _| match event {
+            iced::Event::Window(iced::window::Event::Rescaled(f)) => Some(Msg::Scale(f)),
+            _ => None,
+        }));
         Subscription::batch(subs)
     }
 
+    /// Detail renders follow the camera, plane, and boards: any change to
+    /// them plans again once things rest.
     fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let before = (self.camera, self.plane_size, self.scale_factor);
+        let task = self.handle(msg);
+        if (self.camera, self.plane_size, self.scale_factor) != before {
+            self.details.poke(Instant::now());
+        }
+        task
+    }
+
+    fn handle(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(message) => return self.on_bus(&message),
             Msg::Frame => {
@@ -277,6 +332,21 @@ impl App {
             Msg::WaitTick => {
                 self.observe_loads();
                 self.check_waits();
+            }
+            Msg::Glow => {
+                let loads = &self.loads;
+                self.glows.tick(Instant::now(), |tab| loads.is_settled(tab));
+            }
+            Msg::DetailTick => {
+                if self.details.due.is_some_and(|due| Instant::now() >= due) {
+                    self.plan_details();
+                }
+            }
+            Msg::Scale(f) => {
+                if f.is_finite() && f > 0.0 {
+                    self.scale_factor = f;
+                    self.grow_surfaces();
+                }
             }
             Msg::Plane(ev) => return self.on_plane(ev),
             Msg::Sidebar(m) => {
@@ -350,10 +420,13 @@ impl App {
                     self.drop_project(&project);
                 }
             }
-            menu::FIT => self.fit(),
+            menu::FIT => {
+                self.take_camera();
+                self.fit();
+            }
             menu::ACTUAL_SIZE => {
                 if let Some(c) = self.plane_center() {
-                    self.user_camera = true;
+                    self.take_camera();
                     self.camera.set_zoom_at(c, 1.0);
                 }
             }
@@ -371,16 +444,17 @@ impl App {
         match ev {
             overlay::Event::Bounds(b) => {
                 self.plane_size = Some(b.size());
+                self.grow_surfaces();
                 if self.fit_pending {
                     self.fit();
                 }
             }
             overlay::Event::Pan(d) => {
-                self.user_camera = true;
+                self.take_camera();
                 self.camera.pan(d);
             }
             overlay::Event::Zoom { at, factor } => {
-                self.user_camera = true;
+                self.take_camera();
                 self.camera.zoom_at(at, factor);
             }
             overlay::Event::Pick { tab, x, y } => self.pick(tab, x, y),
@@ -437,11 +511,70 @@ impl App {
             .map(|s| Point::new(s.width / 2.0, s.height / 2.0))
     }
 
+    /// Ask each board for the detail the camera needs now.
+    fn plan_details(&mut self) {
+        let Some(plane) = self.plane_size else {
+            self.details.due = None;
+            return;
+        };
+        let asks = self.details.refresh(
+            &self.boards,
+            &self.camera,
+            plane,
+            self.scale_factor,
+            self.surface_cap,
+        );
+        for ask in asks {
+            self.ask(ask);
+        }
+    }
+
+    fn ask(&mut self, ask: detail::Ask) {
+        match ask {
+            detail::Ask::Grow { tab, size } => {
+                if let Some(b) = self.boards.iter_mut().find(|b| b.tab == tab) {
+                    b.surface = size.surface;
+                    b.grown = true;
+                    self.send(Cmd::SetBoard { id: tab, size });
+                }
+            }
+            detail::Ask::View { tab, seq, detail } => {
+                self.send(Cmd::BoardDetail { id: tab, seq, detail });
+            }
+        }
+    }
+
+    /// The plane in px, rounded up: the floor for grown board surfaces, so
+    /// a detail can cover any board on screen. Grows only.
+    fn grow_surfaces(&mut self) {
+        let Some(plane) = self.plane_size else {
+            return;
+        };
+        let px = |logical: f32| {
+            let px = (logical * self.scale_factor).ceil().max(1.0) as u32;
+            px.div_ceil(SURFACE_STEP) * SURFACE_STEP
+        };
+        let cap = (
+            self.surface_cap.0.max(px(plane.width)),
+            self.surface_cap.1.max(px(plane.height)),
+        );
+        if cap != self.surface_cap {
+            self.surface_cap = cap;
+            self.settle_rasters();
+        }
+    }
+
     fn zoom_step(&mut self, factor: f32) {
         if let Some(c) = self.plane_center() {
-            self.user_camera = true;
+            self.take_camera();
             self.camera.zoom_at(c, factor);
         }
+    }
+
+    /// The human steers the camera from here on (this canvas).
+    fn take_camera(&mut self) {
+        self.user_camera = true;
+        self.human_camera = true;
     }
 
     // ── selection ─────────────────────────────────────────────────
@@ -483,8 +616,12 @@ impl App {
             return;
         };
         let why = match why {
-            Pending::Call { inc, kind } => return self.finish_call(inc, kind, reply),
-            Pending::Settle { tab, generation } => return self.on_settled(tab, generation, reply),
+            Pending::Call { inc, kind, tab } => return self.finish_call(inc, kind, tab, reply),
+            Pending::Settle {
+                tab,
+                generation,
+                follow_up,
+            } => return self.on_settled(tab, generation, follow_up, reply),
             other => other,
         };
         if !reply.ok {
@@ -732,9 +869,16 @@ impl App {
                 let items = self
                     .boards
                     .iter()
-                    .map(|b| plane::Item {
-                        tab: b.tab.0,
-                        rect: b.rect(),
+                    .map(|b| {
+                        let (views, detail) = self.details.plane_views(b.tab.0);
+                        plane::Item {
+                            tab: b.tab.0,
+                            rect: b.rect(),
+                            pixels: b.size().pixels(),
+                            surface: b.surface,
+                            views,
+                            detail,
+                        }
                     })
                     .collect();
                 let textures = Shader::new(Plane {
@@ -756,11 +900,13 @@ impl App {
                     focus: self.focus,
                     cursor: self.engine.cursor_handle().load(Ordering::Relaxed),
                     live: !self.dialog_open(),
+                    glows: self.glows.lit(Instant::now()),
                 };
                 let overlay: Element<'_, overlay::Event> = iced_canvas(overlay)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .into();
+                let overlay = crate::ime::target(overlay, self.ime_caret());
                 let mut layers = stack![textures, overlay.map(Msg::Plane)];
                 if let Some(e) = &open.error {
                     layers = layers.push(error_chip(e));
@@ -783,6 +929,28 @@ impl App {
                 ..container::Style::default()
             })
             .into()
+    }
+
+    /// Where the IME candidate window goes (plane-local), while a board
+    /// has the keyboard: the page's caret, or near the board's corner
+    /// until the page reports one.
+    fn ime_caret(&self) -> Option<iced::Rectangle> {
+        if self.dialog_open() {
+            return None;
+        }
+        let board = self.boards.iter().find(|b| Some(b.tab.0) == self.focus)?;
+        let caret = *self.engine.ime_handle().lock().unwrap();
+        let s = board.scale as f32;
+        let (x, y, w, h) = if caret.w > 0 && caret.h > 0 {
+            (caret.x as f32 / s, caret.y as f32 / s, caret.w as f32 / s, caret.h as f32 / s)
+        } else {
+            (16.0, 16.0, 1.0, 16.0)
+        };
+        let at = iced::Rectangle::new(
+            Point::new(board.art.x + x, board.art.y + y),
+            Size::new(w, h),
+        );
+        Some(self.camera.rect_to_screen(at))
     }
 
     /// Zoom and the current pick, floating at the bottom of the plane.

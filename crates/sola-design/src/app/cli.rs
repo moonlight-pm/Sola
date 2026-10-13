@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use iced::Task;
 use serde_json::{Value, json};
 use sola_browser::agent::{AgentOp, AgentReply};
-use sola_browser::engine::{Engine, TabId};
+use sola_browser::cef::engine::InputEvent;
+use sola_browser::engine::{Cmd, Engine, TabId};
 use sola_call::Incoming;
 
 use super::{App, Msg, Pending};
@@ -20,6 +21,7 @@ use crate::canvas;
 use crate::inspect;
 use crate::loads::LOAD_GRACE;
 use crate::projects::{self, CanvasRef};
+use crate::select;
 
 /// CSS px per inch (PDF paper size).
 const CSS_DPI: f64 = 96.0;
@@ -63,7 +65,12 @@ impl App {
             "open" => self.call_open(&p),
             "canvas.new" => self.call_canvas_new(&p),
             "status" => Ok(self.status_json()),
-            "selection" => Ok(self.selection.as_ref().map_or(Value::Null, |s| s.to_json())),
+            "selection" => {
+                if let Some(sel) = &self.selection {
+                    self.glows.elements(sel.tab, [sel.picked.rect], Instant::now());
+                }
+                Ok(self.selection.as_ref().map_or(Value::Null, |s| s.to_json()))
+            }
             "view" => self.call_view(&p),
             "wait" => return self.begin_wait(inc, false),
             "reload" => return self.begin_wait(inc, true),
@@ -75,7 +82,15 @@ impl App {
                 };
                 match started {
                     Ok((tab, op, kind)) => {
-                        self.agent(tab, op, Some(Pending::Call { inc, kind }));
+                        if matches!(kind, CallKind::Screenshot { .. } | CallKind::Pdf { .. }) {
+                            self.begin_capture(tab);
+                        }
+                        let why = Pending::Call {
+                            inc,
+                            kind,
+                            tab: tab.0,
+                        };
+                        self.agent(tab, op, Some(why));
                         return Task::none();
                     }
                     Err(e) => Err(e),
@@ -90,7 +105,42 @@ impl App {
         Task::none()
     }
 
-    pub(super) fn finish_call(&mut self, inc: Incoming, kind: CallKind, reply: AgentReply) {
+    /// An agent capture (screenshot / PDF) of `tab` starts. It sees the
+    /// page as the page is, whatever the human is doing on the canvas: the
+    /// board is held whole (no detail render from the camera), and the
+    /// human's pointer leaves it (no `:hover` in the picture). It glows.
+    fn begin_capture(&mut self, tab: TabId) {
+        if let Some(ask) = self.details.hold(tab.0) {
+            self.ask(ask);
+        }
+        self.send(Cmd::BoardInput {
+            id: tab,
+            input: InputEvent::PointerLeave {
+                x: -1,
+                y: -1,
+                modifiers: 0,
+            },
+        });
+        self.glows.board(tab.0, Instant::now());
+    }
+
+    pub(super) fn finish_call(&mut self, inc: Incoming, kind: CallKind, tab: u64, reply: AgentReply) {
+        let now = Instant::now();
+        match &kind {
+            CallKind::Screenshot { .. } | CallKind::Pdf { .. } => {
+                self.details.release(tab);
+                self.details.poke(now);
+            }
+            CallKind::Inspect { .. } if reply.ok => {
+                let rects = inspected_rects(reply.data.as_ref());
+                if rects.is_empty() {
+                    self.glows.board(tab, now);
+                } else {
+                    self.glows.elements(tab, rects, now);
+                }
+            }
+            CallKind::Inspect { .. } => {}
+        }
         if !reply.ok {
             inc.reply
                 .err(reply.error.unwrap_or_else(|| "board call failed".into()));
@@ -168,6 +218,10 @@ impl App {
                     "width": b.art.width,
                     "height": b.art.height,
                     "scale": b.scale,
+                    // Part of the board re-rastered at screen scale, if any.
+                    "detail": self.details.current(b.tab.0).map(|d| json!({
+                        "x": d.x, "y": d.y, "scale": d.scale,
+                    })),
                     "auto_height": b.art.auto_height,
                     "painted": self.frames.is_painted(b.tab.0),
                     "loading": loading.get(&b.tab.0).copied().unwrap_or(true),
@@ -285,11 +339,20 @@ impl App {
         v
     }
 
+    /// Steer the camera — unless the human has, on this canvas: then the
+    /// view is theirs and stays put (`moved: false`).
     fn call_view(&mut self, p: &Value) -> Result<Value, String> {
         let view = self
             .plane_size
             .ok_or("the Design window has not laid out a canvas yet")?;
         let zoom = p.get("zoom").and_then(Value::as_f64).map(|z| z as f32);
+        if self.human_camera {
+            return Ok(json!({
+                "zoom": self.camera.zoom,
+                "moved": false,
+                "reason": "the human is steering this canvas's view; it stays where they put it",
+            }));
+        }
         self.user_camera = true;
         if p.get("artboard").is_some() {
             let rect = self.target_board(p)?.rect();
@@ -306,7 +369,7 @@ impl App {
         } else {
             return Err("give --fit, --artboard, or --zoom".into());
         }
-        Ok(json!({"zoom": self.camera.zoom}))
+        Ok(json!({"zoom": self.camera.zoom, "moved": true}))
     }
 
     // ── page calls ────────────────────────────────────────────────
@@ -535,4 +598,36 @@ fn str_param<'a>(p: &'a Value, key: &str) -> Result<&'a str, String> {
 
 fn bool_param(p: &Value, key: &str) -> bool {
     p.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// Element rects in an `inspect` reply: the one element, or every match
+/// (`all`). Board-local CSS px.
+fn inspected_rects(data: Option<&Value>) -> Vec<select::Rect> {
+    let Some(data) = data else {
+        return Vec::new();
+    };
+    let rect = |v: &Value| serde_json::from_value::<select::Rect>(v.get("rect")?.clone()).ok();
+    match data.get("elements").and_then(Value::as_array) {
+        Some(all) => all.iter().filter_map(rect).collect(),
+        None => data.get("element").and_then(rect).into_iter().collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inspect_rects_from_one_or_all() {
+        let one = json!({"element": {"rect": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0}}});
+        assert_eq!(inspected_rects(Some(&one)).len(), 1);
+        let all = json!({"elements": [
+            {"rect": {"x": 0.0, "y": 0.0, "width": 5.0, "height": 5.0}},
+            {"rect": {"x": 9.0, "y": 0.0, "width": 5.0, "height": 5.0}},
+            {"no": "rect"}
+        ]});
+        assert_eq!(inspected_rects(Some(&all)).len(), 2);
+        assert!(inspected_rects(Some(&json!({"element": null}))).is_empty());
+        assert!(inspected_rects(None).is_empty());
+    }
 }

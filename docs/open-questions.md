@@ -126,10 +126,47 @@ comparison warrants a second engine.
 
 ---
 
+### D6 — sola-design publish: where shared canvases live (P2) — **open (2026-10-12)**
+
+**Ask:** "publish" a canvas to share on the internet at `design.moonlight.pm`,
+behind an unguessable path (human, 2026-10-12; suggested a Cloudflare Tunnel).
+
+**Proposal (not built):** publish a **snapshot**, not the live project — the
+canvas's own files plus exactly the files its boards loaded (Design already
+collects them at settle), at their project-relative paths, with a generated
+viewer page (the canvas laid out as in Design, pan / zoom in the browser).
+Link: `https://design.moonlight.pm/<token>/`, token = 128 random bits
+(base32, ~26 chars), stable per canvas across republishes, rotatable,
+`unpublish` deletes it; `noindex`, `Referrer-Policy: same-origin`. Root-absolute
+URLs (`/fonts/x`) are redirected under the token using the same-origin
+`Referer`. A live share would expose the whole project root (Exit's is the
+whole repo), so live is not proposed.
+
+**Fork — where the snapshot is served:**
+
+1. **R2 + a Worker** on `design.moonlight.pm` (recommended). Publish uploads
+   the bundle; links work with this machine off; nothing on this machine is
+   exposed. Workers Paid + R2 are already on the account.
+2. **Tunnel to this machine** (`services.cloudflared`, locally managed tunnel,
+   a small always-on static server for the published folder). No upload; links
+   die when the machine sleeps; a new daemon.
+
+**Facts (read-only check):** `moonlight.pm` is on the account (Free plan).
+`*.moonlight.pm` is an unproxied wildcard to the home IP, so `design` needs its
+own proxied record. Universal SSL covers `design.moonlight.pm`, not
+`*.design.moonlight.pm` (per-share subdomains would need Advanced Certificate
+Manager). Access is not enabled (gated shares would need it). No cloudflared
+here; nixpkgs has 2025.11.1.
+
+**Until decided:** nothing is published; no Cloudflare changes.
+
+---
+
 ## Decision log
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-12 | sola-design agent / human | Agent reads never depend on the human's view: screenshots / PDFs hold their board whole (no detail render from the camera reaches it) and the human's pointer leaves the page first; `view` moves the camera only until the human pans / zooms that canvas (`moved: false`). Agent touches glow on the overlay only. (Human ask: pan and zoom freely while an agent works.) | freeze, capabilities, architecture, manual |
 | 2026-10-12 | D5 sola-design origin | Boards are served over a loopback http origin (Design's own server: GET/HEAD, project files only, no dotfiles, Host must name a registered project), **project root as `/`**, one `*.localhost` host per board so each board has its own zoom / raster scale. Replaces `file://`. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, architecture, manual |
 | 2026-10-08 | workspaces Claude | Claude is first-class alongside Grok and Codex (D4.4 closed): `--agent grok\|codex\|claude`, spawn/exec argv, hooks merged into `~/.claude/settings.json` (other settings kept), rail rollup, `×N` from `compact_boundary`, reboot `claude --resume`. OpenCode stays presence-only. | freeze, CLI freeze, CURRENT, capabilities, architecture, manual/solactl, PRODUCT, design law |
 | 2026-09-17 | Bots | Write fence default remains the bot home. Joshua can explicitly order an escape (whole computer / drop the fence / a path outside home). Seat steal stays forbidden. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks |

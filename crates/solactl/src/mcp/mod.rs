@@ -41,10 +41,15 @@ root, each on its own host (`http://<board>--<canvas>.<project>.localhost:<port>
 design/<canvas>/page.html`). Root-absolute URLs (`/x`) resolve against the project \
 root; fetch, ES modules, and iframes work as on a site; dotfiles are not served. A \
 `src` may carry `?query` / `#fragment` (one page, two states: \
-`light.html?theme=dark`). Each board renders at 2×, or 1× when it is too big for 2× \
-(over 4096 px on a side). Edits reload the canvas when they touch its folder, shared \
-files in design/, or any project file a board loaded (a product stylesheet outside \
-design/ included).";
+`light.html?theme=dark`). `root = \"web/public\"` in canvas.toml makes root-absolute \
+URLs look in that project folder first (product `/fonts/…`). Edits reload the \
+canvas when they touch its folder, shared files in design/, or any project file a \
+board loaded (a product stylesheet outside design/ included).
+
+The human may pan, zoom, and look around the canvas while you work; nothing you \
+read depends on their view. Screenshots and PDFs show the whole artboard (2×, or \
+less for a very large one), inspect reads the page. design_view moves their camera \
+only until they take it.";
 
 type Out = Arc<Mutex<io::Stdout>>;
 

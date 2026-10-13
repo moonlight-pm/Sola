@@ -86,7 +86,17 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let _ = fs::write(&pid_path, std::process::id().to_string());
+    // The helper before a chrome self-restart (`execv`) may still be shutting
+    // down: CEF will not start a second browser process on its cache dir.
+    let me = std::process::id();
+    if let Some(prev) = fs::read_to_string(&pid_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&pid| pid != me && is_helper_of(pid, profile_id))
+    {
+        await_helper_exit(prev, profile_id);
+    }
+    let _ = fs::write(&pid_path, me.to_string());
     tracing::info!(
         profile = %profile_id,
         path = %sock.display(),
@@ -176,6 +186,7 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
                             height: tagged.frame.height,
                             dirty: tagged.frame.dirty.clone(),
                             drag: tagged.frame.drag,
+                            view: tagged.frame.view,
                         };
                         // Write the Arc slice directly — no extra 8 MiB clone.
                         if ipc::write_frame(
@@ -355,27 +366,21 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id,
             url,
             title,
-            width,
-            height,
-            scale,
+            size,
         } => Cmd::OpenBoard {
             id: TabId(id),
             url,
             title,
-            width,
-            height,
-            scale,
+            size,
         },
-        ToEngine::SetBoard {
-            id,
-            width,
-            height,
-            scale,
-        } => Cmd::SetBoard {
+        ToEngine::SetBoard { id, size } => Cmd::SetBoard {
             id: TabId(id),
-            width,
-            height,
-            scale,
+            size,
+        },
+        ToEngine::BoardDetail { id, seq, detail } => Cmd::BoardDetail {
+            id: TabId(id),
+            seq,
+            detail,
         },
         ToEngine::BoardInput { id, input } => Cmd::BoardInput {
             id: TabId(id),
@@ -430,6 +435,47 @@ fn stop_profile_engine(profile_id: &str) {
     let _ = fs::remove_file(&sock);
     let _ = fs::remove_file(profiles::engine_frame_sock_path(profile_id));
     let _ = fs::remove_file(&pid_path);
+}
+
+/// `pid` is a live (not zombie) `--engine` helper for `profile_id`.
+fn is_helper_of(pid: u32, profile_id: &str) -> bool {
+    let running = fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| stat.rsplit_once(") ").map(|(_, rest)| rest.to_string()))
+        .is_some_and(|rest| !rest.starts_with('Z') && !rest.starts_with('X'));
+    let argv = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let args: Vec<&[u8]> = argv.split(|&b| b == 0).collect();
+    let profile = format!("--profile={profile_id}");
+    running
+        && args.iter().any(|a| *a == b"--engine")
+        && args.iter().any(|a| *a == profile.as_bytes())
+}
+
+/// Wait for a previous helper of this profile to finish shutting down;
+/// SIGTERM it if it takes too long.
+fn await_helper_exit(pid: u32, profile_id: &str) {
+    let gone = |timeout: Duration| {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if !is_helper_of(pid, profile_id) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+        !is_helper_of(pid, profile_id)
+    };
+    tracing::info!(%profile_id, pid, "engine helper: waiting for the previous helper to exit");
+    if gone(Duration::from_secs(5)) {
+        return;
+    }
+    tracing::warn!(%profile_id, pid, "engine helper: previous helper still up — SIGTERM");
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+    if !gone(Duration::from_secs(3)) {
+        tracing::error!(%profile_id, pid, "engine helper: previous helper did not exit; CEF may refuse to start");
+    }
 }
 
 fn wait_pid_gone(pid: u32, timeout: Duration) -> bool {

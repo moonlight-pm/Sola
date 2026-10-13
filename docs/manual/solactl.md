@@ -294,8 +294,9 @@ solactl design inspect [--artboard phone] [--selector 'main .card']
 solactl design inspect --artboard light --selector section --all   # every match's box
 ```
 
-`screenshot` captures the page as rendered (CDP, at the artboard's raster
-scale, normally 2×) and replies with `path`; `pdf` writes a one-page PDF of
+`screenshot` captures the whole page (CDP, at the artboard's raster scale,
+normally 2×) and replies with `path` — the same however the human is zoomed
+or panned; `pdf` writes a one-page PDF of
 the artboard as it looks on screen (screen media, backgrounds, no margins).
 Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
 `reload` also wait for a `height = "auto"` artboard to be measured. `inspect` replies with the viewport
@@ -304,11 +305,14 @@ the artboard), the element's box and computed styles, and up to 25
 `issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). `--all` instead
 lists every match (up to 300) as `{selector, tag, rect, text}`. In
 `status`, each artboard has `src` (what `canvas.toml` asks for), `url` (what
-its tab shows), and `error` (missing `src`, HTTP ≥ 400).
-`screenshot` reports the `scale` it used: each artboard renders at 2×, or
-1× when it is too big for 2× (over 4096 px on a side). Boards are served
-over http from the project root (`/` = project folder), not `file://`. There is no raw
-`eval` on this plane.
+its tab shows), `error` (missing `src`, HTTP ≥ 400), and `detail` (the part
+re-rendered at screen scale while the human is zoomed in, else null).
+`screenshot` reports the `scale` it used: each artboard renders at 2×, else
+1×, else under 1× for a page over 8192 px. `view` moves the human's camera
+only until they move it themselves on that canvas; after that it replies
+`moved: false` and leaves it. Boards are served over http from the project
+root (`/` = project folder; a canvas `root` is looked in first), not
+`file://`. There is no raw `eval` on this plane.
 
 ## MCP (`solactl mcp`)
 

@@ -6,23 +6,51 @@
 //! chain is rebuilt. Boards draw at the camera transform, clipped to the
 //! widget. Pan and zoom only rebuild six vertices per board — CEF never
 //! repaints for them.
+//!
+//! Past a board's raster scale a detail render (see [`crate::detail`]) is
+//! drawn over it: one more texture holding the visible part at screen
+//! scale. A frame's `view` says which picture it is; the board's own
+//! picture sits in the top-left of a frame (the surface can be larger).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use iced::widget::shader::{self, Viewport};
 use iced::{Rectangle, mouse};
 use sola_browser::cef::cpu_import;
 use sola_browser::cef::engine::CefFrame;
+use sola_browser::engine::BoardDetail;
 
 use crate::camera::Camera;
+use crate::detail::View;
 use crate::frames::BoardFrames;
 
-/// One board as the plane draws it: tab id + rect in canvas units.
+/// One board as the plane draws it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Item {
     pub tab: u64,
+    /// Canvas units.
     pub rect: Rectangle,
+    /// The board's own pixels (top-left of each whole-board frame).
+    pub pixels: (u32, u32),
+    /// Frame size; frames of any other size are stale.
+    pub surface: (u32, u32),
+    /// Requests whose frames can be drawn (see [`crate::detail::View`]).
+    pub views: [Option<View>; 2],
+    /// Draw the board's detail texture, if it has one.
+    pub detail: bool,
+}
+
+impl Item {
+    /// What a frame tagged `view` shows: `Some(None)` the whole board,
+    /// `Some(Some(d))` a detail, `None` a request no longer known.
+    fn picture(&self, view: u32) -> Option<Option<BoardDetail>> {
+        if let Some(v) = self.views.iter().flatten().find(|v| v.seq == view) {
+            return Some(v.detail);
+        }
+        // Untagged frames are the whole board until the first request.
+        (view == 0 && self.views.iter().all(Option::is_none)).then_some(None)
+    }
 }
 
 pub struct Plane {
@@ -70,11 +98,17 @@ impl shader::Primitive for Primitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        let live: HashSet<u64> = self.items.iter().map(|i| i.tab).collect();
-        pipe.textures.retain(|tab, _| live.contains(tab));
+        let items: HashMap<u64, &Item> = self.items.iter().map(|i| (i.tab, i)).collect();
+        pipe.textures.retain(|tab, _| items.contains_key(tab));
+        pipe.details
+            .retain(|tab, _| items.get(tab).is_some_and(|i| i.detail));
+        pipe.last_view.retain(|tab, _| items.contains_key(tab));
         let mut changed = Vec::new();
         for (tab, frame) in self.frames.take_all() {
-            if live.contains(&tab) && pipe.upload(device, queue, tab, &frame) {
+            let Some(item) = items.get(&tab) else {
+                continue;
+            };
+            if pipe.upload(device, queue, item, &frame) {
                 changed.push(tab);
             }
         }
@@ -113,10 +147,15 @@ impl shader::Primitive for Primitive {
         pass.set_pipeline(&pipe.draw_pipeline);
         pass.set_vertex_buffer(0, pipe.vertices.slice(..));
         for d in &pipe.draws {
-            let Some(tex) = pipe.textures.get(&d.tab) else {
+            let bind_group = if d.detail {
+                pipe.details.get(&d.tab).map(|t| &t.bind_group)
+            } else {
+                pipe.textures.get(&d.tab).map(|t| &t.bind_group)
+            };
+            let Some(bind_group) = bind_group else {
                 continue;
             };
-            pass.set_bind_group(0, &tex.bind_group, &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.draw(d.first..d.first + 6, 0..1);
         }
     }
@@ -129,8 +168,18 @@ struct BoardTexture {
     mips: u32,
 }
 
+/// A board's detail render: the surface-sized frame and what it shows.
+struct DetailTexture {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    size: (u32, u32),
+    seq: u32,
+    shows: BoardDetail,
+}
+
 struct Draw {
     tab: u64,
+    detail: bool,
     first: u32,
 }
 
@@ -143,6 +192,10 @@ pub struct Pipeline {
     /// Bilinear box-down for one mip level from the one above.
     mip_sampler: wgpu::Sampler,
     textures: HashMap<u64, BoardTexture>,
+    details: HashMap<u64, DetailTexture>,
+    /// View of the last frame taken per tab: dirty rects only hold
+    /// between frames of one view.
+    last_view: HashMap<u64, u32>,
     staging: Vec<u8>,
     vertices: wgpu::Buffer,
     draws: Vec<Draw>,
@@ -249,6 +302,8 @@ impl shader::Pipeline for Pipeline {
             sampler,
             mip_sampler,
             textures: HashMap::new(),
+            details: HashMap::new(),
+            last_view: HashMap::new(),
             staging: Vec::new(),
             vertices,
             draws: Vec::new(),
@@ -258,28 +313,74 @@ impl shader::Pipeline for Pipeline {
 }
 
 impl Pipeline {
-    /// Upload one frame. A new or resized board gets a fresh texture and a
-    /// full upload; otherwise only the dirty rects. False = skipped.
+    /// Upload one frame to the board's texture or its detail texture. A
+    /// new or resized texture gets a full upload; otherwise only the dirty
+    /// rects. True when the board's own texture changed (mips to rebuild).
     fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        tab: u64,
+        item: &Item,
         frame: &CefFrame,
     ) -> bool {
+        let tab = item.tab;
         let size = (frame.width, frame.height);
-        if size.0 == 0 || size.1 == 0 || size.0 > self.max_side || size.1 > self.max_side {
-            tracing::warn!(tab, w = size.0, h = size.1, max = self.max_side, "board frame skipped");
+        if size != item.surface {
             return false;
         }
-        let fresh = self.textures.get(&tab).is_none_or(|t| t.size != size);
-        if fresh {
-            let tex = board_texture(device, &self.layout, &self.sampler, size);
-            self.textures.insert(tab, tex);
+        let Some(picture) = item.picture(frame.view) else {
+            return false;
+        };
+        let same_view = self.last_view.insert(tab, frame.view) == Some(frame.view);
+        match picture {
+            None => {
+                let px = item.pixels;
+                if px.0 == 0 || px.1 == 0 || px.0 > self.max_side || px.1 > self.max_side {
+                    tracing::warn!(tab, w = px.0, h = px.1, max = self.max_side, "board frame skipped");
+                    return false;
+                }
+                let fresh = self.textures.get(&tab).is_none_or(|t| t.size != px);
+                if fresh {
+                    let tex = board_texture(device, &self.layout, &self.sampler, px, true);
+                    self.textures.insert(tab, tex);
+                }
+                let tex = &self.textures[&tab];
+                cpu_import::upload_cropped(
+                    queue,
+                    &tex.texture,
+                    frame,
+                    &mut self.staging,
+                    fresh || !same_view,
+                    px,
+                );
+                true
+            }
+            Some(shows) => {
+                if !item.detail || size.0 > self.max_side || size.1 > self.max_side {
+                    return false;
+                }
+                let fresh = self.details.get(&tab).is_none_or(|t| t.size != size);
+                if fresh {
+                    let t = board_texture(device, &self.layout, &self.sampler, size, false);
+                    self.details.insert(
+                        tab,
+                        DetailTexture {
+                            texture: t.texture,
+                            bind_group: t.bind_group,
+                            size,
+                            seq: frame.view,
+                            shows,
+                        },
+                    );
+                }
+                let tex = self.details.get_mut(&tab).expect("detail texture");
+                let full = fresh || !same_view || tex.seq != frame.view;
+                tex.seq = frame.view;
+                tex.shows = shows;
+                cpu_import::upload(queue, &tex.texture, frame, &mut self.staging, full);
+                false
+            }
         }
-        let tex = &self.textures[&tab];
-        cpu_import::upload(queue, &tex.texture, frame, &mut self.staging, fresh);
-        true
     }
 
     fn rebuild_mips(&self, device: &wgpu::Device, queue: &wgpu::Queue, tabs: &[u64]) {
@@ -343,45 +444,91 @@ impl Pipeline {
         self.draws.clear();
         let scale = viewport.scale_factor();
         let target = viewport.physical_size();
-        let mut verts: Vec<f32> = Vec::with_capacity(items.len() * 24);
-        for item in items {
-            if !self.textures.contains_key(&item.tab) {
-                continue;
+        let mut verts: Vec<f32> = Vec::with_capacity(items.len() * 48);
+        let mut quad = |draws: &mut Vec<Draw>, tab, detail, [l, t, r, b]: [f32; 4], [u0, v0, u1, v1]: [f32; 4]| {
+            let (l, t) = ndc(l, t, target);
+            let (r, b) = ndc(r, b, target);
+            draws.push(Draw {
+                tab,
+                detail,
+                first: (verts.len() / 4) as u32,
+            });
+            for [x, y, u, v] in [
+                [l, t, u0, v0],
+                [r, t, u1, v0],
+                [l, b, u0, v1],
+                [r, t, u1, v0],
+                [r, b, u1, v1],
+                [l, b, u0, v1],
+            ] {
+                verts.extend([x, y, u, v]);
             }
-            let r = camera.rect_to_screen(item.rect);
-            let screen = Rectangle::new(
-                iced::Point::new(bounds.x + r.x, bounds.y + r.y),
-                r.size(),
-            );
+        };
+        let to_screen = |r: Rectangle| {
+            let r = camera.rect_to_screen(r);
+            Rectangle::new(iced::Point::new(bounds.x + r.x, bounds.y + r.y), r.size())
+        };
+        for item in items {
+            let Some(tex) = self.textures.get(&item.tab) else {
+                continue;
+            };
+            let screen = to_screen(item.rect);
             if !screen.intersects(&bounds) {
                 continue;
             }
             // At 1:1 (one texel per pixel) snap to whole pixels so the page
             // is sharp. Otherwise keep sub-pixel positions: snapping a scaled
             // board makes it jump a pixel as the zoom changes.
-            let tex_w = self.textures[&item.tab].size.0 as f32;
-            let one_to_one = (screen.width * scale - tex_w).abs() < 0.5;
+            let one_to_one = (screen.width * scale - tex.size.0 as f32).abs() < 0.5;
             let snap = |v: f32| if one_to_one { v.round() } else { v };
             let x0 = snap(screen.x * scale);
             let y0 = snap(screen.y * scale);
             let x1 = x0 + snap(screen.width * scale);
             let y1 = y0 + snap(screen.height * scale);
-            let (l, t) = ndc(x0, y0, target);
-            let (rr, b) = ndc(x1, y1, target);
-            self.draws.push(Draw {
-                tab: item.tab,
-                first: (verts.len() / 4) as u32,
-            });
-            for [x, y, u, v] in [
-                [l, t, 0.0, 0.0],
-                [rr, t, 1.0, 0.0],
-                [l, b, 0.0, 1.0],
-                [rr, t, 1.0, 0.0],
-                [rr, b, 1.0, 1.0],
-                [l, b, 0.0, 1.0],
-            ] {
-                verts.extend([x, y, u, v]);
+            quad(&mut self.draws, item.tab, false, [x0, y0, x1, y1], [0.0, 0.0, 1.0, 1.0]);
+
+            if !item.detail {
+                continue;
             }
+            let Some(d) = self.details.get(&item.tab) else {
+                continue;
+            };
+            // The part of the board the detail covers, in board CSS px.
+            let k = d.shows.scale;
+            let (dw, dh) = (f64::from(d.size.0), f64::from(d.size.1));
+            let (bw, bh) = (f64::from(item.rect.width), f64::from(item.rect.height));
+            let (cx0, cy0) = (d.shows.x.max(0.0), d.shows.y.max(0.0));
+            let (cx1, cy1) = ((d.shows.x + dw / k).min(bw), (d.shows.y + dh / k).min(bh));
+            if cx1 <= cx0 || cy1 <= cy0 {
+                continue;
+            }
+            let uv = [
+                ((cx0 - d.shows.x) * k / dw) as f32,
+                ((cy0 - d.shows.y) * k / dh) as f32,
+                ((cx1 - d.shows.x) * k / dw) as f32,
+                ((cy1 - d.shows.y) * k / dh) as f32,
+            ];
+            let part = to_screen(Rectangle::new(
+                iced::Point::new(item.rect.x + cx0 as f32, item.rect.y + cy0 as f32),
+                iced::Size::new((cx1 - cx0) as f32, (cy1 - cy0) as f32),
+            ));
+            // Drawn at its own scale (the camera rested): put its texels on
+            // pixels. Only the origin moves, so the scale stays exactly 1:1.
+            let at_scale = (f64::from(camera.zoom * scale) - k).abs() < k * 1e-4;
+            let (px, py) = (part.x * scale, part.y * scale);
+            let (sx, sy) = if at_scale { (px.round() - px, py.round() - py) } else { (0.0, 0.0) };
+            quad(
+                &mut self.draws,
+                item.tab,
+                true,
+                [
+                    px + sx,
+                    py + sy,
+                    px + sx + part.width * scale,
+                    py + sy + part.height * scale,
+                ],
+                uv,
+            );
         }
         if verts.is_empty() {
             return;
@@ -415,13 +562,16 @@ fn mip_count(w: u32, h: u32) -> u32 {
     32 - w.max(h).max(1).leading_zeros()
 }
 
+/// A board-sized texture; `mipped` for a board's own picture (minified),
+/// one level for a detail (drawn near 1:1).
 fn board_texture(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
     (width, height): (u32, u32),
+    mipped: bool,
 ) -> BoardTexture {
-    let mips = mip_count(width, height);
+    let mips = if mipped { mip_count(width, height) } else { 1 };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("design board"),
         size: wgpu::Extent3d {

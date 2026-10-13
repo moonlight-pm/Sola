@@ -7,7 +7,7 @@ use iced::mouse::ScrollDelta;
 use iced::{Point, Rectangle, Size, Vector};
 
 pub const MIN_ZOOM: f32 = 0.05;
-pub const MAX_ZOOM: f32 = 8.0;
+pub const MAX_ZOOM: f32 = 32.0;
 /// Space kept around the content on fit.
 const FIT_PAD: f32 = 48.0;
 /// One button / menu zoom step.

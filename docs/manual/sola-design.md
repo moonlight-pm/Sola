@@ -18,6 +18,7 @@ You look, pan, zoom, point, and try things.
 
 ```toml
 title = "Settings"              # optional; defaults to the directory name
+root = "web/public"             # optional: root-absolute URLs look in this project folder first
 
 [[artboard]]
 id = "desktop"                  # unique; defaults to the src file stem
@@ -34,15 +35,20 @@ match its size. Design serves the project over http on this machine only
 (`http://<artboard>--<canvas>.<project>.localhost:<port>/design/<canvas>/…`),
 with the **project root as `/`**: root-absolute URLs (`/shared/x.css`) resolve
 against the project folder, and fetch, ES modules, and iframes work as on a
-site. Dotfiles (`.git`, `.env`) are never served. One page can show two
-states with a query: `src = "light.html?theme=dark"`. Content taller than the artboard is cut off at its bottom
-edge — the wheel zooms, it does not scroll. For long pages use
-`height = "auto"`: the artboard grows to the page's content after each load
-(it starts at 900).
+site. Dotfiles (`.git`, `.env`) are never served; video and audio can seek.
+With `root`, a root-absolute URL looks in that folder first and then at the
+project root, so a product's `/fonts/x.woff2` works and the artboards' own
+`/design/<canvas>/…` URLs still do. One page can show two states with a
+query: `src = "light.html?theme=dark"`. Content taller than the artboard is
+cut off at its bottom edge — the wheel zooms, it does not scroll. For long
+pages use `height = "auto"`: the artboard grows to the page's content after
+each load (it starts at 900), and is measured again over the next few seconds
+for images that arrive late.
 
-Pages render at 2×, so they stay sharp to 200%; zooming only scales them,
-so it is immediate. An artboard too big for 2× (over 4096 px on a side)
-renders at 1×; the others keep 2×.
+Pages render at 2× (a very large artboard at less), and zooming only scales
+them, so it is immediate. When you stop zooming past that, the part of each
+artboard on screen re-renders at the screen's scale and sharpens in place —
+nothing re-lays out, so text does not move. Zoom goes to 3200%.
 
 If an artboard's page cannot load (its `src` file is missing, or the page
 answers 404), its title turns red with the reason.
@@ -80,8 +86,9 @@ files are untouched.
 
 ## Use the pages, pick an element
 
-Pages are live: hover, click, and type (click a field first) work on the
-artboard under the pointer. The wheel still zooms and right-drag still pans.
+Pages are live: hover, click, and type (click a field first; input methods
+compose as usual) work on the artboard under the pointer. The wheel still
+zooms and right-drag still pans.
 
 **Super+click** an element to pick it instead: it gets an outline, and the
 bar at the bottom shows it next to the zoom. An agent reads it with
@@ -100,9 +107,21 @@ project (it shows up under that project in the rail), open a canvas, steer the
 view, wait for reloads, screenshot an artboard, export it as a PDF, inspect
 what rendered, and read your selection.
 
+Look around while an agent works. Its screenshots and PDFs are the whole
+artboard however you are zoomed, and your pointer leaves the page while they
+are taken, so no hover state gets in. An agent can move your view only until
+you pan or zoom that canvas yourself; after that its `view` leaves your
+camera alone.
+
+What an agent touches glows: a soft halo with a light sweep over the elements
+it inspects, the selection it reads, an artboard it screenshots or prints,
+and an artboard reloading after its files changed.
+
 ## Not yet
 
-No IME composition in pages. Zooming past 200% softens; an artboard over
-4096 px on a side renders at 1×. An `auto` artboard is measured when its
-page settles (and again after it resizes), so images that arrive later can
-leave it short until the next reload.
+An `auto` artboard is measured for a few seconds after each load; content
+that grows later than that waits for the next reload. Opening a different
+canvas (you or an agent) replaces the one on screen: Design shows one canvas
+at a time, and an agent working on another canvas has to open it. The pages
+themselves are shared with agents: text you type into a page is there when
+an agent looks.

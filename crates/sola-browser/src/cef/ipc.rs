@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cef::engine::InputEvent;
 use crate::cef::paint::DirtyRect;
-use crate::engine::{EditCmd, NavCmd, PageContext, TabInfo};
+use crate::engine::{BoardDetail, BoardSize, EditCmd, NavCmd, PageContext, TabInfo};
 
 /// Safety cap; larger is treated as a corrupt peer. A sola-design board
 /// frame can be up to 8192×5120 BGRA (160 MiB); a 4K page is ≈ 33 MiB.
@@ -99,15 +99,16 @@ pub enum ToEngine {
         id: u64,
         url: String,
         title: String,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
     },
     SetBoard {
         id: u64,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
+    },
+    BoardDetail {
+        id: u64,
+        seq: u32,
+        detail: Option<BoardDetail>,
     },
     BoardInput {
         id: u64,
@@ -211,6 +212,9 @@ pub struct FrameMeta {
     /// Host-composited HTML5 drag overlay. Default false for older writers.
     #[serde(default)]
     pub drag: bool,
+    /// Board view `seq` the frame shows (`Cmd::BoardDetail`); 0 elsewhere.
+    #[serde(default)]
+    pub view: u32,
 }
 
 pub fn write_msg<T: Serialize>(stream: &mut UnixStream, msg: &T) -> io::Result<()> {
@@ -380,6 +384,7 @@ mod tests {
                 h: 1,
             }],
             drag: true,
+            view: 3,
         };
         let pixels = vec![1, 2, 3, 4, 5, 6, 7, 8];
         write_frame(&mut a, &meta, &pixels).unwrap();

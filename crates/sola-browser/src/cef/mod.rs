@@ -7,6 +7,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod agent;
+pub mod board;
 pub mod cpu_import;
 pub mod engine;
 pub mod frame;

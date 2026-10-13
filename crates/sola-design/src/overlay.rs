@@ -18,6 +18,7 @@ use sola_kit::fonts;
 
 use crate::boards::{self, Board};
 use crate::camera::{self, Camera};
+use crate::glow;
 use crate::select;
 
 #[derive(Debug, Clone)]
@@ -47,6 +48,8 @@ pub struct Overlay<'a> {
     pub cursor: u32,
     /// Off while a dialog is open: no input reaches the plane.
     pub live: bool,
+    /// What agents are touching (see [`crate::glow`]).
+    pub glows: Vec<glow::Lit>,
 }
 
 #[derive(Default)]
@@ -58,6 +61,9 @@ pub struct State {
     capture: Option<u64>,
     held: u32,
     last_press: Option<(u32, i32, i32, Instant, u32)>,
+    /// An IME preedit is live in the focused page: typed characters belong
+    /// to it, not to the page as keys.
+    composing: bool,
 }
 
 /// Super is held. River eats a bare Super press (it reaches us as a bus
@@ -249,7 +255,50 @@ impl canvas::Program<Event> for Overlay<'_> {
             iced::Event::Mouse(m) if self.live => self.mouse(st, *m, bounds, cursor),
             iced::Event::Keyboard(k) => {
                 track_modifiers(k);
-                if self.live { self.keyboard(k) } else { None }
+                if !self.live {
+                    return None;
+                }
+                if st.composing {
+                    if let keyboard::Event::KeyPressed { key, .. } = k {
+                        // Escape cancels the composition; characters are
+                        // the IME's (a CHAR would double-insert).
+                        if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
+                            st.composing = false;
+                            let tab = self.focus?;
+                            return Some(
+                                Action::publish(Event::Input(vec![(tab, input::ime_cancel())]))
+                                    .and_capture(),
+                            );
+                        }
+                        if matches!(key, keyboard::Key::Character(_)) {
+                            return Some(Action::capture());
+                        }
+                    }
+                }
+                self.keyboard(k)
+            }
+            iced::Event::InputMethod(ime) if self.live => {
+                use iced::advanced::input_method::Event as Ime;
+                let tab = self.focus?;
+                let ev = match ime {
+                    Ime::Opened => return None,
+                    Ime::Preedit(text, sel) => {
+                        st.composing = !text.is_empty();
+                        input::ime_set_composition(text.clone(), sel.clone())
+                    }
+                    Ime::Commit(text) => {
+                        st.composing = false;
+                        input::ime_commit(text.clone())
+                    }
+                    Ime::Closed => {
+                        let was = std::mem::take(&mut st.composing);
+                        if !was {
+                            return None;
+                        }
+                        input::ime_cancel()
+                    }
+                };
+                Some(Action::publish(Event::Input(vec![(tab, ev)])).and_capture())
             }
             _ => None,
         }
@@ -320,6 +369,26 @@ impl canvas::Program<Event> for Overlay<'_> {
                     Stroke::default().with_color(accent).with_width(2.0),
                 );
             }
+        }
+        for lit in &self.glows {
+            let Some(b) = self.board(lit.tab) else {
+                continue;
+            };
+            let canvas_rect = match lit.rect {
+                // Clip an element to its board: the board shows no more.
+                Some(r) => {
+                    let el = Rectangle::new(
+                        Point::new(b.art.x + r.x, b.art.y + r.y),
+                        Size::new(r.width, r.height),
+                    );
+                    let Some(shown) = el.intersection(&b.rect()) else {
+                        continue;
+                    };
+                    shown
+                }
+                None => b.rect(),
+            };
+            glow::draw(&mut frame, self.camera.rect_to_screen(canvas_rect), lit, accent);
         }
         vec![frame.into_geometry()]
     }

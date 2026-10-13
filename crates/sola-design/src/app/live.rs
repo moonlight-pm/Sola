@@ -32,12 +32,14 @@ impl App {
             at: at.clone(),
             dir,
             error: None,
+            web_root: None,
         });
         self.catalog.selected = Some(at);
         self.persist();
         self.camera = Camera::default();
         self.fit_pending = true;
         self.user_camera = false;
+        self.human_camera = false;
         self.board_links.clear();
         self.mark_shown();
         self.relayout();
@@ -73,13 +75,16 @@ impl App {
                 return;
             }
         };
+        // A new web root changes what the same URLs serve: reload.
+        let root_moved = open.web_root != canvas.web_root && !self.boards.is_empty();
+        open.web_root = canvas.web_root.clone();
         let mut canvas = canvas;
         let mut missing = HashMap::new();
         for art in &mut canvas.artboards {
             if let Some(file) = canvas::file_url_path(&art.url).filter(|f| !f.exists()) {
                 missing.insert(art.id.clone(), file.display().to_string());
             }
-            if let Some(url) = self.served_url(&art.url, &art.id) {
+            if let Some(url) = self.served_url(&art.url, &art.id, canvas.web_root.as_deref()) {
                 art.url = url;
             }
         }
@@ -87,6 +92,7 @@ impl App {
         let (boards, ops) = boards::sync(
             std::mem::take(&mut self.boards),
             &canvas.artboards,
+            self.surface_cap,
             || engine.alloc_tab_id(),
         );
         self.boards = boards;
@@ -113,6 +119,11 @@ impl App {
             self.fit();
         }
         self.settle_rasters();
+        self.details.poke(Instant::now());
+        if root_moved {
+            let tabs: Vec<TabId> = self.boards.iter().map(|b| b.tab).collect();
+            self.reload_tabs(&tabs);
+        }
     }
 
     fn apply(&mut self, op: Op) {
@@ -122,9 +133,7 @@ impl App {
                 tab,
                 url,
                 title,
-                width,
-                height,
-                scale,
+                size,
             } => {
                 self.frames.open(tab.0);
                 self.loads.begin(tab.0, now);
@@ -132,28 +141,16 @@ impl App {
                     id: tab,
                     url,
                     title,
-                    width,
-                    height,
-                    scale,
+                    size,
                 });
             }
-            Op::View {
-                tab,
-                width,
-                height,
-                scale,
-            } => {
+            Op::View { tab, size, resized } => {
                 // An `auto` board only resizes here when its width changed:
                 // its content height is stale.
-                if self.is_auto(tab) {
+                if resized && self.is_auto(tab) {
                     self.loads.begin(tab.0, now);
                 }
-                self.send(Cmd::SetBoard {
-                    id: tab,
-                    width,
-                    height,
-                    scale,
-                });
+                self.send(Cmd::SetBoard { id: tab, size });
             }
             Op::Load { tab, url } => {
                 self.loads.begin(tab.0, now);
@@ -164,16 +161,16 @@ impl App {
     }
 
     /// A `file://` board URL as this project's served origin (its own
-    /// host). `None` keeps the URL (web `src`, no server, or outside the
-    /// project).
-    fn served_url(&self, url: &str, artboard: &str) -> Option<String> {
+    /// host, looking in the canvas `web_root` first). `None` keeps the URL
+    /// (web `src`, no server, or outside the project).
+    fn served_url(&self, url: &str, artboard: &str, web_root: Option<&std::path::Path>) -> Option<String> {
         let server = self.serve.as_ref()?;
         let open = self.open.as_ref()?;
         let root = &self.catalog.project(&open.at.project)?.root;
         let cut = url.find(['?', '#']).unwrap_or(url.len());
         let (base, suffix) = url.split_at(cut);
         let file = canvas::file_url_path(base)?;
-        server.url(&open.at.project, root, &file, suffix, artboard, &open.at.canvas)
+        server.url(&open.at.project, root, &file, suffix, artboard, &open.at.canvas, web_root)
     }
 
     /// The file a board resource URL names: a `file://` URL or this
@@ -201,6 +198,8 @@ impl App {
 
     fn close_board(&mut self, tab: TabId) {
         self.frames.close(tab.0);
+        self.details.forget(tab.0);
+        self.glows.forget(tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
         self.board_links.remove(&tab.0);
@@ -235,6 +234,8 @@ impl App {
         }
         self.listed.clear();
         self.loads.clear();
+        self.details.clear();
+        self.glows = Default::default();
         self.focus = None;
         self.relayout();
     }
@@ -298,6 +299,7 @@ impl App {
                 continue;
             };
             self.loads.begin(tab.0, now);
+            self.glows.reloading(tab.0, now);
             let nav = if shown.get(&tab.0) == Some(&want) {
                 NavCmd::ReloadIgnoreCache
             } else {
@@ -318,22 +320,44 @@ impl App {
             .observe(&loading, self.boards.iter().map(|b| b.tab.0));
         let frames = &self.frames;
         let idle = |tab: u64| frames.is_painted(tab) && loading.get(&tab) == Some(&false);
-        for (tab, generation) in self.loads.take_settles(Instant::now(), idle) {
+        let now = Instant::now();
+        let settles = self.loads.take_settles(now, idle);
+        let follow_ups = self.loads.take_follow_ups(now);
+        let settles = settles.into_iter().map(|(t, g)| (t, g, false));
+        let follow_ups = follow_ups
+            .into_iter()
+            .filter(|&(t, _)| self.is_auto(TabId(t)))
+            .map(|(t, g)| (t, g, true));
+        for (tab, generation, follow_up) in settles.chain(follow_ups).collect::<Vec<_>>() {
             let op = AgentOp::Eval {
                 expression: inspect::SETTLE.to_string(),
             };
-            self.agent(TabId(tab), op, Some(Pending::Settle { tab, generation }));
+            let why = Pending::Settle {
+                tab,
+                generation,
+                follow_up,
+            };
+            self.agent(TabId(tab), op, Some(why));
         }
     }
 
     /// A board settled: flag an HTTP error page, record the files it loaded
     /// from outside `design/`, and resize an `auto` board to its content —
     /// then settle once more (bounded: [`crate::loads::MAX_CONFIRMS`]), since
-    /// the new viewport can reflow the page. A reply for an earlier load of
-    /// the tab is ignored.
-    pub(super) fn on_settled(&mut self, tab: u64, generation: u64, reply: AgentReply) {
-        if !self.loads.settled(tab, generation) {
+    /// the new viewport can reflow the page. An `auto` board is measured
+    /// again a few times after its first settle (`follow_up` replies), for
+    /// content that arrives late. A reply for an earlier load of the tab is
+    /// ignored.
+    pub(super) fn on_settled(&mut self, tab: u64, generation: u64, follow_up: bool, reply: AgentReply) {
+        if follow_up {
+            if self.loads.generation(tab) != generation {
+                return;
+            }
+        } else if !self.loads.settled(tab, generation) {
             return;
+        }
+        if !follow_up && self.is_auto(TabId(tab)) {
+            self.loads.follow_up(tab, Instant::now());
         }
         let data = reply.ok.then_some(reply.data).flatten();
         let Some(data) = data else {
@@ -372,6 +396,7 @@ impl App {
         self.boards[i].art.height = height;
         tracing::debug!(artboard = %self.boards[i].art.id, height, "auto artboard height");
         self.resize_boards(Some(tab));
+        self.details.poke(Instant::now());
         self.loads.confirm(tab, Instant::now());
         if !self.user_camera {
             self.fit();
@@ -399,9 +424,7 @@ impl App {
 
     // ── raster scale ──────────────────────────────────────────────
 
-    /// The canvas raster scale (2×, or 1× if some board cannot fit 2×).
-    /// Raster scale per board (2×, or 1× when a board on the same host is
-    /// too big for 2×).
+    /// Raster scale per board (see [`boards::host_scales`]).
     fn board_scales(&self) -> Vec<f64> {
         let sizes: Vec<(&str, u32, u32)> = self
             .boards
@@ -416,25 +439,23 @@ impl App {
         self.resize_boards(None);
     }
 
-    /// Push each board's scale, plus a `SetBoard` for `also` (a board whose
-    /// size changed) even when its scale did not.
+    /// Push each board's geometry (scale, surface), plus a `SetBoard` for
+    /// `also` (a board whose size changed) even when it looks unchanged.
     fn resize_boards(&mut self, also: Option<u64>) {
         let scales = self.board_scales();
+        let cap = self.surface_cap;
         let mut cmds = Vec::new();
         for (b, scale) in self.boards.iter_mut().zip(scales) {
-            if b.scale == scale && also != Some(b.tab.0) {
+            let size = boards::board_size(&b.art, scale, b.cap(cap));
+            if size == b.size() && also != Some(b.tab.0) {
                 continue;
             }
             if b.scale != scale {
                 tracing::debug!(artboard = %b.art.id, from = b.scale, to = scale, "re-raster");
             }
-            b.scale = scale;
-            cmds.push(Cmd::SetBoard {
-                id: b.tab,
-                width: b.art.width,
-                height: b.art.height,
-                scale,
-            });
+            b.scale = size.scale;
+            b.surface = size.surface;
+            cmds.push(Cmd::SetBoard { id: b.tab, size });
         }
         for cmd in cmds {
             self.send(cmd);

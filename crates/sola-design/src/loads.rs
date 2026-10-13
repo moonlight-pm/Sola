@@ -8,7 +8,9 @@
 //! `wait` counts it done. Each load has a generation, so a settle answered
 //! after the board navigated on (`Inspected target navigated`) cannot mark
 //! the new load settled. An `auto` resize can ask for a confirming settle
-//! (the new viewport may reflow), at most [`MAX_CONFIRMS`] per load.
+//! (the new viewport may reflow), at most [`MAX_CONFIRMS`] per load. An
+//! `auto` board is also measured again a few times after it settles
+//! ([`FOLLOW_UPS`]): images and lazy content that arrive late grow it.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -19,6 +21,12 @@ pub const LOAD_GRACE: Duration = Duration::from_secs(1);
 const SETTLE_GIVE_UP: Duration = Duration::from_secs(15);
 /// Confirming settles after an `auto` resize, per load (bounds `vh` growth).
 pub const MAX_CONFIRMS: u8 = 2;
+/// Re-measures after a load settles, as offsets from the settle.
+pub const FOLLOW_UPS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+    Duration::from_secs(8),
+];
 
 #[derive(Default)]
 pub struct Loads {
@@ -32,6 +40,8 @@ pub struct Loads {
     generation: HashMap<u64, u64>,
     /// Confirming settles used by the current load.
     confirms: HashMap<u64, u8>,
+    /// Re-measures still to come for a load (generation, when).
+    follow: HashMap<u64, (u64, Vec<Instant>)>,
 }
 
 impl Loads {
@@ -42,7 +52,37 @@ impl Loads {
         self.settle_due.insert(tab, now);
         self.settling.remove(&tab);
         self.confirms.remove(&tab);
+        self.follow.remove(&tab);
         *self.generation.entry(tab).or_default() += 1;
+    }
+
+    /// The current load generation of `tab`.
+    pub fn generation(&self, tab: u64) -> u64 {
+        self.generation.get(&tab).copied().unwrap_or_default()
+    }
+
+    /// Measure `tab` again at each of [`FOLLOW_UPS`] from `now` (this load
+    /// only).
+    pub fn follow_up(&mut self, tab: u64, now: Instant) {
+        let when = FOLLOW_UPS.iter().rev().map(|d| now + *d).collect();
+        self.follow.insert(tab, (self.generation(tab), when));
+    }
+
+    /// Re-measures due now, as `(tab, generation)`.
+    pub fn take_follow_ups(&mut self, now: Instant) -> Vec<(u64, u64)> {
+        let mut out = Vec::new();
+        let generation = &self.generation;
+        self.follow.retain(|tab, (g, when)| {
+            if generation.get(tab).copied().unwrap_or_default() != *g {
+                return false;
+            }
+            if when.last().is_some_and(|t| *t <= now) {
+                when.pop();
+                out.push((*tab, *g));
+            }
+            !when.is_empty()
+        });
+        out
     }
 
     /// Settle once more after an `auto` resize (the new viewport may
@@ -81,9 +121,10 @@ impl Loads {
         !self.settle_due.contains_key(&tab)
     }
 
-    /// Some board still needs settling (keeps the app ticking).
+    /// Some board still needs settling or re-measuring (keeps the app
+    /// ticking).
     pub fn has_due(&self) -> bool {
-        !self.settle_due.is_empty()
+        !self.settle_due.is_empty() || !self.follow.is_empty()
     }
 
     /// Boards to settle now: due, idle and painted (`idle(tab)`), and either
@@ -126,6 +167,7 @@ impl Loads {
         self.settling.remove(&tab);
         self.generation.remove(&tab);
         self.confirms.remove(&tab);
+        self.follow.remove(&tab);
     }
 
     pub fn clear(&mut self) {
@@ -198,6 +240,24 @@ mod tests {
         assert!(!l.confirm(5, t0), "max {MAX_CONFIRMS}");
         l.begin(5, t0);
         assert!(l.confirm(5, t0), "a new load gets new confirms");
+    }
+
+    #[test]
+    fn follow_ups_come_due_once_each_for_this_load() {
+        let mut l = Loads::default();
+        let t0 = Instant::now();
+        l.begin(3, t0);
+        l.follow_up(3, t0);
+        assert!(l.has_due());
+        assert!(l.take_follow_ups(t0).is_empty());
+        assert_eq!(l.take_follow_ups(t0 + FOLLOW_UPS[0]), vec![(3, 1)]);
+        assert!(l.take_follow_ups(t0 + FOLLOW_UPS[0]).is_empty());
+        // A new load drops the old schedule.
+        l.begin(3, t0);
+        assert!(l.take_follow_ups(t0 + FOLLOW_UPS[2]).is_empty());
+        l.follow_up(3, t0);
+        let late = l.take_follow_ups(t0 + FOLLOW_UPS[2]);
+        assert_eq!(late, vec![(3, 2)], "overdue ones fire one per tick");
     }
 
     #[test]
