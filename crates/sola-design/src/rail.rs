@@ -52,6 +52,8 @@ pub fn view<'a>(
     projects: &'a [Project],
     canvases: &'a HashMap<String, Vec<canvas::Entry>>,
     selected: Option<&CanvasRef>,
+    // Canvases an agent is working in (a dim "agent" on the row).
+    busy: &std::collections::HashSet<String>,
     theme: &Theme,
     plane_bg: Color,
 ) -> Element<'a, Msg> {
@@ -65,11 +67,12 @@ pub fn view<'a>(
                     canvas: entry.name.clone(),
                 };
                 let key = r.key();
-                items.push(
-                    SidebarItem::new(entry.title.clone(), Msg::SelectCanvas(key.clone()))
-                        .active(selected == Some(&r))
-                        .id(key),
-                );
+                let mut item = SidebarItem::new(entry.title.clone(), Msg::SelectCanvas(key.clone()))
+                    .active(selected == Some(&r));
+                if busy.contains(&key) {
+                    item = item.secondary("agent");
+                }
+                items.push(item.id(key));
             }
         }
         let mark = if project.collapsed { "▸ " } else { "" };

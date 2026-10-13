@@ -17,6 +17,14 @@ pub const WAIT_DEFAULT_SECS: u64 = 15;
 pub fn methods() -> Vec<MethodSpec> {
     let artboard = || opt_s("artboard", Some('a'), "Artboard id (default: selection's, or the only one)");
     let timeout = || opt("timeout", None, ArgType::Int, "Seconds (default 15)");
+    let canvas = || {
+        opt(
+            "canvas",
+            Some('c'),
+            ArgType::Path,
+            "Canvas dir, its canvas.toml, or a file in it (default: the one on the human's screen; over MCP, your last opened / created canvas)",
+        )
+    };
     vec![
         method("project.list", "Projects and their canvases", &[]),
         method(
@@ -26,7 +34,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "open",
-            "Show a canvas (registers its project if needed)",
+            "Make a canvas live for you, off the human's screen (registers its project if needed); --raise shows it to them",
             &[
                 req(
                     "path",
@@ -34,12 +42,12 @@ pub fn methods() -> Vec<MethodSpec> {
                     ArgType::Path,
                     "Canvas dir, its canvas.toml, or any file in it",
                 ),
-                flag("raise", 'r', "Raise the Design window"),
+                flag("raise", 'r', "Show it on the human's screen and raise the Design window"),
             ],
         ),
         method(
             "canvas.new",
-            "Make a canvas (design/<name>/) in a project and show it; opens it if it exists",
+            "Make a canvas (design/<name>/) in a project, live for you off the human's screen; opens it if it exists",
             &[
                 req_s("name", Some('n'), "Canvas name (the folder is its slug)"),
                 opt(
@@ -48,13 +56,23 @@ pub fn methods() -> Vec<MethodSpec> {
                     ArgType::Path,
                     "Project folder (default: your working directory)",
                 ),
-                flag("raise", 'r', "Raise the Design window"),
+                flag("raise", 'r', "Show it on the human's screen and raise the Design window"),
             ],
         ),
         method(
             "status",
-            "Open canvas, artboards (size, scale, loading), watched outside files, zoom, selection",
-            &[],
+            "A canvas: artboards (size, scale, loading), watched outside files, zoom, shown, selection",
+            &[canvas()],
+        ),
+        method(
+            "share",
+            "A canvas's live share link (the web sees its files as they are now, while Design runs)",
+            &[canvas()],
+        ),
+        method(
+            "share.rotate",
+            "A new share link for a canvas; the old one stops working",
+            &[canvas()],
         ),
         method(
             "selection",
@@ -63,8 +81,9 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "view",
-            "Steer the human's camera: --fit, --artboard (fit it), --zoom. Once the human has moved it on this canvas it stays put (`moved: false`)",
+            "Steer a canvas's camera: --fit, --artboard (fit it), --zoom. Off screen it frames the canvas for when the human opens it; once the human has moved it, it stays put (`moved: false`)",
             &[
+                canvas(),
                 flag("fit", 'f', "Fit every artboard"),
                 artboard(),
                 opt("zoom", Some('z'), ArgType::Float, "Zoom (1 = 100%)"),
@@ -73,19 +92,20 @@ pub fn methods() -> Vec<MethodSpec> {
         method_ms(
             "wait",
             "Until the artboards show the files on disk (reloads them if files changed) and have settled",
-            &[artboard(), timeout()],
+            &[canvas(), artboard(), timeout()],
             WAIT_TIMEOUT_MS,
         ),
         method_ms(
             "reload",
             "Reload artboards (all, or --artboard) and wait for them",
-            &[artboard(), timeout()],
+            &[canvas(), artboard(), timeout()],
             WAIT_TIMEOUT_MS,
         ),
         method_ms(
             "screenshot",
             "PNG of the whole artboard at its raster scale (`scale`: 2×, else 1×, else less for a page over 8192 px). The human's view does not change it",
             &[
+                canvas(),
                 artboard(),
                 opt("out", Some('o'), ArgType::Path, "Write here (default: runtime dir)"),
             ],
@@ -95,6 +115,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "pdf",
             "One-page PDF of an artboard as it looks on screen",
             &[
+                canvas(),
                 artboard(),
                 opt("out", Some('o'), ArgType::Path, "Write here (default: runtime dir)"),
             ],
@@ -104,6 +125,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "inspect",
             "Viewport, document size, element box + styles, overflow issues",
             &[
+                canvas(),
                 artboard(),
                 opt_s("selector", Some('s'), "CSS selector (default: the selection's)"),
                 flag(
@@ -179,6 +201,8 @@ mod tests {
             "canvas.new",
             "status",
             "selection",
+            "share",
+            "share.rotate",
             "view",
             "wait",
             "reload",
@@ -198,6 +222,11 @@ mod tests {
         ));
         let wait = methods.iter().find(|m| m.name == "wait").unwrap();
         assert_eq!(wait.timeout_ms, Some(WAIT_TIMEOUT_MS));
+        for page in ["status", "share", "share.rotate", "view", "wait", "reload", "screenshot", "pdf", "inspect"] {
+            let m = methods.iter().find(|m| m.name == page).unwrap();
+            let c = m.args.iter().find(|a| a.name == "canvas").expect(page);
+            assert!(!c.required && matches!(c.ty, ArgType::Path), "{page}");
+        }
         // No raw eval on this plane (freeze: not an agent API).
         assert!(!names.iter().any(|n| n.contains("eval")));
     }

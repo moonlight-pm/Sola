@@ -1,5 +1,6 @@
-//! Live boards: open / re-layout / reload a canvas, track loads, measure
-//! `auto`-height artboards, and keep the canvas raster scale in force.
+//! Board work for a live canvas (see [`super::canvases`]): re-layout,
+//! reload, loads and settles, `auto` heights, and raster scales. Everything
+//! takes the canvas key; on-screen or not makes no difference here.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -9,94 +10,54 @@ use serde_json::Value;
 use sola_browser::agent::{AgentOp, AgentReply};
 use sola_browser::engine::{Cmd, Engine, NavCmd, TabId};
 
-use super::{App, OpenCanvas, Pending};
+use super::{App, Pending};
 use crate::boards::{self, Op};
-use crate::camera::Camera;
 use crate::canvas;
 use crate::inspect;
 use crate::projects::CanvasRef;
 use crate::watch;
 
 impl App {
-    pub(super) fn open_canvas(&mut self, at: CanvasRef) {
-        if self.open.as_ref().is_some_and(|o| o.at == at) {
-            return;
-        }
-        let Some(project) = self.catalog.project(&at.project) else {
-            return;
-        };
-        let dir = canvas::canvas_dir(&project.root, &at.canvas);
-        self.close_canvas();
-        tracing::info!(canvas = %at.key(), dir = %dir.display(), "open canvas");
-        self.open = Some(OpenCanvas {
-            at: at.clone(),
-            dir,
-            error: None,
-            web_root: None,
-        });
-        self.catalog.selected = Some(at);
-        self.persist();
-        self.camera = Camera::default();
-        self.fit_pending = true;
-        self.user_camera = false;
-        self.human_camera = false;
-        self.board_links.clear();
-        self.mark_shown();
-        self.relayout();
-    }
-
-    pub(super) fn close_canvas(&mut self) {
-        for b in std::mem::take(&mut self.boards) {
-            self.close_board(b.tab);
-        }
-        self.open = None;
-        self.selection = None;
-        self.focus = None;
-    }
-
-    /// Read `canvas.toml` and bring the boards in line. A bad file keeps
-    /// the current boards and shows the error.
-    pub(super) fn relayout(&mut self) {
-        let Some(dir) = self.open.as_ref().map(|o| o.dir.clone()) else {
+    /// Read `canvas.toml` and bring the boards of `key` in line. A bad
+    /// file keeps the current boards and shows the error.
+    pub(super) fn relayout(&mut self, key: &str) {
+        let Some(dir) = self.live(key).map(|l| l.dir.clone()) else {
             return;
         };
         let loaded = canvas::load(&dir);
-        let Some(open) = self.open.as_mut() else {
+        let Some(live) = self.live_mut(key) else {
             return;
         };
         let canvas = match loaded {
             Ok(c) => {
-                open.error = None;
+                live.error = None;
                 c
             }
             Err(e) => {
                 tracing::warn!(dir = %dir.display(), error = %e, "load canvas");
-                open.error = Some(e);
+                live.error = Some(e);
                 return;
             }
         };
         // A new web root changes what the same URLs serve: reload.
-        let root_moved = open.web_root != canvas.web_root && !self.boards.is_empty();
-        open.web_root = canvas.web_root.clone();
+        let root_moved = live.web_root != canvas.web_root && !live.boards.is_empty();
+        live.web_root = canvas.web_root.clone();
+        let at = live.at.clone();
+        let current = std::mem::take(&mut live.boards);
         let mut canvas = canvas;
         let mut missing = HashMap::new();
         for art in &mut canvas.artboards {
             if let Some(file) = canvas::file_url_path(&art.url).filter(|f| !f.exists()) {
                 missing.insert(art.id.clone(), file.display().to_string());
             }
-            if let Some(url) = self.served_url(&art.url, &art.id, canvas.web_root.as_deref()) {
+            if let Some(url) = self.served_url(&at, &art.url, &art.id, canvas.web_root.as_deref()) {
                 art.url = url;
             }
         }
         let engine = &self.engine;
-        let (boards, ops) = boards::sync(
-            std::mem::take(&mut self.boards),
-            &canvas.artboards,
-            self.surface_cap,
-            || engine.alloc_tab_id(),
-        );
-        self.boards = boards;
-        for b in &mut self.boards {
+        let (mut synced, ops) =
+            boards::sync(current, &canvas.artboards, self.surface_cap, || engine.alloc_tab_id());
+        for b in &mut synced {
             match missing.get(&b.art.id) {
                 Some(path) => b.error = Some(format!("src not found: {path}")),
                 None if b.error.as_deref().is_some_and(|e| e.starts_with("src not found")) => {
@@ -105,24 +66,29 @@ impl App {
                 None => {}
             }
         }
+        let tabs: HashSet<u64> = synced.iter().map(|b| b.tab.0).collect();
+        if let Some(live) = self.live_mut(key) {
+            live.boards = synced;
+        }
         for op in ops {
             self.apply(op);
         }
-        let live = |tab: u64| self.boards.iter().any(|b| b.tab.0 == tab);
-        if self.selection.as_ref().is_some_and(|s| !live(s.tab)) {
-            self.selection = None;
+        if self.is_shown(key) {
+            if self.selection.as_ref().is_some_and(|s| !tabs.contains(&s.tab)) {
+                self.selection = None;
+            }
+            if self.focus.is_some_and(|f| !tabs.contains(&f)) {
+                self.focus = None;
+            }
+            if self.fit_pending {
+                self.fit();
+            }
         }
-        if self.focus.is_some_and(|f| !live(f)) {
-            self.focus = None;
-        }
-        if self.fit_pending {
-            self.fit();
-        }
-        self.settle_rasters();
+        self.settle_rasters(key);
         self.details.poke(Instant::now());
         if root_moved {
-            let tabs: Vec<TabId> = self.boards.iter().map(|b| b.tab).collect();
-            self.reload_tabs(&tabs);
+            let tabs: Vec<TabId> = tabs.into_iter().map(TabId).collect();
+            self.reload_tabs(key, &tabs);
         }
     }
 
@@ -163,14 +129,19 @@ impl App {
     /// A `file://` board URL as this project's served origin (its own
     /// host, looking in the canvas `web_root` first). `None` keeps the URL
     /// (web `src`, no server, or outside the project).
-    fn served_url(&self, url: &str, artboard: &str, web_root: Option<&std::path::Path>) -> Option<String> {
+    fn served_url(
+        &self,
+        at: &CanvasRef,
+        url: &str,
+        artboard: &str,
+        web_root: Option<&std::path::Path>,
+    ) -> Option<String> {
         let server = self.serve.as_ref()?;
-        let open = self.open.as_ref()?;
-        let root = &self.catalog.project(&open.at.project)?.root;
+        let root = &self.catalog.project(&at.project)?.root;
         let cut = url.find(['?', '#']).unwrap_or(url.len());
         let (base, suffix) = url.split_at(cut);
         let file = canvas::file_url_path(base)?;
-        server.url(&open.at.project, root, &file, suffix, artboard, &open.at.canvas, web_root)
+        server.url(&at.project, root, &file, suffix, artboard, &at.canvas, web_root)
     }
 
     /// The file a board resource URL names: a `file://` URL or this
@@ -191,18 +162,18 @@ impl App {
     }
 
     fn is_auto(&self, tab: TabId) -> bool {
-        self.boards
-            .iter()
-            .any(|b| b.tab == tab && b.art.auto_height)
+        self.board_of(tab.0).is_some_and(|b| b.art.auto_height)
     }
 
-    fn close_board(&mut self, tab: TabId) {
+    pub(super) fn close_board(&mut self, tab: TabId) {
         self.frames.close(tab.0);
         self.details.forget(tab.0);
         self.glows.forget(tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
-        self.board_links.remove(&tab.0);
+        for l in &mut self.live {
+            l.links.remove(&tab.0);
+        }
         self.send(Cmd::CloseTab(tab));
     }
 
@@ -218,7 +189,7 @@ impl App {
             .map(|t| t.id.0)
             .collect();
         let mut lost = false;
-        for b in &self.boards {
+        for b in self.live.iter().flat_map(|l| l.boards.iter()) {
             if live.contains(&b.tab.0) {
                 self.listed.insert(b.tab.0);
             } else if self.listed.contains(&b.tab.0) {
@@ -228,74 +199,85 @@ impl App {
         if !lost {
             return;
         }
-        tracing::warn!(boards = self.boards.len(), "board tabs gone (helper restarted) — reopening");
-        for b in std::mem::take(&mut self.boards) {
-            self.frames.close(b.tab.0);
+        let keys: Vec<String> = self.live.iter().map(|l| l.at.key()).collect();
+        tracing::warn!(canvases = keys.len(), "board tabs gone (helper restarted) — reopening");
+        for l in &mut self.live {
+            for b in std::mem::take(&mut l.boards) {
+                self.frames.close(b.tab.0);
+            }
+            l.links.clear();
         }
         self.listed.clear();
         self.loads.clear();
         self.details.clear();
         self.glows = Default::default();
         self.focus = None;
-        self.relayout();
+        for key in keys {
+            self.relayout(&key);
+        }
     }
 
     /// A watcher burst: re-layout for `canvas.toml`, reload for any other
     /// file — unless the boards already show it (a `reload` / `wait` beat
     /// the watcher to it).
-    pub(super) fn on_canvas_change(&mut self, change: watch::Change) -> iced::Task<super::Msg> {
+    pub(super) fn on_canvas_change(&mut self, key: &str, change: watch::Change) -> iced::Task<super::Msg> {
         if change.layout {
-            self.relayout();
+            self.relayout(key);
         }
-        if change.content && self.boards_stale() {
-            return self.reload_boards();
+        if change.content && self.boards_stale(key) {
+            return self.reload_boards(key);
         }
-        if change.layout {
+        if change.layout && self.is_shown(key) {
             return self.requery_later();
         }
         iced::Task::none()
     }
 
-    pub(super) fn reload_boards(&mut self) -> iced::Task<super::Msg> {
-        let tabs: Vec<TabId> = self.boards.iter().map(|b| b.tab).collect();
-        self.reload_tabs(&tabs);
-        self.requery_later()
+    pub(super) fn reload_boards(&mut self, key: &str) -> iced::Task<super::Msg> {
+        let tabs: Vec<TabId> = self.tabs_of(key).into_iter().map(TabId).collect();
+        self.reload_tabs(key, &tabs);
+        if self.is_shown(key) { self.requery_later() } else { iced::Task::none() }
     }
 
-    /// Files the boards loaded from outside `design/`, sorted.
-    pub(super) fn linked(&self) -> Vec<PathBuf> {
-        let all: BTreeSet<&PathBuf> = self.board_links.values().flatten().collect();
+    /// Files the boards of `key` loaded from outside `design/`, sorted.
+    pub(super) fn linked(&self, key: &str) -> Vec<PathBuf> {
+        let Some(live) = self.live(key) else {
+            return Vec::new();
+        };
+        let all: BTreeSet<&PathBuf> = live.links.values().flatten().collect();
         all.into_iter().cloned().collect()
     }
 
-    /// Some input file is newer than what the boards loaded.
-    pub(super) fn boards_stale(&self) -> bool {
-        let Some(dir) = self.open.as_ref().map(|o| o.dir.clone()) else {
+    /// Some input file of `key` is newer than what its boards loaded.
+    pub(super) fn boards_stale(&self, key: &str) -> bool {
+        let Some(live) = self.live(key) else {
             return false;
         };
-        let newest = watch::newest_input(&dir, &self.linked());
-        newest.is_some() && newest > self.shown_at
+        let newest = watch::newest_input(&live.dir, &self.linked(key));
+        newest.is_some() && newest > live.shown_at
     }
 
-    /// The boards are about to read the files as they are now.
-    fn mark_shown(&mut self) {
-        self.shown_at = self
-            .open
-            .as_ref()
-            .and_then(|o| watch::newest_input(&o.dir, &self.linked()));
+    /// The boards of `key` are about to read the files as they are now.
+    pub(super) fn mark_shown(&mut self, key: &str) {
+        let Some(dir) = self.live(key).map(|l| l.dir.clone()) else {
+            return;
+        };
+        let newest = watch::newest_input(&dir, &self.linked(key));
+        if let Some(l) = self.live_mut(key) {
+            l.shown_at = newest;
+        }
     }
 
     /// Hard-reload `tabs` (bypass the cache: the files just changed).
     /// A tab still on its intended URL hard-reloads; one showing anything
     /// else (a navigation that was cancelled, a click in the page) loads the
     /// intended URL — so a reload also repairs drift.
-    pub(super) fn reload_tabs(&mut self, tabs: &[TabId]) {
+    pub(super) fn reload_tabs(&mut self, key: &str, tabs: &[TabId]) {
         let now = Instant::now();
-        self.mark_shown();
+        self.mark_shown(key);
         let shown = self.tab_urls();
         for &tab in tabs {
-            let Some(want) = self.boards.iter().find(|b| b.tab == tab).map(|b| b.art.url.clone())
-            else {
+            let Some(want) = self.board_of(tab.0).map(|b| b.art.url.clone()) else {
                 continue;
             };
             self.loads.begin(tab.0, now);
@@ -316,8 +298,8 @@ impl App {
     /// loaded files read back).
     pub(super) fn observe_loads(&mut self) {
         let loading = self.loading_map();
-        self.loads
-            .observe(&loading, self.boards.iter().map(|b| b.tab.0));
+        let tabs: Vec<u64> = self.live.iter().flat_map(|l| l.boards.iter().map(|b| b.tab.0)).collect();
+        self.loads.observe(&loading, tabs);
         let frames = &self.frames;
         let idle = |tab: u64| frames.is_painted(tab) && loading.get(&tab) == Some(&false);
         let now = Instant::now();
@@ -364,9 +346,15 @@ impl App {
             tracing::warn!(tab, error = ?reply.error, "settle board");
             return;
         };
-        self.note_links(tab, &data);
+        let Some(key) = self.canvas_of_tab(tab) else {
+            return;
+        };
+        self.note_links(&key, tab, &data);
         let status = data.get("status").and_then(Value::as_u64).unwrap_or(0);
-        if let Some(b) = self.boards.iter_mut().find(|b| b.tab.0 == tab) {
+        let Some(live) = self.live_mut(&key) else {
+            return;
+        };
+        if let Some(b) = live.boards.iter_mut().find(|b| b.tab.0 == tab) {
             if status >= 400 {
                 // A missing `src` (found at layout) says more than its 404.
                 if b.error.is_none() {
@@ -383,28 +371,32 @@ impl App {
             return;
         };
         let height = (height.ceil() as u32).clamp(1, canvas::MAX_SIDE);
-        let Some(i) = self
+        let Some(b) = live
             .boards
-            .iter()
-            .position(|b| b.tab.0 == tab && b.art.auto_height)
+            .iter_mut()
+            .find(|b| b.tab.0 == tab && b.art.auto_height)
         else {
             return;
         };
-        if self.boards[i].art.height == height {
+        if b.art.height == height {
             return;
         }
-        self.boards[i].art.height = height;
-        tracing::debug!(artboard = %self.boards[i].art.id, height, "auto artboard height");
-        self.resize_boards(Some(tab));
+        b.art.height = height;
+        tracing::debug!(artboard = %b.art.id, height, "auto artboard height");
+        self.resize_boards(&key, Some(tab));
         self.details.poke(Instant::now());
         self.loads.confirm(tab, Instant::now());
-        if !self.user_camera {
-            self.fit();
+        if self.is_shown(&key) {
+            if !self.user_camera {
+                self.fit();
+            }
+        } else {
+            self.refit_parked(&key);
         }
     }
 
-    fn note_links(&mut self, tab: u64, data: &Value) {
-        let Some(design) = self.open.as_ref().and_then(|o| o.dir.parent().map(PathBuf::from)) else {
+    fn note_links(&mut self, key: &str, tab: u64, data: &Value) {
+        let Some(design) = self.live(key).and_then(|l| l.dir.parent().map(PathBuf::from)) else {
             return;
         };
         let links: BTreeSet<PathBuf> = data
@@ -416,17 +408,27 @@ impl App {
             .filter_map(|u| self.resource_path(u))
             .filter(|p| !p.starts_with(&design))
             .collect();
-        if self.board_links.get(&tab) != Some(&links) {
+        let Some(live) = self.live_mut(key) else {
+            return;
+        };
+        if live.links.get(&tab) != Some(&links) {
             tracing::debug!(tab, links = links.len(), "board linked files");
-            self.board_links.insert(tab, links);
+            live.links.insert(tab, links);
+            // The share serves exactly these outside files for the canvas.
+            if let Some(share) = &self.share {
+                share.set_links(key, self.linked(key).into_iter().collect());
+            }
         }
     }
 
     // ── raster scale ──────────────────────────────────────────────
 
-    /// Raster scale per board (see [`boards::host_scales`]).
-    fn board_scales(&self) -> Vec<f64> {
-        let sizes: Vec<(&str, u32, u32)> = self
+    /// Raster scale per board of `key` (see [`boards::host_scales`]).
+    fn board_scales(&self, key: &str) -> Vec<f64> {
+        let Some(live) = self.live(key) else {
+            return Vec::new();
+        };
+        let sizes: Vec<(&str, u32, u32)> = live
             .boards
             .iter()
             .map(|b| (boards::url_host(&b.art.url), b.art.width, b.art.height))
@@ -434,18 +436,21 @@ impl App {
         boards::host_scales(&sizes)
     }
 
-    /// Bring every board to its scale (after a layout change).
-    pub(super) fn settle_rasters(&mut self) {
-        self.resize_boards(None);
+    /// Bring every board of `key` to its scale (after a layout change).
+    pub(super) fn settle_rasters(&mut self, key: &str) {
+        self.resize_boards(key, None);
     }
 
     /// Push each board's geometry (scale, surface), plus a `SetBoard` for
     /// `also` (a board whose size changed) even when it looks unchanged.
-    fn resize_boards(&mut self, also: Option<u64>) {
-        let scales = self.board_scales();
+    fn resize_boards(&mut self, key: &str, also: Option<u64>) {
+        let scales = self.board_scales(key);
         let cap = self.surface_cap;
+        let Some(live) = self.live_mut(key) else {
+            return;
+        };
         let mut cmds = Vec::new();
-        for (b, scale) in self.boards.iter_mut().zip(scales) {
+        for (b, scale) in live.boards.iter_mut().zip(scales) {
             let size = boards::board_size(&b.art, scale, b.cap(cap));
             if size == b.size() && also != Some(b.tab.0) {
                 continue;

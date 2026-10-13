@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–4 and both Exit fix rounds on master (2026-10-12); slice 5 merged to master 2026-10-12, installed (human smoke pending)
+**Status:** slices 1–6 on master (2026-10-12), installed
 
 ---
 
@@ -226,3 +226,17 @@
 - [x] Helper waits for a predecessor still shutting down (self-restart race).
 - [x] Verified: detail frames sharp and aligned to the base (engine frame dump); captures whole-board while zoomed; PDF under the pin.
 - [ ] Human: smoke on screen — zoom past 200%, pan, glow, IME.
+
+## Slice 6 — multi-agent canvases, live share (2026-10-12)
+
+- [x] `app/canvases.rs`: many live canvases, one shown; parked cameras; agents' `open` / `canvas.new` off screen (`--raise` shows); idle off-screen canvases close (10 min).
+- [x] `--canvas` on every page call; `solactl mcp` remembers each agent's canvas; rail `agent` mark.
+- [x] `share.rs`: token per canvas (rotatable, `share.json`), viewer + `~canvas.json` + `~version`, token-scoped file access on real paths, `Referer` redirect, privacy headers, connection cap.
+- [x] `share/tunnel.rs`: `cloudflared` connector supervised by Design (pid file: a re-exec stops the old one; inherited zombies reaped at start).
+- [x] Bottom bar: copy-link and new-link buttons (tips above); Share menu (⌘⇧L).
+- [x] Viewer handles like Design: live pages, right-drag pan (capture-phase in each frame; pages never see the right button), wheel zoom, touch two-finger pan / pinch, hint line; Interact toggle removed.
+- [x] LAN DNS: hub Wicket v1 resolves record-less domains upstream (hub `6b47539`).
+- [x] Cloudflare: tunnel `sola-design` (remote config, ingress → 127.0.0.1:47820), proxied CNAME `design.moonlight.pm`; `share.toml` written (0600).
+- [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
+- [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone.
+- [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).

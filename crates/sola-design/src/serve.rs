@@ -182,7 +182,7 @@ fn roots_for(roots: &Roots, web_roots: &WebRoots, host: &str) -> Option<(PathBuf
 }
 
 /// [`resolve`] in the canvas web root, then in the project root.
-fn lookup(root: &Path, web_root: Option<&Path>, raw: &str) -> Result<PathBuf, Refusal> {
+pub(crate) fn lookup(root: &Path, web_root: Option<&Path>, raw: &str) -> Result<PathBuf, Refusal> {
     match web_root.map(|w| resolve(w, raw)) {
         Some(Ok(file)) => Ok(file),
         Some(Err(Refusal::Missing)) | None => resolve(root, raw),
@@ -191,7 +191,7 @@ fn lookup(root: &Path, web_root: Option<&Path>, raw: &str) -> Result<PathBuf, Re
 }
 
 #[derive(Debug, PartialEq)]
-enum Refusal {
+pub(crate) enum Refusal {
     Bad,
     Hidden,
     Missing,
@@ -199,7 +199,7 @@ enum Refusal {
 
 /// Request path (`/a/b.css?x`) → file under `root`. No `..`, no dotfile
 /// segments, directories serve their `index.html`.
-fn resolve(root: &Path, raw: &str) -> Result<PathBuf, Refusal> {
+pub(crate) fn resolve(root: &Path, raw: &str) -> Result<PathBuf, Refusal> {
     let path = raw.split(['?', '#']).next().unwrap_or_default();
     let path = unescape(path).ok_or(Refusal::Bad)?;
     if !path.starts_with('/') {
@@ -221,7 +221,7 @@ fn resolve(root: &Path, raw: &str) -> Result<PathBuf, Refusal> {
     if file.is_file() { Ok(file) } else { Err(Refusal::Missing) }
 }
 
-fn mime(path: &Path) -> &'static str {
+pub(crate) fn mime(path: &Path) -> &'static str {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -258,7 +258,7 @@ fn mime(path: &Path) -> &'static str {
 /// `Range: bytes=…` against a `len`-byte file: `None` serves the whole file
 /// (no header, a multi-range, or a unit we do not speak), `Some(Err(()))`
 /// is unsatisfiable (416), else the inclusive byte span.
-fn byte_range(header: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
+pub(crate) fn byte_range(header: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
     let spec = header.trim().strip_prefix("bytes=")?;
     if spec.contains(',') {
         return None;
@@ -280,27 +280,8 @@ fn byte_range(header: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
 }
 
 fn handle(stream: TcpStream, roots: &Roots, web_roots: &WebRoots) -> io::Result<()> {
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
-    let mut reader = BufReader::new(stream.try_clone()?).take(MAX_HEAD as u64);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let mut parts = line.split_whitespace();
-    let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-    let mut host = String::new();
-    let mut range = None;
-    loop {
-        let mut h = String::new();
-        if reader.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" {
-            break;
-        }
-        if let Some((k, v)) = h.split_once(':') {
-            if k.eq_ignore_ascii_case("host") {
-                host = v.trim().to_string();
-            } else if k.eq_ignore_ascii_case("range") {
-                range = Some(v.trim().to_string());
-            }
-        }
-    }
+    let req = read_request(&stream)?;
+    let (method, target, host, range) = (req.method.as_str(), req.target.as_str(), req.host, req.range);
     let mut out = stream;
     if method != "GET" && method != "HEAD" {
         return status(&mut out, 405, "Method Not Allowed");
@@ -314,21 +295,33 @@ fn handle(stream: TcpStream, roots: &Roots, web_roots: &WebRoots) -> io::Result<
         Err(Refusal::Hidden) => return status(&mut out, 403, "Forbidden"),
         Err(Refusal::Missing) => return status(&mut out, 404, "Not Found"),
     };
-    let mut body = match std::fs::File::open(&file) {
+    send_file(&mut out, method == "HEAD", &file, range.as_deref(), "")
+}
+
+/// Answer with `file` (whole, or the byte range asked for). `extra` is more
+/// header lines, each ending in `\r\n`.
+pub(crate) fn send_file(
+    out: &mut TcpStream,
+    head_only: bool,
+    file: &Path,
+    range: Option<&str>,
+    extra: &str,
+) -> io::Result<()> {
+    let mut body = match std::fs::File::open(file) {
         Ok(f) => f,
-        Err(_) => return status(&mut out, 404, "Not Found"),
+        Err(_) => return status(out, 404, "Not Found"),
     };
     let len = body.metadata()?.len();
-    let kind = mime(&file);
-    match range.as_deref().and_then(|r| byte_range(r, len)) {
+    let kind = mime(file);
+    match range.and_then(|r| byte_range(r, len)) {
         None => {
             write!(
                 out,
                 "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {len}\r\n\
-                 Accept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                 Accept-Ranges: bytes\r\nCache-Control: no-store\r\n{extra}Connection: close\r\n\r\n"
             )?;
-            if method == "GET" {
-                io::copy(&mut body, &mut out)?;
+            if !head_only {
+                io::copy(&mut body, out)?;
             }
         }
         Some(Ok((start, end))) => {
@@ -337,25 +330,25 @@ fn handle(stream: TcpStream, roots: &Roots, web_roots: &WebRoots) -> io::Result<
                 out,
                 "HTTP/1.1 206 Partial Content\r\nContent-Type: {kind}\r\nContent-Length: {n}\r\n\
                  Content-Range: bytes {start}-{end}/{len}\r\nAccept-Ranges: bytes\r\n\
-                 Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+                 Cache-Control: no-store\r\n{extra}Connection: close\r\n\r\n"
             )?;
-            if method == "GET" {
+            if !head_only {
                 body.seek(SeekFrom::Start(start))?;
-                io::copy(&mut body.take(n), &mut out)?;
+                io::copy(&mut body.take(n), out)?;
             }
         }
         Some(Err(())) => {
             write!(
                 out,
                 "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{len}\r\n\
-                 Content-Length: 0\r\nConnection: close\r\n\r\n"
+                 {extra}Content-Length: 0\r\nConnection: close\r\n\r\n"
             )?;
         }
     }
     out.flush()
 }
 
-fn status(out: &mut TcpStream, code: u16, reason: &str) -> io::Result<()> {
+pub(crate) fn status(out: &mut TcpStream, code: u16, reason: &str) -> io::Result<()> {
     write!(
         out,
         "HTTP/1.1 {code} {reason}\r\nContent-Type: text/plain; charset=utf-8\r\n\
@@ -363,6 +356,48 @@ fn status(out: &mut TcpStream, code: u16, reason: &str) -> io::Result<()> {
         reason.len() + 1
     )?;
     out.flush()
+}
+
+/// Request line + the headers we read. `None` for a closed connection.
+pub(crate) struct Request {
+    pub method: String,
+    pub target: String,
+    pub host: String,
+    pub range: Option<String>,
+    pub referer: Option<String>,
+}
+
+/// Read one request head (at most [`MAX_HEAD`] bytes).
+pub(crate) fn read_request(stream: &TcpStream) -> io::Result<Request> {
+    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+    let mut reader = BufReader::new(stream.try_clone()?).take(MAX_HEAD as u64);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let mut parts = line.split_whitespace();
+    let mut req = Request {
+        method: parts.next().unwrap_or("").to_string(),
+        target: parts.next().unwrap_or("").to_string(),
+        host: String::new(),
+        range: None,
+        referer: None,
+    };
+    loop {
+        let mut h = String::new();
+        if reader.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" {
+            break;
+        }
+        if let Some((k, v)) = h.split_once(':') {
+            let v = v.trim().to_string();
+            if k.eq_ignore_ascii_case("host") {
+                req.host = v;
+            } else if k.eq_ignore_ascii_case("range") {
+                req.range = Some(v);
+            } else if k.eq_ignore_ascii_case("referer") {
+                req.referer = Some(v);
+            }
+        }
+    }
+    Ok(req)
 }
 
 #[cfg(test)]

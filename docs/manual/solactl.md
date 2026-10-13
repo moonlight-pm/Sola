@@ -292,7 +292,9 @@ solactl design canvas.new onboarding         # design/onboarding/ in your cwd's 
 solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
-solactl design status                        # canvas, artboards (src, url, error), linked files, zoom, selection
+solactl design status [--canvas design/home] # canvas (shown, share), artboards (src, url, error), linked files, zoom, selection
+solactl design share [--canvas design/home]  # the canvas's live link
+solactl design share.rotate [--canvas …]     # a new link; the old one stops working
 solactl design selection
 solactl design view --fit
 solactl design view --artboard phone [--zoom 1]
@@ -304,6 +306,14 @@ solactl design pdf [--artboard landing] [-o landing.pdf]
 solactl design inspect [--artboard phone] [--selector 'main .card']
 solactl design inspect --artboard light --selector section --all   # every match's box
 ```
+
+`open` and `canvas.new` make a canvas live **off the human's screen** (it
+shows in their rail); `--raise` puts it on their screen. Every page call
+(`status`, `share`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect`)
+takes `--canvas` (its folder, `canvas.toml`, or a file in it — opened in the
+background if need be); without it the call goes to the canvas on the human's
+screen. Over MCP, a page call without `canvas` goes to the canvas that agent
+last opened or made, so agents working at the same time stay on their own.
 
 `screenshot` captures the whole page (CDP, at the artboard's raster scale,
 normally 2×) and replies with `path` — the same however the human is zoomed

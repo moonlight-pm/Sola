@@ -1,14 +1,14 @@
 # sola-design — HTML artboards on a canvas, edited by agents
 
 **Date:** 2026-10-12  
-**Status:** **Frozen** — slices 1–4, `canvas.new`, the served origin (D5), and the Exit field-report fixes on master (2026-10-12); slice 5 (detail renders, limits, agent/human orthogonality, agent glow, IME) merged to master 2026-10-12, installed  
+**Status:** **Frozen** — slices 1–6 on master (2026-10-12), installed  
 **Related:** [sola-wrapper](2026-08-21-sola-wrapper-design.md) (CEF via the sola-browser lib); [browser agent control](2026-09-11-sola-browser-agent-control-design.md) (CDP wrap, call owner shape); [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md) (rail + `solactl` shape); plan [`plans/2026-10-12-sola-design-plan.md`](../plans/2026-10-12-sola-design-plan.md)
 
 | | |
 |--|--|
 | **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
 | **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. |
-| **Gaps** | One canvas on screen at a time: an agent that opens another canvas replaces the human's. `auto` height stops re-measuring 8 s after a load. Page state (typed text) is shared between the human and agents. Page dialogs are auto-accepted. |
+| **Gaps** | Share links have no password or expiry and work only while Design runs. `auto` height stops re-measuring 8 s after a load. Page state (typed text) is shared between the human and agents. Page dialogs are auto-accepted. |
 
 ## Intent
 
@@ -61,6 +61,8 @@ project's git, and openable in any browser.
 | Agent / human | **Orthogonal** (2026-10-12, human ask). The human can pan, zoom, and look around a canvas an agent is working on: agent reads never depend on the view (`screenshot` / `pdf` hold their board whole — no detail request reaches it until the reply — and the human's pointer leaves the page first, so no `:hover`). `view` moves the camera only until the human has panned / zoomed that canvas; then `moved: false`. |
 | Agent glow | What an agent touches shimmers on the overlay (halo + a light sweep): elements it inspects, the selection it reads, a board it screenshots or prints, a board reloading after its files changed (until settled). Never in the pages, so never in an agent's screenshot. |
 | IME | Pages compose with the input method: the overlay is wrapped so iced enables IME at the page caret while a board has the keyboard; preedit / commit go to the page as composition. |
+| Canvases | **Many live, one on screen** (2026-10-12, human ask: multi-agent, nobody in anyone's way). A canvas an agent makes or opens is live off the human's screen; agents never bring one to the front (`--raise` only when the human asks). Every page call names its canvas (`--canvas`); over MCP it defaults to that agent's last opened / made canvas, so agents working at once stay apart. Each canvas keeps its own boards, files, watcher, and camera. The rail marks a canvas an agent is working in. Off-screen canvases idle 10 min close and reopen on the next call. |
+| Share | **Live** (D6, 2026-10-12): every canvas has a link `<public_url>/<token>/` (128-bit token, minted automatically, rotatable). Design is the web server — a thin server that answers only for that canvas's files (its folder, shared `design/` files, its `root`, the files its boards load) and a viewer page handled as in Design (live pages, right-drag pans, wheel zooms, no element picking; a one-line hint; pages reload on change). A Cloudflare Tunnel forwards `design.moonlight.pm` to it; Design runs the connector. |
 | Install | Never auto-install. `cargo make install design` is the human's call. |
 
 ## On disk
@@ -112,10 +114,11 @@ resolved by `solactl` against the caller's cwd.
 |------|------|
 | `project.list` | Projects and their canvases (fresh scan). |
 | `project.add --path` | Register a project folder. |
-| `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, show it. Existing → open (`created: false`). |
-| `open --path [--raise]` | Show the canvas holding that path (dir, toml, or any file in it); registers the project if needed. Raises only with `--raise`. |
+| `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, make it live off screen (`--raise` shows it). Existing → open (`created: false`). |
+| `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen; registers the project if needed. `--raise` shows it and raises the window. |
 | `status` | Canvas, artboards (size, scale, painted, loading), zoom, mode, selection. |
 | `selection` | The human's pick: project, canvas, artboard, selector, tag, text, rect, trimmed `outerHTML` — or `null`. |
+| `share` / `share.rotate [--canvas]` | The canvas's live link; rotate makes a new one (the old stops). |
 | `view --fit` / `--artboard [--zoom]` / `--zoom` | Steer the camera, until the human takes it (`moved: false`). |
 | `wait [--artboard] [--timeout]` | Until the artboards show the files on disk (reload first when files are newer than the boards) and have settled. |
 | `reload [--artboard] [--timeout]` | Hard-reload, then wait. The file watcher is asynchronous; agents `reload` after editing. |
@@ -151,3 +154,6 @@ CLI has no second way to do that. No raw `eval`.
    pages past 8192 px, byte ranges, canvas `root`, late `auto`
    re-measures, orthogonal agent reads, `view` yields to the human, agent
    glow, page IME — built, installed.
+6. Multi-agent canvases (agents never take the screen; `--canvas` on page
+   calls; per-agent MCP canvas) and live share (D6: Design serves token
+   links; Cloudflare Tunnel) — built, installed.
