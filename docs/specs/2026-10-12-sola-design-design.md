@@ -1,14 +1,14 @@
 # sola-design — HTML artboards on a canvas, edited by agents
 
 **Date:** 2026-10-12  
-**Status:** **Frozen** — slices 1–2 **installed** and smoked 2026-10-12; slice 3 (adaptive raster, auto height, PDF) built on worktree `sola-design`  
+**Status:** **Frozen** — slices 1–3 on master (2026-10-12); slice 4 (`solactl mcp`) + `canvas.new` on worktree `sola-design`; all installed and smoked except an agent session over MCP  
 **Related:** [sola-wrapper](2026-08-21-sola-wrapper-design.md) (CEF via the sola-browser lib); [browser agent control](2026-09-11-sola-browser-agent-control-design.md) (CDP wrap, call owner shape); [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md) (rail + `solactl` shape); plan [`plans/2026-10-12-sola-design-plan.md`](../plans/2026-10-12-sola-design-plan.md)
 
 | | |
 |--|--|
-| **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (per-tab view size + raster scale, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). |
-| **Dogfood** | Slice 1 **installed** `design` release 2026-10-12; basic smoke done. First smoke found `AgentReply.data` (`serde_json::Value`) undecodable over bincode IPC — fixed (JSON text), router now kills a still-running helper before respawn, Design reopens boards after a helper restart. |
-| **Gaps** | Fixed 2× raster: past 200% (at output scale 1) zoom softens; a board that cannot fit 2× (texture side 8192 px, frame 160 MiB) drops the whole canvas to 1× (zoom is per host). Auto height is measured once per load. No IME. No MCP. |
+| **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
+| **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom (after removing the adaptive re-raster), Super+click. MCP `sola` registered in Claude Code user config; an agent session end to end is pending. |
+| **Gaps** | Fixed 2× raster: past 200% (at output scale 1) zoom softens; a board that cannot fit 2× (texture side 8192 px, frame 160 MiB) drops the whole canvas to 1× (zoom is per host). Auto height is measured once per load. No IME. |
 
 ## Intent
 
@@ -104,6 +104,7 @@ resolved by `solactl` against the caller's cwd.
 |------|------|
 | `project.list` | Projects and their canvases (fresh scan). |
 | `project.add --path` | Register a project folder. |
+| `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, show it. Existing → open (`created: false`). |
 | `open --path [--raise]` | Show the canvas holding that path (dir, toml, or any file in it); registers the project if needed. Raises only with `--raise`. |
 | `status` | Canvas, artboards (size, scale, painted, loading), zoom, mode, selection. |
 | `selection` | The human's pick: project, canvas, artboard, selector, tag, text, rect, trimmed `outerHTML` — or `null`. |
@@ -136,4 +137,5 @@ CLI has no second way to do that. No raw `eval`.
    — built.
 3. `height = "auto"`; PDF export; real 2× raster (page zoom) — built.
    Zoom-adaptive re-raster tried and removed (settle lag, text shift).
-4. Generic call-plane → MCP adapter (browser, workspaces, design).
+4. Generic call-plane → MCP adapter (browser, workspaces, design) —
+   `solactl mcp`, built.

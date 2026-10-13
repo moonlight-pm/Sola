@@ -259,6 +259,10 @@ files with ordinary tools. Design watches them and reloads, but the watcher
 is asynchronous — after an edit, run `reload` (it reloads and **waits**)
 before `screenshot` or `inspect`.
 
+`canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
+`--path`, default your current directory), registers the project if
+needed, and shows the canvas — it appears under the project in the rail.
+An existing canvas of that name is opened instead (`created: false`).
 `open` takes the canvas dir, its `canvas.toml`, or any file inside it, and
 registers the project if Design does not know it yet. It does not raise the
 window unless `--raise`. `--artboard` defaults to the artboard holding the
@@ -270,6 +274,8 @@ inspects the selected element. `selection` is what the human Super+clicked
 solactl design                               # list methods
 solactl design project.list                  # projects + canvases
 solactl design project.add --path ~/Workspace/Thoxa
+solactl design canvas.new onboarding         # design/onboarding/ in your cwd's project
+solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
 solactl design status                        # canvas, artboards, zoom, mode, selection
@@ -293,6 +299,29 @@ Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
 the artboard), the element's box and computed styles, and up to 25
 `issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). There is no raw
 `eval` on this plane.
+
+## MCP (`solactl mcp`)
+
+An MCP server on stdio that exposes the call plane to agents that speak
+MCP. Every method a running app advertises is a tool named
+`<owner>_<method>` (dots become `_`): `design_screenshot`,
+`browser_tab_open`, `workspaces_pane_send`, … The list follows the apps
+that are up — start Design and its tools appear (the server sends
+`tools/list_changed`). Each tool takes the same arguments as the
+`solactl <owner> <method>` flags; path arguments may be relative to the
+agent's working directory. A reply with a `path` to a PNG / JPEG
+(screenshots) also returns the image inline (up to ~3.7 MB; larger ones
+return the path only).
+
+```text
+solactl mcp                      # every live owner
+solactl mcp --owner design       # only Design (repeat --owner for more)
+claude mcp add sola -- /opt/sola/bin/solactl mcp
+```
+
+It is an adapter over the same methods, not a second protocol: what a tool
+may do is what `solactl` may do (confirm policy is still **D3**).
+`SOLA_BOT=1` rules apply the same way.
 
 ## Not calls
 

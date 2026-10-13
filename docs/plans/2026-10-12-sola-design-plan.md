@@ -112,6 +112,23 @@
 - [x] Human: install `design` + `solactl` and smoke the verbs (picks
       work after the IPC fix — 2026-10-12).
 
+## Slice 4 — `solactl mcp`
+
+- [x] `solactl mcp [--owner …]`: stdio JSON-RPC (2025-06-18 / 03-26 /
+      2024-11-05), `initialize` (+ instructions on the Design workflow),
+      `ping`, `tools/list`, `tools/call` (own thread), list_changed.
+- [x] Tools from the live catalog (`mcp/tools.rs`): names, JSON schema from
+      `ArgSpec`, same preparation as `solactl` (paths, Workspaces context,
+      bot policy, timeouts); PNG / JPEG `path` → image content (≤ ~3.7 MB).
+- [x] Probe: design tools listed; `design_status` text; `design_screenshot`
+      text + image.
+- [x] Docs: solactl manual § MCP, capabilities `call`, architecture.
+- [x] `design canvas.new NAME [--path] [--raise]`: agents make their own
+      canvas (`<project>/design/<slug>/`, project = caller cwd via
+      solactl / MCP injection), registered + shown; existing → opened.
+- [x] Registered in Claude Code user config: `sola` → `solactl mcp`.
+- [ ] Human: an agent session designs through MCP end to end.
+
 ## Slice 3 — crisp zoom, auto height, PDF
 
 - [x] `boards::raster_scale(w, h, want)`: base 2×, up to 4× within the

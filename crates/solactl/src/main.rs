@@ -12,6 +12,7 @@ mod compositor;
 mod dynamic;
 mod emit;
 mod logs;
+mod mcp;
 mod media;
 mod open;
 mod session;
@@ -62,6 +63,14 @@ enum Command {
         /// Method and flags. Omit to list advertised methods.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+
+    /// MCP server on stdio: every live call-plane method as a tool
+    /// (`claude mcp add sola -- solactl mcp`).
+    Mcp {
+        /// Only these owners / app ids (repeat). Default: every live owner.
+        #[arg(long = "owner")]
+        owners: Vec<String>,
     },
 
     /// Tail an app's log file at `/opt/sola/log/<app>.log`.
@@ -116,6 +125,7 @@ fn main() {
             all.extend(args);
             dynamic::run(all)
         }
+        Command::Mcp { owners } => mcp::run(owners),
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),

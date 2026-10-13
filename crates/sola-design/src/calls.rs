@@ -38,6 +38,20 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
+            "canvas.new",
+            "Make a canvas (design/<name>/) in a project and show it; opens it if it exists",
+            &[
+                req_s("name", Some('n'), "Canvas name (the folder is its slug)"),
+                opt(
+                    "path",
+                    Some('p'),
+                    ArgType::Path,
+                    "Project folder (default: your working directory)",
+                ),
+                flag("raise", 'r', "Raise the Design window"),
+            ],
+        ),
+        method(
             "status",
             "Open canvas, artboards (size, loading), zoom, selection",
             &[],
@@ -122,6 +136,10 @@ fn opt(name: &str, short: Option<char>, ty: ArgType, help: &str) -> ArgSpec {
     arg(name, false, ty, short, help)
 }
 
+fn req_s(name: &str, short: Option<char>, help: &str) -> ArgSpec {
+    arg(name, true, ArgType::String, short, help)
+}
+
 fn opt_s(name: &str, short: Option<char>, help: &str) -> ArgSpec {
     arg(name, false, ArgType::String, short, help)
 }
@@ -153,6 +171,7 @@ mod tests {
             "project.list",
             "project.add",
             "open",
+            "canvas.new",
             "status",
             "selection",
             "view",

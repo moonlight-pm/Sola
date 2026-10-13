@@ -52,6 +52,9 @@ pub fn run(args: Vec<String>) -> i32 {
             if entry.owner == "workspaces" {
                 inject_ws_context(method, &mut params);
             }
+            if entry.owner == "design" {
+                inject_design_context(method, &mut params);
+            }
             if let Err(e) = apply_bot_policy(&entry.owner, method, &params) {
                 eprintln!("solactl: {e}");
                 return 3;
@@ -74,7 +77,7 @@ fn is_sola_bot() -> bool {
 }
 
 /// Named informational bots never steal the human seat or default to it.
-fn apply_bot_policy(owner: &str, method: &str, params: &serde_json::Value) -> Result<(), String> {
+pub(crate) fn apply_bot_policy(owner: &str, method: &str, params: &serde_json::Value) -> Result<(), String> {
     bot_browser_policy(is_sola_bot(), owner, method, params)
 }
 
@@ -140,7 +143,7 @@ fn param_is_true(params: &serde_json::Value, key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
+pub(crate) fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
     let Some(map) = params.as_object_mut() else {
         return;
     };
@@ -169,7 +172,20 @@ fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
     }
 }
 
-fn invoke_timeout_secs(spec: &MethodSpec, params: &serde_json::Value) -> u64 {
+/// `design canvas.new` without `--path` makes the canvas in the caller's
+/// project: this shell's (or the MCP server's) working directory.
+pub(crate) fn inject_design_context(method: &str, params: &mut serde_json::Value) {
+    let Some(map) = params.as_object_mut() else {
+        return;
+    };
+    if method == "canvas.new" && !map.contains_key("path") {
+        if let Ok(cwd) = std::env::current_dir() {
+            map.insert("path".into(), serde_json::Value::String(cwd.display().to_string()));
+        }
+    }
+}
+
+pub(crate) fn invoke_timeout_secs(spec: &MethodSpec, params: &serde_json::Value) -> u64 {
     if let Some(secs) = params.get("timeout").and_then(json_u64) {
         return secs.saturating_add(2).max(8);
     }
@@ -313,7 +329,7 @@ fn coerce(spec: &MethodSpec, name: &str, raw: &str) -> serde_json::Value {
 
 /// `~` expands and a relative path resolves against this shell's cwd — the
 /// owner reads the file in its own process, with its own cwd.
-fn absolute_path(raw: &str) -> String {
+pub(crate) fn absolute_path(raw: &str) -> String {
     let home = || std::env::var_os("HOME").map(std::path::PathBuf::from);
     let path = match (raw, raw.strip_prefix("~/")) {
         ("~", _) => home(),
@@ -333,6 +349,20 @@ fn absolute_path(raw: &str) -> String {
 mod tests {
     use super::*;
     use sola_call::{ArgSpec, ArgType, MethodSpec};
+
+    #[test]
+    fn design_canvas_new_defaults_to_the_cwd() {
+        let mut p = serde_json::json!({"name": "onboarding"});
+        inject_design_context("canvas.new", &mut p);
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(p["path"], cwd.display().to_string());
+        let mut q = serde_json::json!({"name": "x", "path": "/tmp/p"});
+        inject_design_context("canvas.new", &mut q);
+        assert_eq!(q["path"], "/tmp/p");
+        let mut r = serde_json::json!({});
+        inject_design_context("status", &mut r);
+        assert!(r.get("path").is_none());
+    }
 
     #[test]
     fn path_args_resolve_against_the_callers_cwd() {

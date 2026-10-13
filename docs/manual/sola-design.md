@@ -84,8 +84,9 @@ cancelled — pages have no browser chrome here.
 
 ## Agents
 
-Agents drive Design with `solactl design` (see
-[`solactl.md`](solactl.md#design-solactl-design)): open a canvas, steer the
+Agents drive Design with `solactl design` or its MCP tools (see
+[`solactl.md`](solactl.md#design-solactl-design)): make a canvas in their
+project (it shows up under that project in the rail), open a canvas, steer the
 view, wait for reloads, screenshot an artboard, export it as a PDF, inspect
 what rendered, and read your selection.
 

@@ -1,9 +1,9 @@
 //! sola-design app: project rail + plane.
 //!
-//! The plane stacks three layers: artboard textures (wgpu shader), the
-//! overlay canvas (frames, titles, selection, all input), and the floating
-//! mode bar. Boards are CEF board tabs in one `--engine` helper. The call
-//! owner `design` lives in [`cli`].
+//! The plane stacks the artboard textures (wgpu shader), the overlay canvas
+//! (frames, titles, pick outline, all input), and a status pill (zoom, pick).
+//! Boards are CEF board tabs in one `--engine` helper. Board lifecycle lives
+//! in [`live`]; the call owner `design` in [`cli`].
 
 mod cli;
 mod live;
