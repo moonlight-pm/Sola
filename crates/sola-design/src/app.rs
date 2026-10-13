@@ -8,11 +8,11 @@
 mod cli;
 mod live;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use iced::widget::{Shader, canvas as iced_canvas, column, container, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme};
@@ -44,6 +44,7 @@ use crate::plane::{self, Plane};
 use crate::projects::{self, CanvasRef, Catalog};
 use crate::rail::{self, AddDraft, CanvasDraft, RailState};
 use crate::select::{self, Selection};
+use crate::serve::Server;
 use crate::watch;
 
 const WINDOW_TITLE: &str = "Design";
@@ -99,12 +100,20 @@ pub fn run() -> iced::Result {
     publish_menu();
 
     let engine = CefEngine::spawn(APP_ID, "", SPAWN_W, SPAWN_H);
-    let cell = std::cell::Cell::new(Some(engine));
+    // Boards load from this loopback origin (D5); without it they fall back
+    // to `file://`.
+    let serve = Server::start()
+        .map_err(|e| tracing::error!(error = %e, "design origin did not start; boards use file://"))
+        .ok();
+    let cell = std::cell::Cell::new(Some((engine, serve)));
     let mut settings = window_settings_transparent(APP_ID);
     settings.size = Size::new(1280.0, 820.0);
 
     iced::application(
-        move || App::new(cell.take().expect("design boots once")),
+        move || {
+            let (engine, serve) = cell.take().expect("design boots once");
+            App::new(engine, serve)
+        },
         App::update,
         App::view,
     )
@@ -137,12 +146,15 @@ enum Pending {
     Requery { tab: u64 },
     /// A `solactl design` call answered by the page.
     Call { inc: Incoming, kind: cli::CallKind },
-    /// Content height of an `auto` artboard.
-    Measure { tab: u64 },
+    /// A board's post-load settle: content height and loaded files, for
+    /// load generation `generation`.
+    Settle { tab: u64, generation: u64 },
 }
 
 struct App {
     engine: CefEngine,
+    /// Loopback http origin the boards load from (`None`: `file://`).
+    serve: Option<Server>,
     frames: Arc<BoardFrames>,
     catalog: Catalog,
     canvases: HashMap<String, Vec<canvas::Entry>>,
@@ -151,6 +163,12 @@ struct App {
     /// Board tabs the helper has listed at least once. One that drops out
     /// without us closing it means the helper restarted (empty).
     listed: HashSet<u64>,
+    /// Files each board loaded from outside `design/` (watched too).
+    board_links: HashMap<u64, BTreeSet<PathBuf>>,
+    /// Newest input file time the boards were (re)loaded at. Files newer
+    /// than this mean the boards are stale (an edit the watcher has not
+    /// acted on yet, or an outside file).
+    shown_at: Option<SystemTime>,
     camera: Camera,
     plane_size: Option<Size>,
     fit_pending: bool,
@@ -172,16 +190,19 @@ struct App {
 }
 
 impl App {
-    fn new(engine: CefEngine) -> (Self, Task<Msg>) {
+    fn new(engine: CefEngine, serve: Option<Server>) -> (Self, Task<Msg>) {
         let catalog = projects::load_from(&projects::catalog_path());
         let mut app = Self {
             engine,
+            serve,
             frames: BoardFrames::new(),
             catalog,
             canvases: HashMap::new(),
             open: None,
             boards: Vec::new(),
             listed: HashSet::new(),
+            board_links: HashMap::new(),
+            shown_at: None,
             camera: Camera::default(),
             plane_size: None,
             fit_pending: false,
@@ -199,6 +220,7 @@ impl App {
             float: sola_kit::FloatState::new(APP_ID),
         };
         app.rescan();
+        app.serve_projects();
         if let Some(at) = app.catalog.selected.clone() {
             app.open_canvas(at);
         }
@@ -228,7 +250,11 @@ impl App {
             watch::canvases(projects, Msg::Canvases),
         ];
         if let Some(open) = &self.open {
-            subs.push(watch::subscription(open.dir.clone(), Msg::CanvasChanged));
+            subs.push(watch::subscription(
+                open.dir.clone(),
+                self.linked(),
+                Msg::CanvasChanged,
+            ));
         }
         if !self.waits.is_empty() || self.loads.has_due() {
             subs.push(iced::time::every(PENDING_TICK).map(|_| Msg::WaitTick));
@@ -458,7 +484,7 @@ impl App {
         };
         let why = match why {
             Pending::Call { inc, kind } => return self.finish_call(inc, kind, reply),
-            Pending::Measure { tab } => return self.on_measured(tab, reply),
+            Pending::Settle { tab, generation } => return self.on_settled(tab, generation, reply),
             other => other,
         };
         if !reply.ok {
@@ -494,7 +520,7 @@ impl App {
                 (Some(sel), None) if sel.tab == tab => self.selection = None,
                 _ => {}
             },
-            Pending::Call { .. } | Pending::Measure { .. } => unreachable!("answered above"),
+            Pending::Call { .. } | Pending::Settle { .. } => unreachable!("answered above"),
         }
     }
 
@@ -600,6 +626,19 @@ impl App {
     fn persist(&self) {
         if let Err(e) = projects::save_to(&projects::catalog_path(), &self.catalog) {
             tracing::warn!(error = %e, "save design projects");
+        }
+        self.serve_projects();
+    }
+
+    /// The origin serves exactly the projects in the list.
+    fn serve_projects(&self) {
+        if let Some(server) = &self.serve {
+            server.set_projects(
+                self.catalog
+                    .projects
+                    .iter()
+                    .map(|p| (p.id.as_str(), p.root.as_path())),
+            );
         }
     }
 

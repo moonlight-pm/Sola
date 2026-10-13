@@ -30,10 +30,21 @@ Design (sola-design): a canvas is files. `<project>/design/<canvas>/canvas.toml`
 lists artboards (src, x, y, width, height or \"auto\"); each artboard is an HTML \
 page beside it. Start with design_canvas_new (name; project = your working \
 directory) — it makes the folder, adds it to the human's rail under the project, and \
-shows it. Edit those files directly, call design_reload (it waits until the pages \
-have loaded), then design_screenshot (returns the image) or design_inspect (sizes, \
-styles, overflow). design_selection is the element the human Super+clicked; \
-design_open shows an existing canvas.";
+shows it. Edit those files directly, then design_reload or design_wait (both make the \
+boards show the files on disk and wait for web fonts and layout), then \
+design_screenshot (returns the image) or design_inspect (sizes, styles, overflow; \
+`all` lists every match's box). design_selection is the element the human \
+Super+clicked; design_open shows an existing canvas.
+
+Boards are Chromium (CEF) pages that Design serves over http from the project \
+root, each on its own host (`http://<board>--<canvas>.<project>.localhost:<port>/\
+design/<canvas>/page.html`). Root-absolute URLs (`/x`) resolve against the project \
+root; fetch, ES modules, and iframes work as on a site; dotfiles are not served. A \
+`src` may carry `?query` / `#fragment` (one page, two states: \
+`light.html?theme=dark`). Each board renders at 2×, or 1× when it is too big for 2× \
+(over 4096 px on a side). Edits reload the canvas when they touch its folder, shared \
+files in design/, or any project file a board loaded (a product stylesheet outside \
+design/ included).";
 
 type Out = Arc<Mutex<io::Stdout>>;
 

@@ -60,6 +60,36 @@ install from agent sessions.
 
 ---
 
+### D5 — sola-design board origin: `file://` or a local http origin (P2) — **closed (2026-10-12)**
+
+**Answered:** serve boards over a loopback http origin, **project root as `/`**, one `*.localhost` host per board (per-board zoom → per-board raster scale).
+
+**Context:** Boards load from `file://`. That breaks root-absolute URLs
+(`/fonts/x.woff2` → filesystem root), fetch/XHR of local files, ES module
+scripts, and iframe `contentDocument` (Exit field report, 2026-10-12). Boards
+raster through page zoom, which Chromium keeps **per host**; every `file://`
+board shares one host, so a canvas has one raster scale and one board too big
+for 2× (Exit's 6800 px sheets) drops the whole canvas to 1×.
+
+**Option:** Design serves each project over a loopback http server
+(`127.0.0.1`, random port, GET only, files under the project root) and loads
+each board from its own `*.localhost` host
+(`http://<board>.<canvas>.localhost:<port>/design/<canvas>/page.html`).
+Fixes the file:// class, gives each board its own zoom (per-board scale), and
+lets boards link product assets the way the app does. Cost: an http server in
+Design; project files readable by any local process that finds the port; a
+per-canvas web root would still be needed for `/fonts/…`-style product URLs.
+Alternative for the scale half only: tile the plane's textures past 8192 px.
+
+**Ask:**
+
+1. Serve boards over a loopback http origin, or keep `file://`?
+2. If served: project root as `/`, or a per-canvas `root` in `canvas.toml`?
+
+**Related:** [sola-design freeze](specs/2026-10-12-sola-design-design.md); `design` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
@@ -100,6 +130,7 @@ comparison warrants a second engine.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-12 | D5 sola-design origin | Boards are served over a loopback http origin (Design's own server: GET/HEAD, project files only, no dotfiles, Host must name a registered project), **project root as `/`**, one `*.localhost` host per board so each board has its own zoom / raster scale. Replaces `file://`. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, architecture, manual |
 | 2026-10-08 | workspaces Claude | Claude is first-class alongside Grok and Codex (D4.4 closed): `--agent grok\|codex\|claude`, spawn/exec argv, hooks merged into `~/.claude/settings.json` (other settings kept), rail rollup, `×N` from `compact_boundary`, reboot `claude --resume`. OpenCode stays presence-only. | freeze, CLI freeze, CURRENT, capabilities, architecture, manual/solactl, PRODUCT, design law |
 | 2026-09-17 | Bots | Write fence default remains the bot home. Joshua can explicitly order an escape (whole computer / drop the fence / a path outside home). Seat steal stays forbidden. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks |
 | 2026-09-15 | Bots | Informational named sessions (not coding). Yolo. Per-bot `~/Bots/<slug>/`. Dialog UI hides compaction. Native iOS. Daemon + ACP Grok. Soft write fence via foundation prompt. This computer is the sandbox; `solactl browser` for web. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks, capabilities |

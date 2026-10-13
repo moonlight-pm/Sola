@@ -887,6 +887,15 @@ cef::wrap_app! {
                 let no_parallel_val = CefString::from("ParallelDownloading");
                 cmd.append_switch_with_value(Some(&no_parallel), Some(&no_parallel_val));
 
+                // sola-design artboards never scroll by pointer, and a
+                // scrollbar steals layout width: a tall page laid out at
+                // its first 900 px viewport wrapped narrower and measured
+                // 20 px taller than at its own height.
+                if self.app_id == "sola-design" {
+                    let k = CefString::from("hide-scrollbars");
+                    cmd.append_switch(Some(&k));
+                }
+
                 // Chrome-runtime CEF 147 often ignores Settings.remote_debugging_port
                 // unless the switch is also on the command line. Subprocesses get 0.
                 if self.debug_port != 0 {

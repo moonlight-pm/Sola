@@ -22,6 +22,8 @@ pub struct Board {
     pub tab: TabId,
     pub art: Artboard,
     pub scale: f64,
+    /// Why the board does not show its page (missing `src`, HTTP 404).
+    pub error: Option<String>,
 }
 
 impl Board {
@@ -73,13 +75,29 @@ pub fn fits(width: u32, height: u32, scale: f64) -> bool {
     w <= MAX_TEXTURE_SIDE && h <= MAX_TEXTURE_SIDE && w * h * 4.0 <= MAX_FRAME_BYTES
 }
 
-/// The canvas's raster scale: [`RASTER_SCALE`] when every board fits, else
-/// 1. One scale for all: page zoom is per host in Chromium.
-pub fn canvas_scale(sizes: impl IntoIterator<Item = (u32, u32)>) -> f64 {
-    let all_fit = sizes
-        .into_iter()
-        .all(|(w, h)| fits(w, h, RASTER_SCALE));
-    if all_fit { RASTER_SCALE } else { 1.0 }
+/// Host of a URL (`scheme://host[:port]/…` → `host`); `""` for `file://`.
+pub fn url_host(url: &str) -> &str {
+    let Some((_, rest)) = url.split_once("://") else {
+        return "";
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    authority.rsplit_once(':').map_or(authority, |(h, _)| h)
+}
+
+/// Raster scale per board, from `(host, width, height)`: [`RASTER_SCALE`]
+/// unless some board on the same host cannot fit it, then 1. Page zoom is
+/// per host in Chromium; served boards each have their own host.
+pub fn host_scales(boards: &[(&str, u32, u32)]) -> Vec<f64> {
+    let mut too_big = std::collections::HashSet::new();
+    for &(host, w, h) in boards {
+        if !fits(w, h, RASTER_SCALE) {
+            too_big.insert(host);
+        }
+    }
+    boards
+        .iter()
+        .map(|(host, ..)| if too_big.contains(host) { 1.0 } else { RASTER_SCALE })
+        .collect()
 }
 
 /// Diff `current` against `next`. Boards keep their tab (and texture) when
@@ -111,6 +129,7 @@ pub fn sync(
                 }
                 let resized = (prev.art.width, prev.art.height) != (art.width, art.height);
                 let scale = prev.scale;
+                let error = if prev.art.url == art.url { prev.error } else { None };
                 if resized {
                     ops.push(Op::View {
                         tab,
@@ -119,7 +138,12 @@ pub fn sync(
                         scale,
                     });
                 }
-                boards.push(Board { tab, art, scale });
+                boards.push(Board {
+                    tab,
+                    art,
+                    scale,
+                    error,
+                });
             }
             None => {
                 let scale = RASTER_SCALE;
@@ -136,6 +160,7 @@ pub fn sync(
                     tab,
                     art: art.clone(),
                     scale,
+                    error: None,
                 });
             }
         }
@@ -180,12 +205,22 @@ mod tests {
     }
 
     #[test]
-    fn canvas_is_2x_unless_a_board_cannot_fit() {
-        assert_eq!(canvas_scale([(1440, 900), (390, 844), (1280, 4000)]), 2.0);
+    fn scale_is_per_host() {
         // Over the texture side at 2× (and over the frame budget).
         assert!(!fits(1440, 6000, 2.0));
-        assert_eq!(canvas_scale([(390, 844), (1440, 6000)]), 1.0);
-        assert_eq!(canvas_scale(std::iter::empty()), 2.0);
+        let scales = host_scales(&[("a.p.localhost", 1440, 900), ("b.p.localhost", 1440, 6000)]);
+        assert_eq!(scales, vec![2.0, 1.0]);
+        // file:// boards share the empty host, so one tall board drags them.
+        assert_eq!(host_scales(&[("", 390, 844), ("", 1440, 6000)]), vec![1.0, 1.0]);
+        assert!(host_scales(&[]).is_empty());
+    }
+
+    #[test]
+    fn hosts_from_urls() {
+        assert_eq!(url_host("http://light--home.proj-x.localhost:4321/design/a.html"), "light--home.proj-x.localhost");
+        assert_eq!(url_host("https://example.com/x?y"), "example.com");
+        assert_eq!(url_host("file:///w/a.html"), "");
+        assert_eq!(url_host("nonsense"), "");
     }
 
     #[test]

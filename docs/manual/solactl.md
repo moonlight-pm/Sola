@@ -255,9 +255,12 @@ sees; `open` switches it.
 
 A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
 lists the artboards and each artboard is an HTML page beside it. Edit those
-files with ordinary tools. Design watches them and reloads, but the watcher
-is asynchronous — after an edit, run `reload` (it reloads and **waits**)
-before `screenshot` or `inspect`.
+files with ordinary tools. Design watches them (and any outside file a page
+loaded — `status` lists those as `linked`) and reloads. After an edit, `wait`
+or `reload` before `screenshot` / `inspect`: both make the boards show the
+files on disk (`wait` reloads when files are newer than the boards) and
+return once pages have loaded, web fonts are in, and `auto` heights are
+measured.
 
 `canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
 `--path`, default your current directory), registers the project if
@@ -278,7 +281,7 @@ solactl design canvas.new onboarding         # design/onboarding/ in your cwd's 
 solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
-solactl design status                        # canvas, artboards, zoom, mode, selection
+solactl design status                        # canvas, artboards (src, url, error), linked files, zoom, selection
 solactl design selection
 solactl design view --fit
 solactl design view --artboard phone [--zoom 1]
@@ -288,6 +291,7 @@ solactl design reload [--artboard phone] [--timeout 15]
 solactl design screenshot [--artboard phone] [-o shot.png]
 solactl design pdf [--artboard landing] [-o landing.pdf]
 solactl design inspect [--artboard phone] [--selector 'main .card']
+solactl design inspect --artboard light --selector section --all   # every match's box
 ```
 
 `screenshot` captures the page as rendered (CDP, at the artboard's raster
@@ -297,7 +301,13 @@ Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
 `reload` also wait for a `height = "auto"` artboard to be measured. `inspect` replies with the viewport
 (the artboard size), the document size, `cut_off_below` (content taller than
 the artboard), the element's box and computed styles, and up to 25
-`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). There is no raw
+`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). `--all` instead
+lists every match (up to 300) as `{selector, tag, rect, text}`. In
+`status`, each artboard has `src` (what `canvas.toml` asks for), `url` (what
+its tab shows), and `error` (missing `src`, HTTP ≥ 400).
+`screenshot` reports the `scale` it used: each artboard renders at 2×, or
+1× when it is too big for 2× (over 4096 px on a side). Boards are served
+over http from the project root (`/` = project folder), not `file://`. There is no raw
 `eval` on this plane.
 
 ## MCP (`solactl mcp`)

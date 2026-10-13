@@ -3,35 +3,58 @@
 //!
 //! A local file can load between two snapshots and never show `loading`, so
 //! "finished a load" is: seen loading, then idle — or idle and painted for
-//! [`LOAD_GRACE`]. `auto`-height boards also need their content measured
-//! after each load before they count as settled.
+//! [`LOAD_GRACE`]. After each load a board is **settled** (web fonts ready,
+//! layout final; its content height and loaded files read back) before
+//! `wait` counts it done. Each load has a generation, so a settle answered
+//! after the board navigated on (`Inspected target navigated`) cannot mark
+//! the new load settled. An `auto` resize can ask for a confirming settle
+//! (the new viewport may reflow), at most [`MAX_CONFIRMS`] per load.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 pub const LOAD_GRACE: Duration = Duration::from_secs(1);
-/// A board that never settles (no paint, stuck loading) stops being
-/// measured after this, so a broken page cannot keep the tick alive.
-const MEASURE_GIVE_UP: Duration = Duration::from_secs(15);
+/// A board that never settles (no paint, stuck loading) is given up on after
+/// this, so a broken page cannot keep the tick alive.
+const SETTLE_GIVE_UP: Duration = Duration::from_secs(15);
+/// Confirming settles after an `auto` resize, per load (bounds `vh` growth).
+pub const MAX_CONFIRMS: u8 = 2;
 
 #[derive(Default)]
 pub struct Loads {
     seen_loading: HashSet<u64>,
     loaded: HashSet<u64>,
-    /// Auto-height boards whose height is stale, and since when.
-    measure_due: HashMap<u64, Instant>,
-    /// Measure calls in flight.
-    measuring: HashSet<u64>,
+    /// Boards whose settle is due, and since when.
+    settle_due: HashMap<u64, Instant>,
+    /// Settle calls in flight (tab → load generation).
+    settling: HashMap<u64, u64>,
+    /// Load generation per tab; bumped by [`Loads::begin`].
+    generation: HashMap<u64, u64>,
+    /// Confirming settles used by the current load.
+    confirms: HashMap<u64, u8>,
 }
 
 impl Loads {
-    /// A board started (or restarted) a load. Auto boards need measuring.
-    pub fn begin(&mut self, tab: u64, auto_height: bool, now: Instant) {
+    /// A board started (or restarted) a load: it needs settling again.
+    pub fn begin(&mut self, tab: u64, now: Instant) {
         self.seen_loading.remove(&tab);
         self.loaded.remove(&tab);
-        if auto_height {
-            self.measure_due.insert(tab, now);
+        self.settle_due.insert(tab, now);
+        self.settling.remove(&tab);
+        self.confirms.remove(&tab);
+        *self.generation.entry(tab).or_default() += 1;
+    }
+
+    /// Settle once more after an `auto` resize (the new viewport may
+    /// reflow). False when this load used its confirms.
+    pub fn confirm(&mut self, tab: u64, now: Instant) -> bool {
+        let used = self.confirms.entry(tab).or_default();
+        if *used >= MAX_CONFIRMS {
+            return false;
         }
+        *used += 1;
+        self.settle_due.insert(tab, now);
+        true
     }
 
     /// Fold one tab snapshot (`tab → loading`) for `tabs`.
@@ -53,48 +76,56 @@ impl Loads {
         self.loaded.contains(&tab)
     }
 
-    /// Height is current (or the board is not `auto`).
-    pub fn is_measured(&self, tab: u64) -> bool {
-        !self.measure_due.contains_key(&tab)
+    /// Settled since its last load.
+    pub fn is_settled(&self, tab: u64) -> bool {
+        !self.settle_due.contains_key(&tab)
     }
 
-    /// Some `auto` board still needs measuring (keeps the app ticking).
+    /// Some board still needs settling (keeps the app ticking).
     pub fn has_due(&self) -> bool {
-        !self.measure_due.is_empty()
+        !self.settle_due.is_empty()
     }
 
-    /// Auto boards to measure now: due, idle and painted (`idle(tab)`), and
-    /// either seen finishing a load or idle past the grace. Marks them in
-    /// flight.
-    pub fn take_measures(&mut self, now: Instant, idle: impl Fn(u64) -> bool) -> Vec<u64> {
-        let measuring = &self.measuring;
-        self.measure_due.retain(|tab, since| {
-            measuring.contains(tab) || now.duration_since(*since) < MEASURE_GIVE_UP
+    /// Boards to settle now: due, idle and painted (`idle(tab)`), and either
+    /// seen finishing a load or idle past the grace. Marks them in flight.
+    /// Returned as `(tab, generation)`; pass the generation to
+    /// [`Loads::settled`].
+    pub fn take_settles(&mut self, now: Instant, idle: impl Fn(u64) -> bool) -> Vec<(u64, u64)> {
+        let settling = &self.settling;
+        self.settle_due.retain(|tab, since| {
+            settling.contains_key(tab) || now.duration_since(*since) < SETTLE_GIVE_UP
         });
         let mut out = Vec::new();
-        for (&tab, &since) in &self.measure_due {
-            if self.measuring.contains(&tab) || !idle(tab) {
+        for (&tab, &since) in &self.settle_due {
+            if self.settling.contains_key(&tab) || !idle(tab) {
                 continue;
             }
             if self.loaded.contains(&tab) || now.duration_since(since) >= LOAD_GRACE {
-                out.push(tab);
+                out.push((tab, self.generation.get(&tab).copied().unwrap_or_default()));
             }
         }
-        self.measuring.extend(out.iter().copied());
+        self.settling.extend(out.iter().copied());
         out
     }
 
-    /// A measure answered (or failed): the height is current again.
-    pub fn measured(&mut self, tab: u64) {
-        self.measuring.remove(&tab);
-        self.measure_due.remove(&tab);
+    /// A settle answered (or failed). False when it belongs to an earlier
+    /// load of the tab: ignore it, the current load still needs settling.
+    pub fn settled(&mut self, tab: u64, generation: u64) -> bool {
+        if self.generation.get(&tab).copied().unwrap_or_default() != generation {
+            return false;
+        }
+        self.settling.remove(&tab);
+        self.settle_due.remove(&tab);
+        true
     }
 
     pub fn forget(&mut self, tab: u64) {
         self.seen_loading.remove(&tab);
         self.loaded.remove(&tab);
-        self.measure_due.remove(&tab);
-        self.measuring.remove(&tab);
+        self.settle_due.remove(&tab);
+        self.settling.remove(&tab);
+        self.generation.remove(&tab);
+        self.confirms.remove(&tab);
     }
 
     pub fn clear(&mut self) {
@@ -114,51 +145,70 @@ mod tests {
     fn loading_then_idle_is_loaded() {
         let mut l = Loads::default();
         let t0 = Instant::now();
-        l.begin(1, false, t0);
+        l.begin(1, t0);
         l.observe(&snap(&[(1, false)]), [1]);
         assert!(!l.is_loaded(1), "idle before any load is not a finished load");
         l.observe(&snap(&[(1, true)]), [1]);
         l.observe(&snap(&[(1, false)]), [1]);
         assert!(l.is_loaded(1));
-        l.begin(1, false, t0);
+        l.begin(1, t0);
         assert!(!l.is_loaded(1));
     }
 
     #[test]
-    fn auto_boards_measure_once_after_load_or_grace() {
+    fn boards_settle_once_after_load_or_grace() {
         let mut l = Loads::default();
         let t0 = Instant::now();
-        l.begin(7, true, t0);
-        assert!(!l.is_measured(7));
-        assert!(l.take_measures(t0, |_| true).is_empty(), "not loaded, no grace yet");
-        assert_eq!(l.take_measures(t0 + LOAD_GRACE, |_| true), vec![7]);
-        assert!(l.take_measures(t0 + LOAD_GRACE * 2, |_| true).is_empty(), "in flight");
-        l.measured(7);
-        assert!(l.is_measured(7));
+        l.begin(7, t0);
+        assert!(!l.is_settled(7));
+        assert!(l.take_settles(t0, |_| true).is_empty(), "not loaded, no grace yet");
+        assert_eq!(l.take_settles(t0 + LOAD_GRACE, |_| true), vec![(7, 1)]);
+        assert!(l.take_settles(t0 + LOAD_GRACE * 2, |_| true).is_empty(), "in flight");
+        assert!(l.settled(7, 1));
+        assert!(l.is_settled(7));
 
-        l.begin(7, true, t0);
+        l.begin(7, t0);
         l.observe(&snap(&[(7, true)]), [7]);
         l.observe(&snap(&[(7, false)]), [7]);
-        assert_eq!(l.take_measures(t0, |_| true), vec![7], "a seen load skips the grace");
-        assert!(l.take_measures(t0, |_| false).is_empty());
+        assert_eq!(l.take_settles(t0, |_| true), vec![(7, 2)], "a seen load skips the grace");
+        assert!(l.take_settles(t0, |_| false).is_empty());
+    }
+
+    #[test]
+    fn a_reply_for_an_earlier_load_is_ignored() {
+        let mut l = Loads::default();
+        let t0 = Instant::now();
+        l.begin(4, t0);
+        let taken = l.take_settles(t0 + LOAD_GRACE, |_| true);
+        assert_eq!(taken, vec![(4, 1)]);
+        l.begin(4, t0); // navigated before the settle answered
+        assert!(!l.settled(4, 1), "stale generation");
+        assert!(!l.is_settled(4), "the new load still needs settling");
+        assert_eq!(l.take_settles(t0 + LOAD_GRACE, |_| true), vec![(4, 2)]);
+        assert!(l.settled(4, 2));
+    }
+
+    #[test]
+    fn confirms_are_bounded_per_load() {
+        let mut l = Loads::default();
+        let t0 = Instant::now();
+        l.begin(5, t0);
+        assert!(l.confirm(5, t0));
+        assert!(l.confirm(5, t0));
+        assert!(!l.confirm(5, t0), "max {MAX_CONFIRMS}");
+        l.begin(5, t0);
+        assert!(l.confirm(5, t0), "a new load gets new confirms");
     }
 
     #[test]
     fn a_board_that_never_settles_is_given_up() {
         let mut l = Loads::default();
         let t0 = Instant::now();
-        l.begin(9, true, t0);
-        assert!(l.take_measures(t0 + MEASURE_GIVE_UP, |_| false).is_empty());
+        l.begin(9, t0);
+        assert!(l.take_settles(t0 + SETTLE_GIVE_UP, |_| false).is_empty());
         assert!(!l.has_due());
-        assert!(l.is_measured(9));
-    }
-
-    #[test]
-    fn fixed_boards_are_always_measured() {
-        let mut l = Loads::default();
-        l.begin(3, false, Instant::now());
-        assert!(l.is_measured(3));
-        l.forget(3);
-        assert!(!l.is_loaded(3));
+        assert!(l.is_settled(9));
+        l.forget(9);
+        assert!(!l.is_loaded(9));
     }
 }

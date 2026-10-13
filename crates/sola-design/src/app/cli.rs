@@ -150,6 +150,7 @@ impl App {
 
     pub(super) fn status_json(&self) -> Value {
         let loading = self.loading_map();
+        let shown = self.tab_urls();
         let artboards: Vec<Value> = self
             .boards
             .iter()
@@ -158,6 +159,10 @@ impl App {
                     "id": b.art.id,
                     "title": b.art.title,
                     "src": b.art.url,
+                    // What the tab is showing; differs from `src` while a
+                    // navigation is pending or after an in-page link.
+                    "url": shown.get(&b.tab.0),
+                    "error": b.error,
                     "x": b.art.x,
                     "y": b.art.y,
                     "width": b.art.width,
@@ -180,6 +185,8 @@ impl App {
         json!({
             "canvas": canvas,
             "artboards": artboards,
+            // Files the boards loaded from outside design/; edits reload too.
+            "linked": self.linked(),
             "zoom": self.camera.zoom,
             "selection": self.selection.as_ref().map(|s| s.to_json()),
         })
@@ -386,7 +393,7 @@ impl App {
                 .map(|s| s.picked.selector.clone())
         });
         let op = AgentOp::Eval {
-            expression: inspect::script(selector.as_deref()),
+            expression: inspect::script(selector.as_deref(), bool_param(p, "all")),
         };
         let kind = CallKind::Inspect {
             artboard: b.art.id.clone(),
@@ -422,7 +429,10 @@ impl App {
             .unwrap_or(WAIT_DEFAULT_SECS)
             .max(1);
         let mut task = Task::none();
-        if reload {
+        // `wait` right after an edit: the watcher may not have acted yet.
+        // Boards older than the files are reloaded first, so the wait means
+        // "showing what is on disk".
+        if reload || self.boards_stale() {
             let ids: Vec<TabId> = tabs.iter().map(|(tab, _)| TabId(*tab)).collect();
             self.reload_tabs(&ids);
             task = self.requery_later();
@@ -461,7 +471,7 @@ impl App {
             let ready = |tab: u64| {
                 self.frames.is_painted(tab)
                     && loading.get(&tab) == Some(&false)
-                    && self.loads.is_measured(tab)
+                    && self.loads.is_settled(tab)
                     && (w.saw_loading.contains(&tab) || self.loads.is_loaded(tab) || grace)
             };
             let gone: Vec<&str> = w

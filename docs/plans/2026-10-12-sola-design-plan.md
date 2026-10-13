@@ -112,6 +112,41 @@
 - [x] Human: install `design` + `solactl` and smoke the verbs (picks
       work after the IPC fix — 2026-10-12).
 
+## Field report fixes (Exit, 2026-10-12)
+
+- [x] MCP instructions: boards are Chromium from `file://` (relative URLs,
+      no local fetch / ES modules / iframe docs), what reloads, `?query`.
+- [x] `src` keeps `?query#fragment` (one page, two states).
+- [x] Settle after every load: `document.fonts.ready` + two frames
+      (`AgentOp::Eval` now `awaitPromise`), then height + loaded files;
+      `wait` / `reload` wait for it. Exit light/dark now agree (6796).
+- [x] Files a board loaded from outside `design/` are watched (`status`
+      lists them as `linked`); a burst can be layout **and** content.
+- [x] `wait` after an edit: reloads when files are newer than the boards
+      (`newest_input` vs `shown_at`); watcher reloads de-duplicated.
+- [x] `inspect --all`: `{selector, tag, rect, text}` per match.
+- [x] **D5 decided:** loopback http origin, project root as `/`.
+      `serve.rs` (GET/HEAD, registered roots, no dotfiles / listing, Host
+      check, no CORS); board URLs rewritten per layout to
+      `<board>--<canvas>.<project>.localhost`; per-board raster scale
+      (`host_scales`); settle resources map back via `local_path`; MCP
+      instructions + docs updated; Exit workspace told.
+
+## Exit follow-up fixes (2026-10-12)
+
+- [x] Changing an artboard's `src` did not re-point its tab: any
+      `canvas.toml` edit counted as stale input, so a `ReloadIgnoreCache` in
+      the same update reloaded the committed URL and cancelled the
+      `LoadUrl`. `canvas.toml` left out of `newest_input`; reload loads the
+      intended URL when the tab shows something else; settle replies carry
+      a load generation (late ones ignored).
+- [x] A fresh tall `auto` board measured 20 px high: its first layout at a
+      900 px viewport had a vertical scrollbar (narrower → more wrapping).
+      `--hide-scrollbars` for Design's CEF; one bounded confirm settle after
+      each auto resize. Exit light / dark measure 6796 on first open.
+- [x] `status` shows each board's tab `url` and `error`; a missing `src` or
+      HTTP ≥ 400 is a red board title.
+
 ## Slice 4 — `solactl mcp`
 
 - [x] `solactl mcp [--owner …]`: stdio JSON-RPC (2025-06-18 / 03-26 /

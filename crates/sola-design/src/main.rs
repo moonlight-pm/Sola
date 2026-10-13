@@ -23,6 +23,7 @@ mod profile;
 mod projects;
 mod rail;
 mod select;
+mod serve;
 mod watch;
 
 use std::process::ExitCode;
