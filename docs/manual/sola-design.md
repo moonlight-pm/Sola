@@ -140,7 +140,8 @@ pinch over a page, one finger pans the background. When a file changes, viewers'
 of seconds. A link only reaches its own canvas: its folder, shared files in
 `design/`, its `root` folder, and the project files its artboards load —
 nothing else in the project, and no dotfiles. Links work while Design is
-running.
+running. There is no password or expiry: anyone with a link sees the canvas,
+and **New Link** is how you cut one off.
 
 Design serves the links itself on `127.0.0.1:47820` and runs a Cloudflare
 Tunnel connector (`cloudflared`) that forwards `design.moonlight.pm` there.
@@ -155,5 +156,4 @@ are in `share.json` beside it. Without a `tunnel_token` the links are local
 An `auto` artboard is measured for a few seconds after each load; content
 that grows later than that waits for the next reload. The pages themselves
 are shared with agents: text you type into a page is there when an agent
-looks. Share links have no password or expiry — anyone with the link sees the
-canvas while Design runs.
+looks.
