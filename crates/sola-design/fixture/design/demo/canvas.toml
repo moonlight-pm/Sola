@@ -1,0 +1,30 @@
+# sola-design smoke fixture. Add project → crates/sola-design/fixture.
+
+title = "Demo"
+
+[[artboard]]
+id = "desktop"
+src = "settings.html"
+x = 0
+y = 0
+width = 1440
+height = 900
+title = "Settings · desktop"
+
+[[artboard]]
+id = "phone"
+src = "settings.html"
+x = 1560
+y = 0
+width = 390
+height = 844
+title = "Settings · phone"
+
+[[artboard]]
+id = "landing"
+src = "landing.html"
+x = 2070
+y = 0
+width = 1280
+height = "auto"                 # grows to the page's content
+title = "Landing · auto height"

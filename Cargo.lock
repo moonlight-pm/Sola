@@ -9224,6 +9224,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-design"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "iced",
+ "iced_futures",
+ "notify",
+ "serde",
+ "serde_json",
+ "sola-browser",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "sola-kit",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
 name = "sola-install"
 version = "0.1.0"
 dependencies = [
