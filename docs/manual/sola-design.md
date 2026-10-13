@@ -121,6 +121,12 @@ pick it to watch. An agent puts a canvas on your screen only when you ask it
 to (`--raise`). Canvases nobody has used for 10 minutes are closed in the
 background and reopen on the next call.
 
+Boards nobody is looking at sleep, like background browser tabs: a canvas
+you are not on (unless an agent is working in it), and boards panned out of
+view. While another window has focus, the boards in view run animations at
+1 frame a second. A board that is loading or that an agent is reading always
+runs at full speed, so reloads show at once.
+
 Look around while an agent works. Its screenshots and PDFs are the whole
 artboard however you are zoomed, and your pointer leaves the page while they
 are taken, so no hover state gets in. An agent can frame a canvas's view until

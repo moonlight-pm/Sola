@@ -390,6 +390,10 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             focused,
         },
+        ToEngine::BoardPace { id, pace } => Cmd::BoardPace {
+            id: TabId(id),
+            pace,
+        },
         ToEngine::Shutdown => return None,
     })
 }

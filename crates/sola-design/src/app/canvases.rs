@@ -2,17 +2,21 @@
 //! the background. Each keeps its own boards, files, and camera, so several
 //! agents can work at once and none of them moves what the human sees.
 //! Agents never bring a canvas to the front (`--raise` is the explicit
-//! exception). An off-screen canvas nobody has used for [`IDLE`] closes;
-//! the next call reopens it.
+//! exception). Boards nobody looks at sleep ([`crate::pace`]). An
+//! off-screen canvas nobody has used for [`IDLE`] closes; the next call
+//! reopens it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
+use sola_browser::engine::{BoardPace, Cmd, TabId};
+
 use super::{App, Pending};
 use crate::boards::Board;
 use crate::camera::{self, Camera};
 use crate::canvas;
+use crate::pace;
 use crate::projects::CanvasRef;
 
 /// An off-screen canvas closes after this long without a call.
@@ -252,6 +256,67 @@ impl App {
     /// Some canvas is live off screen (the eviction tick runs).
     pub(super) fn has_background(&self) -> bool {
         self.live.iter().any(|l| !self.is_shown(&l.at.key()))
+    }
+
+    /// Send each board its pace ([`crate::pace`]) where that changed.
+    pub(super) fn pace_boards(&mut self) {
+        let busy = self.busy_tabs();
+        let agents = self.agent_busy();
+        let mut want = Vec::new();
+        for l in &self.live {
+            let key = l.at.key();
+            let shown = self.is_shown(&key);
+            for b in &l.boards {
+                let in_view = shown
+                    && self
+                        .plane_size
+                        .is_none_or(|p| pace::in_view(b.rect(), &self.camera, p));
+                let look = pace::Look {
+                    busy: busy.contains(&b.tab.0),
+                    in_view,
+                    focused: self.focused,
+                    agent: agents.contains(&key),
+                };
+                want.push((b.tab, pace::pace(look)));
+            }
+        }
+        let open: HashSet<u64> = want.iter().map(|(tab, _)| tab.0).collect();
+        self.paces.retain(|tab, _| open.contains(tab));
+        for (tab, pace) in want {
+            self.set_pace(tab, pace);
+        }
+    }
+
+    /// Board `tab` paints at `pace` (sent only when that changes).
+    pub(super) fn set_pace(&mut self, tab: TabId, pace: BoardPace) {
+        let was = self.paces.insert(tab.0, pace).unwrap_or_default();
+        if was != pace {
+            self.send(Cmd::BoardPace { id: tab, pace });
+        }
+    }
+
+    /// Boards working for someone: loading or settling, or answering a
+    /// call or a pick. A page's height watch is not work.
+    fn busy_tabs(&self) -> HashSet<u64> {
+        let mut busy: HashSet<u64> = self
+            .pending
+            .values()
+            .filter_map(|p| match p {
+                Pending::Pick { tab, .. }
+                | Pending::Requery { tab }
+                | Pending::Call { tab, .. }
+                | Pending::Settle { tab, .. } => Some(*tab),
+                Pending::Height { .. } => None,
+            })
+            .collect();
+        let unsettled = self
+            .live
+            .iter()
+            .flat_map(|l| l.boards.iter())
+            .map(|b| b.tab.0)
+            .filter(|tab| !self.loads.is_settled(*tab));
+        busy.extend(unsettled);
+        busy
     }
 
     /// The camera of `key`, on screen or parked; a never-framed off-screen

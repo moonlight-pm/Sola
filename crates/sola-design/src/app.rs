@@ -20,7 +20,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Point, Size, S
 use sola_browser::CefEngine;
 use sola_browser::agent::{AgentOp, AgentReply, AgentRequest};
 use sola_browser::cef::engine::InputEvent;
-use sola_browser::engine::{Cmd, Engine, TabId};
+use sola_browser::engine::{BoardPace, Cmd, Engine, TabId};
 use sola_bus::Message;
 use sola_bus::topics::{FocusTarget, Topic, TopicKind};
 use sola_call::Incoming;
@@ -65,6 +65,9 @@ const NOTICE: Duration = Duration::from_millis(1800);
 const EVICT_TICK: Duration = Duration::from_secs(60);
 /// Tick while a detail plan is due (see [`crate::detail::SETTLE`]).
 const DETAIL_TICK: Duration = Duration::from_millis(40);
+/// Tick while an agent's recent call keeps a canvas awake, so its boards
+/// sleep once the call ages out.
+const PACE_TICK: Duration = Duration::from_secs(5);
 /// Board surfaces cover the plane in steps of this many px, so a window
 /// resize rarely resizes them.
 const SURFACE_STEP: u32 = 256;
@@ -86,6 +89,10 @@ pub enum Msg {
     Glow,
     /// Close idle off-screen canvases.
     Evict,
+    /// Re-pace boards (an agent's recent call aged out).
+    Pace,
+    /// The window gained (`true`) or lost keyboard focus.
+    Focused(bool),
     /// Copy the shown canvas's share link (`true`: a new link first).
     ShareLink(bool),
     /// The window's output scale.
@@ -217,6 +224,10 @@ struct App {
     glows: Glows,
     /// Board with the keyboard.
     focus: Option<u64>,
+    /// The window has keyboard focus.
+    focused: bool,
+    /// Pace last sent per board tab; a board missing here is `Live`.
+    paces: HashMap<u64, BoardPace>,
     selection: Option<Selection>,
     next_req: u64,
     pending: HashMap<u64, Pending>,
@@ -253,6 +264,8 @@ impl App {
             human_camera: false,
             glows: Glows::default(),
             focus: None,
+            focused: true,
+            paces: HashMap::new(),
             selection: None,
             next_req: 1,
             pending: HashMap::new(),
@@ -307,6 +320,9 @@ impl App {
         if self.has_background() {
             subs.push(iced::time::every(EVICT_TICK).map(|_| Msg::Evict));
         }
+        if !self.agent_busy().is_empty() {
+            subs.push(iced::time::every(PACE_TICK).map(|_| Msg::Pace));
+        }
         if !self.waits.is_empty() || self.loads.has_due() {
             subs.push(iced::time::every(PENDING_TICK).map(|_| Msg::WaitTick));
         }
@@ -318,19 +334,22 @@ impl App {
         }
         subs.push(iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Rescaled(f)) => Some(Msg::Scale(f)),
+            iced::Event::Window(iced::window::Event::Focused) => Some(Msg::Focused(true)),
+            iced::Event::Window(iced::window::Event::Unfocused) => Some(Msg::Focused(false)),
             _ => None,
         }));
         Subscription::batch(subs)
     }
 
     /// Detail renders follow the camera, plane, and boards: any change to
-    /// them plans again once things rest.
+    /// them plans again once things rest. Board paces follow at once.
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         let before = (self.camera, self.plane_size, self.scale_factor);
         let task = self.handle(msg);
         if (self.camera, self.plane_size, self.scale_factor) != before {
             self.details.poke(Instant::now());
         }
+        self.pace_boards();
         task
     }
 
@@ -351,6 +370,8 @@ impl App {
                 self.check_waits();
             }
             Msg::Evict => self.evict_idle(Instant::now()),
+            Msg::Pace => {}
+            Msg::Focused(focused) => self.focused = focused,
             Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
             Msg::Glow => {
                 let loads = &self.loads;
@@ -712,6 +733,11 @@ impl App {
     }
 
     fn agent(&mut self, tab: TabId, op: AgentOp, why: Option<Pending>) {
+        // A sleeping page answers nothing that waits on a frame: wake it
+        // before the op (`pace_boards` settles its pace after).
+        if self.paces.get(&tab.0) == Some(&BoardPace::Asleep) {
+            self.set_pace(tab, BoardPace::Live);
+        }
         let id = self.next_req;
         self.next_req += 1;
         if let Some(why) = why {

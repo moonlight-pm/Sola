@@ -110,6 +110,22 @@ pub struct BoardDetail {
     pub scale: f64,
 }
 
+/// How often a sola-design board paints (`Cmd::BoardPace`). Boards are born
+/// `Live`. An `Asleep` board is a hidden tab: no frames, rAF paused, page
+/// timers throttled; waking repaints it whole.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum BoardPace {
+    /// Shown at 60 fps.
+    #[default]
+    Live,
+    /// Shown at 1 fps: the page runs, animations crawl.
+    Slow,
+    /// Hidden: nothing paints until it wakes.
+    Asleep,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     pub index: i32,
@@ -370,6 +386,11 @@ pub enum Cmd<E: Engine> {
     BoardFocus {
         id: TabId,
         focused: bool,
+    },
+    /// How often one board tab paints (see [`BoardPace`]).
+    BoardPace {
+        id: TabId,
+        pace: BoardPace,
     },
     Quit,
 }

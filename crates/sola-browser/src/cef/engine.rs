@@ -3570,6 +3570,9 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 }
             }
         }
+        Cmd::BoardPace { id, pace } => {
+            set_board_pace(state, id, pace);
+        }
         Cmd::ShowDevTools {
             panel,
             inspect_x,
@@ -3762,7 +3765,8 @@ fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
             }
         }
         _ => {
-            // Board tabs are always shown; revealing one would also take focus.
+            // Board tabs paint at their pace (the app wakes one before it
+            // asks); revealing one would also take focus.
             let needs_show = tab.board.get().is_none()
                 && !matches!(
                     req.op,
@@ -4950,9 +4954,9 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
     tracing::debug!(?id, prev = ?prev, "CEF active tab");
 }
 
-/// Make `id` a sola-design artboard (or update its view). Shown, resized,
-/// and repainted at its own size and raster scale; never hidden by a tab
-/// switch. `notify_screen_info_changed` re-reads the device scale.
+/// Make `id` a sola-design artboard (or update its view). Resized and
+/// repainted at its own size and raster scale at its pace; never hidden by
+/// a tab switch. `notify_screen_info_changed` re-reads the device scale.
 fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) {
     let (host, browser_id, view) = {
         let Some(tab) = tab_state_by_id(state, id) else {
@@ -4965,6 +4969,7 @@ fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) 
         let view = BoardView {
             want: prev.want,
             tag: prev.tag,
+            pace: prev.pace,
             ..BoardView::new(size)
         };
         if view == prev {
@@ -4976,14 +4981,44 @@ fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) 
     let Some(host) = host else {
         return;
     };
-    host.was_hidden(0);
-    host.set_windowless_frame_rate(60);
+    apply_board_pace(&host, view.pace);
     apply_board_zoom(&host, &view);
     // The pinned layout follows the new size; the view in force is re-sent.
     crate::cef::board::request(&host, browser_id, id, &view);
     host.was_resized();
     host.invalidate(cef::PaintElementType::VIEW);
     tracing::debug!(?id, size = ?view.size, "board view");
+}
+
+/// How often board `id` paints (`Cmd::BoardPace`). A board that wakes is
+/// repainted whole.
+fn set_board_pace(state: &CefThreadState, id: TabId, pace: crate::engine::BoardPace) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    let Some(mut view) = tab.board.get() else {
+        return;
+    };
+    if view.pace == pace {
+        return;
+    }
+    let woke = view.pace == crate::engine::BoardPace::Asleep;
+    view.pace = pace;
+    tab.board.set(Some(view));
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    apply_board_pace(&host, pace);
+    if woke {
+        host.invalidate(cef::PaintElementType::VIEW);
+    }
+    tracing::debug!(?id, ?pace, "board pace");
+}
+
+fn apply_board_pace(host: &cef::BrowserHost, pace: crate::engine::BoardPace) {
+    use crate::engine::BoardPace;
+    host.was_hidden(if pace == BoardPace::Asleep { 1 } else { 0 });
+    host.set_windowless_frame_rate(if pace == BoardPace::Live { 60 } else { 1 });
 }
 
 /// A board's view request (`Cmd::BoardDetail`).

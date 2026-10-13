@@ -21,6 +21,7 @@ mod instance;
 mod loads;
 mod menu;
 mod overlay;
+mod pace;
 mod plane;
 mod profile;
 mod projects;

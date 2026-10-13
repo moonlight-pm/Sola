@@ -149,6 +149,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-13 | sola-design board pace | Boards nobody looks at hibernate: off-screen canvases sleep unless an agent is working there (then 1 fps); on the canvas on screen only boards in view paint, at 60 fps while Design has focus and 1 fps while it does not; loading, settling, and agent calls run at full rate. Frame-transport work stays parked. | freeze, capabilities, architecture, manual, CURRENT |
 | 2026-10-13 | sola-design share / pages | Share links stay without password or expiry — **New Link** (`share.rotate`) is how one is revoked. Pages stay shared between the human and agents (one tab per artboard; no hidden agent copy). | capabilities, freeze, manual, CURRENT |
 | 2026-10-12 | D6 sola-design share | **Live** share links served by Design (token per canvas, rotatable; only that canvas's files), through a Cloudflare Tunnel to `design.moonlight.pm`. Not snapshots. | freeze, capabilities, architecture, manual |
 | 2026-10-12 | sola-design multi-agent | Agents never bring a canvas to the human's screen; any number of canvases live at once, one shown; page calls name their canvas (MCP: the agent's own). | freeze, capabilities, architecture, manual |

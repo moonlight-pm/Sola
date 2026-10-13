@@ -103,6 +103,8 @@ impl App {
             } => {
                 self.frames.open(tab.0);
                 self.loads.begin(tab.0, now);
+                // Born `Live`.
+                self.paces.remove(&tab.0);
                 self.send(Cmd::OpenBoard {
                     id: tab,
                     url,
