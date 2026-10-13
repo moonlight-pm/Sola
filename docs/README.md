@@ -56,6 +56,9 @@ ask the human.
 | `AGENTS.md` | Contributor + agent guide |
 | `CURRENT.md` | Only living session handoff |
 | `PERFORMANCE.md` | GPU / idle program log (not a second CURRENT) |
+| `DESIGN.md` | Visual system: tokens, roles, rules, open proposals (P1–P10) |
+| `design/foundation/` | Visual authority sheet (sola-design canvas): Components board + Graphite sheet |
+| `design/tokens.css` | Design tokens (CSS custom properties) shared by every canvas in `design/` |
 | `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
 | `CONTRIBUTING.md` | From-source NixOS setup (`services.sola.installRelease = false`) |
 | `nix/` | NixOS module + `nix/image/` ISO/qcow sources |

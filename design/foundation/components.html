@@ -1,0 +1,1477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation v1 / Components</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="components.css">
+</head>
+<body>
+<div
+  data-name="SOLA / Foundation v1 / Components"
+  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; gap: 48px; height: fit-content; padding: 72px; width: 1440px"
+>
+  <div
+    data-name="Board Header"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 8px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Board Title"
+      style="color: var(--text-primary); font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -0.6px; white-space: nowrap"
+    >
+      Components
+    </div>
+    <div
+      data-name="Board Note"
+      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 21px; width: 760px"
+    >
+      The sola-kit parts, drawn to the kit's measurements. Each one is a reusable component; the Graphite sheet below uses instances, so a change here lands everywhere. Faces on this canvas are the kit fallbacks: Inter for SF Pro Text, JetBrains Mono for Iosevka Term Slab.
+    </div>
+  </div>
+  <div
+    data-name="Buttons Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Buttons Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      BUTTONS
+    </div>
+    <div
+      data-name="Buttons Row"
+      style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
+    >
+      <div class="button-primary">
+        <div class="button-primary__label">
+          Save
+        </div>
+      </div>
+      <div class="button-secondary">
+        <div class="button-secondary__label">
+          Cancel
+        </div>
+      </div>
+      <div class="button-ghost">
+        <div class="button-ghost__label">
+          Revert
+        </div>
+      </div>
+      <div class="button-danger">
+        <div class="button-danger__label">
+          Delete
+        </div>
+      </div>
+      <div class="button-danger-outline">
+        <div class="button-danger-outline__label">
+          Delete…
+        </div>
+      </div>
+      <div class="button-toolbar-icon">
+        <svg
+          class="button-toolbar-icon__icon"
+          data-icon-name="pause"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M3.21973 1.20313q-0.28027 0.05811-0.53321 0.30761-0.12305 0.12646-0.19482 0.23242-0.06836 0.10596-0.11279 0.27344l-0.04102 0.12647 0 9.71386 0.04102 0.12647q0.04443 0.16748 0.11279 0.27344 0.07178 0.10596 0.19482 0.23242 0.23926 0.23584 0.53321 0.30761 0.12646 0.02734 1.15527 0.02735 1.02881 0 1.15527-0.02735 0.29395-0.07178 0.53321-0.30761 0.12305-0.12646 0.1914-0.23242 0.07178-0.10596 0.11621-0.27344l0.04102-0.12647 0-9.71386-0.04102-0.12647q-0.04443-0.16748-0.11621-0.27344-0.06836-0.10596-0.1914-0.23242-0.25293-0.24951-0.54688-0.30761-0.12646-0.02734-1.14844-0.02735-1.02197 0-1.14843 0.02735z m5.25-0.00001q-0.28027 0.05811-0.53321 0.30762-0.12305 0.12646-0.19482 0.23242-0.06836 0.10596-0.11279 0.27344l-0.04102 0.12647 0 9.71386 0.04102 0.12647q0.04443 0.16748 0.11279 0.27344 0.07178 0.10596 0.19482 0.23242 0.23926 0.23584 0.53321 0.30761 0.12646 0.02734 1.15527 0.02735 1.02881 0 1.15527-0.02735 0.29395-0.07178 0.53321-0.30761 0.12305-0.12646 0.1914-0.23242 0.07178-0.10596 0.11621-0.27344l0.04102-0.12647 0-9.71386-0.04102-0.12647q-0.04443-0.16748-0.11621-0.27344-0.06836-0.10596-0.1914-0.23242-0.25293-0.24951-0.54688-0.30761-0.12647-0.02734-1.14844-0.02735-1.02197 0-1.14843 0.02735z m-3.21973 5.79688l0 4.67578-1.75 0 0-9.35156 1.75 0 0 4.67578z m5.25 0l0 4.67578-1.75 0 0-9.35156 1.75 0 0 4.67578z"
+            style="fill: var(--text-ghost)"
+          ></path>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Badges and marks Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Badges and marks Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      BADGES AND MARKS
+    </div>
+    <div
+      data-name="Badges and marks Row"
+      style="align-items: center; display: flex; flex-shrink: 0; gap: 20px; height: fit-content; width: fit-content"
+    >
+      <div class="badge-neutral">
+        <div class="badge-neutral__label">
+          Draft
+        </div>
+      </div>
+      <div class="badge-accent">
+        <div class="badge-accent__label">
+          Live
+        </div>
+      </div>
+      <div class="badge-success">
+        <div class="badge-success__label">
+          Synced
+        </div>
+      </div>
+      <div class="badge-warning">
+        <div class="badge-warning__label">
+          Waiting
+        </div>
+      </div>
+      <div class="badge-danger">
+        <div class="badge-danger__label">
+          Failed
+        </div>
+      </div>
+      <div class="count-mark">
+        <div class="count-mark__count">
+          3
+        </div>
+      </div>
+      <div class="status-working">
+        <div class="status-working__ring"></div>
+      </div>
+      <div class="status-waiting">
+        <div class="status-waiting__diamond"></div>
+      </div>
+      <div class="status-done">
+        <svg class="status-done__check" viewBox="0 0 8 6.4" preserveAspectRatio="none">
+          <path
+            d="M0.6 3.4 L3 5.6 L7.4 0.8"
+            fill="none"
+            stroke-width="1.65"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            vector-effect="non-scaling-stroke"
+            style="stroke: var(--success)"
+          ></path>
+        </svg>
+      </div>
+      <div class="status-active">
+        <div class="status-active__dot"></div>
+      </div>
+      <div class="status-idle">
+        <div class="status-idle__dot"></div>
+      </div>
+      <div class="identity-mark"></div>
+    </div>
+  </div>
+  <div
+    data-name="Fields and choices Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Fields and choices Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      FIELDS AND CHOICES
+    </div>
+    <div
+      data-name="Fields and choices Row"
+      style="align-items: center; display: flex; flex-shrink: 0; gap: 20px; height: fit-content; width: fit-content"
+    >
+      <div class="field">
+        <svg
+          class="field__icon"
+          data-icon-name="search"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
+            style="fill: var(--text-secondary)"
+          ></path>
+        </svg>
+        <div class="field__placeholder">
+          Search mail
+        </div>
+      </div>
+      <div class="field-focused">
+        <svg
+          class="field-focused__icon"
+          data-icon-name="search"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
+            style="fill: var(--text-secondary)"
+          ></path>
+        </svg>
+        <div class="field-focused__value">
+          <div class="field-focused__text">
+            invoice
+          </div>
+          <div class="field-focused__caret"></div>
+        </div>
+      </div>
+      <div class="select">
+        <div class="identity-mark" data-name="Mark" style="height: 12px; width: 12px"></div>
+        <div class="select__label">
+          Personal
+        </div>
+        <svg
+          class="select__chevron"
+          data-icon-name="chevrons-up-down"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M6.84619 1.77734q-0.08545 0.01367-0.14697 0.05811-0.06152 0.04102-1.58936 1.56543l-1.21679 1.23389q-0.28027 0.28027-0.33838 0.38964-0.05469 0.07178-0.04102 0.18457l0 0.05469q0 0.14014 0.04102 0.23926 0.09912 0.19482 0.31445 0.28027 0.21875 0.08203 0.42725 0.01367 0.07178-0.02734 0.27343-0.22216 0.20508-0.19824 1.12793-1.1211l1.30225-1.28857 1.30225 1.28857q0.92285 0.92285 1.12451 1.1211 0.20508 0.19482 0.27685 0.22216 0.2085 0.06836 0.42383-0.01367 0.21875-0.08545 0.31787-0.28027 0.04102-0.09912 0.04102-0.23926l0-0.05469q0.01367-0.11279-0.04102-0.18457-0.0581-0.10938-0.33838-0.38964l-1.21679-1.23389q-1.5415-1.53809-1.63379-1.58594-0.08887-0.05127-0.2085-0.0581-0.11621-0.00684-0.20166 0.0205z m-2.9668 6.42579q-0.09912 0.04443-0.1914 0.12988-0.08887 0.08203-0.12647 0.16064-0.03418 0.0752-0.04101 0.11621-0.00684 0.04102-0.00684 0.14014l0 0.04102q-0.01367 0.11279 0.04102 0.19824 0.07178 0.10938 0.36572 0.40332 0.19482 0.21191 0.96729 0.98096l1.49707 1.48339q0.28027 0.2666 0.38964 0.33838 0.07178 0.05469 0.18457 0.04102l0.08204 0q0.11279 0.01367 0.18457-0.04102 0.10938-0.07178 0.38964-0.33838l1.49707-1.48339q0.77246-0.76904 0.96729-0.98096 0.29395-0.29395 0.36572-0.40332 0.05469-0.08545 0.04102-0.19824l0-0.04102q0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.0957-0.13672-0.1709-0.08887-0.07861-0.18799-0.11279-0.0957-0.0376-0.229-0.0376-0.1333 0-0.22558 0.04443-0.08887 0.04102-1.37745 1.32618l-1.28857 1.28857-1.28857-1.28857q-1.28857-1.28516-1.38086-1.32618-0.08887-0.04443-0.22901-0.04443-0.14014 0-0.22217 0.02735z"
+            style="fill: var(--text-secondary)"
+          ></path>
+        </svg>
+      </div>
+      <div class="checkbox-on">
+        <svg
+          class="checkbox-on__check"
+          data-icon-name="check"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M11.48096 2.95313q-0.07178 0.01367-0.12989 0.0581-0.05469 0.04102-3.07617 3.06592l-3.0249 3.00781-1.28857-1.28857q-1.28857-1.28516-1.38086-1.32618-0.08887-0.04443-0.22217-0.04443-0.1333 0-0.23242 0.0376-0.0957 0.03418-0.18799 0.11279-0.08887 0.0752-0.1333 0.1709-0.02734 0.07178-0.03418 0.11279-0.00684 0.04102-0.00684 0.14014l0 0.04102q-0.01367 0.11279 0.04102 0.19824 0.07178 0.10938 0.36572 0.40332 0.19482 0.21191 0.96729 0.98096l1.49707 1.48339q0.28027 0.2666 0.38964 0.33838 0.07178 0.05469 0.18457 0.04102l0.09571 0.01367q0.07178 0 0.14013-0.02734 0.08545-0.07178 0.32129-0.28711 0.23926-0.21875 0.79981-0.76221l2.2832-2.2832q2.08496-2.09863 2.7002-2.71387 0.61524-0.61865 0.64599-0.68701 0.04102-0.08545 0.04102-0.23926 0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.08203-0.13672-0.16406-0.08887-0.08545-0.18115-0.11963-0.08887-0.0376-0.20849-0.0376-0.11963 0-0.18799 0.02734z"
+            style="fill: var(--on-accent)"
+          ></path>
+        </svg>
+      </div>
+      <div class="checkbox-off"></div>
+      <div class="toggle-on">
+        <div class="toggle-on__knob"></div>
+      </div>
+      <div class="toggle-off">
+        <div class="toggle-off__knob"></div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Rail and menus Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Rail and menus Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      RAIL AND MENUS
+    </div>
+    <div
+      data-name="Rail and menus Row"
+      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: fit-content"
+    >
+      <div
+        data-name="Rail parts"
+        style="align-items: flex-start; background-color: var(--bg-chrome); border-radius: var(--radius-md); display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: fit-content; padding: 8px 0px; width: 220px"
+      >
+        <div class="rail-section">
+          <div class="rail-section__label">
+            SOLA
+          </div>
+          <svg
+            class="rail-section__add"
+            data-icon-name="plus"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+              style="fill: var(--text-tertiary)"
+            ></path>
+          </svg>
+        </div>
+        <div class="rail-row">
+          <div class="rail-row__row">
+            <div class="status-working" data-name="Status">
+              <div class="status-working__ring"></div>
+            </div>
+            <div class="rail-row__label">
+              kit-foundation
+            </div>
+            <div class="rail-row__meta">
+              ×2
+            </div>
+          </div>
+        </div>
+        <div class="rail-row-hover">
+          <div class="rail-row-hover__row">
+            <div class="status-working" data-name="Status">
+              <div class="status-working__ring"></div>
+            </div>
+            <div class="rail-row-hover__label">
+              kit-foundation
+            </div>
+            <div class="rail-row-hover__meta">
+              ×2
+            </div>
+          </div>
+        </div>
+        <div class="rail-row-selected">
+          <div class="rail-row-selected__row">
+            <div class="status-working" data-name="Status">
+              <div class="status-working__ring"></div>
+            </div>
+            <div class="rail-row-selected__label">
+              kit-foundation
+            </div>
+            <div class="rail-row-selected__meta">
+              ×2
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        data-name="Menu parts"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: fit-content; width: fit-content"
+      >
+        <div class="menu-row">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            New Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘T
+          </div>
+        </div>
+        <div class="menu-separator">
+          <div class="menu-separator__line"></div>
+        </div>
+        <div class="menubar-item">
+          <div class="menubar-item__label">
+            Edit
+          </div>
+        </div>
+        <div class="menubar-item-open">
+          <div class="menubar-item-open__label">
+            Edit
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Floating surfaces Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Floating surfaces Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      FLOATING SURFACES
+    </div>
+    <div
+      data-name="Floating surfaces Row"
+      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 32px; height: fit-content; width: fit-content"
+    >
+      <div class="menu">
+        <div class="menu-row" data-name="New Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            New Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘T
+          </div>
+        </div>
+        <div class="menu-row" data-name="New Window">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            New Window
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘N
+          </div>
+        </div>
+        <div class="menu-separator" data-name="Separator">
+          <div class="menu-separator__line"></div>
+        </div>
+        <div class="menu-row" data-name="Reopen Closed Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            Reopen Closed Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⇧⌘T
+          </div>
+        </div>
+        <div class="menu-row" data-name="Close Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            Close Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘W
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__title">
+          Sync Google calendar
+        </div>
+        <div class="card__body">
+          Events from your Google account appear beside local ones. Reminders keep the card up.
+        </div>
+        <div class="card__actions">
+          <div class="button-ghost" data-name="Ghost">
+            <div class="button-ghost__label">
+              Later
+            </div>
+          </div>
+          <div class="button-primary" data-name="Primary">
+            <div class="button-primary__label">
+              Connect
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notification">
+        <div class="notification__icon-well">
+          <svg
+            class="notification__icon"
+            data-icon-name="calendar-clock"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M4.57666 0.60156q-0.12305 0.01367-0.24268 0.09912-0.11963 0.08203-0.1914 0.19483-0.04102 0.08545-0.05469 0.20508-0.01367 0.11621-0.01367 0.35546l0 0.29395-1.32959 0.01367q-0.14014 0.01367-0.23926 0.02735-0.50244 0.14014-0.85449 0.50586-0.34863 0.3623-0.44776 0.88183-0.02734 0.0957-0.02734 0.81006l0 7.99463 0.05469 0.15381q0.15723 0.51953 0.56055 0.86133 0.40674 0.3418 0.93994 0.3999 0.14014 0.02734 1.18945 0.02734 1.04932 0 1.13477-0.02734 0.23584-0.04102 0.37597-0.23584 0.14014-0.19824 0.09912-0.4375-0.01367-0.0957-0.05127-0.16406-0.03418-0.07178-0.11963-0.14014-0.08203-0.07178-0.16406-0.11621l-0.09912-0.04102-2.32422-0.02734-0.09912-0.04102q-0.28027-0.12646-0.32129-0.43408-0.02734-0.11279-0.02734-2.73096l0-2.60449 1.17578 0q0.89551 0 1.11768-0.01367 0.22559-0.01367 0.30761-0.05469 0.08545-0.04443 0.15381-0.11963 0.07178-0.07861 0.11621-0.16064 0.0957-0.22559 0.01026-0.44776-0.08203-0.22559-0.31787-0.33837l-0.08545-0.02735-2.47803-0.01367 0-0.86816q0-0.65625 0.01367-0.85108 0.01367-0.19824 0.05469-0.28027 0.04443-0.08545 0.11963-0.16065 0.07861-0.07861 0.16064-0.12304l0.08545-0.04102 1.31592 0 0 0.34863q0.01367 0.25293 0.02051 0.31788 0.00684 0.06152 0.03418 0.14697 0.05811 0.0957 0.14013 0.18115 0.21191 0.19482 0.50586 0.14697 0.29395-0.04785 0.42041-0.31445 0.02734-0.08545 0.03418-0.14014 0.00684-0.05811 0.02051-0.32129l0-0.36572 3.5 0 0 0.36572q0.01367 0.26318 0.02051 0.32129 0.00684 0.05469 0.03418 0.14014 0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115 0.02734-0.08545 0.03418-0.14697 0.00684-0.06494 0.02051-0.31788l0-0.34863 0.62891 0q0.5332 0 0.64599 0.01367 0.11279 0.01367 0.22217 0.09912 0.08545 0.05469 0.12647 0.12647 0.08545 0.10938 0.09912 0.22217 0.01367 0.11279 0.02734 0.57422 0 0.43408 0.00684 0.51953 0.00684 0.08203 0.04101 0.15381 0.0376 0.06836 0.11963 0.14697 0.08545 0.0752 0.16065 0.11963 0.07861 0.04102 0.24609 0.04101 0.16748 0 0.24268-0.04101 0.07861-0.04443 0.16064-0.11963 0.08545-0.07861 0.11963-0.14697 0.0376-0.07178 0.04443-0.16065 0.00684-0.09229 0.00684-0.54004 0-0.61523-0.02735-0.75537-0.09912-0.51953-0.45117-0.88183-0.34863-0.36572-0.85107-0.50586-0.09912-0.01367-0.23926-0.02735l-1.32959-0.01367 0-0.29395q0-0.32129-0.03418-0.45459-0.03418-0.1333-0.14697-0.24609-0.14014-0.14014-0.35889-0.16064-0.21533-0.02051-0.37597 0.09228-0.16064 0.10938-0.21875 0.29395-0.02734 0.05469-0.03418 0.1333-0.00684 0.0752-0.00684 0.30078l0 0.33496-3.5 0 0-0.34863q0-0.23926-0.00684-0.30762-0.00684-0.07178-0.03418-0.12646-0.08545-0.21191-0.25293-0.30762-0.16748-0.09912-0.37939-0.05811z m4.46729 4.66211q-0.02734 0-0.22559 0.02735-0.38965 0.04443-0.80322 0.18457-0.41357 0.14014-0.76221 0.34863-0.96729 0.57422-1.50049 1.55517-0.52979 0.97754-0.50244 2.08497 0.02734 0.4751 0.12646 0.8955 0.28027 1.03564 1.02198 1.80469 0.28027 0.28027 0.53662 0.47168 0.25977 0.18799 0.59814 0.35547 0.44775 0.22559 0.875 0.32471 0.42725 0.0957 0.92969 0.0957 0.29395 0 0.50244-0.02734 0.21191-0.02734 0.49219-0.09912 1.09033-0.2666 1.88672-1.06299 0.7998-0.7998 1.06641-1.89014 0.07178-0.28027 0.09912-0.48877 0.02734-0.21191 0.02734-0.50586 0-0.93652-0.40674-1.76367-0.28027-0.58789-0.7417-1.06299-0.98096-1.02197-2.33789-1.22021-0.14014-0.01367-0.46142-0.02735-0.32129-0.01367-0.42041 0z m0.68701 1.18945q0.96387 0.12646 1.65088 0.80665 0.68701 0.67676 0.84082 1.64404 0.01367 0.14014 0.01367 0.42724 0 0.28711-0.01367 0.42725-0.12647 0.81006-0.65284 1.43555-0.52295 0.62207-1.29541 0.90234-0.96387 0.33496-1.94482-0.02734-0.58789-0.21191-1.04248-0.65967-0.45459-0.44775-0.68018-1.03564-0.18115-0.4751-0.18115-1.02198 0-0.54688 0.16748-1.02197 0.28027-0.75537 0.90235-1.25781 0.62549-0.50586 1.42187-0.61865 0.15381-0.02734 0.3999-0.02735 0.24609 0 0.41358 0.02735z m-0.50586 1.14844q-0.12646 0.01367-0.2461 0.10596-0.11621 0.08887-0.17431 0.21533l-0.04102 0.09912 0 1.58252 0.04102 0.09912q0.05811 0.0957 0.1333 0.17432 0.07861 0.0752 0.58789 0.38281 0.5127 0.30762 0.59472 0.33838 0.19824 0.05469 0.38624-0.03418 0.18799-0.09228 0.28027-0.28711 0.09229-0.19824 0.03418-0.39306-0.04102-0.16748-0.1333-0.25293-0.08887-0.08545-0.46826-0.30762l-0.29395-0.19483 0-0.47851q0-0.48877-0.02734-0.58789-0.04102-0.23584-0.23242-0.36914-0.18799-0.1333-0.44092-0.09229z"
+              style="fill: var(--text-primary)"
+            ></path>
+          </svg>
+        </div>
+        <div class="notification__body">
+          <div class="notification__source">
+            Calendar · in 10 min
+          </div>
+          <div class="notification__title">
+            Design review
+          </div>
+          <div class="notification__text">
+            Sola foundation — Wicket room
+          </div>
+        </div>
+        <div class="notification__close">
+          <svg
+            class="notification__x"
+            data-icon-name="x"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M3.34619 2.93945q-0.25293 0.08545-0.37939 0.30762-0.04102 0.08545-0.04102 0.25293 0 0.16748 0.04102 0.25293 0.04443 0.08203 1.62353 1.66455l1.58252 1.58252-1.58252 1.58252q-1.5791 1.58252-1.62353 1.66797-0.04102 0.08203-0.04102 0.23584 0 0.15381 0.03418 0.23926 0.0376 0.08203 0.1333 0.18115 0.09912 0.0957 0.18115 0.1333 0.08545 0.03418 0.23926 0.03418 0.15381 0 0.23584-0.04102 0.08545-0.04443 1.66797-1.62353l1.58252-1.58252 1.58252 1.58252q1.58252 1.5791 1.66455 1.62353 0.08545 0.04102 0.23926 0.04102 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.04443-0.23584-0.04101-0.08545-1.62012-1.66797l-1.58252-1.58252 1.58252-1.58252q1.5791-1.58252 1.62012-1.66455 0.04443-0.08545 0.04443-0.25293 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.02734-0.09912-0.04102-0.04102-0.01367-0.15381-0.01367-0.11279 0-0.15381 0.01367-0.04101 0.01367-0.11279 0.04102-0.09912 0.05811-1.66455 1.62695l-1.56885 1.56543-2.82666-2.81299q-0.31104-0.29395-0.42041-0.37939-0.08545-0.05469-0.19824-0.05469l-0.02735 0q-0.14014 0-0.18115 0.01367z"
+              style="fill: var(--text-secondary)"
+            ></path>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Shell parts Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Shell parts Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      SHELL PARTS
+    </div>
+    <div
+      data-name="Shell parts Row"
+      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 32px; height: fit-content; width: fit-content"
+    >
+      <div class="meter-pixel">
+        <div class="meter-pixel__row-1">
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+        </div>
+        <div class="meter-pixel__row-2">
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+        </div>
+        <div class="meter-pixel__row-3">
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+        </div>
+        <div class="meter-pixel__row-4">
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+        </div>
+        <div class="meter-pixel__row-5">
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+          <div class="meter-pixel__dot-2"></div>
+        </div>
+      </div>
+      <div class="app-icon">
+        <svg
+          class="app-icon__glyph"
+          data-icon-name="square-terminal"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <path
+            d="M2.60449 1.20313q-0.50586 0.08545-0.87842 0.43749-0.36914 0.34863-0.50927 0.86475-0.02734 0.08545-0.02735 0.71436l-0.01367 3.78027 0.01367 3.78027q0 0.62891 0.02735 0.71436 0.14014 0.48877 0.46826 0.82031 0.33154 0.32813 0.82031 0.46826 0.08545 0.02734 0.71436 0.02735l3.78027 0.01367 3.78027-0.01367q0.62891 0 0.71436-0.02735 0.48877-0.14014 0.81689-0.46826 0.33154-0.33154 0.47168-0.82031 0.02734-0.08545 0.02735-0.71436l0.01367-3.78027-0.01367-3.78027q0-0.62891-0.02735-0.71436-0.12646-0.48877-0.458-0.81689-0.32813-0.33154-0.80323-0.47168l-0.14013-0.04102-4.32715 0q-4.3374 0-4.4502 0.02734z m8.70899 1.17578q0.2085 0.09912 0.30761 0.30761l0.04102 0.09912 0 8.42871-0.04102 0.09913q-0.14014 0.27685-0.43408 0.33496-0.09912 0.02734-4.18701 0.02734-4.08789 0-4.18701-0.02734-0.29395-0.05811-0.43408-0.33496l-0.04102-0.09913 0-8.42871 0.04102-0.09912q0.07178-0.14014 0.18798-0.229 0.11963-0.09229 0.25977-0.11963 0.08545 0 4.22803 0l4.15967 0 0.09912 0.04102z m-7.36573 1.13476q-0.19482 0.05469-0.32812 0.23242-0.1333 0.17432-0.11963 0.36914 0.01367 0.15381 0.08887 0.27344 0.07861 0.11963 0.41357 0.45459l0.40674 0.40674-0.38965 0.40674q-0.2666 0.25293-0.35205 0.35205-0.08203 0.0957-0.11279 0.16406-0.10938 0.23926-0.01367 0.46485 0.09912 0.22217 0.32128 0.32128 0.22559 0.0957 0.46485-0.01367 0.06836-0.03076 0.20166-0.15381 0.1333-0.12646 0.55371-0.54687l0.04102-0.04102q0.39307-0.39307 0.48876-0.50586 0.14014-0.15381 0.17432-0.22216 0.0376-0.07178 0.0376-0.21192l0-0.02734q0-0.14014-0.0376-0.2085-0.03418-0.07178-0.17432-0.22558-0.0957-0.11279-0.48876-0.50586l-0.04102-0.04102q-0.40674-0.42041-0.54688-0.54346-0.14014-0.12646-0.21191-0.1538-0.06836-0.03076-0.18115-0.04444-0.10938-0.01367-0.19483 0z m2.32422 3.5q-0.14014 0.04102-0.2666 0.16748-0.16748 0.15381-0.17432 0.37256-0.00684 0.21533 0.12647 0.39307 0.1333 0.17432 0.36914 0.21533 0.09912 0.01367 1.31592 0l1.23388 0 0.1128-0.04102q0.2085-0.11279 0.29053-0.32129 0.08545-0.21191 0.00683-0.42041-0.0752-0.21191-0.28369-0.3247l-0.09912-0.04102-1.28858-0.01367q-1.2749 0-1.34326 0.01367z"
+            style="fill: var(--text-primary)"
+          ></path>
+        </svg>
+      </div>
+      <div class="switcher-tile-selected">
+        <div class="app-icon" data-name="Icon">
+          <svg
+            class="app-icon__glyph"
+            data-icon-name="square-terminal"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M2.60449 1.20313q-0.50586 0.08545-0.87842 0.43749-0.36914 0.34863-0.50927 0.86475-0.02734 0.08545-0.02735 0.71436l-0.01367 3.78027 0.01367 3.78027q0 0.62891 0.02735 0.71436 0.14014 0.48877 0.46826 0.82031 0.33154 0.32813 0.82031 0.46826 0.08545 0.02734 0.71436 0.02735l3.78027 0.01367 3.78027-0.01367q0.62891 0 0.71436-0.02735 0.48877-0.14014 0.81689-0.46826 0.33154-0.33154 0.47168-0.82031 0.02734-0.08545 0.02735-0.71436l0.01367-3.78027-0.01367-3.78027q0-0.62891-0.02735-0.71436-0.12646-0.48877-0.458-0.81689-0.32813-0.33154-0.80323-0.47168l-0.14013-0.04102-4.32715 0q-4.3374 0-4.4502 0.02734z m8.70899 1.17578q0.2085 0.09912 0.30761 0.30761l0.04102 0.09912 0 8.42871-0.04102 0.09913q-0.14014 0.27685-0.43408 0.33496-0.09912 0.02734-4.18701 0.02734-4.08789 0-4.18701-0.02734-0.29395-0.05811-0.43408-0.33496l-0.04102-0.09913 0-8.42871 0.04102-0.09912q0.07178-0.14014 0.18798-0.229 0.11963-0.09229 0.25977-0.11963 0.08545 0 4.22803 0l4.15967 0 0.09912 0.04102z m-7.36573 1.13476q-0.19482 0.05469-0.32812 0.23242-0.1333 0.17432-0.11963 0.36914 0.01367 0.15381 0.08887 0.27344 0.07861 0.11963 0.41357 0.45459l0.40674 0.40674-0.38965 0.40674q-0.2666 0.25293-0.35205 0.35205-0.08203 0.0957-0.11279 0.16406-0.10938 0.23926-0.01367 0.46485 0.09912 0.22217 0.32128 0.32128 0.22559 0.0957 0.46485-0.01367 0.06836-0.03076 0.20166-0.15381 0.1333-0.12646 0.55371-0.54687l0.04102-0.04102q0.39307-0.39307 0.48876-0.50586 0.14014-0.15381 0.17432-0.22216 0.0376-0.07178 0.0376-0.21192l0-0.02734q0-0.14014-0.0376-0.2085-0.03418-0.07178-0.17432-0.22558-0.0957-0.11279-0.48876-0.50586l-0.04102-0.04102q-0.40674-0.42041-0.54688-0.54346-0.14014-0.12646-0.21191-0.1538-0.06836-0.03076-0.18115-0.04444-0.10938-0.01367-0.19483 0z m2.32422 3.5q-0.14014 0.04102-0.2666 0.16748-0.16748 0.15381-0.17432 0.37256-0.00684 0.21533 0.12647 0.39307 0.1333 0.17432 0.36914 0.21533 0.09912 0.01367 1.31592 0l1.23388 0 0.1128-0.04102q0.2085-0.11279 0.29053-0.32129 0.08545-0.21191 0.00683-0.42041-0.0752-0.21191-0.28369-0.3247l-0.09912-0.04102-1.28858-0.01367q-1.2749 0-1.34326 0.01367z"
+              style="fill: var(--text-primary)"
+            ></path>
+          </svg>
+        </div>
+      </div>
+      <div
+        data-name="Launcher rows"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); display: flex; flex-direction: column; flex-shrink: 0; gap: 2px; height: fit-content; padding: 6px; width: fit-content"
+      >
+        <div class="launcher-row">
+          <svg
+            class="launcher-row__icon"
+            data-icon-name="mail"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M2.05762 1.77734q-0.28027 0.04102-0.53321 0.16748-0.34863 0.19824-0.58789 0.50586-0.23584 0.30762-0.32129 0.70069-0.01367 0.10938-0.02734 0.66992l0 3.17871 0 3.17871q0.01367 0.56055 0.02734 0.66992 0.11279 0.5332 0.50245 0.90577 0.39307 0.36914 0.92627 0.46826 0.16748 0.02734 4.95605 0.02734 4.78857 0 4.95605-0.02734 0.5332-0.09912 0.92286-0.46826 0.39307-0.37256 0.50586-0.90577 0.01367-0.10938 0.02734-0.66992l0-3.17871 0-3.17871q-0.01367-0.56055-0.02734-0.66992-0.12647-0.54688-0.53321-0.92285-0.40674-0.37939-0.95019-0.46485-0.1709-0.01367-4.93897-0.01367-4.76465 0-4.90478 0.02734z m9.81298 1.17579q0.09912 0.04443 0.18116 0.12304 0.08545 0.0752 0.12646 0.16065 0.04443 0.08203 0.05127 0.12988 0.00684 0.04785 0.00684 0.18799l0 0.21191-2.46436 1.58252q-2.46436 1.56543-2.53613 1.60303-0.06836 0.03418-0.16748 0.03418l-0.02734 0.01367q-0.0957 0.01367-0.2085-0.04102-0.15381-0.07178-0.65967-0.37939l-4.40918-2.81299 0-0.21191q0-0.14014 0.00684-0.18799 0.00684-0.04785 0.04101-0.12305 0.0376-0.07861 0.12647-0.16064 0.09229-0.08545 0.16748-0.1128 0.07861-0.03076 0.70752-0.04443l4.18701 0 4.18701 0q0.61523 0 0.68359 0.02735z m-5.63964 5.02783q0.22217 0.10938 0.46142 0.15381 0.09912 0.02734 0.30762 0.02734 0.2085 0 0.30762-0.02734 0.30762-0.05811 0.54687-0.19825 0.14014-0.08203 2.26612-1.42529l2.12939-1.36035-0.01367 5.50293-0.04102 0.09912q-0.11279 0.2085-0.3247 0.29395l-0.09571 0.02734-9.5498 0-0.09571-0.02734q-0.21191-0.08545-0.3247-0.29395l-0.04102-0.09912-0.01367-5.50293 2.17041 1.37402q2.17041 1.38428 2.31055 1.45606z"
+              style="fill: var(--text-primary)"
+            ></path>
+          </svg>
+          <div class="launcher-row__label">
+            Mail
+          </div>
+        </div>
+        <div class="launcher-row-selected">
+          <svg
+            class="launcher-row-selected__icon"
+            data-icon-name="calendar"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M4.57666 0.60156q-0.12305 0.01367-0.24268 0.09912-0.11963 0.08203-0.1914 0.19483-0.04102 0.08545-0.05469 0.20508-0.01367 0.11621-0.01367 0.35546l0 0.29395-1.32959 0.01367q-0.14014 0.01367-0.23926 0.02735-0.50244 0.14014-0.85449 0.50586-0.34863 0.3623-0.44776 0.88183-0.02734 0.0957-0.02734 0.81006l0 7.99463 0.05469 0.15381q0.15723 0.51953 0.56055 0.86133 0.40674 0.3418 0.93994 0.3999 0.15381 0.02734 4.26904 0.02734 4.11523 0 4.26904-0.02734 0.30762-0.02734 0.58789-0.16748 0.32471-0.15381 0.56055-0.44092 0.23926-0.28711 0.35205-0.65283l0.05469-0.15381 0-7.99463q0-0.71436-0.02735-0.81006-0.09912-0.51953-0.45117-0.88183-0.34863-0.36572-0.85107-0.50586-0.09912-0.01367-0.23926-0.02735l-1.32959-0.01367 0-0.29395q0-0.32129-0.03418-0.45459-0.03418-0.1333-0.14697-0.24609-0.14014-0.14014-0.35889-0.16064-0.21533-0.02051-0.37597 0.09228-0.16064 0.10938-0.21875 0.29395-0.02734 0.05469-0.03418 0.1333-0.00684 0.0752-0.00684 0.30078l0 0.33496-3.5 0 0-0.34863q0-0.23926-0.00684-0.30762-0.00684-0.07178-0.03418-0.12646-0.08545-0.21191-0.25293-0.30762-0.16748-0.09912-0.37939-0.05811z m-0.50244 2.67285q0.01367 0.25293 0.02051 0.31788 0.00684 0.06152 0.03418 0.14697 0.05811 0.0957 0.14013 0.18115 0.21191 0.19482 0.50586 0.14697 0.29395-0.04785 0.42041-0.31445 0.02734-0.08545 0.03418-0.14014 0.00684-0.05811 0.02051-0.32129l0-0.36572 3.5 0 0 0.36572q0.01367 0.26318 0.02051 0.32129 0.00684 0.05469 0.03418 0.14014 0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115 0.02734-0.08545 0.03418-0.14697 0.00684-0.06494 0.02051-0.31788l0-0.34863 1.31592 0 0.08545 0.04102q0.08203 0.04443 0.15722 0.12304 0.07861 0.0752 0.11963 0.16065 0.04443 0.08203 0.05811 0.28027 0.01367 0.19482 0.01367 0.85108l0 0.86816-9.35156 0 0.01367-1.72266q0.01367-0.16748 0.02734-0.20849 0.09912-0.2666 0.35206-0.36572 0.05469-0.01367 0.16748-0.02735l1.18945 0 0 0.34863z m7.58789 5.82422q0 1.89014-0.00684 2.30371-0.00683 0.41357-0.0205 0.45459-0.09912 0.25293-0.35206 0.35205l-0.0957 0.04102-8.37402 0-0.0957-0.04102q-0.15381-0.0581-0.26661-0.19824l-0.02734-0.02734q-0.04443-0.05469-0.05811-0.15381-0.02734-0.14014-0.02734-0.60156l-0.01367-4.80225 9.35156 0-0.01367 2.67285z"
+              style="fill: var(--text-primary)"
+            ></path>
+          </svg>
+          <div class="launcher-row-selected__label">
+            Calendar
+          </div>
+        </div>
+      </div>
+      <div class="window-floating">
+        <div class="window-floating__titlebar">
+          <div class="window-floating__controls">
+            <div class="window-floating__close"></div>
+          </div>
+          <div class="window-floating__title">
+            Preview — invoice-0412.png
+          </div>
+          <div class="window-floating__balance"></div>
+        </div>
+        <div class="window-floating__content">
+          <div class="window-floating__page">
+            <div class="window-floating__head"></div>
+            <div class="window-floating__line"></div>
+            <div class="window-floating__line-2"></div>
+            <div class="window-floating__line-3"></div>
+            <div class="window-floating__line-4"></div>
+            <div class="window-floating__line-5"></div>
+            <div class="window-floating__total"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Menubar Group"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Menubar Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      MENUBAR
+    </div>
+    <div class="menubar">
+      <div class="menubar__left">
+        <div class="menubar__system-menu">
+          <svg class="menubar__flower" viewBox="-25 -32 561 561" preserveAspectRatio="none">
+            <path
+              d="M242.641.561c-21.9 3.5-41.8 14-55.2 29.3-16.4 18.7-24.5 41.6-23.3 65.7 1.1 21 7.8 38.3 23.5 60.5 15.8 22.3 44.6 62.2 49 67.7 10.1 13 23.8 14.3 34.7 3.3 8.6-8.5 59.4-80.3 65.5-92.6 6.5-12.9 9.1-23.4 9.7-39 .8-19-1.6-30.9-8.8-45.3-12.5-24.6-34.1-41.6-61.1-48.1-7.8-1.9-26.4-2.7-34-1.5m-163.3 118.1c-36.5 5.3-67.3 32.9-76.6 68.7-2.7 10.2-3.5 26.9-1.9 36.9 5.9 36.8 33.6 67.6 69.5 77.3 10.1 2.7 28.9 3.8 37.7 2.1 9.8-1.9 103.9-33.5 111.4-37.4 7.1-3.7 11.4-11.3 11.4-20 0-5.300-.3-5.9-10.3-20.3-14.2-20.4-48.9-67.6-54.9-74.6-20.9-24.3-55-37.2-86.3-32.7m323 .3c-23.8 4.6-45.2 17.8-61 37.6-13 16.4-57.2 78.2-59.6 83.5-1 2.2-1.9 5.4-1.9 7.1 0 7.3 4.7 15.2 11.1 18.4 7.5 3.9 102.9 36.3 111.7 38 9.8 2 28.8.8 39.5-2.4 27.5-8.2 48.8-26.3 60.7-52 12.3-26.3 11.3-58.3-2.6-83.3-12.7-22.8-36.4-40.5-61.600-45.9-10.3-2.2-27.7-2.7-36.3-1m-185 163c-29.3 9.7-90.7 31.6-98.1 35.1-11.5 5.3-19.4 10.7-27.1 18.2-13.9 13.8-23.8 32.3-27.4 51.6-1.6 8.6-1.3 26.7.6 35.6 7.6 35.9 37.3 65.3 73.4 72.6 11.2 2.3 29.4 1.6 40.1-1.5 21-6 41.2-20.4 53.1-37.7 4.5-6.4 10.4-19.6 12.8-28.2 3.6-13.1 4.2-25.8 3.900-81.2l-.3-52.6-3-4.8c-5.8-9.3-14.6-11.5-28-7.1m56.7-.3c-4.7 2.4-8.3 6.6-10.1 11.8-1.8 5.5-1.5 113.4.4 124.2 6.4 36.9 30.8 64.7 66.2 75.6 7.9 2.4 10.3 2.7 24.3 2.7 14.1 0 16.3-.3 24.5-2.8 28-8.6 48.6-26.3 60.5-52 6.1-13.1 7.5-20.6 7.5-39.1 0-17.4-.9-22.5-6.5-35.9-6.7-16-20.2-32.3-34.9-42.1-11.2-7.4-20.6-11-91.1-35.1-29.9-10.2-33.5-10.9-40.8-7.3"
+              style="fill: var(--sol)"
+            ></path>
+          </svg>
+        </div>
+        <div class="menubar__app">
+          <div class="menubar__label">
+            Workspaces
+          </div>
+        </div>
+        <div class="menubar__menu-file">
+          <div class="menubar__label-2">
+            File
+          </div>
+        </div>
+        <div class="menubar__menu-edit">
+          <div class="menubar__label-2">
+            Edit
+          </div>
+        </div>
+        <div class="menubar__menu-view">
+          <div class="menubar__label-2">
+            View
+          </div>
+        </div>
+        <div class="menubar__menu-pane">
+          <div class="menubar__label-2">
+            Pane
+          </div>
+        </div>
+        <div class="menubar__menu-tabs">
+          <div class="menubar__label-2">
+            Tabs
+          </div>
+        </div>
+        <div class="menubar__menu-window">
+          <div class="menubar__label-2">
+            Window
+          </div>
+        </div>
+      </div>
+      <div class="menubar__right">
+        <div class="menubar__extras">
+          <div class="menubar__extra-mail">
+            <svg
+              class="menubar__icon"
+              data-icon-name="mail"
+              data-icon-set="lucide"
+              viewBox="0 0 13.99993896484375 14"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <path
+                d="M2.05762 1.77734q-0.28027 0.04102-0.53321 0.16748-0.34863 0.19824-0.58789 0.50586-0.23584 0.30762-0.32129 0.70069-0.01367 0.10938-0.02734 0.66992l0 3.17871 0 3.17871q0.01367 0.56055 0.02734 0.66992 0.11279 0.5332 0.50245 0.90577 0.39307 0.36914 0.92627 0.46826 0.16748 0.02734 4.95605 0.02734 4.78857 0 4.95605-0.02734 0.5332-0.09912 0.92286-0.46826 0.39307-0.37256 0.50586-0.90577 0.01367-0.10938 0.02734-0.66992l0-3.17871 0-3.17871q-0.01367-0.56055-0.02734-0.66992-0.12647-0.54688-0.53321-0.92285-0.40674-0.37939-0.95019-0.46485-0.1709-0.01367-4.93897-0.01367-4.76465 0-4.90478 0.02734z m9.81298 1.17579q0.09912 0.04443 0.18116 0.12304 0.08545 0.0752 0.12646 0.16065 0.04443 0.08203 0.05127 0.12988 0.00684 0.04785 0.00684 0.18799l0 0.21191-2.46436 1.58252q-2.46436 1.56543-2.53613 1.60303-0.06836 0.03418-0.16748 0.03418l-0.02734 0.01367q-0.0957 0.01367-0.2085-0.04102-0.15381-0.07178-0.65967-0.37939l-4.40918-2.81299 0-0.21191q0-0.14014 0.00684-0.18799 0.00684-0.04785 0.04101-0.12305 0.0376-0.07861 0.12647-0.16064 0.09229-0.08545 0.16748-0.1128 0.07861-0.03076 0.70752-0.04443l4.18701 0 4.18701 0q0.61523 0 0.68359 0.02735z m-5.63964 5.02783q0.22217 0.10938 0.46142 0.15381 0.09912 0.02734 0.30762 0.02734 0.2085 0 0.30762-0.02734 0.30762-0.05811 0.54687-0.19825 0.14014-0.08203 2.26612-1.42529l2.12939-1.36035-0.01367 5.50293-0.04102 0.09912q-0.11279 0.2085-0.3247 0.29395l-0.09571 0.02734-9.5498 0-0.09571-0.02734q-0.21191-0.08545-0.3247-0.29395l-0.04102-0.09912-0.01367-5.50293 2.17041 1.37402q2.17041 1.38428 2.31055 1.45606z"
+                style="fill: var(--accent)"
+              ></path>
+            </svg>
+          </div>
+          <div class="menubar__extra-bell">
+            <svg
+              class="menubar__icon"
+              data-icon-name="bell"
+              data-icon-set="lucide"
+              viewBox="0 0 13.99993896484375 14"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <path
+                d="M6.76074 0.60156q-0.62891 0.02734-1.22363 0.25293-0.59473 0.22217-1.0835 0.62891-0.63232 0.50586-1.03222 1.22705-0.39648 0.72119-0.48194 1.51758-0.01367 0.16748-0.03418 0.70068-0.02051 0.52979-0.0581 0.86817-0.03418 0.33496-0.12988 0.68359-0.09912 0.43408-0.28028 0.78613-0.14014 0.30762-0.29394 0.51953-0.15381 0.2085-0.50586 0.58448-0.22217 0.25293-0.30762 0.38623-0.08203 0.1333-0.12647 0.31445-0.04102 0.14014-0.02734 0.32471 0.01367 0.18115 0.05469 0.30761 0.1709 0.46143 0.60498 0.66993l0.04101 0.02734q0.09912 0.0581 0.28028 0.07178 0.23584 0.01367 1.04931 0.02734l7.5879 0q0.81348-0.01367 1.04931-0.02734 0.18115-0.01367 0.28027-0.07178l0.04102-0.02734q0.43408-0.2085 0.60498-0.66993 0.04102-0.12646 0.05469-0.30761 0.01367-0.18457-0.02735-0.32471-0.04443-0.18115-0.12988-0.32129-0.08203-0.14014-0.3042-0.37939-0.35205-0.37598-0.50586-0.58448-0.15381-0.21191-0.29394-0.51953-0.16748-0.33496-0.2666-0.69726-0.0957-0.36572-0.14014-0.72803-0.04102-0.36572-0.06836-0.9126-0.01367-0.72803-0.08545-1.04932-0.2085-1.08008-0.93652-1.9038-0.72803-0.82715-1.76367-1.1792-0.7417-0.23584-1.54151-0.19483z m0.68701 1.18946q0.46143 0.07178 0.88184 0.28369 0.42041 0.2085 0.7417 0.55713 0.46143 0.46143 0.67334 1.06298 0.0957 0.25293 0.12988 0.49219 0.0376 0.23584 0.05127 0.7417 0.01367 0.58789 0.06836 1.01514 0.05811 0.42725 0.15723 0.84765 0.16748 0.68359 0.46826 1.2168 0.30078 0.5332 0.84766 1.12109l0.19482 0.19483-9.32422 0 0.19482-0.19483q0.54688-0.58789 0.84766-1.12109 0.30078-0.5332 0.46826-1.2168 0.09912-0.42041 0.15381-0.84765 0.05811-0.42725 0.07861-1.01514 0.02051-0.58789 0.06836-0.875 0.05127-0.28711 0.21192-0.63574 0.16064-0.35205 0.46142-0.68701 0.30078-0.33838 0.63575-0.54688 0.60498-0.36572 1.333-0.42041 0.08203-0.01367 0.31104 0 0.23242 0.01367 0.34521 0.02735z m-1.6372 9.89843q-0.22559 0.08545-0.33155 0.28028-0.10254 0.19482-0.04785 0.42041 0.01367 0.08545 0.11963 0.24609 0.10596 0.16065 0.21875 0.27344 0.50244 0.50244 1.23047 0.50244 0.72803 0 1.23047-0.50244 0.11279-0.11279 0.21875-0.27344 0.10596-0.16064 0.11963-0.24609 0.05469-0.19482-0.0376-0.38282-0.08887-0.19141-0.27002-0.29052-0.08545-0.04102-0.25293-0.04102-0.11279 0-0.15381 0.01367-0.04102 0.01367-0.11279 0.04102-0.09912 0.05811-0.18115 0.15723-0.11279 0.15381-0.17774 0.20849-0.06152 0.05469-0.14697 0.09912-0.08203 0.04102-0.23584 0.04102-0.15381 0-0.23926-0.04102-0.08203-0.04443-0.14697-0.09912-0.06152-0.05469-0.17432-0.20849-0.15381-0.19824-0.43408-0.21192-0.14014 0-0.19482 0.01367z"
+                style="fill: var(--text-primary)"
+              ></path>
+            </svg>
+          </div>
+          <div class="menubar__extra-bluetooth">
+            <svg
+              class="menubar__icon"
+              data-icon-name="bluetooth"
+              data-icon-set="lucide"
+              viewBox="0 0 13.99993896484375 14"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <path
+                d="M6.90088 0.60156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.38281l0 4.25537-0.99463-0.99463q-0.62891-0.62891-0.83398-0.81689-0.20166-0.18799-0.25635-0.20508-0.19824-0.0957-0.3999-0.0376-0.20166 0.05469-0.32813 0.21533-0.12646 0.16064-0.11279 0.36914l0 0.02735q0.01367 0.11279 0.05469 0.18457 0.07178 0.10938 0.33838 0.37598l2.27978 2.29687-1.28515 1.28857q-0.85449 0.85449-1.07325 1.08692-0.21533 0.229-0.25976 0.29736-0.10938 0.23926-0.01367 0.46485 0.09912 0.22217 0.32128 0.32128 0.22559 0.0957 0.46485-0.01367 0.06836-0.03076 0.24951-0.20508 0.18457-0.17432 0.85449-0.83056l0.99463-0.99463 0 4.25537q0 0.30762 0.03418 0.39307 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785l0.04102 0q0.11279 0 0.18457-0.04102 0.10938-0.07178 0.40332-0.35205l1.20654-1.18945q1.51074-1.51074 1.56543-1.58252 0.08545-0.12647 0.09912-0.28027 0.01367-0.15381-0.05469-0.29395-0.04443-0.06836-0.26318-0.29736-0.21533-0.23242-1.06983-1.08692l-1.28515-1.28857 1.28515-1.28857q0.85449-0.85449 1.06983-1.0835 0.21875-0.23242 0.26318-0.30078 0.06836-0.14014 0.05469-0.29395-0.01367-0.15381-0.09912-0.28027-0.06836-0.08545-1.56885-1.57568-1.49707-1.49023-1.56885-1.52442-0.06836-0.0376-0.23584-0.06494-0.04102 0-0.12646 0.01367z m1.44238 2.73096l0.7417 0.7417-1.51074 1.51074 0-1.49707q0-1.49707 0.01367-1.49707 0.01367 0 0.75537 0.7417z m0 7.33496q-0.7417 0.7417-0.75537 0.7417-0.01367 0-0.01367-1.49707l0-1.49707 1.51074 1.51074-0.7417 0.7417z"
+                style="fill: var(--text-primary)"
+              ></path>
+            </svg>
+          </div>
+        </div>
+        <div class="menubar__spectrum">
+          <div class="menubar__band-1">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-2">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-3">
+            <div class="menubar__led">
+              <div class="menubar__dot-6"></div>
+              <div class="menubar__dot-6"></div>
+              <div class="menubar__dot-6"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-4">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-5">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+              <div class="menubar__dot-5"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-6">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-7">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-8">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-9">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+              <div class="menubar__dot-2"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-10">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+              <div class="menubar__dot-3"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-11">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+          <div class="menubar__band-12">
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+              <div class="menubar__dot"></div>
+            </div>
+            <div class="menubar__led">
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+              <div class="menubar__dot-4"></div>
+            </div>
+          </div>
+        </div>
+        <div class="menubar__stats">
+          <div class="menubar__stat-cpu">
+            <div class="menubar__label-3">
+              CPU
+            </div>
+            <div class="menubar__graph">
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+              </div>
+            </div>
+          </div>
+          <div class="menubar__stat-gpu">
+            <div class="menubar__label-3">
+              GPU
+            </div>
+            <div class="menubar__graph">
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+            </div>
+          </div>
+          <div class="menubar__stat-mem">
+            <div class="menubar__label-3">
+              MEM
+            </div>
+            <div class="menubar__graph">
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-7"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+                <div class="menubar__dot-8"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="menubar__network">
+          <div class="menubar__stat-rx">
+            <div class="menubar__label-3">
+              RX
+            </div>
+            <div class="menubar__graph">
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-9"></div>
+                <div class="menubar__dot"></div>
+              </div>
+            </div>
+          </div>
+          <div class="menubar__stat-tx">
+            <div class="menubar__label-3">
+              TX
+            </div>
+            <div class="menubar__graph">
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+              </div>
+              <div class="menubar__row">
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-10"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-10"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot"></div>
+                <div class="menubar__dot-10"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="menubar__clock">
+          <div class="menubar__label-2">
+            14:32 Mon 2026-10-12
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

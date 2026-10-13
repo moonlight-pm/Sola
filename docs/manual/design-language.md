@@ -2,6 +2,7 @@
 
 **Status:** living reference  
 **Audience:** humans redesigning sola-kit / sola-shell, and agents (Grok Build) implementing visual work  
+**Visual authority:** the sola-design canvas [`design/foundation/`](../../design/foundation/) and [`DESIGN.md`](../../DESIGN.md) (tokens, roles, proposals)  
 **Related:** `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`, `docs/specs/2026-06-06-shell-customization-design.md`, Apple [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
 
 ---
