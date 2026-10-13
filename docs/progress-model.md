@@ -95,7 +95,7 @@ Active freezes under `docs/specs/` should open with:
 **Implementation:** shipped | partial | not started
 **Dogfood:** none | local TTY | …
 **Gaps:** (bullets or “none for v0”)
-**As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
+**As-built:** [capabilities.md](capabilities.md) · [architecture.md](architecture.md)
 ```
 
 - Freezes stay **normative desired shape** — not progress trackers.  

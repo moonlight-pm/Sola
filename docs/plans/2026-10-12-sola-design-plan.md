@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–4 and both Exit fix rounds on master (2026-10-12); slice 5 on the worktree, installed
+**Status:** slices 1–4 and both Exit fix rounds on master (2026-10-12); slice 5 merged to master 2026-10-12, installed (human smoke pending)
 
 ---
 
