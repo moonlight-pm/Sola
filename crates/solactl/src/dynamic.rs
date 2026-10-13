@@ -306,14 +306,43 @@ fn coerce(spec: &MethodSpec, name: &str, raw: &str) -> serde_json::Value {
         ArgType::Json => {
             serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.into()))
         }
-        ArgType::String | ArgType::Path => serde_json::Value::String(raw.into()),
+        ArgType::String => serde_json::Value::String(raw.into()),
+        ArgType::Path => serde_json::Value::String(absolute_path(raw)),
     }
+}
+
+/// `~` expands and a relative path resolves against this shell's cwd — the
+/// owner reads the file in its own process, with its own cwd.
+fn absolute_path(raw: &str) -> String {
+    let home = || std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let path = match (raw, raw.strip_prefix("~/")) {
+        ("~", _) => home(),
+        (_, Some(rest)) => home().map(|h| h.join(rest)),
+        _ => None,
+    }
+    .unwrap_or_else(|| std::path::PathBuf::from(raw));
+    if path.is_absolute() {
+        return path.display().to_string();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(&path).display().to_string())
+        .unwrap_or_else(|_| raw.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sola_call::{ArgSpec, ArgType, MethodSpec};
+
+    #[test]
+    fn path_args_resolve_against_the_callers_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(absolute_path("design/home"), cwd.join("design/home").display().to_string());
+        assert_eq!(absolute_path("/etc/x"), "/etc/x");
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(absolute_path("~/a b"), format!("{home}/a b"));
+        assert_eq!(absolute_path("~"), home);
+    }
 
     fn spec() -> MethodSpec {
         MethodSpec {
