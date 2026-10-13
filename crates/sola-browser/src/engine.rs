@@ -308,6 +308,34 @@ pub enum Cmd<E: Engine> {
     },
     /// Agent control-plane request (snapshot / act / nav on a named tab).
     Agent(crate::agent::AgentRequest),
+    /// Open a sola-design artboard tab: created at its own CSS size and
+    /// raster scale (Chromium takes the device scale at creation), shown,
+    /// painting whether or not it is active. Browser / wrappers never send it.
+    OpenBoard {
+        id: TabId,
+        url: String,
+        title: String,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    /// Resize / re-scale a board tab (see `OpenBoard`).
+    SetBoard {
+        id: TabId,
+        width: u32,
+        height: u32,
+        scale: f64,
+    },
+    /// Pointer / key event for one board tab (not the active tab).
+    BoardInput {
+        id: TabId,
+        input: E::Input,
+    },
+    /// Keyboard focus for one board tab.
+    BoardFocus {
+        id: TabId,
+        focused: bool,
+    },
     Quit,
 }
 

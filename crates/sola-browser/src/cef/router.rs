@@ -338,7 +338,7 @@ fn router_main(
                 let set = helpers.lock().unwrap();
                 if let Some(h) = set.map.get(&current) {
                     if let Some(wire) = to_wire(other) {
-                        if let ToEngine::OpenTab { id, .. } = &wire {
+                        if let ToEngine::OpenTab { id, .. } | ToEngine::OpenBoard { id, .. } = &wire {
                             bump_next(&shared, *id);
                         }
                         let _ = h.to_engine.send(wire);
@@ -371,7 +371,19 @@ fn restore_dead_helper(
         return;
     };
     if let Some(mut child) = old.child {
-        let _ = child.try_wait();
+        // A reader can end on a decode error while the helper still runs.
+        // Its CEF holds the profile: a second helper would fail
+        // `cef::initialize` and Chromium would relaunch-notify the old one
+        // (a stray native window). Kill it before respawning.
+        if let Ok(None) = child.try_wait() {
+            tracing::warn!(
+                profile = %profile_id,
+                pid = child.id(),
+                "engine helper still running after its IPC ended — killing before respawn"
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
     let was_front = shared.current.lock().unwrap().as_str() == profile_id;
     let active = shared.active.load(Ordering::Relaxed);
@@ -856,6 +868,34 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::DevToolsFocus(f) => Some(ToEngine::DevToolsFocus(f)),
         Cmd::CloseDevTools => Some(ToEngine::CloseDevTools),
         Cmd::Agent(req) => Some(ToEngine::Agent(req)),
+        Cmd::OpenBoard {
+            id,
+            url,
+            title,
+            width,
+            height,
+            scale,
+        } => Some(ToEngine::OpenBoard {
+            id: id.0,
+            url,
+            title,
+            width,
+            height,
+            scale,
+        }),
+        Cmd::SetBoard {
+            id,
+            width,
+            height,
+            scale,
+        } => Some(ToEngine::SetBoard {
+            id: id.0,
+            width,
+            height,
+            scale,
+        }),
+        Cmd::BoardInput { id, input } => Some(ToEngine::BoardInput { id: id.0, input }),
+        Cmd::BoardFocus { id, focused } => Some(ToEngine::BoardFocus { id: id.0, focused }),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }
