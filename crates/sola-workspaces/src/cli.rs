@@ -139,6 +139,7 @@ pub fn kind_str(kind: Kind) -> &'static str {
         Kind::Main => "main",
         Kind::Worktree => "worktree",
         Kind::Folder => "folder",
+        Kind::Root => "root",
     }
 }
 
@@ -384,6 +385,17 @@ mod tests {
         assert_eq!(workspace_json(&w, Some("ws-main"))["label"], "root");
         assert_eq!(workspace_json(&w, Some("ws-main"))["selected"], true);
         assert_eq!(workspace_json(&w, Some("ws-main"))["kind"], "main");
+    }
+
+    #[test]
+    fn root_tab_keeps_its_name_and_kind() {
+        let mut w = ws("ws-hotfix", "hotfix", Kind::Root);
+        assert_eq!(display_name(&w), "hotfix");
+        assert_eq!(rail_label(&w), "hotfix");
+        apply_rail_title(&mut w, "quick fix");
+        assert_eq!(rail_label(&w), "quick fix");
+        assert_eq!(workspace_json(&w, None)["kind"], "root");
+        assert_eq!(spawn_json(&w, false)["kind"], "root");
     }
 
     #[test]

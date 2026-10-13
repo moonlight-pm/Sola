@@ -97,6 +97,7 @@ solactl workspaces workspace.list [--project Sola]
 solactl workspaces workspace.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
     [--agent grok|codex|claude] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
+solactl workspaces workspace.spawn --project Sola --name hotfix --root   # no worktree
 solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
 solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
     [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
@@ -117,6 +118,14 @@ solactl workspaces whoami                  # from a Workspaces pane; or --pane /
 a custom title. Spawn is background: the new row appears, the rail/grid
 stay on the caller. `--select` jumps (same as the UI + / ⌘T).
 `workspace.exec` does not select.
+`--root` opens the tab in the project root checkout instead of a new
+worktree (the **No worktree** box on the New workspace card): `kind` is
+`root`, `path` is the project root, and work lands on whatever branch the
+root has checked out (usually master). `--branch` / `--base-branch` are
+refused with `--root`, and the startup script does not run. A root tab
+closes with plain `workspace.rm` (`--worktree` is refused);
+`workspace.set` takes `--title` and `--before` (`--name` / `--branch` need
+a worktree). Hover × and the pencil work as on a worktree tab.
 `workspace.set --name` `git worktree move`s to `.worktrees/<name>` (id
 stays so tmux sessions keep working; live or dirty checkouts are
 forced). The project root cannot be renamed.
@@ -128,7 +137,9 @@ The rail also does this with drag-drop; hover pencil / double-click on a
 worktree tab is `--title` (the label, not the folder). `project.reorder`
 moves a project group (`--before` another project, or omit / `end` for last).
 
-Lists include `path`, `kind`, and `parent`. `project.startup` is the
+Lists include `path`, `kind` (`main` = the project's own tab,
+`worktree`, `root` = extra tab in the project root, `folder` = non-git
+project), and `parent`. `project.startup` is the
 per-project script that runs in a new worktree after spawn (also
 **Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).

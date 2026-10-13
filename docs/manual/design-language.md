@@ -258,7 +258,7 @@ Verification for Sola is not a web browser loop:
 
 1. Capture current surface(s) (idle menubar, open menu, launcher, switcher, storybook).  
 2. Agree a short visual plan (keep / change / forbidden).  
-3. Implement in a **worktree**.  
+3. Implement where your tab is (a root tab works on master; a worktree only when asked).  
 4. `cargo make build` (user installs and runs from TTY).  
 5. New screenshots → critique against this doc and macOS reference.  
 6. Commit when the pass is good; start the next pass clean.

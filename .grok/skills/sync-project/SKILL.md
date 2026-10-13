@@ -32,6 +32,11 @@ Targets = every checkout under `.worktrees/` for **this** repo. Skip the
 master checkout you are sitting in. Match rail slug to folder name
 (`.worktrees/<name>`).
 
+Root tabs (`kind: main` / `kind: root` in `ps`) are not targets — they
+work on master in this checkout. If master is dirty, that is root-tab
+work in progress (maybe another tab's): do not commit, stash, or discard
+it; if a merge refuses because of it, report and let that tab commit.
+
 Per target, record: path, branch, porcelain, `git log --oneline master..BRANCH`,
 whether it is already an ancestor of `master`.
 

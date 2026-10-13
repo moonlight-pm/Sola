@@ -164,6 +164,8 @@ enum Msg {
     SaveStartup,
     DismissDialog,
     SpawnName(String),
+    /// New-tab card: open in the project root (no worktree).
+    SpawnInRoot(bool),
     Spawn,
     AddPath(String),
     AddProject,
@@ -546,6 +548,11 @@ impl App {
             }
             Msg::SpawnName(s) => {
                 self.spawn.name = s;
+                self.spawn.error = None;
+                Task::none()
+            }
+            Msg::SpawnInRoot(on) => {
+                self.spawn.in_root = on;
                 self.spawn.error = None;
                 Task::none()
             }
@@ -1240,13 +1247,14 @@ impl App {
     }
 
     fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
-        if !self.projects.iter().any(|p| p.id == project_id) {
+        let Some(project) = self.projects.iter().find(|p| p.id == project_id) else {
             return Task::none();
-        }
+        };
+        let root_branch = spawn::current_branch(&project.root);
         self.add = sidebar::AddDraft::default();
         self.startup = sidebar::StartupDraft::default();
         self.sidebar.renaming = None;
-        self.spawn = sidebar::SpawnDraft::open(project_id);
+        self.spawn = sidebar::SpawnDraft::open(project_id, root_branch);
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::SPAWN_INPUT_ID))
     }
 
@@ -1304,7 +1312,18 @@ impl App {
             return Task::none();
         };
         let name = self.spawn.name.clone();
-        match self.spawn_workspace(&project_id, &name, None, None, None, None, None, true) {
+        let in_root = self.spawn.in_root;
+        match self.spawn_workspace(
+            &project_id,
+            &name,
+            None,
+            None,
+            None,
+            None,
+            None,
+            in_root,
+            true,
+        ) {
             Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.maybe_toast_startup(startup_err, &id);
@@ -1317,9 +1336,10 @@ impl App {
         }
     }
 
-    /// Create a worktree + catalog row. Does not attach a PTY.
-    /// Second value is a startup-script error (workspace still exists).
-    /// `select` takes the rail (UI / `--select`). CLI default is false.
+    /// Create a worktree (or a root tab when `in_root`) + catalog row.
+    /// Does not attach a PTY. Second value is a startup-script error
+    /// (workspace still exists). `select` takes the rail (UI /
+    /// `--select`). CLI default is false.
     fn spawn_workspace(
         &mut self,
         project_q: &str,
@@ -1329,6 +1349,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        in_root: bool,
         select: bool,
     ) -> Result<(String, Option<String>), String> {
         let project = workspace::resolve_project(&self.projects, project_q)?.clone();
@@ -1337,7 +1358,19 @@ impl App {
             return Err("name needs a letter or number".into());
         }
         let agent = cli::first_class_agent(agent)?;
-        let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
+        let (dest, kind) = if in_root {
+            let given = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+            if given(branch) || given(base) {
+                return Err("--branch / --base-branch need a worktree (drop --root)".into());
+            }
+            if workspace::worktree_name_taken(&self.workspaces, &project.id, &slug, "") {
+                return Err(format!("workspace '{slug}' already exists"));
+            }
+            (project.root.clone(), workspace::Kind::Root)
+        } else {
+            let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
+            (dest, workspace::Kind::Worktree)
+        };
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);
         let parent = match parent {
@@ -1362,14 +1395,19 @@ impl App {
             name: name.trim().to_string(),
             title,
             path: dest,
-            kind: workspace::Kind::Worktree,
+            kind,
             parent,
             layout: None,
             active_pane: None,
             status: status::AgentStatus::Idle,
             agent: agent.map(str::to_string),
         };
-        let startup_err = startup::run(&project, &ws).err();
+        // Startup prepares a fresh worktree; a root tab has none.
+        let startup_err = if in_root {
+            None
+        } else {
+            startup::run(&project, &ws).err()
+        };
         if let Some(e) = &startup_err {
             tracing::warn!(workspace = %ws.id, "{e}");
         }
@@ -1525,6 +1563,7 @@ impl App {
                     param_str(params, "branch").as_deref(),
                     param_str(params, "base-branch").as_deref(),
                     param_str(params, "title").as_deref(),
+                    param_bool(params, "root"),
                     params
                         .get("select")
                         .and_then(|v| v.as_bool())
@@ -1543,7 +1582,7 @@ impl App {
                 if force && !checkout {
                     return (Err("--force needs --worktree".into()), Task::none());
                 }
-                match self.cli_rm(&ws) {
+                match self.cli_rm(&ws, checkout) {
                     // Reply first; teardown on the next tick so solactl
                     // (maybe running in a pane we are about to kill)
                     // gets {ok:true} instead of a hang / timeout.
@@ -1692,6 +1731,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        in_root: bool,
         select: bool,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let prompt = cli::read_prompt(prompt, prompt_file)?;
@@ -1700,8 +1740,9 @@ impl App {
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
-        let (id, startup_err) =
-            self.spawn_workspace(project, name, parent, agent, branch, base, title, select)?;
+        let (id, startup_err) = self.spawn_workspace(
+            project, name, parent, agent, branch, base, title, in_root, select,
+        )?;
         let task = if let Some(a) = agent {
             let args = cli::agent_argv(a, prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1748,10 +1789,16 @@ impl App {
         }))
     }
 
-    fn cli_rm(&self, q: &str) -> Result<String, String> {
+    fn cli_rm(&self, q: &str, checkout: bool) -> Result<String, String> {
         let ws = workspace::resolve_workspace(&self.workspaces, q)?;
         if !workspace::can_close(ws) {
             return Err("cannot close the project root".into());
+        }
+        if checkout && !workspace::has_worktree(ws) {
+            return Err(format!(
+                "{} has no worktree (root tab) — drop --worktree to close the tab",
+                ws.id
+            ));
         }
         Ok(ws.id.clone())
     }
@@ -1858,7 +1905,10 @@ impl App {
         let slug = spawn::slug(raw);
         spawn::check_slug(&slug)?;
         let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind != workspace::Kind::Worktree {
+        if ws.kind == workspace::Kind::Root {
+            return Err("this tab has no worktree to move — use --title for the rail label".into());
+        }
+        if !workspace::has_worktree(ws) {
             return Err("cannot rename the project root".into());
         }
         let project_id = ws.project_id.clone();
@@ -1888,7 +1938,10 @@ impl App {
 
     fn rename_workspace_branch(&self, id: &str, raw: &str) -> Result<(), String> {
         let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind != workspace::Kind::Worktree {
+        if ws.kind == workspace::Kind::Root {
+            return Err("this tab has no worktree — it uses the project root's branch".into());
+        }
+        if !workspace::has_worktree(ws) {
             return Err("cannot rename the project root branch".into());
         }
         spawn::rename_branch(&ws.path, raw)
@@ -2299,14 +2352,22 @@ impl App {
     /// off the iced thread so a `solactl` rm (or hover ×) does not freeze
     /// every other pane.
     fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
-        let Some((panes, path, project_id)) =
+        let Some((panes, path, project_id, has_worktree)) =
             self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
-                workspace::can_close(ws)
-                    .then(|| (ws.layout().leaves(), ws.path.clone(), ws.project_id.clone()))
+                workspace::can_close(ws).then(|| {
+                    (
+                        ws.layout().leaves(),
+                        ws.path.clone(),
+                        ws.project_id.clone(),
+                        workspace::has_worktree(ws),
+                    )
+                })
             })
         else {
             return Task::none();
         };
+        // A root tab's path is the project root — never `git worktree remove` it.
+        let checkout = checkout && has_worktree;
         tracing::info!(workspace = %id, checkout, "closing workspace");
         let detached: Vec<DetachedPane> = panes.iter().map(|pane| self.detach_pane(pane)).collect();
         self.workspaces.retain(|w| w.id != id);

@@ -69,8 +69,8 @@ an agent needs to orchestrate is on the call plane.
 | `project.list` | — | `{projects:[{id,name,root}]}` |
 | `project.rm` | `--project` | `{ok:true}` |
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
-| `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
-| `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. |
+| `workspace.spawn` | `--project --name [--root] [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` — `--root` (2026-10-12): no worktree; the tab sits in the project root (`kind: root`), no `--branch` / `--base-branch`, no startup script |
+| `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. A `kind: root` tab has no worktree: `--worktree` is refused. |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent,session_id}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` — bracketed paste into the tmux session, then optional Enter |
 | `pane.read` | `[--pane] [--lines]` | `{text, pane}` |
