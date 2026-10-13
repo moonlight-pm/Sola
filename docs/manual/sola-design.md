@@ -71,8 +71,10 @@ Projects are your own list (not Workspaces'). **Project → Add Project…**
 (⌘N) takes a folder (`~` ok). The rail lists each project's canvases —
 every `design/<name>/` with a `canvas.toml` — and picks up new ones within
 a couple of seconds. `+` on a project makes an empty canvas
-(**New Canvas…**, ⌘⇧N). **Drop Project** forgets the open canvas's project;
-files are untouched.
+(**New Canvas…**, ⌘⇧N). Drag a canvas to reorder it within its project;
+drag a project's header to move the whole project. The order is kept.
+**Drop Project** forgets the open canvas's project (`solactl design
+project.remove --path <folder>` forgets any); files are untouched.
 
 ## Look
 

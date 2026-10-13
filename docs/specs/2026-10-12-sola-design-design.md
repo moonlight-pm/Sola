@@ -7,7 +7,7 @@
 | | |
 |--|--|
 | **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
-| **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. |
+| **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. 2026-10-12: rail drag-reorder + `project.remove` installed `design`; `project.remove` smoked over solactl and MCP, drag unsmoked. |
 | **Gaps** | Share links have no password or expiry and work only while Design runs. `auto` height stops re-measuring 8 s after a load. Page state (typed text) is shared between the human and agents. Page dialogs are auto-accepted. |
 
 ## Intent
@@ -37,7 +37,7 @@ project's git, and openable in any browser.
 | Topic | Choice |
 |-------|--------|
 | Crate / binary | `sola-design`; `app_id` `sola-design`; window title **Design**. |
-| UI | Iced + sola-kit. Project rail on the left (kit sidebar); canvas on the right. |
+| UI | Iced + sola-kit. Project rail on the left (kit sidebar); canvas on the right. Rail rows drag: canvases within their project, project headers as blocks (order saved in `projects.json`). |
 | Document | **Files are the document.** No app-owned node model, no `write_html`-style node ops. |
 | Projects | Own list at `~/.config/sola/design/projects.json`. **Separate** from Workspaces (may merge later). Add project = pick a folder. |
 | Root only | Canvases are read from `<project root>/design/` only. Worktrees are not scanned (v1). |
@@ -114,6 +114,7 @@ resolved by `solactl` against the caller's cwd.
 |------|------|
 | `project.list` | Projects and their canvases (fresh scan). |
 | `project.add --path` | Register a project folder. |
+| `project.remove --path` | Forget a project (its `root`): its canvases leave the rail and close, agents' too. Files stay. |
 | `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, make it live off screen (`--raise` shows it). Existing → open (`created: false`). |
 | `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen; registers the project if needed. `--raise` shows it and raises the window. |
 | `status` | Canvas, artboards (size, scale, painted, loading), zoom, mode, selection. |

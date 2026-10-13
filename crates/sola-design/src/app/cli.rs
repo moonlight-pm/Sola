@@ -69,6 +69,7 @@ impl App {
         let out = match method.as_str() {
             "project.list" => Ok(self.projects_json()),
             "project.add" => self.call_project_add(&p),
+            "project.remove" => self.call_project_remove(&p),
             "open" => self.call_open(&p),
             "canvas.new" => self.call_canvas_new(&p),
             "status" => self.target(&p).map(|key| self.status_json(&key)),
@@ -195,7 +196,8 @@ impl App {
             .projects
             .iter()
             .map(|p| {
-                let canvases: Vec<Value> = canvas::scan(&p.root)
+                let canvases: Vec<Value> = p
+                    .canvases()
                     .into_iter()
                     .map(|c| {
                         json!({
@@ -287,6 +289,23 @@ impl App {
         Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
     }
 
+    /// Forget the project at `path`. Its live canvases close, agents'
+    /// too; files stay on disk.
+    fn call_project_remove(&mut self, p: &Value) -> Result<Value, String> {
+        let raw = projects::expand_home(str_param(p, "path")?);
+        // A folder that is gone can still be forgotten.
+        let root = raw.canonicalize().unwrap_or(raw);
+        let project = self.catalog.at_root(&root).cloned().ok_or_else(|| {
+            format!(
+                "{} is not a Design project (project.list shows their roots)",
+                root.display()
+            )
+        })?;
+        tracing::info!(project = %project.id, "call removed design project");
+        self.drop_project(&project.id);
+        Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
+    }
+
     fn call_open(&mut self, p: &Value) -> Result<Value, String> {
         let raw = projects::expand_home(str_param(p, "path")?);
         let path = raw
@@ -328,7 +347,7 @@ impl App {
 
     /// Project id for `root`, registering it if Design does not know it.
     fn ensure_project(&mut self, root: &std::path::Path) -> Result<(String, bool), String> {
-        if let Some(p) = self.catalog.projects.iter().find(|p| p.root == root) {
+        if let Some(p) = self.catalog.at_root(root) {
             return Ok((p.id.clone(), false));
         }
         let id = self.catalog.add(&root.to_string_lossy())?;

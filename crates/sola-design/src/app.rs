@@ -27,7 +27,7 @@ use sola_call::Incoming;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent,
 };
-use sola_kit::components::{SidebarEvent, SidebarMsg};
+use sola_kit::components::{Dest, Drop as SidebarDrop, SidebarEvent, SidebarMsg};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
@@ -376,7 +376,12 @@ impl App {
                     self.show_canvas(at);
                 }
             }
-            Msg::Canvases(found) => {
+            Msg::Canvases(mut found) => {
+                for p in &self.catalog.projects {
+                    if let Some(list) = found.get_mut(&p.id) {
+                        p.order_canvases(list);
+                    }
+                }
                 self.canvases = found;
                 self.share_canvases();
             }
@@ -783,7 +788,53 @@ impl App {
                 }
             }
             SidebarEvent::Resize { width } => self.rail.width = width,
-            SidebarEvent::Edit { .. } | SidebarEvent::Drop(_) => {}
+            SidebarEvent::Drop(drop) => self.on_rail_drop(drop),
+            SidebarEvent::Edit { .. } => {}
+        }
+    }
+
+    /// A canvas dropped within its project, or a project header dropped
+    /// in front of another project.
+    fn on_rail_drop(&mut self, drop: SidebarDrop) {
+        let moved = match drop.dest {
+            Dest::Join { before, .. } => {
+                let Some(at) = CanvasRef::from_key(&drop.id) else {
+                    return;
+                };
+                let before = before.as_deref().and_then(CanvasRef::from_key);
+                if before.as_ref().is_some_and(|b| b.project != at.project) {
+                    return;
+                }
+                let listed: Vec<String> = self
+                    .canvases
+                    .get(&at.project)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| c.name.clone())
+                    .collect();
+                self.catalog.move_canvas_before(
+                    &at.project,
+                    &at.canvas,
+                    before.as_ref().map(|b| b.canvas.as_str()),
+                    &listed,
+                )
+            }
+            // `before` is a project id, or a canvas row (its project).
+            Dest::BlockBefore { before } => {
+                let before = before.map(|b| match CanvasRef::from_key(&b) {
+                    Some(at) => at.project,
+                    None => b,
+                });
+                self.catalog.move_project_before(&drop.id, before.as_deref())
+            }
+            Dest::Loose { .. } | Dest::BeforeGroup { .. } | Dest::Sections(_) => return,
+        };
+        match moved {
+            Ok(()) => {
+                self.persist();
+                self.rescan();
+            }
+            Err(e) => tracing::warn!(error = %e, "design rail drop"),
         }
     }
 
@@ -792,7 +843,7 @@ impl App {
             .catalog
             .projects
             .iter()
-            .map(|p| (p.id.clone(), canvas::scan(&p.root)))
+            .map(|p| (p.id.clone(), p.canvases()))
             .collect();
         self.share_canvases();
     }

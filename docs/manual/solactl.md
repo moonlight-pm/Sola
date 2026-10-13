@@ -288,6 +288,7 @@ inspects the selected element. `selection` is what the human Super+clicked
 solactl design                               # list methods
 solactl design project.list                  # projects + canvases
 solactl design project.add --path ~/Workspace/Thoxa
+solactl design project.remove --path ~/Workspace/Thoxa  # forget it: canvases leave the rail and close; files stay
 solactl design canvas.new onboarding         # design/onboarding/ in your cwd's project
 solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd

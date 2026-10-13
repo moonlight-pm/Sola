@@ -239,5 +239,7 @@
 - [x] Viewer fix: `auto` boards stayed at the 900 px start (viewport-bound `scrollHeight`) and overlapped the next one — the layout now carries Design's measured heights (fallback: Design's formula); titles and frame scrollbars removed.
 - [x] Cloudflare: tunnel `sola-design` (remote config, ingress → 127.0.0.1:47820), proxied CNAME `design.moonlight.pm`; `share.toml` written (0600).
 - [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
-- [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone.
+- [x] Rail drag-reorder (kit `reorder_within_sections`): canvases within their project, project headers as blocks; order in `projects.json` (`canvas_order`; unlisted canvases follow by name). `project.list` lists rail order.
+- [x] `project.remove --path` (solactl + MCP `design_project_remove`): exact `root` match, works for a deleted folder, closes the project's live canvases. Smoked.
+- [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone; drag canvases and projects, restart, order kept.
 - [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).

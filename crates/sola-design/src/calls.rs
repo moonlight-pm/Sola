@@ -33,6 +33,16 @@ pub fn methods() -> Vec<MethodSpec> {
             &[req("path", Some('p'), ArgType::Path, "Project folder")],
         ),
         method(
+            "project.remove",
+            "Forget a project: its canvases leave the rail and close (files stay on disk)",
+            &[req(
+                "path",
+                Some('p'),
+                ArgType::Path,
+                "Project folder (its `root` in project.list)",
+            )],
+        ),
+        method(
             "open",
             "Make a canvas live for you, off the human's screen (registers its project if needed); --raise shows it to them",
             &[
@@ -197,6 +207,7 @@ mod tests {
         for need in [
             "project.list",
             "project.add",
+            "project.remove",
             "open",
             "canvas.new",
             "status",
