@@ -112,6 +112,9 @@ struct State {
     saved: Saved,
     /// Token → canvas.
     sites: HashMap<String, Site>,
+    /// Canvas key → `auto` artboard id → the height Design measured, so the
+    /// web lays the canvas out exactly as Design does.
+    heights: HashMap<String, HashMap<String, u32>>,
 }
 
 pub struct Share {
@@ -138,6 +141,7 @@ impl Share {
         let state = Arc::new(RwLock::new(State {
             saved,
             sites: HashMap::new(),
+            heights: HashMap::new(),
         }));
         let listener = TcpListener::bind(config.listen)?;
         let addr = listener.local_addr()?;
@@ -219,6 +223,16 @@ impl Share {
         }
         st.saved.links.insert(key.to_string(), links);
         self.save(&st.saved);
+    }
+
+    /// The height Design measured for an `auto` artboard of a canvas.
+    pub fn set_height(&self, key: &str, artboard: &str, height: u32) {
+        if let Ok(mut st) = self.state.write() {
+            st.heights
+                .entry(key.to_string())
+                .or_default()
+                .insert(artboard.to_string(), height);
+        }
     }
 
     /// The public link of a canvas.
@@ -343,7 +357,7 @@ fn handle(stream: TcpStream, state: &Arc<RwLock<State>>) -> io::Result<()> {
     if req.target.split(['?', '#']).next() == Some(&format!("/{token}")) {
         return redirect(&mut out, &format!("/{token}/"));
     }
-    let (site, links) = {
+    let (site, links, heights) = {
         let st = state
             .read()
             .map_err(|_| io::Error::other("share state poisoned"))?;
@@ -351,7 +365,8 @@ fn handle(stream: TcpStream, state: &Arc<RwLock<State>>) -> io::Result<()> {
             return serve::status(&mut out, 404, "Not Found");
         };
         let links = st.saved.links.get(&site.key).cloned().unwrap_or_default();
-        (site, links)
+        let heights = st.heights.get(&site.key).cloned().unwrap_or_default();
+        (site, links, heights)
     };
     match rest {
         "" => respond(
@@ -361,7 +376,7 @@ fn handle(stream: TcpStream, state: &Arc<RwLock<State>>) -> io::Result<()> {
             VIEWER.as_bytes(),
         ),
         "~canvas.json" => {
-            let body = layout_json(&site, token).to_string();
+            let body = layout_json(&site, token, &heights).to_string();
             respond(&mut out, head_only, "application/json", body.as_bytes())
         }
         "~version" => {
@@ -426,8 +441,9 @@ fn allowed(site: &Site, web_root: Option<&Path>, links: &BTreeSet<PathBuf>, file
 }
 
 /// The canvas as the viewer lays it out. Board `src` files become
-/// token URLs; web `src` stays.
-fn layout_json(site: &Site, token: &str) -> serde_json::Value {
+/// token URLs; web `src` stays. An `auto` board carries the height Design
+/// measured (`measured: true`); the viewer measures only the others.
+fn layout_json(site: &Site, token: &str, heights: &HashMap<String, u32>) -> serde_json::Value {
     let c = match canvas::load(&site.dir) {
         Ok(c) => c,
         // The viewer sees the problem, not this machine's paths.
@@ -450,9 +466,12 @@ fn layout_json(site: &Site, token: &str) -> serde_json::Value {
                 })
                 .map(|rel| format!("/{token}/{}{suffix}", url_path(&rel)))
                 .unwrap_or_else(|| a.url.clone());
+            let measured = a.auto_height.then(|| heights.get(&a.id).copied()).flatten();
             json!({
                 "id": a.id, "title": a.title, "src": src,
-                "x": a.x, "y": a.y, "width": a.width, "height": a.height, "auto": a.auto_height,
+                "x": a.x, "y": a.y, "width": a.width,
+                "height": measured.unwrap_or(a.height),
+                "auto": a.auto_height, "measured": measured.is_some(),
             })
         })
         .collect();
@@ -604,6 +623,10 @@ mod tests {
             "{layout}"
         );
         assert!(layout.contains("\"auto\":true"), "{layout}");
+        assert!(layout.contains("\"measured\":false"), "{layout}");
+        share.set_height("p/home", "a", 649);
+        let layout = get(addr, &format!("/{token}/~canvas.json"), "");
+        assert!(layout.contains("\"height\":649") && layout.contains("\"measured\":true"), "{layout}");
         let page = get(addr, &format!("/{token}/design/home/a.html"), "");
         assert!(
             page.starts_with("HTTP/1.1 200") && page.contains("Referrer-Policy: same-origin"),

@@ -236,6 +236,7 @@
 - [x] Bottom bar: copy-link and new-link buttons (tips above); Share menu (⌘⇧L).
 - [x] Viewer handles like Design: live pages, right-drag pan (capture-phase in each frame; pages never see the right button), wheel zoom, touch two-finger pan / pinch, hint line; Interact toggle removed.
 - [x] LAN DNS: hub Wicket v1 resolves record-less domains upstream (hub `6b47539`).
+- [x] Viewer fix: `auto` boards stayed at the 900 px start (viewport-bound `scrollHeight`) and overlapped the next one — the layout now carries Design's measured heights (fallback: Design's formula); titles and frame scrollbars removed.
 - [x] Cloudflare: tunnel `sola-design` (remote config, ingress → 127.0.0.1:47820), proxied CNAME `design.moonlight.pm`; `share.toml` written (0600).
 - [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
 - [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone.

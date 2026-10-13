@@ -383,6 +383,11 @@ impl App {
         }
         b.art.height = height;
         tracing::debug!(artboard = %b.art.id, height, "auto artboard height");
+        let artboard = b.art.id.clone();
+        // The web share lays the canvas out with Design's heights.
+        if let Some(share) = &self.share {
+            share.set_height(&key, &artboard, height);
+        }
         self.resize_boards(&key, Some(tab));
         self.details.poke(Instant::now());
         self.loads.confirm(tab, Instant::now());
