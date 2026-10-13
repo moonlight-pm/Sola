@@ -4,13 +4,14 @@
 //! which tabs to open, resize, re-point, or close. Applying the ops to the
 //! engine is the app's job.
 
-use sola_browser::engine::TabId;
+use sola_browser::engine::{BoardSize, TabId};
 
 use crate::canvas::Artboard;
 
-/// Raster scale every board renders at (through page zoom): crisp to 200%
-/// at output scale 1. Fixed and integer: zooming the canvas only scales
-/// textures (no re-raster pop), and text keeps one pixel grid.
+/// Raster scale a board renders at (through page zoom) when it fits: crisp
+/// to 200% at output scale 1 without a detail render. Fixed per board:
+/// zooming the canvas only scales textures (no re-raster pop), and past
+/// this a detail render sharpens the visible part.
 pub const RASTER_SCALE: f64 = 2.0;
 /// Largest texture side the plane uploads (wgpu default limit).
 const MAX_TEXTURE_SIDE: f64 = 8192.0;
@@ -22,11 +23,30 @@ pub struct Board {
     pub tab: TabId,
     pub art: Artboard,
     pub scale: f64,
+    /// OSR surface in px: the board's pixels, or (once a detail render
+    /// needed the room) widened to the plane.
+    pub surface: (u32, u32),
+    /// The surface is widened to the plane (see [`Board::surface`]).
+    pub grown: bool,
     /// Why the board does not show its page (missing `src`, HTTP 404).
     pub error: Option<String>,
 }
 
 impl Board {
+    /// The surface floor for this board given the plane `cap`.
+    pub fn cap(&self, cap: (u32, u32)) -> (u32, u32) {
+        if self.grown { cap } else { (0, 0) }
+    }
+
+    pub fn size(&self) -> BoardSize {
+        BoardSize {
+            width: self.art.width,
+            height: self.art.height,
+            scale: self.scale,
+            surface: self.surface,
+        }
+    }
+
     pub fn rect(&self) -> iced::Rectangle {
         iced::Rectangle::new(
             iced::Point::new(self.art.x, self.art.y),
@@ -49,15 +69,13 @@ pub enum Op {
         tab: TabId,
         url: String,
         title: String,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
     },
     View {
         tab: TabId,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
+        /// The CSS size changed (not just scale or surface).
+        resized: bool,
     },
     Load {
         tab: TabId,
@@ -75,6 +93,37 @@ pub fn fits(width: u32, height: u32, scale: f64) -> bool {
     w <= MAX_TEXTURE_SIDE && h <= MAX_TEXTURE_SIDE && w * h * 4.0 <= MAX_FRAME_BYTES
 }
 
+/// Raster scale for one board: [`RASTER_SCALE`], else 1×, else the largest
+/// hundredth that fits (a page taller than the texture side). A board under
+/// 2× is still sharp zoomed in: detail renders cover it.
+pub fn raster_scale(width: u32, height: u32) -> f64 {
+    if fits(width, height, RASTER_SCALE) {
+        return RASTER_SCALE;
+    }
+    if fits(width, height, 1.0) {
+        return 1.0;
+    }
+    let (w, h) = (f64::from(width.max(1)), f64::from(height.max(1)));
+    let s = (MAX_TEXTURE_SIDE / w)
+        .min(MAX_TEXTURE_SIDE / h)
+        .min((MAX_FRAME_BYTES / 4.0 / (w * h)).sqrt());
+    ((s * 100.0).floor() / 100.0).max(0.01)
+}
+
+/// Geometry for `art` at `scale`, its surface widened to `cap` (the plane
+/// in px, for a grown board; else zero).
+pub fn board_size(art: &Artboard, scale: f64, cap: (u32, u32)) -> BoardSize {
+    let mut size = BoardSize {
+        width: art.width,
+        height: art.height,
+        scale,
+        surface: (0, 0),
+    };
+    let (w, h) = size.pixels();
+    size.surface = (w.max(cap.0), h.max(cap.1));
+    size
+}
+
 /// Host of a URL (`scheme://host[:port]/…` → `host`); `""` for `file://`.
 pub fn url_host(url: &str) -> &str {
     let Some((_, rest)) = url.split_once("://") else {
@@ -84,29 +133,30 @@ pub fn url_host(url: &str) -> &str {
     authority.rsplit_once(':').map_or(authority, |(h, _)| h)
 }
 
-/// Raster scale per board, from `(host, width, height)`: [`RASTER_SCALE`]
-/// unless some board on the same host cannot fit it, then 1. Page zoom is
-/// per host in Chromium; served boards each have their own host.
+/// Raster scale per board, from `(host, width, height)`: its
+/// [`raster_scale`], lowered to the smallest on its host. Page zoom is per
+/// host in Chromium; served boards each have their own host.
 pub fn host_scales(boards: &[(&str, u32, u32)]) -> Vec<f64> {
-    let mut too_big = std::collections::HashSet::new();
+    let mut least: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
     for &(host, w, h) in boards {
-        if !fits(w, h, RASTER_SCALE) {
-            too_big.insert(host);
-        }
+        let s = raster_scale(w, h);
+        least
+            .entry(host)
+            .and_modify(|m| *m = m.min(s))
+            .or_insert(s);
     }
-    boards
-        .iter()
-        .map(|(host, ..)| if too_big.contains(host) { 1.0 } else { RASTER_SCALE })
-        .collect()
+    boards.iter().map(|(host, ..)| least[host]).collect()
 }
 
 /// Diff `current` against `next`. Boards keep their tab (and texture) when
 /// the id survives; a changed URL re-points the tab instead of reopening.
-/// A surviving board keeps its raster scale (the app re-checks the canvas
-/// scale after a layout), and an `auto` board keeps its measured height.
+/// A surviving board keeps its raster scale (the app re-checks scales after
+/// a layout), an `auto` board keeps its measured height, and a grown
+/// board keeps its surface widened to `cap`.
 pub fn sync(
     current: Vec<Board>,
     next: &[Artboard],
+    cap: (u32, u32),
     mut alloc: impl FnMut() -> TabId,
 ) -> (Vec<Board>, Vec<Op>) {
     let mut ops = Vec::new();
@@ -127,39 +177,36 @@ pub fn sync(
                         url: art.url.clone(),
                     });
                 }
-                let resized = (prev.art.width, prev.art.height) != (art.width, art.height);
-                let scale = prev.scale;
-                let error = if prev.art.url == art.url { prev.error } else { None };
-                if resized {
-                    ops.push(Op::View {
-                        tab,
-                        width: art.width,
-                        height: art.height,
-                        scale,
-                    });
+                let size = board_size(&art, prev.scale, prev.cap(cap));
+                if size != prev.size() {
+                    let resized = (art.width, art.height) != (prev.art.width, prev.art.height);
+                    ops.push(Op::View { tab, size, resized });
                 }
+                let error = if prev.art.url == art.url { prev.error } else { None };
                 boards.push(Board {
                     tab,
                     art,
-                    scale,
+                    scale: size.scale,
+                    surface: size.surface,
+                    grown: prev.grown,
                     error,
                 });
             }
             None => {
-                let scale = RASTER_SCALE;
+                let size = board_size(art, raster_scale(art.width, art.height), (0, 0));
                 let tab = alloc();
                 ops.push(Op::Open {
                     tab,
                     url: art.url.clone(),
                     title: art.title.clone(),
-                    width: art.width,
-                    height: art.height,
-                    scale,
+                    size,
                 });
                 boards.push(Board {
                     tab,
                     art: art.clone(),
-                    scale,
+                    scale: size.scale,
+                    surface: size.surface,
+                    grown: false,
                     error: None,
                 });
             }
@@ -216,6 +263,23 @@ mod tests {
     }
 
     #[test]
+    fn a_page_past_the_texture_side_scales_down_to_fit() {
+        assert_eq!(raster_scale(1440, 900), 2.0);
+        assert_eq!(raster_scale(1440, 8192), 1.0);
+        let s = raster_scale(1440, 20000);
+        assert!(s < 1.0 && fits(1440, 20000, s), "{s}");
+        assert!(!fits(1440, 20000, s + 0.01));
+    }
+
+    #[test]
+    fn surfaces_widen_to_the_plane() {
+        let size = board_size(&art("p", "u", 390, 844), 2.0, (2560, 1536));
+        assert_eq!(size.pixels(), (780, 1688));
+        assert_eq!(size.surface, (2560, 1688));
+        assert_eq!(board_size(&art("d", "u", 1440, 900), 2.0, (0, 0)).surface, (2880, 1800));
+    }
+
+    #[test]
     fn hosts_from_urls() {
         assert_eq!(url_host("http://light--home.proj-x.localhost:4321/design/a.html"), "light--home.proj-x.localhost");
         assert_eq!(url_host("https://example.com/x?y"), "example.com");
@@ -228,10 +292,11 @@ mod tests {
         let mut alloc = ids();
         let mut a = art("a", "file:///a", 100, 900);
         a.auto_height = true;
-        let (mut boards, _) = sync(Vec::new(), &[a.clone()], &mut alloc);
+        let (mut boards, _) = sync(Vec::new(), &[a.clone()], (0, 0), &mut alloc);
         boards[0].scale = 3.0;
         boards[0].art.height = 2400;
-        let (boards, ops) = sync(boards, &[a], &mut alloc);
+        boards[0].surface = (300, 7200);
+        let (boards, ops) = sync(boards, &[a], (0, 0), &mut alloc);
         assert!(ops.is_empty(), "{ops:?}");
         assert_eq!(boards[0].art.height, 2400);
         assert_eq!(boards[0].scale, 3.0);
@@ -240,7 +305,7 @@ mod tests {
     #[test]
     fn first_sync_opens_everything() {
         let next = [art("a", "file:///a", 100, 100), art("b", "file:///b", 50, 50)];
-        let (boards, ops) = sync(Vec::new(), &next, ids());
+        let (boards, ops) = sync(Vec::new(), &next, (0, 0), ids());
         assert_eq!(boards.len(), 2);
         assert!(matches!(ops[0], Op::Open { tab: TabId(101), .. }));
         assert!(matches!(ops[1], Op::Open { tab: TabId(102), .. }));
@@ -250,10 +315,16 @@ mod tests {
     fn resync_resizes_repoints_and_closes() {
         let mut alloc = ids();
         let first = [art("a", "file:///a", 100, 100), art("b", "file:///b", 50, 50)];
-        let (boards, _) = sync(Vec::new(), &first, &mut alloc);
+        let (boards, _) = sync(Vec::new(), &first, (0, 0), &mut alloc);
         let next = [art("a", "file:///a2", 100, 200), art("c", "file:///c", 10, 10)];
-        let (boards, ops) = sync(boards, &next, &mut alloc);
+        let (boards, ops) = sync(boards, &next, (0, 0), &mut alloc);
         assert_eq!(boards[0].tab, TabId(101));
+        let size = |w, h| BoardSize {
+            width: w,
+            height: h,
+            scale: 2.0,
+            surface: (w * 2, h * 2),
+        };
         assert_eq!(
             ops,
             vec![
@@ -263,17 +334,14 @@ mod tests {
                 },
                 Op::View {
                     tab: TabId(101),
-                    width: 100,
-                    height: 200,
-                    scale: 2.0
+                    size: size(100, 200),
+                    resized: true,
                 },
                 Op::Open {
                     tab: TabId(103),
                     url: "file:///c".into(),
                     title: "c".into(),
-                    width: 10,
-                    height: 10,
-                    scale: 2.0
+                    size: size(10, 10),
                 },
                 Op::Close { tab: TabId(102) },
             ]
@@ -281,10 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn a_bigger_plane_resizes_grown_surfaces_only() {
+        let next = [art("a", "file:///a", 100, 100), art("b", "file:///b", 100, 100)];
+        let (mut boards, _) = sync(Vec::new(), &next, (0, 0), ids());
+        boards[0].grown = true;
+        let (boards, ops) = sync(boards, &next, (640, 400), ids());
+        assert_eq!(boards[0].surface, (640, 400));
+        assert_eq!(boards[1].surface, (200, 200));
+        assert!(matches!(ops[..], [Op::View { resized: false, .. }]), "{ops:?}");
+    }
+
+    #[test]
     fn unchanged_layout_is_quiet() {
         let next = [art("a", "file:///a", 100, 100)];
-        let (boards, _) = sync(Vec::new(), &next, ids());
-        let (_, ops) = sync(boards, &next, ids());
+        let (boards, _) = sync(Vec::new(), &next, (0, 0), ids());
+        let (_, ops) = sync(boards, &next, (0, 0), ids());
         assert!(ops.is_empty());
     }
 
@@ -294,7 +373,7 @@ mod tests {
         let mut b = art("b", "u", 100, 100);
         a.x = 0.0;
         b.x = 50.0;
-        let (boards, _) = sync(Vec::new(), &[a, b], ids());
+        let (boards, _) = sync(Vec::new(), &[a, b], (0, 0), ids());
         let (board, local) = hit(&boards, iced::Point::new(60.0, 10.0)).unwrap();
         assert_eq!(board.art.id, "b");
         assert_eq!(local, (10.0, 10.0));

@@ -78,6 +78,38 @@ pub fn monotonic_ms() -> u64 {
 #[serde(transparent)]
 pub struct TabId(pub u64);
 
+/// A sola-design artboard's geometry. The page lays out at `width × height`
+/// CSS px and rasters at `scale` (page zoom), so the board's own pixels are
+/// `width·scale × height·scale`. `surface` is the OSR view in px — at least
+/// that; the extra room lets a [`BoardDetail`] cover the visible part of a
+/// small board. The layout stays pinned to the board whatever the surface.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BoardSize {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    pub surface: (u32, u32),
+}
+
+impl BoardSize {
+    /// The board's own pixels at its raster scale.
+    pub fn pixels(&self) -> (u32, u32) {
+        let px = |css: u32| ((f64::from(css) * self.scale).round() as u32).max(1);
+        (px(self.width), px(self.height))
+    }
+}
+
+/// A board re-rastered from board-local CSS point `(x, y)` at `scale`
+/// surface px per CSS px, no relayout: the surface's top-left shows that
+/// point, and it covers `surface / scale` CSS px. Sharp past the board's
+/// raster scale at any zoom.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BoardDetail {
+    pub x: f64,
+    pub y: f64,
+    pub scale: f64,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     pub index: i32,
@@ -308,23 +340,26 @@ pub enum Cmd<E: Engine> {
     },
     /// Agent control-plane request (snapshot / act / nav on a named tab).
     Agent(crate::agent::AgentRequest),
-    /// Open a sola-design artboard tab: created at its own CSS size and
-    /// raster scale (Chromium takes the device scale at creation), shown,
+    /// Open a sola-design artboard tab at its own [`BoardSize`]: shown,
     /// painting whether or not it is active. Browser / wrappers never send it.
     OpenBoard {
         id: TabId,
         url: String,
         title: String,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
     },
     /// Resize / re-scale a board tab (see `OpenBoard`).
     SetBoard {
         id: TabId,
-        width: u32,
-        height: u32,
-        scale: f64,
+        size: BoardSize,
+    },
+    /// What a board's frames show from now on: the whole board at its
+    /// raster scale (`None`), or a [`BoardDetail`]. Frames carry the `seq` of
+    /// the request in force when they were painted (`CefFrame::view`).
+    BoardDetail {
+        id: TabId,
+        seq: u32,
+        detail: Option<BoardDetail>,
     },
     /// Pointer / key event for one board tab (not the active tab).
     BoardInput {

@@ -577,6 +577,7 @@ fn spawn_helper(
                                 height: meta.height,
                                 dirty: meta.dirty,
                                 drag: meta.drag,
+                                view: meta.view,
                             },
                         });
                     }
@@ -872,27 +873,18 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             id,
             url,
             title,
-            width,
-            height,
-            scale,
+            size,
         } => Some(ToEngine::OpenBoard {
             id: id.0,
             url,
             title,
-            width,
-            height,
-            scale,
+            size,
         }),
-        Cmd::SetBoard {
-            id,
-            width,
-            height,
-            scale,
-        } => Some(ToEngine::SetBoard {
+        Cmd::SetBoard { id, size } => Some(ToEngine::SetBoard { id: id.0, size }),
+        Cmd::BoardDetail { id, seq, detail } => Some(ToEngine::BoardDetail {
             id: id.0,
-            width,
-            height,
-            scale,
+            seq,
+            detail,
         }),
         Cmd::BoardInput { id, input } => Some(ToEngine::BoardInput { id: id.0, input }),
         Cmd::BoardFocus { id, focused } => Some(ToEngine::BoardFocus { id: id.0, focused }),

@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 
 use crate::cef::paint::{self, DirtyRect, PixelRing};
 
+use crate::cef::board::BoardView;
 use crate::engine::{
     AbsorbDamage, ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine,
     FrameReceiver, FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext,
@@ -45,11 +46,16 @@ pub struct CefFrame {
     /// Host-composited HTML5 drag overlay. Shader pumps while this is set;
     /// chrome must not park it as the tab's last clean frame.
     pub drag: bool,
+    /// sola-design board view `seq` this frame shows (`Cmd::BoardDetail`);
+    /// 0 for every other tab and before a board's first request.
+    pub view: u32,
 }
 
 impl AbsorbDamage for CefFrame {
     fn absorb_damage(&mut self, dropped: &Self) {
-        if self.width != dropped.width || self.height != dropped.height {
+        // Another view's frame is a different picture: all of this one is new.
+        if self.width != dropped.width || self.height != dropped.height || self.view != dropped.view
+        {
             self.dirty.clear();
             return;
         }
@@ -546,38 +552,9 @@ struct CefTabState {
     board: Cell<Option<BoardView>>,
 }
 
-/// A board tab's own viewport: CSS px plus raster scale. The OSR view is
-/// `width·scale × height·scale` pixels and the page is zoomed by `scale`, so
-/// the layout viewport stays `width × height` CSS px while text and images
-/// raster at full resolution. (This CEF's OSR ignores the device scale
-/// factor, so zoom is the scale.)
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct BoardView {
-    width: u32,
-    height: u32,
-    scale: f64,
-}
-
-impl BoardView {
-    fn pixels(self) -> (u32, u32) {
-        let px = |css: u32| ((f64::from(css) * self.scale).round() as u32).max(1);
-        (px(self.width), px(self.height))
-    }
-
-    /// Chromium zoom level for this scale (`factor = 1.2^level`).
-    fn zoom_level(self) -> f64 {
-        self.scale.ln() / 1.2_f64.ln()
-    }
-
-    /// CSS px → view px for board input.
-    fn to_view(self, v: i32) -> i32 {
-        (f64::from(v) * self.scale).round() as i32
-    }
-}
-
-/// Keep a board page zoomed to its raster scale. Zoom is per host in
-/// Chromium, so all of one canvas's file:// boards share a scale.
-fn apply_board_zoom(host: &cef::BrowserHost, board: BoardView) {
+/// Keep a board page zoomed to its raster scale (zoom is per host in
+/// Chromium; served boards each have their own host).
+fn apply_board_zoom(host: &cef::BrowserHost, board: &BoardView) {
     let level = board.zoom_level();
     if (host.zoom_level() - level).abs() > 1e-6 {
         host.set_zoom_level(level);
@@ -1687,7 +1664,7 @@ cef::wrap_load_handler! {
             }
             // A navigation can land on another host's zoom: keep the board's.
             if let (Some(board), Some(host)) = (board_view(&state, Some(browser)), browser.host()) {
-                apply_board_zoom(&host, board);
+                apply_board_zoom(&host, &board);
             }
         }
 
@@ -3048,6 +3025,7 @@ fn publish_view_paint(
         height: h,
         dirty,
         drag: false,
+        view: board_tag(tab),
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
     if drag_has_ghost(state) {
@@ -3148,6 +3126,7 @@ fn publish_popup_paint(
         height: view.height,
         dirty,
         drag: false,
+        view: board_tag(tab),
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
     state.frames.push(TaggedFrame {
@@ -3556,9 +3535,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             id,
             url,
             title,
-            width,
-            height,
-            scale,
+            size,
         } => {
             let next = id.0.saturating_add(1);
             if next > state.next_id.load(std::sync::atomic::Ordering::Relaxed) {
@@ -3566,18 +3543,15 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                     .next_id
                     .store(next, std::sync::atomic::Ordering::Relaxed);
             }
-            let view = board_view_of(width, height, scale);
-            state.pending_board.set(Some(view));
+            state.pending_board.set(Some(BoardView::new(size)));
             open_tab(state, id, url, title);
             state.pending_board.set(None);
         }
-        Cmd::SetBoard {
-            id,
-            width,
-            height,
-            scale,
-        } => {
-            set_board(state, id, width, height, scale);
+        Cmd::SetBoard { id, size } => {
+            set_board(state, id, size);
+        }
+        Cmd::BoardDetail { id, seq, detail } => {
+            set_board_detail(state, id, seq, detail);
         }
         Cmd::BoardInput { id, input } => {
             let target = tab_state_by_id(state, id)
@@ -3937,7 +3911,7 @@ fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32
         }
     }
     if let Some(board) = board_view(state, browser) {
-        return board.pixels();
+        return board.surface();
     }
     *state.size.lock().unwrap()
 }
@@ -4445,6 +4419,7 @@ fn publish_drag_overlay_on(state: &CefThreadState, tab: &CefTabState, extra: Ove
             height: view_h,
             dirty,
             drag: true,
+            view: 0,
         },
     }) {
         state.osr.note_mailbox_drop();
@@ -4812,6 +4787,7 @@ mod frame_absorb_tests {
             width: 2,
             height: 2,
             dirty,
+            view: 0,
             drag: false,
         }
     }
@@ -4976,36 +4952,91 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
 /// Make `id` a sola-design artboard (or update its view). Shown, resized,
 /// and repainted at its own size and raster scale; never hidden by a tab
 /// switch. `notify_screen_info_changed` re-reads the device scale.
-fn board_view_of(width: u32, height: u32, scale: f64) -> BoardView {
-    BoardView {
-        width: width.max(1),
-        height: height.max(1),
-        scale: if scale.is_finite() && scale > 0.0 { scale } else { 1.0 },
-    }
-}
-
-fn set_board(state: &CefThreadState, id: TabId, width: u32, height: u32, scale: f64) {
-    let view = board_view_of(width, height, scale);
-    let host = {
+fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) {
+    let (host, browser_id, view) = {
         let Some(tab) = tab_state_by_id(state, id) else {
             tracing::warn!(?id, "SetBoard: unknown tab");
             return;
         };
-        let prev = tab.board.replace(Some(view));
-        if prev == Some(view) {
+        let Some(prev) = tab.board.get() else {
+            return;
+        };
+        let view = BoardView {
+            want: prev.want,
+            tag: prev.tag,
+            ..BoardView::new(size)
+        };
+        if view == prev {
             return;
         }
-        tab.browser.host()
+        tab.board.set(Some(view));
+        (tab.browser.host(), tab.browser_id, view)
     };
     let Some(host) = host else {
         return;
     };
     host.was_hidden(0);
     host.set_windowless_frame_rate(60);
-    apply_board_zoom(&host, view);
+    apply_board_zoom(&host, &view);
+    // The pinned layout follows the new size; the view in force is re-sent.
+    crate::cef::board::request(&host, browser_id, id, &view);
     host.was_resized();
     host.invalidate(cef::PaintElementType::VIEW);
-    tracing::debug!(?id, width = view.width, height = view.height, scale = view.scale, "board view");
+    tracing::debug!(?id, size = ?view.size, "board view");
+}
+
+/// A board's view request (`Cmd::BoardDetail`).
+fn set_board_detail(
+    state: &CefThreadState,
+    id: TabId,
+    seq: u32,
+    detail: Option<crate::engine::BoardDetail>,
+) {
+    let target = tab_state_by_id(state, id).and_then(|tab| {
+        let mut view = tab.board.get()?;
+        view.want = (seq, detail);
+        tab.board.set(Some(view));
+        Some((tab.browser.host()?, tab.browser_id, view))
+    });
+    if let Some((host, browser_id, view)) = target {
+        crate::cef::board::request(&host, browser_id, id, &view);
+    }
+}
+
+/// A DevTools answer for a board call (see [`crate::cef::board`]). False
+/// when the call was not a board's.
+pub(crate) fn on_board_cdp_result(browser_id: i32, message_id: i32, success: bool, json: &str) -> bool {
+    use crate::cef::board::{self, Answer};
+    let answer = board::on_result(browser_id, message_id, success, json);
+    let state = cef_state();
+    match answer {
+        Answer::NotOurs => return false,
+        Answer::Done => {}
+        Answer::Applied { tab, seq } => {
+            if let Some(t) = tab_state_by_id(&state, tab) {
+                if let Some(mut view) = t.board.get() {
+                    // Answers can overtake each other; requests only grow.
+                    view.tag = view.tag.max(seq);
+                    t.board.set(Some(view));
+                }
+            }
+        }
+        Answer::Scroll { tab, seq, scroll } => {
+            let target = tab_state_by_id(&state, tab).and_then(|t| {
+                let view = t.board.get()?;
+                (view.want.0 == seq).then_some((t.browser.host()?, t.browser_id, view))
+            });
+            if let Some((host, bid, view)) = target {
+                board::send_detail(&host, bid, tab, &view, scroll);
+            }
+        }
+    }
+    true
+}
+
+/// View `seq` a board frame shows (0 for every other tab).
+fn board_tag(tab: &CefTabState) -> u32 {
+    tab.board.get().map_or(0, |b| b.tag)
 }
 
 fn is_board_browser(state: &CefThreadState, browser_id: i32) -> bool {
@@ -5205,7 +5236,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let initial_title = crate::util::wayland_title_text(&initial_title);
     let mut window_info = cef::WindowInfo::default();
     let (w, h) = match state.pending_board.get() {
-        Some(b) => (b.width, b.height),
+        Some(b) => b.surface(),
         None => *state.size.lock().unwrap(),
     };
     apply_osr_window_info(&mut window_info, w, h);
@@ -5274,10 +5305,13 @@ fn push_tab(
         // (Prewarm / parked profiles must not composite.)
         let show = (is_active || board.is_some()) && state.is_front.get();
         set_host_hidden(&host, !show);
+        let obs = crate::cef::agent::attach(&mut host);
         if let Some(b) = board {
-            apply_board_zoom(&host, b);
+            apply_board_zoom(&host, &b);
+            // Pin the layout to the board before the page lays out.
+            crate::cef::board::request(&host, browser_id, id, &b);
         }
-        crate::cef::agent::attach(&mut host)
+        obs
     } else {
         None
     };

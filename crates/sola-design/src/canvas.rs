@@ -11,9 +11,9 @@ use serde::Deserialize;
 pub const DESIGN_DIR: &str = "design";
 pub const CANVAS_FILE: &str = "canvas.toml";
 
-/// Largest artboard side in CSS px. Beyond this the raster scale drops
-/// below 1 and the board stops being useful.
-pub const MAX_SIDE: u32 = 8192;
+/// Largest artboard side in CSS px. Past 8192 a board rasters under 1×
+/// (its texture would not fit) and stays sharp through detail renders.
+pub const MAX_SIDE: u32 = 32768;
 /// Viewport height an `auto` artboard starts at, before it is measured.
 pub const AUTO_START_HEIGHT: u32 = 900;
 
@@ -21,6 +21,9 @@ pub const AUTO_START_HEIGHT: u32 = 900;
 #[serde(deny_unknown_fields)]
 struct CanvasFile {
     title: Option<String>,
+    /// Web root inside the project (project-relative): root-absolute URLs
+    /// look here first, then at the project root.
+    root: Option<String>,
     #[serde(default, rename = "artboard")]
     artboards: Vec<ArtboardSpec>,
 }
@@ -68,6 +71,8 @@ pub struct Artboard {
 pub struct Canvas {
     pub title: String,
     pub artboards: Vec<Artboard>,
+    /// `root` resolved: an existing directory inside the project.
+    pub web_root: Option<PathBuf>,
 }
 
 /// A canvas as the rail lists it.
@@ -137,7 +142,39 @@ pub fn parse(dir: &Path, text: &str) -> Result<Canvas, String> {
         });
     }
     let title = file.title.unwrap_or_else(|| dir_name(dir));
-    Ok(Canvas { title, artboards })
+    let web_root = file.root.map(|r| web_root(dir, &r)).transpose()?;
+    Ok(Canvas {
+        title,
+        artboards,
+        web_root,
+    })
+}
+
+/// `root = "…"`: a directory inside the project (the canvas dir is
+/// `<project>/design/<canvas>`), no `..`, no dotfile segments.
+fn web_root(dir: &Path, root: &str) -> Result<PathBuf, String> {
+    let project = dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "root: the canvas is not under <project>/design/".to_string())?;
+    let rel = Path::new(root.trim().trim_start_matches("./"));
+    let mut path = project.to_path_buf();
+    for part in rel.components() {
+        match part {
+            std::path::Component::Normal(seg) if !seg.to_string_lossy().starts_with('.') => {
+                path.push(seg)
+            }
+            _ => {
+                return Err(format!(
+                    "root: {root:?} must be a project-relative path (no .., no dotfiles)"
+                ));
+            }
+        }
+    }
+    if !path.is_dir() {
+        return Err(format!("root: {} is not a directory", path.display()));
+    }
+    Ok(path)
 }
 
 /// Canvases under `<root>/design/`, sorted by directory name. A directory
@@ -199,6 +236,9 @@ pub fn create(root: &Path, title: &str) -> Result<String, String> {
 
 const TEMPLATE_HEADER: &str = "\
 # sola-design canvas. Artboards are HTML files in this directory.
+#
+# root = \"web/public\"     # optional: root-absolute URLs (/fonts/x) look in
+#                         # this project folder first, then the project root
 #
 # [[artboard]]
 # id = \"desktop\"          # unique; defaults to the src file stem
@@ -319,6 +359,22 @@ mod tests {
         assert_eq!(c.artboards[1].url, "http://localhost:5173/");
         assert_eq!(c.artboards[1].title, "Live");
         assert_eq!(c.artboards[1].y, -20.5);
+    }
+
+    #[test]
+    fn web_root_stays_in_the_project() {
+        let project = std::env::temp_dir().join(format!("sola-design-root-{}", std::process::id()));
+        let dir = project.join("design/home");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(project.join("web/public")).unwrap();
+        let c = parse(&dir, "root = \"web/public\"").unwrap();
+        assert_eq!(c.web_root, Some(project.join("web/public")));
+        assert_eq!(parse(&dir, "").unwrap().web_root, None);
+        for bad in ["../x", "/etc", ".git", "web/missing"] {
+            let err = parse(&dir, &format!("root = {bad:?}")).unwrap_err();
+            assert!(err.starts_with("root:"), "{bad}: {err}");
+        }
+        let _ = std::fs::remove_dir_all(project);
     }
 
     #[test]

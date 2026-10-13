@@ -373,12 +373,12 @@ fn put(browser_id: i32, message_id: i32, job: Job) {
     });
 }
 
-fn cdp(host: &BrowserHost, method: &str, params: Option<&mut DictionaryValue>) -> i32 {
+pub(crate) fn cdp(host: &BrowserHost, method: &str, params: Option<&mut DictionaryValue>) -> i32 {
     let m = CefString::from(method);
     host.execute_dev_tools_method(0, Some(&m), params)
 }
 
-fn dict() -> DictionaryValue {
+pub(crate) fn dict() -> DictionaryValue {
     dictionary_value_create().expect("cef dictionary")
 }
 
@@ -388,17 +388,17 @@ fn set_str(d: &mut DictionaryValue, k: &str, v: &str) {
     let _ = d.set_string(Some(&key), Some(&val));
 }
 
-fn set_int(d: &mut DictionaryValue, k: &str, v: i32) {
+pub(crate) fn set_int(d: &mut DictionaryValue, k: &str, v: i32) {
     let key = CefString::from(k);
     let _ = d.set_int(Some(&key), v);
 }
 
-fn set_bool(d: &mut DictionaryValue, k: &str, v: bool) {
+pub(crate) fn set_bool(d: &mut DictionaryValue, k: &str, v: bool) {
     let key = CefString::from(k);
     let _ = d.set_bool(Some(&key), v as _);
 }
 
-fn set_f64(d: &mut DictionaryValue, k: &str, v: f64) {
+pub(crate) fn set_f64(d: &mut DictionaryValue, k: &str, v: f64) {
     let key = CefString::from(k);
     let _ = d.set_double(Some(&key), v);
 }
@@ -1007,6 +1007,9 @@ cef::wrap_dev_tools_message_observer! {
             let json = result
                 .map(|b| String::from_utf8_lossy(b).into_owned())
                 .unwrap_or_default();
+            if crate::cef::engine::on_board_cdp_result(bid, message_id, success != 0, &json) {
+                return;
+            }
             on_result(bid, message_id, success != 0, &json);
         }
     }

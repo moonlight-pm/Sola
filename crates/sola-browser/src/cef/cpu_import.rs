@@ -96,6 +96,33 @@ pub fn upload(
     (false, bytes)
 }
 
+/// [`upload`] for the top-left `w × h` of `frame` only, into a texture of
+/// that size (a frame larger than the picture it carries). Dirty rects are
+/// clipped to it.
+pub fn upload_cropped(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    frame: &CefFrame,
+    staging: &mut Vec<u8>,
+    force_full: bool,
+    (w, h): (u32, u32),
+) {
+    let (w, h) = (w.min(frame.width), h.min(frame.height));
+    let full =
+        force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height);
+    let src = frame.pixels.as_slice();
+    if full {
+        upload_rect(queue, texture, src, frame.width, 0, 0, w, h, staging);
+        return;
+    }
+    for r in &frame.dirty {
+        let (x1, y1) = ((r.x + r.w).min(w), (r.y + r.h).min(h));
+        if r.x < x1 && r.y < y1 {
+            upload_rect(queue, texture, src, frame.width, r.x, r.y, x1 - r.x, y1 - r.y, staging);
+        }
+    }
+}
+
 fn upload_rect(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,

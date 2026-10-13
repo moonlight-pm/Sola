@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–4 and both Exit fix rounds done; merged to master 2026-10-12
+**Status:** slices 1–4 and both Exit fix rounds on master (2026-10-12); slice 5 on the worktree, installed
 
 ---
 
@@ -213,3 +213,16 @@
 - [x] Helper tab snapshot only rebuilt after a command drain → an idle
       Design never saw loads finish (`reload` timed out, auto height never
       measured). CEF callbacks now `mark_snapshot_dirty` + post a drain.
+
+## Slice 5 — limits, agent / human (2026-10-12)
+
+- [x] Detail renders: board layout pinned (`Emulation.setDeviceMetricsOverride`), viewport override for the visible part at screen scale; frames tagged with the acknowledged request `seq`; plane base + detail textures; surfaces grow to the plane on demand.
+- [x] Raster scale under 1× for pages past 8192 px (`MAX_SIDE` 32768); zoom limit 3200%.
+- [x] Origin: single byte ranges; canvas `root` web root (looked in first; reload when it changes).
+- [x] `auto` re-measures 1 / 3 / 8 s after a settle.
+- [x] Agent reads independent of the view: captures hold the board whole, pointer leaves first; `view` yields to the human.
+- [x] Agent glow (overlay shimmer).
+- [x] Page IME through an overlay wrapper.
+- [x] Helper waits for a predecessor still shutting down (self-restart race).
+- [x] Verified: detail frames sharp and aligned to the base (engine frame dump); captures whole-board while zoomed; PDF under the pin.
+- [ ] Human: smoke on screen — zoom past 200%, pan, glow, IME.

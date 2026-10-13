@@ -63,7 +63,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "view",
-            "Steer the camera: --fit, --artboard (fit it), --zoom",
+            "Steer the human's camera: --fit, --artboard (fit it), --zoom. Once the human has moved it on this canvas it stays put (`moved: false`)",
             &[
                 flag("fit", 'f', "Fit every artboard"),
                 artboard(),
@@ -84,7 +84,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "screenshot",
-            "PNG of an artboard as rendered (canvas raster scale, reported as `scale`: 2×, or 1× when a board is too big)",
+            "PNG of the whole artboard at its raster scale (`scale`: 2×, else 1×, else less for a page over 8192 px). The human's view does not change it",
             &[
                 artboard(),
                 opt("out", Some('o'), ArgType::Path, "Write here (default: runtime dir)"),

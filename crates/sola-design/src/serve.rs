@@ -6,14 +6,19 @@
 //! has its own host — Chromium keeps page zoom per host, so each board gets
 //! its own raster scale.
 //!
-//! Bound to 127.0.0.1 on a random port. GET / HEAD only; files under a
-//! registered project root; no dotfile segments (`.git`, `.env`); no
-//! directory listing (`index.html` only). The `Host` must name a registered
-//! project, which also stops DNS rebinding; no CORS header, so other origins
-//! cannot read responses.
+//! A canvas can name a web root inside the project (`root` in
+//! `canvas.toml`): its boards look a path up there first, then at the
+//! project root — so a product's `/fonts/x.woff2` works while the boards'
+//! own `/design/<canvas>/…` URLs still resolve.
+//!
+//! Bound to 127.0.0.1 on a random port. GET / HEAD only, single byte
+//! ranges (media seeking); files under a registered project root; no
+//! dotfile segments (`.git`, `.env`); no directory listing (`index.html`
+//! only). The `Host` must name a registered project, which also stops DNS
+//! rebinding; no CORS header, so other origins cannot read responses.
 
 use std::collections::HashMap;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -25,10 +30,14 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Project label (`<project>` in the host) → project root.
 type Roots = Arc<RwLock<HashMap<String, PathBuf>>>;
+/// Board host (`<board>--<canvas>.<project>`, no `.localhost`) → its
+/// canvas's web root.
+type WebRoots = Arc<RwLock<HashMap<String, PathBuf>>>;
 
 pub struct Server {
     port: u16,
     roots: Roots,
+    web_roots: WebRoots,
 }
 
 impl Server {
@@ -36,21 +45,27 @@ impl Server {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = listener.local_addr()?.port();
         let roots: Roots = Arc::default();
-        let shared = roots.clone();
+        let web_roots: WebRoots = Arc::default();
+        let (shared, shared_web) = (roots.clone(), web_roots.clone());
         std::thread::Builder::new()
             .name("design-serve".into())
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let roots = shared.clone();
+                    let web_roots = shared_web.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = handle(stream, &roots) {
+                        if let Err(e) = handle(stream, &roots, &web_roots) {
                             tracing::debug!(error = %e, "design serve connection");
                         }
                     });
                 }
             })?;
         tracing::info!(port, "design origin listening on 127.0.0.1");
-        Ok(Self { port, roots })
+        Ok(Self {
+            port,
+            roots,
+            web_roots,
+        })
     }
 
     /// Replace the served projects (`id → root`).
@@ -65,8 +80,10 @@ impl Server {
     }
 
     /// Board URL for `file` (with its `?query#fragment` suffix) shown as
-    /// `board` of `canvas` in `project`. `None` when `file` is outside `root`
-    /// (the board stays on `file://`).
+    /// `board` of `canvas` in `project`, whose root-absolute paths look in
+    /// `web_root` first. `None` when `file` is outside `root` (the board
+    /// stays on `file://`).
+    #[allow(clippy::too_many_arguments)]
     pub fn url(
         &self,
         project: &str,
@@ -75,6 +92,7 @@ impl Server {
         suffix: &str,
         board: &str,
         canvas: &str,
+        web_root: Option<&Path>,
     ) -> Option<String> {
         let rel = file.strip_prefix(root).ok()?;
         let mut path = String::new();
@@ -85,8 +103,14 @@ impl Server {
             path.push('/');
             path.push_str(&escape(&seg.to_string_lossy()));
         }
-        let host = format!("{}.{}.localhost", dns_label(&format!("{board}--{canvas}")), dns_label(project));
-        Some(format!("http://{host}:{}{path}{suffix}", self.port))
+        let site = format!("{}.{}", dns_label(&format!("{board}--{canvas}")), dns_label(project));
+        if let Ok(mut map) = self.web_roots.write() {
+            match web_root {
+                Some(dir) => map.insert(site.clone(), dir.to_path_buf()),
+                None => map.remove(&site),
+            };
+        }
+        Some(format!("http://{site}.localhost:{}{path}{suffix}", self.port))
     }
 
     /// The file a URL of this origin names (`None` for anything else).
@@ -97,8 +121,8 @@ impl Server {
         if port.parse::<u16>().ok()? != self.port {
             return None;
         }
-        let root = project_root(&self.roots, host)?;
-        resolve(&root, path).ok()
+        let (root, web_root) = roots_for(&self.roots, &self.web_roots, host)?;
+        lookup(&root, web_root.as_deref(), path).ok()
     }
 }
 
@@ -142,15 +166,28 @@ fn unescape(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// `<board>.<project>.localhost[:port]` → that project's root.
-fn project_root(roots: &Roots, host: &str) -> Option<PathBuf> {
+/// `<board>.<project>.localhost[:port]` → that project's root, and the
+/// board's canvas web root if it has one.
+fn roots_for(roots: &Roots, web_roots: &WebRoots, host: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     let host = host.split(':').next()?.to_ascii_lowercase();
     let labels: Vec<&str> = host.split('.').collect();
     let n = labels.len();
     if n < 3 || labels[n - 1] != "localhost" {
         return None;
     }
-    roots.read().ok()?.get(labels[n - 2]).cloned()
+    let root = roots.read().ok()?.get(labels[n - 2]).cloned()?;
+    let site = format!("{}.{}", labels[n - 3], labels[n - 2]);
+    let web_root = web_roots.read().ok()?.get(&site).cloned();
+    Some((root, web_root))
+}
+
+/// [`resolve`] in the canvas web root, then in the project root.
+fn lookup(root: &Path, web_root: Option<&Path>, raw: &str) -> Result<PathBuf, Refusal> {
+    match web_root.map(|w| resolve(w, raw)) {
+        Some(Ok(file)) => Ok(file),
+        Some(Err(Refusal::Missing)) | None => resolve(root, raw),
+        Some(Err(refused)) => Err(refused),
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -218,7 +255,31 @@ fn mime(path: &Path) -> &'static str {
     }
 }
 
-fn handle(stream: TcpStream, roots: &Roots) -> io::Result<()> {
+/// `Range: bytes=…` against a `len`-byte file: `None` serves the whole file
+/// (no header, a multi-range, or a unit we do not speak), `Some(Err(()))`
+/// is unsatisfiable (416), else the inclusive byte span.
+fn byte_range(header: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
+    let spec = header.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let (a, b) = (a.trim(), b.trim());
+    let span = if a.is_empty() {
+        let n: u64 = b.parse().ok()?;
+        if n == 0 {
+            return Some(Err(()));
+        }
+        (len.saturating_sub(n), len.checked_sub(1)?)
+    } else {
+        let start: u64 = a.parse().ok()?;
+        let end = if b.is_empty() { len.saturating_sub(1) } else { b.parse::<u64>().ok()?.min(len.saturating_sub(1)) };
+        (start, end)
+    };
+    Some(if span.0 < len && span.0 <= span.1 { Ok(span) } else { Err(()) })
+}
+
+fn handle(stream: TcpStream, roots: &Roots, web_roots: &WebRoots) -> io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut reader = BufReader::new(stream.try_clone()?).take(MAX_HEAD as u64);
     let mut line = String::new();
@@ -226,6 +287,7 @@ fn handle(stream: TcpStream, roots: &Roots) -> io::Result<()> {
     let mut parts = line.split_whitespace();
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut host = String::new();
+    let mut range = None;
     loop {
         let mut h = String::new();
         if reader.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" {
@@ -234,6 +296,8 @@ fn handle(stream: TcpStream, roots: &Roots) -> io::Result<()> {
         if let Some((k, v)) = h.split_once(':') {
             if k.eq_ignore_ascii_case("host") {
                 host = v.trim().to_string();
+            } else if k.eq_ignore_ascii_case("range") {
+                range = Some(v.trim().to_string());
             }
         }
     }
@@ -241,10 +305,10 @@ fn handle(stream: TcpStream, roots: &Roots) -> io::Result<()> {
     if method != "GET" && method != "HEAD" {
         return status(&mut out, 405, "Method Not Allowed");
     }
-    let Some(root) = project_root(roots, &host) else {
+    let Some((root, web_root)) = roots_for(roots, web_roots, &host) else {
         return status(&mut out, 404, "Not Found");
     };
-    let file = match resolve(&root, target) {
+    let file = match lookup(&root, web_root.as_deref(), target) {
         Ok(f) => f,
         Err(Refusal::Bad) => return status(&mut out, 400, "Bad Request"),
         Err(Refusal::Hidden) => return status(&mut out, 403, "Forbidden"),
@@ -255,14 +319,38 @@ fn handle(stream: TcpStream, roots: &Roots) -> io::Result<()> {
         Err(_) => return status(&mut out, 404, "Not Found"),
     };
     let len = body.metadata()?.len();
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {len}\r\n\
-         Cache-Control: no-store\r\nConnection: close\r\n\r\n",
-        mime(&file)
-    )?;
-    if method == "GET" {
-        io::copy(&mut body, &mut out)?;
+    let kind = mime(&file);
+    match range.as_deref().and_then(|r| byte_range(r, len)) {
+        None => {
+            write!(
+                out,
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {len}\r\n\
+                 Accept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+            )?;
+            if method == "GET" {
+                io::copy(&mut body, &mut out)?;
+            }
+        }
+        Some(Ok((start, end))) => {
+            let n = end - start + 1;
+            write!(
+                out,
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: {kind}\r\nContent-Length: {n}\r\n\
+                 Content-Range: bytes {start}-{end}/{len}\r\nAccept-Ranges: bytes\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+            )?;
+            if method == "GET" {
+                body.seek(SeekFrom::Start(start))?;
+                io::copy(&mut body.take(n), &mut out)?;
+            }
+        }
+        Some(Err(())) => {
+            write!(
+                out,
+                "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{len}\r\n\
+                 Content-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+        }
     }
     out.flush()
 }
@@ -323,6 +411,60 @@ mod tests {
     }
 
     #[test]
+    fn byte_ranges() {
+        assert_eq!(byte_range("bytes=0-99", 1000), Some(Ok((0, 99))));
+        assert_eq!(byte_range("bytes=900-", 1000), Some(Ok((900, 999))));
+        assert_eq!(byte_range("bytes=-100", 1000), Some(Ok((900, 999))));
+        assert_eq!(byte_range("bytes=990-2000", 1000), Some(Ok((990, 999))));
+        assert_eq!(byte_range("bytes=1000-", 1000), Some(Err(())));
+        assert_eq!(byte_range("bytes=5-1", 1000), Some(Err(())));
+        assert_eq!(byte_range("bytes=0-1,5-6", 1000), None);
+        assert_eq!(byte_range("items=0-1", 1000), None);
+    }
+
+    fn get_raw(port: u16, host: &str, path: &str, extra: &str) -> String {
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write!(s, "GET {path} HTTP/1.1\r\nHost: {host}\r\n{extra}\r\n").unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn ranges_and_web_roots() {
+        let root = temp_root("range");
+        std::fs::create_dir_all(root.join("web/public/fonts")).unwrap();
+        std::fs::write(root.join("web/public/fonts/a.txt"), "0123456789").unwrap();
+        std::fs::write(root.join("web/public/shadow.txt"), "web").unwrap();
+        std::fs::write(root.join("shadow.txt"), "project").unwrap();
+        let server = Server::start().unwrap();
+        server.set_projects([("proj-x", root.as_path())]);
+        let page = root.join("design/home/index.html");
+        let web = root.join("web/public");
+        server.url("proj-x", &root, &page, "", "light", "home", Some(&web)).unwrap();
+        server.url("proj-x", &root, &page, "", "plain", "home", None).unwrap();
+        let light = format!("light--home.proj-x.localhost:{}", server.port);
+        let plain = format!("plain--home.proj-x.localhost:{}", server.port);
+
+        let part = get_raw(server.port, &light, "/fonts/a.txt", "Range: bytes=2-4\r\n");
+        assert!(part.starts_with("HTTP/1.1 206"), "{part}");
+        assert!(part.contains("Content-Range: bytes 2-4/10") && part.ends_with("234"), "{part}");
+        let all = get_raw(server.port, &light, "/fonts/a.txt", "");
+        assert!(all.contains("Accept-Ranges: bytes") && all.ends_with("0123456789"), "{all}");
+        let bad = get_raw(server.port, &light, "/fonts/a.txt", "Range: bytes=50-\r\n");
+        assert!(bad.starts_with("HTTP/1.1 416"), "{bad}");
+
+        // The web root wins; the project root still serves the board.
+        assert!(get_raw(server.port, &light, "/shadow.txt", "").ends_with("web"));
+        assert!(get_raw(server.port, &plain, "/shadow.txt", "").ends_with("project"));
+        assert!(get_raw(server.port, &light, "/design/home/", "").ends_with("idx"));
+        assert!(get_raw(server.port, &plain, "/fonts/a.txt", "").starts_with("HTTP/1.1 404"));
+        let url = format!("http://{light}/fonts/a.txt");
+        assert_eq!(server.local_path(&url), Some(web.join("fonts/a.txt")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn serves_registered_hosts_only() {
         let root = temp_root("serve");
         let server = Server::start().unwrap();
@@ -335,6 +477,7 @@ mod tests {
                 "?theme=dark",
                 "light",
                 "home",
+                None,
             )
             .unwrap();
         assert!(url.starts_with("http://light--home.proj-x.localhost:"), "{url}");
@@ -355,7 +498,7 @@ mod tests {
         assert!(get(&host, "/.git/config").starts_with("HTTP/1.1 403"));
         assert!(get("evil.example:80", "/design/home/index.html").starts_with("HTTP/1.1 404"));
         assert!(get(&host, "/design/home/missing.css").starts_with("HTTP/1.1 404"));
-        assert!(server.url("proj-x", &root, Path::new("/elsewhere/a.html"), "", "b", "c").is_none());
+        assert!(server.url("proj-x", &root, Path::new("/elsewhere/a.html"), "", "b", "c", None).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 }
