@@ -28,6 +28,9 @@ pub enum Kind {
     Main,
     Worktree,
     Folder,
+    /// Extra tab in the project root checkout. No worktree; it works on
+    /// whatever branch the root has checked out (usually master).
+    Root,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -631,9 +634,15 @@ pub fn move_project_before(
     Ok(())
 }
 
-/// Sibling worktrees can close from the row. The project's root
-/// checkout cannot — drop the whole project instead (`unregister_project`).
+/// Sibling worktrees and root tabs can close from the row. The project's
+/// main tab cannot — drop the whole project instead (`unregister_project`).
 pub fn can_close(ws: &Workspace) -> bool {
+    matches!(ws.kind, Kind::Worktree | Kind::Root)
+}
+
+/// This tab owns a `.worktrees/<slug>` checkout (rename / branch /
+/// `git worktree remove` apply). Root tabs share the project root.
+pub fn has_worktree(ws: &Workspace) -> bool {
     ws.kind == Kind::Worktree
 }
 
@@ -662,7 +671,7 @@ pub fn worktree_name_taken(
 pub fn missing_worktree_ids(workspaces: &[Workspace]) -> Vec<String> {
     workspaces
         .iter()
-        .filter(|w| can_close(w) && !w.path.exists())
+        .filter(|w| has_worktree(w) && !w.path.exists())
         .map(|w| w.id.clone())
         .collect()
 }
@@ -1188,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn only_worktrees_can_close() {
+    fn worktrees_and_root_tabs_can_close() {
         let main = Workspace {
             id: "ws-main".into(),
             project_id: "p".into(),
@@ -1211,9 +1220,18 @@ mod tests {
             kind: Kind::Worktree,
             ..main.clone()
         };
+        let root_tab = Workspace {
+            id: "ws-hotfix".into(),
+            kind: Kind::Root,
+            ..main.clone()
+        };
         assert!(!can_close(&main));
         assert!(!can_close(&folder));
         assert!(can_close(&tree));
+        assert!(can_close(&root_tab));
+        assert!(has_worktree(&tree));
+        assert!(!has_worktree(&root_tab));
+        assert!(!has_worktree(&main));
     }
 
     #[test]
@@ -1250,7 +1268,13 @@ mod tests {
             kind: Kind::Main,
             ..live.clone()
         };
-        assert!(missing_worktree_ids(&[live.clone(), root]).is_empty());
+        let root_tab = Workspace {
+            id: "ws-hotfix".into(),
+            path: PathBuf::from("/no/such/root"),
+            kind: Kind::Root,
+            ..live.clone()
+        };
+        assert!(missing_worktree_ids(&[live.clone(), root, root_tab]).is_empty());
         assert_eq!(missing_worktree_ids(&[live, gone]), ["ws-gone"]);
         let _ = std::fs::remove_dir_all(&dir);
     }

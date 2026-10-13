@@ -64,10 +64,21 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "workspace.spawn",
-            "Create a sibling worktree and open a pane",
+            "Open a sibling tab: a new worktree, or the project root (--root)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
-                req_s("name", Some('n'), ".worktrees/ slug (rail default)"),
+                req_s(
+                    "name",
+                    Some('n'),
+                    ".worktrees/ slug, or the tab name with --root (rail default)",
+                ),
+                arg(
+                    "root",
+                    false,
+                    ArgType::Bool,
+                    None,
+                    "No worktree: open in the project root on its branch (usually master)",
+                ),
                 opt_s("branch", Some('b'), "Git branch (default: same as name)"),
                 opt_s("base-branch", None, "Start-point (default: HEAD)"),
                 opt_s("title", None, "Rail label (default: name)"),
@@ -98,7 +109,7 @@ pub fn methods() -> Vec<MethodSpec> {
                     false,
                     ArgType::Bool,
                     None,
-                    "Also git worktree remove the checkout",
+                    "Also git worktree remove the checkout (worktree tabs only)",
                 ),
                 flag(
                     "force",
@@ -303,6 +314,9 @@ mod tests {
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
         assert!(spawn.args.iter().any(|a| a.name == "base-branch"));
         assert!(spawn.args.iter().any(|a| a.name == "branch"));
+        let root = spawn.args.iter().find(|a| a.name == "root").unwrap();
+        assert!(matches!(root.ty, ArgType::Bool));
+        assert!(!root.required);
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
