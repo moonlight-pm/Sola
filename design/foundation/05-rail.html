@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation v1 / Graphite / 05 Rail, menus, panels</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="components.css">
+</head>
+<body style="padding: 72px">
+<div
+  data-name="05 Rail, menus, panels"
+  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; flex-shrink: 0; gap: 36px; height: fit-content; width: 100%"
+>
+  <div
+    data-name="Header"
+    style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 1px 0px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: 110.5px; margin: -0.5px 0px 0px 0px; padding: 24px 0px 0px 0px; width: 1296px"
+  >
+    <div
+      data-name="Title Row"
+      style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
+    >
+      <div
+        data-name="Number"
+        style="color: var(--accent); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
+      >
+        05
+      </div>
+      <div
+        data-name="Title"
+        style="color: var(--text-primary); font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.6px; line-height: 30px; white-space: nowrap"
+      >
+        Rail, menus, panels
+      </div>
+    </div>
+    <div
+      data-name="Lead"
+      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; width: 760px"
+    >
+      The rail is the column every app shares: chrome graphite, uppercase section caps, 32px rows with a reserved status slot. Menus are tools, not cards: 240 wide, 4px inset, tight rows, shortcuts at 55%.
+    </div>
+  </div>
+  <div
+    data-name="Composed"
+    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 32px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Workspaces rail"
+      style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 240px"
+    >
+      <div
+        data-name="Label"
+        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+      >
+        WORKSPACES RAIL
+      </div>
+      <div
+        data-name="Rail"
+        style="align-items: flex-start; background-color: var(--bg-chrome); border-color: var(--hairline); border-radius: var(--radius-md); border-style: solid; border-width: 0px 1px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 2px; height: 328px; margin: 0px -0.5px 0px 0px; padding: 8px 0px; width: 240.5px"
+      >
+        <div class="rail-section" data-name="Section SOLA">
+          <div class="rail-section__label">
+            SOLA
+          </div>
+          <svg
+            class="rail-section__add"
+            data-icon-name="plus"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+              style="fill: var(--text-tertiary)"
+            ></path>
+          </svg>
+        </div>
+        <div class="rail-row-selected" data-name="kit-foundation">
+          <div class="rail-row-selected__row">
+            <div class="status-working" data-name="Status">
+              <div class="status-working__ring"></div>
+            </div>
+            <div class="rail-row-selected__label">
+              kit-foundation
+            </div>
+            <div class="rail-row-selected__meta">
+              ×2
+            </div>
+          </div>
+        </div>
+        <div class="rail-row" data-name="menubar-pass">
+          <div class="rail-row__row">
+            <div class="status-waiting" data-name="Status">
+              <div class="status-waiting__diamond"></div>
+            </div>
+            <div class="rail-row__label">
+              menubar-pass
+            </div>
+            <div class="rail-row__meta">
+              
+            </div>
+          </div>
+        </div>
+        <div class="rail-row" data-name="mail-focus">
+          <div class="rail-row__row">
+            <div class="status-done" data-name="Status">
+              <svg class="status-done__check" viewBox="0 0 8 6.4" preserveAspectRatio="none">
+                <path
+                  d="M0.6 3.4 L3 5.6 L7.4 0.8"
+                  fill="none"
+                  stroke-width="1.65"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  vector-effect="non-scaling-stroke"
+                  style="stroke: var(--success)"
+                ></path>
+              </svg>
+            </div>
+            <div class="rail-row__label">
+              mail-focus
+            </div>
+            <div class="rail-row__meta">
+              
+            </div>
+          </div>
+        </div>
+        <div class="rail-row" data-name="master">
+          <div class="rail-row__row">
+            <div class="status-idle" data-name="Status">
+              <div class="status-idle__dot"></div>
+            </div>
+            <div class="rail-row__label">
+              master
+            </div>
+            <div class="rail-row__meta">
+              
+            </div>
+          </div>
+        </div>
+        <div class="rail-section" data-name="Section WICKET">
+          <div class="rail-section__label">
+            WICKET
+          </div>
+          <svg
+            class="rail-section__add"
+            data-icon-name="plus"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+              style="fill: var(--text-tertiary)"
+            ></path>
+          </svg>
+        </div>
+        <div class="rail-row-hover" data-name="vault-panel">
+          <div class="rail-row-hover__row">
+            <div class="status-waiting" data-name="Status">
+              <div class="status-waiting__diamond"></div>
+            </div>
+            <div class="rail-row-hover__label">
+              vault-panel
+            </div>
+            <div class="rail-row-hover__meta">
+              
+            </div>
+          </div>
+        </div>
+        <div class="rail-row" data-name="master">
+          <div class="rail-row__row">
+            <div class="status-idle" data-name="Status">
+              <div class="status-idle__dot"></div>
+            </div>
+            <div class="rail-row__label">
+              master
+            </div>
+            <div class="rail-row__meta">
+              
+            </div>
+          </div>
+        </div>
+        <div class="rail-section" data-name="Section EXIT">
+          <div class="rail-section__label">
+            ▸ EXIT
+          </div>
+          <svg
+            class="rail-section__add"
+            data-icon-name="plus"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+              style="fill: var(--text-tertiary)"
+            ></path>
+          </svg>
+        </div>
+        <div class="rail-section" data-name="Section GENEOLOGY">
+          <div class="rail-section__label">
+            ▸ GENEOLOGY
+          </div>
+          <svg
+            class="rail-section__add"
+            data-icon-name="plus"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+              style="fill: var(--text-tertiary)"
+            ></path>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div
+      data-name="Menu and select"
+      style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 240px"
+    >
+      <div
+        data-name="Label"
+        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+      >
+        MENU AND SELECT
+      </div>
+      <div class="menu">
+        <div class="menu-row" data-name="New Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            New Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘T
+          </div>
+        </div>
+        <div class="menu-row" data-name="New Window">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            New Window
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘N
+          </div>
+        </div>
+        <div class="menu-separator" data-name="Separator">
+          <div class="menu-separator__line"></div>
+        </div>
+        <div class="menu-row" data-name="Reopen Closed Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            Reopen Closed Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⇧⌘T
+          </div>
+        </div>
+        <div class="menu-row" data-name="Close Tab">
+          <div class="menu-row__check"></div>
+          <div class="menu-row__label">
+            Close Tab
+          </div>
+          <div class="menu-row__shortcut">
+            ⌘W
+          </div>
+        </div>
+      </div>
+      <div
+        data-name="Select open"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; padding: 16px 0px 0px 0px; width: 200px"
+      >
+        <div class="select" data-name="Trigger" style="width: 100%">
+          <div class="identity-mark" data-name="Mark" style="height: 12px; width: 12px"></div>
+          <div class="select__label">
+            Personal
+          </div>
+          <svg
+            class="select__chevron"
+            data-icon-name="chevron-down"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <path
+              d="M3.34619 4.68945q-0.25293 0.08545-0.37939 0.30762-0.04102 0.08545-0.04102 0.25293 0 0.16748 0.04785 0.25977 0.05127 0.08887 1.8628 1.9038 1.81494 1.81152 1.9038 1.8628 0.09229 0.04785 0.25977 0.04785 0.16748 0 0.25635-0.04785 0.09229-0.05127 1.90381-1.8628 1.81494-1.81494 1.86279-1.9038 0.05127-0.09229 0.05127-0.25977 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.02734-0.09912-0.04102-0.04102-0.01367-0.15381-0.01367-0.11279 0-0.15381 0.01367-0.04101 0.01367-0.11279 0.04102-0.09912 0.05811-1.66455 1.62695l-1.56885 1.56543-2.82666-2.81299q-0.31104-0.29395-0.42041-0.37939-0.08545-0.05469-0.19824-0.05469l-0.02735 0q-0.14014 0-0.18115 0.01367z"
+              style="fill: var(--text-secondary)"
+            ></path>
+          </svg>
+        </div>
+        <div
+          data-name="Hanging menu"
+          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); box-shadow: 0px 2px 10px var(--shadow); display: flex; flex-direction: column; flex-shrink: 0; gap: 1px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 4px; width: 100%"
+        >
+          <div
+            data-name="Personal"
+            style="align-items: center; background-color: var(--selection); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; gap: 8px; height: fit-content; padding: 5px 8px; width: 100%"
+          >
+            <div class="identity-mark" data-name="Mark" style="height: 12px; width: 12px"></div>
+            <div
+              data-name="Label"
+              style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
+            >
+              Personal
+            </div>
+            <svg
+              data-name="Check"
+              data-icon-name="check"
+              data-icon-set="lucide"
+              viewBox="0 0 13.99993896484375 14"
+              preserveAspectRatio="xMidYMid meet"
+              style="flex-shrink: 0; height: 12px; width: 12px"
+            >
+              <path
+                d="M11.48096 2.95313q-0.07178 0.01367-0.12989 0.0581-0.05469 0.04102-3.07617 3.06592l-3.0249 3.00781-1.28857-1.28857q-1.28857-1.28516-1.38086-1.32618-0.08887-0.04443-0.22217-0.04443-0.1333 0-0.23242 0.0376-0.0957 0.03418-0.18799 0.11279-0.08887 0.0752-0.1333 0.1709-0.02734 0.07178-0.03418 0.11279-0.00684 0.04102-0.00684 0.14014l0 0.04102q-0.01367 0.11279 0.04102 0.19824 0.07178 0.10938 0.36572 0.40332 0.19482 0.21191 0.96729 0.98096l1.49707 1.48339q0.28027 0.2666 0.38964 0.33838 0.07178 0.05469 0.18457 0.04102l0.09571 0.01367q0.07178 0 0.14013-0.02734 0.08545-0.07178 0.32129-0.28711 0.23926-0.21875 0.79981-0.76221l2.2832-2.2832q2.08496-2.09863 2.7002-2.71387 0.61524-0.61865 0.64599-0.68701 0.04102-0.08545 0.04102-0.23926 0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.08203-0.13672-0.16406-0.08887-0.08545-0.18115-0.11963-0.08887-0.0376-0.20849-0.0376-0.11963 0-0.18799 0.02734z"
+                style="fill: var(--text-primary)"
+              ></path>
+            </svg>
+          </div>
+          <div
+            data-name="Work"
+            style="align-items: center; border-radius: var(--radius-sm); display: flex; flex-shrink: 0; gap: 8px; height: fit-content; padding: 5px 8px; width: 100%"
+          >
+            <div
+              class="identity-mark"
+              data-name="Mark"
+              style="background-color: var(--enamel-iris); height: 12px; width: 12px"
+            ></div>
+            <div
+              data-name="Label"
+              style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
+            >
+              Work
+            </div>
+          </div>
+          <div
+            data-name="Hetzner"
+            style="align-items: center; border-radius: var(--radius-sm); display: flex; flex-shrink: 0; gap: 8px; height: fit-content; padding: 5px 8px; width: 100%"
+          >
+            <div
+              class="identity-mark"
+              data-name="Mark"
+              style="background-color: var(--enamel-clay); height: 12px; width: 12px"
+            ></div>
+            <div
+              data-name="Label"
+              style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
+            >
+              Hetzner
+            </div>
+          </div>
+          <div
+            data-name="Banking"
+            style="align-items: center; border-radius: var(--radius-sm); display: flex; flex-shrink: 0; gap: 8px; height: fit-content; padding: 5px 8px; width: 100%"
+          >
+            <div
+              class="identity-mark"
+              data-name="Mark"
+              style="background-color: var(--enamel-sage); height: 12px; width: 12px"
+            ></div>
+            <div
+              data-name="Label"
+              style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
+            >
+              Banking
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      data-name="Panels"
+      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+    >
+      <div
+        data-name="Label"
+        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+      >
+        PANELS
+      </div>
+      <div
+        data-name="Row"
+        style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
+      >
+        <div
+          data-name="Card and stat"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 24px; height: fit-content; width: fit-content"
+        >
+          <div class="card">
+            <div class="card__title">
+              Sync Google calendar
+            </div>
+            <div class="card__body">
+              Events from your Google account appear beside local ones. Reminders keep the card up.
+            </div>
+            <div class="card__actions">
+              <div class="button-ghost" data-name="Ghost">
+                <div class="button-ghost__label">
+                  Later
+                </div>
+              </div>
+              <div class="button-primary" data-name="Primary">
+                <div class="button-primary__label">
+                  Connect
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            data-name="Stat drop CPU"
+            style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); box-shadow: 0px 2px 10px var(--shadow); display: flex; flex-direction: column; flex-shrink: 0; gap: 10px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 12px 14px; width: 320px"
+          >
+            <div
+              data-name="Head"
+              style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; justify-content: space-between; width: 100%"
+            >
+              <div
+                data-name="Title"
+                style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
+              >
+                <div
+                  data-name="Name"
+                  style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+                >
+                  CPU
+                </div>
+                <div class="badge-accent" data-name="Proposed">
+                  <div class="badge-accent__label">
+                    Proposed: kit tokens
+                  </div>
+                </div>
+              </div>
+              <div
+                data-name="Value"
+                style="color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
+              >
+                23%
+              </div>
+            </div>
+            <div
+              data-name="Load 1m"
+              style="align-items: center; display: flex; flex-shrink: 0; gap: 10px; height: fit-content; width: 100%"
+            >
+              <div
+                data-name="Key"
+                style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 110px"
+              >
+                Load 1m
+              </div>
+              <div
+                data-name="Track"
+                style="align-items: flex-start; background-color: var(--bg-hover); border-radius: 2px; display: flex; flex: 1 1 0; height: 4px; min-width: 0; min-height: 0"
+              >
+                <div
+                  data-name="Fill"
+                  style="background-color: var(--text-primary); border-radius: 2px; flex-shrink: 0; height: 4px; width: 28px"
+                ></div>
+              </div>
+              <div
+                data-name="Val"
+                style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; font-weight: 400; text-align: right; width: 52px"
+              >
+                2.84
+              </div>
+            </div>
+            <div
+              data-name="Package"
+              style="align-items: center; display: flex; flex-shrink: 0; gap: 10px; height: fit-content; width: 100%"
+            >
+              <div
+                data-name="Key"
+                style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 110px"
+              >
+                Package
+              </div>
+              <div
+                data-name="Track"
+                style="align-items: flex-start; background-color: var(--bg-hover); border-radius: 2px; display: flex; flex: 1 1 0; height: 4px; min-width: 0; min-height: 0"
+              >
+                <div
+                  data-name="Fill"
+                  style="background-color: var(--text-primary); border-radius: 2px; flex-shrink: 0; height: 4px; width: 65px"
+                ></div>
+              </div>
+              <div
+                data-name="Val"
+                style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; font-weight: 400; text-align: right; width: 52px"
+              >
+                54 °C
+              </div>
+            </div>
+            <div
+              data-name="cargo"
+              style="align-items: center; display: flex; flex-shrink: 0; gap: 10px; height: fit-content; width: 100%"
+            >
+              <div
+                data-name="Key"
+                style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 110px"
+              >
+                cargo
+              </div>
+              <div
+                data-name="Track"
+                style="align-items: flex-start; background-color: var(--bg-hover); border-radius: 2px; display: flex; flex: 1 1 0; height: 4px; min-width: 0; min-height: 0"
+              >
+                <div
+                  data-name="Fill"
+                  style="background-color: var(--warning); border-radius: 2px; flex-shrink: 0; height: 4px; width: 108px"
+                ></div>
+              </div>
+              <div
+                data-name="Val"
+                style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; font-weight: 400; text-align: right; width: 52px"
+              >
+                180%
+              </div>
+            </div>
+            <div
+              data-name="sola-browser-cef"
+              style="align-items: center; display: flex; flex-shrink: 0; gap: 10px; height: fit-content; width: 100%"
+            >
+              <div
+                data-name="Key"
+                style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 110px"
+              >
+                sola-browser-cef
+              </div>
+              <div
+                data-name="Track"
+                style="align-items: flex-start; background-color: var(--bg-hover); border-radius: 2px; display: flex; flex: 1 1 0; height: 4px; min-width: 0; min-height: 0"
+              >
+                <div
+                  data-name="Fill"
+                  style="background-color: var(--text-primary); border-radius: 2px; flex-shrink: 0; height: 4px; width: 37px"
+                ></div>
+              </div>
+              <div
+                data-name="Val"
+                style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; font-weight: 400; text-align: right; width: 52px"
+              >
+                31%
+              </div>
+            </div>
+          </div>
+        </div>
+        <div
+          data-name="Notification stack"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
+        >
+          <div class="notification" data-name="Calendar">
+            <div class="notification__icon-well">
+              <svg
+                class="notification__icon"
+                data-icon-name="calendar-clock"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M4.57666 0.60156q-0.12305 0.01367-0.24268 0.09912-0.11963 0.08203-0.1914 0.19483-0.04102 0.08545-0.05469 0.20508-0.01367 0.11621-0.01367 0.35546l0 0.29395-1.32959 0.01367q-0.14014 0.01367-0.23926 0.02735-0.50244 0.14014-0.85449 0.50586-0.34863 0.3623-0.44776 0.88183-0.02734 0.0957-0.02734 0.81006l0 7.99463 0.05469 0.15381q0.15723 0.51953 0.56055 0.86133 0.40674 0.3418 0.93994 0.3999 0.14014 0.02734 1.18945 0.02734 1.04932 0 1.13477-0.02734 0.23584-0.04102 0.37597-0.23584 0.14014-0.19824 0.09912-0.4375-0.01367-0.0957-0.05127-0.16406-0.03418-0.07178-0.11963-0.14014-0.08203-0.07178-0.16406-0.11621l-0.09912-0.04102-2.32422-0.02734-0.09912-0.04102q-0.28027-0.12646-0.32129-0.43408-0.02734-0.11279-0.02734-2.73096l0-2.60449 1.17578 0q0.89551 0 1.11768-0.01367 0.22559-0.01367 0.30761-0.05469 0.08545-0.04443 0.15381-0.11963 0.07178-0.07861 0.11621-0.16064 0.0957-0.22559 0.01026-0.44776-0.08203-0.22559-0.31787-0.33837l-0.08545-0.02735-2.47803-0.01367 0-0.86816q0-0.65625 0.01367-0.85108 0.01367-0.19824 0.05469-0.28027 0.04443-0.08545 0.11963-0.16065 0.07861-0.07861 0.16064-0.12304l0.08545-0.04102 1.31592 0 0 0.34863q0.01367 0.25293 0.02051 0.31788 0.00684 0.06152 0.03418 0.14697 0.05811 0.0957 0.14013 0.18115 0.21191 0.19482 0.50586 0.14697 0.29395-0.04785 0.42041-0.31445 0.02734-0.08545 0.03418-0.14014 0.00684-0.05811 0.02051-0.32129l0-0.36572 3.5 0 0 0.36572q0.01367 0.26318 0.02051 0.32129 0.00684 0.05469 0.03418 0.14014 0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115 0.02734-0.08545 0.03418-0.14697 0.00684-0.06494 0.02051-0.31788l0-0.34863 0.62891 0q0.5332 0 0.64599 0.01367 0.11279 0.01367 0.22217 0.09912 0.08545 0.05469 0.12647 0.12647 0.08545 0.10938 0.09912 0.22217 0.01367 0.11279 0.02734 0.57422 0 0.43408 0.00684 0.51953 0.00684 0.08203 0.04101 0.15381 0.0376 0.06836 0.11963 0.14697 0.08545 0.0752 0.16065 0.11963 0.07861 0.04102 0.24609 0.04101 0.16748 0 0.24268-0.04101 0.07861-0.04443 0.16064-0.11963 0.08545-0.07861 0.11963-0.14697 0.0376-0.07178 0.04443-0.16065 0.00684-0.09229 0.00684-0.54004 0-0.61523-0.02735-0.75537-0.09912-0.51953-0.45117-0.88183-0.34863-0.36572-0.85107-0.50586-0.09912-0.01367-0.23926-0.02735l-1.32959-0.01367 0-0.29395q0-0.32129-0.03418-0.45459-0.03418-0.1333-0.14697-0.24609-0.14014-0.14014-0.35889-0.16064-0.21533-0.02051-0.37597 0.09228-0.16064 0.10938-0.21875 0.29395-0.02734 0.05469-0.03418 0.1333-0.00684 0.0752-0.00684 0.30078l0 0.33496-3.5 0 0-0.34863q0-0.23926-0.00684-0.30762-0.00684-0.07178-0.03418-0.12646-0.08545-0.21191-0.25293-0.30762-0.16748-0.09912-0.37939-0.05811z m4.46729 4.66211q-0.02734 0-0.22559 0.02735-0.38965 0.04443-0.80322 0.18457-0.41357 0.14014-0.76221 0.34863-0.96729 0.57422-1.50049 1.55517-0.52979 0.97754-0.50244 2.08497 0.02734 0.4751 0.12646 0.8955 0.28027 1.03564 1.02198 1.80469 0.28027 0.28027 0.53662 0.47168 0.25977 0.18799 0.59814 0.35547 0.44775 0.22559 0.875 0.32471 0.42725 0.0957 0.92969 0.0957 0.29395 0 0.50244-0.02734 0.21191-0.02734 0.49219-0.09912 1.09033-0.2666 1.88672-1.06299 0.7998-0.7998 1.06641-1.89014 0.07178-0.28027 0.09912-0.48877 0.02734-0.21191 0.02734-0.50586 0-0.93652-0.40674-1.76367-0.28027-0.58789-0.7417-1.06299-0.98096-1.02197-2.33789-1.22021-0.14014-0.01367-0.46142-0.02735-0.32129-0.01367-0.42041 0z m0.68701 1.18945q0.96387 0.12646 1.65088 0.80665 0.68701 0.67676 0.84082 1.64404 0.01367 0.14014 0.01367 0.42724 0 0.28711-0.01367 0.42725-0.12647 0.81006-0.65284 1.43555-0.52295 0.62207-1.29541 0.90234-0.96387 0.33496-1.94482-0.02734-0.58789-0.21191-1.04248-0.65967-0.45459-0.44775-0.68018-1.03564-0.18115-0.4751-0.18115-1.02198 0-0.54688 0.16748-1.02197 0.28027-0.75537 0.90235-1.25781 0.62549-0.50586 1.42187-0.61865 0.15381-0.02734 0.3999-0.02735 0.24609 0 0.41358 0.02735z m-0.50586 1.14844q-0.12646 0.01367-0.2461 0.10596-0.11621 0.08887-0.17431 0.21533l-0.04102 0.09912 0 1.58252 0.04102 0.09912q0.05811 0.0957 0.1333 0.17432 0.07861 0.0752 0.58789 0.38281 0.5127 0.30762 0.59472 0.33838 0.19824 0.05469 0.38624-0.03418 0.18799-0.09228 0.28027-0.28711 0.09229-0.19824 0.03418-0.39306-0.04102-0.16748-0.1333-0.25293-0.08887-0.08545-0.46826-0.30762l-0.29395-0.19483 0-0.47851q0-0.48877-0.02734-0.58789-0.04102-0.23584-0.23242-0.36914-0.18799-0.1333-0.44092-0.09229z"
+                  style="fill: var(--text-primary)"
+                ></path>
+              </svg>
+            </div>
+            <div class="notification__body">
+              <div class="notification__source">
+                Calendar · in 10 min
+              </div>
+              <div class="notification__title">
+                Design review
+              </div>
+              <div class="notification__text">
+                Sola foundation — Wicket room
+              </div>
+            </div>
+            <div class="notification__close">
+              <svg
+                class="notification__x"
+                data-icon-name="x"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M3.34619 2.93945q-0.25293 0.08545-0.37939 0.30762-0.04102 0.08545-0.04102 0.25293 0 0.16748 0.04102 0.25293 0.04443 0.08203 1.62353 1.66455l1.58252 1.58252-1.58252 1.58252q-1.5791 1.58252-1.62353 1.66797-0.04102 0.08203-0.04102 0.23584 0 0.15381 0.03418 0.23926 0.0376 0.08203 0.1333 0.18115 0.09912 0.0957 0.18115 0.1333 0.08545 0.03418 0.23926 0.03418 0.15381 0 0.23584-0.04102 0.08545-0.04443 1.66797-1.62353l1.58252-1.58252 1.58252 1.58252q1.58252 1.5791 1.66455 1.62353 0.08545 0.04102 0.23926 0.04102 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.04443-0.23584-0.04101-0.08545-1.62012-1.66797l-1.58252-1.58252 1.58252-1.58252q1.5791-1.58252 1.62012-1.66455 0.04443-0.08545 0.04443-0.25293 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.02734-0.09912-0.04102-0.04102-0.01367-0.15381-0.01367-0.11279 0-0.15381 0.01367-0.04101 0.01367-0.11279 0.04102-0.09912 0.05811-1.66455 1.62695l-1.56885 1.56543-2.82666-2.81299q-0.31104-0.29395-0.42041-0.37939-0.08545-0.05469-0.19824-0.05469l-0.02735 0q-0.14014 0-0.18115 0.01367z"
+                  style="fill: var(--text-secondary)"
+                ></path>
+              </svg>
+            </div>
+          </div>
+          <div class="notification" data-name="Mail">
+            <div class="notification__icon-well">
+              <svg
+                class="notification__icon"
+                data-icon-name="mail"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M2.05762 1.77734q-0.28027 0.04102-0.53321 0.16748-0.34863 0.19824-0.58789 0.50586-0.23584 0.30762-0.32129 0.70069-0.01367 0.10938-0.02734 0.66992l0 3.17871 0 3.17871q0.01367 0.56055 0.02734 0.66992 0.11279 0.5332 0.50245 0.90577 0.39307 0.36914 0.92627 0.46826 0.16748 0.02734 4.95605 0.02734 4.78857 0 4.95605-0.02734 0.5332-0.09912 0.92286-0.46826 0.39307-0.37256 0.50586-0.90577 0.01367-0.10938 0.02734-0.66992l0-3.17871 0-3.17871q-0.01367-0.56055-0.02734-0.66992-0.12647-0.54688-0.53321-0.92285-0.40674-0.37939-0.95019-0.46485-0.1709-0.01367-4.93897-0.01367-4.76465 0-4.90478 0.02734z m9.81298 1.17579q0.09912 0.04443 0.18116 0.12304 0.08545 0.0752 0.12646 0.16065 0.04443 0.08203 0.05127 0.12988 0.00684 0.04785 0.00684 0.18799l0 0.21191-2.46436 1.58252q-2.46436 1.56543-2.53613 1.60303-0.06836 0.03418-0.16748 0.03418l-0.02734 0.01367q-0.0957 0.01367-0.2085-0.04102-0.15381-0.07178-0.65967-0.37939l-4.40918-2.81299 0-0.21191q0-0.14014 0.00684-0.18799 0.00684-0.04785 0.04101-0.12305 0.0376-0.07861 0.12647-0.16064 0.09229-0.08545 0.16748-0.1128 0.07861-0.03076 0.70752-0.04443l4.18701 0 4.18701 0q0.61523 0 0.68359 0.02735z m-5.63964 5.02783q0.22217 0.10938 0.46142 0.15381 0.09912 0.02734 0.30762 0.02734 0.2085 0 0.30762-0.02734 0.30762-0.05811 0.54687-0.19825 0.14014-0.08203 2.26612-1.42529l2.12939-1.36035-0.01367 5.50293-0.04102 0.09912q-0.11279 0.2085-0.3247 0.29395l-0.09571 0.02734-9.5498 0-0.09571-0.02734q-0.21191-0.08545-0.3247-0.29395l-0.04102-0.09912-0.01367-5.50293 2.17041 1.37402q2.17041 1.38428 2.31055 1.45606z"
+                  style="fill: var(--text-primary)"
+                ></path>
+              </svg>
+            </div>
+            <div class="notification__body">
+              <div class="notification__source">
+                Mail · Fastmail
+              </div>
+              <div class="notification__title">
+                Hetzner — invoice 0412
+              </div>
+              <div class="notification__text">
+                Your invoice for October is ready.
+              </div>
+            </div>
+            <div class="notification__close">
+              <svg
+                class="notification__x"
+                data-icon-name="x"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M3.34619 2.93945q-0.25293 0.08545-0.37939 0.30762-0.04102 0.08545-0.04102 0.25293 0 0.16748 0.04102 0.25293 0.04443 0.08203 1.62353 1.66455l1.58252 1.58252-1.58252 1.58252q-1.5791 1.58252-1.62353 1.66797-0.04102 0.08203-0.04102 0.23584 0 0.15381 0.03418 0.23926 0.0376 0.08203 0.1333 0.18115 0.09912 0.0957 0.18115 0.1333 0.08545 0.03418 0.23926 0.03418 0.15381 0 0.23584-0.04102 0.08545-0.04443 1.66797-1.62353l1.58252-1.58252 1.58252 1.58252q1.58252 1.5791 1.66455 1.62353 0.08545 0.04102 0.23926 0.04102 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.04443-0.23584-0.04101-0.08545-1.62012-1.66797l-1.58252-1.58252 1.58252-1.58252q1.5791-1.58252 1.62012-1.66455 0.04443-0.08545 0.04443-0.25293 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.02734-0.09912-0.04102-0.04102-0.01367-0.15381-0.01367-0.11279 0-0.15381 0.01367-0.04101 0.01367-0.11279 0.04102-0.09912 0.05811-1.66455 1.62695l-1.56885 1.56543-2.82666-2.81299q-0.31104-0.29395-0.42041-0.37939-0.08545-0.05469-0.19824-0.05469l-0.02735 0q-0.14014 0-0.18115 0.01367z"
+                  style="fill: var(--text-secondary)"
+                ></path>
+              </svg>
+            </div>
+          </div>
+          <div class="notification" data-name="Workspaces">
+            <div class="notification__icon-well">
+              <svg
+                class="notification__icon"
+                data-icon-name="bot"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M4.52197 1.76367q-0.14014 0.04102-0.2666 0.16748-0.16748 0.15381-0.17432 0.37256-0.00684 0.21533 0.12647 0.38623 0.1333 0.16748 0.35547 0.22217 0.09912 0.01367 0.98096 0.01367l0.88183 0 0 1.14844-1.42871 0q-1.104 0-1.44922 0.01367-0.3418 0.01367-0.4956 0.05469-0.43408 0.12646-0.74854 0.42041-0.31445 0.29395-0.45459 0.71435-0.07178 0.19824-0.08545 0.39991-0.01367 0.20166-0.01367 0.96045l0 0.93652-0.34863 0q-0.2666 0.01367-0.33155 0.02051-0.06152 0.00684-0.1333 0.04785-0.23584 0.09912-0.32129 0.33838-0.08203 0.23584 0.02735 0.46142 0.04443 0.06836 0.11963 0.14014 0.07861 0.06836 0.15381 0.10596 0.07861 0.03418 0.14013 0.04101 0.06494 0.00684 0.33155 0.02051l0.3623 0 0 1.79102q0.01367 0.16748 0.02734 0.29394 0.09912 0.44775 0.3794 0.78613 0.28027 0.33496 0.70068 0.50245 0.15381 0.05811 0.30762 0.09912 0.12646 0.01367 0.64258 0.02734l3.19238 0 3.19238 0q0.51611-0.01367 0.64258-0.04102 0.5332-0.09912 0.90234-0.46826 0.37256-0.37256 0.48536-0.90576 0.01367-0.12646 0.02734-0.29394l0-1.79102 0.3623 0q0.2666-0.01367 0.32813-0.02051 0.06494-0.00684 0.14014-0.04101 0.07861-0.0376 0.15381-0.10596 0.07861-0.07178 0.11279-0.14014 0.0376-0.07178 0.05127-0.18115 0.04101-0.19824-0.05127-0.36572-0.08887-0.16748-0.28369-0.2666-0.07178-0.02734-0.13672-0.03418-0.06152-0.00684-0.32813-0.02051l-0.34863 0 0-0.93652q0-0.75879-0.01367-0.96045-0.01367-0.20166-0.08545-0.39991-0.14014-0.42041-0.45459-0.71435-0.31445-0.29395-0.74854-0.42041-0.15381-0.04102-0.49902-0.05469-0.3418-0.01367-1.4458-0.01367l-1.42871 0 0-0.92285q0-0.67334 0-0.81348 0-0.14014-0.02734-0.2085-0.08545-0.21191-0.29395-0.3247l-0.09912-0.04102-1.28858-0.01367q-1.2749 0-1.34326 0.01367z m6.23096 3.54102q0.2085 0.11279 0.29395 0.3247 0.02734 0.06836 0.02734 0.38965l0 4.64844-0.05469 0.08545q-0.09912 0.18115-0.2666 0.28027l-0.08545 0.04102-7.33496 0-0.08545-0.04102q-0.16748-0.09912-0.2666-0.28027l-0.05469-0.08545 0-4.63477q0-0.33496 0.02735-0.40332 0.05811-0.12646 0.16748-0.23242 0.11279-0.10596 0.23925-0.1333 0.08545-0.01367 3.68116-0.01367l3.61279 0.01367 0.09912 0.04102z m-5.64307 1.70898q-0.12646 0.02734-0.23925 0.1333-0.10938 0.10596-0.16748 0.23242-0.02734 0.06836-0.02735 0.18116 0 0.11279 0 0.6289l0 0.72803 0.04102 0.08545q0.04443 0.06836 0.12646 0.15381 0.08545 0.08203 0.16065 0.12646 0.07861 0.04102 0.24609 0.04102 0.16748 0 0.24268-0.04102 0.07861-0.04443 0.16064-0.12646 0.08545-0.08545 0.12988-0.15381l0.04102-0.08545 0-0.72803q0-0.51611 0-0.6289 0-0.11279-0.02734-0.18116-0.08545-0.19824-0.27344-0.30078-0.18799-0.10596-0.41358-0.06494z m3.5 0q-0.12646 0.02734-0.23925 0.1333-0.10938 0.10596-0.16748 0.23242-0.02734 0.06836-0.02735 0.18116 0 0.11279 0 0.6289l0 0.72803 0.04102 0.08545q0.04443 0.06836 0.12646 0.15381 0.08545 0.08203 0.16065 0.12646 0.07861 0.04102 0.24609 0.04102 0.16748 0 0.24268-0.04102 0.07861-0.04443 0.16064-0.12646 0.08545-0.08545 0.12988-0.15381l0.04102-0.08545 0-0.72803q0-0.51611 0-0.6289 0-0.11279-0.02734-0.18116-0.08545-0.19824-0.27344-0.30078-0.18799-0.10596-0.41358-0.06494z"
+                  style="fill: var(--text-primary)"
+                ></path>
+              </svg>
+            </div>
+            <div class="notification__body">
+              <div class="notification__source">
+                Workspaces · sola
+              </div>
+              <div class="notification__title">
+                kit-foundation is waiting
+              </div>
+              <div class="notification__text">
+                Claude asks to run cargo make build.
+              </div>
+            </div>
+            <div class="notification__close">
+              <svg
+                class="notification__x"
+                data-icon-name="x"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <path
+                  d="M3.34619 2.93945q-0.25293 0.08545-0.37939 0.30762-0.04102 0.08545-0.04102 0.25293 0 0.16748 0.04102 0.25293 0.04443 0.08203 1.62353 1.66455l1.58252 1.58252-1.58252 1.58252q-1.5791 1.58252-1.62353 1.66797-0.04102 0.08203-0.04102 0.23584 0 0.15381 0.03418 0.23926 0.0376 0.08203 0.1333 0.18115 0.09912 0.0957 0.18115 0.1333 0.08545 0.03418 0.23926 0.03418 0.15381 0 0.23584-0.04102 0.08545-0.04443 1.66797-1.62353l1.58252-1.58252 1.58252 1.58252q1.58252 1.5791 1.66455 1.62353 0.08545 0.04102 0.23926 0.04102 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.04443-0.23584-0.04101-0.08545-1.62012-1.66797l-1.58252-1.58252 1.58252-1.58252q1.5791-1.58252 1.62012-1.66455 0.04443-0.08545 0.04443-0.25293 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.02734-0.09912-0.04102-0.04102-0.01367-0.15381-0.01367-0.11279 0-0.15381 0.01367-0.04101 0.01367-0.11279 0.04102-0.09912 0.05811-1.66455 1.62695l-1.56885 1.56543-2.82666-2.81299q-0.31104-0.29395-0.42041-0.37939-0.08545-0.05469-0.19824-0.05469l-0.02735 0q-0.14014 0-0.18115 0.01367z"
+                  style="fill: var(--text-secondary)"
+                ></path>
+              </svg>
+            </div>
+          </div>
+          <div
+            data-name="Note"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 18px; width: 340px"
+          >
+            Desk cards drop from the bar: 340 wide, 12px from the right edge, at most three, six seconds each. The missed pile is a bell and a count in the bar.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

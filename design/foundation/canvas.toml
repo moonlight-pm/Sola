@@ -1,0 +1,94 @@
+title = "Foundation"
+
+# The Components board, then the Graphite sheet one section per artboard
+# (each stays under 4096 px, so 2×). Ported from Pencil 2026-10-12.
+
+[[artboard]]
+id = "components"
+src = "components.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Components"
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 1608
+width = 1440
+height = "auto"
+title = "Graphite / Cover"
+
+[[artboard]]
+id = "01-color"
+src = "01-color.html"
+x = 0
+y = 2540
+width = 1440
+height = "auto"
+title = "Graphite / 01 Color"
+
+[[artboard]]
+id = "02-type"
+src = "02-type.html"
+x = 0
+y = 4534
+width = 1440
+height = "auto"
+title = "Graphite / 02 Type"
+
+[[artboard]]
+id = "03-space"
+src = "03-space.html"
+x = 0
+y = 6139
+width = 1440
+height = "auto"
+title = "Graphite / 03 Space, shape, edge, depth"
+
+[[artboard]]
+id = "04-controls"
+src = "04-controls.html"
+x = 0
+y = 7623
+width = 1440
+height = "auto"
+title = "Graphite / 04 Controls"
+
+[[artboard]]
+id = "05-rail"
+src = "05-rail.html"
+x = 0
+y = 9115
+width = 1440
+height = "auto"
+title = "Graphite / 05 Rail, menus, panels"
+
+[[artboard]]
+id = "06-shell"
+src = "06-shell.html"
+x = 0
+y = 9926
+width = 1440
+height = "auto"
+title = "Graphite / 06 Shell"
+
+[[artboard]]
+id = "07-desk"
+src = "07-desk.html"
+x = 0
+y = 11503
+width = 1440
+height = "auto"
+title = "Graphite / 07 The desk"
+
+[[artboard]]
+id = "08-proposed"
+src = "08-proposed.html"
+x = 0
+y = 13341
+width = 1440
+height = "auto"
+title = "Graphite / 08 Proposed"

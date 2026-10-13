@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation v1 / Graphite / 03 Space, shape, edge, depth</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="components.css">
+</head>
+<body style="padding: 72px">
+<div
+  data-name="03 Space, shape, edge, depth"
+  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; flex-shrink: 0; gap: 36px; height: fit-content; width: 100%"
+>
+  <div
+    data-name="Header"
+    style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 1px 0px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: 132.5px; margin: -0.5px 0px 0px 0px; padding: 24px 0px 0px 0px; width: 1296px"
+  >
+    <div
+      data-name="Title Row"
+      style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
+    >
+      <div
+        data-name="Number"
+        style="color: var(--accent); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
+      >
+        03
+      </div>
+      <div
+        data-name="Title"
+        style="color: var(--text-primary); font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.6px; line-height: 30px; white-space: nowrap"
+      >
+        Space, shape, edge, depth
+      </div>
+    </div>
+    <div
+      data-name="Lead"
+      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; width: 760px"
+    >
+      Density is macOS dark: tight rows, small radii, small type. Space steps by four with a two for hairline nudges. Radius grows with how far a thing floats. Edges are opaque mixes, because iced inflates translucent white on a 1px border.
+    </div>
+  </div>
+  <div
+    data-name="Space and radius"
+    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Space"
+      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+    >
+      <div
+        data-name="Label"
+        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+      >
+        SPACE
+      </div>
+      <div
+        data-name="Steps"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 6px 20px; width: 100%"
+      >
+        <div
+          data-name="space-2xs"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 8px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            2
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-2xs
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            SPACE_XS
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Icon nudge, badge inset
+          </div>
+        </div>
+        <div
+          data-name="space-xs"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 16px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            4
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-xs
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            SPACE_SM
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Popover inset, menu gap
+          </div>
+        </div>
+        <div
+          data-name="space-sm"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 32px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            8
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-sm
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            SPACE_MD
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Row gap, notification pad
+          </div>
+        </div>
+        <div
+          data-name="space-md"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 48px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            12
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-md
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            SPACE_LG
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Menubar phrase gap
+          </div>
+        </div>
+        <div
+          data-name="space-lg"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 64px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            16
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-lg
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            SPACE_XL
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Panel pad, card pad (18)
+          </div>
+        </div>
+        <div
+          data-name="space-xl"
+          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 33.5px; margin: 0px 0px -0.5px 0px; padding: 9px 0px; width: 596px"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 80px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            20
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-xl
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            —
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Section gap in forms
+          </div>
+        </div>
+        <div
+          data-name="space-xxl"
+          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; padding: 9px 0px; width: 100%"
+        >
+          <div
+            data-name="Bar well"
+            style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; width: 100px"
+          >
+            <div
+              data-name="Bar"
+              style="background-color: var(--accent); border-radius: 1px; flex-shrink: 0; height: 8px; width: 96px"
+            ></div>
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 24px"
+          >
+            24
+          </div>
+          <div
+            data-name="Token"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 96px"
+          >
+            space-xxl
+          </div>
+          <div
+            data-name="Kit"
+            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
+          >
+            —
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Dialog pad, desk gutters
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      data-name="Radius"
+      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+    >
+      <div
+        data-name="Label"
+        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+      >
+        RADIUS
+      </div>
+      <div
+        data-name="Tiles"
+        style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 12px; height: fit-content; width: 100%"
+      >
+        <div
+          data-name="radius-xs"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 4px 4px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            radius-xs 4
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Rail rows
+          </div>
+        </div>
+        <div
+          data-name="radius-sm"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 5px 5px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            radius-sm 5
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Ghost, menu and list rows, checkbox
+          </div>
+        </div>
+        <div
+          data-name="radius-md"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 7px 7px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            radius-md 7
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Buttons, fields, menus
+          </div>
+        </div>
+        <div
+          data-name="radius-lg"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 10px 10px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            radius-lg 10
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Panels, switcher plate
+          </div>
+        </div>
+        <div
+          data-name="radius-xl"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 14px 14px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            radius-xl 14
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Cards, launcher, windows
+          </div>
+        </div>
+        <div
+          data-name="pill"
+          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
+        >
+          <div
+            data-name="Shape"
+            style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline-strong); border-radius: 36px 36px 0px 0px; border-style: solid; border-width: 1px 1px 0px 1px; display: flex; flex-shrink: 0; height: 72.5px; margin: -0.5px -0.5px 0px -0.5px; width: 97px"
+          ></div>
+          <div
+            data-name="Token"
+            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+          >
+            pill 999
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+          >
+            Badges, count marks
+          </div>
+        </div>
+      </div>
+      <div
+        data-name="Pads"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 6px 20px; width: 100%"
+      >
+        <div
+          data-name="PAD_CONTROL"
+          style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 31.5px; margin: 0px 0px -0.5px 0px; padding: 8px 0px; width: 596px"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            PAD_CONTROL
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            7 × 14
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Buttons
+          </div>
+        </div>
+        <div
+          data-name="PAD_CONTROL_SM"
+          style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 31.5px; margin: 0px 0px -0.5px 0px; padding: 8px 0px; width: 596px"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            PAD_CONTROL_SM
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            5 × 11
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Small and toolbar buttons
+          </div>
+        </div>
+        <div
+          data-name="Field"
+          style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 31.5px; margin: 0px 0px -0.5px 0px; padding: 8px 0px; width: 596px"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            Field
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            7 × 12
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Text inputs
+          </div>
+        </div>
+        <div
+          data-name="Rail row"
+          style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 31.5px; margin: 0px 0px -0.5px 0px; padding: 8px 0px; width: 596px"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            Rail row
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            6 × 10, 32 tall
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Sidebar rows
+          </div>
+        </div>
+        <div
+          data-name="Menu row"
+          style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 31.5px; margin: 0px 0px -0.5px 0px; padding: 8px 0px; width: 596px"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            Menu row
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            3 × 10
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Dropdown rows
+          </div>
+        </div>
+        <div
+          data-name="Launcher row"
+          style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; padding: 8px 0px; width: 100%"
+        >
+          <div
+            data-name="Name"
+            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 130px"
+          >
+            Launcher row
+          </div>
+          <div
+            data-name="Value"
+            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 120px"
+          >
+            8 × 12
+          </div>
+          <div
+            data-name="Use"
+            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
+          >
+            Launcher results
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Edges"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      EDGES
+    </div>
+    <div
+      data-name="Samples"
+      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 12px; height: fit-content; width: 100%"
+    >
+      <div
+        data-name="hairline"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; padding: 20px; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Specimen"
+          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); display: flex; flex-shrink: 0; height: 64px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+        >
+          hairline
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          #252931 · white 7% into raised
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Rows, menus, popovers, rules
+        </div>
+      </div>
+      <div
+        data-name="hairline-strong"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; padding: 20px; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Specimen"
+          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); display: flex; flex-shrink: 0; height: 64px; outline-offset: -0.5px; outline: 1px solid var(--hairline-strong); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+        >
+          hairline-strong
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          #31353d · white 12%
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Secondary buttons, fields, switcher
+        </div>
+      </div>
+      <div
+        data-name="bevel"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; padding: 20px; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Specimen"
+          style="align-items: flex-start; border-color: transparent; border-radius: var(--radius-md); border-style: solid; border-width: 1px 1px 1px 1px; display: flex; flex-shrink: 0; height: 65px; margin: -0.5px -0.5px -0.5px -0.5px; width: 210.6px; background-image: linear-gradient(var(--bg-secondary), var(--bg-secondary)), linear-gradient(106.98deg, #0d0f15 14.645%, var(--hairline) 42.929%, #363941 85.355%); background-origin: padding-box, border-box; background-clip: padding-box, border-box"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+        >
+          bevel
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          dark TL → light BR, 1px
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Cards and the launcher read lit from above
+        </div>
+      </div>
+      <div
+        data-name="border"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; padding: 20px; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Specimen"
+          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-md); display: flex; flex-shrink: 0; height: 64px; outline-offset: -0.5px; outline: 1px solid var(--border); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+        >
+          border
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          #2a3344 · the atom
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Checkbox off, hard chrome
+        </div>
+      </div>
+      <div
+        data-name="focus"
+        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; padding: 20px; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Specimen"
+          style="align-items: flex-start; background-color: var(--field-well); border-radius: var(--radius-md); box-shadow: 0px 0px 8px var(--accent-soft); display: flex; flex-shrink: 0; height: 64px; outline-offset: -0.5px; outline: 1px solid var(--field-focus); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
+        >
+          focus
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          accent 55% into the well + halo
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Keyboard focus on fields
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    data-name="Depth: only floats cast"
+    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
+  >
+    <div
+      data-name="Label"
+      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
+    >
+      DEPTH: ONLY FLOATS CAST
+    </div>
+    <div
+      data-name="Stage"
+      style="align-items: flex-start; background-color: var(--bg-primary); border-radius: var(--radius-lg); display: flex; flex-shrink: 0; gap: 32px; height: 300px; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 40px 32px; width: 100%"
+    >
+      <div
+        data-name="Docked"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; background-color: var(--bg-chrome); display: flex; flex-shrink: 0; height: 120px; width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Docked
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          none
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Menubar, rail, zoned windows
+        </div>
+      </div>
+      <div
+        data-name="Popover"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: 7px; box-shadow: 0px 2px 10px var(--shadow); display: flex; flex-shrink: 0; height: 120px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Popover
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          y2 · blur 10 · 28%
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Menus, stat drops
+        </div>
+      </div>
+      <div
+        data-name="Floating window"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; background-color: var(--bg-primary); border-radius: 14px; box-shadow: 0px 3px 11px var(--shadow); display: flex; flex-shrink: 0; height: 120px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Floating window
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          y3 · blur 11 · 28%
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          River draws it under the surface
+        </div>
+      </div>
+      <div
+        data-name="Card"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; border-color: transparent; border-radius: 14px; border-style: solid; border-width: 1px 1px 1px 1px; box-shadow: 0px 4px 16px var(--shadow); display: flex; flex-shrink: 0; height: 121px; margin: -0.5px -0.5px -0.5px -0.5px; width: 179.667px; background-image: linear-gradient(var(--bg-secondary), var(--bg-secondary)), linear-gradient(123.887deg, #0d0f15 14.645%, var(--hairline) 42.929%, #363941 85.355%); background-origin: padding-box, border-box; background-clip: padding-box, border-box"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Card
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          y4 · blur 16 · 28%
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Kit cards
+        </div>
+      </div>
+      <div
+        data-name="Modal"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; border-color: transparent; border-radius: 14px; border-style: solid; border-width: 1px 1px 1px 1px; box-shadow: 0px 8px 28px var(--shadow-deep); display: flex; flex-shrink: 0; height: 121px; margin: -0.5px -0.5px -0.5px -0.5px; width: 179.667px; background-image: linear-gradient(var(--bg-secondary), var(--bg-secondary)), linear-gradient(123.887deg, #0d0f15 14.645%, var(--hairline) 42.929%, #363941 85.355%); background-origin: padding-box, border-box; background-clip: padding-box, border-box"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Modal
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          y8 · blur 28 · 38%
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          Launcher, dialogs
+        </div>
+      </div>
+      <div
+        data-name="Primary glow"
+        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
+      >
+        <div
+          data-name="Object"
+          style="align-items: flex-start; background-color: var(--accent); border-radius: 7px; box-shadow: 0px 4px 14px var(--accent-glow); display: flex; flex-shrink: 0; height: 32px; width: 100%"
+        ></div>
+        <div
+          data-name="Name"
+          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
+        >
+          Primary glow
+        </div>
+        <div
+          data-name="Spec"
+          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
+        >
+          accent 35% · y4 · blur 14
+        </div>
+        <div
+          data-name="Use"
+          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
+        >
+          The one filled primary
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
