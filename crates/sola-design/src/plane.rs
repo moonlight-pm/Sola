@@ -39,6 +39,9 @@ pub struct Item {
     pub views: [Option<View>; 2],
     /// Draw the board's detail texture, if it has one.
     pub detail: bool,
+    /// On the canvas on screen. Off-screen boards keep their textures
+    /// fresh but do not draw.
+    pub shown: bool,
 }
 
 impl Item {
@@ -468,7 +471,7 @@ impl Pipeline {
             let r = camera.rect_to_screen(r);
             Rectangle::new(iced::Point::new(bounds.x + r.x, bounds.y + r.y), r.size())
         };
-        for item in items {
+        for item in items.iter().filter(|i| i.shown) {
             let Some(tex) = self.textures.get(&item.tab) else {
                 continue;
             };

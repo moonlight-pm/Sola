@@ -29,12 +29,16 @@ Path arguments may be relative to your working directory.
 Design (sola-design): a canvas is files. `<project>/design/<canvas>/canvas.toml` \
 lists artboards (src, x, y, width, height or \"auto\"); each artboard is an HTML \
 page beside it. Start with design_canvas_new (name; project = your working \
-directory) — it makes the folder, adds it to the human's rail under the project, and \
-shows it. Edit those files directly, then design_reload or design_wait (both make the \
-boards show the files on disk and wait for web fonts and layout), then \
-design_screenshot (returns the image) or design_inspect (sizes, styles, overflow; \
-`all` lists every match's box). design_selection is the element the human \
-Super+clicked; design_open shows an existing canvas.
+directory) — it makes the folder, lists it in the human's rail under the project, and \
+opens it for you off their screen (they look when they like; other agents may be \
+working on other canvases at the same time). design_open opens an existing one the \
+same way. Page calls (status, view, wait, reload, screenshot, pdf, inspect) go to the \
+canvas you last opened or made; pass `canvas` (its folder) for another. Edit the files \
+directly, then design_reload or design_wait (both make the boards show the files on \
+disk and wait for web fonts and layout), then design_screenshot (returns the image) \
+or design_inspect (sizes, styles, overflow; `all` lists every match's box). \
+design_selection is the element the human Super+clicked (it names its canvas). Only \
+put a canvas on the human's screen (`raise`) when they ask to see it.
 
 Boards are Chromium (CEF) pages that Design serves over http from the project \
 root, each on its own host (`http://<board>--<canvas>.<project>.localhost:<port>/\
@@ -46,7 +50,7 @@ URLs look in that project folder first (product `/fonts/…`). Edits reload the 
 canvas when they touch its folder, shared files in design/, or any project file a \
 board loaded (a product stylesheet outside design/ included).
 
-The human may pan, zoom, and look around the canvas while you work; nothing you \
+The human may pan, zoom, and look around (any canvas) while you work; nothing you \
 read depends on their view. Screenshots and PDFs show the whole artboard (2×, or \
 less for a very large one), inspect reads the page. design_view moves their camera \
 only until they take it.";

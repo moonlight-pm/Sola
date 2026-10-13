@@ -5,14 +5,15 @@
 //! Boards are CEF board tabs in one `--engine` helper. Board lifecycle lives
 //! in [`live`]; the call owner `design` in [`cli`].
 
+mod canvases;
 mod cli;
 mod live;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use iced::widget::{Shader, canvas as iced_canvas, column, container, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme};
@@ -47,6 +48,7 @@ use crate::projects::{self, CanvasRef, Catalog};
 use crate::rail::{self, AddDraft, CanvasDraft, RailState};
 use crate::select::{self, Selection};
 use crate::serve::Server;
+use crate::share::{self, Share};
 use crate::watch;
 
 const WINDOW_TITLE: &str = "Design";
@@ -57,6 +59,10 @@ const SPAWN_H: u32 = 800;
 const REQUERY_DELAY: Duration = Duration::from_millis(400);
 /// Tick for `wait` deadlines and `auto` measures, only while one is pending.
 const PENDING_TICK: Duration = Duration::from_millis(200);
+/// How long a status-pill note stays.
+const NOTICE: Duration = Duration::from_millis(1800);
+/// How often idle off-screen canvases are looked for.
+const EVICT_TICK: Duration = Duration::from_secs(60);
 /// Tick while a detail plan is due (see [`crate::detail::SETTLE`]).
 const DETAIL_TICK: Duration = Duration::from_millis(40);
 /// Board surfaces cover the plane in steps of this many px, so a window
@@ -78,6 +84,10 @@ pub enum Msg {
     DetailTick,
     /// Animation frame while something glows.
     Glow,
+    /// Close idle off-screen canvases.
+    Evict,
+    /// Copy the shown canvas's share link (`true`: a new link first).
+    ShareLink(bool),
     /// The window's output scale.
     Scale(f32),
     Plane(overlay::Event),
@@ -118,14 +128,23 @@ pub fn run() -> iced::Result {
     let serve = Server::start()
         .map_err(|e| tracing::error!(error = %e, "design origin did not start; boards use file://"))
         .ok();
-    let cell = std::cell::Cell::new(Some((engine, serve)));
+    // Live share links (and the tunnel connector, when configured).
+    let share = share::load_config(&share::config_path())
+        .map_err(|e| tracing::error!(error = %e, "share config; sharing is off"))
+        .ok()
+        .and_then(|cfg| {
+            Share::start(cfg)
+                .map_err(|e| tracing::error!(error = %e, "share listener did not start"))
+                .ok()
+        });
+    let cell = std::cell::Cell::new(Some((engine, serve, share)));
     let mut settings = window_settings_transparent(APP_ID);
     settings.size = Size::new(1280.0, 820.0);
 
     iced::application(
         move || {
-            let (engine, serve) = cell.take().expect("design boots once");
-            App::new(engine, serve)
+            let (engine, serve, share) = cell.take().expect("design boots once");
+            App::new(engine, serve, share)
         },
         App::update,
         App::view,
@@ -146,15 +165,6 @@ fn publish_menu() {
     }
 }
 
-struct OpenCanvas {
-    at: CanvasRef,
-    dir: PathBuf,
-    /// Last `canvas.toml` read failure; the previous layout stays up.
-    error: Option<String>,
-    /// The canvas web root in force (`root` in `canvas.toml`).
-    web_root: Option<PathBuf>,
-}
-
 /// Agent calls waiting for a reply. Nav calls are fire-and-forget.
 enum Pending {
     Pick { at: CanvasRef, artboard: String, tab: u64 },
@@ -170,20 +180,22 @@ struct App {
     engine: CefEngine,
     /// Loopback http origin the boards load from (`None`: `file://`).
     serve: Option<Server>,
+    /// Live share links (`None`: sharing did not start).
+    share: Option<Share>,
+    /// A short note in the status pill ("Link copied") and until when.
+    notice: Option<(String, Instant)>,
     frames: Arc<BoardFrames>,
     catalog: Catalog,
     canvases: HashMap<String, Vec<canvas::Entry>>,
-    open: Option<OpenCanvas>,
-    boards: Vec<Board>,
+    /// Canvases with live boards: the one on screen and any an agent works
+    /// on in the background (see [`canvases`]).
+    live: Vec<canvases::Live>,
+    /// Key of the canvas on screen.
+    shown: Option<String>,
     /// Board tabs the helper has listed at least once. One that drops out
     /// without us closing it means the helper restarted (empty).
     listed: HashSet<u64>,
-    /// Files each board loaded from outside `design/` (watched too).
-    board_links: HashMap<u64, BTreeSet<PathBuf>>,
-    /// Newest input file time the boards were (re)loaded at. Files newer
-    /// than this mean the boards are stale (an edit the watcher has not
-    /// acted on yet, or an outside file).
-    shown_at: Option<SystemTime>,
+    /// The camera of the canvas on screen (off-screen ones are parked).
     camera: Camera,
     plane_size: Option<Size>,
     /// Window output scale (physical px per logical px).
@@ -216,19 +228,19 @@ struct App {
 }
 
 impl App {
-    fn new(engine: CefEngine, serve: Option<Server>) -> (Self, Task<Msg>) {
+    fn new(engine: CefEngine, serve: Option<Server>, share: Option<Share>) -> (Self, Task<Msg>) {
         let catalog = projects::load_from(&projects::catalog_path());
         let mut app = Self {
             engine,
             serve,
+            share,
+            notice: None,
             frames: BoardFrames::new(),
             catalog,
             canvases: HashMap::new(),
-            open: None,
-            boards: Vec::new(),
+            live: Vec::new(),
+            shown: None,
             listed: HashSet::new(),
-            board_links: HashMap::new(),
-            shown_at: None,
             camera: Camera::default(),
             plane_size: None,
             scale_factor: 1.0,
@@ -253,7 +265,7 @@ impl App {
         app.rescan();
         app.serve_projects();
         if let Some(at) = app.catalog.selected.clone() {
-            app.open_canvas(at);
+            app.show_canvas(at);
         }
         let scale = iced::window::latest()
             .and_then(iced::window::scale_factor)
@@ -283,12 +295,15 @@ impl App {
             sola_kit::call_subscription().map(Msg::Call),
             watch::canvases(projects, Msg::Canvases),
         ];
-        if let Some(open) = &self.open {
+        for l in &self.live {
             subs.push(watch::subscription(
-                open.dir.clone(),
-                self.linked(),
+                l.dir.clone(),
+                self.linked(&l.at.key()),
                 Msg::CanvasChanged,
             ));
+        }
+        if self.has_background() {
+            subs.push(iced::time::every(EVICT_TICK).map(|_| Msg::Evict));
         }
         if !self.waits.is_empty() || self.loads.has_due() {
             subs.push(iced::time::every(PENDING_TICK).map(|_| Msg::WaitTick));
@@ -333,6 +348,8 @@ impl App {
                 self.observe_loads();
                 self.check_waits();
             }
+            Msg::Evict => self.evict_idle(Instant::now()),
+            Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
             Msg::Glow => {
                 let loads = &self.loads;
                 self.glows.tick(Instant::now(), |tab| loads.is_settled(tab));
@@ -356,13 +373,17 @@ impl App {
             }
             Msg::SelectCanvas(key) => {
                 if let Some(at) = CanvasRef::from_key(&key) {
-                    self.open_canvas(at);
+                    self.show_canvas(at);
                 }
             }
-            Msg::Canvases(found) => self.canvases = found,
+            Msg::Canvases(found) => {
+                self.canvases = found;
+                self.share_canvases();
+            }
             Msg::CanvasChanged(dir, change) => {
-                if self.open.as_ref().is_some_and(|o| o.dir == dir) {
-                    return self.on_canvas_change(change);
+                let key = self.live.iter().find(|l| l.dir == dir).map(|l| l.at.key());
+                if let Some(key) = key {
+                    return self.on_canvas_change(&key, change);
                 }
             }
             Msg::Requery => self.requery(),
@@ -407,16 +428,15 @@ impl App {
             menu::ADD_PROJECT => return self.open_add(),
             menu::NEW_CANVAS => {
                 let project = self
-                    .open
-                    .as_ref()
-                    .map(|o| o.at.project.clone())
+                    .shown_live()
+                    .map(|l| l.at.project.clone())
                     .or_else(|| self.catalog.projects.first().map(|p| p.id.clone()));
                 if let Some(project) = project {
                     return self.open_new_canvas(project);
                 }
             }
             menu::DROP_PROJECT => {
-                if let Some(project) = self.open.as_ref().map(|o| o.at.project.clone()) {
+                if let Some(project) = self.shown_live().map(|l| l.at.project.clone()) {
                     self.drop_project(&project);
                 }
             }
@@ -432,7 +452,13 @@ impl App {
             }
             menu::ZOOM_IN => self.zoom_step(camera::STEP),
             menu::ZOOM_OUT => self.zoom_step(1.0 / camera::STEP),
-            menu::RELOAD => return self.reload_boards(),
+            menu::SHARE_COPY => return self.copy_share_link(false),
+            menu::SHARE_ROTATE => return self.copy_share_link(true),
+            menu::RELOAD => {
+                if let Some(key) = self.shown.clone() {
+                    return self.reload_boards(&key);
+                }
+            }
             _ => {}
         }
         Task::none()
@@ -499,7 +525,7 @@ impl App {
             self.fit_pending = true;
             return;
         };
-        let Some(content) = camera::bounds_of(self.boards.iter().map(Board::rect)) else {
+        let Some(content) = camera::bounds_of(self.shown_boards().iter().map(Board::rect)) else {
             return;
         };
         self.camera = Camera::fit(content, view, 1.0);
@@ -517,8 +543,9 @@ impl App {
             self.details.due = None;
             return;
         };
+        let boards = self.shown_boards().to_vec();
         let asks = self.details.refresh(
-            &self.boards,
+            &boards,
             &self.camera,
             plane,
             self.scale_factor,
@@ -532,7 +559,12 @@ impl App {
     fn ask(&mut self, ask: detail::Ask) {
         match ask {
             detail::Ask::Grow { tab, size } => {
-                if let Some(b) = self.boards.iter_mut().find(|b| b.tab == tab) {
+                let board = self
+                    .live
+                    .iter_mut()
+                    .flat_map(|l| l.boards.iter_mut())
+                    .find(|b| b.tab == tab);
+                if let Some(b) = board {
                     b.surface = size.surface;
                     b.grown = true;
                     self.send(Cmd::SetBoard { id: tab, size });
@@ -560,7 +592,10 @@ impl App {
         );
         if cap != self.surface_cap {
             self.surface_cap = cap;
-            self.settle_rasters();
+            let keys: Vec<String> = self.live.iter().map(|l| l.at.key()).collect();
+            for key in keys {
+                self.settle_rasters(&key);
+            }
         }
     }
 
@@ -580,14 +615,14 @@ impl App {
     // ── selection ─────────────────────────────────────────────────
 
     fn pick(&mut self, tab: u64, x: f32, y: f32) {
-        let (Some(open), Some(board)) = (
-            self.open.as_ref(),
-            self.boards.iter().find(|b| b.tab.0 == tab),
-        ) else {
+        let Some(live) = self.shown_live() else {
+            return;
+        };
+        let Some(board) = live.boards.iter().find(|b| b.tab.0 == tab) else {
             return;
         };
         let why = Pending::Pick {
-            at: open.at.clone(),
+            at: live.at.clone(),
             artboard: board.art.id.clone(),
             tab,
         };
@@ -637,8 +672,9 @@ impl App {
         };
         match why {
             Pending::Pick { at, artboard, tab } => {
-                let current = self.open.as_ref().is_some_and(|o| o.at == at)
-                    && self.boards.iter().any(|b| b.tab.0 == tab);
+                let current = self.shown_live().is_some_and(|l| {
+                    l.at == at && l.boards.iter().any(|b| b.tab.0 == tab)
+                });
                 if !current {
                     return;
                 }
@@ -737,7 +773,7 @@ impl App {
         match ev {
             SidebarEvent::Activate { id } => {
                 if let Some(at) = CanvasRef::from_key(&id) {
-                    self.open_canvas(at);
+                    self.show_canvas(at);
                 }
             }
             SidebarEvent::ToggleSection { id } => {
@@ -758,6 +794,46 @@ impl App {
             .iter()
             .map(|p| (p.id.clone(), canvas::scan(&p.root)))
             .collect();
+        self.share_canvases();
+    }
+
+    /// Every canvas the rail lists has a share link.
+    fn share_canvases(&self) {
+        let Some(share) = &self.share else {
+            return;
+        };
+        let all = self.catalog.projects.iter().flat_map(|p| {
+            self.canvases
+                .get(&p.id)
+                .into_iter()
+                .flatten()
+                .map(move |c| {
+                    let key = CanvasRef {
+                        project: p.id.clone(),
+                        canvas: c.name.clone(),
+                    }
+                    .key();
+                    (key, p.root.clone(), canvas::canvas_dir(&p.root, &c.name))
+                })
+        });
+        share.set_canvases(all);
+    }
+
+    /// Copy the shown canvas's share link (`rotate`: a new one first).
+    fn copy_share_link(&mut self, rotate: bool) -> Task<Msg> {
+        let (Some(share), Some(key)) = (&self.share, self.shown.clone()) else {
+            return Task::none();
+        };
+        let url = if rotate { share.rotate(&key) } else { share.url(&key) };
+        let Some(url) = url else {
+            return Task::none();
+        };
+        let note = if rotate { "New link copied" } else { "Link copied" };
+        self.notice = Some((note.to_string(), Instant::now() + NOTICE));
+        Task::batch([
+            iced::clipboard::write(url),
+            Task::perform(tokio::time::sleep(NOTICE), |()| Msg::Ignore),
+        ])
     }
 
     fn persist(&self) {
@@ -825,7 +901,7 @@ impl App {
             Ok(name) => {
                 self.canvas_draft = CanvasDraft::default();
                 self.rescan();
-                self.open_canvas(CanvasRef {
+                self.show_canvas(CanvasRef {
                     project,
                     canvas: name,
                 });
@@ -835,8 +911,14 @@ impl App {
     }
 
     fn drop_project(&mut self, project: &str) {
-        if self.open.as_ref().is_some_and(|o| o.at.project == project) {
-            self.close_canvas();
+        let keys: Vec<String> = self
+            .live
+            .iter()
+            .filter(|l| l.at.project == project)
+            .map(|l| l.at.key())
+            .collect();
+        for key in keys {
+            self.close_live(&key);
         }
         self.catalog.drop_project(project);
         self.persist();
@@ -852,6 +934,7 @@ impl App {
             &self.catalog.projects,
             &self.canvases,
             self.catalog.selected.as_ref(),
+            &self.agent_busy(),
             &self.theme,
             plane_bg,
         );
@@ -863,13 +946,20 @@ impl App {
     }
 
     fn plane_view(&self, bg: Color) -> Element<'_, Msg> {
-        let body: Element<'_, Msg> = match &self.open {
+        let body: Element<'_, Msg> = match self.shown_live() {
             None => hint("Pick a canvas, or add a project (⌘N)."),
             Some(open) => {
+                // Every live board keeps its texture fresh (off-screen ones
+                // show at once when their canvas comes up); only the shown
+                // canvas draws.
                 let items = self
-                    .boards
+                    .live
                     .iter()
-                    .map(|b| {
+                    .flat_map(|l| {
+                        let shown = self.is_shown(&l.at.key());
+                        l.boards.iter().map(move |b| (b, shown))
+                    })
+                    .map(|(b, shown)| {
                         let (views, detail) = self.details.plane_views(b.tab.0);
                         plane::Item {
                             tab: b.tab.0,
@@ -878,6 +968,7 @@ impl App {
                             surface: b.surface,
                             views,
                             detail,
+                            shown,
                         }
                     })
                     .collect();
@@ -890,8 +981,8 @@ impl App {
                 .height(Length::Fill);
                 let overlay = Overlay {
                     camera: self.camera,
-                    boards: &self.boards,
-                    painted: self
+                    boards: &open.boards,
+                    painted: open
                         .boards
                         .iter()
                         .map(|b| self.frames.is_painted(b.tab.0))
@@ -910,7 +1001,7 @@ impl App {
                 let mut layers = stack![textures, overlay.map(Msg::Plane)];
                 if let Some(e) = &open.error {
                     layers = layers.push(error_chip(e));
-                } else if self.boards.is_empty() {
+                } else if open.boards.is_empty() {
                     let file = format!(
                         "No artboards yet. Add [[artboard]] entries to design/{}/canvas.toml.",
                         open.at.canvas
@@ -938,7 +1029,7 @@ impl App {
         if self.dialog_open() {
             return None;
         }
-        let board = self.boards.iter().find(|b| Some(b.tab.0) == self.focus)?;
+        let board = self.shown_boards().iter().find(|b| Some(b.tab.0) == self.focus)?;
         let caret = *self.engine.ime_handle().lock().unwrap();
         let s = board.scale as f32;
         let (x, y, w, h) = if caret.w > 0 && caret.h > 0 {
@@ -967,7 +1058,31 @@ impl App {
         if let Some(sel) = &self.selection {
             bar = bar.push(small(sel.label()));
         }
-        let pill = container(bar).padding([6, 10]).style(pill_style);
+        if let Some((note, until)) = &self.notice {
+            if Instant::now() < *until {
+                bar = bar.push(small(note.clone()));
+            }
+        }
+        // Share: copy the live link, or replace it.
+        let mut right = 10.0;
+        if self.share.is_some() {
+            bar = bar
+                .push(share_tool("lucide/link", "Copy share link", Msg::ShareLink(false)))
+                .push(share_tool(
+                    "lucide/refresh-cw",
+                    "New share link (the old one stops working)",
+                    Msg::ShareLink(true),
+                ));
+            right = 3.0;
+        }
+        let pill = container(bar)
+            .padding(iced::Padding {
+                top: 3.0,
+                right,
+                bottom: 3.0,
+                left: 10.0,
+            })
+            .style(pill_style);
         container(pill)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1026,6 +1141,19 @@ fn error_chip<'a>(message: &str) -> Element<'a, Msg> {
     }))
     .padding(16)
     .into()
+}
+
+/// A pill tool: icon button, tip above (the pill sits on the bottom edge).
+fn share_tool<'a>(icon: &str, tip: &'static str, msg: Msg) -> Element<'a, Msg> {
+    use sola_kit::components::{icon::icon_handle, popover, toolbar};
+    let button = toolbar::toolbar_icon(icon_handle(icon), 14).on_press(msg);
+    let tip = container(text(tip).font(fonts::ui()).size(12))
+        .padding([5, 8])
+        .style(popover::style);
+    iced::widget::tooltip(button, tip, iced::widget::tooltip::Position::Top)
+        .gap(8)
+        .delay(Duration::from_millis(280))
+        .into()
 }
 
 fn pill_style(theme: &Theme) -> container::Style {

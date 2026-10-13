@@ -300,6 +300,13 @@ impl Details {
         Some(self.issue(tab, None, false))
     }
 
+    /// `tab` goes off screen: back to the whole board (the track stays, so
+    /// its frames stay known). `None` when no detail was up.
+    pub fn retire(&mut self, tab: u64) -> Option<Ask> {
+        self.tabs.get(&tab)?.now.detail?;
+        Some(self.issue(tab, None, false))
+    }
+
     /// The capture finished; plan again (the app pokes).
     pub fn release(&mut self, tab: u64) {
         if let Some(t) = self.tabs.get_mut(&tab) {

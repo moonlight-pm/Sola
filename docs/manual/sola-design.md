@@ -103,25 +103,54 @@ cancelled — pages have no browser chrome here.
 
 Agents drive Design with `solactl design` or its MCP tools (see
 [`solactl.md`](solactl.md#design-solactl-design)): make a canvas in their
-project (it shows up under that project in the rail), open a canvas, steer the
-view, wait for reloads, screenshot an artboard, export it as a PDF, inspect
-what rendered, and read your selection.
+project, open a canvas, wait for reloads, screenshot an artboard, export it as
+a PDF, inspect what rendered, and read your selection.
+
+Agents never take your screen. A canvas an agent makes or opens is listed in
+the rail and runs off screen; several agents can work on their own canvases
+at once. While an agent is working in a canvas its rail row says **agent**;
+pick it to watch. An agent puts a canvas on your screen only when you ask it
+to (`--raise`). Canvases nobody has used for 10 minutes are closed in the
+background and reopen on the next call.
 
 Look around while an agent works. Its screenshots and PDFs are the whole
 artboard however you are zoomed, and your pointer leaves the page while they
-are taken, so no hover state gets in. An agent can move your view only until
-you pan or zoom that canvas yourself; after that its `view` leaves your
-camera alone.
+are taken, so no hover state gets in. An agent can frame a canvas's view until
+you pan or zoom it yourself; after that its `view` leaves your camera alone.
 
 What an agent touches glows: a soft halo with a light sweep over the elements
 it inspects, the selection it reads, an artboard it screenshots or prints,
 and an artboard reloading after its files changed.
 
+## Share
+
+Every canvas has a live link, `https://design.moonlight.pm/<token>/`, where
+the token is 26 random characters. The link button on the bottom bar (or
+**Share → Copy Link**, ⌘⇧L) copies the link of the canvas on screen; the
+refresh button beside it (or **Share → New Link**) makes a new one, copies
+it, and the old link stops working. Agents get it with `solactl design share`.
+
+The link shows the canvas as it is right now, laid out and handled as in
+Design: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
+frames everything (no element picking). On a phone, two fingers pan and
+pinch over a page, one finger pans the background. When a file changes, viewers' pages reload within a couple
+of seconds. A link only reaches its own canvas: its folder, shared files in
+`design/`, its `root` folder, and the project files its artboards load —
+nothing else in the project, and no dotfiles. Links work while Design is
+running.
+
+Design serves the links itself on `127.0.0.1:47820` and runs a Cloudflare
+Tunnel connector (`cloudflared`) that forwards `design.moonlight.pm` there.
+Settings are in `~/.config/sola/design/share.toml` (`public_url`, `listen`,
+`tunnel_token`, `cloudflared`; owner-only — the token is a secret); tokens
+are in `share.json` beside it. Without a `tunnel_token` the links are local
+(`http://127.0.0.1:47820/…`). The connector logs to
+`/opt/sola/log/design-tunnel.log`.
+
 ## Not yet
 
 An `auto` artboard is measured for a few seconds after each load; content
-that grows later than that waits for the next reload. Opening a different
-canvas (you or an agent) replaces the one on screen: Design shows one canvas
-at a time, and an agent working on another canvas has to open it. The pages
-themselves are shared with agents: text you type into a page is there when
-an agent looks.
+that grows later than that waits for the next reload. The pages themselves
+are shared with agents: text you type into a page is there when an agent
+looks. Share links have no password or expiry — anyone with the link sees the
+canvas while Design runs.

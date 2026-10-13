@@ -27,6 +27,7 @@ mod projects;
 mod rail;
 mod select;
 mod serve;
+mod share;
 mod watch;
 
 use std::process::ExitCode;
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
     }
 
     sola_kit::app::startup(APP_ID);
+    reap_inherited_children();
     if let Err(e) = profile::bind() {
         tracing::error!(error = %e, "bind design profile");
         return ExitCode::FAILURE;
@@ -71,5 +73,19 @@ fn main() -> ExitCode {
             tracing::error!(error = %e, "iced");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Children of the image before a self-restart (`execv` keeps the pid, so
+/// they stay ours): the engine helper and the tunnel connector, already
+/// exited. Reap them so they do not linger as zombies, one set per install.
+fn reap_inherited_children() {
+    loop {
+        // SAFETY: waitpid with WNOHANG only collects exited children.
+        let pid = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+        if pid <= 0 {
+            break;
+        }
+        tracing::debug!(pid, "reaped a child from before the restart");
     }
 }

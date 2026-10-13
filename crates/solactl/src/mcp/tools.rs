@@ -7,6 +7,7 @@
 //! policy, timeout). A reply whose `path` is a small PNG / JPEG also comes
 //! back as an image, so the agent sees a screenshot without a second read.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -17,6 +18,23 @@ use crate::dynamic;
 
 /// Largest image inlined (raw bytes; base64 grows it by a third).
 const MAX_IMAGE_BYTES: u64 = 3_700_000;
+
+/// The canvas this agent last opened or made. One MCP server runs per
+/// agent, so this is per agent: its page calls go to its own canvas, not
+/// to whatever the human has on screen — several agents work at once.
+static DESIGN_CANVAS: Mutex<Option<String>> = Mutex::new(None);
+/// Design calls that act on one canvas (they take `canvas`).
+const DESIGN_PAGE_CALLS: &[&str] = &[
+    "status",
+    "share",
+    "share.rotate",
+    "view",
+    "wait",
+    "reload",
+    "screenshot",
+    "pdf",
+    "inspect",
+];
 
 /// One live method as a tool.
 #[derive(Debug, Clone)]
@@ -107,19 +125,44 @@ pub fn call(t: &Tool, arguments: Option<&Value>) -> Value {
     }
     if t.owner == "design" {
         dynamic::inject_design_context(&t.spec.name, &mut params);
+        let mine = DESIGN_CANVAS.lock().ok().and_then(|c| c.clone());
+        default_canvas(&t.spec.name, &mut params, mine);
     }
     if let Err(e) = dynamic::apply_bot_policy(&t.owner, &t.spec.name, &params) {
         return error_result(&e);
     }
     let timeout = Duration::from_secs(dynamic::invoke_timeout_secs(&t.spec, &params));
     match sola_call::invoke(&t.owner, &t.spec.name, params, timeout) {
-        Ok(data) => ok_result(&data),
+        Ok(data) => {
+            if t.owner == "design" && matches!(t.spec.name.as_str(), "open" | "canvas.new") {
+                remember_canvas(&data);
+            }
+            ok_result(&data)
+        }
         Err(CallError::Timeout) => error_result(&format!(
             "timeout waiting for {}.{} — if {} is still on screen its call channel is wedged; \
              close it from its window and launch it again",
             t.owner, t.spec.name, t.app_id
         )),
         Err(e) => error_result(&e.to_string()),
+    }
+}
+
+/// A page call without `canvas` goes to this agent's canvas (`mine`).
+fn default_canvas(method: &str, params: &mut Value, mine: Option<String>) {
+    let (Some(map), Some(path)) = (params.as_object_mut(), mine) else {
+        return;
+    };
+    if DESIGN_PAGE_CALLS.contains(&method) && !map.contains_key("canvas") {
+        map.insert("canvas".into(), Value::String(path));
+    }
+}
+
+/// Keep the canvas an `open` / `canvas.new` reply names for this agent.
+fn remember_canvas(data: &Value) {
+    let path = data.pointer("/canvas/path").and_then(Value::as_str);
+    if let (Some(path), Ok(mut mine)) = (path, DESIGN_CANVAS.lock()) {
+        *mine = Some(path.to_string());
     }
 }
 
@@ -178,6 +221,24 @@ fn image_for(data: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn page_calls_default_to_the_agents_canvas() {
+        let mine = Some("/w/p/design/home".to_string());
+        let mut p = json!({"artboard": "a"});
+        default_canvas("screenshot", &mut p, mine.clone());
+        assert_eq!(p["canvas"], "/w/p/design/home");
+        let mut p = json!({"canvas": "/other"});
+        default_canvas("inspect", &mut p, mine.clone());
+        assert_eq!(p["canvas"], "/other", "explicit wins");
+        let mut p = json!({});
+        default_canvas("selection", &mut p, mine.clone());
+        assert!(p.get("canvas").is_none(), "not a page call");
+        let mut p = json!({});
+        default_canvas("status", &mut p, None);
+        assert!(p.get("canvas").is_none(), "no canvas yet: the human's");
+    }
+
     use super::*;
     use sola_call::ArgSpec;
 
