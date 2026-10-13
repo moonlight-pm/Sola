@@ -81,7 +81,9 @@
   // As in Design: pages are live (left button, hover, keys), the right
   // button drags the canvas anywhere — the pages never see it — and the
   // wheel always zooms. Touch: two fingers pan and pinch over a page, one
-  // finger pans on the background.
+  // finger pans on the background. Pointer events drive the pan: a page
+  // cancels the right pointerdown, and that also stops the browser's
+  // mousedown / mousemove / mouseup for the press.
   let pan = null;
   const startPan = (e) => { pan = { x: e.screenX, y: e.screenY }; document.body.classList.add('panning'); };
   const movePan = (e) => {
@@ -113,11 +115,12 @@
     } catch (e) {}
     const swallow = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
     const right = (e) => e.button === 2;
-    win.addEventListener('pointerdown', (e) => { if (right(e)) swallow(e); }, true);
-    win.addEventListener('pointerup', (e) => { if (right(e)) swallow(e); }, true);
-    win.addEventListener('mousedown', (e) => { if (right(e)) { swallow(e); startPan(e); } }, true);
-    win.addEventListener('mousemove', (e) => { if (pan) { e.stopImmediatePropagation(); movePan(e); } }, true);
-    win.addEventListener('mouseup', (e) => { if (right(e) && pan) { swallow(e); endPan(); } }, true);
+    win.addEventListener('pointerdown', (e) => { if (right(e)) { swallow(e); startPan(e); } }, true);
+    win.addEventListener('pointermove', (e) => { if (pan) { e.stopImmediatePropagation(); movePan(e); } }, true);
+    win.addEventListener('pointerup', (e) => { if (right(e)) { swallow(e); endPan(); } }, true);
+    win.addEventListener('mousedown', (e) => { if (right(e)) swallow(e); }, true);
+    win.addEventListener('mousemove', (e) => { if (pan) e.stopImmediatePropagation(); }, true);
+    win.addEventListener('mouseup', (e) => { if (right(e)) swallow(e); }, true);
     win.addEventListener('contextmenu', swallow, true);
     win.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -184,9 +187,11 @@
   };
 
   // The background: right-drag pans, wheel zooms; touch pans and pinches.
-  plane.addEventListener('mousedown', (e) => { if (e.button === 2) { e.preventDefault(); startPan(e); } });
-  addEventListener('mousemove', movePan);
-  addEventListener('mouseup', (e) => { if (e.button === 2) endPan(); });
+  plane.addEventListener('pointerdown', (e) => {
+    if (e.button === 2 && e.pointerType !== 'touch') { e.preventDefault(); startPan(e); }
+  });
+  addEventListener('pointermove', movePan);
+  addEventListener('pointerup', (e) => { if (e.button === 2) endPan(); });
   addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('blur', endPan);
   plane.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
