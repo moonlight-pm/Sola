@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slice 1 in progress
+**Status:** slices 1–4 and both Exit fix rounds done; merged to master 2026-10-12
 
 ---
 
@@ -162,7 +162,7 @@
       canvas (`<project>/design/<slug>/`, project = caller cwd via
       solactl / MCP injection), registered + shown; existing → opened.
 - [x] Registered in Claude Code user config: `sola` → `solactl mcp`.
-- [ ] Human: an agent session designs through MCP end to end.
+- [x] Human: an agent session designs through MCP end to end (Exit, `design/foundation`).
 
 ## Slice 3 — crisp zoom, auto height, PDF
 

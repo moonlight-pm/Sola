@@ -1,7 +1,7 @@
 # sola-design — HTML artboards on a canvas, edited by agents
 
 **Date:** 2026-10-12  
-**Status:** **Frozen** — slices 1–3 on master (2026-10-12); slice 4 (`solactl mcp`), `canvas.new`, the served origin (D5), and the Exit field-report fixes on worktree `sola-design`; all installed and smoked  
+**Status:** **Frozen** — slices 1–4, `canvas.new`, the served origin (D5), and the Exit field-report fixes on master (2026-10-12); all installed and smoked  
 **Related:** [sola-wrapper](2026-08-21-sola-wrapper-design.md) (CEF via the sola-browser lib); [browser agent control](2026-09-11-sola-browser-agent-control-design.md) (CDP wrap, call owner shape); [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md) (rail + `solactl` shape); plan [`plans/2026-10-12-sola-design-plan.md`](../plans/2026-10-12-sola-design-plan.md)
 
 | | |
