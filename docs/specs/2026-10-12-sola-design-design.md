@@ -8,7 +8,7 @@
 |--|--|
 | **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
 | **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. 2026-10-12: rail drag-reorder + `project.remove` installed `design`; `project.remove` smoked over solactl and MCP, drag smoked. |
-| **Gaps** | `auto` height stops re-measuring 8 s after a load. Page state (typed text) is shared between the human and agents. Page dialogs are auto-accepted. |
+| **Gaps** | An `auto` page sized in `vh` grows a few steps per load (the measured height carries across reloads). Page dialogs are auto-accepted. |
 
 ## Intent
 
@@ -53,7 +53,7 @@ project's git, and openable in any browser.
 | Zoom | The **wheel always zooms**, about the pointer. No wheel scrolling anywhere, including inside artboards. ⌘0 fits all, ⌘1 is 100%, ⌘= / ⌘- step. |
 | Pointer | **No modes.** Pages are always live: pointer and keys go to the artboard under the pointer / the one last clicked. **Super+click** picks instead (2026-10-12: replaced the Select / Interact toggle). Wheel zooms; right-drag pans. |
 | Pick | Super+click picks the element under the pointer in that artboard (`document.elementFromPoint` via CDP `Runtime.evaluate`); iced draws the outline. Super+click on empty canvas clears it. The pick is held in the app for the agent. Super comes from River as a bus chord (`sola_browser::input`), since iced does not see a bare Super. |
-| Auto height | `height = "auto"`: the viewport starts at 900 and is resized to the page's content height when the board settles after each load (web fonts ready, two frames). Each resize earns one confirming settle, at most two per load, so `vh` content cannot run away; it is measured again 1, 3, and 8 s after a settle for late images; scrollbars are hidden so layout width always equals the artboard width. |
+| Auto height | `height = "auto"`: the viewport starts at 900 and is resized to the page's content height when the board settles after each load (web fonts ready, two frames). Each resize earns one confirming settle, at most two per load. After the first settle the page **watches its height** for the rest of the load (one pending eval: a `ResizeObserver` on the root, body, and body's children resolves when the content height changes; Design resizes and asks again — no timers), so late images, fetched data, and opened sections resize it. A change that came with a viewport change (`reflow`) is applied at most two times in a row, so `vh` content cannot run away; scrollbars are hidden so layout width always equals the artboard width. |
 | Settle | After every load a board is settled (`document.fonts.ready`, two frames) and reports its height, HTTP status, URL, and the local resources it used. An `auto` resize settles again (≤ 2 per load) since the new viewport can reflow. Each load has a generation; a settle answered after the board navigated on is ignored. `wait` / `reload` count a board done only when settled. Design's CEF runs with `--hide-scrollbars` (a scrollbar narrowed the first layout of tall pages). |
 | Board errors | A missing `src` file (at layout) or an HTTP status ≥ 400 (at settle) is the board's `error`: red in its title on the canvas, `error` in `status`. `status` also shows each board's actual tab `url` next to `src`. |
 | Reload | Recursive watch on `design/` plus the files a board loaded from outside it. The open canvas's `canvas.toml` → re-layout; any other file in that canvas, a shared file outside every canvas (`design/tokens.css`), or a linked outside file → reload its boards (skipped when the boards already show those file times). Edits inside other canvases are ignored. `src` keeps `?query` / `#fragment`. |
@@ -153,7 +153,8 @@ CLI has no second way to do that. No raw `eval`.
    `solactl mcp`, built.
 5. Limits + agent/human (2026-10-12): detail renders (sharp to 3200%),
    pages past 8192 px, byte ranges, canvas `root`, late `auto`
-   re-measures, orthogonal agent reads, `view` yields to the human, agent
+   re-measures (2026-10-13: replaced by the page's height watch),
+   orthogonal agent reads, `view` yields to the human, agent
    glow, page IME — built, installed.
 6. Multi-agent canvases (agents never take the screen; `--canvas` on page
    calls; per-agent MCP canvas) and live share (D6: Design serves token

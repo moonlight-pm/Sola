@@ -42,8 +42,10 @@ project root, so a product's `/fonts/x.woff2` works and the artboards' own
 query: `src = "light.html?theme=dark"`. Content taller than the artboard is
 cut off at its bottom edge — the wheel zooms, it does not scroll. For long
 pages use `height = "auto"`: the artboard grows to the page's content after
-each load (it starts at 900), and is measured again over the next few seconds
-for images that arrive late.
+each load (it starts at 900) and keeps following it while the page is open —
+images, fetched data, or a section you open grow or shrink it. A page sized
+in `vh` grows with its own artboard; Design stops that after a few steps per
+load, so give `auto` pages content heights, not viewport ones.
 
 Pages render at 2× (a very large artboard at less), and zooming only scales
 them, so it is immediate. When you stop zooming past that, the part of each
@@ -98,6 +100,10 @@ bar at the bottom shows it next to the zoom. An agent reads it with
 outline follows the element across reloads. Super+click empty canvas to
 clear it.
 
+You and agents use the same pages: text you type, a menu you open, or a
+scroll inside a page is what an agent sees in its next screenshot, and an
+agent's reload (or a file edit) clears it.
+
 Page dialogs (`alert`, `confirm`) are accepted automatically and logins are
 cancelled — pages have no browser chrome here.
 
@@ -151,9 +157,3 @@ are in `share.json` beside it. Without a `tunnel_token` the links are local
 (`http://127.0.0.1:47820/…`). The connector logs to
 `/opt/sola/log/design-tunnel.log`.
 
-## Not yet
-
-An `auto` artboard is measured for a few seconds after each load; content
-that grows later than that waits for the next reload. The pages themselves
-are shared with agents: text you type into a page is there when an agent
-looks.

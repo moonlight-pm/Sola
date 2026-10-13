@@ -171,6 +171,9 @@ impl App {
         self.glows.forget(tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
+        // A height watch never answers for a closed tab.
+        self.pending
+            .retain(|_, p| !matches!(p, Pending::Height { tab: t, .. } if *t == tab.0));
         for l in &mut self.live {
             l.links.remove(&tab.0);
         }
@@ -209,6 +212,8 @@ impl App {
         }
         self.listed.clear();
         self.loads.clear();
+        // The old helper's height watches never answer.
+        self.pending.retain(|_, p| !matches!(p, Pending::Height { .. }));
         self.details.clear();
         self.glows = Default::default();
         self.focus = None;
@@ -303,43 +308,24 @@ impl App {
         let frames = &self.frames;
         let idle = |tab: u64| frames.is_painted(tab) && loading.get(&tab) == Some(&false);
         let now = Instant::now();
-        let settles = self.loads.take_settles(now, idle);
-        let follow_ups = self.loads.take_follow_ups(now);
-        let settles = settles.into_iter().map(|(t, g)| (t, g, false));
-        let follow_ups = follow_ups
-            .into_iter()
-            .filter(|&(t, _)| self.is_auto(TabId(t)))
-            .map(|(t, g)| (t, g, true));
-        for (tab, generation, follow_up) in settles.chain(follow_ups).collect::<Vec<_>>() {
+        for (tab, generation) in self.loads.take_settles(now, idle) {
             let op = AgentOp::Eval {
                 expression: inspect::SETTLE.to_string(),
             };
-            let why = Pending::Settle {
-                tab,
-                generation,
-                follow_up,
-            };
-            self.agent(TabId(tab), op, Some(why));
+            self.agent(TabId(tab), op, Some(Pending::Settle { tab, generation }));
         }
     }
 
     /// A board settled: flag an HTTP error page, record the files it loaded
     /// from outside `design/`, and resize an `auto` board to its content —
     /// then settle once more (bounded: [`crate::loads::MAX_CONFIRMS`]), since
-    /// the new viewport can reflow the page. An `auto` board is measured
-    /// again a few times after its first settle (`follow_up` replies), for
+    /// the new viewport can reflow the page. An `auto` board's page then
+    /// watches its height for the rest of the load ([`Self::on_height`]), for
     /// content that arrives late. A reply for an earlier load of the tab is
     /// ignored.
-    pub(super) fn on_settled(&mut self, tab: u64, generation: u64, follow_up: bool, reply: AgentReply) {
-        if follow_up {
-            if self.loads.generation(tab) != generation {
-                return;
-            }
-        } else if !self.loads.settled(tab, generation) {
+    pub(super) fn on_settled(&mut self, tab: u64, generation: u64, reply: AgentReply) {
+        if !self.loads.settled(tab, generation) {
             return;
-        }
-        if !follow_up && self.is_auto(TabId(tab)) {
-            self.loads.follow_up(tab, Instant::now());
         }
         let data = reply.ok.then_some(reply.data).flatten();
         let Some(data) = data else {
@@ -370,12 +356,64 @@ impl App {
         let Some(height) = data.get("height").and_then(Value::as_f64) else {
             return;
         };
-        let height = (height.ceil() as u32).clamp(1, canvas::MAX_SIDE);
-        let Some(b) = live
-            .boards
-            .iter_mut()
-            .find(|b| b.tab.0 == tab && b.art.auto_height)
+        if self.is_auto(TabId(tab)) && self.loads.watch(tab) {
+            self.watch_height(tab, generation, height);
+        }
+        self.set_auto_height(&key, tab, height);
+    }
+
+    /// Ask the page of `auto` board `tab` for its next content-height change
+    /// from `known` (what it measured last).
+    fn watch_height(&mut self, tab: u64, generation: u64, known: f64) {
+        let expression = format!("{}({})", inspect::WATCH_HEIGHT, known.ceil() as u64);
+        self.agent(
+            TabId(tab),
+            AgentOp::Eval { expression },
+            Some(Pending::Height { tab, generation }),
+        );
+    }
+
+    /// The page of `auto` board `tab` changed height: watch for the next
+    /// change, and resize the board — unless the page only follows its
+    /// viewport (`vh`) and has grown with the board too often in a row.
+    pub(super) fn on_height(&mut self, tab: u64, generation: u64, reply: AgentReply) {
+        if self.loads.generation(tab) != generation || !self.is_auto(TabId(tab)) {
+            return;
+        }
+        let data = reply.ok.then_some(reply.data).flatten();
+        let Some(height) = data
+            .as_ref()
+            .and_then(|d| d.get("height"))
+            .and_then(Value::as_f64)
         else {
+            // Navigated or closed; the next load watches again.
+            tracing::debug!(tab, error = ?reply.error, "height watch ended");
+            self.loads.unwatch(tab);
+            return;
+        };
+        self.watch_height(tab, generation, height);
+        let reflow = data
+            .as_ref()
+            .and_then(|d| d.get("reflow"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !self.loads.reflowed(tab, reflow) {
+            tracing::debug!(tab, height, "auto board follows its viewport; not resized");
+            return;
+        }
+        if let Some(key) = self.canvas_of_tab(tab) {
+            self.set_auto_height(&key, tab, height);
+        }
+    }
+
+    /// Size `auto` board `tab` of canvas `key` to its content `height`.
+    fn set_auto_height(&mut self, key: &str, tab: u64, height: f64) {
+        let height = (height.ceil() as u32).clamp(1, canvas::MAX_SIDE);
+        let Some(b) = self.live_mut(key).and_then(|live| {
+            live.boards
+                .iter_mut()
+                .find(|b| b.tab.0 == tab && b.art.auto_height)
+        }) else {
             return;
         };
         if b.art.height == height {
@@ -386,17 +424,17 @@ impl App {
         let artboard = b.art.id.clone();
         // The web share lays the canvas out with Design's heights.
         if let Some(share) = &self.share {
-            share.set_height(&key, &artboard, height);
+            share.set_height(key, &artboard, height);
         }
-        self.resize_boards(&key, Some(tab));
+        self.resize_boards(key, Some(tab));
         self.details.poke(Instant::now());
         self.loads.confirm(tab, Instant::now());
-        if self.is_shown(&key) {
+        if self.is_shown(key) {
             if !self.user_camera {
                 self.fit();
             }
         } else {
-            self.refit_parked(&key);
+            self.refit_parked(key);
         }
     }
 

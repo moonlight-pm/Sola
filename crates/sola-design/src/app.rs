@@ -172,8 +172,10 @@ enum Pending {
     /// A `solactl design` call answered by the page of board `tab`.
     Call { inc: Incoming, kind: cli::CallKind, tab: u64 },
     /// A board's post-load settle: content height and loaded files, for
-    /// load generation `generation` — or a later re-measure (`follow_up`).
-    Settle { tab: u64, generation: u64, follow_up: bool },
+    /// load generation `generation`.
+    Settle { tab: u64, generation: u64 },
+    /// An `auto` board's page waiting to report its next height change.
+    Height { tab: u64, generation: u64 },
 }
 
 struct App {
@@ -657,11 +659,8 @@ impl App {
         };
         let why = match why {
             Pending::Call { inc, kind, tab } => return self.finish_call(inc, kind, tab, reply),
-            Pending::Settle {
-                tab,
-                generation,
-                follow_up,
-            } => return self.on_settled(tab, generation, follow_up, reply),
+            Pending::Settle { tab, generation } => return self.on_settled(tab, generation, reply),
+            Pending::Height { tab, generation } => return self.on_height(tab, generation, reply),
             other => other,
         };
         if !reply.ok {
@@ -698,7 +697,9 @@ impl App {
                 (Some(sel), None) if sel.tab == tab => self.selection = None,
                 _ => {}
             },
-            Pending::Call { .. } | Pending::Settle { .. } => unreachable!("answered above"),
+            Pending::Call { .. } | Pending::Settle { .. } | Pending::Height { .. } => {
+                unreachable!("answered above")
+            }
         }
     }
 

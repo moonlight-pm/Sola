@@ -1223,6 +1223,7 @@ cef::wrap_life_span_handler! {
                 if close_devtools_browser(&state, bid) {
                     return;
                 }
+                crate::cef::agent::forget_browser(bid);
                 let removed = {
                     let mut tabs = state.tabs.borrow_mut();
                     if let Some(pos) = tabs.iter().position(|t| t.browser_id == bid) {

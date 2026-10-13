@@ -7,12 +7,23 @@
 
 use crate::select::{PATH_FN, json_string};
 
+/// Content height for `height = "auto"`: the body's scroll height, or the
+/// root box when body margins add to it. One formula for [`SETTLE`] and
+/// [`WATCH_HEIGHT`].
+macro_rules! content_height {
+    () => {
+        "Math.ceil(Math.max(
+    document.body ? document.body.scrollHeight : 0,
+    document.documentElement.getBoundingClientRect().height))"
+    };
+}
+
 /// Run once a board has loaded: wait for web fonts and two frames (so the
-/// layout is final), then report the content height (for `height = "auto"`:
-/// the body's scroll height, or the root box when body margins add to it)
-/// and every local resource the page used — `file://` or Design's
-/// `*.localhost` origin — to watch files that live outside `design/`.
-pub const SETTLE: &str = r#"(async () => {
+/// layout is final), then report the content height and every local
+/// resource the page used — `file://` or Design's `*.localhost` origin — to
+/// watch files that live outside `design/`.
+pub const SETTLE: &str = concat!(
+    r#"(async () => {
   await document.fonts.ready;
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const urls = new Set([location.href]);
@@ -23,9 +34,9 @@ pub const SETTLE: &str = r#"(async () => {
       for (const r of s.cssRules) if (r.styleSheet && r.styleSheet.href) urls.add(r.styleSheet.href);
     } catch (_) {}
   }
-  const height = Math.ceil(Math.max(
-    document.body ? document.body.scrollHeight : 0,
-    document.documentElement.getBoundingClientRect().height));
+  const height = "#,
+    content_height!(),
+    r#";
   const local = (u) => {
     try {
       return u.startsWith('file://') || new URL(u).hostname.endsWith('.localhost');
@@ -36,7 +47,51 @@ pub const SETTLE: &str = r#"(async () => {
   const nav = performance.getEntriesByType('navigation')[0];
   const status = (nav && nav.responseStatus) || 0;
   return { height, resources: [...urls].filter(local), status, url: location.href };
-})()"#;
+})()"#
+);
+
+/// A function of `known` (call it as `WATCH_HEIGHT(<px>)`): resolves with
+/// `{height, reflow}` once the content height differs from `known`, measured
+/// 150 ms after boxes stop changing (the root, body, and body's children,
+/// observed once per document). `reflow`: the viewport changed since the
+/// page last measured — the board was resized, not new content. Design asks
+/// again after each answer; a navigation fails the wait.
+pub const WATCH_HEIGHT: &str = concat!(
+    r#"(async (known) => {
+  await document.fonts.ready;
+  const w = window.__solaDesignHeight || (window.__solaDesignHeight = (() => {
+    const s = { waiting: [], timer: 0, viewport: innerHeight };
+    const check = () => requestAnimationFrame(() => {
+      const height = "#,
+    content_height!(),
+    r#";
+      const reflow = innerHeight !== s.viewport;
+      s.viewport = innerHeight;
+      s.waiting = s.waiting.filter(([k, done]) => k === height || (done({ height, reflow }), false));
+    });
+    s.poke = () => {
+      clearTimeout(s.timer);
+      s.timer = setTimeout(check, 150);
+    };
+    const boxes = new ResizeObserver(s.poke);
+    const observe = () => {
+      boxes.observe(document.documentElement);
+      if (!document.body) return;
+      boxes.observe(document.body);
+      for (const el of document.body.children) boxes.observe(el);
+    };
+    observe();
+    if (document.body) {
+      new MutationObserver(() => { observe(); s.poke(); }).observe(document.body, { childList: true });
+    }
+    return s;
+  })());
+  return await new Promise((done) => {
+    w.waiting.push([known, done]);
+    w.poke();
+  });
+})"#
+);
 
 /// Report for `selector` (or just the page when `None`). `all`: one compact
 /// entry (selector path, tag, box, a little text) per match instead of the

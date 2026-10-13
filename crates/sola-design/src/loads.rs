@@ -8,9 +8,11 @@
 //! `wait` counts it done. Each load has a generation, so a settle answered
 //! after the board navigated on (`Inspected target navigated`) cannot mark
 //! the new load settled. An `auto` resize can ask for a confirming settle
-//! (the new viewport may reflow), at most [`MAX_CONFIRMS`] per load. An
-//! `auto` board is also measured again a few times after it settles
-//! ([`FOLLOW_UPS`]): images and lazy content that arrive late grow it.
+//! (the new viewport may reflow), at most [`MAX_CONFIRMS`] per load. After
+//! an `auto` board settles its page **watches its height** (one per load)
+//! and reports each change, so content that arrives late grows the board;
+//! changes that only follow a resize (`vh` units) are bounded by
+//! [`MAX_REFLOWS`] in a row.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -21,12 +23,9 @@ pub const LOAD_GRACE: Duration = Duration::from_secs(1);
 const SETTLE_GIVE_UP: Duration = Duration::from_secs(15);
 /// Confirming settles after an `auto` resize, per load (bounds `vh` growth).
 pub const MAX_CONFIRMS: u8 = 2;
-/// Re-measures after a load settles, as offsets from the settle.
-pub const FOLLOW_UPS: [Duration; 3] = [
-    Duration::from_secs(1),
-    Duration::from_secs(3),
-    Duration::from_secs(8),
-];
+/// Height reports in a row applied when the page's viewport changed since
+/// it last measured: a page sized in `vh` grows each time its board does.
+pub const MAX_REFLOWS: u8 = 2;
 
 #[derive(Default)]
 pub struct Loads {
@@ -40,8 +39,9 @@ pub struct Loads {
     generation: HashMap<u64, u64>,
     /// Confirming settles used by the current load.
     confirms: HashMap<u64, u8>,
-    /// Re-measures still to come for a load (generation, when).
-    follow: HashMap<u64, (u64, Vec<Instant>)>,
+    /// Height watch per tab: the load generation it runs for, and reflow
+    /// reports applied in a row.
+    watch: HashMap<u64, (u64, u8)>,
 }
 
 impl Loads {
@@ -52,7 +52,7 @@ impl Loads {
         self.settle_due.insert(tab, now);
         self.settling.remove(&tab);
         self.confirms.remove(&tab);
-        self.follow.remove(&tab);
+        self.watch.remove(&tab);
         *self.generation.entry(tab).or_default() += 1;
     }
 
@@ -61,28 +61,37 @@ impl Loads {
         self.generation.get(&tab).copied().unwrap_or_default()
     }
 
-    /// Measure `tab` again at each of [`FOLLOW_UPS`] from `now` (this load
-    /// only).
-    pub fn follow_up(&mut self, tab: u64, now: Instant) {
-        let when = FOLLOW_UPS.iter().rev().map(|d| now + *d).collect();
-        self.follow.insert(tab, (self.generation(tab), when));
+    /// Start the height watch for this load of `tab`. False when it runs.
+    pub fn watch(&mut self, tab: u64) -> bool {
+        let generation = self.generation(tab);
+        if self.watch.get(&tab).is_some_and(|w| w.0 == generation) {
+            return false;
+        }
+        self.watch.insert(tab, (generation, 0));
+        true
     }
 
-    /// Re-measures due now, as `(tab, generation)`.
-    pub fn take_follow_ups(&mut self, now: Instant) -> Vec<(u64, u64)> {
-        let mut out = Vec::new();
-        let generation = &self.generation;
-        self.follow.retain(|tab, (g, when)| {
-            if generation.get(tab).copied().unwrap_or_default() != *g {
-                return false;
-            }
-            if when.last().is_some_and(|t| *t <= now) {
-                when.pop();
-                out.push((*tab, *g));
-            }
-            !when.is_empty()
-        });
-        out
+    /// The watch ended without a report (it may start again).
+    pub fn unwatch(&mut self, tab: u64) {
+        self.watch.remove(&tab);
+    }
+
+    /// A height report: may it resize the board? A `reflow` (the viewport
+    /// changed since the page last measured) is applied [`MAX_REFLOWS`]
+    /// times in a row; any other change resets the count.
+    pub fn reflowed(&mut self, tab: u64, reflow: bool) -> bool {
+        let Some((_, streak)) = self.watch.get_mut(&tab) else {
+            return false;
+        };
+        if !reflow {
+            *streak = 0;
+            return true;
+        }
+        if *streak >= MAX_REFLOWS {
+            return false;
+        }
+        *streak += 1;
+        true
     }
 
     /// Settle once more after an `auto` resize (the new viewport may
@@ -121,10 +130,9 @@ impl Loads {
         !self.settle_due.contains_key(&tab)
     }
 
-    /// Some board still needs settling or re-measuring (keeps the app
-    /// ticking).
+    /// Some board still needs settling (keeps the app ticking).
     pub fn has_due(&self) -> bool {
-        !self.settle_due.is_empty() || !self.follow.is_empty()
+        !self.settle_due.is_empty()
     }
 
     /// Boards to settle now: due, idle and painted (`idle(tab)`), and either
@@ -167,7 +175,7 @@ impl Loads {
         self.settling.remove(&tab);
         self.generation.remove(&tab);
         self.confirms.remove(&tab);
-        self.follow.remove(&tab);
+        self.watch.remove(&tab);
     }
 
     pub fn clear(&mut self) {
@@ -243,21 +251,34 @@ mod tests {
     }
 
     #[test]
-    fn follow_ups_come_due_once_each_for_this_load() {
+    fn one_height_watch_per_load() {
         let mut l = Loads::default();
         let t0 = Instant::now();
         l.begin(3, t0);
-        l.follow_up(3, t0);
-        assert!(l.has_due());
-        assert!(l.take_follow_ups(t0).is_empty());
-        assert_eq!(l.take_follow_ups(t0 + FOLLOW_UPS[0]), vec![(3, 1)]);
-        assert!(l.take_follow_ups(t0 + FOLLOW_UPS[0]).is_empty());
-        // A new load drops the old schedule.
+        assert_eq!(l.take_settles(t0 + LOAD_GRACE, |_| true), vec![(3, 1)]);
+        assert!(l.settled(3, 1));
+        assert!(l.watch(3));
+        assert!(!l.watch(3), "confirming settles do not start another");
+        assert!(!l.has_due(), "a watch needs no tick");
+        l.unwatch(3);
+        assert!(l.watch(3), "a failed watch may start again");
         l.begin(3, t0);
-        assert!(l.take_follow_ups(t0 + FOLLOW_UPS[2]).is_empty());
-        l.follow_up(3, t0);
-        let late = l.take_follow_ups(t0 + FOLLOW_UPS[2]);
-        assert_eq!(late, vec![(3, 2)], "overdue ones fire one per tick");
+        assert!(l.watch(3), "a new load watches again");
+    }
+
+    #[test]
+    fn reflows_in_a_row_are_bounded() {
+        let mut l = Loads::default();
+        let t0 = Instant::now();
+        assert!(!l.reflowed(6, false), "no watch, no resize");
+        l.begin(6, t0);
+        l.watch(6);
+        for _ in 0..MAX_REFLOWS {
+            assert!(l.reflowed(6, true));
+        }
+        assert!(!l.reflowed(6, true), "a vh page stops growing");
+        assert!(l.reflowed(6, false), "new content still resizes");
+        assert!(l.reflowed(6, true), "and the count starts over");
     }
 
     #[test]

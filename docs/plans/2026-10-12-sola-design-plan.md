@@ -241,5 +241,6 @@
 - [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
 - [x] Rail drag-reorder (kit `reorder_within_sections`): canvases within their project, project headers as blocks; order in `projects.json` (`canvas_order`; unlisted canvases follow by name). `project.list` lists rail order.
 - [x] `project.remove --path` (solactl + MCP `design_project_remove`): exact `root` match, works for a deleted folder, closes the project's live canvases. Smoked.
+- [x] `auto` height follows the page for the whole load: `inspect::WATCH_HEIGHT` (pending eval + `ResizeObserver`) replaces the 1 / 3 / 8 s re-measures; `reflow` answers capped (`loads::MAX_REFLOWS`); helper drops closed browsers' DevTools jobs. Smoked: +500 px at 12 s grew `late`; 120vh stopped; re-armed after a file edit.
 - [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone; drag canvases and projects, restart, order kept.
 - [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).
