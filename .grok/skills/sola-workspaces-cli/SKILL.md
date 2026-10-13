@@ -3,7 +3,8 @@ name: sola-workspaces-cli
 description: >
   Drive sola-workspaces from solactl. Use when the user says review ticket,
   work ticket, implement ticket, fan out, create worktree, spawn sibling,
-  new workspace, tell that worktree, tell grok in X, brief a workspace,
+  new workspace, new tab on master, no worktree, root tab, tell that
+  worktree, tell grok in X, brief a workspace,
   send to a pane, clean up this worktree, merge and clean up, remove this
   worktree, or solactl workspaces. Default is background — never steal
   the rail. /sola-workspaces-cli
@@ -18,8 +19,30 @@ window).
 Contract: `docs/specs/2026-08-18-workspaces-cli-design.md`.  
 Operator list: `docs/manual/solactl.md`. Do not copy those here.
 
-You are usually the **root** Grok. Fan-out means a **sibling worktree +
-pane**, not you leaving this checkout, and not `git worktree add`.
+You are usually in a **root tab**. Do the work here, on master. Fan-out
+(a sibling worktree + pane) happens only when the user asks for it — and
+never as `git worktree add`.
+
+## Root tabs work on master (`kind: main` / `kind: root`)
+
+A root tab sits in the project root checkout: the project's own tab
+(`kind: main`, label `root`) or an extra tab opened with **No worktree**
+on the New workspace card / `workspace.spawn --root` (`kind: root`).
+`whoami` / `ps` show the kind; `path` is the project root.
+
+In a root tab, do the work right there on the root's branch (usually
+master). Do **not** open a worktree or spawn a sibling unless the user
+asks (create a worktree / fan out / spawn a sibling / new workspace).
+There is no merge step: approval (LGTM / ship it / nailed it…) means
+commit on that branch in the same turn. All root tabs share one checkout
+— commit only your own changes; never stash, reset, or discard edits you
+did not make.
+
+The main tab cannot close (drop the project instead). An extra root tab
+closes with plain `workspace.rm` (the app refuses `--worktree` — its
+path is the project root). On a `kind: root` tab, `workspace.set` takes
+`--title` and `--before`; `--name` and `--branch` need a worktree. The
+project startup script does not run for a root tab.
 
 ## Rail (locked)
 
@@ -39,8 +62,10 @@ pane. `--name` is the `.worktrees/<name>` folder (rail default). `--title` is th
 
 | User says | Do |
 |---|---|
-| review / work / implement / look at **ticket** *N*; fan out this work | If that workspace already exists → `workspace.exec --prompt`. Else **spawn** grok + `--prompt`. **No `--select`.** Do not wait unless they want a report. |
+| review / work / implement / look at **ticket** *N* (no fan-out asked) | Do it here, in this checkout — in a root tab that is master. Do not spawn. If a workspace for that ticket already exists, brief it with `workspace.exec --prompt` instead. |
+| fan out / in a worktree / in a sibling: ticket *N* or this work | If that workspace already exists → `workspace.exec --prompt`. Else **spawn** grok + `--prompt`. **No `--select`.** Do not wait unless they want a report. |
 | create worktree / spawn sibling / new workspace | `workspace.spawn`. Prompt only if they gave a brief. **No `--select`.** |
+| new tab on master / in root / no worktree | `workspace.spawn --root` (no `--branch` / `--base-branch`). Prompt only if they gave a brief. **No `--select`.** |
 | tell *name* / tell that grok / send to *name* / brief *name* | `workspace.exec --prompt` (or `pane.send --enter` for a follow-up line). Do not spawn a second row. Do not select. |
 | when it's done / wait / report back | `pane.wait --status done` (add `--fresh` if it may already be done) |
 | what's on that pane / read *name* | `pane.read` |
@@ -53,7 +78,7 @@ pane. `--name` is the `.worktrees/<name>` folder (rail default). `--title` is th
 | reorder this tab / move it before *name* | `workspace.set --workspace SLUG --before OTHER` (`end` = last in the project). Same project only. |
 | reorder this project / move the group | `project.reorder --project NAME [--before OTHER]` |
 
-## Fan-out a ticket (stay here)
+## Fan-out (only when asked)
 
 ```bash
 solactl workspaces whoami
@@ -72,6 +97,9 @@ solactl workspaces workspace.spawn --project PROJECT --name SLUG --agent grok \
 #   --prompt '…'
 # optional: --base-branch origin/dev --branch joshua/sc-1234/fix --title '…'
 # long brief: --prompt-file /tmp/brief.md  (not both)
+# on master, no worktree (kind: root):
+# solactl workspaces workspace.spawn --project PROJECT --name SLUG --root \
+#   --agent claude --prompt '…'
 ```
 
 Then **keep talking in this pane**. Do not `pane.wait` unless they asked.
@@ -136,6 +164,7 @@ reaps the tab on its own.
 | clean up this worktree / merge and clean up this worktree / ship and cleanup | yes | yes | yes |
 | remove this worktree, don't merge / toss this worktree | no | yes | yes |
 | close the tab / drop the workspace | no | no | yes |
+| clean up / close a `kind: root` tab | no | — (none) | yes |
 | keep the worktree / keep the tab / hold off / don't drop it | — | no | no |
 
 If merge is in the request and merge fails, stop — do not remove.
@@ -168,7 +197,7 @@ solactl workspaces workspace.rm --workspace "$NAME" --worktree
 unmerged; do not `-D`. Skip the branch line if you are not deleting it.
 
 Tab-only drop is just `solactl workspaces workspace.rm --workspace "$NAME"`
-(no `--worktree`). `workspace.rm` replies **before** it kills tmux, so a
+(no `--worktree`). A `kind: root` tab is always a tab-only drop. `workspace.rm` replies **before** it kills tmux, so a
 foreground call from inside the pane works. After it returns, **stop** —
 no more tools in that tab.
 
@@ -182,6 +211,9 @@ Prefer the parent/root pane when it is already there.
 - `git worktree remove` from inside the pane being cleaned up (use
   `workspace.rm --worktree` instead)
 - `git worktree add` as the spawn verb (`workspace.spawn` instead)
+- Open a worktree or spawn a sibling from a root tab (`kind: main` or
+  `kind: root`) unless the user asked for one; pass `--worktree` when
+  closing a `kind: root` tab
 - `--agent` other than `grok`, `codex`, or `claude` (OpenCode stays presence-only).
 - Build a mailbox / ask-reply / `worker_done`
 - Call `sat` (there is no such binary)

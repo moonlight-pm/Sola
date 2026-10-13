@@ -224,7 +224,8 @@ pub fn rename_branch(worktree: &Path, branch: &str) -> Result<(), String> {
     })
 }
 
-fn current_branch(worktree: &Path) -> Option<String> {
+/// Checked-out branch, or `None` when detached / not a checkout.
+pub fn current_branch(worktree: &Path) -> Option<String> {
     let s = git_stdout(worktree, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if s == "HEAD" { None } else { Some(s) }
 }

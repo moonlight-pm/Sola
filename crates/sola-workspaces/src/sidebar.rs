@@ -1,10 +1,11 @@
 //! Project groups + workspace rows. `+` on the group opens a name modal.
 
-use iced::widget::{column, container, mouse_area, row, text_editor};
+use iced::widget::{checkbox, column, container, mouse_area, row, text_editor};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
+use sola_kit::components::form::checkbox_style;
 use sola_kit::components::status_mark;
 use sola_kit::components::style::SPACE_SM;
 use sola_kit::components::text_input::text_input;
@@ -43,14 +44,19 @@ pub struct SpawnDraft {
     pub project_id: Option<String>,
     pub name: String,
     pub error: Option<String>,
+    /// Open in the project root (no worktree).
+    pub in_root: bool,
+    /// Root checkout's branch when the card opened (`None` = detached /
+    /// not git). Copy only.
+    pub root_branch: Option<String>,
 }
 
 impl SpawnDraft {
-    pub fn open(project_id: impl Into<String>) -> Self {
+    pub fn open(project_id: impl Into<String>, root_branch: Option<String>) -> Self {
         Self {
             project_id: Some(project_id.into()),
-            name: String::new(),
-            error: None,
+            root_branch,
+            ..Self::default()
         }
     }
 
@@ -181,7 +187,7 @@ fn workspace_row<'a>(
             .width(Length::Fill);
         item = item.content(body);
     } else if workspace::can_close(ws) {
-        // Worktree tabs: hover pencil (and double-click via kit Event::Edit).
+        // Worktree and root tabs: hover pencil (and double-click via kit Event::Edit).
         item = item.on_edit(Msg::BeginRename(ws.id.clone()));
     }
     item
@@ -278,11 +284,13 @@ fn veil<'a>(card: Element<'a, Msg>) -> Element<'a, Msg> {
 
 fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg> {
     let slug = spawn::slug(&draft.name);
-    let hint = if slug.is_empty() {
-        format!("{}/<name>", spawn::WORKTREE_DIR)
-    } else {
-        format!("{}/{}", spawn::WORKTREE_DIR, slug)
-    };
+    let (root_label, hint) = spawn_copy(draft, &slug);
+    let in_root = checkbox(draft.in_root)
+        .label(root_label)
+        .font(fonts::ui())
+        .text_size(13)
+        .on_toggle(Msg::SpawnInRoot)
+        .style(checkbox_style);
     card::modal(
         container(
             column![
@@ -297,6 +305,7 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
                     draft.error.as_deref(),
                 )
                 .padding(0),
+                in_root,
                 sola_kit::components::text::caption(hint).style(sola_kit::components::text::muted),
                 row![
                     iced::widget::Space::new().width(Length::Fill),
@@ -313,6 +322,25 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
     )
     .width(Length::Shrink)
     .into()
+}
+
+/// Checkbox label + where-it-lands hint for the new-tab card.
+fn spawn_copy(draft: &SpawnDraft, slug: &str) -> (String, String) {
+    let label = match draft.root_branch.as_deref() {
+        Some(branch) => format!("No worktree — work on {branch} in the root"),
+        None => "No worktree — work in the project root".to_string(),
+    };
+    let hint = if draft.in_root {
+        match draft.root_branch.as_deref() {
+            Some(branch) => format!("Root checkout · {branch}"),
+            None => "Root checkout".to_string(),
+        }
+    } else if slug.is_empty() {
+        format!("{}/<name>", spawn::WORKTREE_DIR)
+    } else {
+        format!("{}/{}", spawn::WORKTREE_DIR, slug)
+    };
+    (label, hint)
 }
 
 fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {

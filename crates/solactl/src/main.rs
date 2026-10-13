@@ -36,7 +36,7 @@ enum Command {
         #[command(subcommand)]
         cmd: session::Command,
     },
-    /// Workspaces: projects, worktrees, panes (app must be running).
+    /// Workspaces: projects, tabs (worktree or root checkout), panes (app must be running).
     #[command(disable_help_flag = true)]
     Workspaces {
         /// Method and flags. Omit to list advertised methods.
