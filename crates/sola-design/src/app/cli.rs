@@ -13,13 +13,15 @@ use sola_browser::cef::engine::InputEvent;
 use sola_browser::engine::{Cmd, Engine, TabId};
 use sola_call::Incoming;
 
+use super::budget::Admit;
 use super::{App, Msg, Pending};
 use crate::boards::Board;
-use crate::calls::WAIT_DEFAULT_SECS;
+use crate::calls::{PAGE_TIMEOUT_MS, WAIT_DEFAULT_SECS};
 use crate::camera::Camera;
 use crate::canvas;
 use crate::inspect;
 use crate::loads::LOAD_GRACE;
+use crate::memory;
 use crate::projects::{self, CanvasRef};
 use crate::select;
 
@@ -27,6 +29,9 @@ use crate::select;
 const CSS_DPI: f64 = 96.0;
 const NO_CANVAS: &str =
     "no canvas given and none on screen (pass --canvas <path>, or solactl design open <path>)";
+/// A page call on a discarded board waits this long for it to load (the
+/// caller's own timeout is [`PAGE_TIMEOUT_MS`]).
+const WAKE_WAIT: Duration = Duration::from_millis(PAGE_TIMEOUT_MS - 3_000);
 
 /// Page call waiting on the helper.
 pub(super) enum CallKind {
@@ -46,7 +51,16 @@ pub(super) enum CallKind {
     },
 }
 
-/// `wait` / `reload` waiting for its boards to load.
+impl CallKind {
+    fn artboard(&self) -> &str {
+        match self {
+            Self::Screenshot { artboard, .. } | Self::Inspect { artboard } | Self::Pdf { artboard, .. } => artboard,
+        }
+    }
+}
+
+/// `wait` / `reload` waiting for its boards to load — or a page call
+/// waiting for its discarded board to reopen (`redo`).
 pub(super) struct Wait {
     inc: Incoming,
     /// `(tab, artboard id)`.
@@ -54,6 +68,8 @@ pub(super) struct Wait {
     saw_loading: HashSet<u64>,
     started: Instant,
     deadline: Instant,
+    /// Done means run the call again (its board is open now), not reply.
+    redo: bool,
 }
 
 impl Wait {
@@ -72,6 +88,7 @@ impl App {
             "project.remove" => self.call_project_remove(&p),
             "open" => self.call_open(&p),
             "canvas.new" => self.call_canvas_new(&p),
+            "canvas.close" => self.call_canvas_close(&p),
             "status" => self.target(&p).map(|key| self.status_json(&key)),
             "selection" => {
                 if let Some(sel) = &self.selection {
@@ -95,7 +112,19 @@ impl App {
                     _ => self.start_inspect(&key, &p),
                 });
                 match started {
+                    Ok((tab, _, kind)) if self.board_of(tab.0).is_some_and(|b| b.discarded) => {
+                        // Reopen the board; the call runs once it has loaded.
+                        let artboard = kind.artboard().to_string();
+                        let canvas = self.canvas_of_tab(tab.0).unwrap_or_default();
+                        let what = format!("artboard `{artboard}` of `{canvas}` (discarded, reloading it)");
+                        match self.wake_boards(&[tab.0], Admit::IfRoom, &what) {
+                            Ok(()) => self.defer(inc, tab.0, artboard),
+                            Err(e) => inc.reply.err(e),
+                        }
+                        return Task::none();
+                    }
                     Ok((tab, op, kind)) => {
+                        self.seen.insert(tab.0, Instant::now());
                         if matches!(kind, CallKind::Screenshot { .. } | CallKind::Pdf { .. }) {
                             self.begin_capture(tab);
                         }
@@ -243,8 +272,11 @@ impl App {
                         "x": d.x, "y": d.y, "scale": d.scale,
                     })),
                     "auto_height": b.art.auto_height,
-                    "painted": self.frames.is_painted(b.tab.0),
-                    "loading": loading.get(&b.tab.0).copied().unwrap_or(true),
+                    "painted": self.has_picture(b.tab.0),
+                    // Its page is closed to save memory (picture kept); a
+                    // page call, `wait`, or a look reopens it.
+                    "discarded": b.discarded,
+                    "loading": !b.discarded && loading.get(&b.tab.0).copied().unwrap_or(true),
                 })
             })
             .collect();
@@ -265,6 +297,8 @@ impl App {
             "linked": self.linked(key),
             "zoom": zoom,
             "selection": self.selection.as_ref().map(|s| s.to_json()),
+            // The machine's memory and Design's boards (estimated).
+            "memory": self.memory_json(),
         })
     }
 
@@ -318,7 +352,7 @@ impl App {
             )
         })?;
         let (project, added) = self.ensure_project(&root)?;
-        Ok(self.show(p, project, name, added, None))
+        self.show(p, project, name, added, None)
     }
 
     /// `<project>/design/<slug(name)>/canvas.toml`, then open it. An existing
@@ -342,7 +376,7 @@ impl App {
             canvas::create(&root, title)?
         };
         let (project, added) = self.ensure_project(&root)?;
-        Ok(self.show(p, project, name, added, Some(!exists)))
+        self.show(p, project, name, added, Some(!exists))
     }
 
     /// Project id for `root`, registering it if Design does not know it.
@@ -358,7 +392,7 @@ impl App {
 
     /// Make `canvas` of `project` live in the background — the human's
     /// screen stays as it is — or, with `--raise`, show it and raise the
-    /// window. Reports its status.
+    /// window. Reports its status. Refused when its boards do not fit.
     fn show(
         &mut self,
         p: &Value,
@@ -366,12 +400,10 @@ impl App {
         canvas: String,
         added: bool,
         created: Option<bool>,
-    ) -> Value {
+    ) -> Result<Value, String> {
         self.rescan();
         let at = CanvasRef { project, canvas };
-        let Some(key) = self.ensure_live(&at) else {
-            return Value::Null;
-        };
+        let key = self.ensure_live_for_agent(&at)?;
         self.agent_touch(&key);
         if bool_param(p, "raise") {
             self.show_canvas(at);
@@ -382,7 +414,40 @@ impl App {
         if let Some(created) = created {
             v["created"] = json!(created);
         }
-        v
+        Ok(v)
+    }
+
+    /// Close a live canvas an agent is done with: its boards' memory comes
+    /// back (files stay; the next call opens it again). The canvas on the
+    /// human's screen stays.
+    fn call_canvas_close(&mut self, p: &Value) -> Result<Value, String> {
+        let raw = projects::expand_home(str_param(p, "canvas")?);
+        let path = raw
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", raw.display()))?;
+        let (root, canvas) = canvas::locate(&path).ok_or_else(|| {
+            format!(
+                "{} is not in a canvas (want <project>/design/<name>/canvas.toml)",
+                path.display()
+            )
+        })?;
+        let project = self
+            .catalog
+            .at_root(&root)
+            .map(|p| p.id.clone())
+            .ok_or_else(|| format!("{} is not a Design project", root.display()))?;
+        let key = CanvasRef { project, canvas }.key();
+        let Some(live) = self.live(&key) else {
+            return Ok(json!({"closed": false, "reason": "not open"}));
+        };
+        if self.is_shown(&key) {
+            return Err("the human has this canvas on screen; it stays open".into());
+        }
+        let boards = live.boards.len();
+        let freed: u64 = live.boards.iter().filter(|b| !b.discarded).map(Board::cost).sum();
+        tracing::info!(canvas = %key, "call closed canvas");
+        self.close_live(&key);
+        Ok(json!({"closed": true, "boards": boards, "freed_mib": memory::mib(freed)}))
     }
 
     /// Steer the camera of `key` — unless the human has, on that canvas:
@@ -487,12 +552,10 @@ impl App {
         if added {
             self.rescan();
         }
-        let key = self
-            .ensure_live(&CanvasRef {
-                project,
-                canvas: name,
-            })
-            .ok_or_else(|| format!("cannot open {}", path.display()))?;
+        let key = self.ensure_live_for_agent(&CanvasRef {
+            project,
+            canvas: name,
+        })?;
         self.agent_touch(&key);
         Ok(key)
     }
@@ -619,6 +682,20 @@ impl App {
             .and_then(Value::as_u64)
             .unwrap_or(WAIT_DEFAULT_SECS)
             .max(1);
+        // Discarded boards reopen (they load the files fresh); refused when
+        // they do not fit.
+        let ids: Vec<u64> = tabs.iter().map(|(tab, _)| *tab).collect();
+        let discarded = ids
+            .iter()
+            .filter(|t| self.board_of(**t).is_some_and(|b| b.discarded))
+            .count();
+        if discarded > 0 {
+            let what = format!("reloading {discarded} discarded artboard(s) of `{key}`");
+            if let Err(e) = self.wake_boards(&ids, Admit::IfRoom, &what) {
+                inc.reply.err(e);
+                return Task::none();
+            }
+        }
         let mut task = Task::none();
         // `wait` right after an edit: the watcher may not have acted yet.
         // Boards older than the files are reloaded first, so the wait means
@@ -637,9 +714,23 @@ impl App {
             saw_loading: HashSet::new(),
             started: now,
             deadline: now + Duration::from_secs(secs),
+            redo: false,
         });
         self.check_waits();
         task
+    }
+
+    /// Run page call `inc` again once board `tab` (just woken) has loaded.
+    fn defer(&mut self, inc: Incoming, tab: u64, artboard: String) {
+        let now = Instant::now();
+        self.waits.push(Wait {
+            inc,
+            tabs: vec![(tab, artboard)],
+            saw_loading: HashSet::new(),
+            started: now,
+            deadline: now + WAKE_WAIT,
+            redo: true,
+        });
     }
 
     /// Answer every wait that is done or out of time. A board is done when
@@ -656,6 +747,7 @@ impl App {
             .iter()
             .flat_map(|l| l.boards.iter().map(|b| b.tab.0))
             .collect();
+        let mut redo = Vec::new();
         let mut i = 0;
         while i < self.waits.len() {
             let w = &mut self.waits[i];
@@ -700,12 +792,18 @@ impl App {
                 Some(result) => {
                     let w = self.waits.remove(i);
                     match result {
+                        Ok(_) if w.redo => redo.push(w.inc),
                         Ok(v) => w.inc.reply.ok(v),
+                        Err(e) if w.redo => w.inc.reply.err(format!("{e} (it was discarded and reloading)")),
                         Err(e) => w.inc.reply.err(e),
                     }
                 }
                 None => i += 1,
             }
+        }
+        // Page calls whose board has reopened: run them now.
+        for inc in redo {
+            let _ = self.on_call(inc);
         }
     }
 }

@@ -70,8 +70,18 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
+            "canvas.close",
+            "Close a canvas you are done with: its boards' memory comes back (files stay; your next call on it opens it again). The canvas on the human's screen stays open",
+            &[req(
+                "canvas",
+                Some('c'),
+                ArgType::Path,
+                "Canvas dir, its canvas.toml, or a file in it",
+            )],
+        ),
+        method(
             "status",
-            "A canvas: artboards (size, scale, loading), watched outside files, zoom, shown, selection",
+            "A canvas: artboards (size, scale, loading, discarded), watched outside files, zoom, shown, selection, memory",
             &[canvas()],
         ),
         method(
@@ -101,7 +111,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method_ms(
             "wait",
-            "Until the artboards show the files on disk (reloads them if files changed) and have settled",
+            "Until the artboards show the files on disk (reloads them if files changed; reopens discarded ones) and have settled",
             &[canvas(), artboard(), timeout()],
             WAIT_TIMEOUT_MS,
         ),
@@ -210,6 +220,7 @@ mod tests {
             "project.remove",
             "open",
             "canvas.new",
+            "canvas.close",
             "status",
             "selection",
             "share",
@@ -238,6 +249,10 @@ mod tests {
             let c = m.args.iter().find(|a| a.name == "canvas").expect(page);
             assert!(!c.required && matches!(c.ty, ArgType::Path), "{page}");
         }
+        // Closing names its canvas: never the one on screen by default.
+        let close = methods.iter().find(|m| m.name == "canvas.close").unwrap();
+        let c = close.args.iter().find(|a| a.name == "canvas").unwrap();
+        assert!(c.required && matches!(c.ty, ArgType::Path));
         // No raw eval on this plane (freeze: not an agent API).
         assert!(!names.iter().any(|n| n.contains("eval")));
     }

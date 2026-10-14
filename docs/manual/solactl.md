@@ -293,7 +293,8 @@ solactl design canvas.new onboarding         # design/onboarding/ in your cwd's 
 solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
-solactl design status [--canvas design/home] # canvas (shown, share), artboards (src, url, error), linked files, zoom, selection
+solactl design canvas.close --canvas design/onboarding  # done with it: its boards' memory comes back; files stay
+solactl design status [--canvas design/home] # canvas (shown, share), artboards (src, url, error, discarded), linked files, zoom, selection, memory
 solactl design share [--canvas design/home]  # the canvas's live link
 solactl design share.rotate [--canvas …]     # a new link; the old one stops working
 solactl design selection
@@ -315,6 +316,20 @@ takes `--canvas` (its folder, `canvas.toml`, or a file in it — opened in the
 background if need be); without it the call goes to the canvas on the human's
 screen. Over MCP, a page call without `canvas` goes to the canvas that agent
 last opened or made, so agents working at the same time stay on their own.
+
+Design holds its boards within the machine's free memory (it keeps 15% free
+for everything else). When memory runs short it **discards** idle boards —
+their page closes, their picture stays — and reopens them on the next call
+that needs one (`screenshot` / `pdf` / `inspect` wait for the reload;
+`wait` / `reload` reopen the boards they cover). `status` marks them
+`discarded` and reports `memory` (`free_mib`, `total_mib`, `keep_free_mib`,
+`boards_mib` — Design's estimate for its open boards — and board counts).
+When the boards in use leave no room, `open`, a call on a canvas that is not
+open, or a call that reopens boards **fails with the reason**: the numbers,
+each open canvas (boards, memory, why it is kept), and the way out. Close a
+canvas you are done with: `canvas.close --canvas <dir>` (required; the
+canvas on the human's screen stays open). The next call on it opens it
+again.
 
 `screenshot` captures the whole page (CDP, at the artboard's raster scale,
 normally 2×) and replies with `path` — the same however the human is zoomed

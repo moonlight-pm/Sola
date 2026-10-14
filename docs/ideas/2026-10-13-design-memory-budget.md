@@ -1,7 +1,11 @@
 # sola-design memory — parked mitigations
 
-**Status:** idea (parked 2026-10-13). Do not implement from this file.
-Promote into a freeze + plan + `CURRENT.md` **Now** before any code.
+**Status:** partly promoted (2026-10-14): items 1, 2, 4, and `status`
+memory (8) are **slice 7** of the
+[freeze](../specs/2026-10-12-sola-design-design.md) /
+[plan](../plans/2026-10-12-sola-design-plan.md#slice-7--memory-budget-2026-10-14).
+Items 3, 5, 6, 7, and the log half of 8 stay parked; do not implement them
+from this file.
 
 **Locked already** ([decision log](../open-questions.md#decision-log),
 2026-10-13): the budget **adapts** to what the machine has free (if that
@@ -68,7 +72,7 @@ process, so earlyoom takes CEF boards and tabs first. Never fired yet.
 systemd-oomd user-slice monitoring was not used: River runs in the TTY's
 `session-1.scope`, so oomd could pick the whole session.
 
-## Parked mitigations (rough order)
+## Mitigations (rough order; 1, 2, 4, 8-status built in slice 7)
 
 1. **Budget with admission control.** Track live board bytes (Design knows
    each board's frame size) against a budget that follows free memory

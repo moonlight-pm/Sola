@@ -19,6 +19,7 @@ mod ime;
 mod inspect;
 mod instance;
 mod loads;
+mod memory;
 mod menu;
 mod overlay;
 mod pace;

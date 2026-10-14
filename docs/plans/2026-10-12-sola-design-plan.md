@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–6 on master (2026-10-12), installed
+**Status:** slices 1–6 on master (2026-10-12), installed; slice 7 (memory budget) installed 2026-10-14
 
 ---
 
@@ -245,3 +245,44 @@
 - [x] Viewer on phones: touch mode (coarse pointer, or touch without a fine pointer; or the first touch on a page) makes pages inert (`pointer-events: none`), one finger pans, a pinch only zooms about where it began (no two-finger pan — the old pan + midpoint zoom wobbled), no hint, native page pinch / scroll blocked. Desktop hint sits above the zoom bar under 860 px. Gesture math tested in node; renders checked at 1024 / 390 / 360 px.
 - [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone; drag canvases and projects, restart, order kept.
 - [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).
+
+## Slice 7 — memory budget (2026-10-14)
+
+Why: ten agents' canvases filled 125G; no swap, no OOM watcher → hard reset
+([idea](../ideas/2026-10-13-design-memory-budget.md); host net: zram +
+earlyoom). Decisions: budget adapts to free memory; discard idle boards
+first (picture kept); refuse an agent with the reason only when the boards
+in use do not fit.
+
+- [x] Measured: ten boards (295 MiB of frames) took ~2.9 GiB of
+      `MemAvailable` (Design PSS +1.6 GiB); renderers ~12 MiB unique each.
+- [x] `memory.rs`: `/proc/meminfo`, reserve 15% (min 2 GiB), board cost
+      64 MiB + 9 × surface bytes, `Ledger` (opens carried until painted +
+      settled ≤ 20 s, discards 20 s), LRU `pick`, sizes. Tests.
+- [x] `Board.discarded`; `boards::sync` sends no ops for a discarded board
+      (it opens at its new layout). Test.
+- [x] `app/budget.rs`: 2 s tick discards idle boards when short (+1 GiB
+      slack); `make_room` / `wake_boards` / `ensure_live_for_agent`;
+      discard keeps the tab id (engine drops a closed tab's state at once,
+      paints map by browser id) so the plane keeps the texture; overlay
+      treats a kept picture as painted.
+- [x] Waking: in view on the human's screen (never refused); page calls
+      wait for the reload (`Wait { redo }`), `wait` / `reload` reopen what
+      they cover; agent wakes glow like a reload.
+- [x] Refusal text: free / total / kept free, open canvases (boards,
+      memory, why kept, path), the way out.
+- [x] Off-screen relayout: new boards wait discarded when they do not fit.
+- [x] Helper-restart check skips discarded boards (their tab is gone on
+      purpose — would have reopened everything).
+- [x] `canvas.close --canvas` (required; not the canvas on screen);
+      `status` → `discarded`, `memory`.
+- [x] Installed `design` 2026-10-14. Smoked: `status` → `memory` (26
+      boards ≈ 8.7 GiB estimated, 19 GiB kept free); MCP
+      `design_canvas_close` appeared; `open` + `wait` of Sola `foundation`
+      (10 boards, 794 ms) took 2.65 GiB of `MemAvailable` (estimate 2.4 GiB
+      at first, 3.3 GiB once `auto` heights were measured); `canvas.close`
+      → `freed_mib: 3290`; renderers exited at once, `MemAvailable` came
+      fully back within ~20 s (GPU-process shm is returned late) → discards
+      are carried 20 s, not 3.
+- [ ] Smoke a discard under real pressure (keeps the picture, reopens on
+      pan / `screenshot`); refusal text read by an agent.

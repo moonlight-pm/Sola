@@ -2,9 +2,9 @@
 //! the background. Each keeps its own boards, files, and camera, so several
 //! agents can work at once and none of them moves what the human sees.
 //! Agents never bring a canvas to the front (`--raise` is the explicit
-//! exception). Boards nobody looks at sleep ([`crate::pace`]). An
-//! off-screen canvas nobody has used for [`IDLE`] closes; the next call
-//! reopens it.
+//! exception). Boards nobody looks at sleep ([`crate::pace`]); when memory
+//! runs short, idle ones are discarded ([`super::budget`]). An off-screen
+//! canvas nobody has used for [`IDLE`] closes; the next call reopens it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use sola_browser::engine::{BoardPace, Cmd, TabId};
 
+use super::budget::Admit;
 use super::{App, Pending};
 use crate::boards::Board;
 use crate::camera::{self, Camera};
@@ -22,7 +23,7 @@ use crate::projects::CanvasRef;
 /// An off-screen canvas closes after this long without a call.
 pub(super) const IDLE: Duration = Duration::from_secs(10 * 60);
 /// The rail marks a canvas an agent called on within this.
-const AGENT_RECENT: Duration = Duration::from_secs(30);
+pub(super) const AGENT_RECENT: Duration = Duration::from_secs(30);
 
 pub(super) struct Live {
     pub at: CanvasRef,
@@ -101,6 +102,13 @@ impl App {
             .find(|b| b.tab.0 == tab)
     }
 
+    pub(super) fn board_mut(&mut self, tab: u64) -> Option<&mut Board> {
+        self.live
+            .iter_mut()
+            .flat_map(|l| l.boards.iter_mut())
+            .find(|b| b.tab.0 == tab)
+    }
+
     pub(super) fn tabs_of(&self, key: &str) -> Vec<u64> {
         self.live(key)
             .map(|l| l.boards.iter().map(|b| b.tab.0).collect())
@@ -127,7 +135,8 @@ impl App {
                 agent_at: None,
             });
             self.mark_shown(&key);
-            self.relayout(&key);
+            // Agents are admitted before this ([`App::ensure_live_for_agent`]).
+            self.relayout(&key, Admit::Always);
         }
         self.touch(&key);
         Some(key)
@@ -224,7 +233,11 @@ impl App {
         };
         let live = self.live.remove(i);
         tracing::info!(canvas = %key, boards = live.boards.len(), "canvas closed");
+        let now = Instant::now();
         for b in live.boards {
+            if !b.discarded {
+                self.ledger.freed(b.cost(), now);
+            }
             self.close_board(b.tab);
         }
     }
@@ -258,19 +271,36 @@ impl App {
         self.live.iter().any(|l| !self.is_shown(&l.at.key()))
     }
 
-    /// Send each board its pace ([`crate::pace`]) where that changed.
+    /// Board `b` of the canvas on screen is in view (or the plane is not
+    /// laid out yet).
+    pub(super) fn in_view(&self, b: &Board) -> bool {
+        self.plane_size
+            .is_none_or(|p| pace::in_view(b.rect(), &self.camera, p))
+    }
+
+    /// Send each board its pace ([`crate::pace`]) where that changed. A
+    /// discarded board that comes into view on the human's screen reopens;
+    /// boards in view or working are marked seen ([`super::budget`]).
     pub(super) fn pace_boards(&mut self) {
         let busy = self.busy_tabs();
         let agents = self.agent_busy();
         let mut want = Vec::new();
+        let mut seen = Vec::new();
+        let mut wake = Vec::new();
         for l in &self.live {
             let key = l.at.key();
             let shown = self.is_shown(&key);
             for b in &l.boards {
-                let in_view = shown
-                    && self
-                        .plane_size
-                        .is_none_or(|p| pace::in_view(b.rect(), &self.camera, p));
+                let in_view = shown && self.in_view(b);
+                if b.discarded {
+                    if in_view {
+                        wake.push(b.tab.0);
+                    }
+                    continue;
+                }
+                if in_view || busy.contains(&b.tab.0) {
+                    seen.push(b.tab.0);
+                }
                 let look = pace::Look {
                     busy: busy.contains(&b.tab.0),
                     in_view,
@@ -280,10 +310,18 @@ impl App {
                 want.push((b.tab, pace::pace(look)));
             }
         }
+        let now = Instant::now();
+        for tab in seen {
+            self.seen.insert(tab, now);
+        }
         let open: HashSet<u64> = want.iter().map(|(tab, _)| tab.0).collect();
         self.paces.retain(|tab, _| open.contains(tab));
         for (tab, pace) in want {
             self.set_pace(tab, pace);
+        }
+        if !wake.is_empty() {
+            // The human's view: never refused.
+            let _ = self.wake_boards(&wake, Admit::Always, "boards in view");
         }
     }
 
@@ -297,7 +335,7 @@ impl App {
 
     /// Boards working for someone: loading or settling, or answering a
     /// call or a pick. A page's height watch is not work.
-    fn busy_tabs(&self) -> HashSet<u64> {
+    pub(super) fn busy_tabs(&self) -> HashSet<u64> {
         let mut busy: HashSet<u64> = self
             .pending
             .values()
@@ -313,6 +351,7 @@ impl App {
             .live
             .iter()
             .flat_map(|l| l.boards.iter())
+            .filter(|b| !b.discarded)
             .map(|b| b.tab.0)
             .filter(|tab| !self.loads.is_settled(*tab));
         busy.extend(unsettled);

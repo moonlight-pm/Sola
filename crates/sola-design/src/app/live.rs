@@ -10,17 +10,21 @@ use serde_json::Value;
 use sola_browser::agent::{AgentOp, AgentReply};
 use sola_browser::engine::{Cmd, Engine, NavCmd, TabId};
 
+use super::budget::Admit;
 use super::{App, Pending};
 use crate::boards::{self, Op};
 use crate::canvas;
 use crate::inspect;
+use crate::memory;
 use crate::projects::CanvasRef;
 use crate::watch;
 
 impl App {
     /// Read `canvas.toml` and bring the boards of `key` in line. A bad
-    /// file keeps the current boards and shows the error.
-    pub(super) fn relayout(&mut self, key: &str) {
+    /// file keeps the current boards and shows the error. New boards open
+    /// as `admit` says; one refused stays discarded (no picture) until it
+    /// fits.
+    pub(super) fn relayout(&mut self, key: &str, admit: Admit) {
         let Some(dir) = self.live(key).map(|l| l.dir.clone()) else {
             return;
         };
@@ -71,7 +75,7 @@ impl App {
             live.boards = synced;
         }
         for op in ops {
-            self.apply(op);
+            self.apply(key, op, admit);
         }
         if self.is_shown(key) {
             if self.selection.as_ref().is_some_and(|s| !tabs.contains(&s.tab)) {
@@ -92,7 +96,7 @@ impl App {
         }
     }
 
-    fn apply(&mut self, op: Op) {
+    fn apply(&mut self, key: &str, op: Op, admit: Admit) {
         let now = Instant::now();
         match op {
             Op::Open {
@@ -101,8 +105,21 @@ impl App {
                 title,
                 size,
             } => {
+                let cost = memory::board_cost(size.surface);
+                if admit == Admit::IfRoom {
+                    let what = format!("new artboard `{title}` on `{key}`");
+                    if let Err(e) = self.make_room(cost, &HashSet::from([tab.0]), &what) {
+                        tracing::warn!(canvas = %key, artboard = %title, reason = %e, "board held: memory");
+                        if let Some(b) = self.board_mut(tab.0) {
+                            b.discarded = true;
+                        }
+                        return;
+                    }
+                }
                 self.frames.open(tab.0);
                 self.loads.begin(tab.0, now);
+                self.seen.insert(tab.0, now);
+                self.ledger.open(tab.0, cost, now);
                 // Born `Live`.
                 self.paces.remove(&tab.0);
                 self.send(Cmd::OpenBoard {
@@ -167,18 +184,28 @@ impl App {
         self.board_of(tab.0).is_some_and(|b| b.art.auto_height)
     }
 
+    /// The board is gone from its canvas: its tab, picture, and links.
     pub(super) fn close_board(&mut self, tab: TabId) {
+        self.shut_tab(tab);
+        self.pictures.remove(&tab.0);
+        self.seen.remove(&tab.0);
+        for l in &mut self.live {
+            l.links.remove(&tab.0);
+        }
+    }
+
+    /// Close board `tab`'s page and forget its page state (the board
+    /// itself may stay, discarded).
+    pub(super) fn shut_tab(&mut self, tab: TabId) {
         self.frames.close(tab.0);
         self.details.forget(tab.0);
         self.glows.forget(tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
+        self.ledger.landed(tab.0);
         // A height watch never answers for a closed tab.
         self.pending
             .retain(|_, p| !matches!(p, Pending::Height { tab: t, .. } if *t == tab.0));
-        for l in &mut self.live {
-            l.links.remove(&tab.0);
-        }
         self.send(Cmd::CloseTab(tab));
     }
 
@@ -194,7 +221,8 @@ impl App {
             .map(|t| t.id.0)
             .collect();
         let mut lost = false;
-        for b in self.live.iter().flat_map(|l| l.boards.iter()) {
+        // A discarded board's tab is gone on purpose.
+        for b in self.live.iter().flat_map(|l| l.boards.iter()).filter(|b| !b.discarded) {
             if live.contains(&b.tab.0) {
                 self.listed.insert(b.tab.0);
             } else if self.listed.contains(&b.tab.0) {
@@ -212,6 +240,8 @@ impl App {
             }
             l.links.clear();
         }
+        self.pictures.clear();
+        self.seen.clear();
         self.listed.clear();
         self.loads.clear();
         // The old helper's height watches never answer.
@@ -220,7 +250,7 @@ impl App {
         self.glows = Default::default();
         self.focus = None;
         for key in keys {
-            self.relayout(&key);
+            self.relayout(&key, Admit::Always);
         }
     }
 
@@ -229,7 +259,10 @@ impl App {
     /// the watcher to it).
     pub(super) fn on_canvas_change(&mut self, key: &str, change: watch::Change) -> iced::Task<super::Msg> {
         if change.layout {
-            self.relayout(key);
+            // New boards on the human's screen always open; elsewhere they
+            // wait for room.
+            let admit = if self.is_shown(key) { Admit::Always } else { Admit::IfRoom };
+            self.relayout(key, admit);
         }
         if change.content && self.boards_stale(key) {
             return self.reload_boards(key);
@@ -278,13 +311,18 @@ impl App {
     /// Hard-reload `tabs` (bypass the cache: the files just changed).
     /// A tab still on its intended URL hard-reloads; one showing anything
     /// else (a navigation that was cancelled, a click in the page) loads the
-    /// intended URL — so a reload also repairs drift.
+    /// intended URL — so a reload also repairs drift. A discarded board is
+    /// skipped: it loads the files fresh when it wakes.
     pub(super) fn reload_tabs(&mut self, key: &str, tabs: &[TabId]) {
         let now = Instant::now();
         self.mark_shown(key);
         let shown = self.tab_urls();
         for &tab in tabs {
-            let Some(want) = self.board_of(tab.0).map(|b| b.art.url.clone()) else {
+            let Some(want) = self
+                .board_of(tab.0)
+                .filter(|b| !b.discarded)
+                .map(|b| b.art.url.clone())
+            else {
                 continue;
             };
             self.loads.begin(tab.0, now);
@@ -498,6 +536,12 @@ impl App {
         for (b, scale) in live.boards.iter_mut().zip(scales) {
             let size = boards::board_size(&b.art, scale, b.cap(cap));
             if size == b.size() && also != Some(b.tab.0) {
+                continue;
+            }
+            if b.discarded {
+                // No tab: it opens at this geometry when woken.
+                b.scale = size.scale;
+                b.surface = size.surface;
                 continue;
             }
             if b.scale != scale {

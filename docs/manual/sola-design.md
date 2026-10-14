@@ -127,6 +127,18 @@ view. While another window has focus, the boards in view run animations at
 1 frame a second. A board that is loading or that an agent is reading always
 runs at full speed, so reloads show at once.
 
+Design keeps its boards within what the machine has free. Every board is a
+real browser page and costs memory (about half a gigabyte for a tall page at
+2×). Design leaves 15% of the machine's memory free for everything else; when
+free memory drops below that, it discards boards nobody is using — not in
+view on your screen, not being worked on by an agent, untouched for 30
+seconds — oldest first. A discarded board keeps its picture on the canvas;
+its page reloads from its files when you pan to it or an agent needs it.
+Boards in use are never discarded. If an agent asks for more than fits even
+then, it is told so — how much memory is free, what is open and why — and
+asked to close a canvas it is done with (`canvas.close`) or wait. Your own
+view is never refused.
+
 Look around while an agent works. Its screenshots and PDFs are the whole
 artboard however you are zoomed, and your pointer leaves the page while they
 are taken, so no hover state gets in. An agent can frame a canvas's view until

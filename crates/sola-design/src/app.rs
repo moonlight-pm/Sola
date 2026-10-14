@@ -3,8 +3,10 @@
 //! The plane stacks the artboard textures (wgpu shader), the overlay canvas
 //! (frames, titles, pick outline, all input), and a status pill (zoom, pick).
 //! Boards are CEF board tabs in one `--engine` helper. Board lifecycle lives
-//! in [`live`]; the call owner `design` in [`cli`].
+//! in [`live`]; the memory budget in [`budget`]; the call owner `design` in
+//! [`cli`].
 
+mod budget;
 mod canvases;
 mod cli;
 mod live;
@@ -41,6 +43,7 @@ use crate::frames::{self, BoardFrames};
 use crate::glow::Glows;
 use crate::instance;
 use crate::loads::Loads;
+use crate::memory::Ledger;
 use crate::menu;
 use crate::overlay::{self, Overlay};
 use crate::plane::{self, Plane};
@@ -89,6 +92,8 @@ pub enum Msg {
     Glow,
     /// Close idle off-screen canvases.
     Evict,
+    /// Check the machine's free memory ([`budget`]).
+    Budget,
     /// Re-pace boards (an agent's recent call aged out).
     Pace,
     /// The window gained (`true`) or lost keyboard focus.
@@ -228,6 +233,14 @@ struct App {
     focused: bool,
     /// Pace last sent per board tab; a board missing here is `Live`.
     paces: HashMap<u64, BoardPace>,
+    /// When each open board was last in view or working ([`budget`]).
+    seen: HashMap<u64, Instant>,
+    /// Discarded boards whose last picture stays on the plane.
+    pictures: HashSet<u64>,
+    /// Board opens and discards free memory does not show yet.
+    ledger: Ledger,
+    /// The last budget check found no idle boards left to discard.
+    budget_short: bool,
     selection: Option<Selection>,
     next_req: u64,
     pending: HashMap<u64, Pending>,
@@ -266,6 +279,10 @@ impl App {
             focus: None,
             focused: true,
             paces: HashMap::new(),
+            seen: HashMap::new(),
+            pictures: HashSet::new(),
+            ledger: Ledger::default(),
+            budget_short: false,
             selection: None,
             next_req: 1,
             pending: HashMap::new(),
@@ -320,6 +337,9 @@ impl App {
         if self.has_background() {
             subs.push(iced::time::every(EVICT_TICK).map(|_| Msg::Evict));
         }
+        if self.open_cost() > 0 {
+            subs.push(iced::time::every(budget::BUDGET_TICK).map(|_| Msg::Budget));
+        }
         if !self.agent_busy().is_empty() {
             subs.push(iced::time::every(PACE_TICK).map(|_| Msg::Pace));
         }
@@ -370,6 +390,7 @@ impl App {
                 self.check_waits();
             }
             Msg::Evict => self.evict_idle(Instant::now()),
+            Msg::Budget => self.budget_tick(),
             Msg::Pace => {}
             Msg::Focused(focused) => self.focused = focused,
             Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
@@ -529,6 +550,12 @@ impl App {
         Task::none()
     }
 
+    /// Board `tab` has a picture on the plane: painted since it opened, or
+    /// kept from before it was discarded.
+    fn has_picture(&self, tab: u64) -> bool {
+        self.frames.is_painted(tab) || self.pictures.contains(&tab)
+    }
+
     fn focus_board(&mut self, tab: Option<u64>) {
         if self.focus == tab {
             return;
@@ -571,7 +598,13 @@ impl App {
             self.details.due = None;
             return;
         };
-        let boards = self.shown_boards().to_vec();
+        // A discarded board has no page to re-raster.
+        let boards: Vec<Board> = self
+            .shown_boards()
+            .iter()
+            .filter(|b| !b.discarded)
+            .cloned()
+            .collect();
         let asks = self.details.refresh(
             &boards,
             &self.camera,
@@ -1063,7 +1096,7 @@ impl App {
                     painted: open
                         .boards
                         .iter()
-                        .map(|b| self.frames.is_painted(b.tab.0))
+                        .map(|b| self.has_picture(b.tab.0))
                         .collect(),
                     selection: self.selection.as_ref().map(|s| (s.tab, s.picked.rect)),
                     focus: self.focus,
