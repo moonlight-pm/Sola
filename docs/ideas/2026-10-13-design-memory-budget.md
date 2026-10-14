@@ -5,9 +5,11 @@ Promote into a freeze + plan + `CURRENT.md` **Now** before any code.
 
 **Locked already** ([decision log](../open-questions.md#decision-log),
 2026-10-13): the budget **adapts** to what the machine has free (if that
-can be done reliably), and over budget Design **refuses** the agent's new
-board / canvas with an error that says what is wrong, what is live, and
-how to free room.
+can be done reliably). Over budget, Design first **discards idle boards**
+(page closed, picture kept, reload from disk on the next look or call —
+not counted as dropping a board); only when the boards in use still do
+not fit does it **refuse** the agent's new board / canvas with an error
+that says what is wrong, what is live, and how to free room.
 
 **Shipped (host, not Sola):** zram swap + earlyoom in
 `/etc/nixos/configuration.nix` (see below).
@@ -70,7 +72,8 @@ systemd-oomd user-slice monitoring was not used: River runs in the TTY's
 
 1. **Budget with admission control.** Track live board bytes (Design knows
    each board's frame size) against a budget that follows free memory
-   (`MemAvailable`, `/proc/pressure/memory`). Over budget, `open` /
+   (`MemAvailable`, `/proc/pressure/memory`). Over budget, discard idle
+   boards first (item 4); if the boards in use still do not fit, `open` /
    `canvas.new` / a board that would grow fail with a plain reason: the
    memory, the live canvases and their boards, and the way out
    (`canvas.close`).
@@ -82,8 +85,9 @@ systemd-oomd user-slice monitoring was not used: River runs in the TTY's
    call.
 4. **A discarded tier** below Asleep: close the CEF browser, keep the last
    picture on the plane (perhaps at 1×), reopen on a look or a call, least
-   recently used first. **Fork — ask first:** the decision says not to
-   silently drop other boards; does a discard that keeps the picture count?
+   recently used first. **Decided (2026-10-13):** a discard is not
+   dropping a board — Design discards idle boards before it refuses
+   anyone. Lost on discard: in-page state only (scroll, typed text).
 5. **Cheaper boards.** Raster at 1× when not in view (`RASTER_SCALE` is a
    fixed 2.0 — 4× the bytes). Find where the ~10 copies live: renderer
    tiles and viz output in shm (GPU process), engine `CefFrame`, frame
