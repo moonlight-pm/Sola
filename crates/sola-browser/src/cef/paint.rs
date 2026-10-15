@@ -531,7 +531,6 @@ impl PixelRing {
 mod tests {
 
     #[test]
-    #[test]
     fn only_tiles_that_changed_are_damage() {
         // 128 × 64: CEF says the whole width of the top 40 rows moved, but
         // only a spot at (5, 5) and one at (100, 35) did.
@@ -559,6 +558,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn a_packed_patch_lands_where_it_came_from() {
         // 3 × 2 buffer, each pixel's bytes = its index.
         let src: Vec<u8> = (0..6u8).flat_map(|p| [p; 4]).collect();

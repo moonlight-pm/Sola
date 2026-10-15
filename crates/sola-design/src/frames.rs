@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use iced::futures::{SinkExt, StreamExt as _};
@@ -15,8 +15,6 @@ use iced_futures::subscription::{self, EventStream, Recipe};
 use sola_browser::cef::engine::CefFrame;
 use sola_browser::engine::{AbsorbDamage, FrameReceiver};
 
-/// Least time between two frame wakes (~120 Hz).
-const WAKE_GAP: std::time::Duration = std::time::Duration::from_micros(8_333);
 
 #[derive(Default)]
 pub struct BoardFrames {
@@ -29,6 +27,11 @@ pub struct BoardFrames {
     /// Boards whose patch had no picture to land on (see
     /// [`CefFrame::patch`]): the app asks them to paint whole.
     want_whole: Mutex<HashSet<u64>>,
+    /// Boards on the human's screen: only their frames wake iced (a wake
+    /// presents the window). The rest wait for the next present.
+    visible: Mutex<HashSet<u64>>,
+    /// Most wakes a second: the fastest visible board's frame rate.
+    wake_hz: AtomicU32,
 }
 
 impl BoardFrames {
@@ -62,8 +65,22 @@ impl BoardFrames {
             .collect()
     }
 
+    /// The boards on the human's screen, and the fastest of their frame
+    /// rates (see [`crate::pace`]).
+    pub fn set_visible(&self, tabs: HashSet<u64>, hz: u32) {
+        *self.visible.lock().unwrap() = tabs;
+        self.wake_hz.store(hz.max(1), Ordering::Relaxed);
+    }
+
+    /// Least time between two wakes.
+    fn wake_gap(&self) -> std::time::Duration {
+        let hz = self.wake_hz.load(Ordering::Relaxed);
+        std::time::Duration::from_micros(1_000_000 / u64::from(if hz == 0 { 60 } else { hz }))
+    }
+
     /// Keep the newest frame per open tab; a replaced frame donates its
-    /// damage. False when the tab is not open (nothing to wake for).
+    /// damage. True when the frame should wake iced: an open board on the
+    /// human's screen.
     pub fn push(&self, tab: u64, mut frame: CefFrame) -> bool {
         if !self.open.lock().unwrap().contains(&tab) {
             return false;
@@ -74,7 +91,7 @@ impl BoardFrames {
         }
         pending.insert(tab, frame);
         self.painted.lock().unwrap().insert(tab);
-        true
+        self.visible.lock().unwrap().contains(&tab)
     }
 
     pub fn take_all(&self) -> HashMap<u64, CefFrame> {
@@ -147,14 +164,16 @@ impl<M: Clone + Send + 'static> Recipe for FrameRecipe<M> {
                     }
                 })
                 .expect("spawn design-frames thread");
-            // Wake iced at most once a display frame: boards animating at
-            // 60 fps each would otherwise rebuild the view hundreds of times
-            // a second. Frames keep merging in `BoardFrames` meanwhile.
-            let mut last = tokio::time::Instant::now() - WAKE_GAP;
+            // Wake iced no faster than the fastest visible board paints:
+            // each wake presents the window, and boards animating at once
+            // would otherwise present it hundreds of times a second. Frames
+            // keep merging in `BoardFrames` meanwhile.
+            let mut last = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
             while rx.recv().await.is_some() {
+                let gap = frames.wake_gap();
                 let since = last.elapsed();
-                if since < WAKE_GAP {
-                    tokio::time::sleep(WAKE_GAP - since).await;
+                if since < gap {
+                    tokio::time::sleep(gap - since).await;
                 }
                 last = tokio::time::Instant::now();
                 if output.send(on_frame.clone()).await.is_err() {

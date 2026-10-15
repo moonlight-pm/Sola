@@ -3633,6 +3633,12 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 host.invalidate(cef::PaintElementType::VIEW);
             }
         }
+        Cmd::BoardFrameRate { id, fps } => {
+            let board = tab_state_by_id(state, id).filter(|t| t.board.get().is_some());
+            if let Some(host) = board.and_then(|t| t.browser.host()) {
+                host.set_windowless_frame_rate(fps.clamp(1, 60) as i32);
+            }
+        }
         Cmd::ShowDevTools {
             panel,
             inspect_x,

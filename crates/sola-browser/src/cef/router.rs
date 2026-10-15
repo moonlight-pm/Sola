@@ -891,6 +891,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::BoardInput { id, input } => Some(ToEngine::BoardInput { id: id.0, input }),
         Cmd::BoardFocus { id, focused } => Some(ToEngine::BoardFocus { id: id.0, focused }),
         Cmd::BoardRepaint { id } => Some(ToEngine::BoardRepaint { id: id.0 }),
+        Cmd::BoardFrameRate { id, fps } => Some(ToEngine::BoardFrameRate { id: id.0, fps }),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

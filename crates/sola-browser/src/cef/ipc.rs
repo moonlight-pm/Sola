@@ -121,6 +121,10 @@ pub enum ToEngine {
     BoardRepaint {
         id: u64,
     },
+    BoardFrameRate {
+        id: u64,
+        fps: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -207,6 +207,7 @@ impl App {
         self.frames.close(tab.0);
         self.details.forget(tab.0);
         self.glows.forget(tab.0);
+        self.paced.remove(&tab.0);
         self.listed.remove(&tab.0);
         self.loads.forget(tab.0);
         for l in &mut self.live {
@@ -246,6 +247,7 @@ impl App {
             l.links.clear();
         }
         self.listed.clear();
+        self.paced.clear();
         self.loads.clear();
         self.details.clear();
         self.glows = Default::default();

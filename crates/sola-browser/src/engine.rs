@@ -375,6 +375,12 @@ pub enum Cmd<E: Engine> {
     BoardRepaint {
         id: TabId,
     },
+    /// How often a board tab may paint (1–60): sola-design slows boards
+    /// the human cannot see, or sees too small for motion to matter.
+    BoardFrameRate {
+        id: TabId,
+        fps: u32,
+    },
     Quit,
 }
 

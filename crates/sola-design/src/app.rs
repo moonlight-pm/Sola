@@ -44,6 +44,7 @@ use crate::instance;
 use crate::loads::Loads;
 use crate::menu;
 use crate::overlay::{self, Overlay};
+use crate::pace;
 use crate::plane::{self, Plane};
 use crate::projects::{self, CanvasRef, Catalog};
 use crate::rail::{self, AddDraft, CanvasDraft, RailState};
@@ -234,6 +235,8 @@ struct App {
     notes_open: bool,
     /// The flows list above the pill is open.
     flows_open: bool,
+    /// Frame rate last asked of each board (see [`pace`]).
+    paced: HashMap<u64, u32>,
     /// Board with the keyboard.
     focus: Option<u64>,
     selection: Option<Selection>,
@@ -276,6 +279,7 @@ impl App {
             open_notes: HashSet::new(),
             notes_open: false,
             flows_open: false,
+            paced: HashMap::new(),
             focus: None,
             selection: None,
             next_req: 1,
@@ -361,7 +365,38 @@ impl App {
             tracing::debug!(tab, "board repaint (patch missed its picture)");
             self.send(Cmd::BoardRepaint { id: TabId(tab) });
         }
+        self.pace_boards();
         task
+    }
+
+    /// Each board's frame rate from what the human can see (see
+    /// [`crate::pace`]), and which boards' frames wake the window.
+    fn pace_boards(&mut self) {
+        let plane = self.plane_size.map(|s| iced::Rectangle::new(Point::ORIGIN, s));
+        let mut visible = HashSet::new();
+        let mut fastest = pace::HIDDEN;
+        let mut changes = Vec::new();
+        for l in &self.live {
+            let shown = self.is_shown(&l.at.key());
+            for b in &l.boards {
+                let tab = b.tab.0;
+                let on_screen =
+                    shown && plane.is_some_and(|p| self.camera.rect_to_screen(b.rect()).intersects(&p));
+                let fps = pace::fps(on_screen, self.camera.zoom, !self.loads.is_settled(tab));
+                if on_screen {
+                    visible.insert(tab);
+                    fastest = fastest.max(fps);
+                }
+                if self.paced.get(&tab) != Some(&fps) {
+                    changes.push((tab, fps));
+                }
+            }
+        }
+        for (tab, fps) in changes {
+            self.paced.insert(tab, fps);
+            self.send(Cmd::BoardFrameRate { id: TabId(tab), fps });
+        }
+        self.frames.set_visible(visible, fastest);
     }
 
     fn handle(&mut self, msg: Msg) -> Task<Msg> {

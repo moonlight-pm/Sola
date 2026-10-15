@@ -147,10 +147,7 @@ impl<'a> Pages<'a> {
     }
 }
 
-/// [`Pages::board_for`] for one link.
-pub fn board_for_url<'a>(href: &str, boards: &[(&'a str, &'a str)], from: &str) -> Option<&'a str> {
-    Pages::new(boards).board_for(href, from)
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -175,7 +172,7 @@ mod tests {
     fn find(href: &str, from: &str) -> Option<&'static str> {
         let b: &'static Vec<(&'static str, String)> = Box::leak(Box::new(boards()));
         let refs: Vec<(&'static str, &'static str)> = b.iter().map(|(id, u)| (*id, u.as_str())).collect();
-        board_for_url(href, &refs, from)
+        Pages::new(&refs).board_for(href, from)
     }
 
     #[test]
