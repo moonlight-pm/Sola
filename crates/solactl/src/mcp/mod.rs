@@ -58,7 +58,8 @@ is not obvious; `[[link]]` (from, to, label) is an arrow between whole boards; \
 `data-design-to=\"<board id>\"` (optional `data-design-label`) on a button or link \
 makes it an exit: an arrow to that board, and clicking it moves the camera there. \
 Use exits for flows, not for navigation chrome (plain links between boards already \
-move the camera, without arrows). Leave room between sections. design_status lists \
+move the camera, without arrows). Arrows run in the gaps between boards, never \
+across one: leave room between boards (120+ px) and between sections. design_status lists \
 them, each board's exits, and any that lead nowhere; design_view --section frames \
 one. None of this is in a screenshot.
 

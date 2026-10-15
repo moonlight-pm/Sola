@@ -13,7 +13,7 @@ use sola_kit::fonts;
 
 use crate::boards::Board;
 use crate::camera::Camera;
-use crate::routes::{self, Arrow};
+use crate::routes;
 use crate::scene::Scene;
 
 const NOTE_RADIUS: f32 = 9.0;
@@ -117,79 +117,123 @@ pub fn section_titles(frame: &mut Frame, scene: &Scene, camera: Camera, theme: &
 
 // ── arrows ───────────────────────────────────────────────────────
 
-/// How the arrows are emphasised: the tour's board (its arrows bright,
-/// the rest dim) and the clickable region under the pointer.
+/// How the arrows are emphasised: the tour's board (its arrows lit, the
+/// rest dim) and the clickable region under the pointer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Focus<'a> {
     pub step: Option<&'a str>,
     pub hover: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Look {
+    Dim,
+    Plain,
+    Lit,
+}
+
+/// A polyline with its corners rounded (axis-aligned runs).
+fn rounded(points: &[Point], radius: f32) -> Path {
+    Path::new(|b| {
+        let Some(first) = points.first() else { return };
+        b.move_to(*first);
+        for k in 1..points.len().saturating_sub(1) {
+            let (a, c, n) = (points[k - 1], points[k], points[k + 1]);
+            let r = radius.min(a.distance(c) / 2.0).min(c.distance(n) / 2.0);
+            let unit = |v: iced::Vector| {
+                let len = (v.x * v.x + v.y * v.y).sqrt().max(1e-3);
+                iced::Vector::new(v.x / len, v.y / len)
+            };
+            b.line_to(c - unit(c - a) * r);
+            b.quadratic_curve_to(c, c + unit(n - c) * r);
+        }
+        if let Some(last) = points.last() {
+            b.line_to(*last);
+        }
+    })
+}
+
+/// Connectors through the gutters. Neutral hairlines; accent when they
+/// matter (the exit under the pointer, the tour step's way out), dim for
+/// the rest of a tour. Nothing crosses a page: a lit connector leaves the
+/// board's edge level with its exit, which is outlined.
 pub fn arrows(frame: &mut Frame, scene: &Scene, boards: &[Board], camera: Camera, focus: Focus, theme: &Theme) {
     let p = theme.extended_palette();
     let accent = p.primary.base.color;
-    let bg = p.background.base.color;
-    let routes_in: Vec<Arrow> = scene
-        .arrows
+    let ink = p.background.base.text;
+    let raised = p.background.weak.color;
+    let mut paths: Vec<Vec<Point>> = scene
+        .wires
         .iter()
-        .map(|a| Arrow {
-            from: camera.rect_to_screen(a.from),
-            to: camera.rect_to_screen(boards[a.target].rect()),
-            target: a.target,
-        })
+        .map(|w| w.path.iter().map(|q| camera.to_screen(*q)).collect())
         .collect();
-    let curves = routes::route(&routes_in);
-    let pills: Vec<Option<Size>> = scene
-        .arrows
-        .iter()
-        .map(|a| {
-            let t = measure(a.label.as_deref()?, LABEL_TEXT, fonts::ui(), 220.0);
-            Some(Size::new(t.width + 14.0, t.height + 6.0))
-        })
-        .collect();
-    let spots = routes::label_spots(&curves, &pills);
-    // Dim ones first, so bright ones cross over them.
-    let mut order: Vec<usize> = (0..curves.len()).collect();
-    let weight = |i: usize| -> (f32, f32) {
+    routes::nudge(&mut paths, 6.0);
+    let look = |i: usize| {
         let a = &scene.arrows[i];
-        let hovered = a.hot.is_some() && a.hot == focus.hover;
+        if a.hot.is_some() && a.hot == focus.hover {
+            return Look::Lit;
+        }
         match focus.step {
-            _ if hovered => (1.0, 2.5),
-            Some(step) if a.from_board == step => (1.0, 2.0),
-            Some(_) => (0.22, 1.5),
-            None => (0.8, 1.5),
+            Some(step) if a.from_board == step => Look::Lit,
+            Some(_) => Look::Dim,
+            None => Look::Plain,
         }
     };
-    order.sort_by(|&a, &b| weight(a).0.total_cmp(&weight(b).0));
+    // Labels never cover a page unless their arrow is lit; lit ones first.
+    let rects: Vec<Rectangle> = boards.iter().map(|b| camera.rect_to_screen(b.rect())).collect();
+    let mut placed = Vec::new();
+    let mut labels: Vec<Option<(Point, Size)>> = vec![None; paths.len()];
+    let mut by_look: Vec<usize> = (0..paths.len()).collect();
+    by_look.sort_by_key(|&i| std::cmp::Reverse(look(i)));
+    for i in by_look {
+        let Some(text) = scene.arrows[i].label.as_deref() else { continue };
+        let t = measure(text, LABEL_TEXT, fonts::ui(), 220.0);
+        let size = Size::new(t.width + 14.0, t.height + 6.0);
+        labels[i] = routes::label_spot(&paths[i], size, &mut placed, &rects, look(i) == Look::Lit).map(|c| (c, size));
+    }
+    let mut order: Vec<usize> = (0..paths.len()).collect();
+    order.sort_by_key(|&i| look(i));
     for i in order {
-        let (a, width) = weight(i);
-        let c = &curves[i];
-        let color = alpha(accent, a);
-        let path = Path::new(|b| {
-            b.move_to(c.from);
-            b.bezier_curve_to(c.c1, c.c2, c.to);
-        });
-        frame.stroke(&path, Stroke::default().with_color(color).with_width(width));
-        frame.fill(&Path::circle(c.from, 2.5 + width / 2.0), color);
-        let [tip, l, r] = c.head(9.0 + width, 4.0 + width / 2.0);
+        let path = &paths[i];
+        if path.len() < 2 {
+            continue;
+        }
+        let look = look(i);
+        let (color, width) = match look {
+            Look::Lit => (accent, 2.0),
+            Look::Plain => (alpha(ink, 0.42), 1.5),
+            Look::Dim => (alpha(ink, 0.14), 1.25),
+        };
+        frame.stroke(&rounded(path, 10.0), Stroke::default().with_color(color).with_width(width));
+        frame.fill(&Path::circle(path[0], 2.0 + width / 2.0), color);
+        let (tip, prev) = (path[path.len() - 1], path[path.len() - 2]);
+        let d = tip - prev;
+        let len = (d.x * d.x + d.y * d.y).sqrt().max(1e-3);
+        let dir = iced::Vector::new(d.x / len, d.y / len);
+        let (long, half) = (8.0 + width, 3.5 + width / 2.0);
+        let base = tip - dir * long;
+        let side = iced::Vector::new(-dir.y, dir.x) * half;
         frame.fill(
             &Path::new(|b| {
                 b.move_to(tip);
-                b.line_to(l);
-                b.line_to(r);
+                b.line_to(base + side);
+                b.line_to(base - side);
                 b.close();
             }),
             color,
         );
-        if let (Some(text), Some(mid), Some(size)) = (&scene.arrows[i].label, spots[i], pills[i]) {
-            let pill = Rectangle::new(
-                Point::new(mid.x - size.width / 2.0, mid.y - size.height / 2.0),
-                size,
-            );
+        let a = &scene.arrows[i];
+        if let (Some(text), Some((mid, size))) = (&a.label, labels[i]) {
+            let pill = Rectangle::new(Point::new(mid.x - size.width / 2.0, mid.y - size.height / 2.0), size);
             let shape = Path::rounded_rectangle(pill.position(), pill.size(), 7.0.into());
-            frame.fill(&shape, alpha(bg, a.max(0.6)));
-            frame.stroke(&shape, Stroke::default().with_color(color).with_width(1.0));
-            frame.fill_text(label(text, Point::new(pill.x + 7.0, pill.y + 3.0), LABEL_TEXT, fonts::ui(), alpha(p.background.base.text, a.max(0.4)), 220.0));
+            let (fill, edge, words) = match look {
+                Look::Lit => (raised, accent, ink),
+                Look::Plain => (raised, alpha(ink, 0.18), alpha(ink, 0.72)),
+                Look::Dim => (alpha(raised, 0.7), alpha(ink, 0.08), alpha(ink, 0.3)),
+            };
+            frame.fill(&shape, fill);
+            frame.stroke(&shape, Stroke::default().with_color(edge).with_width(1.0));
+            frame.fill_text(label(text, Point::new(pill.x + 7.0, pill.y + 3.0), LABEL_TEXT, fonts::ui(), words, 220.0));
         }
     }
 }

@@ -137,9 +137,12 @@ screen, and none of it is in the pages or in an agent's screenshots.
   a spot on the canvas. Hover a marker to read it; click it to keep it open.
   The notes button on the bottom bar (or **N** while no page has the
   keyboard) opens every note.
-- **Arrows** show flow: from a button or link in a page to the artboard it
-  leads to (its label, if any, in a pill), or between two whole artboards.
-  Hover the button to light its arrow.
+- **Arrows** show flow, through the gaps between artboards (never across
+  one): from the edge of an artboard, level with the button or link that
+  leads on, to the artboard it leads to — or between two whole artboards.
+  A label shows where it fits without covering an artboard, and always on
+  a lit arrow. Hover the button to outline it and light its arrow. Leave
+  room between artboards and the arrows (and labels) have room to run.
 - **Clicking** a button or link that leads to another artboard moves the
   camera there (a short glide) instead of loading that page into the
   artboard you clicked. That includes plain links between artboards, which

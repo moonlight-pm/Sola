@@ -210,11 +210,20 @@ In a page:
   units, never less than a few screen px, with room on top for the
   boards' titles — and the title (and note) above its top-left corner at a
   fixed screen size. A board may be in more than one section.
-- Arrows draw over the boards at a fixed screen width, as curves from the
-  side of the exit element (or source board) that faces the target to the
-  facing side of the target board, with an arrowhead and the label in a
-  small pill at the middle. Several arrows into one side spread along it.
-  An exit element under the pointer is outlined and its arrow brightens.
+- Arrows are connectors that **never cross a board** (2026-10-14, human:
+  lines through a page look bad). Each leaves a port on the source board's
+  side facing the target — level with the exit element, or the side's
+  middle for a `[[link]]` — and runs orthogonally through the gutters
+  (lines beside every board's edges; shortest with a cost per bend; canvas
+  units, so routes move with the boards, not the camera) to the target's
+  facing side, entering level with where it left when the side allows (a
+  straight run between neighbours; ports into one side keep 24 px apart).
+  Rounded corners and an arrowhead; runs that share a gutter are nudged
+  apart on screen. A label is a pill on its longest run, shown only where
+  it covers no board — unless its arrow is lit. Neutral hairlines by default; accent
+  only when they matter (the exit under the pointer, the tour step's way
+  out); dim during a tour. An exit element under the pointer is outlined;
+  no line is drawn from it across its page.
 - Clicking an exit (or a plain link to a board) is the app's, not the
   page's: the page does not get the click. The camera glides (≈ 0.4 s) to
   frame the target board; a tall board is framed by its width, top first.

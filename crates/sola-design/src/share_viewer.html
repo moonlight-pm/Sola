@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Design</title>
 <style>
-  :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #7aa7ff; --note: #e3b341; }
+  :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #3dd6f5; --note: #e3b341; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
     font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #plane { position: absolute; inset: 0; touch-action: none; }
@@ -36,8 +36,10 @@
   .sec > div { display: inline-block; margin: 0 0 0 -6px; padding: 3px 6px; border-radius: 6px; background: rgba(20,21,24,.88); }
   .sec b { display: block; font-size: 15px; font-weight: 500; line-height: 20px; color: var(--fg); }
   .sec span { display: block; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 3px; }
-  .lbl { position: absolute; transform: translate(-50%, -50%); padding: 2px 7px; border: 1px solid var(--accent);
-    border-radius: 7px; background: var(--bg); font-size: 11px; line-height: 15px; white-space: nowrap; }
+  .lbl { position: absolute; transform: translate(-50%, -50%); padding: 2px 7px; border: 1px solid rgba(201,204,210,.18);
+    border-radius: 7px; background: var(--chip); color: rgba(201,204,210,.72); font-size: 11px; line-height: 15px; white-space: nowrap; }
+  .lbl.lit { border-color: var(--accent); color: var(--fg); }
+  .lbl.dim { border-color: rgba(201,204,210,.08); color: rgba(201,204,210,.3); background: rgba(29,31,35,.7); }
   .note { position: absolute; width: 0; height: 0; pointer-events: auto; }
   .note .dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
     background: var(--note); color: #1a1407; box-shadow: 0 0 0 1.5px var(--bg); font: 500 11px/18px system-ui, sans-serif;
@@ -293,7 +295,13 @@
     const pad = Math.max(64 * cam.z, 12), top = pad + 24;
     return { x: x0 - pad, y: y0 - top, w: x1 - x0 + 2 * pad, h: y1 - y0 + pad + top };
   };
-  const OUT = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
+  // Connectors run through the gutters, never across a board (as Design's
+  // routes.rs): a port on the source board's side level with the exit, a
+  // stub out, an orthogonal path on lines beside every board's edges
+  // (shortest, with a cost per bend), the target's stub and port. Canvas
+  // units; runs that share a gutter are nudged apart on screen.
+  const CLEAR = 28, BEND = 320, PORT_GAP = 24, INSET = 24;
+  const OUT = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] }, DIR = { R: 0, L: 1, B: 2, T: 3 };
   const sides = (a, b) => {
     const gx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), gy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
     const dx = b.x + b.w / 2 - (a.x + a.w / 2), dy = b.y + b.h / 2 - (a.y + a.h / 2);
@@ -301,32 +309,193 @@
     if (acrossX) return dx >= 0 ? ['R', 'L'] : ['L', 'R'];
     return dy >= 0 ? ['B', 'T'] : ['T', 'B'];
   };
-  const along = (r, s, k, n) => {
-    const len = s === 'T' || s === 'B' ? r.w : r.h;
-    const off = (k - (n - 1) / 2) * Math.min(len / (n + 1), 28), cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-    return s === 'L' ? [r.x, cy + off] : s === 'R' ? [r.x + r.w, cy + off] : s === 'T' ? [cx + off, r.y] : [cx + off, r.y + r.h];
+  const project = (r, s, p) => {
+    const clamp = (v, lo, len) => Math.min(Math.max(v, lo + Math.min(INSET, len / 2)), lo + len - Math.min(INSET, len / 2));
+    if (s === 'L' || s === 'R') return [s === 'L' ? r.x : r.x + r.w, clamp(p[1], r.y, r.h)];
+    return [clamp(p[0], r.x, r.w), s === 'T' ? r.y : r.y + r.h];
   };
-  const route = (arrows) => {
-    const sd = arrows.map((a) => sides(a.from, a.to));
-    const starts = arrows.map((a, i) => along(a.from, sd[i][0], 0, 1));
+  const simplify = (path) => {
+    const out = [];
+    for (const p of path) {
+      const q = out[out.length - 1];
+      if (q && Math.hypot(q[0] - p[0], q[1] - p[1]) < 0.01) continue;
+      if (out.length >= 2) {
+        const a = out[out.length - 2], b = out[out.length - 1];
+        if ((Math.abs(a[0] - b[0]) < 0.01 && Math.abs(b[0] - p[0]) < 0.01) || (Math.abs(a[1] - b[1]) < 0.01 && Math.abs(b[1] - p[1]) < 0.01)) out.pop();
+      }
+      out.push(p);
+    }
+    return out;
+  };
+  const grid = (xs, ys, rects) => {
+    const lines = (v) => [...v].sort((a, b) => a - b).filter((x, i, a) => i === 0 || x - a[i - 1] >= 0.5);
+    xs = lines(xs); ys = lines(ys);
+    const blocks = rects.map((r) => ({ x: r.x - CLEAR + 1, y: r.y - CLEAR + 1, w: r.w + 2 * CLEAR - 2, h: r.h + 2 * CLEAR - 2 }));
+    const inside = (x, y) => blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h);
+    const clear = (x0, y0, x1, y1) => !blocks.some((b) => Math.min(x0, x1) < b.x + b.w && Math.max(x0, x1) > b.x && Math.min(y0, y1) < b.y + b.h && Math.max(y0, y1) > b.y);
+    const nx = xs.length, ny = ys.length, open = new Uint8Array(nx * ny), next = new Int32Array(nx * ny * 4).fill(-1);
+    for (let n = 0; n < nx * ny; n++) open[n] = inside(xs[n % nx], ys[(n / nx) | 0]) ? 0 : 1;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const n = j * nx + i;
+      if (!open[n]) continue;
+      if (i + 1 < nx && open[n + 1] && clear(xs[i], ys[j], xs[i + 1], ys[j])) { next[n * 4] = n + 1; next[(n + 1) * 4 + 1] = n; }
+      if (j + 1 < ny && open[n + nx] && clear(xs[i], ys[j], xs[i], ys[j + 1])) { next[n * 4 + 2] = n + nx; next[(n + nx) * 4 + 3] = n; }
+    }
+    const pt = (n) => [xs[n % nx], ys[(n / nx) | 0]];
+    const node = (p) => {
+      const i = xs.findIndex((x) => Math.abs(x - p[0]) < 0.5), j = ys.findIndex((y) => Math.abs(y - p[1]) < 0.5);
+      if (i < 0 || j < 0) return -1;
+      const n = j * nx + i;
+      return [0, 1, 2, 3].some((d) => next[n * 4 + d] >= 0) ? n : -1;
+    };
+    // Cheapest run: length plus BEND per turn (Dijkstra over node × heading).
+    const path = (a, out, b, into) => {
+      const start = node(a), goal = node(b);
+      if (start < 0 || goal < 0) return null;
+      const inward = DIR[into] ^ 1, cost = new Float64Array(nx * ny * 4).fill(Infinity), prev = new Int32Array(nx * ny * 4).fill(-1);
+      const heap = [];
+      const push = (c, s) => {
+        heap.push([c, s]);
+        for (let k = heap.length - 1; k > 0;) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; }
+      };
+      const pop = () => {
+        const top = heap[0], last = heap.pop();
+        if (heap.length) {
+          heap[0] = last;
+          for (let k = 0; ;) {
+            const l = 2 * k + 1, r = l + 1;
+            let m = k;
+            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+            if (m === k) break;
+            [heap[m], heap[k]] = [heap[k], heap[m]]; k = m;
+          }
+        }
+        return top;
+      };
+      const first = start * 4 + DIR[out];
+      cost[first] = 0; push(0, first);
+      let best = null;
+      while (heap.length) {
+        const [c, s] = pop();
+        if (c > cost[s] || (best && c >= best[0])) continue;
+        const n = s >> 2, dir = s & 3;
+        if (n === goal) {
+          const total = c + (dir === inward ? 0 : BEND);
+          if (!best || total < best[0]) best = [total, s];
+          continue;
+        }
+        for (let d = 0; d < 4; d++) {
+          const m = next[n * 4 + d];
+          if (m < 0 || d === (dir ^ 1)) continue;
+          const p = pt(n), q = pt(m), t = m * 4 + d;
+          const step = Math.hypot(q[0] - p[0], q[1] - p[1]) + (d === dir ? 0 : BEND);
+          if (c + step < cost[t]) { cost[t] = c + step; prev[t] = s; push(cost[t], t); }
+        }
+      }
+      if (!best) return null;
+      const out2 = [];
+      for (let s = best[1]; s >= 0; s = prev[s]) out2.push(pt(s >> 2));
+      return out2.reverse();
+    };
+    return { path };
+  };
+  const layOut = (rects, arrows) => {
+    const sd = arrows.map((a) => sides(a.board, a.to));
+    const starts = arrows.map((a, i) => project(a.board, sd[i][0], [a.from.x + a.from.w / 2, a.from.y + a.from.h / 2]));
+    // Each arrow enters level with where it leaves when the side allows (a
+    // straight run between neighbours); ports into one side keep apart.
+    const ends = arrows.map((a, i) => project(a.to, sd[i][1], starts[i]));
+    const done = new Set();
+    arrows.forEach((a, i) => {
+      if (done.has(i)) return;
+      const into = sd[i][1], k = into === 'T' || into === 'B' ? 0 : 1;
+      const peers = arrows.map((_, j) => j).filter((j) => j >= i && arrows[j].target === a.target && sd[j][1] === into);
+      peers.forEach((j) => done.add(j));
+      peers.sort((p, q) => ends[p][k] - ends[q][k] || p - q);
+      const lo0 = k ? a.to.y : a.to.x, len = k ? a.to.h : a.to.w, inset = Math.min(INSET, len / 2);
+      const lo = lo0 + inset, hi = lo0 + len - inset, at = [];
+      for (const j of peers) at.push(Math.max(ends[j][k], at.length ? at[at.length - 1] + PORT_GAP : -Infinity));
+      const over = at.length ? Math.max(at[at.length - 1] - hi, 0) : 0;
+      peers.forEach((j, n) => { ends[j] = k ? [ends[j][0], Math.max(at[n] - over, lo)] : [Math.max(at[n] - over, lo), ends[j][1]]; });
+    });
+    const stub = (p, s) => [p[0] + OUT[s][0] * CLEAR, p[1] + OUT[s][1] * CLEAR];
+    const xs = [], ys = [];
+    for (const r of rects) { xs.push(r.x - CLEAR, r.x + r.w + CLEAR); ys.push(r.y - CLEAR, r.y + r.h + CLEAR); }
+    arrows.forEach((_, i) => {
+      for (const s of [stub(starts[i], sd[i][0]), stub(ends[i], sd[i][1])]) { xs.push(s[0]); ys.push(s[1]); }
+    });
+    const g = grid(xs, ys, rects);
     return arrows.map((a, i) => {
-      const side = sd[i][1], horiz = side === 'T' || side === 'B';
-      const pos = (j) => (horiz ? starts[j][0] : starts[j][1]);
-      const peers = arrows.map((_, j) => j).filter((j) => arrows[j].target === a.target && sd[j][1] === side);
-      const k = peers.filter((j) => pos(j) < pos(i) || (pos(j) === pos(i) && j < i)).length;
-      const from = starts[i], to = along(a.to, side, k, peers.length), o = OUT[sd[i][0]], io = OUT[side];
-      const reach = Math.min(240, Math.max(24, Math.hypot(to[0] - from[0], to[1] - from[1]) * 0.45));
-      return [from, [from[0] + o[0] * reach, from[1] + o[1] * reach], [to[0] + io[0] * reach, to[1] + io[1] * reach], to];
+      const sa = stub(starts[i], sd[i][0]), sb = stub(ends[i], sd[i][1]);
+      const mid = g.path(sa, sd[i][0], sb, sd[i][1]) || [sa, sb];
+      return { path: simplify([starts[i], ...mid, ends[i]]) };
     });
   };
-  const bez = (c, t) => {
-    const u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
-    return [0, 1].map((k) => c.reduce((s, p, i) => s + p[k] * w[i], 0));
+  let wiresKey = null, wiresMemo = [];
+  const wiresFor = (rects, arrows) => {
+    const key = JSON.stringify([rects, arrows.map((a) => [a.board, a.from, a.to, a.target])]);
+    if (key !== wiresKey) { wiresKey = key; wiresMemo = layOut(rects, arrows); }
+    return wiresMemo;
   };
-  const head = (c, len, half) => {
-    const d = [c[3][0] - c[2][0], c[3][1] - c[2][1]], n = Math.max(Math.hypot(d[0], d[1]), 1e-3);
-    const dir = [d[0] / n, d[1] / n], base = [c[3][0] - dir[0] * len, c[3][1] - dir[1] * len];
-    return [c[3], [base[0] - dir[1] * half, base[1] + dir[0] * half], [base[0] + dir[1] * half, base[1] - dir[0] * half]];
+  // Overlapping runs on one gutter line move apart by `gap` (screen px);
+  // a path's first and last runs stay on their ports.
+  const nudge = (paths, gap) => {
+    const runs = [];
+    paths.forEach((p, w) => {
+      for (let k = 1; k < p.length - 2; k++) {
+        const a = p[k], b = p[k + 1];
+        if (Math.abs(a[1] - b[1]) < 0.01) runs.push([1, a[1], Math.min(a[0], b[0]), Math.max(a[0], b[0]), w, k]);
+        else if (Math.abs(a[0] - b[0]) < 0.01) runs.push([0, a[0], Math.min(a[1], b[1]), Math.max(a[1], b[1]), w, k]);
+      }
+    });
+    runs.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    for (let i = 0; i < runs.length;) {
+      let j = i;
+      while (j < runs.length && runs[j][0] === runs[i][0] && Math.abs(runs[j][1] - runs[i][1]) < 0.5) j++;
+      const ends = [], lanes = [];
+      for (const r of runs.slice(i, j)) {
+        let l = ends.findIndex((e) => e < r[2] - 0.5);
+        if (l < 0) { ends.push(-Infinity); l = ends.length - 1; }
+        ends[l] = r[3]; lanes.push(l);
+      }
+      runs.slice(i, j).forEach((r, k) => {
+        const off = (lanes[k] - (ends.length - 1) / 2) * gap, p = paths[r[4]];
+        for (const q of [r[5], r[5] + 1]) p[q] = r[0] ? [p[q][0], p[q][1] + off] : [p[q][0] + off, p[q][1]];
+      });
+      i = j;
+    }
+  };
+  // A label goes on its path's longest run (middle, then quarters), else
+  // the next, where it covers neither a board nor a label already placed;
+  // nowhere if nothing fits, unless its arrow is lit (`force`).
+  const labelSpot = (path, w, h, placed, rects, force) => {
+    const runs = [];
+    for (let k = 0; k < path.length - 1; k++) {
+      const a = path[k], b = path[k + 1], inner = k > 0 && k + 2 < path.length;
+      runs.push([Math.hypot(b[0] - a[0], b[1] - a[1]) * (inner ? 1 : 0.25), a, b]);
+    }
+    runs.sort((a, b) => b[0] - a[0]);
+    const box = (a, b, t) => { const c = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; return { x: c[0] - w / 2, y: c[1] - h / 2, w, h, c }; };
+    const hit = (p, b) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h;
+    const free = (b) => !placed.some((p) => hit(p, b)) && !rects.some((r) => hit(r, b));
+    let spot = runs.flatMap((r) => [0.5, 0.25, 0.75].map((t) => box(r[1], r[2], t))).find(free);
+    if (!spot && force && runs.length) spot = box(runs[0][1], runs[0][2], 0.5);
+    if (!spot) return null;
+    placed.push(spot);
+    return spot.c;
+  };
+  const rounded = (pts, radius) => {
+    let d = `M${pts[0]}`;
+    for (let k = 1; k < pts.length - 1; k++) {
+      const a = pts[k - 1], c = pts[k], n = pts[k + 1];
+      const li = Math.hypot(c[0] - a[0], c[1] - a[1]), lo = Math.hypot(n[0] - c[0], n[1] - c[1]);
+      const r = Math.min(radius, li / 2, lo / 2);
+      const p1 = [c[0] - ((c[0] - a[0]) / (li || 1)) * r, c[1] - ((c[1] - a[1]) / (li || 1)) * r];
+      const p2 = [c[0] + ((n[0] - c[0]) / (lo || 1)) * r, c[1] + ((n[1] - c[1]) / (lo || 1)) * r];
+      d += ` L${p1} Q${c} ${p2}`;
+    }
+    return d + ` L${pts[pts.length - 1]}`;
   };
 
   // The canvas's annotations in canvas units (as Design's scene.rs).
@@ -336,15 +505,18 @@
     const arrows = [], ids = [...boards.keys()];
     for (const b of boards.values()) {
       for (const e of b.exits) {
-        arrows.push({ fromBoard: b.id, from: { x: b.x + e.r.x, y: b.y + e.r.y, w: e.r.w, h: e.r.h }, to: e.to,
+        arrows.push({ fromBoard: b.id, board: boardRect(b), from: { x: b.x + e.r.x, y: b.y + e.r.y, w: e.r.w, h: e.r.h }, to: e.to,
           label: e.label || null, name: e.label || e.text || null, el: e.el });
       }
     }
     for (const l of annot.links) {
       if (!boards.has(l.from) || !boards.has(l.to)) continue;
-      arrows.push({ fromBoard: l.from, from: boardRect(boards.get(l.from)), to: l.to, label: l.label || null, name: l.label || null, el: null });
+      const b = boardRect(boards.get(l.from));
+      arrows.push({ fromBoard: l.from, board: b, from: b, to: l.to, label: l.label || null, name: l.label || null, el: null });
     }
     for (const a of arrows) a.target = ids.indexOf(a.to);
+    const rects = [...boards.values()].map(boardRect);
+    const wires = wiresFor(rects, arrows.map((a) => ({ board: a.board, from: a.from, to: rects[a.target], target: a.target })));
     const notes = [];
     for (const n of annot.notes) {
       if (n.board == null) { notes.push({ ...n, at: [n.x, n.y] }); continue; }
@@ -354,7 +526,7 @@
       const r = b.anchors[n.n];
       if (r) notes.push({ ...n, at: [b.x + r.x + r.w, b.y + r.y] });
     }
-    return { sections, arrows, notes };
+    return { sections, arrows, notes, wires };
   };
   const choices = (from) => {
     const out = [];
@@ -393,49 +565,55 @@
     let u = '';
     s.sections.forEach((x, i) => {
       const r = sectionBox(x.rects.map(scr));
-      u += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="14" fill="rgba(255,255,255,.035)" stroke="#2b2e34"/>`;
+      u += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10" fill="rgba(255,255,255,.035)" stroke="#2b2e34"/>`;
       const el = inkSecs[i];
       el.style.left = r.x + 2 + 'px'; el.style.top = r.y - 5 + 'px';
       el.style.width = Math.min(640, Math.max(160, r.w)) + 'px';
     });
     under.innerHTML = u;
-    // Arrows; the hovered exit and the tour's arrows bright, the rest dim.
-    const curves = route(s.arrows.map((a) => ({ from: scr(a.from), to: scr(boardRect(boards.get(a.to))), target: a.target })));
-    const weight = (a) => {
-      if (hover && a.el && a.el === hover.el) return [1, 2.5];
-      if (step) return a.fromBoard === step ? [1, 2] : [0.22, 1.5];
-      return [0.8, 1.5];
+    // Connectors: neutral hairlines; accent when they matter (the exit under
+    // the pointer, the tour step's way out), dim for the rest of a tour.
+    // Nothing crosses a page: a lit connector leaves the board's edge level
+    // with its exit, which is outlined.
+    const paths = s.wires.map((w) => w.path.map((q) => [cam.x + q[0] * cam.z, cam.y + q[1] * cam.z]));
+    nudge(paths, 6);
+    const look = (a) => {
+      if (hover && a.el && a.el === hover.el) return 2;
+      if (step) return a.fromBoard === step ? 2 : 0;
+      return 1;
     };
+    const LOOK = [['rgba(201,204,210,.14)', 1.25], ['rgba(201,204,210,.42)', 1.5], ['var(--accent)', 2]];
     let o = '';
-    // Labels: the middle of the curve, else a little either side (no overlaps).
-    const placed = [], spots = curves.map((c, i) => {
+    // Labels never cover a page unless their arrow is lit; lit ones first.
+    const screens = [...boards.values()].map((b) => scr(boardRect(b)));
+    const placed = [], spots = [];
+    s.arrows.map((_, i) => i).sort((i, j) => look(s.arrows[j]) - look(s.arrows[i])).forEach((i) => {
       const lbl = inkLabels[i];
-      if (!lbl) return null;
-      const w = lbl.offsetWidth, h = lbl.offsetHeight;
-      const box = (t) => { const m = bez(c, t); return { m, x: m[0] - w / 2, y: m[1] - h / 2 }; };
-      const free = (b) => !placed.some((p) => b.x < p.x + p.w && p.x < b.x + w && b.y < p.y + p.h && p.y < b.y + h);
-      const spot = [0.5, 0.35, 0.65, 0.22, 0.78].map(box).find(free) || box(0.5);
-      placed.push({ x: spot.x, y: spot.y, w, h });
-      return spot.m;
+      if (lbl) lbl.style.display = '';
+      spots[i] = lbl ? labelSpot(paths[i], lbl.offsetWidth, lbl.offsetHeight, placed, screens, look(s.arrows[i]) === 2) : null;
     });
-    const order = s.arrows.map((_, i) => i).sort((i, j) => weight(s.arrows[i])[0] - weight(s.arrows[j])[0]);
+    const order = s.arrows.map((_, i) => i).sort((i, j) => look(s.arrows[i]) - look(s.arrows[j]));
     for (const i of order) {
-      const [a, w] = weight(s.arrows[i]), c = curves[i], col = `rgba(122,167,255,${a})`;
-      o += `<path d="M${c[0]} C${c[1]} ${c[2]} ${c[3]}" fill="none" stroke="${col}" stroke-width="${w}"/>`;
-      o += `<circle cx="${c[0][0]}" cy="${c[0][1]}" r="${2.5 + w / 2}" fill="${col}"/>`;
-      o += `<polygon points="${head(c, 9 + w, 4 + w / 2).join(' ')}" fill="${col}"/>`;
+      const a = s.arrows[i], path = paths[i], lk = look(a), [col, w] = LOOK[lk];
+      if (path.length < 2) continue;
+      o += `<path d="${rounded(path, 10)}" fill="none" style="stroke:${col}" stroke-width="${w}"/>`;
+      o += `<circle cx="${path[0][0]}" cy="${path[0][1]}" r="${2 + w / 2}" style="fill:${col}"/>`;
+      const tip = path[path.length - 1], prev = path[path.length - 2];
+      const len = Math.hypot(tip[0] - prev[0], tip[1] - prev[1]) || 1, dir = [(tip[0] - prev[0]) / len, (tip[1] - prev[1]) / len];
+      const base = [tip[0] - dir[0] * (8 + w), tip[1] - dir[1] * (8 + w)], half = 3.5 + w / 2;
+      o += `<polygon points="${tip} ${base[0] - dir[1] * half},${base[1] + dir[0] * half} ${base[0] + dir[1] * half},${base[1] - dir[0] * half}" style="fill:${col}"/>`;
       const lbl = inkLabels[i];
-      if (lbl) {
-        const m = spots[i];
-        lbl.style.left = m[0] + 'px'; lbl.style.top = m[1] + 'px';
-        lbl.style.opacity = Math.max(a, 0.4); lbl.style.zIndex = a >= 1 ? 1 : 0;
+      if (lbl && !spots[i]) lbl.style.display = 'none';
+      else if (lbl) {
+        lbl.style.left = spots[i][0] + 'px'; lbl.style.top = spots[i][1] + 'px';
+        lbl.className = 'lbl ' + ['dim', 'plain', 'lit'][lk]; lbl.style.zIndex = lk;
       }
     }
     // The hovered link / exit, and the tour step's exits.
     const outline = (b, r, strong) => {
       const q = scr({ x: b.x + r.x, y: b.y + r.y, w: r.w, h: r.h });
-      o += `<rect x="${q.x - 2}" y="${q.y - 2}" width="${q.w + 4}" height="${q.h + 4}" rx="4" fill="${strong ? 'rgba(122,167,255,.1)' : 'none'}"`
-        + ` stroke="rgba(122,167,255,${strong ? 1 : 0.55})" stroke-width="${strong ? 1.5 : 1}"/>`;
+      o += `<rect x="${q.x - 2}" y="${q.y - 2}" width="${q.w + 4}" height="${q.h + 4}" rx="4" fill="${strong ? 'rgba(61,214,245,.1)' : 'none'}"`
+        + ` stroke="rgba(61,214,245,${strong ? 1 : 0.55})" stroke-width="${strong ? 1.5 : 1}"/>`;
     };
     for (const b of boards.values()) {
       for (const e of b.exits) if (b.id === step && !(hover && hover.el === e.el)) outline(b, e.r, false);

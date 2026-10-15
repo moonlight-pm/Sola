@@ -2,13 +2,16 @@
 //! from its boards (and what their pages declared, see [`crate::marks`])
 //! and `canvas.toml` (see [`crate::annot`]). Rebuilt each view; cheap.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use iced::{Point, Rectangle, Size};
 
 use crate::annot::{Annotations, Place};
 use crate::boards::Board;
 use crate::marks;
+use crate::routes::{self, Wire};
 use crate::select::Rect;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +25,8 @@ pub struct SectionMark {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrowMark {
     pub from_board: String,
+    /// Index of the source board in the boards.
+    pub source: usize,
     pub from: Rectangle,
     /// Index of the target in the boards.
     pub target: usize,
@@ -68,6 +73,8 @@ pub struct Scene {
     pub arrows: Vec<ArrowMark>,
     pub hots: Vec<Hot>,
     pub notes: Vec<NoteMark>,
+    /// Each arrow laid out through the gutters (canvas units).
+    pub wires: Vec<Wire>,
 }
 
 fn rect(r: Rect) -> Rectangle {
@@ -96,7 +103,7 @@ impl Scene {
             ..Self::default()
         };
 
-        for b in boards {
+        for (source, b) in boards.iter().enumerate() {
             let origin = b.rect().position();
             let to_canvas = |r: Rectangle| Rectangle::new(origin + iced::Vector::new(r.x, r.y), r.size());
             for exit in &b.marks.exits {
@@ -113,6 +120,7 @@ impl Scene {
                 });
                 scene.arrows.push(ArrowMark {
                     from_board: b.art.id.clone(),
+                    source,
                     from: to_canvas(local),
                     target,
                     to: exit.to.clone(),
@@ -140,6 +148,7 @@ impl Scene {
             };
             scene.arrows.push(ArrowMark {
                 from_board: l.from.clone(),
+                source: from,
                 from: boards[from].rect(),
                 target,
                 to: l.to.clone(),
@@ -174,6 +183,18 @@ impl Scene {
                 text: note.text.clone(),
             });
         }
+        let rects: Vec<Rectangle> = boards.iter().map(Board::rect).collect();
+        let arrows: Vec<routes::Arrow> = scene
+            .arrows
+            .iter()
+            .map(|a| routes::Arrow {
+                board: rects[a.source],
+                from: a.from,
+                to: rects[a.target],
+                target: a.target,
+            })
+            .collect();
+        scene.wires = lay_out_once(&rects, &arrows);
         scene
     }
 
@@ -208,6 +229,39 @@ impl Scene {
         }
         out
     }
+}
+
+thread_local! {
+    /// The last layout and its wires: a scene is rebuilt every view, its
+    /// wires only when boards or arrows move.
+    static LAST: RefCell<Option<(u64, Vec<Wire>)>> = const { RefCell::new(None) };
+}
+
+fn lay_out_once(boards: &[Rectangle], arrows: &[routes::Arrow]) -> Vec<Wire> {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let rect = |r: &Rectangle, h: &mut std::collections::hash_map::DefaultHasher| {
+        [r.x, r.y, r.width, r.height].map(f32::to_bits).hash(h);
+    };
+    for b in boards {
+        rect(b, &mut h);
+    }
+    for a in arrows {
+        rect(&a.board, &mut h);
+        rect(&a.from, &mut h);
+        rect(&a.to, &mut h);
+        a.target.hash(&mut h);
+    }
+    let key = h.finish();
+    LAST.with(|last| {
+        if let Some((k, wires)) = &*last.borrow() {
+            if *k == key {
+                return wires.clone();
+            }
+        }
+        let wires = routes::lay_out(boards, arrows);
+        *last.borrow_mut() = Some((key, wires.clone()));
+        wires
+    })
 }
 
 #[cfg(test)]
@@ -294,6 +348,8 @@ mod tests {
         assert_eq!(exit.from, Rectangle::new(Point::new(10., 10.), Size::new(40., 20.)));
         assert_eq!(exit.label.as_deref(), Some("send"));
         assert_eq!(s.arrows.len(), 3, "unknown and self exits are skipped; two [[link]]s");
+        assert_eq!(s.wires.len(), 3);
+        assert_eq!(s.wires[0].path[0], Point::new(100., 24.), "the exit's port on a's right side, off the corner");
         assert_eq!(s.arrows[1].from, Rectangle::new(Point::new(0., 0.), Size::new(100., 100.)));
         // Plain links to a board are hot, without arrows; the smallest wins.
         assert_eq!(s.hots.len(), 3);
