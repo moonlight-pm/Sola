@@ -909,6 +909,13 @@ cef::wrap_app! {
                 if self.app_id == "sola-design" {
                     let k = CefString::from("hide-scrollbars");
                     cmd.append_switch(Some(&k));
+                    // Boards are CPU frames (no shared textures). With GPU
+                    // compositing Chromium reads every frame back whole from
+                    // the GPU — a 10 px spinner on a zoomed board cost ~40%
+                    // of the GPU. Software compositing redraws the damage
+                    // straight into the paint buffer.
+                    let k = CefString::from("disable-gpu-compositing");
+                    cmd.append_switch(Some(&k));
                 }
 
                 // Chrome-runtime CEF 147 often ignores Settings.remote_debugging_port
