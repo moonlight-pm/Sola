@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / Cover</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  body { transition: none; }
+  .meta { display: flex; justify-content: space-between; font-family: var(--font-figure); font-size: 12px; letter-spacing: 1.5px; color: var(--text-3); text-transform: uppercase; }
+  .hero { display: flex; align-items: center; gap: 44px; margin-top: 8px; }
+  .hero__word { font-family: var(--font-display); font-weight: 600; font-size: 168px; line-height: 150px; letter-spacing: -6px; }
+  .thesis { font-family: var(--font-display); font-size: 40px; line-height: 46px; font-weight: 500; letter-spacing: -0.8px; }
+  .lead { font-size: 18px; line-height: 30px; color: var(--text-2); width: 900px; }
+
+  .day-strip { position: relative; height: 96px; border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline) inset; }
+  .day-strip__band { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; padding-left: 14px; gap: 2px; }
+  .day-strip__name { font-weight: 600; font-size: 14px; }
+  .day-strip__time { font-family: var(--font-figure); font-size: 11px; opacity: 0.75; }
+  .day-strip__now { position: absolute; top: -8px; bottom: -8px; width: 1px; background: var(--text); }
+  .ticks { position: relative; height: 18px; font-family: var(--font-figure); font-size: 11px; color: var(--text-3); }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  .sunmarks { position: relative; height: 34px; font-size: 12px; color: var(--text-2); }
+  .sunmarks div { position: absolute; bottom: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; white-space: nowrap; }
+  .sunmarks div::after { content: ""; width: 1px; height: 8px; background: var(--text-3); }
+  .sunmarks b { font-family: var(--font-figure); font-weight: 400; color: var(--text); }
+
+  .lights { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--hairline); border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .light { background: var(--bg); padding: 20px 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+  .light__name { font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: -0.3px; display: flex; justify-content: space-between; align-items: baseline; }
+  .light__name span { font-family: var(--font-figure); font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }
+  .light__chips { display: flex; gap: 6px; }
+  .light__chips i { width: 28px; height: 28px; border-radius: 6px; box-shadow: 0 0 0 1px #8080803d inset; }
+  .light__model { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--signal); font-weight: 600; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding-top: 28px; border-top: 1px solid var(--hairline); }
+  .cols h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  .cols ol, .cols ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .cols li { color: var(--text-2); font-size: 14px; line-height: 21px; display: grid; grid-template-columns: 156px 1fr; gap: 14px; }
+  .cols li b { color: var(--text); font-weight: 500; font-family: var(--font-figure); font-size: 12.5px; }
+  .cols ol li { grid-template-columns: 24px 1fr; }
+  .cols ol li b { color: var(--signal); }
+  .lit-note { font-size: 13px; color: var(--text-3); }
+</style>
+</head>
+<body class="l-night">
+<div id="bar" data-bar='{"app":"Design","menus":["File","Edit","View","Board","Window"],"clock":"","sky":"moon","x":0.4,"seed":3}' style="width:1440px"></div>
+<div class="page" style="gap: 44px; padding-top: 64px">
+  <div class="meta"><span>Sola · exploration · 2026-10-13</span><span id="litnow">lit by the hour</span></div>
+
+  <div class="hero">
+    <span data-flower="132" class="bar__flower"></span>
+    <div class="hero__word">Solar</div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div class="thesis">Sola keeps the sun's hours.</div>
+    <div class="lead">Graphite is a desk at night. Solar gives it the rest of the day: four lights — dawn, day, dusk, night — on one structure, with forty-minute fades around sunrise and sunset. By day things cast shadows; by night they emit light. The flower is the one thing the sun never changes.</div>
+  </div>
+
+  <div class="section" style="gap: 8px">
+    <div class="label" style="margin-bottom: 6px">Tuesday 2026-10-13 at Denver, the desk's time zone · twenty-four hours, left to right</div>
+    <div class="sunmarks" id="sunmarks"></div>
+    <div class="day-strip" id="strip"></div>
+    <div class="ticks" id="ticks"></div>
+  </div>
+
+  <div class="lights">
+    <div class="light l-dawn"><div class="light__name">Dawn <span id="w-dawn"></span></div><div class="light__chips"><i style="background:var(--bar)"></i><i style="background:var(--bg)"></i><i style="background:var(--raised)"></i><i style="background:var(--text)"></i><i style="background:var(--signal)"></i></div><div class="light__model">Diffuse</div><div class="note">Blue hour. Mid-key slate, a peach signal. Soft long shadows and a faint glow, both at half strength.</div></div>
+    <div class="light l-day"><div class="light__name">Day <span id="w-day"></span></div><div class="light__chips"><i style="background:var(--bar)"></i><i style="background:var(--bg)"></i><i style="background:var(--raised)"></i><i style="background:var(--text)"></i><i style="background:var(--signal)"></i></div><div class="light__model">Casts</div><div class="note">North light. White and ink, the night cyan pressed dark. Raised things cast shadows; meters read like an LCD.</div></div>
+    <div class="light l-dusk"><div class="light__name">Dusk <span id="w-dusk"></span></div><div class="light__chips"><i style="background:var(--bar)"></i><i style="background:var(--bg)"></i><i style="background:var(--raised)"></i><i style="background:var(--text)"></i><i style="background:var(--signal)"></i></div><div class="light__model">Begins to emit</div><div class="note">Afterglow. Violet-umber surfaces, warm ink, a violet signal. Edges pick up rim light as the shadows go.</div></div>
+    <div class="light l-night"><div class="light__name">Night <span id="w-night"></span></div><div class="light__chips"><i style="background:var(--bar)"></i><i style="background:var(--bg)"></i><i style="background:var(--raised)"></i><i style="background:var(--text)"></i><i style="background:var(--signal)"></i></div><div class="light__model">Emits</div><div class="note">Graphite as it ships, unchanged. Cyan signal, LEDs, glows. Only floating windows cast a shadow.</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <h3>What changes from Graphite</h3>
+      <ol>
+        <li><b>1</b><span>Graphite becomes Night, one of four lights. Nothing in it changes.</span></li>
+        <li><b>2</b><span>Sola gets a light theme (Day) and two twilights between it and Night.</span></li>
+        <li><b>3</b><span>Depth follows the light: shadows by day, rim light and glow by night.</span></li>
+        <li><b>4</b><span>The menubar's bottom edge is a horizon. The sun travels it from sunrise to sunset.</span></li>
+        <li><b>5</b><span>The clock dropdown shows sunrise, sunset, day length, and the next change of light.</span></li>
+        <li><b>6</b><span>Surfaces fade in OKLCH. Ink never fades: it flips once, where the other side reads better.</span></li>
+      </ol>
+    </div>
+    <div>
+      <h3>Prior art</h3>
+      <ul>
+        <li><b>f.lux · 2009</b><span>Screen color temperature follows local sunset.</span></li>
+        <li><b>Night Shift · 2016</b><span>The same idea in the OS, iOS 9.3.</span></li>
+        <li><b>Night Light · 2017</b><span>GNOME 3.24, on a sunset schedule.</span></li>
+        <li><b>Mojave · 2018</b><span>Dynamic Desktop: a wallpaper that follows the sun's position.</span></li>
+        <li><b>Catalina · 2019</b><span>Auto appearance: light by day, dark at night.</span></li>
+        <li><b>Daylight DC-1 · 2024</b><span>Sol:OS on a paper-like screen by day, amber backlight at night.</span></li>
+        <li><b>Plasma 6.5 · 2025</b><span>Switches the global theme light to dark on the Night Light schedule.</span></li>
+      </ul>
+      <div class="lit-note" style="margin-top: 16px">They switch between two themes or tint the screen. Solar has four lights, fades instead of a switch, and changes how depth is drawn as well as color.</div>
+    </div>
+  </div>
+</div>
+<script>
+window.afterMount = () => {
+  const date = new Date(2026, 9, 13);
+  const s = sunDay(date);
+  const pct = (h) => (h / 24) * 100;
+  const st = { night: readState("night"), dawn: readState("dawn"), day: readState("day"), dusk: readState("dusk") };
+
+  // The strip: bands blended in OKLCH, like the desk itself.
+  const stops = [
+    [0, "night"], [s.civilDawn - FADE, "night"], [s.civilDawn, "dawn"], [s.sunrise, "dawn"],
+    [s.sunrise + FADE, "day"], [s.sunset - FADE, "day"], [s.sunset, "dusk"], [s.civilDusk, "dusk"],
+    [s.civilDusk + FADE, "night"], [24, "night"],
+  ];
+  const strip = document.getElementById("strip");
+  strip.style.background = `linear-gradient(90deg, ${dayStops(s)})`;
+  const mid = (a, b) => (a + b) / 2;
+  const bands = [
+    ["night", 0, mid(s.civilDawn - FADE, s.civilDawn)],
+    ["dawn", mid(s.civilDawn - FADE, s.civilDawn), mid(s.sunrise, s.sunrise + FADE)],
+    ["day", mid(s.sunrise, s.sunrise + FADE), mid(s.sunset - FADE, s.sunset)],
+    ["dusk", mid(s.sunset - FADE, s.sunset), mid(s.civilDusk, s.civilDusk + FADE)],
+    ["night", mid(s.civilDusk, s.civilDusk + FADE), 24],
+  ];
+  const names = { night: "Night", dawn: "Dawn", day: "Day", dusk: "Dusk" };
+  for (const [n, a, b] of bands) {
+    const d = document.createElement("div");
+    d.className = "day-strip__band";
+    d.style.left = pct(a) + "%";
+    d.style.width = pct(b - a) + "%";
+    d.style.color = st[n].text;
+    const wide = b - a > 1.5;
+    d.innerHTML = `<div class="day-strip__name">${names[n]}</div>` + (wide ? `<div class="day-strip__time">${hhmm(a)}–${hhmm(b === 24 ? 24 : b)}</div>` : `<div class="day-strip__time">${hhmm(a)}</div>`);
+    if (!wide) d.style.paddingLeft = "8px";
+    strip.appendChild(d);
+    const w = document.getElementById("w-" + n);
+    if (w && n !== "night") w.textContent = `${hhmm(a)}–${hhmm(b)}`;
+  }
+  document.getElementById("w-night").textContent = `${hhmm(bands[4][1])}–${hhmm(bands[0][2])}`;
+
+  // The horizon along the strip's foot, with the sun's track lit by day.
+  const track = document.createElement("div");
+  track.style.cssText = `position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg, transparent ${pct(s.sunrise)}%, var(--sol) ${pct(s.sunrise)}%, var(--sol) ${pct(s.sunset)}%, transparent ${pct(s.sunset)}%);opacity:.9`;
+  strip.appendChild(track);
+
+  const marks = document.getElementById("sunmarks");
+  const noon = (s.sunrise + s.sunset) / 2;
+  for (const [h, label] of [[s.sunrise, "Sunrise"], [noon, "Solar noon"], [s.sunset, "Sunset"]]) {
+    const m = document.createElement("div");
+    m.style.left = pct(h) + "%";
+    m.innerHTML = `<span>${label} <b>${hhmm(h)}</b></span>`;
+    marks.appendChild(m);
+  }
+  const ticks = document.getElementById("ticks");
+  for (let h = 0; h <= 24; h += 3) {
+    const t = document.createElement("span");
+    t.style.left = pct(h) + "%";
+    if (h === 0) t.style.transform = "none";
+    if (h === 24) t.style.transform = "translateX(-100%)";
+    t.textContent = String(h).padStart(2, "0");
+    ticks.appendChild(t);
+  }
+
+  // This page is lit by the hour: the paper takes today's light at the desk.
+  const now = new Date();
+  const h = now.getHours() + now.getMinutes() / 60;
+  const today = sunDay(now);
+  const L = lightAt(h, today);
+  if (L.from === L.to) document.body.className = "l-" + L.from;
+  else applyVars(document.body, blend(L.from, L.to, L.t));
+  const name = L.from === L.to ? names[L.from] : `${names[L.from]} → ${names[L.to]} ${Math.round(L.t * 100)}%`;
+  document.getElementById("litnow").textContent = `lit now: ${name} · ${hhmm(h)}`;
+
+  const nowMark = document.createElement("div");
+  nowMark.className = "day-strip__now";
+  nowMark.style.left = pct(h) + "%";
+  strip.appendChild(nowMark);
+
+  let kind = "moon", x;
+  if (h >= today.sunrise && h <= today.sunset) { kind = "sun"; x = (h - today.sunrise) / (today.sunset - today.sunrise); }
+  else if (h < today.sunrise && h >= today.civilDawn - FADE) { kind = "rise"; x = 0; }
+  else if (h > today.sunset && h <= today.civilDusk + FADE) { kind = "set"; x = 1; }
+  else { const night = 24 - today.sunset + today.sunrise; x = ((h - today.sunset + 24) % 24) / night; }
+  const barEl = document.getElementById("bar");
+  const o = JSON.parse(barEl.dataset.bar);
+  Object.assign(o, { sky: kind, x, clock: `${hhmm(h)} ${now.toLocaleDateString("en-US", { weekday: "short" })} ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}` });
+  barEl.innerHTML = bar(o);
+};
+</script>
+</body>
+</html>

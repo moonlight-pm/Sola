@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent desk / 03 Seam light</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="agent-desk.css">
+<script src="agent-desk.js"></script>
+<style>
+  /* One-shot state classes for the live demo (the looping ones live in agent-desk.css). */
+  .seam.s-working { background: var(--state-working); animation: breath var(--breath) ease-in-out infinite; }
+  .seam.s-waiting { background: var(--state-waiting); animation: pulse1 600ms linear 1 forwards; }
+  .seam.s-done { background: var(--state-done); animation: flash1 1200ms ease-out 1 forwards; }
+  .seam.s-off { background: transparent; }
+  @keyframes pulse1 { 0% { opacity: .35; } 33% { opacity: 1; } 66% { opacity: .45; } 100% { opacity: 1; } }
+  @keyframes flash1 { 0% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .seam.s-working { animation: none; opacity: .45; }
+    .seam.s-waiting { animation: none; opacity: 1; }
+    .seam.s-done { animation: none; opacity: 0; }
+  }
+
+  /* ---- whole desk at 1:4 ---- */
+  .desk { width: 1280px; height: 540px; position: relative; background: #060709; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .desk__bar { position: absolute; left: 0; right: 0; top: 0; height: 7px; background: #000; }
+  .desk__bar .fl { position: absolute; left: 4px; top: 1.5px; width: 4px; height: 4px; border-radius: 50%; background: var(--sol); }
+  .desk__bar .chips { position: absolute; right: 150px; top: 1.5px; display: flex; gap: 3px; }
+  .desk__bar .chips i { height: 4px; width: 26px; border-radius: 1px; background: #e9ecf233; display: block; }
+  .desk__bar .chips i.w { background: var(--warning); }
+  .desk__bar .clk { position: absolute; right: 6px; top: 1.5px; width: 34px; height: 4px; background: #e9ecf259; border-radius: 1px; }
+  .zone { position: absolute; background: var(--bg-primary); overflow: hidden; }
+  .zone .seam--v { width: 2px; } .zone .seam--h { height: 2px; }
+  .zl { position: absolute; left: 0; right: 0; height: 2px; border-radius: 1px; background: #232a36; }
+  .zone .rail { position: absolute; left: 0; top: 0; bottom: 0; width: 55px; background: var(--bg-chrome); }
+  .zone .rail i { position: absolute; left: 6px; height: 3px; border-radius: 1px; background: #2c3442; display: block; }
+  .zone .tabs { position: absolute; left: 0; right: 0; top: 0; height: 10px; background: var(--bg-chrome); }
+  .zone .page { position: absolute; left: 40px; right: 40px; top: 30px; bottom: 30px; background: #12161e; border-radius: 2px; }
+  .zone .board { position: absolute; background: #1a1f29; border-radius: 1px; }
+  .zone .list { position: absolute; left: 0; top: 0; bottom: 0; width: 80px; background: #0f1218; border-right: 1px solid #1a1f27; }
+  .desk__card { position: absolute; right: 3px; top: 10px; width: 85px; height: 40px; border-radius: 3px; background: var(--bg-secondary);
+    box-shadow: 0 0 0 1px var(--warning-edge), 0 3px 8px #000; transition: opacity 180ms, transform 180ms; }
+  .desk__card.out { opacity: 0; transform: translateY(-6px); transition-duration: 140ms; }
+  .desk__card::before { content: ""; position: absolute; left: 5px; top: 6px; width: 5px; height: 5px; background: var(--warning); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+  .desk__card::after { content: ""; position: absolute; left: 14px; top: 7px; width: 50px; height: 3px; background: #e9ecf266; box-shadow: 0 9px 0 #e9ecf233, -9px 21px 0 #e9ecf233; }
+  .zlabel { position: absolute; left: 10px; bottom: 8px; font: 400 10px/12px var(--font-mono); color: var(--text-tertiary); }
+  .zlabel b { color: var(--text-secondary); font-weight: 400; }
+
+  .timeline { width: 1280px; position: relative; height: 54px; margin-top: 12px; }
+  .timeline .track { position: absolute; left: 0; right: 0; top: 10px; height: 1px; background: var(--hairline-strong); }
+  .timeline .head { position: absolute; top: 4px; width: 1px; height: 13px; background: var(--accent); left: 0; box-shadow: 0 0 6px var(--accent-glow); }
+  .timeline .tick { position: absolute; top: 18px; font: 400 11px/15px var(--font-ui); color: var(--text-tertiary); white-space: nowrap; }
+  .timeline .tick::before { content: ""; position: absolute; left: 0; top: -12px; width: 1px; height: 7px; background: #4b5260; }
+  .timeline .tick b { display: block; font: 400 10px/14px var(--font-mono); color: var(--text-secondary); }
+  .timeline .tick.on { color: var(--text-primary); }
+  .timeline .tick.on b { color: var(--accent); }
+
+  /* ---- 1:1 detail ---- */
+  .detail { position: relative; height: 560px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); background: var(--bg-primary); }
+  .detail .mb { position: absolute; left: 0; right: 0; top: 0; z-index: 2; }
+  .win { position: absolute; top: 28px; bottom: 0; overflow: hidden; }
+  .win--ws { left: 0; width: 720px; display: grid; grid-template-columns: 220px 1fr; }
+  .win--ds { left: 720px; right: 0; display: grid; grid-template-columns: 196px 1fr; }
+  .wrail { background: var(--bg-chrome); border-right: 1px solid var(--hairline); padding: 12px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .wsec { display: flex; justify-content: space-between; padding: 8px 8px 6px; font: 500 11px/14px var(--font-ui); letter-spacing: 1px; color: var(--text-tertiary); }
+  .wrow { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font: 400 13px/16px var(--font-ui); color: var(--text-primary); }
+  .wrow--sel { background: var(--rail-selected); }
+  .wrow .meta { margin-left: auto; font: 400 10px/1 var(--font-mono); color: var(--text-tertiary); }
+  .term { padding: 14px 18px; font: 400 13px/22px var(--font-mono); color: var(--text-secondary); white-space: pre; }
+  .term .hi { color: var(--text-primary); } .term .cy { color: var(--accent); } .term .add { color: var(--success); } .term .del { color: var(--danger); }
+  .canvas { background: #0a0c10; position: relative; background-image: radial-gradient(#1a1e26 1px, transparent 1px); background-size: 16px 16px; }
+  .art { position: absolute; background: var(--bg-primary); box-shadow: 0 0 0 1px #262b34; border-radius: 2px; }
+  .art .t { position: absolute; left: 0; top: -18px; font: 400 11px/14px var(--font-ui); color: var(--text-tertiary); white-space: nowrap; }
+  .art .l { position: absolute; left: 14px; height: 4px; border-radius: 2px; background: #252b36; }
+  .agentmark { display: inline-flex; align-items: center; gap: 4px; font: 500 10px/1 var(--font-ui); color: var(--accent); letter-spacing: .3px; margin-left: auto; }
+  .call { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px; font: 400 11.5px/16px var(--font-ui); color: var(--text-primary); }
+  .call::before { content: ""; width: 26px; height: 1px; background: var(--text-tertiary); }
+  .call .n { color: var(--text-secondary); }
+  .call--l { flex-direction: row-reverse; }
+  .call--l::before { order: 0; }
+
+  /* ---- timing ---- */
+  .curves { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .curve { border-top: 1px solid var(--hairline); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .curve h4 { margin: 0; display: flex; align-items: center; gap: 8px; font: 500 13px/18px var(--font-ui); }
+  .curve > svg { width: 100%; height: 86px; overflow: visible; }
+  .curve dl { display: grid; grid-template-columns: 72px 1fr; gap: 3px 10px; margin: 0; font: 400 12px/17px var(--font-ui); }
+  .curve dt { color: var(--text-tertiary); } .curve dd { margin: 0; color: var(--text-secondary); }
+  .curve dd code { font: 400 11px/17px var(--font-mono); color: var(--text-ghost); }
+
+  .triptych { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .mini { width: 100%; aspect-ratio: 5120 / 2160; position: relative; background: #060709; border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .mini .zone .seam--v { width: 2px; } .mini .zone .seam--h { height: 2px; }
+  .mini__cap { margin-top: 10px; font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .mini__cap b { color: var(--text-primary); font-weight: 500; }
+
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 28px; border-top: 1px solid var(--hairline); padding-top: 22px; }
+  .rules h4 { font: 500 13px/18px var(--font-ui); margin: 0 0 6px; }
+  .rules p { font: 400 12.5px/19px var(--font-ui); color: var(--text-secondary); margin: 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="head__row"><span class="head__num">03</span><span class="head__title">Seam light</span></div>
+    <div class="head__lead">Zoned windows meet bare, edge to edge. Here a zone's own edges become a light pipe for the agent inside it: River draws a 2px border colored by that window's loudest agent. You can tell which zone needs you from across the room, without reading a word.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">The whole desk, 5120 × 2160 at 1:4 · live · seams drawn at 4× so they read at this scale</div>
+    <div class="desk" id="desk">
+      <div class="desk__bar"><span class="fl"></span><span class="chips"><i id="chipA" class="w"></i><i></i><i></i></span><span class="clk"></span></div>
+
+      <div class="zone" style="left: 0; top: 7px; width: 427px; bottom: 0">
+        <div class="rail"><i style="top: 12px; width: 30px"></i><i style="top: 22px; width: 40px; background: #3a4352"></i><i style="top: 30px; width: 34px"></i><i style="top: 38px; width: 28px"></i><i style="top: 54px; width: 30px"></i></div>
+        <div style="position: absolute; left: 66px; right: 24px; top: 12px">
+          <div class="zl" style="top: 0; width: 60%; background: #1d4c58"></div><div class="zl" style="top: 8px; width: 30%"></div>
+          <div class="zl" style="top: 20px; width: 70%"></div><div class="zl" style="top: 28px; width: 76%"></div><div class="zl" style="top: 36px; width: 52%"></div>
+          <div class="zl" style="top: 48px; width: 64%"></div><div class="zl" style="top: 56px; width: 40%; background: #4b2a2f"></div><div class="zl" style="top: 64px; width: 44%; background: #1f4a37"></div>
+          <div class="zl" style="top: 78px; width: 50%"></div><div class="zl" style="top: 86px; width: 22%; background: #1d4c58"></div><div class="zl" style="top: 94px; width: 34%"></div>
+        </div>
+        <div class="zlabel"><b>Workspaces</b> · kit-foundation, Claude</div>
+        <div class="seam seam--v s-working" data-z="A" style="left: 0"></div><div class="seam seam--v s-working" data-z="A" style="right: 0"></div>
+        <div class="seam seam--h s-working" data-z="A" style="top: 0"></div><div class="seam seam--h s-working" data-z="A" style="bottom: 0"></div>
+      </div>
+
+      <div class="zone" style="left: 427px; top: 7px; width: 426px; bottom: 0">
+        <div class="tabs"></div>
+        <div class="page"><div class="zl" style="left: 20px; top: 24px; width: 46%; height: 6px; background: #252b36"></div>
+          <div class="zl" style="left: 20px; top: 44px; width: 70%"></div><div class="zl" style="left: 20px; top: 52px; width: 66%"></div><div class="zl" style="left: 20px; top: 60px; width: 72%"></div></div>
+        <div class="zlabel"><b>Browser</b> · no agent</div>
+      </div>
+
+      <div class="zone" style="left: 853px; top: 7px; width: 427px; height: 266px">
+        <div class="rail" style="width: 49px"></div>
+        <div class="board" style="left: 80px; top: 34px; width: 120px; height: 70px"></div>
+        <div class="board" style="left: 214px; top: 34px; width: 120px; height: 70px"></div>
+        <div class="board" style="left: 80px; top: 120px; width: 254px; height: 90px"></div>
+        <div class="zlabel"><b>Design</b> · chat, an agent at work</div>
+        <div class="seam seam--v s-working" data-z="C" style="left: 0"></div><div class="seam seam--v s-working" data-z="C" style="right: 0"></div>
+        <div class="seam seam--h s-working" data-z="C" style="top: 0"></div><div class="seam seam--h s-working" data-z="C" style="bottom: 0"></div>
+      </div>
+
+      <div class="zone" style="left: 853px; top: 274px; width: 427px; bottom: 0">
+        <div class="list"></div>
+        <div style="position: absolute; left: 6px; top: 8px; width: 68px">
+          <div class="zl" style="top: 0; width: 80%; background: #2c3442"></div><div class="zl" style="top: 6px; width: 60%"></div>
+          <div class="zl" style="top: 22px; width: 76%; background: #2c3442"></div><div class="zl" style="top: 28px; width: 50%"></div>
+          <div class="zl" style="top: 44px; width: 70%; background: #2c3442"></div><div class="zl" style="top: 50px; width: 56%"></div>
+        </div>
+        <div style="position: absolute; left: 100px; right: 40px; top: 20px">
+          <div class="zl" style="top: 0; width: 40%; background: #2c3442"></div><div class="zl" style="top: 14px; width: 90%"></div><div class="zl" style="top: 22px; width: 84%"></div><div class="zl" style="top: 30px; width: 60%"></div>
+        </div>
+        <div class="zlabel"><b>Mail</b> · no agent</div>
+      </div>
+
+      <div class="desk__card out" id="dcard"></div>
+    </div>
+    <div class="timeline" id="tl">
+      <div class="track"></div>
+      <div class="tick" data-at="0" style="left: 0"><b>0:00</b>Both at work</div>
+      <div class="tick" data-at="4" style="left: 320px"><b>0:04</b>kit-foundation asks: Workspaces pulses once, then holds amber</div>
+      <div class="tick" data-at="10" style="left: 800px"><b>0:10</b>Answered: cyan again</div>
+      <div class="tick" data-at="13" style="left: 1040px"><b>0:13</b>chat is done: one green flash</div>
+      <div class="head" id="ph"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Where Workspaces meets Design, 1:1</div>
+    <div class="detail">
+      <div class="mb" data-app="Design" data-menus="File Edit View Canvas Window" data-meters="short" data-seed="17">
+        <div class="strip">
+          <div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__t">0:42</span></div>
+          <div class="chip" data-g="ring">chat</div>
+        </div>
+      </div>
+      <div class="win win--ws">
+        <div class="wrail">
+          <div class="wsec">SOLA</div>
+          <div class="wrow wrow--sel" data-g="diamond">kit-foundation<span class="meta">×2</span></div>
+          <div class="wrow" data-g="ring">menubar-pass</div>
+          <div class="wrow" data-g="check">mail-focus</div>
+          <div class="wrow" data-g="idle">master</div>
+          <div class="wsec" style="margin-top: 8px">WICKET</div>
+          <div class="wrow" data-g="ring">vault-panel</div>
+        </div>
+<div class="term"><span class="cy">~/Workspace/Sola/.worktrees/kit-foundation</span>
+<span class="hi">●</span> Update(crates/sola-kit/src/fonts.rs)
+  <span class="del">-  display: medium(ui_fam),</span>
+  <span class="add">+  display: medium(display_fam),</span>
+
+  <span class="hi">Bash command</span>
+    cargo make build sola-kit
+  Do you want to proceed?
+  <span class="cy">❯ 1. Yes</span>
+    2. No, and tell Claude what to do
+</div>
+        <div class="seam seam--v s-waiting" style="right: 0; animation: pulse 9.6s linear infinite"></div>
+        <div class="seam seam--v s-waiting" style="left: 0; animation: pulse 9.6s linear infinite"></div>
+        <div class="seam seam--h s-waiting" style="top: 0; animation: pulse 9.6s linear infinite"></div>
+        <div class="seam seam--h s-waiting" style="bottom: 0; animation: pulse 9.6s linear infinite"></div>
+      </div>
+      <div class="win win--ds">
+        <div class="wrail">
+          <div class="wsec">SOLA</div>
+          <div class="wrow">foundation</div>
+          <div class="wrow">agent-desk</div>
+          <div class="wsec" style="margin-top: 8px">EXIT</div>
+          <div class="wrow">foundation</div>
+          <div class="wrow wrow--sel">chat<span class="agentmark">agent</span></div>
+        </div>
+        <div class="canvas">
+          <div class="art" style="left: 28px; top: 70px; width: 150px; height: 220px"><span class="t">Chat / Thread</span>
+            <div class="l" style="top: 20px; width: 90px"></div><div class="l" style="top: 34px; width: 130px"></div><div class="l" style="top: 44px; width: 110px"></div>
+            <div class="l" style="top: 70px; width: 120px; left: 36px"></div><div class="l" style="top: 80px; width: 90px; left: 36px"></div></div>
+          <div class="art" style="left: 198px; top: 70px; width: 150px; height: 220px; box-shadow: 0 0 0 1px var(--accent-edge)"><span class="t" style="color: var(--accent)">Chat / Composer</span>
+            <div class="l" style="top: 20px; width: 70px"></div><div class="l" style="top: 180px; width: 122px; height: 22px; border-radius: 6px; background: #1b2029"></div></div>
+          <div class="art" style="left: 28px; top: 330px; width: 320px; height: 150px"><span class="t">Chat / Empty</span>
+            <div class="l" style="top: 64px; left: 120px; width: 130px"></div><div class="l" style="top: 76px; left: 140px; width: 90px"></div></div>
+        </div>
+        <div class="seam seam--v s-working" style="left: 0"></div><div class="seam seam--v s-working" style="right: 0"></div>
+        <div class="seam seam--h s-working" style="top: 0"></div><div class="seam seam--h s-working" style="bottom: 0"></div>
+      </div>
+      <div class="call" style="left: 728px; top: 520px"><span>Design's own edge: cyan, breathing. <span class="n">An agent is editing chat.</span></span></div>
+      <div class="call call--l" style="right: 584px; top: 470px"><span>Workspaces' edge: amber, steady. <span class="n">kit-foundation waits, so the whole window does.</span></span></div>
+    </div>
+    <div class="note">Each window lights its own edges, so where two lit zones meet both lights show, side by side. The menubar is never lit; it has the strip. 2px is drawn above the content by River, so the window's content box does not move.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Timing, opacity over six seconds</div>
+    <div class="curves">
+      <div class="curve">
+        <h4 data-g="ring">Working</h4>
+        <svg viewBox="0 0 280 86" preserveAspectRatio="none">
+          <line x1="0" y1="80" x2="280" y2="80" stroke="#31353d"/><line x1="0" y1="6" x2="280" y2="6" stroke="#252931" stroke-dasharray="2 3"/>
+          <path d="M0 55 C 28 55, 84 30, 112 30 C 140 30, 196 55, 224 55 C 252 55, 280 42, 280 42" fill="none" stroke="#3dd6f5" stroke-width="1.6"/>
+          <text x="0" y="0" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">100%</text>
+          <text x="244" y="76" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">6 s</text>
+        </svg>
+        <dl><dt>Color</dt><dd><code>accent</code></dd><dt>Opacity</dt><dd>28% to 62%, never higher</dd><dt>Period</dt><dd>4.8 s, eased in and out</dd><dt>Reduced</dt><dd>holds at 45%</dd></dl>
+      </div>
+      <div class="curve">
+        <h4 data-g="diamond">Waiting</h4>
+        <svg viewBox="0 0 280 86" preserveAspectRatio="none">
+          <line x1="0" y1="80" x2="280" y2="80" stroke="#31353d"/><line x1="0" y1="6" x2="280" y2="6" stroke="#252931" stroke-dasharray="2 3"/>
+          <path d="M0 57 L 9 6 L 18 50 L 28 6 L 280 6" fill="none" stroke="#e8b84a" stroke-width="1.6" stroke-linejoin="round"/>
+          <text x="34" y="22" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">600 ms, then steady</text>
+          <text x="244" y="76" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">6 s</text>
+        </svg>
+        <dl><dt>Color</dt><dd><code>warning</code></dd><dt>Opacity</dt><dd>one pulse, then 100% until answered</dd><dt>Why</dt><dd>full amber outshines any breath</dd><dt>Reduced</dt><dd>100% at once, no pulse</dd></dl>
+      </div>
+      <div class="curve">
+        <h4 data-g="check">Done</h4>
+        <svg viewBox="0 0 280 86" preserveAspectRatio="none">
+          <line x1="0" y1="80" x2="280" y2="80" stroke="#31353d"/><line x1="0" y1="6" x2="280" y2="6" stroke="#252931" stroke-dasharray="2 3"/>
+          <path d="M0 6 C 20 6, 40 70, 56 80 L 280 80" fill="none" stroke="#3ecf8e" stroke-width="1.6"/>
+          <text x="64" y="66" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">1.2 s, then off</text>
+          <text x="244" y="76" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">6 s</text>
+        </svg>
+        <dl><dt>Color</dt><dd><code>success</code></dd><dt>Opacity</dt><dd>100% to 0, eased out</dd><dt>After</dt><dd>dark; the strip keeps the check</dd><dt>Reduced</dt><dd>off at once</dd></dl>
+      </div>
+      <div class="curve">
+        <h4 data-g="failed">Failed</h4>
+        <svg viewBox="0 0 280 86" preserveAspectRatio="none">
+          <line x1="0" y1="80" x2="280" y2="80" stroke="#31353d"/><line x1="0" y1="6" x2="280" y2="6" stroke="#252931" stroke-dasharray="2 3"/>
+          <path d="M0 28 L 280 28" fill="none" stroke="#f07178" stroke-width="1.6"/>
+          <text x="0" y="44" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">steady 70% until you focus the zone</text>
+          <text x="244" y="76" font-family="Iosevka Term Slab" font-size="10" fill="#7d8597">6 s</text>
+        </svg>
+        <dl><dt>Color</dt><dd><code>danger</code></dd><dt>Opacity</dt><dd>70%, still</dd><dt>Clears</dt><dd>when that window takes focus</dd><dt>Reduced</dt><dd>same</dd></dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">From across the room · the same desk at 1:20</div>
+    <div class="triptych" id="trip"></div>
+  </div>
+
+  <div class="rules">
+    <div><h4>One window, one light</h4><p>A Workspaces window carries the roll-up of its panes, the same order as the rail mark: waiting, then working, then done. A background tab that waits lights the window.</p></div>
+    <div><h4>Focus is not a seam</h4><p>Graphite keeps saying what has focus in the menubar. The seam only ever means an agent, so a lit edge is never a question of which window you are typing into.</p></div>
+    <div><h4>Brightness budget</h4><p>Working peaks at 62% so a waiting zone always outshines it. With every zone at work the desk is a dim cyan grid, and one amber edge still finds you.</p></div>
+    <div><h4>Floats and fullscreen</h4><p>A floating window keeps its titlebar and shadow and gets no seam; its agent still shows in the strip. River draws no borders on a fullscreen window.</p></div>
+    <div><h4>No agent, no light</h4><p>Browser, Mail and the rest stay bare. Shells and idle panes never light. If nothing is running the desk looks exactly like Graphite.</p></div>
+    <div><h4>Reduced motion</h4><p>Breath holds still at 45%, the waiting pulse and the done flash are skipped. Color and steadiness still carry the state.</p></div>
+  </div>
+</div>
+<script>
+  // Triptych: three moments of the same four-zone desk.
+  (() => {
+    const zones = [
+      { l: 0, t: 1.4, w: 33.36, h: 98.6 },
+      { l: 33.36, t: 1.4, w: 33.28, h: 98.6 },
+      { l: 66.64, t: 1.4, w: 33.36, h: 49.2 },
+      { l: 66.64, t: 50.6, w: 33.36, h: 49.4 },
+    ];
+    const moments = [
+      { s: ["working", null, "working", null], cap: "<b>All at work.</b> A dim cyan breath on two zones. Nothing to do." },
+      { s: ["waiting", null, "working", null], cap: "<b>One waits.</b> The amber zone is the one to walk over to." },
+      { s: [null, null, null, null], cap: "<b>All done.</b> Dark seams. The strip keeps the checks for a minute." },
+    ];
+    const trip = document.getElementById("trip");
+    moments.forEach(m => {
+      const wrap = document.createElement("div");
+      const mini = document.createElement("div");
+      mini.className = "mini";
+      zones.forEach((z, i) => {
+        const d = document.createElement("div");
+        d.className = "zone";
+        Object.assign(d.style, { left: z.l + "%", top: z.t + "%", width: `calc(${z.w}% - 1px)`, height: `calc(${z.h}% - 1px)` });
+        const st = m.s[i];
+        if (st) ["left", "right", "top", "bottom"].forEach(side => {
+          const e = document.createElement("div");
+          e.className = "seam " + (side === "left" || side === "right" ? "seam--v " : "seam--h ") + st;
+          if (st === "waiting") e.style.animation = "none";
+          e.style[side] = 0;
+          d.appendChild(e);
+        });
+        mini.appendChild(d);
+      });
+      const cap = document.createElement("div");
+      cap.className = "mini__cap";
+      cap.innerHTML = m.cap;
+      wrap.append(mini, cap);
+      trip.appendChild(wrap);
+    });
+  })();
+
+  // Live desk: a 16 s story, looped. Reduced motion holds the "one waits" frame.
+  (() => {
+    const A = [...document.querySelectorAll('[data-z="A"]')];
+    const C = [...document.querySelectorAll('[data-z="C"]')];
+    const card = document.getElementById("dcard");
+    const chipA = document.getElementById("chipA");
+    const ph = document.getElementById("ph");
+    const ticks = [...document.querySelectorAll(".tick")];
+    const set = (els, s) => els.forEach(e => {
+      e.classList.remove("s-working", "s-waiting", "s-done", "s-off");
+      void e.offsetWidth;
+      e.classList.add("s-" + s);
+    });
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const story = [
+      [0, () => { set(A, "working"); set(C, "working"); card.classList.add("out"); chipA.className = ""; }],
+      [4, () => { set(A, "waiting"); card.classList.remove("out"); chipA.className = "w"; }],
+      [10, () => { set(A, "working"); card.classList.add("out"); chipA.className = ""; }],
+      [13, () => { set(C, "done"); }],
+    ];
+    const LEN = 16;
+    if (still) { story[1][1](); ticks[1].classList.add("on"); ph.style.left = "320px"; return; }
+    let last = -1, t0 = performance.now();
+    const px = t => t <= 4 ? t / 4 * 320 : t <= 10 ? 320 + (t - 4) / 6 * 480 : t <= 13 ? 800 + (t - 10) / 3 * 240 : 1040 + (t - 13) / 3 * 240;
+    function frame(now) {
+      const t = ((now - t0) / 1000) % LEN;
+      let idx = 0;
+      story.forEach(([at], i) => { if (t >= at) idx = i; });
+      if (idx !== last) { story[idx][1](); ticks.forEach((k, i) => k.classList.toggle("on", i === idx)); last = idx; }
+      ph.style.left = px(t) + "px";
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / The desk</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .notes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 40px; margin-top: 28px; width: 2560px; }
+  .notes h4 { font: 600 15px/1.2 var(--f-display); margin: 0 0 8px; }
+  .notes p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+</style>
+</head>
+<body class="board">
+
+<div class="head" style="width:2560px">
+  <div class="head__row"><span class="head__eyebrow">NEXT</span><span class="head__title">The desk</span></div>
+  <div class="head__lead">A 2560 × 1080 output at 1:1, half the dogfood desk's width. Every window wears a titlebar with its own menus, every window sits 10 px from its neighbors and from the edge, and the top row holds only islands. Workspaces has focus.</div>
+</div>
+
+<div class="label">A 2560 × 1080 output, 1:1</div>
+<div class="frame" id="desk" style="width:2560px;height:1080px"></div>
+
+<div class="notes">
+  <div><h4>One gap, everywhere</h4><p>10 px between windows, 10 px to the output's edges, and 10 px above and below the islands. Tiles start at y 48: gap, island, gap.</p></div>
+  <div><h4>Menus ride the window</h4><p>Close, the app's name in bold, then its menus. The name is the app menu (About, Quit), as it is in the bar today. The title sits at the right in tertiary ink.</p></div>
+  <div><h4>Focus is the window</h4><p>The focused window's titlebar is a step brighter, its rim is lit, and its close dot is red. Unfocused windows keep their menus in tertiary ink, so nothing shifts when focus moves.</p></div>
+  <div><h4>The top row is islands</h4><p>The flower on the left, the one live thing in the center, and the instruments on the right, each group its own bubble. The ground between them is the same black as the gaps.</p></div>
+  <div><h4>Floats are windows too</h4><p>Preview has the same titlebar and corners. It is the only thing on the desk with a shadow, and its zone glyph says float.</p></div>
+</div>
+
+<script>
+  document.getElementById("desk").innerHTML = desk({ w: 2560, h: 1080, top: "bubbles", focus: 0, float: { x: 1520, y: 600, w: 560, h: 400 } });
+  finish();
+</script>
+</body>
+</html>

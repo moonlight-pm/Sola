@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / Day</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  .rules { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .rule { display: flex; flex-direction: column; gap: 12px; }
+  .stage { height: 150px; border-radius: var(--r-lg); background: var(--bg); box-shadow: 0 0 0 1px var(--hairline) inset; display: grid; place-items: center; position: relative; overflow: hidden; }
+  .rule h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 18px; }
+  .zoom { zoom: 3; }
+</style>
+</head>
+<body class="l-day">
+<div class="page">
+  <div class="head">
+    <div class="head__row"><div class="head__num">11:40</div><div class="head__title">Day: things cast shadows</div></div>
+    <div class="head__lead">North light on a Tuesday morning. Surfaces go high-key and cool, ink is near-black, and the signal is the night cyan pressed dark enough to read on white. Raised things cast short, soft shadows; nothing glows. The sun sits 40% along the horizon, where 11:40 falls between sunrise and sunset.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">A slice of the desk, 1:1 · the bar is drawn to the slice; on the 5120 bar the sun sits at x 2061</div>
+    <div class="desk" style="height: 760px">
+      <div data-bar='{"app":"Workspaces","menus":["File","Edit","View","Pane","Tabs","Window"],"clock":"11:40 Tue 2026-10-13","sky":"sun","x":0.4025,"seed":11}'></div>
+      <div class="zones" style="height: 732px">
+        <div class="zone rail" style="width: 248px">
+          <div class="rail__project">SOLA <span>+</span></div>
+          <div class="rail__row rail__row--sel"><span class="rail__mark"><span class="mark-ring"></span></span>kit-foundation<span class="rail__count">×2</span></div>
+          <div class="rail__row"><span class="rail__mark"><span class="mark-diamond"></span></span>menubar-pass</div>
+          <div class="rail__row"><span class="rail__mark"><svg class="mark-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>mail-focus</div>
+          <div class="rail__row"><span class="rail__mark"><span class="mark-dot"></span></span>master</div>
+          <div class="rail__project">WICKET <span>+</span></div>
+          <div class="rail__row rail__row--focus"><span class="rail__mark"><span class="mark-diamond"></span></span>vault-panel</div>
+          <div class="rail__row"><span class="rail__mark"><span class="mark-dot"></span></span>master</div>
+          <div class="rail__project rail__project--closed">EXIT <span style="margin-left:auto">+</span></div>
+          <div class="rail__project rail__project--closed">GENEOLOGY <span style="margin-left:auto">+</span></div>
+        </div>
+<div class="zone term" style="width: 500px"><span class="sig">~/Workspace/Sola/.worktrees/kit-foundation</span>
+❯ git log --oneline -3
+<span class="c3">502fa9ad</span> feat(design): boards nobody looks at sleep
+<span class="c3">b914ba73</span> fix(design): share viewer is look-only
+<span class="c3">4a235657</span> feat(design): auto boards follow height
+❯ claude
+
+● Read crates/sola-terminal/src/term_view.rs
+● Read crates/sola-kit/src/theme.rs
+  <span class="c7">from_kit_theme lightens every bright slot.</span>
+  <span class="c7">On white that pushes bright black into the</span>
+  <span class="c7">paper. By day, brights move toward ink.</span>
+
+● Update(crates/sola-terminal/src/term_view.rs)
+  <span class="c1">-  lighten(atoms.danger),           // 9</span>
+  <span class="c2">+  toward(atoms.danger, atoms.fg), // 9</span>
+
+  Build it?  cargo make build sola-terminal
+  <span class="sig">❯ 1. Yes</span>
+    <span class="c7">2. No, and tell Claude what to do</span>
+
+❯ <span class="sel">cargo make build</span> sola-terminal<span class="cur"> </span></div>
+        <div class="zone list" style="width: 272px">
+          <div class="list__head">Inbox <small><span class="mark-ring" style="width:10px;height:10px"></span>12 unread</small></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from"><span class="msg__unread"></span>Hetzner Online</span><span class="msg__time">11:02</span></div><div class="msg__subj">Invoice 0412 for October</div><div class="msg__peek">Your invoice is attached as a PDF.</div></div>
+          <div class="msg msg--sel"><div class="msg__top"><span class="msg__from"><span class="msg__unread"></span>Cal.com</span><span class="msg__time">10:40</span></div><div class="msg__subj">Design review moved to Thursday</div><div class="msg__peek">The Sola foundation review is now…</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">GitHub</span><span class="msg__time">09:15</span></div><div class="msg__subj">[sola] CI passed on master</div><div class="msg__peek">All 4 jobs succeeded for 502fa9a.</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Fastmail</span><span class="msg__time">Yesterday</span></div><div class="msg__subj">Your export is ready</div><div class="msg__peek">Download it within 7 days.</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Grapevine</span><span class="msg__time">Mon</span></div><div class="msg__subj">Weekly digest</div><div class="msg__peek">Three new threads in #desk.</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Backblaze</span><span class="msg__time">Mon</span></div><div class="msg__subj">B2 usage for September</div><div class="msg__peek">You stored 1.84 TB last month.</div></div>
+        </div>
+        <div class="zone read" style="width: 276px">
+          <div style="height: 64px"></div>
+          <div class="read__meta">Cal.com · notifications@cal.com · 10:40</div>
+          <div class="read__subject">Design review moved to Thursday</div>
+          <div class="read__actions"><span class="btn btn--secondary">Reply</span><span class="btn btn--ghost">Forward</span><span class="btn btn--ghost">Junk</span></div>
+          <div>Hi —</div>
+          <div>The Sola foundation review moved to Thursday at 10:00. Same room, same link.</div>
+          <div>On the agenda: the graphite sheet, the role scale, and whether the desk should keep the sun's hours.</div>
+        </div>
+      </div>
+
+      <div class="card notify" style="position: absolute; right: 12px; top: 38px">
+        <div class="notify__icon"><span data-icon="bot"></span></div>
+        <div><div class="notify__app">Workspaces · sola</div><div class="notify__title">kit-foundation is waiting</div><div class="notify__body">Claude asks to run cargo make build.</div></div>
+        <span data-icon="x" class="notify__x"></span>
+      </div>
+
+      <div class="float" style="left: 560px; top: 392px; width: 440px; height: 320px">
+        <div class="float__title"><span class="float__close"></span>Preview — invoice-0412.png</div>
+        <div class="float__body"><div class="doc"><i class="k"></i><i></i><i style="width:80%"></i><i></i><i style="width:55%"></i><i></i><i class="k" style="width:40%;margin-top:8px"></i></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">What daylight changes</div>
+    <div class="rules">
+      <div class="rule">
+        <div class="stage">
+          <div class="card" style="width: 200px; padding: 6px">
+            <div style="padding: 6px 10px; font-size: 13px">Reply</div>
+            <div style="padding: 6px 10px; font-size: 13px; background: var(--hover); border-radius: 5px">Reply All</div>
+            <div style="padding: 6px 10px; font-size: 13px">Forward</div>
+          </div>
+        </div>
+        <h3>Shadows, not glows</h3>
+        <div class="note">Popovers cast 0 10 28 at 12% ink; floating windows 0 26 60 at 20%. Zoned windows stay flush and flat, as at night.</div>
+      </div>
+      <div class="rule">
+        <div class="stage" style="padding: 0 36px">
+          <div class="field field--focus"><span data-icon="search"></span>invoice<span class="field__caret" style="margin-left:-6px"></span></div>
+        </div>
+        <h3>Focus is a ring</h3>
+        <div class="note">A 2px signal ring with a 1px paper gap. A halo has nothing to glow against on white, so day draws an edge instead.</div>
+      </div>
+      <div class="rule">
+        <div class="stage">
+          <div style="display: flex; gap: 28px; align-items: center">
+            <div class="zoom" data-graph="31,2.6"></div>
+            <div class="zoom l-night" style="background: var(--bar); padding: 2px; border-radius: 1px" data-graph="31,2.6"></div>
+          </div>
+        </div>
+        <h3>Meters are reflective</h3>
+        <div class="note">By day the LEDs read like an LCD: lit segments are ink, off segments an 8% tint. At night (right, 3×) they emit, as today.</div>
+      </div>
+      <div class="rule">
+        <div class="stage" style="background: var(--bar)">
+          <div style="display: flex; gap: 40px; align-items: center">
+            <span data-flower="14" class="bar__flower"></span>
+            <span data-flower="56" class="bar__flower"></span>
+          </div>
+        </div>
+        <h3>The flower casts</h3>
+        <div class="note">Gold on white is 1.7:1. The petals keep their fill and gain a half-pixel contact shadow, like anything else in daylight.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

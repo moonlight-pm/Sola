@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / Tokens and fades</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  .tt { display: grid; grid-template-columns: 150px repeat(4, minmax(0, 1fr)); border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .tt > div { padding: 7px 14px; border-top: 1px solid var(--hairline); display: flex; align-items: center; gap: 10px; min-height: 38px; }
+  .tt .h { border-top: 0; font-family: var(--font-display); font-weight: 600; font-size: 16px; min-height: 48px; }
+  .tt .k { font-family: var(--font-figure); font-size: 12px; color: var(--text-2); background: var(--bg); }
+  .tt .v { font-family: var(--font-figure); font-size: 11.5px; color: var(--text-2); background: var(--bg); }
+  .tt .v i { width: 34px; height: 22px; border-radius: 5px; box-shadow: 0 0 0 1px #80808040 inset; flex-shrink: 0; }
+  .tt .v em { font-style: normal; margin-left: auto; color: var(--text-3); }
+  .tt .sol { grid-column: 2 / span 4; background: var(--bg); font-size: 12.5px; color: var(--text-2); }
+  .tt .sol i { width: 34px; height: 22px; border-radius: 5px; background: var(--sol); }
+
+  .ansi { display: grid; grid-template-columns: 150px 1fr; row-gap: 10px; align-items: center; }
+  .ansi__row { display: grid; grid-template-columns: repeat(16, 1fr); gap: 4px; padding: 8px; border-radius: 8px; }
+  .ansi__row i { height: 30px; border-radius: 4px; display: grid; place-items: center; font-family: var(--font-figure); font-style: normal; font-size: 10px; }
+
+  .frames { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+  .frame { border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .frame__body { background: var(--bg); padding: 12px; display: flex; flex-direction: column; gap: 10px; height: 168px; }
+  .frame__card { background: var(--raised); border-radius: 8px; padding: 10px; box-shadow: var(--elev-pop); display: flex; flex-direction: column; gap: 4px; }
+  .frame__card b { font-size: 12.5px; line-height: 16px; color: var(--text); }
+  .frame__card span { font-size: 11.5px; color: var(--text-2); line-height: 15px; }
+  .frame__cap { padding: 8px 10px; font-family: var(--font-figure); font-size: 11px; color: var(--text-2); background: var(--raised); display: flex; justify-content: space-between; }
+  .frame .bar { border-radius: 4px; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .rules { display: flex; flex-direction: column; gap: 14px; }
+  .rules div { display: grid; grid-template-columns: 24px 1fr; gap: 10px; font-size: 13.5px; line-height: 21px; color: var(--text-2); }
+  .rules b { font-family: var(--font-figure); font-weight: 400; color: var(--signal); }
+  .rules strong { color: var(--text); font-weight: 600; }
+  table.anchors { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.anchors td, table.anchors th { text-align: left; padding: 9px 10px; border-top: 1px solid var(--hairline); }
+  table.anchors th { color: var(--text-3); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; font-weight: 500; border-top: 0; }
+  table.anchors .f { font-family: var(--font-figure); font-size: 12px; }
+
+  .settings { border-radius: var(--r-lg); background: var(--raised); box-shadow: 0 0 0 1px var(--hairline); padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+  .settings h4 { margin: 0; font-family: var(--font-display); font-size: 18px; font-weight: 600; }
+  .seg { display: inline-flex; background: var(--well); border-radius: 7px; padding: 2px; box-shadow: 0 0 0 1px var(--well-edge) inset; width: fit-content; }
+  .seg span { padding: 5px 14px; border-radius: 5px; font-size: 13px; color: var(--text-2); }
+  .seg .on { background: var(--selection); color: var(--text); box-shadow: 0 0 0 1px var(--hairline-strong) inset; }
+  .srow { display: grid; grid-template-columns: 120px 1fr; gap: 16px; align-items: center; font-size: 13px; }
+  .srow > span:first-child { color: var(--text-2); }
+  .srow small { display: block; color: var(--text-3); font-size: 12px; margin-top: 2px; }
+</style>
+</head>
+<body class="l-night">
+<div class="page">
+  <div class="head">
+    <div class="head__row"><div class="head__num">OKLCH</div><div class="head__title">Tokens and fades</div></div>
+    <div class="head__lead">Each light is a full set of the bus palette's tokens, so a component reads one name and the hour supplies the value. Contrast is checked per light on the raised surface. Between lights, surfaces fade and ink flips.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Tokens per light · ratio is against raised</div>
+    <div class="tt" id="tt"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Terminal, sixteen ANSI slots per light · on that light's terminal ground</div>
+    <div class="ansi" id="ansi"></div>
+    <div class="note" style="width: 860px">Night is Graphite's mapping with P9's enamel magenta and cyan. By day the bright row steps toward ink, not paper. Dawn and dusk give ANSI blue its own blue, since their signals are not blue. The cursor is Sol gold in every light.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Day → dusk in seven frames · 17:44 to 18:24 today</div>
+    <div class="frames" id="frames"></div>
+    <div class="two" style="margin-top: 10px">
+      <div class="section" style="gap: 8px">
+        <div class="label">Surface lightness across the fade</div>
+        <svg id="chart" viewBox="0 0 620 220" style="width: 100%; height: auto"></svg>
+      </div>
+      <div class="rules">
+        <div><b>1</b><span><strong>Surfaces fade over forty minutes in OKLCH.</strong> Hue and chroma move evenly. When a fade crosses from light to dark, lightness eases on a steep curve so the desk spends about six minutes in mid-gray (L 0.40–0.75), not eighteen.</span></div>
+        <div><b>2</b><span><strong>Ink is chosen, not blended.</strong> Text takes whichever light reads better on the blended surface, so it flips once, at the crossover, instead of passing through gray.</span></div>
+        <div><b>3</b><span><strong>One theme a minute.</strong> Forty emits per change, about 160 a day. Each is a full redraw of every open window, once.</span></div>
+        <div><b>4</b><span><strong>Sol is in no light.</strong> The flower, the terminal cursor, and the sun on the line read one constant.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="section">
+      <div class="label">The four changes · anchored to the sun</div>
+      <table class="anchors">
+        <tr><th>Change</th><th>Anchor</th><th>2026-10-13, Denver</th></tr>
+        <tr><td>Night → Dawn</td><td>ends at civil dawn, sun 6° below</td><td class="f">06:01 – 06:41</td></tr>
+        <tr><td>Dawn → Day</td><td>starts at sunrise</td><td class="f">07:08 – 07:48</td></tr>
+        <tr><td>Day → Dusk</td><td>ends at sunset</td><td class="f">17:44 – 18:24</td></tr>
+        <tr><td>Dusk → Night</td><td>starts at civil dusk</td><td class="f">18:51 – 19:31</td></tr>
+      </table>
+      <div class="note">Twilights run short near the equator and long in the north. Polar day and polar night have no sunrise to anchor on; the desk then holds Day or Night until the sun comes back.</div>
+    </div>
+    <div class="section">
+      <div class="label">Where the light is set · Settings, proposed</div>
+      <div class="settings">
+        <h4>Light</h4>
+        <div class="srow"><span>Light</span><span class="seg"><span class="on">Follow the sun</span><span>Night</span><span>Day</span></span></div>
+        <div class="srow"><span>Location</span><span>Denver<small>From the time zone, America/Denver (39°44′ N, 104°59′ W). Change…</small></span></div>
+        <div class="srow"><span>Today</span><span class="figure" style="font-size: 12.5px">Sunrise 07:08 · Sunset 18:24</span></div>
+        <div class="srow"><span>Now</span><span id="nowlight"></span></div>
+      </div>
+      <div class="note">Night is Graphite, for anyone who never wants the day. Location defaults from the time zone's entry in zone1970.tab, so it works offline and asks for nothing.</div>
+    </div>
+  </div>
+</div>
+<script>
+window.afterMount = () => {
+  const names = ["dawn", "day", "dusk", "night"];
+  const S = Object.fromEntries(names.map((n) => [n, state(n)]));
+  const rows = ["bar", "bg", "chrome", "raised", "hover", "selection", "border", "hairline", "text", "text-2", "text-3", "signal", "on-signal", "ok", "warn", "bad", "horizon", "sun-bloom"];
+  const ratio = { "text": 1, "text-2": 1, "text-3": 1, "signal": 1, "ok": 1, "warn": 1, "bad": 1 };
+  let h = '<div class="h k" style="font-family:var(--font-ui);font-size:12px;color:var(--text-3)">Token</div>';
+  for (const n of names) h += `<div class="h l-${n}" style="background:var(--bg)">${n[0].toUpperCase() + n.slice(1)}</div>`;
+  for (const r of rows) {
+    h += `<div class="k">${r}</div>`;
+    for (const n of names) {
+      const v = S[n][r];
+      const show = v.length === 9 && v.endsWith("ff") ? v.slice(0, 7) : v;
+      const cr = ratio[r] ? `<em>${contrast(v.slice(0, 7), S[n].raised).toFixed(1)}:1</em>` : "";
+      h += `<div class="v"><i style="background:${v}"></i>${show}${cr}</div>`;
+    }
+  }
+  h += `<div class="k">sol</div><div class="sol"><i></i>#ffb800 in every light · the flower, the cursor, the sun · gains a contact shadow by day and a faint glow by night</div>`;
+  document.getElementById("tt").innerHTML = h;
+
+  const ansi = document.getElementById("ansi");
+  for (const n of names) {
+    const probe = document.createElement("div"); probe.className = "l-" + n; document.body.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    let row = `<div class="label" style="color:var(--text-2)">${n}</div><div class="ansi__row" style="background:${cs.getPropertyValue("--term-bg")};box-shadow:0 0 0 1px var(--hairline) inset">`;
+    for (let i = 0; i < 16; i++) {
+      const c = cs.getPropertyValue("--a" + i).trim();
+      row += `<i style="background:${c};color:${luminance(c) > 0.3 ? "#10141c" : "#ffffffcc"}">${i}</i>`;
+    }
+    probe.remove();
+    ansi.insertAdjacentHTML("beforeend", row + "</div>");
+  }
+
+  // Seven frames of the day → dusk fade.
+  const frames = document.getElementById("frames");
+  const ts = [0, 0.25, 0.4, 0.5, 0.6, 0.75, 1];
+  for (const t of ts) {
+    const v = blend("day", "dusk", t);
+    const el = document.createElement("div");
+    el.className = "frame";
+    const minute = 17 * 60 + 44 + Math.round(t * 40);
+    const L = toOklch(hexToRgba(v.bg))[0];
+    el.innerHTML = `<div class="frame__body"><div class="bar" style="padding:0 4px">${bar({ app: "Mail", menus: [], compact: true, clock: "", sky: t < 1 ? "sun" : "set", x: t < 1 ? 0.96 + t * 0.04 : 1, unread: true })}</div><div class="frame__card"><b>Design review moved to Thursday</b><span>Cal.com · 10:40</span></div><div><span class="btn btn--primary" style="height:24px;font-size:12px">Reply</span></div></div><div class="frame__cap"><span>${hhmm(minute / 60)}</span><span>L ${L.toFixed(2)}</span></div>`;
+    frames.appendChild(el);
+    applyVars(el, v);
+  }
+
+  // Lightness chart: linear vs eased, with the ink flip.
+  const W = 620, H = 220, px = (t) => 40 + t * (W - 60), py = (L) => 16 + (1 - L) * (H - 48);
+  const A = toOklch(hexToRgba(S.day.bg))[0], B = toOklch(hexToRgba(S.dusk.bg))[0];
+  let lin = "", eased = "", flip = null;
+  for (let i = 0; i <= 80; i++) {
+    const t = i / 80;
+    lin += `${i ? "L" : "M"}${px(t).toFixed(1)},${py(A + (B - A) * t).toFixed(1)}`;
+    eased += `${i ? "L" : "M"}${px(t).toFixed(1)},${py(A + (B - A) * easeL(t, true)).toFixed(1)}`;
+    if (flip === null && blend("day", "dusk", t).__side === "dusk") flip = t;
+  }
+  const c = getComputedStyle(document.body);
+  const col = (k) => c.getPropertyValue("--" + k).trim();
+  let svg = "";
+  for (const L of [0, 0.25, 0.5, 0.75, 1]) svg += `<line x1="40" x2="${W - 20}" y1="${py(L)}" y2="${py(L)}" stroke="${col("hairline")}"/><text x="30" y="${py(L) + 4}" text-anchor="end" font-size="10" fill="${col("text-3")}" font-family="Iosevka Fixed">${L.toFixed(2)}</text>`;
+  svg += `<rect x="${px(0.4)}" y="10" width="${px(0.6) - px(0.4)}" height="${H - 40}" fill="${col("signal")}" opacity="0.07"/>`;
+  svg += `<path d="${lin}" fill="none" stroke="${col("text-3")}" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+  svg += `<path d="${eased}" fill="none" stroke="${col("signal")}" stroke-width="2"/>`;
+  svg += `<line x1="${px(flip)}" x2="${px(flip)}" y1="10" y2="${H - 30}" stroke="${col("text")}" stroke-width="1"/>`;
+  svg += `<text x="${px(flip) + 6}" y="22" font-size="11" fill="${col("text")}" font-family="SF Pro Text">ink flips · ${hhmm((17 * 60 + 44 + flip * 40) / 60)}</text>`;
+  for (const [t, label] of [[0, "17:44"], [0.5, "18:04"], [1, "18:24"]]) svg += `<text x="${px(t)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="${col("text-3")}" font-family="Iosevka Fixed">${label}</text>`;
+  svg += `<text x="${px(0.04)}" y="${py(0.36)}" font-size="11" fill="${col("text-3")}" font-family="SF Pro Text">linear</text>`;
+  svg += `<text x="${px(0.18)}" y="${py(0.9)}" font-size="11" fill="${col("signal")}" font-family="SF Pro Text">eased</text>`;
+  document.getElementById("chart").innerHTML = svg;
+
+  const now = new Date(), hh = now.getHours() + now.getMinutes() / 60;
+  const L = lightAt(hh, sunDay(now));
+  const nm = (n) => n[0].toUpperCase() + n.slice(1);
+  document.getElementById("nowlight").textContent = L.from === L.to ? `${nm(L.from)}, ${hhmm(hh)}` : `${nm(L.from)} → ${nm(L.to)}, ${Math.round(L.t * 100)}%`;
+};
+</script>
+</body>
+</html>

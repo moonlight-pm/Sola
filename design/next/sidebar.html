@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / The master sidebar</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<link rel="stylesheet" href="sidebar.css">
+<script src="next.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 05</span><span class="head__title">The master sidebar</span></div>
+  <div class="head__lead">One vertical bar down the left owns where everything is. Each workspace is a main row; under it sit its three zones and a floating zone, and under each zone the windows it holds. A zone shows one window at a time, so the bar is how you reach the others. The top row keeps the flower, the live bubble, and the instruments; the bar replaces board 04's workspace bubble. Projects is the agent app, as on 04.</div>
+</div>
+
+<div class="section">
+  <div class="label">The desk · a 2560 × 1080 output at 1:2 · Sola is showing, Projects has focus</div>
+  <div id="desk"></div>
+</div>
+
+<div class="section">
+  <div class="label">Anatomy · the bar at 1:1</div>
+  <div class="row2">
+    <div id="anat"></div>
+    <div class="notes">
+      <div><b>Workspace row</b>Number, name, a chevron. The showing workspace is open; the others fold to one row with the icons of what they hold and their marks (Mail's cyan dot: unread).</div>
+      <div><b>Zone header</b>Left, Center, Right, Floating, each with the zone glyph from the titlebars and a count. A header is a drop target.</div>
+      <div><b>Window row</b>App icon and window title. The window a zone is showing is lifted a step; the focused one is a pill. The rest are in tertiary ink: open, but behind.</div>
+      <div><b>Marks ride along</b>Projects' working ring sits on its row, so an agent is visible even when its window is behind another in the zone.</div>
+      <div><b>The titlebar says there is more</b>A stack count beside the zone glyph (2) tells you the zone holds another window, without opening the bar.</div>
+      <div><b>Width</b>240 px, plus one gap. On 5120 that is 4.9% of the output; on 2560 it is 9.8%.</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Moving things · the bar at 1:1</div>
+  <div class="cols3" id="states"></div>
+</div>
+
+<div class="section">
+  <div class="label">Empty zones give their width away</div>
+  <div class="zs" id="zones"></div>
+</div>
+
+<script src="sidebar.js"></script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / Dawn and dusk</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  body { background: #000; }
+  .lit { padding: 56px 72px 64px; display: flex; flex-direction: column; gap: 28px; background: var(--bg); color: var(--text); }
+  .lit:first-child { padding-top: 72px; }
+  .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .notes h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+  .when { display: flex; align-items: baseline; gap: 14px; }
+  .when__time { font-family: var(--font-figure); font-size: 13px; color: var(--signal); }
+  .when__name { font-family: var(--font-display); font-size: 24px; font-weight: 600; letter-spacing: -0.3px; }
+  .when__sub { color: var(--text-2); font-size: 14px; }
+
+  .launcher { position: absolute; left: 290px; top: 104px; width: 520px; padding: 0 0 8px; overflow: hidden; }
+  .launcher__q { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 18px; font-size: 18px; border-bottom: 1px solid var(--hairline); }
+  .launcher__q svg { width: 18px; height: 18px; stroke: var(--text-2); fill: none; stroke-width: 2; stroke-linecap: round; }
+  .launcher__row { margin: 0 8px; height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: 8px; font-size: 15px; }
+  .launcher__row:first-of-type { margin-top: 8px; }
+  .launcher__row svg { width: 20px; height: 20px; stroke: var(--text); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .launcher__row--sel { background: var(--selection); }
+  .launcher__row small { margin-left: auto; color: var(--text-3); font-size: 12px; }
+
+  .cal { background: var(--raised); display: flex; flex-direction: column; }
+  .cal__head { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--hairline); font-weight: 600; font-size: 14px; }
+  .cal__grid { position: relative; flex: 1; }
+  .cal__hour { position: absolute; left: 0; right: 0; height: 1px; background: var(--hairline); }
+  .cal__hour span { position: absolute; left: 14px; top: -8px; font-family: var(--font-figure); font-size: 11px; color: var(--text-3); background: var(--raised); padding-right: 6px; }
+  .cal__ev { position: absolute; left: 62px; right: 14px; border-radius: 6px; padding: 6px 10px; font-size: 13px; line-height: 17px; }
+  .cal__ev small { display: block; color: var(--text-2); font-size: 12px; }
+  .cal__now { position: absolute; left: 54px; right: 0; height: 2px; background: var(--signal); }
+  .cal__now::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--signal); }
+  .cal__sun { position: absolute; left: 62px; right: 14px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+  .cal__sun svg { width: 14px; height: 14px; stroke: var(--sol); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .cal__sun::after { content: ""; flex: 1; height: 1px; background: repeating-linear-gradient(90deg, var(--sol) 0 3px, transparent 3px 7px); opacity: 0.6; }
+
+  .attach { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 8px; box-shadow: 0 0 0 1px var(--hairline-strong) inset; font-size: 13px; width: fit-content; }
+  .attach svg { width: 14px; height: 14px; stroke: var(--text-2); fill: none; stroke-width: 2; stroke-linecap: round; }
+
+  .browser { background: var(--chrome); display: flex; flex-direction: column; }
+  .tabs { height: 38px; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; }
+  .tab { height: 30px; padding: 0 12px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); border-radius: 7px 7px 0 0; max-width: 210px; white-space: nowrap; overflow: hidden; }
+  .tab--on { background: var(--raised); color: var(--text); }
+  .tab i { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .loc { height: 40px; background: var(--raised); display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--hairline); }
+  .loc div { height: 28px; flex: 1; border-radius: 7px; background: var(--well); display: flex; align-items: center; padding: 0 12px; font-size: 13px; color: var(--text-2); }
+  .page-web { flex: 1; background: #1c1b22; color: #e6e1ea; padding: 22px 26px; font-family: "SF Pro Text", sans-serif; font-size: 14px; line-height: 22px; display: flex; flex-direction: column; gap: 12px; }
+  .page-web h1 { margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; }
+  .page-web code { font-family: var(--font-mono); font-size: 13px; color: #c5b8ff; }
+  .page-web pre { margin: 0; background: #141319; border-radius: 6px; padding: 12px 14px; font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: #d6d0dc; }
+
+  .switcher { position: absolute; left: 280px; top: 210px; width: 736px; padding: 32px 48px 22px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .switcher__row { display: flex; gap: 40px; }
+</style>
+</head>
+<body>
+
+<section class="lit l-dawn">
+  <div class="head" style="border-top-color: var(--hairline-strong)">
+    <div class="head__row"><div class="head__num">06:52 · 18:32</div><div class="head__title">Dawn and dusk: the short lights</div></div>
+    <div class="head__lead">Twilight is short here because it is short outside: today each holds about an hour. Dawn is the only mid-key light, slate mist with a peach signal and long soft shadows. Dusk is low-key violet-umber; as the shadows go, edges start to glow. Both boards show an overlay open, because that is where depth shows most.</div>
+  </div>
+
+  <div class="when"><span class="when__time">06:52</span><span class="when__name">Dawn</span><span class="when__sub">Sixteen minutes before sunrise. Launcher open over Mail and Calendar, 1:1.</span></div>
+
+  <div class="desk" style="height: 600px">
+    <div data-bar='{"app":"Mail","menus":["File","Edit","Message","View","Window"],"clock":"06:52 Tue 2026-10-13","sky":"rise","x":0,"seed":21}'></div>
+    <div class="zones" style="height: 572px">
+      <div class="zone list" style="width: 330px">
+        <div class="list__head">Inbox <small>3 unread</small></div>
+        <div class="msg msg--sel"><div class="msg__top"><span class="msg__from"><span class="msg__unread"></span>Hetzner Online</span><span class="msg__time">06:31</span></div><div class="msg__subj">Invoice 0412 for October</div><div class="msg__peek">Your invoice is attached as a PDF.</div></div>
+        <div class="msg"><div class="msg__top"><span class="msg__from"><span class="msg__unread"></span>GitHub</span><span class="msg__time">06:02</span></div><div class="msg__subj">[sola] Nightly build passed</div><div class="msg__peek">sola-make release · 4 targets · 38.4 s</div></div>
+        <div class="msg"><div class="msg__top"><span class="msg__from"><span class="msg__unread"></span>Cal.com</span><span class="msg__time">05:40</span></div><div class="msg__subj">Design review moved to Thursday</div><div class="msg__peek">The Sola foundation review is now…</div></div>
+        <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Fastmail</span><span class="msg__time">Yesterday</span></div><div class="msg__subj">Your export is ready</div><div class="msg__peek">Download it within 7 days.</div></div>
+        <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Grapevine</span><span class="msg__time">Mon</span></div><div class="msg__subj">Weekly digest</div><div class="msg__peek">Three new threads in #desk.</div></div>
+      </div>
+      <div class="zone read" style="width: 520px">
+        <div class="read__meta">Hetzner Online · billing@hetzner.com · 06:31</div>
+        <div class="read__subject">Invoice 0412 for October</div>
+        <div class="read__actions"><span class="btn btn--secondary">Reply</span><span class="btn btn--ghost">Forward</span><span class="btn btn--ghost">Junk</span></div>
+        <div>Dear customer,</div>
+        <div>Your invoice for October is attached. The amount will be charged to your card on file on 2026-10-20.</div>
+        <div class="attach"><span data-icon="paperclip"></span>invoice-0412.pdf · 84 KB</div>
+      </div>
+      <div class="zone cal" style="width: 446px">
+        <div class="cal__head">Tuesday, October 13 <span class="chip">Today</span></div>
+        <div class="cal__grid" id="dawncal"></div>
+      </div>
+    </div>
+    <div class="overlay-scrim"></div>
+    <div class="card launcher">
+      <div class="launcher__q"><span data-icon="search"></span>ca<span class="field__caret" style="height: 20px; margin-left: -10px"></span></div>
+      <div class="launcher__row launcher__row--sel"><span data-icon="calendar"></span>Calendar<small>Open</small></div>
+      <div class="launcher__row"><span data-icon="calculator"></span>Calculator</div>
+      <div class="launcher__row"><span data-icon="gamepad"></span>Arcade</div>
+      <div class="launcher__row"><span data-icon="scan"></span>Capture area</div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div><h3>Mid-key on purpose</h3><div class="note">Surfaces sit at OKLCH lightness 0.26–0.33, a step above night's 0.16–0.21 and far below day. Text stays light until the fade to day crosses over, twenty minutes after sunrise.</div></div>
+    <div><h3>Peach is the signal</h3><div class="note">It sits between danger and warning, so shape keeps status apart, as Graphite already rules: working is a ring, waiting a diamond, done a check. Danger moves toward crimson.</div></div>
+    <div><h3>The sun before sunrise</h3><div class="note">Below the horizon there is no disc, only a bloom at the left end of the bar. The calendar marks sunrise in gold on the day's grid.</div></div>
+  </div>
+</section>
+
+<section class="lit l-dusk">
+  <div class="when"><span class="when__time">18:32</span><span class="when__name">Dusk</span><span class="when__sub">Eight minutes after sunset. Switcher open over Workspaces and Browser, 1:1.</span></div>
+
+  <div class="desk" style="height: 600px">
+    <div data-bar='{"app":"Workspaces","menus":["File","Edit","View","Pane","Tabs","Window"],"clock":"18:32 Tue 2026-10-13","sky":"set","x":1,"seed":41}'></div>
+    <div class="zones" style="height: 572px">
+      <div class="zone rail" style="width: 248px">
+        <div class="rail__project">SOLA <span>+</span></div>
+        <div class="rail__row"><span class="rail__mark"><svg class="mark-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>kit-foundation</div>
+        <div class="rail__row rail__row--sel"><span class="rail__mark"><span class="mark-diamond"></span></span>menubar-pass<span class="rail__count">×1</span></div>
+        <div class="rail__row"><span class="rail__mark"><svg class="mark-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>mail-focus</div>
+        <div class="rail__row"><span class="rail__mark"><span class="mark-dot"></span></span>master</div>
+        <div class="rail__project">WICKET <span>+</span></div>
+        <div class="rail__row"><span class="rail__mark"><span class="mark-ring"></span></span>vault-panel</div>
+        <div class="rail__row"><span class="rail__mark"><span class="mark-dot"></span></span>master</div>
+        <div class="rail__project rail__project--closed">EXIT <span style="margin-left:auto">+</span></div>
+        <div class="rail__project rail__project--closed">GENEOLOGY <span style="margin-left:auto">+</span></div>
+      </div>
+<div class="zone term" style="width: 560px"><span class="sig">~/Workspace/Sola/.worktrees/menubar-pass</span>
+❯ claude
+
+● Read crates/sola-shell/src/menubar/view.rs
+● Read crates/sola-shell/src/components/clock.rs
+  <span class="c7">The horizon is the bar's last pixel row. The sun</span>
+  <span class="c7">is a 1px core, a 3px dome, and a bloom that never</span>
+  <span class="c7">leaves the 28px bar.</span>
+
+● Write(crates/sola-shell/src/menubar/horizon.rs)
+  <span class="c2">+ pub fn horizon(now: DateTime&lt;Local&gt;, sun: &amp;SunDay)</span>
+
+● Bash(cargo make build sola-shell)
+  <span class="c8">⎿</span>  <span class="c2">Finished</span> release [optimized] in 41.2s
+
+<span class="c3">◇</span> Waiting for you · install sola-shell?
+❯ <span class="cur"> </span></div>
+      <div class="zone browser" style="width: 488px">
+        <div class="tabs">
+          <div class="tab tab--on"><i style="background:#e8a33c"></i>iced::theme::palette</div>
+          <div class="tab"><i style="background:#7a8ac7"></i>ext-background-effect-v1</div>
+        </div>
+        <div class="loc"><div>docs.rs/iced/0.14.0/iced/theme/palette</div></div>
+        <div class="page-web">
+          <h1>Struct Extended</h1>
+          <div>An extended set of colors generated from a <code>Palette</code>. <code>is_dark</code> decides which way the weak and strong tiers step.</div>
+          <pre>pub fn generate(palette: Palette) -&gt; Extended
+    is_dark: is_dark(palette.background),</pre>
+          <div style="color:#a59fb0">The page keeps its own colors. Solar only asks it for dark or light.</div>
+        </div>
+      </div>
+    </div>
+    <div class="overlay-scrim"></div>
+    <div class="card switcher">
+      <div class="switcher__row">
+        <div class="tile tile--sel"><span data-icon="terminal"></span></div>
+        <div class="tile"><span data-icon="globe"></span></div>
+        <div class="tile"><span data-icon="mail"></span><span class="tile__badge">12</span></div>
+        <div class="tile"><span data-icon="calendar"></span><span class="tile__badge">1</span></div>
+        <div class="tile"><span data-icon="music"></span></div>
+      </div>
+      <div style="width: 100%; display: flex; padding-left: 0"><span style="width: 96px; text-align: center; font-size: 14px">Workspaces</span></div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div><h3>Edges start to glow</h3><div class="note">Popovers keep their shadow and gain a 1px rim and a faint violet halo. Dusk is the change from casting to emitting, so it does a little of both.</div></div>
+    <div><h3>Violet, not amber</h3><div class="note">Amber already means Sol and warning. The afterglow signal is violet, so the terminal's ANSI blue gets its own blue instead of borrowing the signal.</div></div>
+    <div><h3>The sun after sunset</h3><div class="note">The bloom moves to the right end of the bar and cools to coral; the disc is gone. At civil dusk it fades out and the moon tick appears.</div></div>
+  </div>
+</section>
+
+<script>
+window.afterMount = () => {
+  // Dawn calendar: 06:00–14:00, 60px an hour, top at 06:00.
+  const g = document.getElementById("dawncal");
+  const y = (h) => 18 + (h - 6) * 60;
+  for (let h = 6; h <= 14; h++) {
+    const d = document.createElement("div");
+    d.className = "cal__hour"; d.style.top = y(h) + "px";
+    d.innerHTML = `<span>${String(h).padStart(2, "0")}:00</span>`;
+    g.appendChild(d);
+  }
+  const ev = (a, b, title, sub, color) => {
+    const d = document.createElement("div");
+    d.className = "cal__ev";
+    d.style.cssText = `top:${y(a) + 2}px;height:${(b - a) * 60 - 4}px;background:color-mix(in oklch, ${color} 22%, var(--raised));box-shadow:inset 3px 0 0 ${color}`;
+    d.innerHTML = `${title}<small>${sub}</small>`;
+    g.appendChild(d);
+  };
+  ev(9, 9.5, "Standup", "09:00 · Sola", "#61adb8");
+  ev(10.5, 11.75, "Pair on kit-foundation", "10:30 · Workspaces", "#7a8ac7");
+  ev(13, 14, "Kit review", "13:00 · menubar-pass", "#75a380");
+  const sun = document.createElement("div");
+  sun.className = "cal__sun"; sun.style.top = (y(7 + 8 / 60) - 8) + "px";
+  sun.innerHTML = icon("sunrise") + "Sunrise 07:08";
+  g.appendChild(sun);
+  const now = document.createElement("div");
+  now.className = "cal__now"; now.style.top = y(6 + 52 / 60) + "px";
+  g.appendChild(now);
+};
+</script>
+</body>
+</html>

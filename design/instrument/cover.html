@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / Cover</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .cover { gap: 56px; padding-top: 64px; }
+  .meta { display: flex; justify-content: space-between; }
+  .hero {
+    background: var(--panel);
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px var(--seam-hi);
+    overflow: hidden;
+  }
+  .hero__field { display: block; padding: 22px 22px 18px; }
+  .hero__strip {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 22px; box-shadow: inset 0 1px 0 var(--seam);
+  }
+  .thesis { display: flex; flex-direction: column; gap: 18px; }
+  .thesis h1 {
+    margin: 0; font-family: var(--font-display-i); font-weight: 600;
+    font-size: 46px; line-height: 50px; letter-spacing: -0.8px;
+  }
+  .thesis p { margin: 0; color: var(--ink-3); font-size: 17px; line-height: 27px; max-width: 900px; }
+  .thesis p b { color: var(--ink); font-weight: 500; }
+  .key { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0; border-top: 1px solid var(--seam-hi); }
+  .key__item { display: flex; flex-direction: column; gap: 14px; padding: 22px 20px 0 0; }
+  .key__item + .key__item { padding-left: 20px; box-shadow: inset 1px 0 0 var(--seam); }
+  .key__top { display: flex; align-items: center; gap: 14px; height: 38px; }
+  .key__name { display: flex; flex-direction: column; gap: 4px; }
+  .key__text { color: var(--ink-3); font-size: 13px; line-height: 20px; }
+  .key__group { grid-column: span 4; }
+  .cols { display: grid; grid-template-columns: 1.15fr 1fr; gap: 64px; border-top: 1px solid var(--seam-hi); padding-top: 26px; }
+  .list { display: flex; flex-direction: column; gap: 0; margin-top: 16px; }
+  .list__row { display: block; padding: 11px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .list__row:last-child { box-shadow: none; }
+  .list__n { color: var(--ink-3); line-height: 0; padding-top: 5px; }
+  .list__t { font-size: 14px; line-height: 21px; color: var(--ink-2); }
+  .list__t b { color: var(--ink); font-weight: 500; }
+  .art__row { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 11px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .art__row:last-child { box-shadow: none; }
+  .art__name { font-size: 14px; line-height: 21px; color: var(--ink); }
+  .art__what { font-size: 13px; line-height: 20px; color: var(--ink-3); margin-top: 2px; }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div data-part="bar" data-preset="unread" data-set='{"app":"Workspaces","bell":""}'></div>
+
+<div class="board cover">
+  <div class="meta">
+    <span class="lbl">Sola · exploration · instrument · 2026-10-13</span>
+    <span class="lbl">After Graphite v1 · shell chrome only</span>
+  </div>
+
+  <div class="hero">
+    <div class="hero__field" id="field"></div>
+    <div class="hero__strip">
+      <span class="lbl lbl--lo">Dot 8 · pitch 12 · the bar's grid at 4×</span>
+      <span class="lbl lbl--lo">The flower rastered from its own path</span>
+    </div>
+  </div>
+
+  <div class="thesis">
+    <h1>The chrome is a front panel.</h1>
+    <p>Graphite already reads like instruments at night: 2px LED meters, a phosphor spectrum. This direction finishes the thought for the shell only. The bar, launcher, switcher, shortcuts, and notices become a front panel: <b>numbers in dot-matrix on the meters' own grid</b>, <b>labels engraved</b>, and <b>four colors that each mean one thing</b>. Apps stay calm SF Pro on Graphite.</p>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Function key · four keys, two lamps</span>
+    <div class="key">
+      <div class="key__item">
+        <div class="key__top"><span class="knob" style="--c: var(--fn-focus)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">Focus</span><span class="lbl lbl--9 lbl--lo">#3dd6f5</span></div></div>
+        <div class="key__text">What has focus, what you picked, what is unread or working for you.</div>
+      </div>
+      <div class="key__item">
+        <div class="key__top"><span class="knob" style="--c: var(--fn-signal)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">Signal</span><span class="lbl lbl--9 lbl--lo">#38fa6b</span></div></div>
+        <div class="key__text">Sound, live meters, done.</div>
+      </div>
+      <div class="key__item">
+        <div class="key__top"><span class="knob" style="--c: var(--fn-value)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">Value</span><span class="lbl lbl--9 lbl--lo">#e9ecf2</span></div></div>
+        <div class="key__text">Readouts and labels at rest. Most of the panel.</div>
+      </div>
+      <div class="key__item">
+        <div class="key__top"><span class="knob" style="--c: var(--fn-system)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">System</span><span class="lbl lbl--9 lbl--lo">#ffb800</span></div></div>
+        <div class="key__text">The flower, the Super key, power, the cursor. Never status.</div>
+      </div>
+      <div class="key__item">
+        <div class="key__top"><span class="lamp" style="--c: var(--lamp-look)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">Look</span><span class="lbl lbl--9 lbl--lo">#ff8a3d</span></div></div>
+        <div class="key__text">Needs a look: an agent waiting, a meter past 75%.</div>
+      </div>
+      <div class="key__item">
+        <div class="key__top"><span class="lamp" style="--c: var(--lamp-live)"></span><div class="key__name"><span class="lbl lbl--11 lbl--ink">Live</span><span class="lbl lbl--9 lbl--lo">#ff4a3d</span></div></div>
+        <div class="key__text">A device is capturing, or a meter is past 90%. The tally and the clip light.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <span class="lbl">What changes from Graphite</span>
+      <div class="list">
+        <div class="list__row"><div class="list__t"><b>Numbers become readouts.</b> Clock, counts, and drop-panel values are dots on the 3px LED grid. Cells are fixed, so the bar never reflows.</div></div>
+        <div class="list__row"><div class="list__t"><b>Labels are engraved.</b> Iosevka Fixed Extended, caps, tracked, muted. Menu titles and sentences stay SF Pro.</div></div>
+        <div class="list__row"><div class="list__t"><b>Shell surfaces go neutral black.</b> #0a0a0b and #121314 with hairline seams. Apps keep Graphite's blue graphite.</div></div>
+        <div class="list__row"><div class="list__t"><b>Color by function.</b> Network gives up cyan. The spectrum is one phosphor with a white peak dot. Meters print orange past 75%, red past 90%.</div></div>
+        <div class="list__row"><div class="list__t"><b>Gold is the system's alone.</b> Waiting moves from amber to orange and keeps its diamond.</div></div>
+        <div class="list__row"><div class="list__t"><b>Two new modules.</b> Capture lamps (MIC, CAM) and an agent count beside the meters.</div></div>
+        <div class="list__row"><div class="list__t"><b>Super+K is a keycap map.</b> Hold Super and the keys that do something light.</div></div>
+      </div>
+    </div>
+    <div>
+      <span class="lbl">Prior art</span>
+      <div class="list">
+        <div class="art__row"><div><div class="art__name">Teenage Engineering OP-1, OP-1 field, TX-6</div><div class="art__what">Front-panel graphics; four encoders, each color tied to one parameter.</div></div><span class="lbl lbl--lo">2011 · 2022</span></div>
+        <div class="art__row"><div><div class="art__name">Nothing OS 4.0 and the Phone (3) Glyph Matrix</div><div class="art__what">Dot-matrix numerals and widgets beside plain type. cdm.link reports Teenage Engineering joining Nothing's leadership (reported, not confirmed here).</div></div><span class="lbl lbl--lo">2025</span></div>
+        <div class="art__row"><div><div class="art__name">Braun under Dieter Rams</div><div class="art__what">Labels that say what a control does; color only where it marks a function.</div></div><span class="lbl lbl--lo">1955–1995</span></div>
+        <div class="art__row"><div><div class="art__name">Panic Playdate</div><div class="art__what">A whole system in two tones. Discipline over decoration.</div></div><span class="lbl lbl--lo">2022</span></div>
+        <div class="art__row"><div><div class="art__name">Omarchy</div><div class="art__what">The Super-chord desk Sola's Super+K overlay comes from.</div></div><span class="lbl lbl--lo">2025</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // The hero: one LED field. The flower in gold, SOLA at 2× cells, the rest dark.
+  (() => {
+    const I = window.Instrument;
+    const COLS = 104, ROWS = 21;
+    const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    const put = (rows, x0, y0, v, k = 1) =>
+      rows.forEach((r, y) => r.forEach((b, x) => {
+        if (!b) return;
+        for (let dy = 0; dy < k; dy++) for (let dx = 0; dx < k; dx++) {
+          const yy = y0 + y * k + dy, xx = x0 + x * k + dx;
+          if (yy < ROWS && xx < COLS) grid[yy][xx] = v;
+        }
+      }));
+    const flower = I.trim(I.flowerBits(21, 0.55));
+    put(flower, 2, Math.floor((ROWS - flower.length) / 2), 2);
+    put(I.bits("SOLA", "57"), flower[0].length + 7, Math.floor((ROWS - 14) / 2), 1, 2);
+    const color = (x, y, v) => (v === 2 ? "var(--fn-system)" : "var(--fn-value)");
+    const el = document.getElementById("field");
+    el.innerHTML = I.svg(grid, { dot: 8, pitch: 12, round: 1.5, cell: color });
+    el.classList.add("glow");
+    el.style.color = "var(--fn-value)";
+  })();
+</script>
+</body>
+</html>

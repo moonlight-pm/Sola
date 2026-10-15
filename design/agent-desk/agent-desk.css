@@ -1,0 +1,206 @@
+/* Agent desk — exploration canvas. Graphite tokens (../tokens.css) plus
+ * the few this direction adds. Faces are the kit's preferred installed
+ * faces (SF Pro, Iosevka Term Slab), not the Inter fallback. */
+:root {
+  --font-ui: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-display: "SF Pro Display", "Inter Display", system-ui, sans-serif;
+  --font-chrome: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-mono: "Iosevka Term Slab", "JetBrains Mono", ui-monospace, monospace;
+  --font-key: "SF Mono", ui-monospace, monospace;
+
+  /* Agent states. Shapes carry the state; color only confirms it. */
+  --state-working: var(--accent);
+  --state-waiting: var(--warning);
+  --state-done: var(--success);
+  --state-failed: var(--danger);
+
+  /* Strip */
+  --chip-h: 20px;
+  --chip-label: var(--stat-label);
+
+  /* Seam light */
+  --seam-w: 2px;
+  --breath: 4.8s;
+
+  /* Keycaps */
+  --key-fill: #1b2029;
+  --key-edge: #343a45;
+  --key-lip: #00000080;
+
+  /* Board text column */
+  --text-tertiary: var(--text-tertiary-proposed);
+}
+
+html { background: var(--bg-primary); }
+body {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Board scaffolding ---------- */
+.page { padding: 72px; display: flex; flex-direction: column; gap: 48px; }
+.head { border-top: 1px solid var(--hairline); padding-top: 24px; display: flex; flex-direction: column; gap: 12px; }
+.head__row { display: flex; align-items: baseline; gap: 16px; }
+.head__num { color: var(--accent); font: 400 13px/1 var(--font-mono); }
+.head__title { font: 600 30px/1 var(--font-display); letter-spacing: -0.4px; }
+.head__lead { color: var(--text-secondary); font: 400 14px/22px var(--font-ui); max-width: 780px; }
+
+.eyebrow {
+  color: var(--text-tertiary);
+  font: 500 11px/14px var(--font-ui);
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+}
+.section { display: flex; flex-direction: column; gap: 14px; }
+.note { color: var(--text-secondary); font: 400 12px/18px var(--font-ui); }
+.note b { color: var(--text-primary); font-weight: 500; }
+.mono { font-family: var(--font-mono); }
+.cap { color: var(--text-tertiary); font: 400 11px/16px var(--font-mono); }
+
+.frame {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-primary);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---------- Glyphs (12 px box) ---------- */
+.g { width: 12px; height: 12px; flex: none; display: inline-block; position: relative; }
+.g svg { width: 12px; height: 12px; display: block; overflow: visible; }
+.g--ring circle { fill: none; stroke: var(--state-working); stroke-width: 1.6; stroke-dasharray: 19 6.2; stroke-linecap: butt; }
+.g--diamond::before {
+  content: ""; position: absolute; left: 1.8px; top: 1.8px; width: 8.4px; height: 8.4px;
+  background: var(--state-waiting); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.g--check path { fill: none; stroke: var(--state-done); stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.g--failed path { fill: none; stroke: var(--state-failed); stroke-width: 1.6; stroke-linecap: round; }
+.g--idle::before {
+  content: ""; position: absolute; left: 4.5px; top: 4.5px; width: 3px; height: 3px; border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+/* ---------- Menubar ---------- */
+.mb {
+  height: var(--menubar-height);
+  background: var(--shell-menubar-bg);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 6px;
+  position: relative;
+  font-family: var(--font-chrome);
+}
+.mb__left, .mb__right { display: flex; align-items: center; height: 28px; }
+.mb__sys { width: 30px; height: 28px; display: grid; place-items: center; }
+.mb__sys svg { width: 14px; height: 14px; }
+.mb__item { padding: 0 9px; height: 28px; display: flex; align-items: center; font-size: 13px; line-height: 16px; white-space: nowrap; color: var(--text-primary); }
+.mb__item--app { font-weight: 700; }
+.mb__whisper {
+  position: absolute; left: 50%; top: 0; height: 28px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-primary); white-space: nowrap;
+}
+.mb__whisper .dim { color: var(--stat-label); }
+.mb__extras { display: flex; align-items: center; gap: 0; }
+.mb__icon { width: 28px; height: 28px; display: grid; place-items: center; }
+.mb__icon svg { width: 14px; height: 14px; fill: none; stroke: var(--text-primary); stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+.mb__icon--on svg { stroke: var(--accent); }
+.mb__clock { padding: 0 8px 0 10px; font-size: 13px; color: var(--text-primary); white-space: nowrap; }
+.mb__stat { display: flex; align-items: center; gap: 5px; padding: 0 7px; font-size: 13px; color: var(--stat-label); }
+.mb__sep { width: 1px; height: 14px; background: var(--hairline-strong); margin: 0 6px; }
+
+/* LED meters (filled by agent-desk.js) */
+.leds { display: grid; grid-auto-flow: column; gap: 1px; }
+.leds i { width: 2px; height: 2px; background: var(--led-off); display: block; }
+
+/* ---------- Agent strip ---------- */
+.strip { display: flex; align-items: center; gap: 2px; height: 28px; }
+.chip {
+  height: var(--chip-h); display: flex; align-items: center; gap: 5px;
+  padding: 0 7px 0 5px; border-radius: var(--radius-sm);
+  font: 400 12px/14px var(--font-chrome); color: var(--chip-label); white-space: nowrap;
+}
+.chip__n { font: 400 10px/1 var(--font-mono); color: var(--text-tertiary); }
+.chip__t { font: 400 11px/1 var(--font-mono); }
+.chip--hover { background: var(--menubar-active); color: var(--text-primary); }
+.chip--waiting {
+  background: var(--warning-soft);
+  box-shadow: inset 0 0 0 1px var(--warning-edge);
+  color: var(--text-primary);
+}
+.chip--waiting .chip__t { color: var(--warning); }
+.chip--armed { box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-dim); }
+.chip--count { gap: 4px; padding: 0 6px 0 5px; }
+.chip--count .chip__t { color: var(--chip-label); }
+
+/* ---------- Keycaps ---------- */
+.keys { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.kv { display: inline-flex; align-items: center; gap: 6px; font: 400 12px/16px var(--font-ui); color: var(--text-secondary); white-space: nowrap; }
+.key {
+  min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+  display: inline-grid; place-items: center;
+  border-radius: 4px; background: var(--key-fill);
+  box-shadow: inset 0 0 0 1px var(--key-edge), inset 0 -2px 0 var(--key-lip);
+  font: 500 11px/1 var(--font-key); color: var(--text-primary);
+}
+.key--lit { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-edge), inset 0 -2px 0 var(--key-lip); color: var(--accent); }
+.key--down { transform: translateY(1px); box-shadow: inset 0 0 0 1px var(--accent), inset 0 1px 0 var(--key-lip); background: var(--accent-soft); color: var(--accent); }
+.kv--primary { color: var(--text-primary); }
+
+/* ---------- Floating cards (cast the only shadows) ---------- */
+.card {
+  width: 340px; background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 1px var(--hairline-strong), 0 12px 32px var(--shadow-deep), 0 2px 6px var(--shadow);
+  padding: 12px 14px 12px; display: flex; flex-direction: column; gap: 10px;
+  position: relative;
+}
+.card--armed { box-shadow: 0 0 0 1px var(--accent-edge), 0 0 0 4px var(--accent-dim), 0 12px 32px var(--shadow-deep); }
+.card__top { display: flex; align-items: center; gap: 8px; }
+.card__title { font: 500 13px/16px var(--font-ui); color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card__time { font: 400 11px/1 var(--font-mono); color: var(--warning); }
+.card__src { font: 400 11px/14px var(--font-ui); color: var(--text-tertiary); margin-top: -6px; padding-left: 20px; }
+.card__ask { font: 400 13px/18px var(--font-ui); color: var(--text-primary); }
+.well {
+  background: var(--field-well); border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--field-edge);
+  padding: 8px 10px; font: 400 11.5px/17px var(--font-mono); color: var(--text-secondary);
+  white-space: pre; overflow: hidden;
+}
+.well .hi { color: var(--text-primary); }
+.well .add { color: var(--success); }
+.well .del { color: var(--danger); }
+.well .cy { color: var(--accent); }
+.well .wa { color: var(--warning); }
+
+/* ---------- Seam light ---------- */
+.seam { position: absolute; pointer-events: none; }
+.seam--v { width: var(--seam-w); top: 0; bottom: 0; }
+.seam--h { height: var(--seam-w); left: 0; right: 0; }
+.seam.working { background: var(--state-working); animation: breath var(--breath) ease-in-out infinite; }
+.seam.waiting { background: var(--state-waiting); animation: pulse 9.6s linear infinite; }
+.seam.done { background: var(--state-done); animation: doneflash 9.6s linear infinite; }
+.seam.failed { background: var(--state-failed); opacity: .7; }
+@keyframes breath { 0%, 100% { opacity: .28; } 50% { opacity: .62; } }
+/* one 600 ms pulse, then steady; loops so the board keeps showing it */
+@keyframes pulse { 0% { opacity: .35; } 3% { opacity: 1; } 6% { opacity: .45; } 9%, 100% { opacity: 1; } }
+@keyframes doneflash { 0% { opacity: 1; } 12.5% { opacity: 0; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .seam.working { animation: none; opacity: .45; }
+  .seam.waiting { animation: none; opacity: 1; }
+  .seam.done { animation: none; opacity: 0; }
+}
+
+/* ---------- Tables ---------- */
+.tbl { width: 100%; border-collapse: collapse; font: 400 12.5px/18px var(--font-ui); }
+.tbl th {
+  text-align: left; color: var(--text-tertiary); font: 500 11px/14px var(--font-ui);
+  letter-spacing: 1px; text-transform: uppercase; padding: 0 16px 10px 0; border-bottom: 1px solid var(--hairline-strong);
+}
+.tbl td { padding: 12px 16px 12px 0; vertical-align: top; border-bottom: 1px solid var(--hairline); color: var(--text-secondary); }
+.tbl td:first-child { color: var(--text-primary); }
+.tbl code, .code { font: 400 11.5px/17px var(--font-mono); color: var(--text-ghost); }
+.cost { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font: 500 10px/1 var(--font-ui); letter-spacing: .4px; white-space: nowrap; }
+.cost--cheap { color: var(--success); background: var(--success-soft); box-shadow: inset 0 0 0 1px var(--success-edge); }
+.cost--medium { color: var(--warning); background: var(--warning-soft); box-shadow: inset 0 0 0 1px var(--warning-edge); }
+.cost--hard { color: var(--danger); background: var(--danger-soft); box-shadow: inset 0 0 0 1px var(--danger-edge); }

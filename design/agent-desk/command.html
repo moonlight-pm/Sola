@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent desk / 04 Launcher, attention, recap</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="agent-desk.css">
+<script src="agent-desk.js"></script>
+<style>
+  .bars { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 56px; align-items: start; }
+  .lx-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .lx-cap { font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .lx-cap b { color: var(--text-primary); font-weight: 500; }
+  .lx { background: var(--bg-secondary); border-radius: var(--radius-xl);
+    box-shadow: 0 0 0 1px var(--shell-switcher-border), 0 18px 48px var(--shadow-deep), 0 2px 8px var(--shadow); overflow: hidden; }
+  .lx__q { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--hairline); font: 400 17px/22px var(--font-ui); color: var(--text-primary); }
+  .lx__q svg { width: 16px; height: 16px; fill: none; stroke: var(--text-secondary); stroke-width: 1.5; flex: none; }
+  .caret { display: inline-block; width: 1.5px; height: 20px; background: var(--accent); vertical-align: -4px; margin-left: 1px; }
+  .tok { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px 0 6px; border-radius: 6px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-edge); color: var(--accent); font: 500 14px/1 var(--font-ui); margin-right: 6px; }
+  .lx__rows { padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+  .lx__row { height: 40px; display: grid; grid-template-columns: 18px 150px 1fr auto; align-items: center; gap: 10px; padding: 0 10px; border-radius: 8px; font: 400 14px/18px var(--font-ui); color: var(--text-primary); }
+  .lx__row--sel { background: var(--bg-hover); }
+  .lx__row .who { color: var(--text-tertiary); font-size: 12.5px; }
+  .lx__row .st { font: 400 11.5px/1 var(--font-mono); color: var(--text-secondary); }
+  .lx__row .st.wa { color: var(--warning); }
+  .lx__group { padding: 8px 10px 4px; font: 500 10.5px/14px var(--font-ui); letter-spacing: 1px; text-transform: uppercase; color: var(--text-tertiary); }
+  .lx__foot { display: flex; gap: 18px; padding: 10px 16px; border-top: 1px solid var(--hairline); }
+  .lx__send { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .lx__send h5 { margin: 0; display: flex; align-items: center; gap: 8px; font: 500 14px/18px var(--font-ui); }
+  .lx__send p { margin: 0; font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .lx__empty { padding: 26px 18px; text-align: center; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .lx__empty h5 { margin: 0; font: 500 14px/18px var(--font-ui); }
+  .lx__empty p { margin: 0; font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+
+  .policy td:nth-child(3) { white-space: nowrap; }
+  .policy .yes { color: var(--warning); }
+  .policy .no { color: var(--text-tertiary); }
+  .policy td:first-child { white-space: nowrap; }
+  .policy .s { display: inline-flex; align-items: center; gap: 8px; }
+
+  .recap-desk { position: relative; height: 600px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); background: var(--bg-primary); }
+  .recap-desk .mb { position: absolute; left: 0; right: 0; top: 0; }
+  .recap-desk .dim { position: absolute; inset: 28px 0 0 0; display: grid; grid-template-columns: 220px 1fr 1fr; }
+  .recap-desk .dim > div { border-right: 1px solid var(--hairline); }
+  .recap-desk .dim .rail { background: var(--bg-chrome); }
+  .recap { position: absolute; top: 34px; width: 400px; background: var(--bg-secondary); border-radius: var(--radius-lg);
+    box-shadow: 0 0 0 1px var(--hairline-strong), 0 12px 32px var(--shadow-deep), 0 2px 6px var(--shadow); padding: 14px 0 6px; }
+  .recap__head { padding: 0 16px 10px; display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--hairline); }
+  .recap__head h5 { margin: 0; font: 600 15px/20px var(--font-display); }
+  .recap__head span { font: 400 11px/1 var(--font-mono); color: var(--text-tertiary); }
+  .recap__sec { padding: 10px 16px 4px; font: 500 10.5px/14px var(--font-ui); letter-spacing: 1px; text-transform: uppercase; color: var(--text-tertiary); display: flex; justify-content: space-between; }
+  .recap__row { margin: 0 6px; padding: 7px 10px; border-radius: 7px; display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 10px; align-items: center; }
+  .recap__row--sel { background: var(--bg-hover); }
+  .recap__row .n { font: 500 13px/17px var(--font-ui); }
+  .recap__row .n span { color: var(--text-tertiary); font-weight: 400; font-size: 12px; }
+  .recap__row .t { font: 400 11px/1 var(--font-mono); color: var(--text-secondary); }
+  .recap__row .t.wa { color: var(--warning); }
+  .recap__row .d { grid-column: 2 / 4; font: 400 12px/16px var(--font-ui); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recap__row .d code { font: 400 11.5px/16px var(--font-mono); color: var(--accent); }
+  .recap__foot { margin-top: 6px; padding: 10px 16px 6px; border-top: 1px solid var(--hairline); display: flex; justify-content: space-between; font: 400 11.5px/16px var(--font-ui); color: var(--text-tertiary); }
+  .side-notes { position: absolute; left: 260px; top: 70px; width: 440px; display: flex; flex-direction: column; gap: 18px; }
+  .side-notes h4 { margin: 0 0 4px; font: 500 13px/18px var(--font-ui); }
+  .side-notes p { margin: 0; font: 400 12.5px/19px var(--font-ui); color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="head__row"><span class="head__num">04</span><span class="head__title">@ in the launcher, attention, and the recap</span></div>
+    <div class="head__lead">Super+Space already finds apps. With @ it finds agents, in the same list, with their state. Typing after a name writes to that pane. Below: the rule for what may interrupt you, and the card that catches you up after a break.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Super+Space, then @ · 1:1</div>
+    <div class="bars">
+      <div class="lx-wrap">
+        <div class="lx">
+          <div class="lx__q"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="5"/><path d="m11 11 3.5 3.5"/></svg><span>@<span class="caret"></span></span></div>
+          <div class="lx__rows">
+            <div class="lx__group">Waiting</div>
+            <div class="lx__row lx__row--sel"><span data-g="diamond"></span><span>kit-foundation</span><span class="who">Claude · SOLA</span><span class="st wa">2:14</span></div>
+            <div class="lx__row"><span data-g="diamond"></span><span>vault-panel</span><span class="who">Codex · WICKET</span><span class="st wa">0:51</span></div>
+            <div class="lx__group">Working</div>
+            <div class="lx__row"><span data-g="ring"></span><span>menubar-pass</span><span class="who">Grok · SOLA</span><span class="st">6:02</span></div>
+            <div class="lx__row"><span data-g="ring"></span><span>chat</span><span class="who">Design agent · EXIT</span><span class="st">1:40</span></div>
+            <div class="lx__row"><span data-g="ring"></span><span>Tertius</span><span class="who">Bots</span><span class="st">0:20</span></div>
+            <div class="lx__group">Done</div>
+            <div class="lx__row"><span data-g="check"></span><span>mail-focus</span><span class="who">Claude · SOLA</span><span class="st">13:40</span></div>
+          </div>
+          <div class="lx__foot">
+            <span class="kv"><span class="key">↵</span>Open pane</span>
+            <span class="kv"><span class="key">Tab</span>Write to it</span>
+            <span class="kv"><span class="key">esc</span>Close</span>
+          </div>
+        </div>
+        <div class="lx-cap"><b>@ alone lists every live agent,</b> grouped by state in the strip's order. Type to filter by name, project, or agent. Idle panes are left out.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 28px">
+        <div class="lx-wrap">
+          <div class="lx">
+            <div class="lx__q"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="5"/><path d="m11 11 3.5 3.5"/></svg><span><span class="tok" data-g="check">mail-focus</span>also re-list after the desk wakes<span class="caret"></span></span></div>
+            <div class="lx__send">
+              <h5>Send to mail-focus</h5>
+              <p>Pastes into the Claude pane in mail-focus and presses Enter. Claude is done and at its prompt. Focus stays where it is.</p>
+            </div>
+            <div class="lx__foot">
+              <span class="kv kv--primary"><span class="key">↵</span>Send</span>
+              <span class="kv"><span class="key">⌘↵</span>Send and open pane</span>
+              <span class="kv"><span class="key">esc</span>Cancel</span>
+            </div>
+          </div>
+          <div class="lx-cap"><b>A name becomes a token</b> once Tab or a space completes it. The rest of the line is the prompt, sent as typed.</div>
+        </div>
+
+        <div class="lx-wrap">
+          <div class="lx">
+            <div class="lx__q"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="5"/><path d="m11 11 3.5 3.5"/></svg><span><span class="tok" style="background: var(--warning-soft); box-shadow: inset 0 0 0 1px var(--warning-edge); color: var(--warning)" data-g="diamond">kit-foundation</span>skip the build<span class="caret"></span></span></div>
+            <div class="lx__send">
+              <h5 data-g="diamond">kit-foundation is waiting on a question</h5>
+              <p>Claude asks to run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>. Text sent now would land in that menu, so it is not sent. Answer the question first.</p>
+            </div>
+            <div class="lx__foot">
+              <span class="kv kv--primary"><span class="key">↵</span>Open pane</span>
+              <span class="kv"><span class="key">esc</span>Cancel</span>
+            </div>
+          </div>
+          <div class="lx-cap"><b>A waiting agent does not take text.</b> Its question gets a key on its own card, not a sentence from here.</div>
+        </div>
+
+        <div class="lx-wrap">
+          <div class="lx">
+            <div class="lx__q"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="5"/><path d="m11 11 3.5 3.5"/></svg><span>@<span class="caret"></span></span></div>
+            <div class="lx__empty">
+              <h5>No agents are running</h5>
+              <p>Start one in a Workspaces tab, or ask a Bot.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Attention policy</div>
+    <table class="tbl policy">
+      <thead><tr><th style="width: 160px">State</th><th>Shows in</th><th style="width: 180px">May interrupt</th><th style="width: 330px">Clears when</th></tr></thead>
+      <tbody>
+        <tr><td><span class="s"><span data-g="diamond"></span>Waiting</span></td><td>A desk card that stays, the chip at the front, amber seam, the recap</td><td class="yes">Yes: the card</td><td>You answer, or you open the pane</td></tr>
+        <tr><td><span class="s"><span data-g="failed"></span>Failed</span></td><td>A whisper, a cross chip, red seam, the recap</td><td class="no">No: it whispers</td><td>You open the pane or focus its window</td></tr>
+        <tr><td><span class="s"><span data-g="check"></span>Done</span></td><td>A whisper, a check chip for 60 s, one green flash, the recap</td><td class="no">No: it whispers</td><td>60 s pass, or the next prompt</td></tr>
+        <tr><td><span class="s"><span data-g="ring"></span>Working</span></td><td>A ring chip and a cyan breath on its zone</td><td class="no">Never</td><td>It stops, or it asks</td></tr>
+        <tr><td><span class="s"><span data-g="idle"></span>Idle</span></td><td>Nowhere</td><td class="no">Never</td><td>—</td></tr>
+        <tr><td style="color: var(--text-secondary)">Looking at it</td><td>Nothing new: no card, no whisper for the pane on screen in the focused window. The chip and seam stay.</td><td class="no">Never</td><td>You look away</td></tr>
+      </tbody>
+    </table>
+    <div class="note">No sounds. No badge on the Workspaces icon in the switcher beyond what it has today. Do not disturb (later) would hold cards in the strip, never drop them.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Away recap · from the bell, opened for you once · 1:1</div>
+    <div class="recap-desk" id="rd">
+      <div class="mb" data-app="Workspaces" data-meters="short" data-seed="27" data-clock="14:02 Mon 2026-10-13">
+        <div class="strip">
+          <div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__t">41:02</span></div>
+          <div class="chip chip--waiting" data-g="diamond">vault-panel <span class="chip__t">12:40</span></div>
+          <div class="chip" data-g="failed">menubar-pass</div>
+        </div>
+      </div>
+      <div class="dim"><div class="rail"></div><div></div><div></div></div>
+      <div class="side-notes">
+        <div><h4>When it opens</h4><p>Once, the first time you touch the desk after ten minutes without input, if an agent changed state while you were gone. Otherwise it waits in the bell.</p></div>
+        <div><h4>What it holds</h4><p>Only what changed since you left: waiting first with how long, then what stopped, then what finished. Working agents are a count, not rows.</p></div>
+        <div><h4>What it does</h4><p>A row opens its pane. Answers still happen one card at a time; the recap has no buttons that act for an agent.</p></div>
+      </div>
+      <div class="recap" id="rc">
+        <div class="recap__head"><h5>Since 13:10</h5><span>away 52 min · 2 at work</span></div>
+        <div class="recap__sec"><span>Waiting</span><span>2</span></div>
+        <div class="recap__row recap__row--sel"><span data-g="diamond"></span><span class="n">kit-foundation <span>Claude · SOLA</span></span><span class="t wa">41 min</span><span class="d">Run <code>cargo make build sola-kit</code>?</span></div>
+        <div class="recap__row"><span data-g="diamond"></span><span class="n">vault-panel <span>Codex · WICKET</span></span><span class="t wa">12 min</span><span class="d">Apply an edit to src/vault/panel.rs?</span></div>
+        <div class="recap__sec"><span>Stopped</span><span>1</span></div>
+        <div class="recap__row"><span data-g="failed"></span><span class="n">menubar-pass <span>Grok · SOLA</span></span><span class="t">13:52</span><span class="d">Stopped with an error. The last lines are in the pane.</span></div>
+        <div class="recap__sec"><span>Finished</span><span>3</span></div>
+        <div class="recap__row"><span data-g="check"></span><span class="n">mail-focus <span>Claude · SOLA</span></span><span class="t">13:40</span><span class="d">Mail re-lists the open folder on focus.</span></div>
+        <div class="recap__row"><span data-g="check"></span><span class="n">chat <span>Design agent · EXIT</span></span><span class="t">13:31</span><span class="d">Three boards changed on the chat canvas.</span></div>
+        <div class="recap__row"><span data-g="check"></span><span class="n">master <span>Codex · EXIT</span></span><span class="t">13:22</span><span class="d">Finished; no question left.</span></div>
+        <div class="recap__foot"><span>Also in the bell: 4 mail, 1 reminder</span><span class="kv"><span class="key">esc</span>Close</span></div>
+      </div>
+    </div>
+    <div class="note">A "Finished" line is the agent's last message, cut to one line. Workspaces already reads the Claude and Codex transcripts for the ×N count; the same files hold that message. With nothing to read, the row says only that it finished.</div>
+  </div>
+</div>
+<script>
+  // Hang the recap under the bell once the bar is built.
+  addEventListener("load", () => {
+    const rd = document.getElementById("rd"), rc = document.getElementById("rc");
+    const bell = rd.querySelectorAll(".mb__icon")[1];
+    const a = bell.getBoundingClientRect(), r = rd.getBoundingClientRect();
+    rc.style.left = Math.min(a.left - r.left + a.width / 2 - 200, r.width - 412) + "px";
+  });
+</script>
+</body>
+</html>

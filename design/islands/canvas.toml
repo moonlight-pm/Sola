@@ -1,0 +1,68 @@
+title = "Islands"
+
+# Exploration against Foundation v1 (Graphite): chrome that floats, morphs,
+# and gets out of the way. Boards stack top to bottom; the desk board is
+# wider (a 2560 output at 1:1).
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Islands / Cover"
+
+[[artboard]]
+id = "desk"
+src = "desk.html"
+x = 0
+y = 3016
+width = 2704
+height = "auto"
+title = "Islands / The desk"
+
+[[artboard]]
+id = "morph"
+src = "morph.html"
+x = 0
+y = 4693
+width = 1440
+height = "auto"
+title = "Islands / The morph"
+
+[[artboard]]
+id = "surfaces"
+src = "surfaces.html"
+x = 0
+y = 6559
+width = 1440
+height = "auto"
+title = "Islands / Surfaces"
+
+[[artboard]]
+id = "zones"
+src = "zones.html"
+x = 0
+y = 8440
+width = 1440
+height = "auto"
+title = "Islands / Zones"
+
+[[artboard]]
+id = "material"
+src = "material.html"
+x = 0
+y = 10586
+width = 1440
+height = "auto"
+title = "Islands / Material"
+
+[[artboard]]
+id = "takes"
+src = "takes.html"
+x = 0
+y = 13368
+width = 1440
+height = "auto"
+title = "Islands / What it takes"

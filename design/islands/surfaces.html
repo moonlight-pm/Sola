@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / Surfaces</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .rules2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 48px; }
+  .rule { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: center; padding: 20px 24px; border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--hairline); }
+  .rule h4 { font: 600 17px/1 var(--f-display); margin: 0 0 8px; }
+  .rule p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .diag { position: relative; height: 110px; background: var(--band-bg); border-radius: 10px; overflow: hidden; }
+  .diag i { position: absolute; display: block; }
+
+  .grid2 { display: grid; grid-template-columns: 640px 640px; gap: 16px; margin-bottom: 40px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 416px); gap: 24px; }
+  .vig { display: flex; flex-direction: column; gap: 12px; }
+  .vig .frame { height: 520px; }
+  .grid3 .vig .frame { height: 440px; }
+  .vig h4 { font: 600 15px/1.2 var(--f-display); margin: 0; }
+  .vig h4 span { font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; color: var(--accent); margin-right: 8px; vertical-align: 2px; }
+  .vig p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0; }
+
+  /* Launcher */
+  .launch { position: absolute; left: 8px; top: 6px; width: 600px; border-radius: var(--r-card); z-index: 5; padding: 0 6px 6px; }
+  .launch__q { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 5px; font-size: 15px; }
+  .launch__q .flower { margin: 0 3px; }
+  .caret { display: inline-block; width: 1.5px; height: 17px; background: var(--accent); vertical-align: -3px; margin-left: 1px; }
+  .launch__q .spec { margin-left: auto; padding-right: 6px; }
+  .launch .sep { margin: 4px 6px 6px; }
+  .launch .row { height: 36px; border-radius: 12px; font-size: 14px; gap: 12px; padding: 0 12px; }
+  .launch .row .row__key { font-size: 12px; }
+
+  /* Switcher */
+  .switch { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); border-radius: var(--r-card); z-index: 5; padding: 12px 12px 10px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .switch__tiles { display: flex; gap: 8px; }
+  .tile { position: relative; width: 60px; height: 60px; border-radius: 12px; display: grid; place-items: center; background: #ffffff0d; box-shadow: inset 0 0 0 1px #ffffff0f; color: var(--ink-2); }
+  .tile.is-sel { background: #ffffff24; color: var(--ink); box-shadow: inset 0 1px 0 #ffffff2a, 0 0 0 2px var(--accent-edge); }
+  .badge { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: 600 10.5px/18px var(--f-live); text-align: center; box-sizing: border-box; }
+  .switch__name { font: 500 13px/16px var(--f-chrome); }
+
+  /* Menu */
+  .hang { position: absolute; z-index: 5; }
+
+  /* Audio */
+  .audio { width: 320px; padding: 12px; display: flex; flex-direction: column; gap: 10px; border-radius: var(--r-sheet); font-size: 13px; }
+  .audio .kick { font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; color: var(--ink-3); padding: 2px 4px 0; }
+  .dev { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: var(--r-row); }
+  .dev.is-on { background: #ffffff0f; }
+  .dev .ic:last-child { margin-left: auto; }
+  .slider { display: flex; align-items: center; gap: 10px; padding: 0 8px; color: var(--ink-2); }
+  .slider__track { flex: 1; height: 4px; border-radius: 2px; background: #ffffff1a; position: relative; }
+  .slider__track i { position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--accent); }
+  .slider__track b { position: absolute; left: 62%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--ink); box-shadow: 0 1px 4px #0008; }
+  .np { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center; padding: 10px 8px 4px; border-top: 1px solid #ffffff10; }
+  .np__art { width: 52px; height: 52px; border-radius: 8px; background: linear-gradient(135deg, #2c333e, #151922); box-shadow: inset 0 0 0 1px #ffffff14; display: grid; place-items: center; }
+  .np__t { font-weight: 600; }
+  .np__a { color: var(--ink-2); font-size: 12px; }
+  .np__bar { height: 3px; border-radius: 2px; background: #ffffff1a; margin-top: 8px; position: relative; }
+  .np__bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 36%; background: var(--ink-2); border-radius: 2px; }
+  .np__ctl { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+  .np__ctl .spec { width: 40px; }
+  .np__ctl .spec:last-child { text-align: right; }
+  .np__btns { display: flex; gap: 18px; align-items: center; color: var(--ink); }
+
+  /* Calendar */
+  .cal { width: 300px; padding: 12px; border-radius: var(--r-sheet); font-size: 13px; }
+  .cal__head { display: flex; align-items: center; gap: 8px; padding: 0 4px 10px; }
+  .cal__head b { font: 600 14px/1 var(--f-display); margin-right: auto; }
+  .cal__today { font-size: 12px; color: var(--ink-2); padding: 3px 8px; border-radius: 6px; background: #ffffff0f; }
+  .cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 2px; text-align: center; font-variant-numeric: tabular-nums; }
+  .cal__grid .dow { font: 500 10px/24px var(--f-chrome); color: var(--ink-3); letter-spacing: 0.5px; }
+  .cal__grid .d { height: 32px; display: grid; place-items: center; position: relative; }
+  .cal__grid .d.mute { color: var(--ink-3); opacity: 0.5; }
+  .cal__grid .d.today span { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 600; }
+  .cal__grid .d.has-ev::after { content: ""; position: absolute; bottom: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--enamel-iris); }
+  .cal__next { margin-top: 10px; padding: 10px 4px 2px; border-top: 1px solid #ffffff10; display: flex; flex-direction: column; gap: 8px; }
+  .ev { display: grid; grid-template-columns: 4px 1fr auto; gap: 10px; align-items: center; }
+  .ev i { width: 4px; height: 26px; border-radius: 2px; }
+  .ev b { font-weight: 500; display: block; }
+  .ev span { font-size: 12px; color: var(--ink-2); }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS</span><span class="head__title">Surfaces grow from their island</span></div>
+  <div class="head__lead">Every shell surface has an owner in the band, and it opens from there. Two rules cover all of them. A surface that takes over (the launcher, the switcher, an agent card) becomes its island. A surface that sits beside the work (a menu, the audio panel, the calendar) hangs 6 px under the group that opened it, and the island stays.</div>
+</div>
+
+<div class="rules2">
+  <div class="rule">
+    <div class="diag" id="diag-become"></div>
+    <div><h4>Become</h4><p>The island is the surface. One rounded rectangle grows from the island's corner or center and shrinks back to it. Used when the surface takes the keyboard.</p></div>
+  </div>
+  <div class="rule">
+    <div class="diag" id="diag-hang"></div>
+    <div><h4>Hang</h4><p>The group that opened it turns into a 7 px pill; a sheet hangs 6 px below, its edge aligned to the pill. Used when the work stays in view.</p></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="vig">
+    <div class="label" style="margin:0">Desk x 0–640, 1:1</div>
+    <div class="frame" id="v-launch"></div>
+    <h4><span>BECOME</span>The launcher is the flower island</h4>
+    <p>Super+Space. The flower stays where it was; the app name and menus leave and the query takes their place. No scrim: the live Frame is the card, not the whole output.</p>
+  </div>
+  <div class="vig">
+    <div class="label" style="margin:0">Desk x 2240–2880, 1:1</div>
+    <div class="frame" id="v-switch"></div>
+    <h4><span>BECOME</span>The switcher is the center island</h4>
+    <p>Super+Tab. The strip opens where the live island sits, so the eye already knows where to look. Worth a desk test: on a 2160-tall output the top may be far from the work.</p>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="vig">
+    <div class="label" style="margin:0">Desk x 0–416, Mail focused</div>
+    <div class="frame" id="v-menu"></div>
+    <h4><span>HANG</span>A menu hangs from its title</h4>
+    <p>Message turns into a pill; the menu hangs 6 px below with its rows aligned to the title's text.</p>
+  </div>
+  <div class="vig">
+    <div class="label" style="margin:0">Desk x 4312–4728</div>
+    <div class="frame" id="v-audio"></div>
+    <h4><span>HANG</span>The audio panel hangs from the spectrum</h4>
+    <p>The panel's left edge meets the spectrum's. Outputs, volume, and what is playing; the same LEDs at 2× sit at the bottom.</p>
+  </div>
+  <div class="vig">
+    <div class="label" style="margin:0">Desk x 4704–5120</div>
+    <div class="frame" id="v-cal"></div>
+    <h4><span>HANG</span>The calendar hangs from the clock</h4>
+    <p>Right-aligned under the clock, where calendar.rs anchors it today. Sunday first, today in cyan, the next event below.</p>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const zone = (left, top, html, w = 5120) => `<div class="zone" style="left:${left}px;top:${top}px;width:${w}px;bottom:0">${html}</div>`;
+  const deskZones = (offset, w) => `
+    <div style="position:absolute;left:${-offset}px;top:0;width:5120px;bottom:0">
+      <div class="zone" style="left:0;top:40px;width:1706px;bottom:0;display:flex"><div style="width:220px;flex-shrink:0">${rail()}</div><div style="flex:1">${terminal()}</div></div>
+      <div class="zone" style="left:1706px;top:40px;width:1707px;bottom:0">${browser()}</div>
+      <div class="zone" style="left:3413px;top:40px;width:1707px;bottom:0">${mail()}</div>
+    </div>`;
+  // A band slice: the full 5120 band, shifted so desk x `offset` is at the frame's left.
+  const bandSlice = (offset, o = {}) => `<div style="position:absolute;left:${-offset}px;top:0;z-index:2">${band({ width: 5120, ...o })}</div>`;
+
+  // Rule diagrams
+  $("diag-become").innerHTML = `
+    <i style="left:66px;top:8px;width:88px;height:14px;border-radius:5px;border:1px dashed #3dd6f580"></i>
+    <i class="glass glass--float" style="left:30px;top:8px;width:160px;height:90px;border-radius:12px;opacity:.95"></i>
+    <i style="left:66px;top:8px;width:88px;height:14px;border-radius:5px;border:1px dashed #3dd6f5a0"></i>`;
+  $("diag-hang").innerHTML = `
+    <i class="glass" style="left:20px;top:8px;width:180px;height:14px;border-radius:5px"></i>
+    <i style="left:72px;top:10px;width:34px;height:10px;border-radius:4px;background:var(--island-open)"></i>
+    <i class="glass glass--float" style="left:68px;top:26px;width:96px;height:72px;border-radius:9px"></i>`;
+
+  // Launcher: desk x 0–640, the left island has become the card.
+  $("v-launch").innerHTML = `
+    ${bandSlice(0, { parts: ["right"] })}
+    ${deskZones(0)}
+    <div class="launch glass glass--float">
+      <div class="launch__q">${flower(14)}<span>ca<span class="caret"></span></span><span class="spec">Super Space</span></div>
+      <div class="sep"></div>
+      <div class="row is-hot">${icon("calendar", 16, "var(--ink)")}<span>Calendar</span><span class="row__key">↵ open</span></div>
+      <div class="row">${icon("calculator", 16, "var(--ink-2)")}<span>Calculator</span></div>
+      <div class="row">${icon("capture", 16, "var(--ink-2)")}<span>Capture area</span><span class="row__key">⇧⌘4</span></div>
+      <div class="row">${icon("gamepad", 16, "var(--ink-2)")}<span>Arcade</span></div>
+      <div class="row">${icon("palette", 16, "var(--ink-2)")}<span>Design</span></div>
+    </div>
+`;
+
+  // Switcher: desk x 2240–2880; center island grown into the strip.
+  const tiles = [["terminal"], ["mail", 12, true], ["globe"], ["calendar", 1], ["settings"]];
+  $("v-switch").innerHTML = `
+    ${bandSlice(2240, { parts: [] })}
+    ${deskZones(2240)}
+    <div class="switch glass glass--float">
+      <div class="switch__tiles">${tiles.map(([n, c, sel]) => `<div class="tile${sel ? " is-sel" : ""}">${icon(n, 26, "currentColor", 1.6)}${c ? `<span class="badge">${c}</span>` : ""}</div>`).join("")}</div>
+      <div class="switch__name">Mail</div>
+    </div>
+`;
+
+  // Menu: Mail focused, Message open. Desk x 0–416.
+  $("v-menu").innerHTML = `
+    ${bandSlice(0, { app: "Mail", open: "Message", parts: ["left"] })}
+    ${deskZones(0)}
+    <div class="hang sheet glass glass--float" id="menu-sheet" style="top:40px;width:250px">
+      <div class="row">Reply<span class="row__key">⌘R</span></div>
+      <div class="row is-hot">Reply All<span class="row__key">⇧⌘R</span></div>
+      <div class="row">Forward<span class="row__key">⇧⌘F</span></div>
+      <div class="sep"></div>
+      <div class="row">Mark as Unread<span class="row__key">⇧⌘U</span></div>
+      <div class="row">Move to Junk<span class="row__key">X</span></div>
+      <div class="sep"></div>
+      <div class="row" style="padding-left:6px">${icon("check", 12, "var(--ink)", 2)}<span style="margin-left:-4px">Show Remote Images</span></div>
+    </div>`;
+
+  // Audio: desk x 4312–4728, hanging from the spectrum group.
+  $("v-audio").innerHTML = `
+    ${bandSlice(4312, { open: "spectrum", parts: ["right"] })}
+    ${deskZones(4312)}
+    <div class="hang audio glass glass--float" id="audio-sheet" style="top:40px">
+      <div class="kick">OUTPUT</div>
+      <div class="dev is-on">${icon("speaker", 15, "var(--ink)")}<span>Desk speakers</span>${icon("check", 13, "var(--accent)", 2)}</div>
+      <div class="dev">${icon("headphones", 15, "var(--ink-2)")}<span style="color:var(--ink-2)">AirPods Pro</span></div>
+      <div class="slider">${icon("volume", 15)}<div class="slider__track"><i></i><b></b></div><span class="spec" style="color:var(--ink-2)">62</span></div>
+      <div class="np"><div class="np__art">${icon("music", 20, "var(--ink-3)")}</div>
+        <div><div class="np__t">Says</div><div class="np__a">Nils Frahm · Spotify</div><div class="np__bar"><i></i></div></div></div>
+      <div class="np__ctl"><span class="spec">3:12</span><span class="np__btns">${icon("prev", 15)}${icon("pause", 18)}${icon("next", 15)}</span><span class="spec">8:50</span></div>
+      <div style="padding:6px 8px 2px">${leds("spectrum", 2)}</div>
+    </div>`;
+
+  // Calendar: desk x 4704–5120, hanging from the clock.
+  const days = [];
+  for (let d = 27; d <= 30; d++) days.push(`<div class="d mute">${d}</div>`); // Sep 27–30 (Oct 1 is a Thursday)
+  for (let d = 1; d <= 31; d++) {
+    const cls = d === 12 ? "d today" : d === 15 || d === 21 ? "d has-ev" : "d";
+    days.push(`<div class="${cls}"><span>${d}</span></div>`);
+  }
+  $("v-cal").innerHTML = `
+    ${bandSlice(4704, { open: "clock", parts: ["right"] })}
+    ${deskZones(4704)}
+    <div class="hang cal glass glass--float" style="top:40px;right:8px">
+      <div class="cal__head"><b>October 2026</b>${icon("chevL", 15, "var(--ink-2)")}${icon("chevR", 15, "var(--ink-2)")}<span class="cal__today">Today</span></div>
+      <div class="cal__grid">${["S", "M", "T", "W", "T", "F", "S"].map((d) => `<div class="dow">${d}</div>`).join("")}${days.join("")}</div>
+      <div class="cal__next">
+        <div class="ev"><i style="background:var(--enamel-iris)"></i><div><b>Design review</b><span>Thu 15 · 10:00 · Cal.com</span></div><span>in 3 days</span></div>
+      </div>
+    </div>`;
+
+  // Align hanging sheets to the group that opened them.
+  document.fonts.ready.then(() => {
+    const frame = (id) => $(id).getBoundingClientRect();
+    const msg = $("v-menu").querySelector(".menu.is-open").getBoundingClientRect();
+    $("menu-sheet").style.left = msg.left - frame("v-menu").left - 8 + "px";
+    const sp = $("v-audio").querySelector(".grp.is-open").getBoundingClientRect();
+    $("audio-sheet").style.left = sp.left - frame("v-audio").left + "px";
+  });
+</script>
+</body>
+</html>

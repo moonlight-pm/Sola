@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / Zones</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .variant { padding: 28px 0 32px; border-top: 1px solid var(--hairline); }
+  .variant__head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 16px; }
+  .variant__head h3 { font: 600 20px/1 var(--f-display); margin: 0; letter-spacing: -0.2px; }
+  .variant__head .tag { font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; padding: 4px 7px; border-radius: 5px; background: #ffffff0f; color: var(--ink-2); }
+  .variant__head .tag.is-pick { background: var(--accent-soft); color: var(--accent); }
+  .views { display: grid; grid-template-columns: 640px 300px 300px; gap: 28px; }
+  .views > div { display: flex; flex-direction: column; gap: 8px; }
+  .mini, .crop { position: relative; height: 270px; overflow: hidden; border-radius: 6px; outline: 1px solid var(--hairline); outline-offset: -0.5px; }
+  .mini > div { transform: scale(0.25); transform-origin: 0 0; }
+  .crop > div { position: absolute; }
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 20px; }
+  .facts div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+  .facts b { display: block; font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; color: var(--ink-3); margin-bottom: 7px; text-transform: uppercase; }
+  .facts .num { font-family: var(--f-spec); color: var(--ink); font-size: 12px; }
+
+  .pick { display: grid; grid-template-columns: 300px 1fr; gap: 40px; padding: 28px 32px; border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--accent-edge); margin-top: 8px; }
+  .pick h3 { font: 600 24px/1.15 var(--f-display); margin: 6px 0 0; letter-spacing: -0.3px; }
+  .pick ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .pick li { font: 400 13.5px/21px var(--f-chrome); color: var(--ink-2); }
+  .pick li b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS · THE ZONE QUESTION</span><span class="head__title">Flush, gapped, or islands only</span></div>
+  <div class="head__lead">Floating chrome raises a fair question: should the tiles float too? Three treatments of the same 5120 × 2160 desk, each as a quarter of the desk at 1:4 and as two 1:1 crops: where the desk meets the output's corner, and where Workspaces meets Browser.</div>
+</div>
+
+<div id="variants"></div>
+
+<div class="pick">
+  <div><div class="label" style="margin:0">Recommendation</div><h3>Islands only. Keep the zones flush.</h3></div>
+  <ol>
+    <li><b>A corner should mean "this floats".</b> Graphite already says only floats cast shadows. With square tiles, rounded corners and shadows mark the same set of things: shell surfaces and floating windows.</li>
+    <li><b>Gaps ask every app for corners.</b> River 0.4.5 does not round or clip a client's buffer, so each kit app would clip its own 12 px corners and give up its full opaque region. Xwayland windows and other foreign apps would stay square.</li>
+    <li><b>The band is the cheap half.</b> It is one opaque surface 12 px taller than today's bar, and the GPU idle work on tiled windows stays as it is.</li>
+    <li><b>Gapped can come back as a preset.</b> Omarchy 4 ships rounded and sharp as one control. If Sola wants that, it is zoning geometry plus River work, not a v1 decision.</li>
+  </ol>
+</div>
+
+<script>
+  const V = [
+    {
+      kind: "flush", name: "Flush", tag: "GRAPHITE TODAY",
+      facts: [
+        ["Usable", `<span class="num">5120 × 2132</span><br>A 28 px strip, then tiles edge to edge.`],
+        ["Corners", "None on tiles. The float rounds all four and wears the titlebar."],
+        ["Compositor", "Tiles are opaque with a full opaque region. Nothing behind them is drawn."],
+        ["Reads as", "One instrument panel. Seams are changes of surface color."],
+      ],
+    },
+    {
+      kind: "gapped", name: "Gapped", tag: "HYPRLAND · OMARCHY",
+      facts: [
+        ["Usable", `<span class="num">3 × 1696 × 2110</span><br>1.6% less than Graphite; each tile loses 10 px across and 22 down.`],
+        ["Corners", "Every tile clips its own 12 px corners. Apps the kit does not draw stay square."],
+        ["Compositor", "Tiles drop four corner squares from their opaque region; the ground under the gutters is drawn."],
+        ["Reads as", "A set of cards. The islands fit right in, and so does every tile."],
+      ],
+    },
+    {
+      kind: "islands", name: "Islands only", tag: "PROPOSED", pick: true,
+      facts: [
+        ["Usable", `<span class="num">5120 × 2120</span><br>0.6% less than Graphite; the band is 12 px taller.`],
+        ["Corners", "Only on things that float: islands, sheets, cards, and floating windows."],
+        ["Compositor", "Same as Graphite. The band is still one opaque surface."],
+        ["Reads as", "Graphite's panel, with its chrome lifted off the edge."],
+      ],
+    },
+  ];
+  document.getElementById("variants").innerHTML = V.map((v) => `
+    <div class="variant">
+      <div class="variant__head"><h3>${v.name}</h3><span class="tag${v.pick ? " is-pick" : ""}">${v.tag}</span></div>
+      <div class="views">
+        <div><div class="mini">${fullDesk(v.kind)}</div><span class="spec">Desk x 0–2560, y 0–1080, 1:4</span></div>
+        <div><div class="crop"><div style="left:0;top:0">${fullDesk(v.kind)}</div></div><span class="spec">Desk x 0–300, 1:1</span></div>
+        <div><div class="crop"><div style="left:-1556px;top:0">${fullDesk(v.kind)}</div></div><span class="spec">Desk x 1556–1856, 1:1 · zone seam at 1706</span></div>
+      </div>
+      <div class="facts">${v.facts.map(([k, t]) => `<div><b>${k}</b>${t}</div>`).join("")}</div>
+    </div>`).join("");
+</script>
+</body>
+</html>

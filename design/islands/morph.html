@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / The morph</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .stage { width: 1296px; height: 520px; }
+  .stage .zone { left: 0; right: 0; top: 40px; bottom: 0; }
+
+  #morph {
+    position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+    z-index: 4; overflow: hidden;
+    border-radius: var(--r-island);
+    transition-property: width, height, border-radius, box-shadow, opacity;
+  }
+  #morph.is-float {
+    box-shadow: inset 0 1px 0 var(--island-rim), 0 0 0 1px var(--island-edge), var(--island-shadow);
+  }
+  .layer {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    opacity: 0; transition: opacity 90ms ease-out; pointer-events: none;
+  }
+  .layer.is-on { opacity: 1; transition: opacity 140ms ease-out; pointer-events: auto; }
+  .layer--pill { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px; white-space: nowrap; font-size: 13px; line-height: 16px; }
+  .layer--card { width: 420px; }
+
+  .controls { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .step {
+    position: relative; overflow: hidden;
+    display: flex; flex-direction: column; gap: 4px;
+    width: 200px; padding: 10px 12px; border-radius: var(--r-row);
+    background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--hairline);
+    cursor: pointer; user-select: none;
+  }
+  .step b { font: 500 13px/1 var(--f-chrome); }
+  .step .spec { white-space: nowrap; }
+  .step i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent); }
+  .step.is-on { box-shadow: inset 0 0 0 1px var(--accent-edge); }
+  .toggle { margin-left: auto; }
+  .toggle .btn { cursor: pointer; user-select: none; }
+
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .kf { display: flex; flex-direction: column; gap: 12px; }
+  .kf__frame { position: relative; height: 170px; border-radius: var(--radius-lg); overflow: hidden; background: #0f1218; outline: 1px solid var(--hairline); outline-offset: -0.5px; }
+  .kf__frame .band { height: 24px; }
+  .kf__scale { position: absolute; z-index: 3; top: 3.6px; left: 50%; transform: translateX(-50%) scale(0.6); transform-origin: 50% 0; }
+  .kf__scale .glass { border-radius: var(--r-island); }
+  .kf__scale .glass.card { border-radius: var(--r-card); }
+  .kf__ghost { position: absolute; z-index: 2; left: 50%; transform: translateX(-50%); border: 1px dashed #3dd6f580; border-radius: 6px; pointer-events: none; }
+  .kf h4 { font: 600 15px/1 var(--f-display); margin: 0; display: flex; justify-content: space-between; align-items: baseline; }
+  .kf h4 .spec { font-size: 11px; }
+  .kf p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0; min-height: 57px; }
+  .kf svg.curve { display: block; }
+  .kf .timing { font: 400 11px/16px var(--f-spec); color: var(--ink); }
+  .kf .timing span { color: var(--ink-3); }
+
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px 40px; }
+  .rules h4 { font: 600 15px/1.2 var(--f-display); margin: 0 0 8px; }
+  .rules p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS · SIGNATURE</span><span class="head__title">The morph</span></div>
+  <div class="head__lead">The center island does not open a window; it becomes one. Claude stops to ask, the island widens to say so, grows into a card with two actions, opens to show the command, and closes back to a pill when you answer. Springs size the shell; content only fades. Click a step to jump to it.</div>
+</div>
+
+<div class="section">
+  <div class="label">Live · desk x 1912–3208 at 1:1</div>
+  <div class="frame stage" id="stage">
+    <div class="band" style="width:1296px"></div>
+    <div class="zone" id="stage-zone"></div>
+    <div id="morph" class="glass"></div>
+  </div>
+  <div class="controls" id="steps"></div>
+</div>
+
+<div class="section">
+  <div class="label">Keyframes · at 0.6 so the card fits; dashed is the state it closes from</div>
+  <div class="strip" id="strip"></div>
+</div>
+
+<div class="section">
+  <div class="label">Rules</div>
+  <div class="rules">
+    <div><h4>Size springs, content fades</h4><p>Text never scales. Each state's content is laid out at its final size and revealed by the island's edge as it grows.</p></div>
+    <div><h4>Grow may overshoot; shrink never</h4><p>The card and the open card overshoot 4% and 2%. Closing is critically damped, so the pill lands on the band without a bounce.</p></div>
+    <div><h4>Leave first, arrive late</h4><p>Outgoing content is gone in 90 ms. Incoming content fades in over 140 ms once the shell is 40% through its spring.</p></div>
+    <div><h4>350 ms is the ceiling</h4><p>The longest step is the card, 320 ms. A morph that needs longer is the wrong surface.</p></div>
+    <div><h4>Reduced motion</h4><p>No springs. The island fades out in 80 ms, takes its new size, and fades in over 120 ms. The toggle above shows it.</p></div>
+    <div><h4>Frames only while moving</h4><p>Iced presents every window after any message, so the shell asks for frames during a morph and stops when it settles. A waiting card holds still.</p></div>
+  </div>
+</div>
+
+<script>
+  document.getElementById("stage-zone").innerHTML = browser();
+
+  // Damped spring (mass 1), sampled into a CSS linear() easing.
+  function springAt(k, z, t) {
+    const w0 = Math.sqrt(k);
+    if (z < 1) {
+      const wd = w0 * Math.sqrt(1 - z * z);
+      return 1 - Math.exp(-z * w0 * t) * (Math.cos(wd * t) + ((z * w0) / wd) * Math.sin(wd * t));
+    }
+    return 1 - (1 + w0 * t) * Math.exp(-w0 * t);
+  }
+  function springEasing(s, n = 48) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) pts.push(i === n ? 1 : +springAt(s.k, s.z, (i / n) * s.d).toFixed(4));
+    return `linear(${pts.join(", ")})`;
+  }
+  const SPRING = {
+    whisper: { k: 785, z: 0.86, d: 0.22, note: "spring k 785, ζ 0.86", over: "width only" },
+    card: { k: 530, z: 0.72, d: 0.32, note: "spring k 530, ζ 0.72", over: "4% overshoot" },
+    expanded: { k: 590, z: 0.78, d: 0.28, note: "spring k 590, ζ 0.78", over: "2% overshoot" },
+    collapse: { k: 960, z: 1.0, d: 0.24, note: "critically damped, ζ 1", over: "no overshoot" },
+    rest: { k: 785, z: 0.86, d: 0.22, note: "spring k 785, ζ 0.86", over: "width only" },
+  };
+
+  const STATES = [
+    { id: "rest", name: "Rest", html: live.working(), pill: true, dwell: 1800,
+      why: "An agent pane is working. A ring and the time it has run." },
+    { id: "whisper", name: "Whisper", html: live.waiting(), pill: true, dwell: 1500,
+      why: "Claude stops to ask. The island widens to say who is waiting and for what." },
+    { id: "card", name: "Card", html: waitingCard(), pill: false, dwell: 2200,
+      why: "Held 900 ms, or the pointer enters. Height grows down, corners open to 18, the shadow arrives." },
+    { id: "expanded", name: "Expanded", html: waitingCard({ expanded: true }), pill: false, dwell: 2600,
+      why: "Hover the card or press ↓. It shows what Claude changed and the command it wants to run." },
+    { id: "collapse", name: "Collapse", html: live.building(), pill: true, dwell: 1600,
+      why: "Run build. The card's content leaves, then the shell closes to a pill that says what started." },
+  ];
+
+  document.fonts.ready.then(() => {
+  // Build the layers inside the live island and measure each state.
+  const morph = document.getElementById("morph");
+  morph.innerHTML = STATES.map((s) =>
+    `<div class="layer ${s.pill ? "layer--pill" : "layer--card"}" data-id="${s.id}">${s.html}</div>`).join("");
+  const layers = Object.fromEntries([...morph.querySelectorAll(".layer")].map((l) => [l.dataset.id, l]));
+  const size = {};
+  STATES.forEach((s) => {
+    const l = layers[s.id];
+    size[s.id] = { w: l.offsetWidth, h: s.pill ? 28 : l.offsetHeight, r: s.pill ? 10 : 18 };
+  });
+
+  const reduced = { on: window.matchMedia("(prefers-reduced-motion: reduce)").matches };
+  let idx = 0, timer = null, prog = null;
+
+  function apply(i, instant) {
+    const s = STATES[i], z = size[s.id], sp = SPRING[s.id];
+    Object.values(layers).forEach((l) => l.classList.remove("is-on"));
+    const show = () => {
+      morph.style.width = z.w + "px";
+      morph.style.height = z.h + "px";
+      morph.style.borderRadius = z.r + "px";
+      morph.classList.toggle("is-float", !s.pill);
+    };
+    if (instant) {
+      morph.style.transitionDuration = "0s";
+      show();
+      layers[s.id].classList.add("is-on");
+      return;
+    }
+    if (reduced.on) {
+      morph.style.transitionDuration = "80ms";
+      morph.style.transitionTimingFunction = "ease-out";
+      morph.style.opacity = 0;
+      setTimeout(() => {
+        morph.style.transitionDuration = "0s";
+        show();
+        layers[s.id].classList.add("is-on");
+        requestAnimationFrame(() => {
+          morph.style.transitionDuration = "120ms";
+          morph.style.opacity = 1;
+        });
+      }, 80);
+      return;
+    }
+    morph.style.opacity = 1;
+    morph.style.transitionDuration = `${sp.d}s, ${sp.d}s, ${sp.d}s, ${sp.d}s, 0s`;
+    morph.style.transitionTimingFunction = springEasing(sp);
+    // Shrinking: content leaves before the shell closes.
+    const shrinking = z.h < morph.offsetHeight;
+    setTimeout(show, shrinking ? 90 : 0);
+    setTimeout(() => layers[s.id].classList.add("is-on"), (shrinking ? 90 : 0) + sp.d * 400);
+  }
+
+  const stepsEl = document.getElementById("steps");
+  stepsEl.innerHTML = STATES.map((s, i) => `<div class="step" data-i="${i}"><b>${s.name}</b><span class="spec">${SPRING[s.id].d * 1000} ms · ${SPRING[s.id].over}</span><i></i></div>`).join("")
+    + `<div class="toggle"><span class="btn btn--quiet" id="rm">Reduced motion: off</span></div>`;
+  const stepEls = [...stepsEl.querySelectorAll(".step")];
+
+  function go(i, instant = false) {
+    idx = i;
+    clearTimeout(timer);
+    apply(i, instant);
+    stepEls.forEach((e, j) => {
+      e.classList.toggle("is-on", j === i);
+      const bar = e.querySelector("i");
+      bar.style.transition = "none";
+      bar.style.width = j < i ? "100%" : "0";
+    });
+    const bar = stepEls[i].querySelector("i");
+    requestAnimationFrame(() => {
+      bar.style.transition = `width ${STATES[i].dwell}ms linear`;
+      bar.style.width = "100%";
+    });
+    timer = setTimeout(() => go((i + 1) % STATES.length), STATES[i].dwell);
+  }
+  stepEls.forEach((e) => e.addEventListener("click", () => go(+e.dataset.i)));
+  const rm = document.getElementById("rm");
+  const paintRm = () => (rm.textContent = `Reduced motion: ${reduced.on ? "on" : "off"}`);
+  rm.addEventListener("click", () => { reduced.on = !reduced.on; paintRm(); });
+  paintRm();
+  go(0, true);
+
+  // Keyframe strip: static states at 0.6, the previous state dashed, and each spring's curve.
+  const strip = document.getElementById("strip");
+  strip.innerHTML = STATES.map((s, i) => {
+    const z = size[s.id], prev = size[STATES[(i + STATES.length - 1) % STATES.length].id];
+    const sp = SPRING[s.id];
+    const card = !s.pill;
+    const box = `<div class="glass${card ? " glass--float card" : ""}" style="width:${z.w}px;height:${z.h}px;overflow:hidden;position:relative">
+        <div class="${s.pill ? "layer layer--pill" : "layer layer--card"} is-on" style="opacity:1">${s.html}</div></div>`;
+    const ghost = i === 0 ? "" :
+      `<div class="kf__ghost" style="top:3.6px;width:${prev.w * 0.6}px;height:${prev.h * 0.6}px"></div>`;
+    // Curve: value over the step's duration, 0..1 with overshoot headroom.
+    // Value over the step's duration; y spans 0..1.1 so overshoot shows.
+    const W = 150, H = 56, pts = [];
+    let peak = 0;
+    const y = (v) => H - 2 - (v / 1.1) * (H - 4);
+    for (let j = 0; j <= 80; j++) {
+      const v = springAt(sp.k, sp.z, (j / 80) * sp.d);
+      peak = Math.max(peak, v);
+      pts.push(`${((j / 80) * W).toFixed(1)},${y(v).toFixed(2)}`);
+    }
+    const curve = `<div style="display:flex;align-items:flex-end;gap:10px"><svg class="curve" width="${W}" height="${H}">
+        <line x1="0" x2="${W}" y1="${y(1)}" y2="${y(1)}" stroke="#ffffff2e" stroke-dasharray="2 3"/>
+        <polyline points="${pts.join(" ")}" fill="none" stroke="var(--accent)" stroke-width="1.5"/></svg>
+        <span class="spec">peak ${(peak * 100).toFixed(1)}%</span></div>`;
+    return `<div class="kf">
+      <div class="kf__frame"><div class="band" style="width:100%"></div><div class="kf__scale">${box}</div>${ghost}</div>
+      <h4>${i + 1}. ${s.name}<span class="spec">${z.w} × ${z.h} · r ${z.r}</span></h4>
+      <p>${s.why}</p>
+      ${i === 0 ? '<div class="timing">enters from 5 · <span>' + sp.d * 1000 + " ms · " + sp.note + "</span></div>" : '<div class="timing">' + sp.d * 1000 + " ms · <span>" + sp.note + " · " + sp.over + "</span></div>"}
+      ${curve}
+    </div>`;
+  }).join("");
+  });
+</script>
+</body>
+</html>

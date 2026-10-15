@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / One tab list</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<link rel="stylesheet" href="sidebar.css">
+<link rel="stylesheet" href="tabs.css">
+<script src="next.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 06</span><span class="head__title">One tab list</span></div>
+  <div class="head__lead">The master bar takes over every app's tabs. The browser's strip, the Projects rail, and the terminal's tabs go away; each page, shell, and agent session is a tab in the bar. A zone holds tabs of any kind and shows one, and its titlebar is the titlebar of what it shows. The workspace switcher is back in the top row, and the bar lists only the workspace showing there.</div>
+</div>
+
+<div class="section">
+  <div class="label">The desk · a 2560 × 1080 output at 1:2 · Sola is showing</div>
+  <div id="desk"></div>
+</div>
+
+<div class="section">
+  <div class="label">Anatomy · the bar at 1:1</div>
+  <div class="row2">
+    <div id="anat"></div>
+    <div class="notes">
+      <div><b>One workspace</b>The bar heads with the workspace the top row says is showing, and lists only its tabs. Switching workspace swaps the bar with the desk.</div>
+      <div><b>Zones hold anything</b>Center has two pages and two shells. Order is yours: drag rows to arrange, across kinds.</div>
+      <div><b>Agents are tabs</b>Each agent session is a row in a zone, with its mark: kit-foundation working, menubar-pass waiting, mail-focus done. The Projects rail is gone.</div>
+      <div><b>New tabs</b>The + on a zone header opens a page, a shell, or an agent there; ⌘T and ⌘⇧Enter add to the focused zone.</div>
+      <div><b>Empty zones</b>A zone with no tabs keeps its header as a drop target and gives its width to the others.</div>
+      <div><b>The stack count</b>A titlebar shows how many tabs its zone holds (4), so you know without looking left.</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">One zone, mixed tabs · the bar and the Center zone, 1:1</div>
+  <div id="pairs"></div>
+</div>
+
+<script src="tabs.js"></script>
+</body>
+</html>

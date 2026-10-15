@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 03 Launcher, switcher, notices</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .pair-stages { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .stage { height: 540px; }
+  .stage__desk { position: absolute; inset: 0; display: grid; grid-template-columns: 26% 1fr 30%; }
+  .stage__desk > div { box-shadow: inset -1px 0 0 #ffffff0a; padding: 22px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .ghost { height: 7px; border-radius: 2px; background: #ffffff10; }
+  .term { font-family: var(--font-mono-i); font-size: 12px; line-height: 19px; color: #8b94a8; }
+  .center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+
+  .launcher { width: 540px; overflow: hidden; }
+  .launcher__field { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 16px; box-shadow: inset 0 -1px 0 var(--seam-hi); }
+  .launcher__field [data-icon] { width: 17px; height: 17px; color: var(--ink-3); }
+  .launcher__q { font-size: 18px; color: var(--ink); display: flex; align-items: center; }
+  .caret { width: 2px; height: 20px; background: var(--fn-focus); margin-left: 1px; }
+  .launcher__sp { flex: 1; }
+  .launcher__rows { padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .lrow { position: relative; height: 40px; border-radius: 7px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 22px; }
+  .lrow [data-icon] { width: 18px; height: 18px; color: var(--ink-2); }
+  .lrow__name { font-size: 14px; color: var(--ink); flex: 1; }
+  .lrow--sel { background: var(--module-hi); box-shadow: inset 0 0 0 1px var(--seam); }
+  .lrow--sel .led { position: absolute; left: 9px; top: 18px; }
+  .launcher__foot { display: flex; gap: 18px; align-items: center; padding: 10px 16px; background: var(--panel); box-shadow: inset 0 1px 0 var(--seam-hi); }
+  .launcher__foot > span { display: flex; gap: 7px; align-items: center; }
+
+  .switcher { padding: 18px 18px 14px; display: flex; flex-direction: column; align-items: center; gap: 12px; border-radius: 16px; }
+  .tiles { display: flex; gap: 14px; }
+  .tile { position: relative; width: 68px; height: 68px; border-radius: 14px; background: #17181b; box-shadow: inset 0 0 0 1px var(--seam-hi); display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+  .tile [data-icon] { width: 30px; height: 30px; }
+  .tile--sel { color: var(--ink); background: #1d1f23; box-shadow: inset 0 0 0 1px #ffffff24, 0 0 0 2px var(--panel), 0 0 0 4px var(--fn-focus); }
+  .tile .readout { position: absolute; top: -7px; right: -7px; padding: 4px 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px #ffffff14, 0 0 0 2px var(--module); }
+  .switcher__name { font-size: 13px; color: var(--ink); height: 16px; }
+  .switcher__names { display: flex; gap: 14px; }
+  .switcher__names > span { width: 68px; text-align: center; }
+
+  .notice-stage { height: 400px; }
+  .notices { position: absolute; top: 40px; right: 12px; display: flex; flex-direction: column; gap: 10px; width: 372px; }
+  .notice { overflow: hidden; }
+  .notice__band { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
+  .notice__band [data-icon] { width: 13px; height: 13px; color: var(--ink-2); }
+  .notice__src { flex: 1; }
+  .notice__x { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+  .notice__x [data-icon] { width: 12px; height: 12px; }
+  .notice__body { display: grid; grid-template-columns: 12px 1fr; gap: 10px; padding: 12px 14px 14px 14px; }
+  .notice__mark { padding-top: 4px; }
+  .notice__title { font-size: 13px; font-weight: 600; color: var(--ink); line-height: 18px; }
+  .notice__text { font-size: 12.5px; color: var(--ink-3); line-height: 18px; margin-top: 2px; }
+  .pile { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; height: 34px; }
+  .pile__l { display: flex; align-items: center; gap: 10px; }
+  .notes { position: absolute; left: 28px; top: 70px; width: 600px; display: flex; flex-direction: column; }
+  .notes .explain__row { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 13px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .notes .explain__row:last-child { box-shadow: none; }
+  .caps { display: flex; flex-direction: column; gap: 10px; }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="03"></span><div class="head__title">Launcher, switcher, notices</div></div>
+    <div class="head__lead">The surfaces that interrupt. Each is one module on the panel black, with a band where a label belongs and a lamp where a state does. Names and sentences stay SF Pro; counts and times become readouts.</div>
+  </div>
+
+  <div class="pair-stages">
+    <div class="caps">
+      <span class="lbl">Launcher · Super+Space · 1:1</span>
+      <div class="stage">
+        <div class="stage__desk">
+          <div><div class="ghost" style="width:70%"></div><div class="ghost" style="width:52%"></div><div class="ghost" style="width:60%"></div></div>
+          <div class="term">$ cargo make build sola-kit<br>&nbsp;&nbsp;Compiling iced_wgpu v0.14.0<br>&nbsp;&nbsp;Compiling sola-kit v0.1.0</div>
+          <div><div class="ghost" style="width:80%"></div><div class="ghost" style="width:64%"></div></div>
+        </div>
+        <div class="stage__scrim"></div>
+        <div class="center">
+          <div class="module launcher">
+            <div class="launcher__field"><span data-icon="search"></span><span class="launcher__q">ca<span class="caret"></span></span><span class="launcher__sp"></span><span class="kc kc--lbl">esc</span></div>
+            <div class="launcher__rows">
+              <div class="lrow lrow--sel"><span class="led led--on" style="--c: var(--fn-focus)"></span><span data-icon="calendar"></span><span class="lrow__name">Calendar</span><span class="lbl lbl--9">App</span></div>
+              <div class="lrow"><span data-icon="calculator"></span><span class="lrow__name">Calculator</span><span class="lbl lbl--9 lbl--lo">App</span></div>
+              <div class="lrow"><span data-icon="gamepad"></span><span class="lrow__name">Arcade</span><span class="lbl lbl--9 lbl--lo">App</span></div>
+              <div class="lrow"><span data-icon="capture"></span><span class="lrow__name">Capture area</span><span class="chord" style="display:flex;gap:3px"><span class="kc" style="color:var(--fn-system)">⌘</span><span class="kc">⇧</span><span class="kc">4</span></span></div>
+            </div>
+            <div class="launcher__foot">
+              <span><span class="kc">↵</span><span class="lbl lbl--9">Open</span></span>
+              <span><span class="kc">↑</span><span class="kc">↓</span><span class="lbl lbl--9">Move</span></span>
+              <span><span class="kc kc--lbl">esc</span><span class="lbl lbl--9">Close</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caps">
+      <span class="lbl">Switcher · Super+Tab · 1:1</span>
+      <div class="stage">
+        <div class="stage__desk">
+          <div><div class="ghost" style="width:70%"></div><div class="ghost" style="width:52%"></div><div class="ghost" style="width:60%"></div></div>
+          <div class="term">$ git status<br>On branch master<br>Untracked files:<br>&nbsp;&nbsp;design/instrument/</div>
+          <div><div class="ghost" style="width:80%"></div><div class="ghost" style="width:64%"></div></div>
+        </div>
+        <div class="center">
+          <div class="module switcher">
+            <div class="tiles">
+              <div class="tile"><span data-icon="terminal"></span></div>
+              <div class="tile tile--sel"><span data-icon="mail"></span><span class="readout"><span data-dots="12" data-font="35" data-cols="7" data-align="right" style="color: var(--fn-focus)"></span></span></div>
+              <div class="tile"><span data-icon="globe"></span></div>
+              <div class="tile"><span data-icon="calendar"></span><span class="readout"><span data-dots="1" data-font="35" data-cols="7" data-align="right" style="color: var(--fn-focus)"></span></span></div>
+              <div class="tile"><span data-icon="settings"></span></div>
+            </div>
+            <div class="switcher__names"><span></span><span class="switcher__name">Mail</span><span></span><span></span><span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="note" style="max-width: 1000px"><b>Launcher.</b> The selected row carries a cyan lamp, not a fill alone. The right column says what a row is: an engraved APP, or the chord for an action you could have typed. The footer is the only instruction, in keycaps. <b>Switcher.</b> The cyan ring is focus. Unread counts sit in a small readout window at the tile's corner, so a count of 12 and a count of 1 take the same space.</div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Notices · top right of the desk · 1:1</span>
+    <div class="stage notice-stage">
+      <div data-part="bar" data-preset="unread" data-set='{"width":1296,"elide":{"menus":2,"right":["extras","agents","audio","clock"]}}'></div>
+      <div class="notes">
+        <div class="explain__row"><span class="lbl lbl--ink">Band</span><span class="note">The source, engraved, on panel black. The time is a readout on the right, then the close button.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">Lamp</span><span class="note">A notice that needs you carries the rail's shape and lamp: the orange diamond for an agent that is waiting. Plain notices carry none.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">Copy</span><span class="note">Title in SF Pro semibold, body in SF Pro. A notice is sentences, so it is type.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">Pile</span><span class="note">Missed notices fold into one row with a readout. The bell in the bar shows the same number.</span></div>
+      </div>
+      <div class="notices">
+        <div class="module notice">
+          <div class="module__band notice__band"><span data-icon="terminal"></span><span class="lbl lbl--9 notice__src">Workspaces · sola</span><span data-dots="14:28" data-font="35" style="color: var(--ink-2)"></span><span class="notice__x"><span data-icon="x"></span></span></div>
+          <div class="notice__body">
+            <span class="notice__mark"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="2.2" y="2.2" width="5.6" height="5.6" transform="rotate(45 5 5)" fill="var(--lamp-look)"/></svg></span>
+            <div><div class="notice__title">kit-foundation is waiting</div><div class="notice__text">Claude asks to run cargo make build.</div></div>
+          </div>
+        </div>
+        <div class="module notice">
+          <div class="module__band notice__band"><span data-icon="calendar"></span><span class="lbl lbl--9 notice__src">Calendar · in 15 min</span><span data-dots="14:30" data-font="35" style="color: var(--ink-2)"></span><span class="notice__x"><span data-icon="x"></span></span></div>
+          <div class="notice__body">
+            <span></span>
+            <div><div class="notice__title">Foundation review</div><div class="notice__text">Today, 14:45 to 15:15. Bring the menubar screenshots.</div></div>
+          </div>
+        </div>
+        <div class="module pile">
+          <span class="pile__l"><span data-icon="bell" style="color: var(--ink-2)"></span><span class="note" style="color: var(--ink-2)">Missed while you were away</span></span>
+          <span class="readout"><span data-dots="3" data-font="35" style="color: var(--fn-focus)"></span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

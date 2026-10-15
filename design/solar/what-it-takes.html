@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / What it takes</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start; }
+  .tier { border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--hairline); background: var(--raised); overflow: hidden; }
+  .tier__head { padding: 16px 18px; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--hairline); }
+  .tier__head b { font-family: var(--font-display); font-size: 20px; font-weight: 600; }
+  .tier__head span { font-size: 12px; color: var(--text-3); }
+  .item { padding: 14px 18px 16px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px; }
+  .item:first-of-type { border-top: 0; }
+  .item h4 { margin: 0; font-size: 14px; font-weight: 600; line-height: 19px; }
+  .item p { margin: 0; color: var(--text-2); font-size: 13px; line-height: 20px; }
+  .item code, .risk code { font-family: var(--font-mono); font-size: 12px; color: var(--text); background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+  .paths { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+  .paths span { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); line-height: 16px; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .risk { display: grid; grid-template-columns: 150px 1fr; gap: 14px; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 13px; line-height: 20px; color: var(--text-2); }
+  .risk b { color: var(--text); font-weight: 600; }
+  .order { display: flex; flex-direction: column; gap: 0; }
+  .order div { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 13px; line-height: 20px; color: var(--text-2); }
+  .order b { font-family: var(--font-figure); font-weight: 400; color: var(--signal); }
+  .order strong { color: var(--text); font-weight: 600; }
+  .ask { border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--signal-edge); background: var(--signal-soft); padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; }
+  .ask h4 { margin: 0; font-size: 14px; color: var(--signal); }
+  .ask div { font-size: 13px; line-height: 20px; color: var(--text); }
+</style>
+</head>
+<body class="l-night">
+<div class="page">
+  <div class="head">
+    <div class="head__row"><div class="head__num">iced 0.14</div><div class="head__title">What it takes</div></div>
+    <div class="head__lead">Solar is a theme change, not a renderer change. Every surface stays opaque, nothing blurs, nothing new composites in River. The work sits in the places that assume the desk is always dark, and in one small scheduler that knows where the sun is.</div>
+  </div>
+
+  <div class="tiers">
+    <div class="tier">
+      <div class="tier__head"><b>Cheap</b><span>days</span></div>
+      <div class="item">
+        <h4>Three presets on the bus</h4>
+        <p>Named themes already persist through <code>Topic::CustomTheme</code>. <code>solar-dawn</code>, <code>solar-day</code>, and <code>solar-dusk</code> pass <code>is_valid_theme_name</code>; Night is the built-in Default.</p>
+        <div class="paths"><span>crates/sola-core/src/theme/types.rs</span><span>crates/sola-bus/src/topics.rs</span><span>~/.config/sola/theme/presets/&lt;name&gt;.yaml</span></div>
+      </div>
+      <div class="item">
+        <h4>Sun times, offline</h4>
+        <p>The NOAA sunrise equation is about sixty lines on <code>chrono</code>, which the shell already depends on. Coordinates default from the time zone's line in zone1970.tab.</p>
+        <div class="paths"><span>crates/sola-shell/Cargo.toml</span><span>/etc/zoneinfo/zone1970.tab · +394421−1045903</span></div>
+      </div>
+      <div class="item">
+        <h4>The horizon and the sun</h4>
+        <p>A 1px row at the bar's foot and a small sun widget, moved by the minute tick that already redraws the clock. The bar's tokens gain <code>shell-horizon</code> through <code>ShellStyle</code>.</p>
+        <div class="paths"><span>crates/sola-shell/src/menubar/view.rs</span><span>crates/sola-shell/src/components/clock.rs</span><span>crates/sola-kit/src/theme.rs · ShellStyle</span></div>
+      </div>
+      <div class="item">
+        <h4>Light rows in the clock dropdown</h4>
+        <p>The calendar panel gains sunrise, sunset, day length, and the next change above its month grid. <code>CARD_HEIGHT</code> 320 grows by about 150.</p>
+        <div class="paths"><span>crates/sola-shell/src/calendar.rs</span></div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier__head"><b>Medium</b><span>a week or two</span></div>
+      <div class="item">
+        <h4>The scheduler</h4>
+        <p>The shell emits a blended <code>Topic::Theme</code> once a minute during a fade. Kit apps already rebuild theme, fonts, and selection on each one. The topic is persistent, so a fade rewrites theme/current.yaml forty times: acceptable, or move fades to a non-persistent topic.</p>
+        <div class="paths"><span>crates/sola-shell/src/app/bus.rs</span><span>crates/sola-kit/src/app.rs · apply_theme_topic</span></div>
+      </div>
+      <div class="item">
+        <h4>A kit that knows light from dark</h4>
+        <p><code>extended_from_atoms</code> pins <code>is_dark: true</code>; derive it from the background. Edges are white mixes: <code>mix_white</code> has 68 calls in 21 files and needs an ink mix by day. <code>CHROME_SURFACE</code> is a const #121722 used 31 times.</p>
+        <div class="paths"><span>crates/sola-kit/src/theme.rs:173</span><span>crates/sola-kit/src/components/style.rs:64, :73</span></div>
+      </div>
+      <div class="item">
+        <h4>Depth as tokens</h4>
+        <p>The card's shadow is a fixed black at 28% and the accent glow is built from the accent. Both become per-light tokens: popover, float, and focus.</p>
+        <div class="paths"><span>crates/sola-kit/src/components/card.rs:39</span><span>crates/sola-kit/src/components/style.rs:319 · accent_glow</span></div>
+      </div>
+      <div class="item">
+        <h4>Terminal by day</h4>
+        <p><code>Palette::from_kit_theme</code> lightens every bright slot and maps ANSI blue to the accent. Day needs brights that step toward ink; dawn and dusk need their own blue.</p>
+        <div class="paths"><span>crates/sola-terminal/src/term_view.rs:308, :445</span></div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier__head"><b>Hard</b><span>the long tail</span></div>
+      <div class="item">
+        <h4>Every hardcoded dark</h4>
+        <p>sola-shell alone has 30 literal colors, 27 of them in the stats drops (P6). Apps have their own. Each one looks wrong on white, and the sweep goes app by app, checked in the storybook's theme page first.</p>
+        <div class="paths"><span>crates/sola-shell/src/stats/view.rs</span><span>crates/sola-kit/src/storybook/pages/theme.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Web pages</h4>
+        <p>cef 147 has <code>set_chrome_color_scheme</code> on the request context. Whether off-screen pages see <code>prefers-color-scheme</code> change from it is untested. Pages switch in one step at the ink flip; they do not fade.</p>
+        <div class="paths"><span>cef 147.1.0 · ImplRequestContext::set_chrome_color_scheme</span><span>crates/sola-browser</span></div>
+      </div>
+      <div class="item">
+        <h4>Fades on a 5K desk</h4>
+        <p>Each emit redraws every open window once: a full present per window per minute for forty minutes, four times a day. Small next to video, but measure River's SM% before trusting it.</p>
+        <div class="paths"><span>PERFORMANCE.md</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="section">
+      <div class="label">Risks</div>
+      <div>
+        <div class="risk"><b>GPU idle</b><span>Tiled windows must stay opaque so River can scan out: <code>theme_for(false)</code> marks the full opaque region from an opaque <code>background.base</code> (docs/architecture.md, "Tiled kit opaque-region"; crates/iced_winit-patched). Every Solar background is opaque, so this holds. Do not make the bar translucent to show a sky.</span></div>
+        <div class="risk"><b>Mid-fade contrast</b><span>Between L 0.40 and 0.75 text contrast drops. Eased lightness keeps that to about six minutes per crossing fade; a "change at once" option skips fades entirely.</span></div>
+        <div class="risk"><b>Status hues</b><span>Dawn's peach signal sits between danger and warning. Shape carries status as it does today, and dawn's danger leans crimson.</span></div>
+        <div class="risk"><b>Theme churn</b><span>An emit restyles every window mid-task. iced restyles without relayout, but check that text inputs, selections, and scroll positions survive an emit.</span></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="label">An order that ships something each step</div>
+      <div class="order">
+        <div><b>1</b><span><strong>The solar line, in Graphite.</strong> It needs no new light: the sun crosses a dark bar by day, the moon tick by night. Clock dropdown rows with it.</span></div>
+        <div><b>2</b><span><strong>A light-aware kit.</strong> <code style="font-family:var(--font-mono);font-size:12px">is_dark</code>, ink edges, chrome from the theme. Prove it with Day as a static preset in the storybook.</span></div>
+        <div><b>3</b><span><strong>Day by hand.</strong> Terminal palette, depth tokens, the shell's literals. Pick it in Settings like any theme.</span></div>
+        <div><b>4</b><span><strong>The scheduler and fades.</strong> Follow the sun, then dawn and dusk.</span></div>
+        <div><b>5</b><span><strong>Web pages.</strong> The CEF color scheme at the ink flip.</span></div>
+      </div>
+      <div class="ask">
+        <h4>For Joshua to decide</h4>
+        <div>Does the desk follow the sun by default, or stay Night until asked? Is a light theme wanted at all on a desk used mostly after dark? If the light is pinned to Night, does the sun still cross the bar?</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

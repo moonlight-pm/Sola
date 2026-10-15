@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 04 The desk</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .slice { position: relative; border-radius: 10px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--seam-hi); }
+  .apps { display: grid; grid-template-columns: 222px 1fr 236px 1fr; height: 660px; font-family: var(--font-chrome-i); }
+  /* Apps: Graphite, untouched */
+  .rail { background: var(--bg-chrome); box-shadow: inset -1px 0 0 var(--hairline); padding: 12px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .rail__sec { display: flex; justify-content: space-between; align-items: center; padding: 8px 8px 6px; color: var(--text-tertiary); font-size: 10px; font-weight: 500; letter-spacing: 1px; }
+  .rail__row { height: 34px; border-radius: 7px; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 13px; color: var(--text-primary); }
+  .rail__row--sel { background: var(--selection); box-shadow: inset 0 0 0 1px var(--hairline-strong); }
+  .rail__row--hover { background: var(--bg-hover); }
+  .rail__meta { margin-left: auto; font-size: 10px; color: var(--text-tertiary); }
+  .mark { width: 10px; display: flex; justify-content: center; flex-shrink: 0; }
+  .term { background: var(--bg-primary); padding: 14px 16px; font-family: var(--font-mono-i); font-size: 13.5px; line-height: 22px; color: var(--text-primary); box-shadow: inset -1px 0 0 var(--hairline); }
+  .term .p { color: var(--accent); }
+  .term .dim { color: var(--text-secondary); }
+  .term .add { color: var(--success); }
+  .term .del { color: var(--danger); }
+  .term .sel { background: var(--accent-wash); color: var(--on-accent); }
+  .cursor { display: inline-block; width: 9px; height: 17px; background: var(--term-cursor); vertical-align: -3px; }
+  .inbox { background: var(--bg-chrome); box-shadow: inset -1px 0 0 var(--hairline); display: flex; flex-direction: column; }
+  .inbox__head { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; box-shadow: inset 0 -1px 0 var(--hairline); font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .inbox__count { font-size: 12px; font-weight: 400; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+  .msg { padding: 10px 12px; box-shadow: inset 0 -1px 0 var(--hairline); display: flex; flex-direction: column; gap: 2px; }
+  .msg--sel { background: var(--selection); }
+  .msg__top { display: flex; justify-content: space-between; font-size: 13.5px; color: var(--text-primary); }
+  .msg__from { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .msg__from--read { font-weight: 400; }
+  .unread { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .msg__time { font-size: 12px; color: var(--text-tertiary); }
+  .msg__subj { font-size: 13px; color: var(--text-primary); }
+  .msg__prev { font-size: 12.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reader { background: var(--bg-primary); padding: 22px 26px; display: flex; flex-direction: column; gap: 18px; font-size: 14.5px; line-height: 24px; color: var(--text-primary); }
+  .reader__meta { font-size: 12px; color: var(--text-secondary); }
+  .reader__title { font-size: 20px; font-weight: 600; line-height: 26px; }
+  .reader__acts { display: flex; gap: 6px; }
+  .btn { height: 28px; padding: 0 12px; border-radius: 7px; display: inline-flex; align-items: center; font-size: 13px; color: var(--text-primary); }
+  .btn--sec { background: var(--secondary-fill); box-shadow: inset 0 0 0 1px var(--secondary-edge); }
+  .quote { border-left: 2px solid var(--hairline-strong); padding-left: 14px; color: var(--text-secondary); }
+  .float-notice { position: absolute; top: 40px; right: 12px; width: 360px; }
+  .notice__band { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
+  .notice__band [data-icon] { width: 13px; height: 13px; color: var(--ink-2); }
+  .notice__src { flex: 1; }
+  .notice__x { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+  .notice__x [data-icon] { width: 12px; height: 12px; }
+  .notice__body { display: grid; grid-template-columns: 12px 1fr; gap: 10px; padding: 12px 14px 14px; }
+  .notice__title { font-size: 13px; font-weight: 600; line-height: 18px; }
+  .notice__text { font-size: 12.5px; color: var(--ink-3); line-height: 18px; margin-top: 2px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .chips { display: flex; gap: 8px; }
+  .chip { width: 120px; height: 64px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--seam-hi); padding: 8px 10px; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+  .chip span { font-family: var(--font-label); font-stretch: expanded; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+
+  .whole { position: relative; width: 1280px; height: 540px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--seam-hi); background: var(--bg-primary); }
+  .whole__bar { position: absolute; left: 0; right: 0; top: 0; height: 7px; background: #050506; box-shadow: inset 0 -1px 0 var(--seam-hi); z-index: 1; }
+  .whole__words { position: absolute; top: 2px; left: 4px; height: 3px; display: flex; gap: 3px; z-index: 2; }
+  .whole__words i { display: block; height: 3px; border-radius: 1px; background: #e9ecf255; }
+  .whole__zone { position: absolute; top: 7px; bottom: 0; box-shadow: inset -1px 0 0 #ffffff0d; padding: 18px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; }
+  .whole__zone .t { font-size: 13px; color: var(--text-primary); }
+  .whole__mods { position: absolute; top: 2px; height: 3px; right: 4px; display: flex; gap: 3px; z-index: 2; }
+  .whole__mods i { display: block; height: 3px; background: #e9ecf255; border-radius: 1px; }
+  .whole__call { position: absolute; top: 16px; z-index: 2; font-family: var(--font-label); font-stretch: expanded; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
+  .whole__call::before { content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 5px; background: var(--ink-3); }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="04"></span><div class="head__title">The desk</div></div>
+    <div class="head__lead">Everything together at 1:1. The panel is the frame; the apps are the work. The bar and the notice are neutral black with readouts and lamps. Workspaces and Mail keep Graphite exactly: blue graphite, SF Pro, the rail's shapes. Only one surface on this desk lights in dots, and it is the one you glance at.</div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">A slice of the desk · 1:1</span>
+    <div class="slice">
+      <div data-part="bar" data-preset="unread" data-set='{"app":"Workspaces","width":1296,"bell":"","mail":"12","waiting":"1","working":"2"}'></div>
+      <div class="apps">
+        <div class="rail">
+          <div class="rail__sec"><span>SOLA</span><span>+</span></div>
+          <div class="rail__row rail__row--sel"><span class="mark"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="3.6" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="17 6"/></svg></span>kit-foundation<span class="rail__meta">×2</span></div>
+          <div class="rail__row"><span class="mark"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="2.4" y="2.4" width="5.2" height="5.2" transform="rotate(45 5 5)" fill="var(--lamp-look)"/></svg></span>menubar-pass</div>
+          <div class="rail__row"><span class="mark" style="color:var(--success)"><span data-icon="check" data-stroke="2.4" style="width:11px;height:11px"></span></span>mail-focus</div>
+          <div class="rail__row"><span class="mark"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="1.6" fill="var(--text-tertiary)"/></svg></span>master</div>
+          <div class="rail__sec" style="margin-top:8px"><span>WICKET</span><span>+</span></div>
+          <div class="rail__row rail__row--hover"><span class="mark"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="2.4" y="2.4" width="5.2" height="5.2" transform="rotate(45 5 5)" fill="var(--lamp-look)"/></svg></span>vault-panel</div>
+          <div class="rail__row"><span class="mark"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="1.6" fill="var(--text-tertiary)"/></svg></span>master</div>
+          <div class="rail__sec" style="margin-top:8px"><span>▸ EXIT</span><span>+</span></div>
+          <div class="rail__sec"><span>▸ GENEOLOGY</span><span>+</span></div>
+        </div>
+        <div class="term">
+          <div class="p">~/Workspace/Sola/.worktrees/kit-foundation</div>
+          <div>❯ claude</div><br>
+          <div>● Read crates/sola-shell/src/stats/pixel.rs</div>
+          <div>● Read crates/sola-shell/src/components/clock.rs</div>
+          <div class="dim">&nbsp;&nbsp;The clock is 13px chrome text today. A 17 × 5</div>
+          <div class="dim">&nbsp;&nbsp;readout fits the meters' row and never reflows.</div><br>
+          <div>● Update(crates/sola-shell/src/components/clock.rs)</div>
+          <div class="del">&nbsp;&nbsp;-&nbsp;&nbsp;text(format_clock(now)).font(fonts::chrome())</div>
+          <div class="add">&nbsp;&nbsp;+&nbsp;&nbsp;dots::readout(&amp;now.format("%H:%M"), CLOCK_CELLS)</div><br>
+          <div>&nbsp;&nbsp;Build it?&nbsp;&nbsp;cargo make build shell</div>
+          <div class="p">&nbsp;&nbsp;❯ 1. Yes</div>
+          <div class="dim">&nbsp;&nbsp;&nbsp;&nbsp;2. No, and tell Claude what to do</div>
+          <div>❯ <span class="sel">cargo make build</span> shell <span class="cursor"></span></div>
+        </div>
+        <div class="inbox">
+          <div class="inbox__head"><span>Inbox</span><span class="inbox__count">12 unread</span></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from"><span class="unread"></span>Hetzner Online</span><span class="msg__time">14:02</span></div><div class="msg__subj">Invoice 0412 for October</div><div class="msg__prev">Your invoice is attached as a PDF.</div></div>
+          <div class="msg msg--sel"><div class="msg__top"><span class="msg__from"><span class="unread"></span>Cal.com</span><span class="msg__time">13:40</span></div><div class="msg__subj">Design review moved to 14:45</div><div class="msg__prev">The Sola foundation review is now…</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">GitHub</span><span class="msg__time">12:15</span></div><div class="msg__subj">[sola] CI passed on master</div><div class="msg__prev">All 4 jobs succeeded for 502fa9a.</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Fastmail</span><span class="msg__time">Yesterday</span></div><div class="msg__subj">Your export is ready</div><div class="msg__prev">Download it within 7 days.</div></div>
+          <div class="msg"><div class="msg__top"><span class="msg__from msg__from--read">Grapevine</span><span class="msg__time">Mon</span></div><div class="msg__subj">Weekly digest</div><div class="msg__prev">Three new threads in #desk.</div></div>
+        </div>
+        <div class="reader">
+          <div class="reader__meta">Cal.com · notifications@cal.com · 13:40</div>
+          <div class="reader__title">Design review moved to 14:45</div>
+          <div class="reader__acts"><span class="btn btn--sec">Reply</span><span class="btn">Forward</span><span class="btn">Junk</span></div>
+          <div>Hi —</div>
+          <div>The Sola foundation review moved to today at 14:45. Same room, same link.</div>
+          <div>On the agenda: the instrument sheet, the function key, and whether the clock should be a readout. Bring the menubar screenshots from the last pass.</div>
+          <div class="quote">&gt; Can the agent count live in the bar? The rail already has the shapes.</div>
+        </div>
+      </div>
+      <div class="module float-notice">
+        <div class="module__band notice__band"><span data-icon="terminal"></span><span class="lbl lbl--9 notice__src">Workspaces · sola</span><span data-dots="14:31" data-font="35" style="color: var(--ink-2)"></span><span class="notice__x"><span data-icon="x"></span></span></div>
+        <div class="notice__body">
+          <span style="padding-top:4px"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="2.2" y="2.2" width="5.6" height="5.6" transform="rotate(45 5 5)" fill="var(--lamp-look)"/></svg></span>
+          <div><div class="notice__title">kit-foundation is waiting</div><div class="notice__text">Claude asks to run cargo make build shell.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="side">
+      <span class="lbl">Chrome · Instrument</span>
+      <div class="chips">
+        <div class="chip" style="background:#0a0a0b"><span>Panel</span><span>#0a0a0b</span></div>
+        <div class="chip" style="background:#121314"><span>Module</span><span>#121314</span></div>
+        <div class="chip" style="background:#1a1b1e"><span>Raised</span><span>#1a1b1e</span></div>
+        <div class="chip" style="background:#050506"><span>Window</span><span>#050506</span></div>
+      </div>
+      <div class="note">Neutral black, no hue. It reads as the frame around the work, and it lets cyan, green, white, and gold stay the only colors in it.</div>
+    </div>
+    <div class="side">
+      <span class="lbl">Apps · Graphite, unchanged</span>
+      <div class="chips">
+        <div class="chip" style="background:var(--bg-primary)"><span>Primary</span><span>#0c0e12</span></div>
+        <div class="chip" style="background:var(--bg-chrome)"><span>Chrome</span><span>#121722</span></div>
+        <div class="chip" style="background:var(--bg-secondary)"><span>Secondary</span><span>#151922</span></div>
+        <div class="chip" style="background:var(--selection)"><span>Selection</span><span>#2c333e</span></div>
+      </div>
+      <div class="note">The one change inside apps: the rail's waiting diamond takes the orange lamp, so gold is never status.</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">The whole desk · 5120 × 2160 at 1:4</span>
+    <div class="whole">
+      <div class="whole__bar"></div>
+      <div class="whole__words" id="words"></div>
+      <div class="whole__mods" id="mods"></div>
+      <div class="whole__zone" style="left:0;width:28%;background:var(--bg-chrome)"><span class="t">Workspaces</span><span class="lbl lbl--9 lbl--lo">Left · 28%</span></div>
+      <div class="whole__zone" style="left:28%;width:44%;background:var(--bg-secondary)"><span class="t">Browser</span><span class="lbl lbl--9 lbl--lo">Full middle · 44%</span></div>
+      <div class="whole__zone" style="left:72%;width:28%;background:var(--bg-chrome)"><span class="t">Mail</span><span class="lbl lbl--9 lbl--lo">Right · 28%</span></div>
+      <span class="whole__call" style="left:6px">Words</span>
+      <span class="whole__call" style="left:50%;transform:translateX(-50%)">Whispers</span>
+      <span class="whole__call" style="right:8px">Instruments</span>
+    </div>
+    <div class="note">At full width the bar is 5120 px: words at the left end, a long quiet middle where whispers appear, and the instrument cluster at the right end, about 900 px of a 5120 px strip.</div>
+  </div>
+</div>
+<script>
+  // Module footprint at 1:4 (extras, agents, audio, stats, net, clock).
+  document.getElementById("mods").innerHTML = [40, 18, 30, 52, 32, 26].map((w) => `<i style="width:${w}px"></i>`).join("");
+  // Flower, app name, menus at 1:4.
+  document.getElementById("words").innerHTML = [[3, "var(--fn-system)"], [20], [8], [8], [8], [8], [8], [12]]
+    .map(([w, c]) => `<i style="width:${w}px${c ? `;background:${c}` : ""}"></i>`).join("");
+</script>
+</body>
+</html>

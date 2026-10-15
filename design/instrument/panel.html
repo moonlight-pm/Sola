@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 01 The front panel</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .ticks { position: relative; height: 46px; margin-top: -16px; }
+  .tick { position: absolute; top: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; transform: translateX(-50%); color: var(--ink-2); }
+  .tick__line { width: 1px; height: 18px; background: var(--seam-hi); }
+  .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 40px; }
+  .legend__item { display: grid; grid-template-columns: 22px 1fr; gap: 12px; }
+  .legend__n { color: var(--ink-2); line-height: 0; padding-top: 1px; }
+  .legend__t { display: flex; flex-direction: column; gap: 5px; }
+  .legend__t .note { font-size: 13px; }
+  .states { display: flex; flex-direction: column; gap: 26px; }
+  .state { display: flex; flex-direction: column; gap: 10px; }
+  .state__head { display: grid; grid-template-columns: 120px 1fr; align-items: baseline; gap: 16px; }
+  .drop-stage { position: relative; height: 640px; }
+  .drop { position: absolute; top: 34px; width: 320px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 14px; }
+  .drop__head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .drop__title { display: flex; flex-direction: column; gap: 8px; }
+  .drop__id { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-top: 1px; }
+  .drop__model { font-size: 12px; color: var(--ink-2); }
+  .drop__sec { display: flex; flex-direction: column; gap: 8px; }
+  .drop__cap { display: flex; justify-content: space-between; align-items: center; }
+  .drop__threads { display: flex; align-items: flex-end; gap: 12px; }
+  .procs { display: flex; flex-direction: column; gap: 7px; }
+  .proc { display: grid; grid-template-columns: 1fr auto 40px; gap: 12px; align-items: center; }
+  .proc__name { font-size: 12px; color: var(--ink-2); }
+  .proc__v { font-family: var(--font-mono-i); font-size: 11px; color: var(--ink-2); text-align: right; }
+  .drop__foot { display: flex; justify-content: space-between; }
+  .pair { display: flex; align-items: baseline; gap: 8px; }
+  .pair__v { font-family: var(--font-mono-i); font-size: 11px; color: var(--ink-2); }
+  .explain { position: absolute; left: 0; top: 52px; width: 520px; display: flex; flex-direction: column; gap: 0; }
+  .explain__row { display: grid; grid-template-columns: 180px 1fr; gap: 16px; padding: 13px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .explain__row:last-child { box-shadow: none; }
+  .leader { position: absolute; height: 1px; background: var(--seam-hi); }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="01"></span><div class="head__title">The front panel</div></div>
+    <div class="head__lead">One 28px bar, read left to right like a rack unit. Words on the left, instruments on the right. Every module has a fixed footprint, an engraved label where a glyph would not do, and lights only in the function key's colors. Nothing reflows when a number changes.</div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Anatomy · 1:1</span>
+    <div id="anatomy" data-part="bar" data-preset="unread" data-set='{"app":"Workspaces","width":1296}'></div>
+    <div class="ticks" id="ticks"></div>
+    <div class="legend">
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="1"></span><div class="legend__t"><span class="lbl lbl--ink">System</span><span class="note">The flower, 14px, gold. The only warm point in the bar and its only brand.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="2"></span><div class="legend__t"><span class="lbl lbl--ink">Focused app</span><span class="note">Bold SF Pro, as today. Zoned windows have no titles, so this word says what has focus.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="3"></span><div class="legend__t"><span class="lbl lbl--ink">Menus</span><span class="note">SF Pro 13. Words stay type. An open menu takes an 18% ink fill.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="4"></span><div class="legend__t"><span class="lbl lbl--ink">Extras</span><span class="note">Mail and missed notices: the glyph and a fixed readout. Cyan when something waits for you, dark when not.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="5"></span><div class="legend__t"><span class="lbl lbl--ink">Lamps</span><span class="note">BT, MIC, CAM. Labels stay dark until their lamp lights. MIC and CAM are red tallies while any app holds the device. New.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="6"></span><div class="legend__t"><span class="lbl lbl--ink">Agents</span><span class="note">Ring: working. Diamond: waiting. One cell each, counted from the Workspaces rail. New.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="7"></span><div class="legend__t"><span class="lbl lbl--ink">Out</span><span class="note">The 12-band spectrum in one phosphor, green. A white dot holds each band's recent peak.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="8"></span><div class="legend__t"><span class="lbl lbl--ink">Meters</span><span class="note">CPU, GPU, MEM, RX, TX: 12 × 5 LEDs, white at rest. A column prints orange past 75%, red past 90%.</span></div></div>
+      <div class="legend__item"><span class="legend__n dim-field" data-dots="9"></span><div class="legend__t"><span class="lbl lbl--ink">Clock</span><span class="note">A 17 × 5 readout, exactly the meters' height. The day and date are engraved beside it.</span></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">States · 1:1</span>
+    <div class="states">
+      <div class="state">
+        <div class="state__head"><span class="lbl lbl--ink">Idle</span><span class="note">Nothing needs you. Readouts sit dark, meters run white, and the clock is the brightest thing on the right.</span></div>
+        <div data-part="bar" data-preset="idle" data-set='{"width":1296}'></div>
+      </div>
+      <div class="state">
+        <div class="state__head"><span class="lbl lbl--ink">Warm</span><span class="note">A release build. CPU columns past 75% print orange, past 90% red. The label does not change; the meter says it.</span></div>
+        <div data-part="bar" data-preset="warm" data-set='{"width":1296}'></div>
+      </div>
+      <div class="state">
+        <div class="state__head"><span class="lbl lbl--ink">For you</span><span class="note">Twelve unread, three missed notices, one agent waiting. Cyan is for you; orange asks for a look.</span></div>
+        <div data-part="bar" data-preset="unread" data-set='{"width":1296}'></div>
+      </div>
+      <div class="state">
+        <div class="state__head"><span class="lbl lbl--ink">Live</span><span class="note">A Slack huddle in Browser holds the mic and camera. Two red tallies stay lit, steady, until it lets go.</span></div>
+        <div data-part="bar" data-preset="live" data-set='{"width":1296}'></div>
+      </div>
+      <div class="state">
+        <div class="state__head"><span class="lbl lbl--ink">Whisper</span><span class="note">Screenshot copied. A whisper is a sentence, so it stays SF Pro in the middle of the bar for a few seconds.</span></div>
+        <div data-part="bar" data-preset="whisper" data-set='{"width":1296}'></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">CPU drop panel · 1:1</span>
+    <div class="drop-stage" id="stage">
+      <div id="dropbar" data-part="bar" data-preset="warm" data-set='{"width":1296,"openStat":"cpu"}'></div>
+      <div class="explain">
+        <div class="explain__row"><span class="lbl lbl--ink">Value</span><span class="note">5×7 on a 4 / 5 grid in a recessed window. Four cells, sized for 100%, so 83% keeps a dark cell and never shifts. Tinted by the same rule as the meter.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">History</span><span class="note">The last 60 samples, one column each, 8 rows tall. It fills the card exactly: 60 × 5 px.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">Per thread</span><span class="note">One column per thread, siblings side by side, a dark column between the 16 cores. No numbers: the shape is the point.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">Lists stay type</span><span class="note">Process names in SF Pro, figures in Iosevka. Dots are for the number you came for; type is for the rest.</span></div>
+        <div class="explain__row"><span class="lbl lbl--ink">One grid per display</span><span class="note">The bar is 2 / 3. A drop panel is 4 / 5. Nothing else lights.</span></div>
+      </div>
+      <div class="module drop" id="drop">
+        <div class="drop__head">
+          <div class="drop__title">
+            <span class="lbl">CPU</span>
+            <span class="readout"><span data-dots="83%" data-cols="23" data-align="right" data-dot="4" data-pitch="5" style="color: var(--lamp-look)"></span></span>
+          </div>
+          <div class="drop__id"><div class="drop__model">AMD Ryzen 9 5950X</div><span class="lbl lbl--9">16C / 32T</span></div>
+        </div>
+        <div class="drop__sec">
+          <div class="drop__cap"><span class="lbl lbl--9">Last 60 seconds</span><span class="pair"><span class="lbl lbl--9 lbl--lo">Peak</span><span class="pair__v">91%</span></span></div>
+          <span id="hist" data-graph="0" data-cols="60" data-rows="8" data-dot="4" data-pitch="5"></span>
+        </div>
+        <div class="drop__sec">
+          <div class="drop__cap"><span class="lbl lbl--9">Per-thread load</span><span class="lbl lbl--9 lbl--lo">32 threads</span></div>
+          <span id="threads" data-graph="0" data-cols="47" data-rows="6" data-dot="4" data-pitch="5"></span>
+        </div>
+        <div class="seam"></div>
+        <div class="drop__sec">
+          <div class="drop__cap"><span class="lbl lbl--9">Top processes</span><span class="lbl lbl--9 lbl--lo">by CPU</span></div>
+          <div class="procs">
+            <div class="proc"><span class="proc__name">rustc</span><span data-bar="0.62" data-cells="16" data-dot="4" data-pitch="5"></span><span class="proc__v">21%</span></div>
+            <div class="proc"><span class="proc__name">rustc</span><span data-bar="0.53" data-cells="16" data-dot="4" data-pitch="5"></span><span class="proc__v">18%</span></div>
+            <div class="proc"><span class="proc__name">rustc</span><span data-bar="0.41" data-cells="16" data-dot="4" data-pitch="5"></span><span class="proc__v">14%</span></div>
+            <div class="proc"><span class="proc__name">sola-browser</span><span data-bar="0.18" data-cells="16" data-dot="4" data-pitch="5"></span><span class="proc__v">6%</span></div>
+            <div class="proc"><span class="proc__name">river</span><span data-bar="0.09" data-cells="16" data-dot="4" data-pitch="5"></span><span class="proc__v">3%</span></div>
+          </div>
+        </div>
+        <div class="seam"></div>
+        <div class="drop__foot">
+          <span class="pair"><span class="lbl lbl--9">Load</span><span class="pair__v">21.4  14.8  8.2</span></span>
+          <span class="pair"><span class="lbl lbl--9">Up</span><span class="pair__v">6d 4h</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Data: a build that climbs into the warm zone over the last minute.
+  (() => {
+    const hist = [];
+    for (let i = 0; i < 60; i++) {
+      const base = 18 + i * 1.05 + 9 * Math.sin(i / 3.1) + 5 * Math.sin(i * 1.7);
+      hist.push(Math.max(4, Math.min(96, Math.round(base))));
+    }
+    hist.splice(48, 12, 70, 74, 78, 83, 88, 91, 86, 79, 82, 85, 80, 83);
+    document.getElementById("hist").dataset.graph = hist.join(" ");
+    // 32 threads as 16 cores: two sibling columns, a dark column between cores.
+    const t = [];
+    for (let i = 0; i < 16; i++) {
+      const v = 58 + 36 * Math.sin(i * 2.3) * Math.cos(i * 0.7);
+      if (i) t.push(0);
+      t.push(Math.round(Math.max(8, Math.min(98, v))), Math.round(Math.max(6, Math.min(98, v - 14))));
+    }
+    document.getElementById("threads").dataset.graph = t.join(" ");
+  })();
+
+  // Place ticks under each module and hang the drop panel under CPU.
+  window.addEventListener("load", () => document.fonts.ready.then(() => {
+    const bar = document.getElementById("anatomy");
+    const base = bar.getBoundingClientRect();
+    const ticks = document.getElementById("ticks");
+    ["sys", "app", "menus", "extras", "lamps", "agents", "audio", "stats", "clock"].forEach((id, i) => {
+      const a = bar.querySelector(`[data-anchor="${id}"]`);
+      if (!a) return;
+      const r = a.getBoundingClientRect();
+      const t = document.createElement("div");
+      t.className = "tick";
+      t.style.left = `${r.left - base.left + r.width / 2}px`;
+      t.innerHTML = `<span class="tick__line"></span><span class="dim-field" data-dots="${i + 1}"></span>`;
+      ticks.appendChild(t);
+    });
+    window.Instrument.render(ticks);
+
+    const stage = document.getElementById("stage");
+    const sb = stage.getBoundingClientRect();
+    const cpu = stage.querySelector('[data-anchor="cpu"]').getBoundingClientRect();
+    const drop = document.getElementById("drop");
+    drop.style.left = `${Math.round(cpu.left - sb.left - 8)}px`;
+    const ex = stage.querySelector(".explain");
+    ex.style.width = `${Math.round(cpu.left - sb.left - 8 - 64)}px`;
+    stage.style.height = `${Math.round(drop.offsetTop + drop.offsetHeight + 8)}px`;
+  }));
+</script>
+</body>
+</html>

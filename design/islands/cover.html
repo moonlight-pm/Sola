@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / Cover</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .hero { width: 1296px; height: 500px; }
+  .hero .zone { left: 0; right: 0; top: 40px; bottom: 0; }
+  .hero__card { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 420px; z-index: 4; border-radius: var(--r-card); }
+  
+  .title { display: grid; grid-template-columns: 560px 1fr; gap: 48px; align-items: end; margin: 64px 0 72px; }
+  .title__name { font: 600 132px/0.9 var(--f-display); letter-spacing: -5px; margin-left: -6px; }
+  .title__name span { color: var(--sol); }
+  .title__meta { font: 400 11px/1 var(--f-spec); color: var(--ink-3); letter-spacing: 0.4px; margin-bottom: 20px; }
+  .title__thesis { font: 500 30px/1.18 var(--f-display); letter-spacing: -0.5px; margin-bottom: 18px; }
+  .title__lead { font: 400 15px/24px var(--f-chrome); color: var(--ink-2); }
+
+  .scale { position: relative; width: 1280px; overflow: hidden; border-radius: 2px; }
+  .scale > div { width: 5120px; transform: scale(0.25); transform-origin: 0 0; }
+  .strip-label { display: flex; justify-content: space-between; margin: 0 0 8px; }
+  .dims { position: relative; height: 34px; width: 1280px; margin-top: 6px; }
+  .dim { position: absolute; top: 0; height: 30px; border-top: 1px solid var(--ink-3); }
+  .dim::before, .dim::after { content: ""; position: absolute; top: -4px; width: 1px; height: 7px; background: var(--ink-3); }
+  .dim::before { left: 0; } .dim::after { right: 0; }
+  .dim span { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); white-space: nowrap; font: 400 11px/1 var(--f-spec); color: var(--ink-2); }
+  .dim--ground { border-top-style: dashed; border-color: #ffffff2a; }
+  .dim--ground span { color: var(--ink-3); }
+
+  .spec-row { display: flex; flex-direction: column; gap: 22px; padding: 28px 0; border-top: 1px solid var(--hairline); }
+  .spec-row:last-child { border-bottom: 1px solid var(--hairline); }
+  .spec-row h3 { font: 600 15px/1 var(--f-display); margin: 0 0 12px; }
+  .defs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 32px; }
+  .defs div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+  .defs b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 2px; }
+  .states { display: grid; grid-template-columns: repeat(4, max-content); gap: 18px 22px; }
+  .state { display: flex; flex-direction: column; gap: 8px; }
+  .state .spec { white-space: nowrap; }
+
+  .changes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px 40px; }
+  .changes h4 { font: 600 15px/1.2 var(--f-display); margin: 0 0 8px; }
+  .changes p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .kept { margin-top: 28px; font: 400 13px/20px var(--f-chrome); color: var(--ink-3); }
+  .kept b { color: var(--ink-2); font-weight: 500; }
+
+  .credits { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .credit { display: grid; grid-template-columns: 210px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--hairline); font-size: 13px; line-height: 19px; }
+  .credit b { font-weight: 500; }
+  .credit .spec { margin-top: 3px; }
+  .credit p { margin: 0; color: var(--ink-2); }
+</style>
+</head>
+<body class="board">
+
+<div class="frame hero" id="hero">
+  <div class="band" style="width:1296px"></div>
+  <div class="zone" id="hero-zone"></div>
+  <div class="hero__card glass glass--float" id="hero-card"></div>
+</div>
+<div class="spec" style="margin-top:12px">Desk x 1912–3208 at 1:1, over the Browser zone. Claude is waiting, so the center island has become a card. The rest of the band stays empty.</div>
+
+<div class="title">
+  <div class="title__name">Islands<span>.</span></div>
+  <div>
+    <div class="title__meta">SOLA · EXPLORATION · 2026-10-13 · AGAINST FOUNDATION V1 (GRAPHITE)</div>
+    <div class="title__thesis">Chrome that floats, grows out of where it lives, and goes back.</div>
+    <div class="title__lead">Graphite's bar is a 28 px strip across 5120 px, and most of it carries nothing. Islands keeps every instrument Graphite has and changes where things sit: three islands that hug their content, a live center, and shell surfaces that grow out of the island that owns them.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The top of the desk at 1:4</div>
+  <div class="strip-label"><span class="spec"><b>Graphite</b> · one 28 px strip, edge to edge</span></div>
+  <div class="scale" style="height:80px"><div id="top-graphite"></div></div>
+  <div class="strip-label" style="margin-top:28px"><span class="spec"><b>Islands</b> · a 40 px band and three islands, measured from the render</span></div>
+  <div class="scale" style="height:80px"><div id="top-islands"></div></div>
+  <div class="dims" id="dims"></div>
+</div>
+
+<div class="section">
+  <div class="label">The three islands at 1:1</div>
+  <div class="spec-row">
+    <div><div id="chip-left"></div></div>
+    <div>
+      <h3>Left · who has focus</h3>
+      <div class="defs">
+        <div><b>Sol flower</b>The system menu and the only warm thing in the bar. The launcher grows out of it.</div>
+        <div><b>Focused app</b>The only bold word. Zoned windows have no titles, so this is where you learn what has focus.</div>
+        <div><b>App menus</b>13 px chrome, 8 px each side. An open menu is a 7 px pill inside the island's 10 px corner.</div>
+        <div><b>Hug</b>The island ends after Window. Mail's menus make it shorter; nothing reserves space.</div>
+      </div>
+    </div>
+  </div>
+  <div class="spec-row">
+    <div class="states" id="states" style="grid-template-columns: repeat(3, max-content); column-gap: 40px"></div>
+    <div>
+      <h3>Center · one live thing</h3>
+      <div class="defs">
+        <div><b>Priority</b>Waiting, then working, then a meeting due in 15 minutes, then now playing. A whisper borrows the island for 3 s and gives it back.</div>
+        <div><b>Shape first</b>Graphite's marks: a ring is working, a diamond is waiting, a check is done. The column reads without color.</div>
+        <div><b>Rounded numerals</b>Timers use SF Pro Rounded, tabular. The only place it appears.</div>
+        <div><b>Empty is allowed</b>With nothing live the center island is not drawn. The band stays black.</div>
+      </div>
+    </div>
+  </div>
+  <div class="spec-row">
+    <div><div id="chip-right"></div></div>
+    <div>
+      <h3>Right · instruments</h3>
+      <div class="defs">
+        <div><b>Extras</b>Mail, bell, Bluetooth at 14 px. Mail is cyan while something is unread.</div>
+        <div><b>Spectrum</b>12 phosphor bands, 3 LEDs wide. The audio panel hangs from it.</div>
+        <div><b>Stats and network</b>Graphite's 12 × 5 LED graphs, unchanged. Numbers live in the drop.</div>
+        <div><b>Clock</b>Regular weight, tabular. The calendar hangs from it.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">What changes against Graphite</div>
+  <div class="changes">
+    <div><h4>The bar becomes a band</h4><p>40 px, opaque black, reserved the way the bar is. Zones start 12 px lower. The band is one surface, as the bar is today.</p></div>
+    <div><h4>Islands hug their content</h4><p>Three of them, 6 px from the top, 8 px from the output's edges. The ground between them is empty on purpose.</p></div>
+    <div><h4>The center is live</h4><p>Graphite has no center. Islands puts the one thing that is happening there: an agent, a meeting, a track, a whisper.</p></div>
+    <div><h4>Surfaces grow from their island</h4><p>The launcher, the switcher, and agent cards become the island. Menus, the audio panel, and the calendar hang from it.</p></div>
+    <div><h4>Smoked glass</h4><p>A graphite fill, a 1 px rim on top, a dark edge, and a shadow only where the glass floats over an app. Opaque until River can blur; tested on Material.</p></div>
+    <div><h4>One radius family</h4><p>A child's corner is its parent's minus the gap between them: card 18 → button 8, sheet 14 → row 8, island 10 → pill 7.</p></div>
+  </div>
+  <div class="kept"><b>Kept from Graphite:</b> flush zones without titles, one cyan signal, shape-first marks, pixel meters, the Sol gold flower, and the shadow rule (only things that float cast one).</div>
+</div>
+
+<div class="section">
+  <div class="label">Prior art</div>
+  <div class="credits">
+    <div class="credit"><div><b>Dynamic Island</b><div class="spec">Apple · iPhone 14 Pro · 2022</div></div><p>The status area becomes the live activity, then goes back to being a status area.</p></div>
+    <div class="credit"><div><b>Caelestia shell</b><div class="spec">Quickshell · Hyprland</div></div><p>Describes itself as "a fluid, morphing shell". Panels grow out of the bar instead of appearing beside it.</p></div>
+    <div class="credit"><div><b>Liquid Glass</b><div class="spec">Apple · macOS Tahoe 26 · 2025</div></div><p>Refined in macOS 27 (WWDC, June 2026): diffused shadows, a transparency slider, and one corner radius for every window.</p></div>
+    <div class="credit"><div><b>Noctalia shell</b><div class="spec">Quickshell · Wayland</div></div><p>A minimal shell whose color scheme syncs across every app. Islands borrows the restraint, not the palette.</p></div>
+    <div class="credit"><div><b>Material 3 Expressive</b><div class="spec">Google · 2025</div></div><p>Physics-based spring motion. The morph's springs come from this vocabulary, kept under 350 ms.</p></div>
+    <div class="credit"><div><b>Omarchy 4</b><div class="spec">Basecamp · 2026</div></div><p>Rebuilt its desktop shell on Quickshell and added a rounded / sharp corner control across the desk.</p></div>
+    <div class="credit"><div><b>COSMIC Epoch 2 roadmap</b><div class="spec">System76</div></div><p>An iced desktop planning widget animations and frosted glass. The nearest neighbor to Sola's stack.</p></div>
+    <div class="credit"><div><b>niri 26.04</b><div class="spec">April 2026</div></div><p>Blur through ext-background-effect-v1, which KDE Plasma 6.7 (June 2026) and GNOME 51 development (July 2026) also speak.</p></div>
+  </div>
+</div>
+
+<script>
+  // Hero: a 1:1 slice of the desk's top center over the Browser zone.
+  document.getElementById("hero-zone").innerHTML = browser();
+  document.getElementById("hero-card").innerHTML = waitingCard();
+
+  // Whole-bar renders at 5120, scaled to 1:4 by their containers.
+  document.getElementById("top-graphite").innerHTML = deskTop({ strip: true });
+  document.getElementById("top-islands").innerHTML = deskTop();
+
+  document.getElementById("chip-left").innerHTML = chip("left");
+  document.getElementById("chip-right").innerHTML = chip("right");
+  const states = [
+    ["working", live.working(), "Agent working · ring"],
+    ["waiting", live.waiting(), "Agent waiting · diamond"],
+    ["done", live.done(), "Agent done · check, 30 s"],
+    ["countdown", live.countdown(), "Due in 15 min or less"],
+    ["playing", live.playing(), "Now playing"],
+    ["whisper", live.whisper(), "Whisper · 3 s"],
+  ];
+  document.getElementById("states").innerHTML = states
+    .map(([k, html, note]) => `<div class="state">${chip("center", { center: html })}<div class="spec">${note}</div></div>`)
+    .join("");
+
+  // Measure the islands in the 5120 render and draw dimension lines at 1:4.
+  document.fonts.ready.then(() => {
+    const host = document.getElementById("top-islands");
+    const left = host.querySelector(".island--left").offsetWidth;
+    const center = host.querySelector(".island--center").offsetWidth;
+    const right = host.querySelector(".island--right").offsetWidth;
+    const lx = 8, cx = 2560 - center / 2, rx = 5120 - 8 - right;
+    const ground = 5120 - left - center - right;
+    const q = (v) => v / 4;
+    const dims = [
+      [lx, left, `${left} px`, ""],
+      [lx + left, cx - lx - left, "", "ground"],
+      [cx, center, `${center} px`, ""],
+      [cx + center, rx - cx - center, `ground · ${ground.toLocaleString()} px of 5,120 carry nothing`, "ground"],
+      [rx, right, `${right} px`, ""],
+    ];
+    document.getElementById("dims").innerHTML = dims
+      .map(([x, w, t, k]) => `<div class="dim${k ? " dim--ground" : ""}" style="left:${q(x)}px;width:${q(w)}px">${t ? `<span>${t}</span>` : ""}</div>`)
+      .join("");
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / Menus on the window</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .anat { position: relative; width: 1296px; }
+  .anat .crop { width: 1296px; height: 156px; }
+  .anat .crop > .desk { transform: scale(2); transform-origin: 0 0; }
+  .callouts { position: relative; height: 96px; }
+  .callout { position: absolute; top: 0; }
+  .callout i { position: absolute; left: 0; top: 0; width: 1px; height: 16px; background: var(--accent); }
+  .callout--low i { height: 48px; }
+  .callout.callout--low span { top: 54px; }
+  .callout.callout--low em { top: 72px; }
+  .callout span { position: absolute; top: 22px; left: 0; white-space: nowrap; font: 500 12px/1 var(--f-chrome); color: var(--ink); }
+  .callout em { position: absolute; top: 40px; left: 0; white-space: nowrap; font: 400 11px/1 var(--f-spec); color: var(--ink-3); font-style: normal; }
+  .defs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px 28px; margin-top: 18px; }
+  .defs div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+  .defs b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 2px; }
+  .layout { display: grid; grid-template-columns: 760px 1fr; gap: 36px; padding: 24px 0; border-top: 1px solid var(--hairline); align-items: start; }
+  .layout:last-child { border-bottom: 1px solid var(--hairline); }
+  .layout .sample p + p { margin-top: 8px; }
+  .cols3 { grid-template-columns: repeat(3, 1fr); }
+  .cols2 { grid-template-columns: repeat(2, 1fr); }
+  .narrow { display: grid; grid-template-columns: 120px 1fr; gap: 14px 20px; align-items: center; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 01</span><span class="head__title">Menus on the window</span></div>
+  <div class="head__lead">Every window wears a 38 px titlebar, the height of the kit's floating titlebar today. The menus each app already publishes move out of the shell's bar and into that row, after the close dot and the app's name. Samples of the row, how focus reads, where a menu hangs, how a narrow tile folds it, and what apps that are not ours get.</div>
+</div>
+
+<div class="section">
+  <div class="label">Anatomy · the focused Workspaces titlebar at 2×</div>
+  <div class="anat" id="anat">
+    <div class="crop"><div class="desk" id="anat-desk" style="width:648px;height:78px"></div></div>
+    <div class="callouts" id="callouts"></div>
+  </div>
+  <div class="defs">
+    <div><b>Close</b>12 px, 13 px in from the edge. Red only on the focused window; grey on the rest.</div>
+    <div><b>App menu</b>The app's name in bold is its first menu (About, Quit), the one it publishes today as <i>Workspaces</i> or <i>Mail</i>.</div>
+    <div><b>Menus</b>13 px, 8 px each side, on 24 px pills. An open menu is a 7 px pill. The Window menu is still the shell's, injected last.</div>
+    <div><b>Title</b>Tertiary ink, right-aligned after the menus. It is the first thing to give way when the window narrows.</div>
+    <div><b>Zone</b>Where the window sits: a third of the output, or a float. A click opens the Window menu.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Three ways to lay out the row</div>
+  <div id="layouts"></div>
+</div>
+
+<div class="section">
+  <div class="label">Focus · Mail's titlebar three ways, 1:1</div>
+  <div class="samples cols3" id="focus"></div>
+</div>
+
+<div class="section">
+  <div class="label">A menu hangs from its title, 1:1</div>
+  <div class="samples cols2" id="hang"></div>
+</div>
+
+<div class="section">
+  <div class="label">When the tile narrows · Mail, 1:1</div>
+  <div class="narrow" id="narrow"></div>
+  <div class="spec" style="margin-top:16px">Order of giving way: the title truncates, then menus fold right to left into <b>···</b>, then every menu folds into the app's name. A third of the 5120 desk is 1693 px wide, so this only happens in split or quarter layouts.</div>
+</div>
+
+<div class="section">
+  <div class="label">The browser, which already has a toolbar</div>
+  <div id="browser"></div>
+</div>
+
+<div class="section">
+  <div class="label">Apps that are not ours</div>
+  <div class="samples cols2" id="foreign"></div>
+</div>
+
+<script>
+  const stage = (w, h, inner, cls = "") => `<div class="crop" style="width:${w}px;height:${h}px"><div class="desk ${cls}" style="width:${w}px;height:${h}px">${inner}</div></div>`;
+
+  /* Anatomy */
+  document.getElementById("anat-desk").innerHTML = win("workspaces", { x: 10, y: 10, w: 628, h: 200, focus: true, zone: 0, tb: { title: "kit-foundation · claude" } });
+
+  /* Layouts */
+  const L = [
+    {
+      name: "One row", tag: "PROPOSED", pick: true, layout: "row", h: 150,
+      p: ["<b>38 px, everything on one line.</b> Close, name, menus, title, zone. The window gives up no more height than a float does today.",
+          "Reads like the old bar, moved down onto the thing it belongs to. The bold name still says which app this is."],
+    },
+    {
+      name: "Two rows", tag: "WINDOWS · KDE", layout: "two", h: 180,
+      p: ["<b>38 + 30 px.</b> A centered title on top, the menus on their own strip below.",
+          "Familiar and roomy, but every window pays 30 px more, and on a 1080 output that is a tenth of a terminal's lines over three tiles."],
+    },
+    {
+      name: "Name as menu", tag: "COMPACT", layout: "name", h: 150,
+      p: ["<b>38 px, one button.</b> The app's name opens a single menu with the others as submenus.",
+          "Quietest, and what a narrow tile falls back to. As the default it hides the commands the bar shows today."],
+    },
+  ];
+  document.getElementById("layouts").innerHTML = L.map((l) => `
+    <div class="layout">
+      ${stage(760, l.h, win("workspaces", { x: 10, y: 10, w: 740, h: 400, focus: true, zone: 0, tb: { layout: l.layout } }))}
+      <div class="sample">
+        <div class="sample__head"><h4>${l.name}</h4><span class="tag${l.pick ? " is-pick" : ""}">${l.tag}</span></div>
+        ${l.p.map((t) => `<p>${t}</p>`).join("")}
+      </div>
+    </div>`).join("");
+
+  /* Focus */
+  const F = [
+    ["Focused", "", "Titlebar a step brighter, rim lit, close dot red. Menus in full ink.", { focus: true }],
+    ["Unfocused, menus dim", "PROPOSED", "Same layout in tertiary ink. Nothing moves when focus does, and a click on a dim menu opens it.", { focus: false }],
+    ["Unfocused, menus hidden", "", "Only the name and title until the window has focus. Calmer across 5120 px, but the row reflows on every focus change.", { focus: false, tb: { hideMenus: true } }],
+  ];
+  document.getElementById("focus").innerHTML = F.map(([h, tag, p, o]) => `
+    <div class="sample">
+      ${stage(410, 96, win("mail", { x: 10, y: 10, w: 560, h: 200, zone: 2, ...o }))}
+      <div class="sample__head"><h4>${h}</h4>${tag ? `<span class="tag is-pick">${tag}</span>` : ""}</div>
+      <p>${p}</p>
+    </div>`).join("");
+
+  /* Hanging menus */
+  document.getElementById("hang").innerHTML = [
+    ["The app menu", "Workspaces publishes Spawn Sibling, the splits, Close Pane, About, Quit. The sheet hangs 4 px under the titlebar with its rows aligned to the title's text.",
+      win("workspaces", { x: 10, y: 10, w: 760, h: 520, focus: true, zone: 0, tb: { open: "Workspaces" }, sheet: "Workspaces" })],
+    ["A menu in the middle", "Mail's Message menu, under its own title. The sheet is the shell's today; it can stay the shell's, drawn where the app says the title is.",
+      win("mail", { x: 10, y: 10, w: 760, h: 520, focus: true, zone: 2, tb: { open: "Message" }, sheet: "Message" })],
+  ].map(([h, p, inner]) => `
+    <div class="sample">
+      ${stage(634, 440, inner)}
+      <div class="sample__head"><h4>${h}</h4></div>
+      <p>${p}</p>
+    </div>`).join("");
+
+  /* Narrow */
+  const N = [
+    [720, "720 px", {}],
+    [470, "470 px", { fold: 2, title: "Inbox · 12 unread" }],
+    [360, "360 px", { layout: "name" }],
+    [250, "250 px", { layout: "name", title: "" }],
+  ];
+  document.getElementById("narrow").innerHTML = N.map(([w, label, tb]) => `
+    <div class="spec"><b>${label}</b><br>${tb.layout === "name" ? (tb.title === "" ? "name only" : "name as menu") : tb.fold ? "two folded" : "all menus"}</div>
+    ${stage(w + 20, 66, win("mail", { x: 10, y: 10, w, h: 200, focus: true, zone: 2, tb }))}`).join("");
+
+  /* Browser */
+  const BR = [
+    {
+      name: "Titlebar, then toolbar", tag: "AS BUILT + MENUS", h: 220, o: {},
+      p: ["<b>38 + 40 px of chrome.</b> The browser keeps its own bar under the titlebar: back, forward, reload, the location, vault, downloads.",
+          "Tabs stay in the sidebar, so the top of the browser grows by one row, not two."],
+    },
+    {
+      name: "Location in the titlebar", tag: "BROWSER ONLY", pick: false, h: 220, o: { layout: "omni" }, noBar: true,
+      p: ["<b>38 px of chrome.</b> The menus fold into the name, and the location field takes the rest of the row.",
+          "The page gains 40 px. The browser becomes the one app whose titlebar is different, which is the price."],
+    },
+  ];
+  document.getElementById("browser").innerHTML = BR.map((b) => `
+    <div class="layout">
+      ${stage(760, b.h, win("browser", { x: 10, y: 10, w: 840, h: 400, focus: true, zone: 1, tb: b.o, body: browserBody({ noBar: b.noBar }) }))}
+      <div class="sample">
+        <div class="sample__head"><h4>${b.name}</h4><span class="tag">${b.tag}</span></div>
+        ${b.p.map((t) => `<p>${t}</p>`).join("")}
+      </div>
+    </div>`).join("");
+
+  /* Foreign */
+  const steam = { name: "Steam", menus: [], title: "Steam", body: () => `<div class="steam"><h5>STORE</h5><div class="tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>` };
+  const files = { name: "Files", menus: [], title: "", body: () => `<div class="gtk"><div class="gtk__hb"><i></i><i></i><b>Downloads</b><i></i><span class="gtk__x">${icon("x", 12)}</span></div><div class="gtk__body"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>` };
+  document.getElementById("foreign").innerHTML = [
+    ["Supports server-side: sola-river draws it", "Steam under Xwayland. River's window manager can ask a client to use server-side decorations and draw a titlebar surface above it. Close, name, title, zone; no menus, because the app publishes none. River can clip a window to a box but cannot round it, so the corners stay square unless sola-river paints ground-colored corners on a tile.",
+      win(steam, { x: 10, y: 10, w: 614, h: 420, zone: 1, focus: true, tb: { layout: "ssd", tag: "XWAYLAND" } })],
+    ["Client-side only: it keeps its own", "A GTK 4 app with a headerbar says it only supports client-side decorations. It keeps its own bar, square, with a hairline rim from sola-river so it still sits in the grid. The bar keeps no menus for it either way.",
+      win(files, { x: 10, y: 10, w: 614, h: 420, zone: 2, focus: false, tb: false, style: "border-radius:0" })],
+  ].map(([h, p, inner]) => `
+    <div class="sample">
+      ${stage(634, 300, inner)}
+      <div class="sample__head"><h4>${h}</h4></div>
+      <p>${p}</p>
+    </div>`).join("");
+
+  finish();
+
+  /* Anatomy callouts, measured from the render (2×). */
+  document.fonts.ready.then(() => {
+    const host = document.getElementById("anat");
+    const base = host.getBoundingClientRect();
+    const tb = host.querySelector(".tb");
+    const menus = [...tb.querySelectorAll(".tb__menu")];
+    const box = (els) => {
+      const r = els.map((e) => e.getBoundingClientRect());
+      return { l: Math.min(...r.map((x) => x.left)) - base.left, r: Math.max(...r.map((x) => x.right)) - base.left };
+    };
+    const parts = [
+      ["Close", "12 px", [tb.querySelector(".tb__close")]],
+      ["App menu", "600 · 13 px", [tb.querySelector(".tb__app")]],
+      ["Menus", "24 px pills", menus],
+      ["Title", "12.5 px · tertiary", [tb.querySelector(".tb__title")]],
+      ["Zone", "16 × 12", [tb.querySelector(".tb__zone")]],
+    ];
+    document.getElementById("callouts").innerHTML = parts.map(([name, spec, els]) => {
+      const b = box(els);
+      const right = name === "Zone";
+      const x = right ? b.r : name === "Title" ? b.l + 36 : b.l;
+      const align = right ? "transform:translateX(-100%);" : "";
+      const low = name === "Close" ? " callout--low" : "";
+      return `<div class="callout${low}" style="left:${Math.round(x)}px"><i></i><span style="${align}">${name}</span><em style="${align}">${spec}</em></div>`;
+    }).join("");
+  });
+</script>
+</body>
+</html>

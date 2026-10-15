@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 06 What it takes</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .tiers { display: flex; flex-direction: column; gap: 40px; }
+  .tier { display: grid; grid-template-columns: 200px 1fr; gap: 32px; }
+  .tier__side { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
+  .tier__meter { display: flex; gap: 4px; }
+  .tier__meter i { width: 14px; height: 4px; border-radius: 1px; background: #e9ecf21f; }
+  .tier__meter i.on { background: var(--c); box-shadow: 0 0 4px color-mix(in srgb, var(--c) 50%, transparent); }
+  .items { display: flex; flex-direction: column; }
+  .item { display: grid; grid-template-columns: 1fr 1.25fr; gap: 32px; padding: 16px 0; box-shadow: inset 0 1px 0 var(--seam-hi); }
+  .item__t { font-size: 15px; font-weight: 500; color: var(--ink); margin-bottom: 6px; }
+  .item .note { font-size: 13px; }
+  .files { display: flex; flex-direction: column; gap: 5px; padding-top: 2px; }
+  .file { font-family: var(--font-mono-i); font-size: 12px; line-height: 18px; color: var(--ink-2); }
+  .file b { color: var(--ink); font-weight: 400; }
+  .file span { color: var(--ink-3); }
+  .risks { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .risk { padding: 16px 0; box-shadow: inset 0 1px 0 var(--seam-hi); display: grid; grid-template-columns: 14px 1fr; gap: 12px; }
+  .risk .led { margin-top: 7px; }
+  .risk__t { font-size: 14px; color: var(--ink); font-weight: 500; margin-bottom: 4px; }
+  .order { display: flex; gap: 0; border-radius: 10px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--seam-hi); background: var(--panel); }
+  .step { flex: 1; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; box-shadow: inset -1px 0 0 var(--seam); }
+  .step:last-child { box-shadow: none; }
+  .step__n { color: var(--ink-2); line-height: 0; }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="06"></span><div class="head__title">What it takes</div></div>
+    <div class="head__lead">Most of this direction is already half-built: the shell rasters its meters to nearest-neighbor images on the 2 / 3 grid, so a readout is the same machinery with a glyph table. The new facts (capture lamps, agent count) are the expensive part. Paths checked against master on 2026-10-13.</div>
+  </div>
+
+  <div class="tiers">
+    <div class="tier">
+      <div class="tier__side"><span class="lbl lbl--11 lbl--ink">Cheap</span><span class="tier__meter" style="--c: var(--fn-value)"><i class="on"></i><i></i><i></i></span><span class="note">Tokens and constants. Hours.</span></div>
+      <div class="items">
+        <div class="item">
+          <div><div class="item__t">Meters in the function key</div><div class="note">Warn and crit become the look and live lamps; RX and TX draw white. Graphite's P6 touches the same lines.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/stats/mod.rs</b> <span>AMBER, RED, level_color</span></span><span class="file"><b>sola-shell/src/stats/pixel.rs</b> <span>Tint::Rx, Tint::Tx</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">One-phosphor spectrum, peak dot</div><div class="note">The five-row phosphor stack becomes signal green; a per-band peak with a slow fall lights one white cell. Same raster, same 50 ms <span class="file">At</span> only while live.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/audio/wave.rs</b> <span>ROW_RGB, phosphor()</span></span><span class="file"><b>sola-shell/src/audio/meter.rs</b> <span>RISE, FALL</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Gold flower, orange waiting</div><div class="note">The system button takes Sol. The rail's waiting diamond already draws in the warning atom, so retuning warning to #ff8a3d moves it with no rail code.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/menubar/view.rs</b> <span>extra_icon("sola/flower", fg)</span></span><span class="file"><b>sola-kit/src/components/status_mark.rs</b> <span>Waiting → warning</span></span><span class="file"><b>sola-core/src/theme/palette.rs</b> <span>warning seed</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Neutral shell surfaces</div><div class="note">Menubar, switcher, launcher, and notice backgrounds move to panel black and module grey. These are shell-* tokens already, so it is a preset.</div></div>
+          <div class="files"><span class="file"><b>sola-core/src/theme/palette.rs</b> <span>shell-menubar-bg, shell-switcher-bg</span></span><span class="file"><b>sola-kit/src/theme.rs</b> <span>ShellStyle</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier__side"><span class="lbl lbl--11 lbl--ink">Medium</span><span class="tier__meter" style="--c: var(--fn-value)"><i class="on"></i><i class="on"></i><i></i></span><span class="note">New shell code, one crate at a time. Days.</span></div>
+      <div class="items">
+        <div class="item">
+          <div><div class="item__t">Dot readouts</div><div class="note">A glyph table and a raster beside pixel.rs: fixed cells to RGBA, nearest-neighbor, dim field. The clock swaps its text for a 17 × 5 image rebuilt once a minute; counts rebuild when they change. No new timer.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/stats/dots.rs</b> <span>new, next to pixel.rs</span></span><span class="file"><b>sola-shell/src/components/clock.rs</b> <span>clock_widget</span></span><span class="file"><b>sola-shell/src/menubar/view.rs</b> <span>extras counts</span></span><span class="file"><b>sola-shell/src/stats/view.rs</b> <span>stat_card value</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">A label role</div><div class="note">The kit has five font roles. Add label, with a bus FontFamily token. Iosevka Fixed is installed here from /etc/nixos/configuration.nix, not shipped by the Sola module; fall back to Iosevka Term Slab tracked wider.</div></div>
+          <div class="files"><span class="file"><b>sola-kit/src/fonts.rs</b> <span>Fonts, Fonts::default</span></span><span class="file"><b>docs/manual/distribution.md</b> <span>font list</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Function key on the bus</div><div class="note">fn-signal, lamp-look, lamp-live, and sol as atoms in the shell group, read by ShellStyle, so a preset can move them and the storybook Shell page can edit them.</div></div>
+          <div class="files"><span class="file"><b>sola-core/src/theme/palette.rs</b> <span>Palette::seed</span></span><span class="file"><b>sola-kit/src/theme.rs</b> <span>shell_style_from_bus_theme</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Bands, corner readouts, the kind column</div><div class="note">Notice header band with the time readout; switcher count windows; launcher APP label or chord keycaps.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/notify/view.rs</b></span><span class="file"><b>sola-shell/src/switcher/view.rs</b></span><span class="file"><b>sola-shell/src/launcher/view.rs</b></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier__side"><span class="lbl lbl--11 lbl--ink">Hard</span><span class="tier__meter" style="--c: var(--fn-value)"><i class="on"></i><i class="on"></i><i class="on"></i></span><span class="note">New facts or new plumbing.</span></div>
+      <div class="items">
+        <div class="item">
+          <div><div class="item__t">Capture lamps</div><div class="note">The shell knows of no app holding a mic or camera. Browser would publish CEF media access on the bus; native capture could come from PipeWire stream nodes, which the shell already reads for volume. Camera outside Browser has no clean source on River.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/audio/pw.rs</b> <span>pw-dump</span></span><span class="file"><b>sola-bus/src/topics.rs</b> <span>new topic</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Agent count</div><div class="note">No bus topic carries agent state today. Workspaces already computes working and waiting for its rail; it would publish the rollup, and the shell counts it.</div></div>
+          <div class="files"><span class="file"><b>sola-bus/src/topics.rs</b> <span>new topic</span></span><span class="file"><b>sola-workspaces</b> <span>rail rollup publisher</span></span></div>
+        </div>
+        <div class="item">
+          <div><div class="item__t">Super+K keycap map</div><div class="note">Chords exist (shell_rows, window_rows, the focused app's menus). New: a physical layout table, ANSI plus numpad, and a keycode-to-cap map. The card grows from about 584 × 575 to 1296 × 632 while open, about 2.4× the pixels; it stays card-sized and transient.</div></div>
+          <div class="files"><span class="file"><b>sola-shell/src/shortcuts/state.rs</b> <span>shell_rows, window_rows</span></span><span class="file"><b>sola-shell/src/shortcuts/view.rs</b></span><span class="file"><b>sola-shell/src/zoning.rs</b> <span>card_overlay_frame</span></span><span class="file"><b>sola-bus/src/topics.rs</b> <span>Zone::rect for the glyphs</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Risks</span>
+    <div class="risks">
+      <div class="risk"><span class="led led--on" style="--c: var(--lamp-look)"></span><div><div class="risk__t">GPU idle</div><div class="note">Every readout is a cached image rebuilt on change. Lamps are steady, glows are baked or skipped, nothing blinks. The spectrum keeps its existing self-wake only while live (PERFORMANCE.md).</div></div></div>
+      <div class="risk"><span class="led led--on" style="--c: var(--lamp-look)"></span><div><div class="risk__t">Legibility at 1:1</div><div class="note">3×5 on 2 px dots is small on the 5120 × 2160 panel. Keep 3×5 to digits and the colon in the bar; try it on the desk before the rest.</div></div></div>
+      <div class="risk"><span class="led led--on" style="--c: var(--lamp-look)"></span><div><div class="risk__t">Gold and orange</div><div class="note">#ffb800 and #ff8a3d are about 20° apart. If they blur on the real panel, waiting keeps its diamond and drops the hue to cyan outline.</div></div></div>
+      <div class="risk"><span class="led led--on" style="--c: var(--lamp-look)"></span><div><div class="risk__t">Costume</div><div class="note">Dots spreading is the failure mode. "Dots for the number you came for" is the guard; a dot marquee or dot menu titles break it.</div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">A first slice, in order</span>
+    <div class="order">
+      <div class="step"><span class="step__n dim-field" data-dots="1" data-font="35"></span><span class="lbl lbl--ink">Hues</span><span class="note">Meters, spectrum, flower, warning. One preset.</span></div>
+      <div class="step"><span class="step__n dim-field" data-dots="2" data-font="35"></span><span class="lbl lbl--ink">Clock readout</span><span class="note">dots.rs plus the clock. Judge legibility on the desk.</span></div>
+      <div class="step"><span class="step__n dim-field" data-dots="3" data-font="35"></span><span class="lbl lbl--ink">Label role</span><span class="note">Engraved labels in the bar and drop panels.</span></div>
+      <div class="step"><span class="step__n dim-field" data-dots="4" data-font="35"></span><span class="lbl lbl--ink">Surfaces</span><span class="note">Notice band, switcher, launcher, drop values.</span></div>
+      <div class="step"><span class="step__n dim-field" data-dots="5" data-font="35"></span><span class="lbl lbl--ink">Keys</span><span class="note">The keycap map, after the rest has proved itself.</span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

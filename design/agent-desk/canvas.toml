@@ -1,0 +1,58 @@
+title = "Agent desk"
+
+# Exploration: agent state moves from the Workspaces rail into the shell.
+# Builds on Foundation v1 (Graphite); tokens from ../tokens.css.
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Agent desk / Cover"
+
+[[artboard]]
+id = "strip"
+src = "strip.html"
+x = 0
+y = 1922
+width = 1440
+height = "auto"
+title = "Agent desk / 01 Agent strip"
+
+[[artboard]]
+id = "waiting"
+src = "waiting.html"
+x = 0
+y = 3965
+width = 1440
+height = "auto"
+title = "Agent desk / 02 Waiting"
+
+[[artboard]]
+id = "seam"
+src = "seam.html"
+x = 0
+y = 6108
+width = 1440
+height = "auto"
+title = "Agent desk / 03 Seam light"
+
+[[artboard]]
+id = "command"
+src = "command.html"
+x = 0
+y = 8696
+width = 1440
+height = "auto"
+title = "Agent desk / 04 Launcher, attention, recap"
+
+[[artboard]]
+id = "what-it-takes"
+src = "what-it-takes.html"
+x = 0
+y = 10903
+width = 1440
+height = "auto"
+title = "Agent desk / 05 What it takes"
