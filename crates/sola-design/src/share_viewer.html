@@ -44,11 +44,10 @@
   .note .dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
     background: var(--note); color: #1a1407; box-shadow: 0 0 0 1.5px var(--bg); font: 500 11px/18px system-ui, sans-serif;
     text-align: center; user-select: none; }
-  .note .card { display: none; position: absolute; left: 14px; top: -12px; width: max-content; max-width: 280px;
+  .note .card { visibility: hidden; position: absolute; left: 14px; top: -12px; width: max-content; max-width: 280px;
     padding: 9px 11px; border: 1px solid rgba(227,179,65,.75); border-radius: 8px; background: var(--chip);
     font-size: 12px; line-height: 16px; white-space: pre-wrap; }
-  .note.flip .card { left: auto; right: 14px; }
-  .note.open .card, .note:hover .card { display: block; }
+  .note.open .card, .note:hover .card { visibility: visible; }
   .note:hover { z-index: 2; }
   .pop { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); display: none; padding: 6px 8px;
     background: var(--chip); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
@@ -485,6 +484,18 @@
     placed.push(spot);
     return spot.c;
   };
+  // Beside its marker at m: right, left, above, below — the first spot
+  // covering neither the marker, `keep` (titles, cards, markers), nor
+  // `rects` (boards); else the first clear of the marker and `keep`.
+  const cardSpot = (m, w, h, keep, rects) => {
+    const G = 14, E = 8;
+    const fit = (x, y) => ({ x: Math.max(Math.min(x, innerWidth - w - E), E), y: Math.max(Math.min(y, innerHeight - h - E), E), w, h });
+    const spots = [fit(m[0] + G, m[1] - 12), fit(m[0] - G - w, m[1] - 12), fit(m[0] - 12, m[1] - G - h), fit(m[0] - 12, m[1] + G)];
+    const hit = (p, b) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h;
+    const own = { x: m[0] - 10, y: m[1] - 10, w: 20, h: 20 };
+    const clear = (r) => !hit(r, own) && !keep.some((k) => hit(k, r));
+    return spots.find((r) => clear(r) && !rects.some((b) => hit(b, r))) || spots.find(clear) || spots[0];
+  };
   const rounded = (pts, radius) => {
     let d = `M${pts[0]}`;
     for (let k = 1; k < pts.length - 1; k++) {
@@ -620,13 +631,27 @@
       for (const h of [...b.exits, ...b.links]) if (hover && hover.el === h.el) outline(b, h.r, true);
     }
     over.innerHTML = o;
-    // Notes on top: markers always; cards open, on the tour's step, or hovered.
-    s.notes.forEach((n, i) => {
-      const el = inkNotes[i], x = cam.x + n.at[0] * cam.z, y = cam.y + n.at[1] * cam.z;
+    // Notes on top: markers always; cards open, on the tour's step, or
+    // hovered. A card goes beside its marker where it covers no title, other
+    // card, or marker — and no board, if it can (as Design's card_spot).
+    const marks = s.notes.map((n) => [cam.x + n.at[0] * cam.z, cam.y + n.at[1] * cam.z]);
+    const keep = [...screens.map((r) => ({ x: r.x, y: r.y - 22, w: r.w, h: 20 })),
+      ...inkSecs.map((el) => { const q = el.firstChild.getBoundingClientRect(); return { x: q.x, y: q.y, w: q.width, h: q.height }; })];
+    const isOpen = (n) => notesOpen || openNotes.has(n.n) || (step != null && n.board === step);
+    const noteOrder = s.notes.map((_, i) => i).sort((i, j) => isOpen(s.notes[j]) - isOpen(s.notes[i]));
+    for (const i of noteOrder) {
+      const n = s.notes[i], el = inkNotes[i], [x, y] = marks[i], card = el.lastChild;
       el.style.left = x + 'px'; el.style.top = y + 'px';
-      el.classList.toggle('flip', x + 14 + 304 > innerWidth - 8);
-      el.classList.toggle('open', notesOpen || openNotes.has(n.n) || (step != null && n.board === step));
-    });
+      // A marker off screen has no card (it would pile up at the edge).
+      const shown = x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight;
+      el.style.display = shown ? '' : 'none';
+      if (!shown) continue;
+      el.classList.toggle('open', isOpen(n));
+      const others = marks.filter((_, j) => j !== i).map(([mx, my]) => ({ x: mx - 9, y: my - 9, w: 18, h: 18 }));
+      const spot = cardSpot([x, y], card.offsetWidth, card.offsetHeight, [...keep, ...others], screens);
+      card.style.left = spot.x - x + 'px'; card.style.top = spot.y - y + 'px';
+      if (isOpen(n)) keep.push(spot);
+    }
     document.getElementById('notes-btn').classList.toggle('on', notesOpen);
     tourUi();
   };

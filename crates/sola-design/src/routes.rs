@@ -416,17 +416,35 @@ pub fn label_spot(
     Some(spot.center())
 }
 
-/// Top-left of a note card of `size` beside its marker at `m`: to the
-/// right, else to the left, kept on the plane.
-pub fn card_at(m: Point, size: Size, plane: Size) -> Point {
+/// Top-left of a note card of `size` beside its marker at `m` (screen
+/// px), on the plane: to the right, left, above, or below — the first spot
+/// that covers neither its marker, anything in `keep_clear` (board titles,
+/// section titles, other cards and markers), nor any of `boards`; else the
+/// first that covers neither its marker nor `keep_clear`; else to the right.
+pub fn card_spot(m: Point, size: Size, plane: Size, keep_clear: &[Rectangle], boards: &[Rectangle]) -> Point {
     const GAP: f32 = 14.0;
     const EDGE: f32 = 8.0;
-    let mut x = m.x + GAP;
-    if x + size.width > plane.width - EDGE {
-        x = m.x - GAP - size.width;
-    }
-    let y = (m.y - 12.0).min(plane.height - size.height - EDGE).max(EDGE);
-    Point::new(x.max(EDGE), y)
+    let fit = |x: f32, y: f32| {
+        let x = x.min(plane.width - size.width - EDGE).max(EDGE);
+        let y = y.min(plane.height - size.height - EDGE).max(EDGE);
+        Rectangle::new(Point::new(x, y), size)
+    };
+    let spots = [
+        fit(m.x + GAP, m.y - 12.0),
+        fit(m.x - GAP - size.width, m.y - 12.0),
+        fit(m.x - 12.0, m.y - GAP - size.height),
+        fit(m.x - 12.0, m.y + GAP),
+    ];
+    // Never over its own marker (a spot pushed back onto the plane can be).
+    let own = Rectangle::new(Point::new(m.x - 10.0, m.y - 10.0), Size::new(20.0, 20.0));
+    let covers = |r: &Rectangle, of: &[Rectangle]| of.iter().any(|o| o.intersects(r));
+    let clear = |r: &&Rectangle| !r.intersects(&own) && !covers(r, keep_clear);
+    spots
+        .iter()
+        .find(|r| clear(r) && !covers(r, boards))
+        .or_else(|| spots.iter().find(clear))
+        .unwrap_or(&spots[0])
+        .position()
 }
 
 #[cfg(test)]
@@ -527,11 +545,20 @@ mod tests {
     }
 
     #[test]
-    fn cards_flip_and_stay_on_the_plane() {
-        let plane = Size::new(800., 600.);
-        let size = Size::new(300., 100.);
-        assert_eq!(card_at(Point::new(100., 100.), size, plane), Point::new(114., 88.));
-        assert_eq!(card_at(Point::new(700., 590.), size, plane).x, 700. - 14. - 300.);
-        assert_eq!(card_at(Point::new(700., 590.), size, plane).y, 600. - 100. - 8.);
+    fn cards_keep_off_titles_and_boards_and_stay_on_the_plane() {
+        let plane = Size::new(1600., 1000.);
+        let size = Size::new(300., 60.);
+        let m = Point::new(400., 300.);
+        assert_eq!(card_spot(m, size, plane, &[], &[]), Point::new(414., 288.), "right by default");
+        // A board to the right with its title band: the card goes left.
+        let board = r(440., 290., 600., 400.);
+        let title = r(440., 268., 600., 20.);
+        assert_eq!(card_spot(m, size, plane, &[title], &[board]), Point::new(86., 288.));
+        // Pinned inside a board: covering the board is fine, its title is not.
+        let inside = Point::new(600., 300.);
+        let spot = card_spot(inside, size, plane, &[title], &[board]);
+        assert!(!Rectangle::new(spot, size).intersects(&title), "{spot:?}");
+        // Near the right edge it stays on the plane.
+        assert_eq!(card_spot(Point::new(1590., 300.), size, plane, &[], &[]).x, 1590. - 14. - 300.);
     }
 }

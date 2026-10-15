@@ -432,7 +432,7 @@ impl canvas::Program<Event> for Overlay<'_> {
                 });
             });
         }
-        annotate::section_titles(&mut frame, &self.scene, self.camera, theme);
+        let heads = annotate::section_titles(&mut frame, &self.scene, self.camera, theme);
         annotate::arrows(&mut frame, &self.scene, self.boards, self.camera, focus, theme);
         annotate::hots(&mut frame, &self.scene, self.boards, self.camera, focus, theme);
         if let Some((tab, rect)) = self.selection {
@@ -483,7 +483,12 @@ impl canvas::Program<Event> for Overlay<'_> {
             Some(Mark::Note(n)) => Some(n),
             _ => None,
         };
-        annotate::notes(&mut frame, &self.scene, self.camera, bounds.size(), open, hover, theme);
+        let around = annotate::Around {
+            boards: self.boards,
+            heads: &heads,
+            plane: bounds.size(),
+        };
+        annotate::notes(&mut frame, &self.scene, self.camera, around, open, hover, theme);
         vec![frame.into_geometry()]
     }
 

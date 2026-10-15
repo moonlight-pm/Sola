@@ -90,11 +90,13 @@ fn section_box(camera: Camera, s: &crate::scene::SectionMark) -> Option<Rectangl
 }
 
 /// Section titles (and notes) above their regions, over the boards — on a
-/// plate, so they read where a zoomed-out row runs under them.
-pub fn section_titles(frame: &mut Frame, scene: &Scene, camera: Camera, theme: &Theme) {
+/// plate, so they read where a zoomed-out row runs under them. Returns the
+/// plates (notes keep their cards off them).
+pub fn section_titles(frame: &mut Frame, scene: &Scene, camera: Camera, theme: &Theme) -> Vec<Rectangle> {
     let p = theme.extended_palette();
     let ink = p.background.base.text;
     let plate = alpha(p.background.base.color, 0.88);
+    let mut plates = Vec::with_capacity(scene.sections.len());
     for s in &scene.sections {
         let Some(b) = section_box(camera, s) else { continue };
         let width = b.width.clamp(160.0, 640.0);
@@ -107,12 +109,14 @@ pub fn section_titles(frame: &mut Frame, scene: &Scene, camera: Camera, theme: &
         let top = b.y - 8.0 - height;
         let back = Rectangle::new(Point::new(b.x - 4.0, top - 3.0), Size::new(wide + 12.0, height + 6.0));
         frame.fill(&Path::rounded_rectangle(back.position(), back.size(), 6.0.into()), plate);
+        plates.push(back);
         frame.fill_text(label(&s.title, Point::new(b.x + 2.0, top), SECTION_TITLE, fonts::ui_medium(), alpha(ink, 0.92), width));
         if let Some((n, _)) = note {
             let at = Point::new(b.x + 2.0, top + title.height + gap);
             frame.fill_text(label(n, at, SECTION_NOTE, fonts::ui(), alpha(ink, 0.62), width));
         }
     }
+    plates
 }
 
 // ── arrows ───────────────────────────────────────────────────────
@@ -272,9 +276,19 @@ pub fn note_at(scene: &Scene, camera: Camera, p: Point) -> Option<usize> {
         .map(|n| n.n)
 }
 
+/// Where notes keep their cards off: on screen, the boards and, never to
+/// be covered, their title bands and the section titles (`heads`).
+pub struct Around<'a> {
+    pub boards: &'a [Board],
+    pub heads: &'a [Rectangle],
+    pub plane: Size,
+}
+
 /// Markers for every note; cards for the open ones (`open`) and the one
-/// under the pointer (drawn last, on top).
-pub fn notes(frame: &mut Frame, scene: &Scene, camera: Camera, plane: Size, open: impl Fn(usize) -> bool, hover: Option<usize>, theme: &Theme) {
+/// under the pointer (drawn last, on top). A card goes beside its marker
+/// where it covers no title, other card, or marker — and no board, if it
+/// can (see [`routes::card_spot`]).
+pub fn notes(frame: &mut Frame, scene: &Scene, camera: Camera, around: Around, open: impl Fn(usize) -> bool, hover: Option<usize>, theme: &Theme) {
     let p = theme.extended_palette();
     let mark = p.warning.base.color;
     let ring = p.background.base.color;
@@ -299,11 +313,29 @@ pub fn notes(frame: &mut Frame, scene: &Scene, camera: Camera, plane: Size, open
         .iter()
         .filter(|n| open(n.n) && hover != Some(n.n))
         .chain(scene.notes.iter().filter(|n| hover == Some(n.n)));
+    let boards: Vec<Rectangle> = around.boards.iter().map(|b| camera.rect_to_screen(b.rect())).collect();
+    let mut keep_clear: Vec<Rectangle> = boards
+        .iter()
+        .map(|r| Rectangle::new(Point::new(r.x, r.y - 22.0), Size::new(r.width, 20.0)))
+        .chain(around.heads.iter().copied())
+        .collect();
+    let marker = |n: &crate::scene::NoteMark| {
+        let at = camera.to_screen(n.at);
+        Rectangle::new(Point::new(at.x - NOTE_RADIUS, at.y - NOTE_RADIUS), Size::new(2.0 * NOTE_RADIUS, 2.0 * NOTE_RADIUS))
+    };
+    let plane = Rectangle::new(Point::ORIGIN, around.plane);
     for n in cards {
         let at = camera.to_screen(n.at);
+        // A marker off the plane has no card (it would pile up at the edge).
+        if !plane.contains(at) {
+            continue;
+        }
         let text = measure(&n.text, CARD_TEXT, fonts::ui(), CARD_WIDTH);
         let size = Size::new(text.width + 2.0 * CARD_PAD[1], text.height + 2.0 * CARD_PAD[0]);
-        let tl = routes::card_at(at, size, plane);
+        let others: Vec<Rectangle> = scene.notes.iter().filter(|o| o.n != n.n).map(marker).collect();
+        let clear: Vec<Rectangle> = keep_clear.iter().chain(&others).copied().collect();
+        let tl = routes::card_spot(at, size, around.plane, &clear, &boards);
+        keep_clear.push(Rectangle::new(tl, size));
         let shape = Path::rounded_rectangle(tl, size, 8.0.into());
         frame.fill(&shape, p.background.weak.color);
         frame.stroke(&shape, Stroke::default().with_color(alpha(mark, 0.75)).with_width(1.0));
