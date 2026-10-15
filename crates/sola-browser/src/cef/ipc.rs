@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cef::engine::InputEvent;
 use crate::cef::paint::DirtyRect;
-use crate::engine::{BoardDetail, BoardSize, EditCmd, NavCmd, PageContext, TabInfo};
+use crate::engine::{BoardDetail, BoardPace, BoardSize, EditCmd, NavCmd, PageContext, TabInfo};
 
 /// Safety cap; larger is treated as a corrupt peer. A sola-design board
 /// frame can be up to 8192×5120 BGRA (160 MiB); a 4K page is ≈ 33 MiB.
@@ -121,9 +121,9 @@ pub enum ToEngine {
     BoardRepaint {
         id: u64,
     },
-    BoardFrameRate {
+    BoardPace {
         id: u64,
-        fps: u32,
+        pace: BoardPace,
     },
 }
 

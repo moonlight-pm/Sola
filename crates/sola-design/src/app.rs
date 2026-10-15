@@ -3,8 +3,10 @@
 //! The plane stacks the artboard textures (wgpu shader), the overlay canvas
 //! (frames, titles, pick outline, all input), and a status pill (zoom, pick).
 //! Boards are CEF board tabs in one `--engine` helper. Board lifecycle lives
-//! in [`live`]; the call owner `design` in [`cli`].
+//! in [`live`]; the memory budget in [`budget`]; the call owner `design` in
+//! [`cli`].
 
+mod budget;
 mod canvases;
 mod cli;
 mod live;
@@ -21,19 +23,20 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Point, Size, S
 use sola_browser::CefEngine;
 use sola_browser::agent::{AgentOp, AgentReply, AgentRequest};
 use sola_browser::cef::engine::InputEvent;
-use sola_browser::engine::{Cmd, Engine, TabId};
+use sola_browser::engine::{BoardPace, Cmd, Engine, TabId};
 use sola_bus::Message;
 use sola_bus::topics::{FocusTarget, Topic, TopicKind};
 use sola_call::Incoming;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent,
 };
-use sola_kit::components::{SidebarEvent, SidebarMsg};
+use sola_kit::components::{Dest, Drop as SidebarDrop, SidebarEvent, SidebarMsg};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::APP_ID;
 use crate::annotate;
+use crate::boards::Board;
 use crate::calls;
 use crate::camera::{self, Camera};
 use crate::canvas;
@@ -42,9 +45,9 @@ use crate::frames::{self, BoardFrames};
 use crate::glow::Glows;
 use crate::instance;
 use crate::loads::Loads;
+use crate::memory::Ledger;
 use crate::menu;
 use crate::overlay::{self, Overlay};
-use crate::pace;
 use crate::plane::{self, Plane};
 use crate::projects::{self, CanvasRef, Catalog};
 use crate::rail::{self, AddDraft, CanvasDraft, RailState};
@@ -68,6 +71,9 @@ const NOTICE: Duration = Duration::from_millis(1800);
 const EVICT_TICK: Duration = Duration::from_secs(60);
 /// Tick while a detail plan is due (see [`crate::detail::SETTLE`]).
 const DETAIL_TICK: Duration = Duration::from_millis(40);
+/// Tick while an agent's recent call keeps a canvas awake, so its boards
+/// sleep once the call ages out.
+const PACE_TICK: Duration = Duration::from_secs(5);
 /// Board surfaces cover the plane in steps of this many px, so a window
 /// resize rarely resizes them.
 const SURFACE_STEP: u32 = 256;
@@ -89,6 +95,12 @@ pub enum Msg {
     Animate,
     /// Close idle off-screen canvases.
     Evict,
+    /// Check the machine's free memory ([`budget`]).
+    Budget,
+    /// Re-pace boards (an agent's recent call aged out).
+    Pace,
+    /// The window gained (`true`) or lost keyboard focus.
+    Focused(bool),
     /// Copy the shown canvas's share link (`true`: a new link first).
     ShareLink(bool),
     /// Open / close the flows list above the pill.
@@ -185,8 +197,13 @@ enum Pending {
     /// A `solactl design` call answered by the page of board `tab`.
     Call { inc: Incoming, kind: cli::CallKind, tab: u64 },
     /// A board's post-load settle: content height and loaded files, for
-    /// load generation `generation` — or a later re-measure (`follow_up`).
-    Settle { tab: u64, generation: u64, follow_up: bool },
+    /// load generation `generation`.
+    Settle { tab: u64, generation: u64 },
+    /// An `auto` board's page waiting to report its next height change.
+    Height { tab: u64, generation: u64 },
+    /// What a settled board's page declares, read again (its notes moved,
+    /// or its height changed) — see [`crate::marks`].
+    Marks { tab: u64, generation: u64 },
 }
 
 struct App {
@@ -235,10 +252,20 @@ struct App {
     notes_open: bool,
     /// The flows list above the pill is open.
     flows_open: bool,
-    /// Frame rate last asked of each board (see [`pace`]).
-    paced: HashMap<u64, u32>,
     /// Board with the keyboard.
     focus: Option<u64>,
+    /// The window has keyboard focus.
+    focused: bool,
+    /// Pace last sent per board tab; a board missing here is `Live`.
+    paces: HashMap<u64, BoardPace>,
+    /// When each open board was last in view or working ([`budget`]).
+    seen: HashMap<u64, Instant>,
+    /// Discarded boards whose last picture stays on the plane.
+    pictures: HashSet<u64>,
+    /// Board opens and discards free memory does not show yet.
+    ledger: Ledger,
+    /// The last budget check found no idle boards left to discard.
+    budget_short: bool,
     selection: Option<Selection>,
     next_req: u64,
     pending: HashMap<u64, Pending>,
@@ -279,8 +306,13 @@ impl App {
             open_notes: HashSet::new(),
             notes_open: false,
             flows_open: false,
-            paced: HashMap::new(),
             focus: None,
+            focused: true,
+            paces: HashMap::new(),
+            seen: HashMap::new(),
+            pictures: HashSet::new(),
+            ledger: Ledger::default(),
+            budget_short: false,
             selection: None,
             next_req: 1,
             pending: HashMap::new(),
@@ -335,6 +367,12 @@ impl App {
         if self.has_background() {
             subs.push(iced::time::every(EVICT_TICK).map(|_| Msg::Evict));
         }
+        if self.open_cost() > 0 {
+            subs.push(iced::time::every(budget::BUDGET_TICK).map(|_| Msg::Budget));
+        }
+        if !self.agent_busy().is_empty() {
+            subs.push(iced::time::every(PACE_TICK).map(|_| Msg::Pace));
+        }
         if !self.waits.is_empty() || self.loads.has_due() {
             subs.push(iced::time::every(PENDING_TICK).map(|_| Msg::WaitTick));
         }
@@ -346,14 +384,16 @@ impl App {
         }
         subs.push(iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Rescaled(f)) => Some(Msg::Scale(f)),
+            iced::Event::Window(iced::window::Event::Focused) => Some(Msg::Focused(true)),
+            iced::Event::Window(iced::window::Event::Unfocused) => Some(Msg::Focused(false)),
             _ => None,
         }));
         Subscription::batch(subs)
     }
 
     /// Detail renders follow the camera, plane, and boards: any change to
-    /// them plans again once things rest. Boards whose patch missed are
-    /// asked to paint whole.
+    /// them plans again once things rest. Board paces follow at once.
+    /// Boards whose patch missed are asked to paint whole.
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         let before = (self.camera, self.plane_size, self.scale_factor);
         let task = self.handle(msg);
@@ -367,36 +407,6 @@ impl App {
         }
         self.pace_boards();
         task
-    }
-
-    /// Each board's frame rate from what the human can see (see
-    /// [`crate::pace`]), and which boards' frames wake the window.
-    fn pace_boards(&mut self) {
-        let plane = self.plane_size.map(|s| iced::Rectangle::new(Point::ORIGIN, s));
-        let mut visible = HashSet::new();
-        let mut fastest = pace::HIDDEN;
-        let mut changes = Vec::new();
-        for l in &self.live {
-            let shown = self.is_shown(&l.at.key());
-            for b in &l.boards {
-                let tab = b.tab.0;
-                let on_screen =
-                    shown && plane.is_some_and(|p| self.camera.rect_to_screen(b.rect()).intersects(&p));
-                let fps = pace::fps(on_screen, self.camera.zoom, !self.loads.is_settled(tab));
-                if on_screen {
-                    visible.insert(tab);
-                    fastest = fastest.max(fps);
-                }
-                if self.paced.get(&tab) != Some(&fps) {
-                    changes.push((tab, fps));
-                }
-            }
-        }
-        for (tab, fps) in changes {
-            self.paced.insert(tab, fps);
-            self.send(Cmd::BoardFrameRate { id: TabId(tab), fps });
-        }
-        self.frames.set_visible(visible, fastest);
     }
 
     fn handle(&mut self, msg: Msg) -> Task<Msg> {
@@ -416,6 +426,9 @@ impl App {
                 self.check_waits();
             }
             Msg::Evict => self.evict_idle(Instant::now()),
+            Msg::Budget => self.budget_tick(),
+            Msg::Pace => {}
+            Msg::Focused(focused) => self.focused = focused,
             Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
             Msg::Animate => {
                 let now = Instant::now();
@@ -450,7 +463,12 @@ impl App {
                     self.show_canvas(at);
                 }
             }
-            Msg::Canvases(found) => {
+            Msg::Canvases(mut found) => {
+                for p in &self.catalog.projects {
+                    if let Some(list) = found.get_mut(&p.id) {
+                        p.order_canvases(list);
+                    }
+                }
                 self.canvases = found;
                 self.share_canvases();
             }
@@ -584,6 +602,12 @@ impl App {
         Task::none()
     }
 
+    /// Board `tab` has a picture on the plane: painted since it opened, or
+    /// kept from before it was discarded.
+    fn has_picture(&self, tab: u64) -> bool {
+        self.frames.is_painted(tab) || self.pictures.contains(&tab)
+    }
+
     fn focus_board(&mut self, tab: Option<u64>) {
         if self.focus == tab {
             return;
@@ -626,7 +650,13 @@ impl App {
             self.details.due = None;
             return;
         };
-        let boards = self.shown_boards().to_vec();
+        // A discarded board has no page to re-raster.
+        let boards: Vec<Board> = self
+            .shown_boards()
+            .iter()
+            .filter(|b| !b.discarded)
+            .cloned()
+            .collect();
         let asks = self.details.refresh(
             &boards,
             &self.camera,
@@ -735,11 +765,9 @@ impl App {
         };
         let why = match why {
             Pending::Call { inc, kind, tab } => return self.finish_call(inc, kind, tab, reply),
-            Pending::Settle {
-                tab,
-                generation,
-                follow_up,
-            } => return self.on_settled(tab, generation, follow_up, reply),
+            Pending::Settle { tab, generation } => return self.on_settled(tab, generation, reply),
+            Pending::Height { tab, generation } => return self.on_height(tab, generation, reply),
+            Pending::Marks { tab, generation } => return self.on_marks(tab, generation, reply),
             other => other,
         };
         if !reply.ok {
@@ -776,7 +804,12 @@ impl App {
                 (Some(sel), None) if sel.tab == tab => self.selection = None,
                 _ => {}
             },
-            Pending::Call { .. } | Pending::Settle { .. } => unreachable!("answered above"),
+            Pending::Call { .. }
+            | Pending::Settle { .. }
+            | Pending::Height { .. }
+            | Pending::Marks { .. } => {
+                unreachable!("answered above")
+            }
         }
     }
 
@@ -789,6 +822,11 @@ impl App {
     }
 
     fn agent(&mut self, tab: TabId, op: AgentOp, why: Option<Pending>) {
+        // A sleeping page answers nothing that waits on a frame: wake it
+        // before the op (`pace_boards` settles its pace after).
+        if self.paces.get(&tab.0) == Some(&BoardPace::Asleep) {
+            self.set_pace(tab, BoardPace::Live);
+        }
         let id = self.next_req;
         self.next_req += 1;
         if let Some(why) = why {
@@ -866,7 +904,53 @@ impl App {
                 }
             }
             SidebarEvent::Resize { width } => self.rail.width = width,
-            SidebarEvent::Edit { .. } | SidebarEvent::Drop(_) => {}
+            SidebarEvent::Drop(drop) => self.on_rail_drop(drop),
+            SidebarEvent::Edit { .. } => {}
+        }
+    }
+
+    /// A canvas dropped within its project, or a project header dropped
+    /// in front of another project.
+    fn on_rail_drop(&mut self, drop: SidebarDrop) {
+        let moved = match drop.dest {
+            Dest::Join { before, .. } => {
+                let Some(at) = CanvasRef::from_key(&drop.id) else {
+                    return;
+                };
+                let before = before.as_deref().and_then(CanvasRef::from_key);
+                if before.as_ref().is_some_and(|b| b.project != at.project) {
+                    return;
+                }
+                let listed: Vec<String> = self
+                    .canvases
+                    .get(&at.project)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| c.name.clone())
+                    .collect();
+                self.catalog.move_canvas_before(
+                    &at.project,
+                    &at.canvas,
+                    before.as_ref().map(|b| b.canvas.as_str()),
+                    &listed,
+                )
+            }
+            // `before` is a project id, or a canvas row (its project).
+            Dest::BlockBefore { before } => {
+                let before = before.map(|b| match CanvasRef::from_key(&b) {
+                    Some(at) => at.project,
+                    None => b,
+                });
+                self.catalog.move_project_before(&drop.id, before.as_deref())
+            }
+            Dest::Loose { .. } | Dest::BeforeGroup { .. } | Dest::Sections(_) => return,
+        };
+        match moved {
+            Ok(()) => {
+                self.persist();
+                self.rescan();
+            }
+            Err(e) => tracing::warn!(error = %e, "design rail drop"),
         }
     }
 
@@ -875,7 +959,7 @@ impl App {
             .catalog
             .projects
             .iter()
-            .map(|p| (p.id.clone(), canvas::scan(&p.root)))
+            .map(|p| (p.id.clone(), p.canvases()))
             .collect();
         self.share_canvases();
     }
@@ -1079,7 +1163,7 @@ impl App {
                     painted: open
                         .boards
                         .iter()
-                        .map(|b| self.frames.is_painted(b.tab.0))
+                        .map(|b| self.has_picture(b.tab.0))
                         .collect(),
                     selection: self.selection.as_ref().map(|s| (s.tab, s.picked.rect)),
                     focus: self.focus,

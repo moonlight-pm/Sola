@@ -1,14 +1,14 @@
 # sola-design — HTML artboards on a canvas, edited by agents
 
 **Date:** 2026-10-12  
-**Status:** **Frozen** — slices 1–6 on master (2026-10-12), installed; slice 7 (annotations, exits, flows) built and installed 2026-10-14 (branch `sola-design`)  
+**Status:** **Frozen** — slices 1–6 on master (2026-10-12), installed; slice 7 (memory budget) installed 2026-10-14; slice 8 (annotations, exits, flows) installed 2026-10-14  
 **Related:** [sola-wrapper](2026-08-21-sola-wrapper-design.md) (CEF via the sola-browser lib); [browser agent control](2026-09-11-sola-browser-agent-control-design.md) (CDP wrap, call owner shape); [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md) (rail + `solactl` shape); plan [`plans/2026-10-12-sola-design-plan.md`](../plans/2026-10-12-sola-design-plan.md)
 
 | | |
 |--|--|
-| **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab, per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
-| **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. |
-| **Gaps** | Share links have no password or expiry and work only while Design runs. `auto` height stops re-measuring 8 s after a load. Page state (typed text) is shared between the human and agents. Page dialogs are auto-accepted. |
+| **Implementation** | `crates/sola-design`; sola-browser CEF **board mode** (`OpenBoard` / `SetBoard`, page-zoom raster, board tabs paint regardless of the active tab at their own pace (`BoardPace`), per-tab input, `AgentOp::Eval` / `Pdf`). Call owner `design` (`app/cli.rs`, specs `calls.rs`). MCP: `solactl mcp` (generic over call-plane owners). |
+| **Dogfood** | **Installed** `design`+`solactl`+`shell`+`browser`+`wrapper` release 2026-10-12. Smoked: picks, `solactl design` verbs, zoom, Super+click. First agent session (Exit, Claude over MCP) ported a Pencil file to `Exit/design/foundation` (tall auto boards, web fonts, product CSS outside `design/`); its two field reports drove the served origin, settle, linked-file watch, and the `src` / auto-height fixes, re-verified by Exit. 2026-10-12: rail drag-reorder + `project.remove` installed `design`; `project.remove` smoked over solactl and MCP, drag smoked. 2026-10-13: board pace installed `design`, smoked (idle CPU gone). 2026-10-14: memory budget installed `design`; `status` memory and `canvas.close` smoked (ten boards' memory fully back within ~20 s); a discard under real pressure not yet seen. |
+| **Gaps** | An `auto` page sized in `vh` grows a few steps per load (the measured height carries across reloads). Page dialogs are auto-accepted. Memory: board cost is an estimate (measured once); a board whose renderer is killed is not recovered; boards stay 2× and one renderer each — see [idea](../ideas/2026-10-13-design-memory-budget.md). |
 
 ## Intent
 
@@ -37,13 +37,15 @@ project's git, and openable in any browser.
 | Topic | Choice |
 |-------|--------|
 | Crate / binary | `sola-design`; `app_id` `sola-design`; window title **Design**. |
-| UI | Iced + sola-kit. Project rail on the left (kit sidebar); canvas on the right. |
+| UI | Iced + sola-kit. Project rail on the left (kit sidebar); canvas on the right. Rail rows drag: canvases within their project, project headers as blocks (order saved in `projects.json`). |
 | Document | **Files are the document.** No app-owned node model, no `write_html`-style node ops. |
 | Projects | Own list at `~/.config/sola/design/projects.json`. **Separate** from Workspaces (may merge later). Add project = pick a folder. |
 | Root only | Canvases are read from `<project root>/design/` only. Worktrees are not scanned (v1). |
 | Rail | Sections = projects. Items = canvases: each directory `design/<canvas>/` that holds a `canvas.toml`. `+` on a project creates an empty canvas (name only). |
 | Engine | CEF via `sola-browser` (`default-features = false`) + `profiles::bind_external("sola-design", …)`. One `--engine` helper. **One OSR browser per artboard** (“board” tab). CPU OSR stays; do **not** enable `accelerated_osr`. Design's helper runs with `--disable-gpu-compositing` (2026-10-14): with CPU frames, GPU compositing read every frame back whole. |
-| Board tabs | `Cmd::OpenBoard` creates a board at its own CSS size and raster scale, shown; `Cmd::SetBoard` resizes / re-scales it. A board is never `was_hidden` and paints whether or not it is the active tab. The browser and wrappers never create board tabs. |
+| Board tabs | `Cmd::OpenBoard` creates a board at its own CSS size and raster scale, shown; `Cmd::SetBoard` resizes / re-scales it. A board paints whether or not it is the active tab. The browser and wrappers never create board tabs. |
+| Board pace | **Only what someone looks at runs at full rate** (2026-10-13, human ask: Design was taking ~3.5 cores idle — every frame of an animated board copies its whole surface under CPU OSR). `Cmd::BoardPace` per board: **Live** (60 fps), **Slow** (1 fps, shown), **Asleep** (`was_hidden`: no frames, like a background browser tab; wakes repainted whole). A board loading, settling, or answering a call is Live. On the canvas on screen a board in view (plane + 256 px) is Live while Design has focus, Slow while it does not; out of view it sleeps. Off-screen canvases sleep, except one an agent called on in the last 30 s (Slow). A sleeping board keeps its last picture. Whole boards, not their visible part: a part would re-raster on every pan. |
+| Memory budget | **Boards fit in what the machine has free** (2026-10-13/14, human ask after ten agents' canvases filled 125G and froze the box; [decision log](../open-questions.md#decision-log)). No fixed size: Design keeps **15%** of RAM free for everything else (`MemAvailable`, min 2 GiB) and costs each open board at 64 MiB + 9 × its OSR surface bytes (measured: ten boards, 295 MiB of frames, ~2.9 GiB). Opens and discards are carried until `MemAvailable` shows them. Short on memory (2 s check), Design **discards idle boards**, least recently used first: not in view on the human's screen, not working (loading, settling, a call, a wait), not on a canvas an agent called in the last 30 s, not the focus or pick, untouched 30 s. A discarded board's tab closes (same tab id); the plane keeps its picture; its layout, links, and share stay. It reopens when it comes into view (the human — never refused) or an agent's call needs it (`screenshot` / `pdf` / `inspect` wait for the reload, `wait` / `reload` reopen what they cover). An agent's open, call on a closed canvas, or reopen is **refused with the reason** only when the boards in use still do not fit after discarding: free / total / kept free, each open canvas (boards, memory, why kept, path), and the way out (`canvas.close`, wait, ask the human). New boards a file edit adds to an off-screen canvas wait discarded (no picture) until they fit. |
 | Origin | **Loopback http, project root as `/`** (D5, 2026-10-12). Design runs a small server (127.0.0.1, random port, GET/HEAD, single byte ranges, files under a registered project root, no dotfile segments, no listing; Host must name a registered project; no CORS header). Each board loads from its own host `http://<board>--<canvas>.<project>.localhost:<port>/design/<canvas>/<src>`, so page zoom (raster scale) is per board. Web `src` URLs load as written. |
 | Raster mechanism | **Page zoom, not device scale.** This CEF's OSR paints at 1× whatever `GetScreenInfo` (or `--force-device-scale-factor`) says, so a board's OSR view is CSS size × scale in pixels and the page is zoomed by the scale: the layout viewport stays the artboard's CSS size, `devicePixelRatio` reports the scale, pixels are real. Chromium keeps zoom per host, so **one scale per canvas**. Board pointer input is CSS px; the engine scales it to view px. |
 | Canvas plane | Drawn by iced, not by the page: background, artboard textures (custom wgpu shader, one texture per artboard, dirty-rect uploads), titles, selection outline, mode button. Pan and zoom never repaint CEF. |
@@ -53,7 +55,7 @@ project's git, and openable in any browser.
 | Zoom | The **wheel always zooms**, about the pointer. No wheel scrolling anywhere, including inside artboards. ⌘0 fits all, ⌘1 is 100%, ⌘= / ⌘- step. |
 | Pointer | **No modes.** Pages are always live: pointer and keys go to the artboard under the pointer / the one last clicked. **Super+click** picks instead (2026-10-12: replaced the Select / Interact toggle). Wheel zooms; right-drag pans. |
 | Pick | Super+click picks the element under the pointer in that artboard (`document.elementFromPoint` via CDP `Runtime.evaluate`); iced draws the outline. Super+click on empty canvas clears it. The pick is held in the app for the agent. Super comes from River as a bus chord (`sola_browser::input`), since iced does not see a bare Super. |
-| Auto height | `height = "auto"`: the viewport starts at 900 and is resized to the page's content height when the board settles after each load (web fonts ready, two frames). Each resize earns one confirming settle, at most two per load, so `vh` content cannot run away; it is measured again 1, 3, and 8 s after a settle for late images; scrollbars are hidden so layout width always equals the artboard width. |
+| Auto height | `height = "auto"`: the viewport starts at 900 and is resized to the page's content height when the board settles after each load (web fonts ready, two frames). Each resize earns one confirming settle, at most two per load. After the first settle the page **watches its height** for the rest of the load (one pending eval: a `ResizeObserver` on the root, body, and body's children resolves when the content height changes; Design resizes and asks again — no timers), so late images, fetched data, and opened sections resize it. A change that came with a viewport change (`reflow`) is applied at most two times in a row, so `vh` content cannot run away; scrollbars are hidden so layout width always equals the artboard width. |
 | Settle | After every load a board is settled (`document.fonts.ready`, two frames) and reports its height, HTTP status, URL, and the local resources it used. An `auto` resize settles again (≤ 2 per load) since the new viewport can reflow. Each load has a generation; a settle answered after the board navigated on is ignored. `wait` / `reload` count a board done only when settled. Design's CEF runs with `--hide-scrollbars` (a scrollbar narrowed the first layout of tall pages). |
 | Board errors | A missing `src` file (at layout) or an HTTP status ≥ 400 (at settle) is the board's `error`: red in its title on the canvas, `error` in `status`. `status` also shows each board's actual tab `url` next to `src`. |
 | Reload | Recursive watch on `design/` plus the files a board loaded from outside it. The open canvas's `canvas.toml` → re-layout; any other file in that canvas, a shared file outside every canvas (`design/tokens.css`), or a linked outside file → reload its boards (skipped when the boards already show those file times). Edits inside other canvases are ignored. `src` keeps `?query` / `#fragment`. |
@@ -62,7 +64,7 @@ project's git, and openable in any browser.
 | Agent glow | What an agent touches shimmers on the overlay (halo + a light sweep): elements it inspects, the selection it reads, a board it screenshots or prints, a board reloading after its files changed (until settled). Never in the pages, so never in an agent's screenshot. |
 | IME | Pages compose with the input method: the overlay is wrapped so iced enables IME at the page caret while a board has the keyboard; preedit / commit go to the page as composition. |
 | Canvases | **Many live, one on screen** (2026-10-12, human ask: multi-agent, nobody in anyone's way). A canvas an agent makes or opens is live off the human's screen; agents never bring one to the front (`--raise` only when the human asks). Every page call names its canvas (`--canvas`); over MCP it defaults to that agent's last opened / made canvas, so agents working at once stay apart. Each canvas keeps its own boards, files, watcher, and camera. The rail marks a canvas an agent is working in. Off-screen canvases idle 10 min close and reopen on the next call. |
-| Share | **Live** (D6, 2026-10-12): every canvas has a link `<public_url>/<token>/` (128-bit token, minted automatically, rotatable). Design is the web server — a thin server that answers only for that canvas's files (its folder, shared `design/` files, its `root`, the files its boards load) and a viewer page handled as in Design (live pages, right-drag pans, wheel zooms, no element picking; a one-line hint; pages reload on change). A Cloudflare Tunnel forwards `design.moonlight.pm` to it; Design runs the connector. |
+| Share | **Live** (D6, 2026-10-12): every canvas has a link `<public_url>/<token>/` (128-bit token, minted automatically, rotatable). Design is the web server — a thin server that answers only for that canvas's files (its folder, shared `design/` files, its `root`, the files its boards load) and a viewer page handled as in Design (live pages, right-drag pans, wheel zooms, no element picking; a one-line hint; on a phone (2026-10-13) the pages are for looking only — one finger pans, a pinch zooms, no hint; pages reload on change). A Cloudflare Tunnel forwards `design.moonlight.pm` to it; Design runs the connector. |
 | Install | Never auto-install. `cargo make install design` is the human's call. |
 
 ## On disk
@@ -114,9 +116,11 @@ resolved by `solactl` against the caller's cwd.
 |------|------|
 | `project.list` | Projects and their canvases (fresh scan). |
 | `project.add --path` | Register a project folder. |
+| `project.remove --path` | Forget a project (its `root`): its canvases leave the rail and close, agents' too. Files stay. |
 | `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, make it live off screen (`--raise` shows it). Existing → open (`created: false`). |
-| `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen; registers the project if needed. `--raise` shows it and raises the window. |
-| `status` | Canvas, artboards (size, scale, painted, loading), zoom, mode, selection. |
+| `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen; registers the project if needed. `--raise` shows it and raises the window. Refused (with the reason) when its boards do not fit. |
+| `canvas.close --canvas` | Close a live canvas an agent is done with (`--canvas` required); its boards' memory comes back, files stay, the next call reopens it. The canvas on the human's screen stays (error). |
+| `status` | Canvas, artboards (size, scale, painted, loading, discarded), zoom, mode, selection, `memory` (free / total / kept free MiB, Design's board estimate, open / discarded counts). |
 | `selection` | The human's pick: project, canvas, artboard, selector, tag, text, rect, trimmed `outerHTML` — or `null`. |
 | `share` / `share.rotate [--canvas]` | The canvas's live link; rotate makes a new one (the old stops). |
 | `view --fit` / `--artboard [--zoom]` / `--zoom` | Steer the camera, until the human takes it (`moved: false`). |
@@ -129,7 +133,7 @@ resolved by `solactl` against the caller's cwd.
 Artboards are added, moved, and resized by editing `canvas.toml`; the
 CLI has no second way to do that. No raw `eval`.
 
-## Annotations, exits, and flows (slice 7, 2026-10-14)
+## Annotations, exits, and flows (slice 8, 2026-10-14)
 
 **Why.** A canvas with dozens of boards is hard to take in. At the zoom
 that shows them all, nothing says which boards belong together, which page
@@ -279,12 +283,19 @@ pages. `status` adds `sections`, `links`, `notes` (with any `at` error),
    `solactl mcp`, built.
 5. Limits + agent/human (2026-10-12): detail renders (sharp to 3200%),
    pages past 8192 px, byte ranges, canvas `root`, late `auto`
-   re-measures, orthogonal agent reads, `view` yields to the human, agent
+   re-measures (2026-10-13: replaced by the page's height watch),
+   orthogonal agent reads, `view` yields to the human, agent
    glow, page IME — built, installed.
 6. Multi-agent canvases (agents never take the screen; `--canvas` on page
    calls; per-agent MCP canvas) and live share (D6: Design serves token
    links; Cloudflare Tunnel) — built, installed.
-7. Annotations, exits, flows (2026-10-14): sections, notes, `[[link]]`,
+7. Memory budget (2026-10-14): adaptive reserve, discard idle boards
+   (picture kept, reopen on look / call), refuse an agent with the reason,
+   `canvas.close`, `memory` in `status` — built, installed; discard under
+   real pressure unsmoked.
+8. Annotations, exits, flows (2026-10-14): sections, notes, `[[link]]`,
    page exits (`data-design-to`) with arrows and click-to-follow, plain
    board links move the camera, tours — in Design and the share viewer;
-   `status` + `view --section`.
+   `status` + `view --section` — built,
+   installed; arrows through the gutters after the human's look; board
+   patches, paced wakes, software compositing (GPU).

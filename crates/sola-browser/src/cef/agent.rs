@@ -359,6 +359,12 @@ fn resolve(
     );
 }
 
+/// Drop the jobs of a closed browser: DevTools never answers them (a
+/// long-pending eval, such as Design's height watch, would stay forever).
+pub(crate) fn forget_browser(browser_id: i32) {
+    JOBS.with(|j| j.borrow_mut().retain(|(b, _), _| *b != browser_id));
+}
+
 fn put(browser_id: i32, message_id: i32, job: Job) {
     if message_id <= 0 {
         emit(AgentReply::fail(

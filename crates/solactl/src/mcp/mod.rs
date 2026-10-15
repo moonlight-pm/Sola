@@ -59,9 +59,12 @@ is not obvious; `[[link]]` (from, to, label) is an arrow between whole boards; \
 makes it an exit: an arrow to that board, and clicking it moves the camera there. \
 Use exits for flows, not for navigation chrome (plain links between boards already \
 move the camera, without arrows). Arrows run in the gaps between boards, never \
-across one: leave room between boards (120+ px) and between sections. design_status lists \
-them, each board's exits, and any that lead nowhere; design_view --section frames \
-one. None of this is in a screenshot.
+across one: leave room between boards (120+ px) and between sections, and keep \
+labels to a few words (a label shows only where it fits). Every board id you name \
+must exist, or canvas.toml is an error (design_status shows it, and the last good \
+layout stays up). design_status lists the annotations, each board's exits, and any \
+that lead nowhere; design_view with `section` frames one. None of this is in a \
+screenshot.
 
 The human may pan, zoom, and look around (any canvas) while you work; nothing you \
 read depends on their view. Screenshots and PDFs show the whole artboard (2×, or \

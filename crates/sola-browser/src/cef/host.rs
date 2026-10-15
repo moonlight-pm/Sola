@@ -404,7 +404,10 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             focused,
         },
         ToEngine::BoardRepaint { id } => Cmd::BoardRepaint { id: TabId(id) },
-        ToEngine::BoardFrameRate { id, fps } => Cmd::BoardFrameRate { id: TabId(id), fps },
+        ToEngine::BoardPace { id, pace } => Cmd::BoardPace {
+            id: TabId(id),
+            pace,
+        },
         ToEngine::Shutdown => return None,
     })
 }

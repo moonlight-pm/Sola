@@ -22,6 +22,7 @@ mod inspect;
 mod instance;
 mod loads;
 mod marks;
+mod memory;
 mod menu;
 mod overlay;
 mod pace;

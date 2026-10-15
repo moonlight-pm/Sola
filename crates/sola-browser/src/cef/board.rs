@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use cef::{BrowserHost, DictionaryValue, ImplDictionaryValue};
 
 use crate::cef::agent::{cdp, dict, set_bool, set_f64, set_int};
-use crate::engine::{BoardDetail, BoardSize, TabId};
+use crate::engine::{BoardDetail, BoardPace, BoardSize, TabId};
 
 /// A board tab's state on the helper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +28,8 @@ pub(crate) struct BoardView {
     pub want: (u32, Option<BoardDetail>),
     /// The newest request Chromium has applied. Frames carry it.
     pub tag: u32,
+    /// How often it paints (`Cmd::BoardPace`).
+    pub pace: BoardPace,
 }
 
 impl BoardView {
@@ -49,6 +51,7 @@ impl BoardView {
             size,
             want: (0, None),
             tag: 0,
+            pace: BoardPace::Live,
         }
     }
 

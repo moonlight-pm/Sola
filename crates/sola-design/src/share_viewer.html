@@ -7,7 +7,7 @@
 <title>Design</title>
 <style>
   :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #3dd6f5; --note: #e3b341; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; touch-action: none;
     font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #plane { position: absolute; inset: 0; touch-action: none; }
   body.panning, body.panning * { cursor: grabbing !important; user-select: none; }
@@ -62,6 +62,12 @@
   #tour .where { padding: 0 6px; min-width: 120px; }
   #tour .where b { font-weight: 500; }
   #bar button.on { color: var(--accent); }
+  /* Too narrow for the hint beside the zoom bar: centre it above. */
+  @media (max-width: 860px) { #help { right: 16px; bottom: 64px; text-align: center; } }
+  /* Touch: pages take no input (the canvas gets every finger) and the
+     gestures need no hint. */
+  body.touch .board iframe { pointer-events: none; }
+  body.touch #help { display: none; }
 </style>
 </head>
 <body>
@@ -75,12 +81,15 @@
 </div>
 <div id="flows" class="pop"></div>
 <div id="tour" class="pop"></div>
-<div id="help"></div>
+<div id="help">Right-drag to pan · Scroll to zoom</div>
 <div id="msg"></div>
 <script>
 (() => {
   const plane = document.getElementById('plane'), world = document.getElementById('world');
   const pct = document.getElementById('pct'), live = document.getElementById('live');
+  // Touch mode (a phone): pages take no input, one finger pans, two pinch.
+  // Set from the device, and by the input actually used.
+  const touchMode = (on) => document.body.classList.toggle('touch', on);
   let cam = { x: 48, y: 48, z: 1 }, moved = false, boards = new Map(), version = null, layoutKey = '';
   // canvas.toml annotations; what the pointer is over in a page; the tour.
   let annot = { sections: [], links: [], notes: [], flows: [] }, hover = null, tour = null, glide = null;
@@ -96,9 +105,10 @@
     }
     render();
   };
+  const clampZ = (z) => Math.min(32, Math.max(0.05, z));
   const zoomAt = (px, py, f) => {
     glide = null;
-    const z = Math.min(32, Math.max(0.05, cam.z * f));
+    const z = clampZ(cam.z * f);
     cam.x = px - (px - cam.x) * (z / cam.z); cam.y = py - (py - cam.y) * (z / cam.z); cam.z = z;
     moved = true; apply();
   };
@@ -172,8 +182,9 @@
 
   // As in Design: pages are live (left button, hover, keys), the right
   // button drags the canvas anywhere — the pages never see it — and the
-  // wheel always zooms. Touch: two fingers pan and pinch over a page, one
-  // finger pans on the background.
+  // wheel always zooms. Pointer events drive the pan: a page cancels the
+  // right pointerdown, and that also stops the browser's mousedown /
+  // mousemove / mouseup for the press.
   let pan = null;
   const startPan = (e) => { pan = { x: e.screenX, y: e.screenY }; document.body.classList.add('panning'); };
   const movePan = (e) => {
@@ -183,12 +194,32 @@
     moved = true; apply();
   };
   const endPan = () => { pan = null; document.body.classList.remove('panning'); };
-  // Pinch / two-finger pan from client points already in this window.
+  // Touch, on the background only (pages are inert): one finger pans; two
+  // only zoom — about the point where the pinch began, by how far apart the
+  // fingers are now — so nothing drifts and no pan is mixed in.
+  const fingers = new Map();
   let pinch = null;
-  const gesture = (a, b) => {
-    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    if (pinch) { cam.x += mx - pinch.mx; cam.y += my - pinch.my; zoomAt(mx, my, d / pinch.d); }
-    pinch = { d, mx, my };
+  const regrip = () => {
+    pinch = null;
+    if (fingers.size !== 2) return;
+    const [a, b] = [...fingers.values()];
+    pinch = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y), cam: { ...cam } };
+  };
+  const fingerDown = (id, p) => { fingers.set(id, p); regrip(); };
+  const fingerUp = (id) => { fingers.delete(id); regrip(); };
+  const fingerMove = (id, p) => {
+    const prev = fingers.get(id);
+    if (!prev) return;
+    fingers.set(id, p);
+    glide = null;
+    if (fingers.size === 1) {
+      cam.x += p.x - prev.x; cam.y += p.y - prev.y; moved = true; apply();
+    } else if (pinch && pinch.d > 0) {
+      const [a, b] = [...fingers.values()];
+      const z = clampZ(pinch.cam.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d), k = z / pinch.cam.z;
+      cam = { z, x: pinch.x - (pinch.x - pinch.cam.x) * k, y: pinch.y - (pinch.y - pinch.cam.y) * k };
+      moved = true; apply();
+    }
   };
 
   const hookPage = (b) => {
@@ -198,19 +229,25 @@
       const r = b.frame.getBoundingClientRect(), s = r.width / b.frame.clientWidth;
       return { x: r.left + x * s, y: r.top + y * s };
     };
-    // No scrollbars (they would also take layout width).
+    // No scrollbars (they would also take layout width), no native gestures.
     try {
       const style = win.document.createElement('style');
-      style.textContent = 'html { scrollbar-width: none; } html::-webkit-scrollbar { display: none; }';
+      style.textContent = 'html { scrollbar-width: none; touch-action: none; } html::-webkit-scrollbar { display: none; }';
       win.document.head.append(style);
     } catch (e) {}
     const swallow = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
     const right = (e) => e.button === 2;
-    win.addEventListener('pointerdown', (e) => { if (right(e)) swallow(e); }, true);
-    win.addEventListener('pointerup', (e) => { if (right(e)) swallow(e); }, true);
-    win.addEventListener('mousedown', (e) => { if (right(e)) { swallow(e); startPan(e); } }, true);
-    win.addEventListener('mousemove', (e) => { if (pan) { e.stopImmediatePropagation(); movePan(e); } }, true);
-    win.addEventListener('mouseup', (e) => { if (right(e) && pan) { swallow(e); endPan(); } }, true);
+    // A touch on a page means a phone the device check missed: pages go
+    // inert from here (this first touch does nothing, the next one pans).
+    const inert = (e) => { if (e.pointerType !== 'mouse') { swallow(e); touchMode(true); } };
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) win.addEventListener(type, inert, true);
+    for (const type of ['touchstart', 'touchmove']) win.addEventListener(type, swallow, { passive: false, capture: true });
+    win.addEventListener('pointerdown', (e) => { if (right(e)) { swallow(e); startPan(e); } }, true);
+    win.addEventListener('pointermove', (e) => { if (pan) { e.stopImmediatePropagation(); movePan(e); } }, true);
+    win.addEventListener('pointerup', (e) => { if (right(e)) { swallow(e); endPan(); } }, true);
+    win.addEventListener('mousedown', (e) => { if (right(e)) swallow(e); }, true);
+    win.addEventListener('mousemove', (e) => { if (pan) e.stopImmediatePropagation(); }, true);
+    win.addEventListener('mouseup', (e) => { if (right(e)) swallow(e); }, true);
     win.addEventListener('contextmenu', swallow, true);
     // An exit, or a plain link to another board's page: the camera goes
     // there; the page does not get the click.
@@ -237,14 +274,6 @@
       const p = toHere(e.clientX, e.clientY);
       zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
     }, { passive: false });
-    const twoFingers = (e) => {
-      if (e.touches.length !== 2) { pinch = null; return; }
-      e.preventDefault();
-      gesture(toHere(e.touches[0].clientX, e.touches[0].clientY), toHere(e.touches[1].clientX, e.touches[1].clientY));
-    };
-    win.addEventListener('touchstart', twoFingers, { passive: false, capture: true });
-    win.addEventListener('touchmove', twoFingers, { passive: false, capture: true });
-    win.addEventListener('touchend', () => { pinch = null; }, true);
   };
 
   const build = (data) => {
@@ -772,36 +801,33 @@
     setTimeout(poll, 2000);
   };
 
-  // The background: right-drag pans, wheel zooms; touch pans and pinches.
-  plane.addEventListener('mousedown', (e) => { if (e.button === 2) { e.preventDefault(); startPan(e); } });
-  addEventListener('mousemove', movePan);
-  addEventListener('mouseup', (e) => { if (e.button === 2) endPan(); });
-  addEventListener('contextmenu', (e) => e.preventDefault());
-  addEventListener('blur', endPan);
-  plane.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
-  const touches = new Map();
+  // The background: right-drag pans, wheel zooms; fingers pan and pinch.
   plane.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch') return;
-    plane.setPointerCapture(e.pointerId); touches.set(e.pointerId, e);
+    if (e.button === 2 && e.pointerType !== 'touch') { e.preventDefault(); startPan(e); }
   });
-  plane.addEventListener('pointermove', (e) => {
-    if (!touches.has(e.pointerId)) return;
-    const prev = touches.get(e.pointerId); touches.set(e.pointerId, e);
-    if (touches.size === 2) {
-      const [a, b] = [...touches.values()];
-      gesture({ x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY });
-    } else {
-      glide = null;
-      cam.x += e.clientX - prev.clientX; cam.y += e.clientY - prev.clientY; moved = true; apply();
-    }
+  addEventListener('pointermove', movePan);
+  addEventListener('pointerup', (e) => { if (e.button === 2) endPan(); });
+  addEventListener('contextmenu', (e) => e.preventDefault());
+  addEventListener('blur', () => { endPan(); fingers.clear(); pinch = null; });
+  plane.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  plane.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') { touchMode(false); return; }
+    touchMode(true);
+    // A tap on a note marker opens its card; it is not a pan.
+    if (e.target.closest && e.target.closest('.note')) return;
+    plane.setPointerCapture(e.pointerId);
+    fingerDown(e.pointerId, { x: e.clientX, y: e.clientY });
   });
-  const lift = (e) => { touches.delete(e.pointerId); pinch = null; };
+  plane.addEventListener('pointermove', (e) => fingerMove(e.pointerId, { x: e.clientX, y: e.clientY }));
+  const lift = (e) => fingerUp(e.pointerId);
   plane.addEventListener('pointerup', lift); plane.addEventListener('pointercancel', lift);
 
-  const touch = matchMedia('(pointer: coarse)').matches;
-  document.getElementById('help').textContent = touch
-    ? 'Drag with two fingers to pan · Pinch to zoom'
-    : 'Right-drag to pan · Scroll to zoom';
+  // The viewer itself never scrolls or zooms natively (iOS pinch-zooms the
+  // whole page otherwise); taps still click the bar.
+  document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  addEventListener('gesturestart', (e) => e.preventDefault());
+  touchMode(matchMedia('(pointer: coarse)').matches
+    || (navigator.maxTouchPoints > 0 && !matchMedia('(any-pointer: fine)').matches));
   document.getElementById('fit').onclick = () => { moved = false; fit(); };
   document.getElementById('in').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
   document.getElementById('out').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 0.8);

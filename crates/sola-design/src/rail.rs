@@ -89,7 +89,10 @@ pub fn view<'a>(
         line: p.background.stronger.color,
         b: plane_bg,
     };
-    let mut panel = SidebarPanel::new(sections).controller(&state.gestures, Msg::Sidebar);
+    // Canvases drag within their project; project headers drag as blocks.
+    let mut panel = SidebarPanel::new(sections)
+        .controller(&state.gestures, Msg::Sidebar)
+        .reorder_within_sections();
     if projects.is_empty() {
         panel = panel.footer(
             container(kit_btn::labeled_sm("Add project", kit_btn::ghost).on_press(Msg::OpenAdd))

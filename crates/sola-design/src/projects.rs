@@ -16,6 +16,30 @@ pub struct Project {
     pub root: PathBuf,
     #[serde(default)]
     pub collapsed: bool,
+    /// Canvas dir names in rail order (dragged). Canvases not listed
+    /// follow, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canvas_order: Vec<String>,
+}
+
+impl Project {
+    /// This project's canvases on disk, in rail order.
+    pub fn canvases(&self) -> Vec<crate::canvas::Entry> {
+        let mut found = crate::canvas::scan(&self.root);
+        self.order_canvases(&mut found);
+        found
+    }
+
+    /// Put `entries` (a scan, by name) in rail order.
+    pub fn order_canvases(&self, entries: &mut [crate::canvas::Entry]) {
+        let rank = |name: &str| {
+            self.canvas_order
+                .iter()
+                .position(|n| n == name)
+                .unwrap_or(usize::MAX)
+        };
+        entries.sort_by_key(|e| rank(&e.name));
+    }
 }
 
 /// A canvas inside a project: the `design/<canvas>` directory name.
@@ -95,8 +119,14 @@ impl Catalog {
             name,
             root,
             collapsed: false,
+            canvas_order: Vec::new(),
         });
         Ok(id)
+    }
+
+    /// The project registered at `root` exactly (not one above it).
+    pub fn at_root(&self, root: &Path) -> Option<&Project> {
+        self.projects.iter().find(|p| p.root == root)
     }
 
     /// Unregister a project. Files on disk are untouched.
@@ -105,6 +135,63 @@ impl Catalog {
         if self.selected.as_ref().is_some_and(|s| s.project == id) {
             self.selected = None;
         }
+    }
+
+    /// Move project `id` in front of `before` (`None` = last).
+    pub fn move_project_before(&mut self, id: &str, before: Option<&str>) -> Result<(), String> {
+        let from = self
+            .projects
+            .iter()
+            .position(|p| p.id == id)
+            .ok_or_else(|| format!("unknown project '{id}'"))?;
+        if before == Some(id) {
+            return Ok(());
+        }
+        if let Some(b) = before {
+            if self.project(b).is_none() {
+                return Err(format!("unknown project '{b}'"));
+            }
+        }
+        let moved = self.projects.remove(from);
+        let at = before
+            .and_then(|b| self.projects.iter().position(|p| p.id == b))
+            .unwrap_or(self.projects.len());
+        self.projects.insert(at, moved);
+        Ok(())
+    }
+
+    /// Move canvas `name` in front of `before` (`None` = last) within
+    /// `project`. `listed` is the project's canvases in rail order now; it
+    /// becomes the saved order (so deleted canvases fall out of it).
+    pub fn move_canvas_before(
+        &mut self,
+        project: &str,
+        name: &str,
+        before: Option<&str>,
+        listed: &[String],
+    ) -> Result<(), String> {
+        let p = self
+            .projects
+            .iter_mut()
+            .find(|p| p.id == project)
+            .ok_or_else(|| format!("unknown project '{project}'"))?;
+        let known = |n: &str| listed.iter().any(|l| l == n);
+        if !known(name) {
+            return Err(format!("unknown canvas '{name}' in {project}"));
+        }
+        if let Some(b) = before.filter(|b| !known(b)) {
+            return Err(format!("unknown canvas '{b}' in {project}"));
+        }
+        if before == Some(name) {
+            return Ok(());
+        }
+        let mut order: Vec<String> = listed.iter().filter(|n| *n != name).cloned().collect();
+        let at = before
+            .and_then(|b| order.iter().position(|n| n == b))
+            .unwrap_or(order.len());
+        order.insert(at, name.to_string());
+        p.canvas_order = order;
+        Ok(())
     }
 
     fn unique_id(&self, base: &str) -> String {
@@ -249,5 +336,63 @@ mod tests {
         assert!(cat.selected.is_none());
         assert_eq!(load_from(&root.join("absent.json")), Catalog::default());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn project(id: &str) -> Project {
+        Project {
+            id: id.into(),
+            name: id.into(),
+            root: PathBuf::from(format!("/{id}")),
+            collapsed: false,
+            canvas_order: Vec::new(),
+        }
+    }
+
+    fn ids(cat: &Catalog) -> Vec<&str> {
+        cat.projects.iter().map(|p| p.id.as_str()).collect()
+    }
+
+    #[test]
+    fn move_project_before_reorders_rail() {
+        let mut cat = Catalog {
+            projects: vec![project("a"), project("b"), project("c")],
+            ..Catalog::default()
+        };
+        cat.move_project_before("c", Some("a")).unwrap();
+        assert_eq!(ids(&cat), ["c", "a", "b"]);
+        cat.move_project_before("c", None).unwrap();
+        assert_eq!(ids(&cat), ["a", "b", "c"]);
+        cat.move_project_before("b", Some("b")).unwrap();
+        assert_eq!(ids(&cat), ["a", "b", "c"]);
+        assert!(cat.move_project_before("z", None).is_err());
+        assert!(cat.move_project_before("a", Some("z")).is_err());
+        assert_eq!(ids(&cat), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn canvas_order_saves_and_sorts_new_canvases_last() {
+        use crate::canvas::Entry;
+        let entry = |n: &str| Entry {
+            name: n.into(),
+            title: n.into(),
+        };
+        let listed: Vec<String> = ["home", "onboarding", "settings"].map(String::from).into();
+        let mut cat = Catalog {
+            projects: vec![project("a")],
+            ..Catalog::default()
+        };
+        let order = |cat: &Catalog| cat.projects[0].canvas_order.clone();
+        let moved = cat.move_canvas_before("a", "settings", Some("home"), &listed);
+        assert_eq!(moved, Ok(()));
+        assert_eq!(order(&cat), ["settings", "home", "onboarding"]);
+        assert!(cat.move_canvas_before("a", "gone", None, &listed).is_err());
+        let unknown_before = cat.move_canvas_before("a", "home", Some("gone"), &listed);
+        assert!(unknown_before.is_err());
+
+        // A scan (by name) with a new canvas and one deleted.
+        let mut scan: Vec<Entry> = ["about", "home", "settings", "zebra"].map(entry).into();
+        cat.projects[0].order_canvases(&mut scan);
+        let names: Vec<&str> = scan.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["settings", "home", "about", "zebra"]);
     }
 }

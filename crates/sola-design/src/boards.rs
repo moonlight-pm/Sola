@@ -34,6 +34,9 @@ pub struct Board {
     /// What its page declares (exits, links, pinned elements), as of its
     /// last settle.
     pub marks: Marks,
+    /// Its tab is closed to free memory ([`crate::memory`]); the plane keeps
+    /// its last picture, and it reopens on a look or an agent's call.
+    pub discarded: bool,
 }
 
 impl Board {
@@ -49,6 +52,11 @@ impl Board {
             scale: self.scale,
             surface: self.surface,
         }
+    }
+
+    /// Estimated memory while open ([`crate::memory::board_cost`]).
+    pub fn cost(&self) -> u64 {
+        crate::memory::board_cost(self.surface)
     }
 
     pub fn rect(&self) -> iced::Rectangle {
@@ -156,7 +164,8 @@ pub fn host_scales(boards: &[(&str, u32, u32)]) -> Vec<f64> {
 /// the id survives; a changed URL re-points the tab instead of reopening.
 /// A surviving board keeps its raster scale (the app re-checks scales after
 /// a layout), an `auto` board keeps its measured height, and a grown
-/// board keeps its surface widened to `cap`.
+/// board keeps its surface widened to `cap`. A discarded board stays
+/// discarded with no ops: it opens at its new layout when woken.
 pub fn sync(
     current: Vec<Board>,
     next: &[Artboard],
@@ -175,14 +184,14 @@ pub fn sync(
                 if art.auto_height && prev.art.auto_height {
                     art.height = prev.art.height;
                 }
-                if prev.art.url != art.url {
+                if prev.art.url != art.url && !prev.discarded {
                     ops.push(Op::Load {
                         tab,
                         url: art.url.clone(),
                     });
                 }
                 let size = board_size(&art, prev.scale, prev.cap(cap));
-                if size != prev.size() {
+                if size != prev.size() && !prev.discarded {
                     let resized = (art.width, art.height) != (prev.art.width, prev.art.height);
                     ops.push(Op::View { tab, size, resized });
                 }
@@ -195,6 +204,7 @@ pub fn sync(
                     grown: prev.grown,
                     error: if same_page { prev.error } else { None },
                     marks: if same_page { prev.marks } else { Marks::default() },
+                    discarded: prev.discarded,
                 });
             }
             None => {
@@ -214,6 +224,7 @@ pub fn sync(
                     grown: false,
                     error: None,
                     marks: Marks::default(),
+                    discarded: false,
                 });
             }
         }
@@ -363,6 +374,19 @@ mod tests {
         assert_eq!(boards[0].surface, (640, 400));
         assert_eq!(boards[1].surface, (200, 200));
         assert!(matches!(ops[..], [Op::View { resized: false, .. }]), "{ops:?}");
+    }
+
+    #[test]
+    fn a_discarded_board_takes_its_new_layout_without_ops() {
+        let first = [art("a", "file:///a", 100, 100)];
+        let (mut boards, _) = sync(Vec::new(), &first, (0, 0), ids());
+        boards[0].discarded = true;
+        let next = [art("a", "file:///a2", 300, 100)];
+        let (boards, ops) = sync(boards, &next, (0, 0), ids());
+        assert!(ops.is_empty(), "{ops:?}");
+        assert!(boards[0].discarded);
+        assert_eq!((boards[0].art.url.as_str(), boards[0].art.width), ("file:///a2", 300));
+        assert_eq!(boards[0].surface, (600, 200));
     }
 
     #[test]

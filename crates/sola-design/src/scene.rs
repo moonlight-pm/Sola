@@ -293,6 +293,7 @@ mod tests {
             grown: false,
             error: None,
             marks: Marks::from_settle(&marks),
+            discarded: false,
         }
     }
 

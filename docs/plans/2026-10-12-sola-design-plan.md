@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–6 on master (2026-10-12), installed
+**Status:** slices 1–6 on master (2026-10-12), installed; slice 7 (memory budget) installed 2026-10-14
 
 ---
 
@@ -239,10 +239,55 @@
 - [x] Viewer fix: `auto` boards stayed at the 900 px start (viewport-bound `scrollHeight`) and overlapped the next one — the layout now carries Design's measured heights (fallback: Design's formula); titles and frame scrollbars removed.
 - [x] Cloudflare: tunnel `sola-design` (remote config, ingress → 127.0.0.1:47820), proxied CNAME `design.moonlight.pm`; `share.toml` written (0600).
 - [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
-- [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone.
+- [x] Rail drag-reorder (kit `reorder_within_sections`): canvases within their project, project headers as blocks; order in `projects.json` (`canvas_order`; unlisted canvases follow by name). `project.list` lists rail order.
+- [x] `project.remove --path` (solactl + MCP `design_project_remove`): exact `root` match, works for a deleted folder, closes the project's live canvases. Smoked.
+- [x] `auto` height follows the page for the whole load: `inspect::WATCH_HEIGHT` (pending eval + `ResizeObserver`) replaces the 1 / 3 / 8 s re-measures; `reflow` answers capped (`loads::MAX_REFLOWS`); helper drops closed browsers' DevTools jobs. Smoked: +500 px at 12 s grew `late`; 120vh stopped; re-armed after a file edit.
+- [x] Viewer on phones: touch mode (coarse pointer, or touch without a fine pointer; or the first touch on a page) makes pages inert (`pointer-events: none`), one finger pans, a pinch only zooms about where it began (no two-finger pan — the old pan + midpoint zoom wobbled), no hint, native page pinch / scroll blocked. Desktop hint sits above the zoom bar under 860 px. Gesture math tested in node; renders checked at 1024 / 390 / 360 px.
+- [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone; drag canvases and projects, restart, order kept.
 - [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).
 
-## Slice 7 — annotations, exits, flows (2026-10-14)
+## Slice 7 — memory budget (2026-10-14)
+
+Why: ten agents' canvases filled 125G; no swap, no OOM watcher → hard reset
+([idea](../ideas/2026-10-13-design-memory-budget.md); host net: zram +
+earlyoom). Decisions: budget adapts to free memory; discard idle boards
+first (picture kept); refuse an agent with the reason only when the boards
+in use do not fit.
+
+- [x] Measured: ten boards (295 MiB of frames) took ~2.9 GiB of
+      `MemAvailable` (Design PSS +1.6 GiB); renderers ~12 MiB unique each.
+- [x] `memory.rs`: `/proc/meminfo`, reserve 15% (min 2 GiB), board cost
+      64 MiB + 9 × surface bytes, `Ledger` (opens carried until painted +
+      settled ≤ 20 s, discards 20 s), LRU `pick`, sizes. Tests.
+- [x] `Board.discarded`; `boards::sync` sends no ops for a discarded board
+      (it opens at its new layout). Test.
+- [x] `app/budget.rs`: 2 s tick discards idle boards when short (+1 GiB
+      slack); `make_room` / `wake_boards` / `ensure_live_for_agent`;
+      discard keeps the tab id (engine drops a closed tab's state at once,
+      paints map by browser id) so the plane keeps the texture; overlay
+      treats a kept picture as painted.
+- [x] Waking: in view on the human's screen (never refused); page calls
+      wait for the reload (`Wait { redo }`), `wait` / `reload` reopen what
+      they cover; agent wakes glow like a reload.
+- [x] Refusal text: free / total / kept free, open canvases (boards,
+      memory, why kept, path), the way out.
+- [x] Off-screen relayout: new boards wait discarded when they do not fit.
+- [x] Helper-restart check skips discarded boards (their tab is gone on
+      purpose — would have reopened everything).
+- [x] `canvas.close --canvas` (required; not the canvas on screen);
+      `status` → `discarded`, `memory`.
+- [x] Installed `design` 2026-10-14. Smoked: `status` → `memory` (26
+      boards ≈ 8.7 GiB estimated, 19 GiB kept free); MCP
+      `design_canvas_close` appeared; `open` + `wait` of Sola `foundation`
+      (10 boards, 794 ms) took 2.65 GiB of `MemAvailable` (estimate 2.4 GiB
+      at first, 3.3 GiB once `auto` heights were measured); `canvas.close`
+      → `freed_mib: 3290`; renderers exited at once, `MemAvailable` came
+      fully back within ~20 s (GPU-process shm is returned late) → discards
+      are carried 20 s, not 3.
+- [ ] Smoke a discard under real pressure (keeps the picture, reopens on
+      pan / `screenshot`); refusal text read by an agent.
+
+## Slice 8 — annotations, exits, flows (2026-10-14)
 
 - [x] Board titles: iced 0.14 `Frame::with_clip` no longer translates; draw at the title box. Viewer titles back (12 px, cut at the board width).
 - [x] `annot.rs`: `[[section]]`, `[[note]]`, `[[link]]`, `[[flow]]` parsed with the layout and checked against board ids.
@@ -253,4 +298,6 @@
 - [x] `status` `annotations`, per-board `exits` / `board_links`; `view --section`; MCP instructions.
 - [x] Share viewer: the same in JS (exits from its own frames); `~canvas.json` carries the annotations.
 - [x] Verified headless (Chrome over CDP) on a copy of Wicket foundation: fit, flows list, tour + fork pick, exit click inside a page, back, Esc, note hover, N. `status` exits / anchors / errors.
-- [ ] Human: look in Design (Flowdemo → Foundation): sections under boards, arrows, notes, tour bar, exit click glide.
+- [x] Human looked in Design (Flowdemo → Foundation, a scratch copy of Wicket foundation): arrows across pages looked bad → arrows run through the gutters (orthogonal, level ports, lanes, labels only where they fit); note cards keep off titles and the screen edge. Approved 2026-10-14.
+- [x] Perf (the human saw a spinner stutter, then GPU 80–90%): board patches over the frame socket (changed tiles only), visible-only paced wakes, tiny-on-screen boards `Slow`, `--disable-gpu-compositing` for Design's helper. See PERFORMANCE.md.
+- [x] Merged with master's slice 7 (memory budget) and board pace; master's `BoardPace` kept, `Look::readable` added.

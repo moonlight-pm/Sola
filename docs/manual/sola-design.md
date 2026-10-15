@@ -68,8 +68,10 @@ project root, so a product's `/fonts/x.woff2` works and the artboards' own
 query: `src = "light.html?theme=dark"`. Content taller than the artboard is
 cut off at its bottom edge — the wheel zooms, it does not scroll. For long
 pages use `height = "auto"`: the artboard grows to the page's content after
-each load (it starts at 900), and is measured again over the next few seconds
-for images that arrive late.
+each load (it starts at 900) and keeps following it while the page is open —
+images, fetched data, or a section you open grow or shrink it. A page sized
+in `vh` grows with its own artboard; Design stops that after a few steps per
+load, so give `auto` pages content heights, not viewport ones.
 
 Pages render at 2× (a very large artboard at less), and zooming only scales
 them, so it is immediate. When you stop zooming past that, the part of each
@@ -97,8 +99,10 @@ Projects are your own list (not Workspaces'). **Project → Add Project…**
 (⌘N) takes a folder (`~` ok). The rail lists each project's canvases —
 every `design/<name>/` with a `canvas.toml` — and picks up new ones within
 a couple of seconds. `+` on a project makes an empty canvas
-(**New Canvas…**, ⌘⇧N). **Drop Project** forgets the open canvas's project;
-files are untouched.
+(**New Canvas…**, ⌘⇧N). Drag a canvas to reorder it within its project;
+drag a project's header to move the whole project. The order is kept.
+**Drop Project** forgets the open canvas's project (`solactl design
+project.remove --path <folder>` forgets any); files are untouched.
 
 ## Look
 
@@ -121,6 +125,10 @@ bar at the bottom shows it next to the zoom. An agent reads it with
 `solactl design selection` or inspects it with `solactl design inspect`. The
 outline follows the element across reloads. Super+click empty canvas to
 clear it.
+
+You and agents use the same pages: text you type, a menu you open, or a
+scroll inside a page is what an agent sees in its next screenshot, and an
+agent's reload (or a file edit) clears it.
 
 Page dialogs (`alert`, `confirm`) are accepted automatically and logins are
 cancelled — pages have no browser chrome here.
@@ -159,6 +167,11 @@ that starts one, so Back takes you back. **→** next, **←** back, **1–9** p
 The step's notes are open and its outgoing arrows are bright; the others
 dim. Panning and zooming never end a tour.
 
+Exits and note positions are read when a page finishes loading and again
+when its height changes, so an element that moves for another reason (a
+menu that opens) keeps its old arrow until the next reload. Zoomed far out,
+arrow labels hide where they do not fit and section titles can overlap.
+
 ## Agents
 
 Agents drive Design with `solactl design` or its MCP tools (see
@@ -172,6 +185,24 @@ at once. While an agent is working in a canvas its rail row says **agent**;
 pick it to watch. An agent puts a canvas on your screen only when you ask it
 to (`--raise`). Canvases nobody has used for 10 minutes are closed in the
 background and reopen on the next call.
+
+Boards nobody is looking at sleep, like background browser tabs: a canvas
+you are not on (unless an agent is working in it), and boards panned out of
+view. While another window has focus, the boards in view run animations at
+1 frame a second. A board that is loading or that an agent is reading always
+runs at full speed, so reloads show at once.
+
+Design keeps its boards within what the machine has free. Every board is a
+real browser page and costs memory (about half a gigabyte for a tall page at
+2×). Design leaves 15% of the machine's memory free for everything else; when
+free memory drops below that, it discards boards nobody is using — not in
+view on your screen, not being worked on by an agent, untouched for 30
+seconds — oldest first. A discarded board keeps its picture on the canvas;
+its page reloads from its files when you pan to it or an agent needs it.
+Boards in use are never discarded. If an agent asks for more than fits even
+then, it is told so — how much memory is free, what is open and why — and
+asked to close a canvas it is done with (`canvas.close`) or wait. Your own
+view is never refused.
 
 Look around while an agent works. Its screenshots and PDFs are the whole
 artboard however you are zoomed, and your pointer leaves the page while they
@@ -194,12 +225,13 @@ The link shows the canvas as it is right now, laid out and handled as in
 Design — the same artboard heights Design measured, each board's title
 above it, its sections, notes, arrows, and flows (Notes and Flows buttons on
 its bar, the same keys), no scrollbars: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
-frames everything (no element picking). On a phone, two fingers pan and
-pinch over a page, one finger pans the background. When a file changes, viewers' pages reload within a couple
+frames everything (no element picking). On a phone the pages are for
+looking only: one finger pans anywhere, a pinch zooms, and there is no hint. When a file changes, viewers' pages reload within a couple
 of seconds. A link only reaches its own canvas: its folder, shared files in
 `design/`, its `root` folder, and the project files its artboards load —
 nothing else in the project, and no dotfiles. Links work while Design is
-running.
+running. There is no password or expiry: anyone with a link sees the canvas,
+and **New Link** is how you cut one off.
 
 Design serves the links itself on `127.0.0.1:47820` and runs a Cloudflare
 Tunnel connector (`cloudflared`) that forwards `design.moonlight.pm` there.
@@ -209,13 +241,3 @@ are in `share.json` beside it. Without a `tunnel_token` the links are local
 (`http://127.0.0.1:47820/…`). The connector logs to
 `/opt/sola/log/design-tunnel.log`.
 
-## Not yet
-
-An `auto` artboard is measured for a few seconds after each load; content
-that grows later than that waits for the next reload. Exits and note
-anchors are read at the same times, so an element that moves later (a menu
-that opens) keeps its old arrow until then. Zoomed far out, arrow labels
-and section titles can overlap their neighbours. The pages themselves
-are shared with agents: text you type into a page is there when an agent
-looks. Share links have no password or expiry — anyone with the link sees the
-canvas while Design runs.

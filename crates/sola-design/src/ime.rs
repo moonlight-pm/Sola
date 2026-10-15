@@ -3,6 +3,10 @@
 //! cannot ask for it itself; this widget forwards everything to the overlay
 //! and asks, at the page's caret. The overlay turns the IME's preedit and
 //! commit into the page's composition (`InputEvent::Ime*`).
+//!
+//! Optional. Joshua does not type into pages (here or on the web share),
+//! so if IME gets in the way, remove it — this wrapper, `ime_caret`, and
+//! the overlay's `InputMethod` / `composing` handling — rather than debug it.
 
 use iced::advanced::input_method::{InputMethod, Purpose};
 use iced::advanced::layout::{self, Layout};
