@@ -186,10 +186,10 @@ pick it to watch. An agent puts a canvas on your screen only when you ask it
 to (`--raise`). Canvases nobody has used for 10 minutes are closed in the
 background and reopen on the next call.
 
-Boards nobody is looking at sleep, like background browser tabs: a canvas
-you are not on (unless an agent is working in it), and boards panned out of
-view. While another window has focus, the boards in view run animations at
-1 frame a second. A board that is loading or that an agent is reading always
+Boards nobody is looking at slow down to 1 frame a second: a canvas you are
+not on, and boards panned out of view. They keep painting, so a board you
+come back to shows its page at once. While another window has focus, the
+boards in view run animations at 1 frame a second too. A board that is loading or that an agent is reading always
 runs at full speed, so reloads show at once.
 
 Design keeps its boards within what the machine has free. Every board is a

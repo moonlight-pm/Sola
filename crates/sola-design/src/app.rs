@@ -822,8 +822,9 @@ impl App {
     }
 
     fn agent(&mut self, tab: TabId, op: AgentOp, why: Option<Pending>) {
-        // A sleeping page answers nothing that waits on a frame: wake it
-        // before the op (`pace_boards` settles its pace after).
+        // A sleeping page answers what waits on a frame only once a
+        // second: wake it before the op (`pace_boards` settles its pace
+        // after).
         if self.paces.get(&tab.0) == Some(&BoardPace::Asleep) {
             self.set_pace(tab, BoardPace::Live);
         }

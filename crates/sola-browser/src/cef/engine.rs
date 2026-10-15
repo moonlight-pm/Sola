@@ -5102,8 +5102,7 @@ fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) 
     tracing::debug!(?id, size = ?view.size, "board view");
 }
 
-/// How often board `id` paints (`Cmd::BoardPace`). A board that wakes is
-/// repainted whole.
+/// How often board `id` paints (`Cmd::BoardPace`).
 fn set_board_pace(state: &CefThreadState, id: TabId, pace: crate::engine::BoardPace) {
     let Some(tab) = tab_state_by_id(state, id) else {
         return;
@@ -5114,22 +5113,22 @@ fn set_board_pace(state: &CefThreadState, id: TabId, pace: crate::engine::BoardP
     if view.pace == pace {
         return;
     }
-    let woke = view.pace == crate::engine::BoardPace::Asleep;
     view.pace = pace;
     tab.board.set(Some(view));
     let Some(host) = tab.browser.host() else {
         return;
     };
     apply_board_pace(&host, pace);
-    if woke {
-        host.invalidate(cef::PaintElementType::VIEW);
-    }
     tracing::debug!(?id, ?pace, "board pace");
 }
 
+/// A board is never `was_hidden`: Chromium keeps the last frame of only a
+/// few hidden views (5 here) and evicts the rest, and an evicted OSR view
+/// that is shown again gets no BeginFrames — its board stays CEF's white
+/// background for good. A board nobody looks at only paints slowly.
 fn apply_board_pace(host: &cef::BrowserHost, pace: crate::engine::BoardPace) {
     use crate::engine::BoardPace;
-    host.was_hidden(if pace == BoardPace::Asleep { 1 } else { 0 });
+    host.was_hidden(0);
     host.set_windowless_frame_rate(if pace == BoardPace::Live { 60 } else { 1 });
 }
 

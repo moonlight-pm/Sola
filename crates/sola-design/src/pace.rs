@@ -1,13 +1,15 @@
 //! How often each board paints (`Cmd::BoardPace`). Under CPU OSR every
 //! frame copies the whole board surface, so only what someone looks at runs
-//! at full rate; the rest sleeps like a background browser tab.
+//! at full rate; the rest paint once a second.
 //!
 //! - A board doing work (loading, settling, answering a call) is `Live`.
 //! - On the canvas on screen, a board in view is `Live` while Design has
 //!   focus and the zoom is readable, and `Slow` otherwise (unfocused, or
 //!   so small on screen that motion does not read).
 //! - Any other board of a canvas an agent called on lately is `Slow`.
-//! - Every other board is `Asleep`. It keeps its last picture on the plane.
+//! - Every other board is `Asleep`: 1 fps like `Slow` (a board is never a
+//!   hidden tab — Chromium would evict its frame, and it would stay white),
+//!   but its frames do not wake the window.
 
 use iced::{Point, Rectangle, Size};
 use sola_browser::engine::BoardPace;

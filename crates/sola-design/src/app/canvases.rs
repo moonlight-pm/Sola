@@ -370,7 +370,7 @@ impl App {
                 | Pending::Requery { tab }
                 | Pending::Call { tab, .. }
                 | Pending::Settle { tab, .. }
-                // A re-read waits on page frames: an asleep board never answers.
+                // A re-read waits on page frames: at 1 fps it would crawl.
                 | Pending::Marks { tab, .. } => Some(*tab),
                 Pending::Height { .. } => None,
             })
