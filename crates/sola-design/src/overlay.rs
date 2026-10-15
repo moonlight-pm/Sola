@@ -343,10 +343,11 @@ impl canvas::Program<Event> for Overlay<'_> {
                 Some(e) => (format!("{} — {e}", board.art.title), danger),
                 None => (board.art.title.clone(), label),
             };
+            // iced 0.14's `with_clip` clips but does not move the origin.
             frame.with_clip(title_box, |f| {
                 f.fill_text(Text {
                     content: title,
-                    position: Point::new(0.0, 16.0),
+                    position: Point::new(title_box.x, title_box.y + 16.0),
                     color,
                     size: 12.0.into(),
                     font: fonts::ui(),
