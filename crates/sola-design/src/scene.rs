@@ -89,6 +89,7 @@ impl Scene {
             .map(|(i, b)| (b.art.id.as_str(), i))
             .collect();
         let urls: Vec<(&str, &str)> = boards.iter().map(|b| (b.art.id.as_str(), b.art.url.as_str())).collect();
+        let pages = marks::Pages::new(&urls);
         let mut scene = Scene {
             sections: annot
                 .sections
@@ -130,7 +131,7 @@ impl Scene {
                 });
             }
             for link in &b.marks.links {
-                if let Some(to) = marks::board_for_url(&link.href, &urls, &b.art.id) {
+                if let Some(to) = pages.board_for(&link.href, &b.art.id) {
                     scene.hots.push(Hot {
                         tab: b.tab.0,
                         board: b.art.id.clone(),

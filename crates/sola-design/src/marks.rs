@@ -103,36 +103,53 @@ fn key(url: &str) -> Option<Key<'_>> {
     })
 }
 
-/// The board (other than `from`) whose page `href` is: same path and query
-/// (host too for web pages); the fragment decides between boards that
-/// share a page. A link to `from`'s own page goes nowhere unless its
-/// fragment names another board's; a link that fits several boards goes
-/// nowhere.
-pub fn board_for_url<'a>(href: &str, boards: &[(&'a str, &str)], from: &str) -> Option<&'a str> {
-    let want = key(href)?;
-    let same_page = |k: &Key| k.host == want.host && k.path == want.path && k.query == want.query;
-    let own = boards.iter().find(|(id, _)| *id == from).and_then(|(_, url)| key(url));
-    let own_page = own.as_ref().is_some_and(same_page);
-    let hits: Vec<(&'a str, Key)> = boards
-        .iter()
-        .filter(|(id, _)| *id != from)
-        .filter_map(|(id, url)| Some((*id, key(url)?)))
-        .filter(|(_, k)| same_page(k))
-        .collect();
-    let by_fragment = || {
-        let mut named = hits.iter().filter(|(_, k)| k.fragment == want.fragment);
-        match (named.next(), named.next()) {
-            (Some((id, _)), None) => Some(*id),
-            _ => None,
+/// The boards' pages, parsed once, for matching many links.
+pub struct Pages<'a> {
+    keys: Vec<(&'a str, Key<'a>)>,
+}
+
+impl<'a> Pages<'a> {
+    /// `(board id, page URL)` per board.
+    pub fn new(boards: &[(&'a str, &'a str)]) -> Self {
+        Self {
+            keys: boards.iter().filter_map(|(id, url)| Some((*id, key(url)?))).collect(),
         }
-    };
-    if own_page {
-        return by_fragment().filter(|_| own.is_some_and(|o| o.fragment != want.fragment));
     }
-    match hits.as_slice() {
-        [(id, _)] => Some(id),
-        _ => by_fragment(),
+
+    /// The board (other than `from`) whose page `href` is: same path and
+    /// query (host too for web pages); the fragment decides between boards
+    /// that share a page. A link to `from`'s own page goes nowhere unless
+    /// its fragment names another board's; a link that fits several boards
+    /// goes nowhere.
+    pub fn board_for(&self, href: &str, from: &str) -> Option<&'a str> {
+        let want = key(href)?;
+        let same_page = |k: &Key| k.host == want.host && k.path == want.path && k.query == want.query;
+        let own = self.keys.iter().find(|(id, _)| *id == from).map(|(_, k)| k);
+        let own_page = own.is_some_and(same_page);
+        let mut hits = self.keys.iter().filter(|(id, k)| *id != from && same_page(k));
+        let by_fragment = || {
+            let mut named = self
+                .keys
+                .iter()
+                .filter(|(id, k)| *id != from && same_page(k) && k.fragment == want.fragment);
+            match (named.next(), named.next()) {
+                (Some((id, _)), None) => Some(*id),
+                _ => None,
+            }
+        };
+        if own_page {
+            return by_fragment().filter(|_| own.is_some_and(|o| o.fragment != want.fragment));
+        }
+        match (hits.next(), hits.next()) {
+            (Some((id, _)), None) => Some(*id),
+            _ => by_fragment(),
+        }
     }
+}
+
+/// [`Pages::board_for`] for one link.
+pub fn board_for_url<'a>(href: &str, boards: &[(&'a str, &'a str)], from: &str) -> Option<&'a str> {
+    Pages::new(boards).board_for(href, from)
 }
 
 #[cfg(test)]
@@ -156,9 +173,19 @@ mod tests {
     }
 
     fn find(href: &str, from: &str) -> Option<&'static str> {
-        let b = boards();
-        let refs: Vec<(&'static str, &str)> = b.iter().map(|(id, u)| (*id, u.as_str())).collect();
+        let b: &'static Vec<(&'static str, String)> = Box::leak(Box::new(boards()));
+        let refs: Vec<(&'static str, &'static str)> = b.iter().map(|(id, u)| (*id, u.as_str())).collect();
         board_for_url(href, &refs, from)
+    }
+
+    #[test]
+    fn pages_parse_once_and_match_the_same() {
+        let b = boards();
+        let refs: Vec<(&str, &str)> = b.iter().map(|(id, u)| (*id, u.as_str())).collect();
+        let pages = Pages::new(&refs);
+        let href = format!("{HOST}/design/foundation/backups.html");
+        assert_eq!(pages.board_for(&href, "overview"), Some("backups"));
+        assert_eq!(pages.board_for(&href, "backups"), None);
     }
 
     #[test]

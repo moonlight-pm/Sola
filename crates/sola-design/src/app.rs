@@ -348,12 +348,18 @@ impl App {
     }
 
     /// Detail renders follow the camera, plane, and boards: any change to
-    /// them plans again once things rest.
+    /// them plans again once things rest. Boards whose patch missed are
+    /// asked to paint whole.
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         let before = (self.camera, self.plane_size, self.scale_factor);
         let task = self.handle(msg);
         if (self.camera, self.plane_size, self.scale_factor) != before {
             self.details.poke(Instant::now());
+        }
+        // A patch the plane could not apply: that board paints whole.
+        for tab in self.frames.take_want_whole() {
+            tracing::debug!(tab, "board repaint (patch missed its picture)");
+            self.send(Cmd::BoardRepaint { id: TabId(tab) });
         }
         task
     }

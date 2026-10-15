@@ -118,6 +118,9 @@ pub enum ToEngine {
         id: u64,
         focused: bool,
     },
+    BoardRepaint {
+        id: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +218,10 @@ pub struct FrameMeta {
     /// Board view `seq` the frame shows (`Cmd::BoardDetail`); 0 elsewhere.
     #[serde(default)]
     pub view: u32,
+    /// The payload is only the `dirty` rects, packed (a board patch; see
+    /// `CefFrame::patch`), not a whole frame.
+    #[serde(default)]
+    pub patch: bool,
 }
 
 pub fn write_msg<T: Serialize>(stream: &mut UnixStream, msg: &T) -> io::Result<()> {
@@ -385,6 +392,7 @@ mod tests {
             }],
             drag: true,
             view: 3,
+            patch: false,
         };
         let pixels = vec![1, 2, 3, 4, 5, 6, 7, 8];
         write_frame(&mut a, &meta, &pixels).unwrap();

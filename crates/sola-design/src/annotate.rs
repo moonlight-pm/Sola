@@ -26,8 +26,30 @@ const SECTION_NOTE: f32 = 12.0;
 
 type Para = <Renderer as iced::advanced::text::Renderer>::Paragraph;
 
-/// Laid-out size of `text` wrapped at `max_width`.
+thread_local! {
+    /// Measured text, so a redraw does not lay the same words out again.
+    static MEASURED: std::cell::RefCell<std::collections::HashMap<(String, u32, u32, iced::Font), Size>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Laid-out size of `text` wrapped at `max_width` (remembered).
 fn measure(text: &str, size: f32, font: iced::Font, max_width: f32) -> Size {
+    let key = (text.to_string(), size.to_bits(), max_width.round().to_bits(), font);
+    if let Some(s) = MEASURED.with(|m| m.borrow().get(&key).copied()) {
+        return s;
+    }
+    let s = lay_out(text, size, font, max_width.round());
+    MEASURED.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 512 {
+            m.clear();
+        }
+        m.insert(key, s);
+    });
+    s
+}
+
+fn lay_out(text: &str, size: f32, font: iced::Font, max_width: f32) -> Size {
     let p = Para::with_text(iced::advanced::Text {
         content: text,
         bounds: Size::new(max_width, f32::INFINITY),

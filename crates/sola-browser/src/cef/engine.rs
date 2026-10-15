@@ -49,13 +49,51 @@ pub struct CefFrame {
     /// sola-design board view `seq` this frame shows (`Cmd::BoardDetail`);
     /// 0 for every other tab and before a board's first request.
     pub view: u32,
+    /// A sola-design board's frame: the helper may send only its damage
+    /// across the frame socket (see [`CefFrame::patch`]).
+    pub board: bool,
+    /// `pixels` holds only the `dirty` rects, in order, each packed row by
+    /// row (`w × 4` bytes a row) — a patch over the board's previous frame.
+    /// Only board frames are sent this way, and only after a whole frame of
+    /// the same size and view.
+    pub patch: bool,
 }
 
 impl AbsorbDamage for CefFrame {
-    fn absorb_damage(&mut self, dropped: &Self) {
+    fn absorb_damage(&mut self, dropped: Self) {
+        let same = self.width == dropped.width && self.height == dropped.height && self.view == dropped.view;
+        if self.patch {
+            if !same {
+                // The writer sends a whole frame first after a size or view
+                // change, so this cannot follow; keep the newer picture.
+                tracing::warn!(w = self.width, h = self.height, view = self.view, "board patch after another picture");
+                return;
+            }
+            let w = self.width;
+            if dropped.patch {
+                // Both are patches: apply the older first.
+                let mut pixels = Arc::try_unwrap(dropped.pixels).unwrap_or_else(|a| a.to_vec());
+                pixels.extend_from_slice(&self.pixels);
+                let mut dirty = dropped.dirty;
+                dirty.extend_from_slice(&self.dirty);
+                self.pixels = Arc::new(pixels);
+                self.dirty = dirty;
+            } else {
+                // A whole frame under a patch: the patch is written into
+                // it (in place — the mailbox owns it alone).
+                let mut base = dropped.pixels;
+                let buf: &mut Vec<u8> = Arc::make_mut(&mut base);
+                paint::apply_patch(buf, w, &self.dirty, &self.pixels);
+                let mut dirty = dropped.dirty;
+                paint::merge_wire_damage(&mut dirty, &self.dirty, w, self.height);
+                self.pixels = base;
+                self.dirty = dirty;
+                self.patch = false;
+            }
+            return;
+        }
         // Another view's frame is a different picture: all of this one is new.
-        if self.width != dropped.width || self.height != dropped.height || self.view != dropped.view
-        {
+        if !same {
             self.dirty.clear();
             return;
         }
@@ -3006,6 +3044,18 @@ fn publish_view_paint(
 ) {
     let (mut bytes, complete) = take_view_dst(tab, w, h);
     let full = paint::is_full_damage(&dirty, w, h);
+    // A board's damage, cut down to the tiles that changed: CEF reports
+    // the bounds of all of it (two spinners → most of the page), and a
+    // board's damage crosses the frame socket as a patch.
+    let board = tab.board.get().is_some();
+    let mut unchanged = false;
+    let dirty = if board && complete && !full {
+        let tiles = paint::changed_tiles(&bytes, src, w, h, &dirty);
+        unchanged = tiles.is_empty();
+        if unchanged { dirty } else { tiles }
+    } else {
+        dirty
+    };
     paint::apply_paint(&mut bytes, src, w, h, &dirty, complete);
     // Incomplete dest is a full blit of CEF's buffer — swizzle the whole
     // region, not just `dirty` (ARGB holes otherwise).
@@ -3026,8 +3076,14 @@ fn publish_view_paint(
         dirty,
         drag: false,
         view: board_tag(tab),
+        board: tab.board.get().is_some(),
+        patch: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
+    if unchanged {
+        // CEF repainted the same pixels: nothing to send.
+        return;
+    }
     if drag_has_ghost(state) {
         publish_drag_overlay_on(state, tab, OverlayDamage::View(&frame.dirty));
         return;
@@ -3127,6 +3183,8 @@ fn publish_popup_paint(
         dirty,
         drag: false,
         view: board_tag(tab),
+        board: tab.board.get().is_some(),
+        patch: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
     state.frames.push(TaggedFrame {
@@ -3567,6 +3625,12 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 if focused {
                     host.invalidate(cef::PaintElementType::VIEW);
                 }
+            }
+        }
+        Cmd::BoardRepaint { id } => {
+            // A whole repaint: the frame socket sends it whole, not a patch.
+            if let Some(host) = tab_state_by_id(state, id).and_then(|t| t.browser.host()) {
+                host.invalidate(cef::PaintElementType::VIEW);
             }
         }
         Cmd::ShowDevTools {
@@ -4420,6 +4484,8 @@ fn publish_drag_overlay_on(state: &CefThreadState, tab: &CefTabState, extra: Ove
             dirty,
             drag: true,
             view: 0,
+            board: false,
+            patch: false,
         },
     }) {
         state.osr.note_mailbox_drop();
@@ -4789,7 +4855,46 @@ mod frame_absorb_tests {
             dirty,
             view: 0,
             drag: false,
+            board: false,
+            patch: false,
         }
+    }
+
+    fn rect(x: u32, y: u32, w: u32, h: u32) -> DirtyRect {
+        DirtyRect { x, y, w, h }
+    }
+
+    fn patch(dirty: Vec<DirtyRect>, fill: u8) -> CefFrame {
+        let len = dirty.iter().map(|r| r.pixel_bytes()).sum();
+        CefFrame {
+            pixels: Arc::new(vec![fill; len]),
+            board: true,
+            patch: true,
+            ..frame(dirty)
+        }
+    }
+
+    #[test]
+    fn patches_keep_every_rect_when_coalesced() {
+        let mut newer = patch(vec![rect(1, 1, 1, 1)], 9);
+        newer.absorb_damage(patch(vec![rect(0, 0, 1, 1)], 5));
+        assert!(newer.patch);
+        assert_eq!(newer.dirty, vec![rect(0, 0, 1, 1), rect(1, 1, 1, 1)], "older first");
+        assert_eq!(*newer.pixels, vec![5, 5, 5, 5, 9, 9, 9, 9]);
+    }
+
+    #[test]
+    fn a_patch_over_a_whole_frame_becomes_a_whole_frame() {
+        let mut newer = patch(vec![rect(1, 0, 1, 1)], 7);
+        let base = CefFrame {
+            pixels: Arc::new((0..16).collect()),
+            ..frame(vec![])
+        };
+        newer.absorb_damage(base);
+        assert!(!newer.patch);
+        assert!(newer.dirty.is_empty(), "the base was a full frame");
+        assert_eq!(&newer.pixels[..8], &[0, 1, 2, 3, 7, 7, 7, 7]);
+        assert_eq!(&newer.pixels[8..], &(8..16).collect::<Vec<u8>>()[..]);
     }
 
     #[test]
@@ -4806,7 +4911,7 @@ mod frame_absorb_tests {
             w: 1,
             h: 1,
         }]);
-        kept.absorb_damage(&dropped);
+        kept.absorb_damage(dropped);
         assert_eq!(kept.dirty.len(), 2);
     }
 
@@ -4819,7 +4924,7 @@ mod frame_absorb_tests {
             h: 1,
         }]);
         let mut kept = frame(vec![]);
-        kept.absorb_damage(&dropped);
+        kept.absorb_damage(dropped);
         assert!(kept.dirty.is_empty());
     }
 
@@ -4832,7 +4937,7 @@ mod frame_absorb_tests {
             w: 1,
             h: 1,
         }]);
-        kept.absorb_damage(&dropped);
+        kept.absorb_damage(dropped);
         assert!(kept.dirty.is_empty());
     }
 }

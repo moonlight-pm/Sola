@@ -4,6 +4,7 @@
 //! profile's `…/cef/` so cookies persist. Chrome talks to us over a Unix
 //! socket — the user never sees this process in the app switcher.
 
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -177,25 +178,37 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
     thread::Builder::new()
         .name("engine-ipc-frames".into())
         .spawn(move || {
+            // Per board tab, the picture (size, view) chrome last got whole:
+            // after that, small damage crosses as a patch, not the frame.
+            let mut whole: HashMap<u64, (u32, u32, u32)> = HashMap::new();
             loop {
                 match frames_w.recv() {
                     Ok(tagged) => {
+                        let f = &tagged.frame;
+                        let picture = (f.width, f.height, f.view);
+                        let patch = f.board
+                            && whole.get(&tagged.tab_id.0) == Some(&picture)
+                            && worth_patching(&f.dirty, f.width, f.height);
                         let meta = ipc::FrameMeta {
                             tab_id: tagged.tab_id.0,
-                            width: tagged.frame.width,
-                            height: tagged.frame.height,
-                            dirty: tagged.frame.dirty.clone(),
-                            drag: tagged.frame.drag,
-                            view: tagged.frame.view,
+                            width: f.width,
+                            height: f.height,
+                            dirty: f.dirty.clone(),
+                            drag: f.drag,
+                            view: f.view,
+                            patch,
                         };
-                        // Write the Arc slice directly — no extra 8 MiB clone.
-                        if ipc::write_frame(
-                            &mut frame_writer,
-                            &meta,
-                            tagged.frame.pixels.as_slice(),
-                        )
-                        .is_err()
-                        {
+                        let sent = if patch {
+                            let packed = crate::cef::paint::pack_patch(&f.pixels, f.width, &f.dirty);
+                            ipc::write_frame(&mut frame_writer, &meta, &packed)
+                        } else {
+                            if f.board {
+                                whole.insert(tagged.tab_id.0, picture);
+                            }
+                            // Write the Arc slice directly — no extra 8 MiB clone.
+                            ipc::write_frame(&mut frame_writer, &meta, f.pixels.as_slice())
+                        };
+                        if sent.is_err() {
                             break;
                         }
                     }
@@ -390,6 +403,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             focused,
         },
+        ToEngine::BoardRepaint { id } => Cmd::BoardRepaint { id: TabId(id) },
         ToEngine::Shutdown => return None,
     })
 }
@@ -585,6 +599,13 @@ enum ReapDecision {
         parked: bool,
         engine: bool,
     },
+}
+
+/// A board frame's damage is worth sending alone: partial, and well under
+/// the whole frame (a spinner, a caret — not a scroll or a relayout).
+fn worth_patching(dirty: &[crate::cef::paint::DirtyRect], w: u32, h: u32) -> bool {
+    !crate::cef::paint::is_full_damage(dirty, w, h)
+        && crate::cef::paint::patch_bytes(dirty) * 2 < w as usize * h as usize * 4
 }
 
 fn cmdline_is_sola_browser(text: &str) -> bool {

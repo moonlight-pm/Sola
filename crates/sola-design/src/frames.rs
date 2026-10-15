@@ -15,6 +15,9 @@ use iced_futures::subscription::{self, EventStream, Recipe};
 use sola_browser::cef::engine::CefFrame;
 use sola_browser::engine::{AbsorbDamage, FrameReceiver};
 
+/// Least time between two frame wakes (~120 Hz).
+const WAKE_GAP: std::time::Duration = std::time::Duration::from_micros(8_333);
+
 #[derive(Default)]
 pub struct BoardFrames {
     pending: Mutex<HashMap<u64, CefFrame>>,
@@ -23,6 +26,9 @@ pub struct BoardFrames {
     open: Mutex<HashSet<u64>>,
     /// A wake is queued in iced; further frames only update `pending`.
     wake_queued: AtomicBool,
+    /// Boards whose patch had no picture to land on (see
+    /// [`CefFrame::patch`]): the app asks them to paint whole.
+    want_whole: Mutex<HashSet<u64>>,
 }
 
 impl BoardFrames {
@@ -39,6 +45,21 @@ impl BoardFrames {
         self.open.lock().unwrap().remove(&tab);
         self.pending.lock().unwrap().remove(&tab);
         self.painted.lock().unwrap().remove(&tab);
+        self.want_whole.lock().unwrap().remove(&tab);
+    }
+
+    /// The plane could not apply a patch of `tab`.
+    pub fn want_whole(&self, tab: u64) {
+        self.want_whole.lock().unwrap().insert(tab);
+    }
+
+    /// Boards to repaint whole (the app sends `Cmd::BoardRepaint`).
+    pub fn take_want_whole(&self) -> Vec<u64> {
+        let open = self.open.lock().unwrap();
+        std::mem::take(&mut *self.want_whole.lock().unwrap())
+            .into_iter()
+            .filter(|t| open.contains(t))
+            .collect()
     }
 
     /// Keep the newest frame per open tab; a replaced frame donates its
@@ -49,7 +70,7 @@ impl BoardFrames {
         }
         let mut pending = self.pending.lock().unwrap();
         if let Some(old) = pending.remove(&tab) {
-            frame.absorb_damage(&old);
+            frame.absorb_damage(old);
         }
         pending.insert(tab, frame);
         self.painted.lock().unwrap().insert(tab);
@@ -126,7 +147,16 @@ impl<M: Clone + Send + 'static> Recipe for FrameRecipe<M> {
                     }
                 })
                 .expect("spawn design-frames thread");
+            // Wake iced at most once a display frame: boards animating at
+            // 60 fps each would otherwise rebuild the view hundreds of times
+            // a second. Frames keep merging in `BoardFrames` meanwhile.
+            let mut last = tokio::time::Instant::now() - WAKE_GAP;
             while rx.recv().await.is_some() {
+                let since = last.elapsed();
+                if since < WAKE_GAP {
+                    tokio::time::sleep(WAKE_GAP - since).await;
+                }
+                last = tokio::time::Instant::now();
                 if output.send(on_frame.clone()).await.is_err() {
                     break;
                 }

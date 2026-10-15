@@ -78,6 +78,7 @@ windows are actually restarted.
 | Menu overlay is card-sized | `sola-shell` `zoning::menu_overlay_frame` | **In code (2026-08-31).** Dropdown / calendar / stat / BT / volume / pile Frame to the card, not the full usable area. Full-output wgpu on software GL (llvmpipe) pegged a core on first click. Launcher / switcher / selection still full-output. |
 | Super+K overlay is card-sized | `sola-shell` `zoning::card_overlay_frame` | **Installed** `shell` release 2026-09-02. Cheatsheet Frames to the card + shadow pad (~584×575 at 1920×1080, ~0.3M px vs ~2.0M usable). Same leftover-pad dismiss as menus; desk clicks pass through. Park stays 2×2 off-output. Launcher / switcher still full-output (their dim / click-outside *is* the usable area). |
 | Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | **In code, not fully smoked.** ARGB kept for float CSD. Tiled `theme_for(false)` → full opaque-region. Float / overlay theme → region cleared. |
+| sola-design board patches | `sola-browser` `cef/host.rs` frame writer, `paint::changed_tiles` / `pack_patch`, `cpu_import::upload_patch`; `sola-design` `plane.rs`, `frames.rs` | **Installed** `design` release 2026-10-14 (branch `sola-design`). A board's frame crossed the frame socket **whole** on every paint (35–55 MB for a tall or 2× board), so a 10 px CSS spinner stuttered and pegged the helper (~146%) and Design (~118%). Now: a board's damage is cut to the 32 px tiles that changed (CEF reports one union rect), sent as a packed patch after one whole frame per size / view, merged in place in the mailboxes (`AbsorbDamage` takes the dropped frame by value), written straight into the board texture, mips rebuilt only over the region; frame wakes paced to ~120 Hz; link → board matching parsed once per view. Copy of Wicket foundation (26 boards, spinners on several): socket ~330 MB/s → ~6 MB/s; Design main thread ~6%; helper ~55%, of which ~80% is the tile compare. Browser tabs unchanged (whole frames). |
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 `browser` `install` `kit` `mail` `monitor` `paint` `preview` `settings`
@@ -105,6 +106,11 @@ Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 **Next (as of 2026-08-25):** River **NVIDIA knobs**, only after clients
 stop presenting storms and after opaque-region is actually live on tiled
 kit windows.
+
+**sola-design next:** throttle board frame rate by visibility
+(`set_windowless_frame_rate`: off-screen or tiny-on-screen boards well
+under 60 fps) — the helper's tile compare scales with animated boards ×
+fps.
 
 **Later / park**
 

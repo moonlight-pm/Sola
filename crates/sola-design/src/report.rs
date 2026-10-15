@@ -75,11 +75,12 @@ pub fn exits(board: &Board, boards: &[Board]) -> (Value, Value) {
         })
         .collect();
     let urls: Vec<(&str, &str)> = boards.iter().map(|b| (b.art.id.as_str(), b.art.url.as_str())).collect();
+    let pages = marks::Pages::new(&urls);
     let linked: BTreeSet<&str> = board
         .marks
         .links
         .iter()
-        .filter_map(|l| marks::board_for_url(&l.href, &urls, &board.art.id))
+        .filter_map(|l| pages.board_for(&l.href, &board.art.id))
         .collect();
     (json!(exits), json!(linked))
 }
