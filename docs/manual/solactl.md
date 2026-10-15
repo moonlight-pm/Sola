@@ -261,8 +261,10 @@ screenshot/input.
 ## Design (`solactl design`)
 
 Needs **sola-design** running (owner `design`). Fails if it or `sola-call`
-is down — it does not launch a window. Verbs act on the canvas the human
-sees; `open` switches it.
+is down — it does not launch a window. Page verbs take `--canvas` (default:
+the canvas on the human's screen; over MCP, the one you last opened or
+made); `open` and `canvas.new` make a canvas live off the human's screen
+(`--raise` shows it to them).
 
 A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
 lists the artboards and each artboard is an HTML page beside it. Edit those
@@ -275,7 +277,7 @@ measured.
 
 `canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
 `--path`, default your current directory), registers the project if
-needed, and shows the canvas — it appears under the project in the rail.
+needed, and opens the canvas — it appears under the project in the rail.
 An existing canvas of that name is opened instead (`created: false`).
 `open` takes the canvas dir, its `canvas.toml`, or any file inside it, and
 registers the project if Design does not know it yet. It does not raise the
@@ -283,6 +285,15 @@ window unless `--raise`. `--artboard` defaults to the artboard holding the
 human's selection, else the only artboard. `inspect` without `--selector`
 inspects the selected element. `selection` is what the human Super+clicked
 (`null` when nothing).
+
+Annotations are files too: `[[section]]`, `[[note]]`, `[[link]]`, and
+`[[flow]]` in `canvas.toml`, and `data-design-to="<artboard id>"` exits in
+the pages (see [sola-design § Files](sola-design.md#files)). Design draws
+them over the canvas, so they are not in screenshots; `status` lists them
+under `annotations`, each artboard's `exits` (with an `error` when one leads
+nowhere) and `board_links` (artboards its plain links lead to), and a note's
+`placed` / `error` once its artboard has settled. `view --section` frames a
+section.
 
 ```text
 solactl design                               # list methods
@@ -292,12 +303,13 @@ solactl design canvas.new onboarding         # design/onboarding/ in your cwd's 
 solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
-solactl design status [--canvas design/home] # canvas (shown, share), artboards (src, url, error), linked files, zoom, selection
+solactl design status [--canvas design/home] # canvas (shown, share), artboards (src, url, error, exits, board_links), annotations (sections, links, notes, flows), linked files, zoom, selection
 solactl design share [--canvas design/home]  # the canvas's live link
 solactl design share.rotate [--canvas …]     # a new link; the old one stops working
 solactl design selection
 solactl design view --fit
 solactl design view --artboard phone [--zoom 1]
+solactl design view --section sign-in        # frame a [[section]]
 solactl design view --zoom 0.5
 solactl design wait [--artboard phone] [--timeout 15]
 solactl design reload [--artboard phone] [--timeout 15]

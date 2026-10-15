@@ -14,6 +14,7 @@ use super::{App, Pending};
 use crate::boards::{self, Op};
 use crate::canvas;
 use crate::inspect;
+use crate::marks::Marks;
 use crate::projects::CanvasRef;
 use crate::watch;
 
@@ -42,6 +43,8 @@ impl App {
         // A new web root changes what the same URLs serve: reload.
         let root_moved = live.web_root != canvas.web_root && !live.boards.is_empty();
         live.web_root = canvas.web_root.clone();
+        let pins_moved = live.annot.notes != canvas.annot.notes;
+        live.annot = canvas.annot.clone();
         let at = live.at.clone();
         let current = std::mem::take(&mut live.boards);
         let mut canvas = canvas;
@@ -74,6 +77,7 @@ impl App {
             self.apply(op);
         }
         if self.is_shown(key) {
+            self.check_tour();
             if self.selection.as_ref().is_some_and(|s| !tabs.contains(&s.tab)) {
                 self.selection = None;
             }
@@ -89,7 +93,41 @@ impl App {
         if root_moved {
             let tabs: Vec<TabId> = tabs.into_iter().map(TabId).collect();
             self.reload_tabs(key, &tabs);
+        } else if pins_moved {
+            // Notes pinned to new elements: measure the pages again.
+            self.remeasure(key);
         }
+    }
+
+    /// Read what each settled board of `key` declares again (no reload).
+    fn remeasure(&mut self, key: &str) {
+        let tabs: Vec<u64> = self
+            .tabs_of(key)
+            .into_iter()
+            .filter(|&t| self.loads.is_settled(t) && self.frames.is_painted(t))
+            .collect();
+        for tab in tabs {
+            let why = Pending::Settle {
+                tab,
+                generation: self.loads.generation(tab),
+                follow_up: true,
+            };
+            let expression = self.settle_script(tab);
+            self.agent(TabId(tab), AgentOp::Eval { expression }, Some(why));
+        }
+    }
+
+    /// The settle script for board `tab`, with the notes pinned into it.
+    fn settle_script(&self, tab: u64) -> String {
+        let pins = self
+            .canvas_of_tab(tab)
+            .and_then(|key| {
+                let live = self.live(&key)?;
+                let board = live.boards.iter().find(|b| b.tab.0 == tab)?;
+                Some(live.annot.pins(&board.art.id))
+            })
+            .unwrap_or_default();
+        inspect::settle(&pins)
     }
 
     fn apply(&mut self, op: Op) {
@@ -312,7 +350,7 @@ impl App {
             .map(|(t, g)| (t, g, true));
         for (tab, generation, follow_up) in settles.chain(follow_ups).collect::<Vec<_>>() {
             let op = AgentOp::Eval {
-                expression: inspect::SETTLE.to_string(),
+                expression: self.settle_script(tab),
             };
             let why = Pending::Settle {
                 tab,
@@ -355,6 +393,7 @@ impl App {
             return;
         };
         if let Some(b) = live.boards.iter_mut().find(|b| b.tab.0 == tab) {
+            b.marks = Marks::from_settle(&data);
             if status >= 400 {
                 // A missing `src` (found at layout) says more than its 404.
                 if b.error.is_none() {

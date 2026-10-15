@@ -7,6 +7,8 @@
 //! `sola-design` is the chrome; `sola-design --engine --profile=sola-design`
 //! is the headless CEF helper it spawns. CEF subprocesses are the same binary.
 
+mod annot;
+mod annotate;
 mod app;
 mod boards;
 mod calls;
@@ -19,15 +21,20 @@ mod ime;
 mod inspect;
 mod instance;
 mod loads;
+mod marks;
 mod menu;
 mod overlay;
 mod plane;
 mod profile;
 mod projects;
 mod rail;
+mod report;
+mod routes;
+mod scene;
 mod select;
 mod serve;
 mod share;
+mod tour;
 mod watch;
 
 use std::process::ExitCode;

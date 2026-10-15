@@ -9,10 +9,17 @@ use crate::select::{PATH_FN, json_string};
 
 /// Run once a board has loaded: wait for web fonts and two frames (so the
 /// layout is final), then report the content height (for `height = "auto"`:
-/// the body's scroll height, or the root box when body margins add to it)
-/// and every local resource the page used — `file://` or Design's
-/// `*.localhost` origin — to watch files that live outside `design/`.
-pub const SETTLE: &str = r#"(async () => {
+/// the body's scroll height, or the root box when body margins add to it),
+/// every local resource the page used — `file://` or Design's
+/// `*.localhost` origin — to watch files that live outside `design/`, and
+/// what the page declares ([`crate::marks`]): its exits, its plain links,
+/// and where each pinned note's element is (`pins`: note number, selector).
+pub fn settle(pins: &[(usize, String)]) -> String {
+    let pins = serde_json::to_string(pins).unwrap_or_else(|_| "[]".into());
+    SETTLE.replace("__PINS__", &pins)
+}
+
+const SETTLE: &str = r#"(async () => {
   await document.fonts.ready;
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const urls = new Set([location.href]);
@@ -35,7 +42,31 @@ pub const SETTLE: &str = r#"(async () => {
   };
   const nav = performance.getEntriesByType('navigation')[0];
   const status = (nav && nav.responseStatus) || 0;
-  return { height, resources: [...urls].filter(local), status, url: location.href };
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  };
+  const seen = (r) => r.width > 0 && r.height > 0;
+  const words = (s) => (s || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const exits = [...document.querySelectorAll('[data-design-to]')].slice(0, 100)
+    .map((el) => ({
+      to: el.getAttribute('data-design-to').trim(),
+      label: el.getAttribute('data-design-label'),
+      text: words(el.innerText || el.getAttribute('aria-label')),
+      rect: box(el),
+    }))
+    .filter((e) => e.to && seen(e.rect));
+  const links = [...document.querySelectorAll('a[href]')]
+    .filter((a) => !a.closest('[data-design-to]')).slice(0, 300)
+    .map((a) => ({ href: a.href, rect: box(a) }))
+    .filter((l) => seen(l.rect));
+  const anchors = __PINS__.map(([n, sel]) => {
+    let el = null;
+    try { el = document.querySelector(sel); } catch (_) {}
+    return { n, rect: el ? box(el) : null };
+  });
+  return { height, resources: [...urls].filter(local), status, url: location.href,
+    exits, links, anchors };
 })()"#;
 
 /// Report for `selector` (or just the page when `None`). `all`: one compact
@@ -157,5 +188,8 @@ mod tests {
         assert!(s.contains("querySelectorAll(sel || 'body > *')"));
         assert!(!s.contains("STYLES"));
         assert!(SETTLE.contains("document.fonts.ready"));
+        let s = settle(&[(2, "a[href=\"x\"]".into())]);
+        assert!(s.contains(r#"[[2,"a[href=\"x\"]"]].map"#), "{s}");
+        assert!(!s.contains("__PINS__"));
     }
 }

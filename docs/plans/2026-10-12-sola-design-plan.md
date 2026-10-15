@@ -241,3 +241,16 @@
 - [x] Verified: background `open` / `wait` / `screenshot` leave the human's canvas; MCP memory; share link over HTTPS through the tunnel; viewer renders (auto height measured).
 - [ ] Human: two agents at once; Copy Link from the Share menu; open on a phone.
 - [ ] `cloudflared` into `configuration.nix` (drop the `cloudflared` path in `share.toml`).
+
+## Slice 7 — annotations, exits, flows (2026-10-14)
+
+- [x] Board titles: iced 0.14 `Frame::with_clip` no longer translates; draw at the title box. Viewer titles back (12 px, cut at the board width).
+- [x] `annot.rs`: `[[section]]`, `[[note]]`, `[[link]]`, `[[flow]]` parsed with the layout and checked against board ids.
+- [x] `inspect::settle(pins)` reads exits (`data-design-to`), plain links, pinned-note anchors → `marks.rs` → `Board::marks`; re-read when notes move.
+- [x] `scene.rs` / `routes.rs` / `annotate.rs`: sections under the boards (own canvas layer), titles on plates, arrows (side choice, spread, label spots), hot outlines, note markers + cards.
+- [x] Overlay: clicks on exits / board links and note markers are the app's; → ← Esc 1–9 N with no page focused.
+- [x] `tour.rs` / `app/tour.rs`: tours (flow or exit click), camera glide, tour bar, flows list, notes toggle; fit leaves room for section titles.
+- [x] `status` `annotations`, per-board `exits` / `board_links`; `view --section`; MCP instructions.
+- [x] Share viewer: the same in JS (exits from its own frames); `~canvas.json` carries the annotations.
+- [x] Verified headless (Chrome over CDP) on a copy of Wicket foundation: fit, flows list, tour + fork pick, exit click inside a page, back, Esc, note hover, N. `status` exits / anchors / errors.
+- [ ] Human: look in Design (Flowdemo → Foundation): sections under boards, arrows, notes, tour bar, exit click glide.

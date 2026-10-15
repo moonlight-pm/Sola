@@ -50,6 +50,18 @@ URLs look in that project folder first (product `/fonts/…`). Edits reload the 
 canvas when they touch its folder, shared files in design/, or any project file a \
 board loaded (a product stylesheet outside design/ included).
 
+Annotate a canvas so a person can take it in: in canvas.toml, `[[section]]` \
+(title, boards = [ids], note) draws a titled region around boards; `[[note]]` (text, \
+and board — optionally at = \"css selector\" — or x / y) is a numbered note for what \
+is not obvious; `[[link]]` (from, to, label) is an arrow between whole boards; \
+`[[flow]]` (title, start = a board id, note) is a tour the viewer can walk. In a page, \
+`data-design-to=\"<board id>\"` (optional `data-design-label`) on a button or link \
+makes it an exit: an arrow to that board, and clicking it moves the camera there. \
+Use exits for flows, not for navigation chrome (plain links between boards already \
+move the camera, without arrows). Leave room between sections. design_status lists \
+them, each board's exits, and any that lead nowhere; design_view --section frames \
+one. None of this is in a screenshot.
+
 The human may pan, zoom, and look around (any canvas) while you work; nothing you \
 read depends on their view. Screenshots and PDFs show the whole artboard (2×, or \
 less for a very large one), inspect reads the page. design_view moves their camera \

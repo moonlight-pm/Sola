@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::annot::{self, Annotations};
+
 pub const DESIGN_DIR: &str = "design";
 pub const CANVAS_FILE: &str = "canvas.toml";
 
@@ -26,6 +28,14 @@ struct CanvasFile {
     root: Option<String>,
     #[serde(default, rename = "artboard")]
     artboards: Vec<ArtboardSpec>,
+    #[serde(default, rename = "section")]
+    sections: Vec<annot::SectionSpec>,
+    #[serde(default, rename = "note")]
+    notes: Vec<annot::NoteSpec>,
+    #[serde(default, rename = "link")]
+    links: Vec<annot::LinkSpec>,
+    #[serde(default, rename = "flow")]
+    flows: Vec<annot::FlowSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +83,8 @@ pub struct Canvas {
     pub artboards: Vec<Artboard>,
     /// `root` resolved: an existing directory inside the project.
     pub web_root: Option<PathBuf>,
+    /// Sections, notes, board links, and flows.
+    pub annot: Annotations,
 }
 
 /// A canvas as the rail lists it.
@@ -141,12 +153,14 @@ pub fn parse(dir: &Path, text: &str) -> Result<Canvas, String> {
             auto_height,
         });
     }
+    let annot = annot::check(file.sections, file.notes, file.links, file.flows, &seen)?;
     let title = file.title.unwrap_or_else(|| dir_name(dir));
     let web_root = file.root.map(|r| web_root(dir, &r)).transpose()?;
     Ok(Canvas {
         title,
         artboards,
         web_root,
+        annot,
     })
 }
 
@@ -248,6 +262,22 @@ const TEMPLATE_HEADER: &str = "\
 # width = 1440            # the artboard's viewport (CSS px)
 # height = 900            # or \"auto\": grow to the page's content
 # title = \"Desktop\"       # optional label
+#
+# [[section]]             # a titled region around some artboards
+# title = \"Sign in\"
+# boards = [\"desktop\"]
+#
+# [[note]]                # an annotation: board (+ at = \"css selector\"), or x / y
+# board = \"desktop\"
+# text = \"What is not obvious here.\"
+#
+# [[link]]                # an arrow between whole artboards; in a page,
+# from = \"desktop\"        # data-design-to=\"<id>\" on an element is an exit
+# to = \"phone\"
+#
+# [[flow]]                # a tour that follows exits and links
+# title = \"Sign in\"
+# start = \"desktop\"
 
 ";
 

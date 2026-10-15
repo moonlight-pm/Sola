@@ -8,6 +8,7 @@
 mod canvases;
 mod cli;
 mod live;
+mod tour;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::APP_ID;
-use crate::boards::Board;
+use crate::annotate;
 use crate::calls;
 use crate::camera::{self, Camera};
 use crate::canvas;
@@ -49,6 +50,7 @@ use crate::rail::{self, AddDraft, CanvasDraft, RailState};
 use crate::select::{self, Selection};
 use crate::serve::Server;
 use crate::share::{self, Share};
+use crate::tour::{Nav, Tour, Tween};
 use crate::watch;
 
 const WINDOW_TITLE: &str = "Design";
@@ -82,12 +84,22 @@ pub enum Msg {
     WaitTick,
     /// Plan detail renders if the camera has rested.
     DetailTick,
-    /// Animation frame while something glows.
-    Glow,
+    /// Animation frame while something glows or the camera glides.
+    Animate,
     /// Close idle off-screen canvases.
     Evict,
     /// Copy the shown canvas's share link (`true`: a new link first).
     ShareLink(bool),
+    /// Open / close the flows list above the pill.
+    Flows,
+    /// Start the flow with this id on the canvas on screen.
+    StartFlow(String),
+    /// Open / close every note card.
+    ToggleNotes,
+    /// A tour-bar button (keys arrive as `Plane(Nav)`).
+    Tour(Nav),
+    /// Frame the tour's step again.
+    TourReturn,
     /// The window's output scale.
     Scale(f32),
     Plane(overlay::Event),
@@ -213,6 +225,15 @@ struct App {
     human_camera: bool,
     /// Shimmer over what agents touch (overlay only).
     glows: Glows,
+    /// The tour on the canvas on screen (see [`tour`]).
+    tour: Option<Tour>,
+    /// The camera gliding to a tour step.
+    tween: Option<Tween>,
+    /// Note cards clicked open, and the open-every-card toggle.
+    open_notes: HashSet<usize>,
+    notes_open: bool,
+    /// The flows list above the pill is open.
+    flows_open: bool,
     /// Board with the keyboard.
     focus: Option<u64>,
     selection: Option<Selection>,
@@ -250,6 +271,11 @@ impl App {
             user_camera: false,
             human_camera: false,
             glows: Glows::default(),
+            tour: None,
+            tween: None,
+            open_notes: HashSet::new(),
+            notes_open: false,
+            flows_open: false,
             focus: None,
             selection: None,
             next_req: 1,
@@ -311,8 +337,8 @@ impl App {
         if self.details.due.is_some() {
             subs.push(iced::time::every(DETAIL_TICK).map(|_| Msg::DetailTick));
         }
-        if self.glows.is_active() {
-            subs.push(iced::window::frames().map(|_| Msg::Glow));
+        if self.glows.is_active() || self.tween.is_some() {
+            subs.push(iced::window::frames().map(|_| Msg::Animate));
         }
         subs.push(iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Rescaled(f)) => Some(Msg::Scale(f)),
@@ -350,10 +376,17 @@ impl App {
             }
             Msg::Evict => self.evict_idle(Instant::now()),
             Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
-            Msg::Glow => {
+            Msg::Animate => {
+                let now = Instant::now();
                 let loads = &self.loads;
-                self.glows.tick(Instant::now(), |tab| loads.is_settled(tab));
+                self.glows.tick(now, |tab| loads.is_settled(tab));
+                self.glide(now);
             }
+            Msg::Flows => self.flows_open = !self.flows_open,
+            Msg::StartFlow(id) => self.start_flow(&id),
+            Msg::ToggleNotes => self.nav(Nav::Notes),
+            Msg::Tour(nav) => self.nav(nav),
+            Msg::TourReturn => self.tour_return(),
             Msg::DetailTick => {
                 if self.details.due.is_some_and(|due| Instant::now() >= due) {
                     self.plan_details();
@@ -477,12 +510,21 @@ impl App {
             }
             overlay::Event::Pan(d) => {
                 self.take_camera();
+                self.tween = None;
                 self.camera.pan(d);
             }
             overlay::Event::Zoom { at, factor } => {
                 self.take_camera();
+                self.tween = None;
                 self.camera.zoom_at(at, factor);
             }
+            overlay::Event::Follow { tab, to } => self.follow(tab, &to),
+            overlay::Event::ToggleNote(n) => {
+                if !self.open_notes.remove(&n) {
+                    self.open_notes.insert(n);
+                }
+            }
+            overlay::Event::Nav(nav) => self.nav(nav),
             overlay::Event::Pick { tab, x, y } => self.pick(tab, x, y),
             overlay::Event::ClearSelection => self.selection = None,
             overlay::Event::Input(events) => {
@@ -525,10 +567,10 @@ impl App {
             self.fit_pending = true;
             return;
         };
-        let Some(content) = camera::bounds_of(self.shown_boards().iter().map(Board::rect)) else {
+        let Some(cam) = self.shown_live().and_then(|l| l.fit_camera(view)) else {
             return;
         };
-        self.camera = Camera::fit(content, view, 1.0);
+        self.camera = cam;
         self.fit_pending = false;
     }
 
@@ -979,7 +1021,18 @@ impl App {
                 })
                 .width(Length::Fill)
                 .height(Length::Fill);
+                let scene = self.shown_scene();
+                let sections = iced_canvas(annotate::Sections {
+                    camera: self.camera,
+                    scene: scene.clone(),
+                })
+                .width(Length::Fill)
+                .height(Length::Fill);
                 let overlay = Overlay {
+                    scene,
+                    step: self.tour.as_ref().map(Tour::step),
+                    notes_open: self.notes_open,
+                    open_notes: &self.open_notes,
                     camera: self.camera,
                     boards: &open.boards,
                     painted: open
@@ -998,7 +1051,7 @@ impl App {
                     .height(Length::Fill)
                     .into();
                 let overlay = crate::ime::target(overlay, self.ime_caret());
-                let mut layers = stack![textures, overlay.map(Msg::Plane)];
+                let mut layers = stack![sections, textures, overlay.map(Msg::Plane)];
                 if let Some(e) = &open.error {
                     layers = layers.push(error_chip(e));
                 } else if open.boards.is_empty() {
@@ -1007,6 +1060,9 @@ impl App {
                         open.at.canvas
                     );
                     layers = layers.push(hint(&file));
+                }
+                if let Some(bar) = self.tour_bar().or_else(|| self.flows_list()) {
+                    layers = layers.push(bar);
                 }
                 layers.push(self.status_bar()).into()
             }
@@ -1063,12 +1119,23 @@ impl App {
                 bar = bar.push(small(note.clone()));
             }
         }
-        // Share: copy the live link, or replace it.
+        // Notes and flows, when the canvas has them; share: copy the live
+        // link, or replace it.
         let mut right = 10.0;
+        let annot = self.shown_live().map(|l| &l.annot);
+        if annot.is_some_and(|a| !a.notes.is_empty()) {
+            let tip = if self.notes_open { "Hide notes (N)" } else { "Show notes (N)" };
+            bar = bar.push(pill_tool("lucide/sticky-note", tip, Msg::ToggleNotes));
+            right = 3.0;
+        }
+        if annot.is_some_and(|a| !a.flows.is_empty()) {
+            bar = bar.push(pill_tool("lucide/route", "Flows", Msg::Flows));
+            right = 3.0;
+        }
         if self.share.is_some() {
             bar = bar
-                .push(share_tool("lucide/link", "Copy share link", Msg::ShareLink(false)))
-                .push(share_tool(
+                .push(pill_tool("lucide/link", "Copy share link", Msg::ShareLink(false)))
+                .push(pill_tool(
                     "lucide/refresh-cw",
                     "New share link (the old one stops working)",
                     Msg::ShareLink(true),
@@ -1144,7 +1211,7 @@ fn error_chip<'a>(message: &str) -> Element<'a, Msg> {
 }
 
 /// A pill tool: icon button, tip above (the pill sits on the bottom edge).
-fn share_tool<'a>(icon: &str, tip: &'static str, msg: Msg) -> Element<'a, Msg> {
+fn pill_tool<'a>(icon: &str, tip: &'static str, msg: Msg) -> Element<'a, Msg> {
     use sola_kit::components::{icon::icon_handle, popover, toolbar};
     let button = toolbar::toolbar_icon(icon_handle(icon), 14).on_press(msg);
     let tip = container(text(tip).font(fonts::ui()).size(12))
@@ -1156,7 +1223,7 @@ fn share_tool<'a>(icon: &str, tip: &'static str, msg: Msg) -> Element<'a, Msg> {
         .into()
 }
 
-fn pill_style(theme: &Theme) -> container::Style {
+pub(super) fn pill_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weak.color)),
