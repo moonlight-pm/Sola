@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Design</title>
 <style>
-  :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #7aa7ff; }
+  :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #3dd6f5; --note: #e3b341; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; touch-action: none;
     font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #plane { position: absolute; inset: 0; touch-action: none; }
@@ -14,6 +14,9 @@
   #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
   .board { position: absolute; }
   .board iframe { display: block; border: 0; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,.35); }
+  /* As in Design: 12px at any zoom, 6px above the board, cut at its width. */
+  .board .title { position: absolute; left: 0; bottom: 100%; padding-bottom: 6px; font-size: 12px; line-height: 16px;
+    white-space: nowrap; overflow: hidden; color: var(--muted); transform-origin: 0 100%; pointer-events: none; }
   body.panning .board iframe { pointer-events: none; }
   #head { position: fixed; top: 14px; left: 16px; display: flex; gap: 10px; align-items: center; pointer-events: none; }
   #head .name { font-weight: 600; }
@@ -26,6 +29,39 @@
   #pct { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
   #msg { position: fixed; inset: 0; display: none; place-items: center; color: var(--muted); }
   #help { position: fixed; left: 16px; bottom: 22px; color: var(--muted); font-size: 12px; pointer-events: none; }
+  /* Annotations, as in Design: fixed sizes on screen, drawn over the plane. */
+  #under, #over { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  #ink { position: absolute; inset: 0; pointer-events: none; }
+  .sec { position: absolute; transform: translateY(-100%); }
+  .sec > div { display: inline-block; margin: 0 0 0 -6px; padding: 3px 6px; border-radius: 6px; background: rgba(20,21,24,.88); }
+  .sec b { display: block; font-size: 15px; font-weight: 500; line-height: 20px; color: var(--fg); }
+  .sec span { display: block; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 3px; }
+  .lbl { position: absolute; transform: translate(-50%, -50%); padding: 2px 7px; border: 1px solid rgba(201,204,210,.18);
+    border-radius: 7px; background: var(--chip); color: rgba(201,204,210,.72); font-size: 11px; line-height: 15px; white-space: nowrap; }
+  .lbl.lit { border-color: var(--accent); color: var(--fg); }
+  .lbl.dim { border-color: rgba(201,204,210,.08); color: rgba(201,204,210,.3); background: rgba(29,31,35,.7); }
+  .note { position: absolute; width: 0; height: 0; pointer-events: auto; }
+  .note .dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+    background: var(--note); color: #1a1407; box-shadow: 0 0 0 1.5px var(--bg); font: 500 11px/18px system-ui, sans-serif;
+    text-align: center; user-select: none; }
+  .note .card { visibility: hidden; position: absolute; left: 14px; top: -12px; width: max-content; max-width: 280px;
+    padding: 9px 11px; border: 1px solid rgba(227,179,65,.75); border-radius: 8px; background: var(--chip);
+    font-size: 12px; line-height: 16px; white-space: pre-wrap; }
+  .note.open .card, .note:hover .card { visibility: visible; }
+  .note:hover { z-index: 2; }
+  .pop { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); display: none; padding: 6px 8px;
+    background: var(--chip); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+  .pop button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; color: var(--fg); }
+  .pop button:hover { background: #26292e; }
+  .pop button:disabled { opacity: .35; cursor: default; background: none; }
+  #flows button { display: block; width: 300px; }
+  #flows small, #tour small { display: block; color: var(--muted); font-size: 12px; }
+  #tour .row { display: flex; gap: 4px; align-items: center; justify-content: center; }
+  #tour .picks { flex-wrap: wrap; margin-bottom: 6px; }
+  #tour .picks button { border: 1px solid var(--line); }
+  #tour .where { padding: 0 6px; min-width: 120px; }
+  #tour .where b { font-weight: 500; }
+  #bar button.on { color: var(--accent); }
   /* Too narrow for the hint beside the zoom bar: centre it above. */
   @media (max-width: 860px) { #help { right: 16px; bottom: 64px; text-align: center; } }
   /* Touch: pages take no input (the canvas gets every finger) and the
@@ -35,12 +71,16 @@
 </style>
 </head>
 <body>
-<div id="plane"><div id="world"></div></div>
+<div id="plane"><svg id="under"></svg><div id="world"></div><svg id="over"></svg><div id="ink"></div></div>
 <div id="head"><span id="live" title="Live"></span><span class="name" id="name"></span></div>
 <div id="bar">
   <button id="out" title="Zoom out (-)">−</button><span id="pct">100%</span><button id="in" title="Zoom in (+)">+</button>
   <button id="fit" title="Fit (0)">Fit</button>
+  <button id="notes-btn" title="Show every note (N)" hidden>Notes</button>
+  <button id="flows-btn" title="Walk a flow" hidden>Flows</button>
 </div>
+<div id="flows" class="pop"></div>
+<div id="tour" class="pop"></div>
 <div id="help">Right-drag to pan · Scroll to zoom</div>
 <div id="msg"></div>
 <script>
@@ -51,13 +91,23 @@
   // Set from the device, and by the input actually used.
   const touchMode = (on) => document.body.classList.toggle('touch', on);
   let cam = { x: 48, y: 48, z: 1 }, moved = false, boards = new Map(), version = null, layoutKey = '';
+  // canvas.toml annotations; what the pointer is over in a page; the tour.
+  let annot = { sections: [], links: [], notes: [], flows: [] }, hover = null, tour = null, glide = null;
+  let notesOpen = false, flowsOpen = false;
+  const openNotes = new Set();
 
   const apply = () => {
     world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
     pct.textContent = Math.round(cam.z * 100) + '%';
+    for (const b of boards.values()) {
+      b.title.style.transform = `scale(${1 / cam.z})`;
+      b.title.style.maxWidth = b.w * cam.z + 'px';
+    }
+    render();
   };
   const clampZ = (z) => Math.min(32, Math.max(0.05, z));
   const zoomAt = (px, py, f) => {
+    glide = null;
     const z = clampZ(cam.z * f);
     cam.x = px - (px - cam.x) * (z / cam.z); cam.y = py - (py - cam.y) * (z / cam.z); cam.z = z;
     moved = true; apply();
@@ -69,9 +119,10 @@
       x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
       x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
     }
-    const pad = 56, W = innerWidth, H = innerHeight;
-    const z = Math.min((W - 2 * pad) / (x1 - x0), (H - 2 * pad - 40) / (y1 - y0), 1);
-    cam = { z, x: (W - (x1 - x0) * z) / 2 - x0 * z, y: (H - 40 - (y1 - y0) * z) / 2 - y0 * z + 20 };
+    // Room above for section titles, as in Design.
+    const pad = 56, W = innerWidth, H = innerHeight, top = annot.sections.length ? 44 : 0;
+    const z = Math.min((W - 2 * pad) / (x1 - x0), (H - 2 * pad - 40 - top) / (y1 - y0), 1);
+    cam = { z, x: (W - (x1 - x0) * z) / 2 - x0 * z, y: (H - 40 - top - (y1 - y0) * z) / 2 - y0 * z + 20 + top };
     apply();
   };
 
@@ -88,6 +139,47 @@
     } catch (e) { /* not same-origin (a web src) */ }
   };
 
+  // What a page declares (as Design reads it when a board settles): its
+  // exits, its plain links that lead to another board, and the elements
+  // notes are pinned to. Rects are board-local CSS px.
+  const words = (s) => (s || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const pageKey = (u) => {
+    try { const x = new URL(u, location.href); return { page: x.origin + x.pathname + x.search, hash: x.hash }; }
+    catch (e) { return null; }
+  };
+  // As Design (marks.rs): a link to the board's own page goes nowhere unless
+  // its fragment names another board's; one that fits several, nowhere.
+  const boardFor = (href, from) => {
+    const want = pageKey(href), own = boards.has(from) && boards.get(from).key;
+    if (!want) return null;
+    const hits = [...boards.values()].filter((b) => b.id !== from && b.key && b.key.page === want.page);
+    const named = hits.filter((b) => b.key.hash === want.hash);
+    const byHash = named.length === 1 ? named[0].id : null;
+    if (own && own.page === want.page) return own.hash !== want.hash ? byHash : null;
+    return hits.length === 1 ? hits[0].id : byHash;
+  };
+  const scan = (b) => {
+    let doc;
+    try { doc = b.frame.contentDocument; void doc.body; } catch (e) { return; }
+    if (!doc || !doc.body) return;
+    const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+    const seen = (r) => r.w > 0 && r.h > 0;
+    b.exits = [...doc.querySelectorAll('[data-design-to]')].slice(0, 100).map((el) => ({
+      el, to: el.getAttribute('data-design-to').trim(), label: (el.getAttribute('data-design-label') || '').trim(),
+      text: words(el.innerText || el.getAttribute('aria-label')), r: box(el),
+    })).filter((e) => e.to && e.to !== b.id && boards.has(e.to) && seen(e.r));
+    b.links = [...doc.querySelectorAll('a[href]')].filter((a) => !a.closest('[data-design-to]')).slice(0, 300)
+      .map((a) => ({ el: a, to: boardFor(a.href, b.id), r: box(a) })).filter((l) => l.to && seen(l.r));
+    b.anchors = {};
+    for (const n of annot.notes) {
+      if (n.board !== b.id || !n.at) continue;
+      let el = null;
+      try { el = doc.querySelector(n.at); } catch (e) {}
+      b.anchors[n.n] = el ? box(el) : null;
+    }
+    render();
+  };
+
   // As in Design: pages are live (left button, hover, keys), the right
   // button drags the canvas anywhere — the pages never see it — and the
   // wheel always zooms. Pointer events drive the pan: a page cancels the
@@ -97,6 +189,7 @@
   const startPan = (e) => { pan = { x: e.screenX, y: e.screenY }; document.body.classList.add('panning'); };
   const movePan = (e) => {
     if (!pan) return;
+    glide = null;
     cam.x += e.screenX - pan.x; cam.y += e.screenY - pan.y; pan = { x: e.screenX, y: e.screenY };
     moved = true; apply();
   };
@@ -118,6 +211,7 @@
     const prev = fingers.get(id);
     if (!prev) return;
     fingers.set(id, p);
+    glide = null;
     if (fingers.size === 1) {
       cam.x += p.x - prev.x; cam.y += p.y - prev.y; moved = true; apply();
     } else if (pinch && pinch.d > 0) {
@@ -155,6 +249,26 @@
     win.addEventListener('mousemove', (e) => { if (pan) e.stopImmediatePropagation(); }, true);
     win.addEventListener('mouseup', (e) => { if (right(e)) swallow(e); }, true);
     win.addEventListener('contextmenu', swallow, true);
+    // An exit, or a plain link to another board's page: the camera goes
+    // there; the page does not get the click.
+    const target = (el) => {
+      if (!el) return null;
+      const to = el.hasAttribute('data-design-to') ? el.getAttribute('data-design-to').trim() : boardFor(el.href, b.id);
+      return to && to !== b.id && boards.has(to) ? to : null;
+    };
+    const hotEl = (e) => (e.target && e.target.closest ? e.target.closest('[data-design-to], a[href]') : null);
+    win.addEventListener('click', (e) => {
+      const to = e.button === 0 ? target(hotEl(e)) : null;
+      if (!to) return;
+      swallow(e);
+      follow(b.id, to);
+    }, true);
+    win.addEventListener('mouseover', (e) => {
+      const el = hotEl(e), to = target(el);
+      const h = to ? { board: b.id, el } : null;
+      if ((h && h.el) !== (hover && hover.el)) { hover = h; render(); }
+    }, true);
+    win.document.documentElement.addEventListener('mouseleave', () => { if (hover) { hover = null; render(); } });
     win.addEventListener('wheel', (e) => {
       e.preventDefault();
       const p = toHere(e.clientX, e.clientY);
@@ -169,24 +283,500 @@
     msg.style.display = data.error ? 'grid' : 'none';
     msg.textContent = data.error || '';
     world.textContent = ''; boards.clear();
+    annot = { sections: data.sections || [], links: data.links || [], notes: data.notes || [], flows: data.flows || [] };
+    inkKey = null; hover = null;
+    if (tour && !(tour.path = tour.path.filter((id) => data.artboards.some((a) => a.id === id))).length) tour = null;
+    document.getElementById('notes-btn').hidden = !annot.notes.length;
+    document.getElementById('flows-btn').hidden = !annot.flows.length;
     for (const a of data.artboards) {
       const el = document.createElement('div'); el.className = 'board';
       el.style.left = a.x + 'px'; el.style.top = a.y + 'px';
+      const title = document.createElement('div'); title.className = 'title'; title.textContent = a.title;
       const frame = document.createElement('iframe');
       frame.src = a.src; frame.title = a.title;
       // As in Design: no scrollbars; content past the board is cut off.
       frame.setAttribute('scrolling', 'no');
       frame.style.width = a.width + 'px'; frame.style.height = a.height + 'px';
-      el.append(frame); world.append(el);
-      const b = { x: a.x, y: a.y, w: a.width, h: a.height, auto: a.auto, measured: a.measured, frame };
+      el.append(title, frame); world.append(el);
+      const b = { id: a.id, x: a.x, y: a.y, w: a.width, h: a.height, auto: a.auto, measured: a.measured, frame, title,
+        key: pageKey(a.src), exits: [], links: [], anchors: {} };
+      const settle = () => { measure(b); scan(b); };
       frame.addEventListener('load', () => {
-        hookPage(b); measure(b);
-        try { b.frame.contentDocument.fonts.ready.then(() => measure(b)); } catch (e) {}
-        for (const ms of [1000, 3000, 8000]) setTimeout(() => measure(b), ms);
+        hookPage(b); settle();
+        try { b.frame.contentDocument.fonts.ready.then(settle); } catch (e) {}
+        for (const ms of [1000, 3000, 8000]) setTimeout(settle, ms);
       });
       boards.set(a.id, b);
     }
     if (!moved) fit(); else apply();
+  };
+
+  // ── Annotations (as in Design: crate routes.rs / annotate.rs) ──────
+  const under = document.getElementById('under'), over = document.getElementById('over');
+  const ink = document.getElementById('ink');
+  const scr = (r) => ({ x: cam.x + r.x * cam.z, y: cam.y + r.y * cam.z, w: r.w * cam.z, h: r.h * cam.z });
+  const boardRect = (b) => ({ x: b.x, y: b.y, w: b.w, h: b.h });
+  const sectionBox = (rects) => {
+    if (!rects.length) return null;
+    const x0 = Math.min(...rects.map((r) => r.x)), y0 = Math.min(...rects.map((r) => r.y));
+    const x1 = Math.max(...rects.map((r) => r.x + r.w)), y1 = Math.max(...rects.map((r) => r.y + r.h));
+    const pad = Math.max(64 * cam.z, 12), top = pad + 24;
+    return { x: x0 - pad, y: y0 - top, w: x1 - x0 + 2 * pad, h: y1 - y0 + pad + top };
+  };
+  // Connectors run through the gutters, never across a board (as Design's
+  // routes.rs): a port on the source board's side level with the exit, a
+  // stub out, an orthogonal path on lines beside every board's edges
+  // (shortest, with a cost per bend), the target's stub and port. Canvas
+  // units; runs that share a gutter are nudged apart on screen.
+  const CLEAR = 28, BEND = 320, PORT_GAP = 24, INSET = 24;
+  const OUT = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] }, DIR = { R: 0, L: 1, B: 2, T: 3 };
+  const sides = (a, b) => {
+    const gx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), gy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
+    const dx = b.x + b.w / 2 - (a.x + a.w / 2), dy = b.y + b.h / 2 - (a.y + a.h / 2);
+    const acrossX = gx > 0 || gy > 0 ? gx >= gy : Math.abs(dx) >= Math.abs(dy);
+    if (acrossX) return dx >= 0 ? ['R', 'L'] : ['L', 'R'];
+    return dy >= 0 ? ['B', 'T'] : ['T', 'B'];
+  };
+  const project = (r, s, p) => {
+    const clamp = (v, lo, len) => Math.min(Math.max(v, lo + Math.min(INSET, len / 2)), lo + len - Math.min(INSET, len / 2));
+    if (s === 'L' || s === 'R') return [s === 'L' ? r.x : r.x + r.w, clamp(p[1], r.y, r.h)];
+    return [clamp(p[0], r.x, r.w), s === 'T' ? r.y : r.y + r.h];
+  };
+  const simplify = (path) => {
+    const out = [];
+    for (const p of path) {
+      const q = out[out.length - 1];
+      if (q && Math.hypot(q[0] - p[0], q[1] - p[1]) < 0.01) continue;
+      if (out.length >= 2) {
+        const a = out[out.length - 2], b = out[out.length - 1];
+        if ((Math.abs(a[0] - b[0]) < 0.01 && Math.abs(b[0] - p[0]) < 0.01) || (Math.abs(a[1] - b[1]) < 0.01 && Math.abs(b[1] - p[1]) < 0.01)) out.pop();
+      }
+      out.push(p);
+    }
+    return out;
+  };
+  const grid = (xs, ys, rects) => {
+    const lines = (v) => [...v].sort((a, b) => a - b).filter((x, i, a) => i === 0 || x - a[i - 1] >= 0.5);
+    xs = lines(xs); ys = lines(ys);
+    const blocks = rects.map((r) => ({ x: r.x - CLEAR + 1, y: r.y - CLEAR + 1, w: r.w + 2 * CLEAR - 2, h: r.h + 2 * CLEAR - 2 }));
+    const inside = (x, y) => blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h);
+    const clear = (x0, y0, x1, y1) => !blocks.some((b) => Math.min(x0, x1) < b.x + b.w && Math.max(x0, x1) > b.x && Math.min(y0, y1) < b.y + b.h && Math.max(y0, y1) > b.y);
+    const nx = xs.length, ny = ys.length, open = new Uint8Array(nx * ny), next = new Int32Array(nx * ny * 4).fill(-1);
+    for (let n = 0; n < nx * ny; n++) open[n] = inside(xs[n % nx], ys[(n / nx) | 0]) ? 0 : 1;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const n = j * nx + i;
+      if (!open[n]) continue;
+      if (i + 1 < nx && open[n + 1] && clear(xs[i], ys[j], xs[i + 1], ys[j])) { next[n * 4] = n + 1; next[(n + 1) * 4 + 1] = n; }
+      if (j + 1 < ny && open[n + nx] && clear(xs[i], ys[j], xs[i], ys[j + 1])) { next[n * 4 + 2] = n + nx; next[(n + nx) * 4 + 3] = n; }
+    }
+    const pt = (n) => [xs[n % nx], ys[(n / nx) | 0]];
+    const node = (p) => {
+      const i = xs.findIndex((x) => Math.abs(x - p[0]) < 0.5), j = ys.findIndex((y) => Math.abs(y - p[1]) < 0.5);
+      if (i < 0 || j < 0) return -1;
+      const n = j * nx + i;
+      return [0, 1, 2, 3].some((d) => next[n * 4 + d] >= 0) ? n : -1;
+    };
+    // Cheapest run: length plus BEND per turn (Dijkstra over node × heading).
+    const path = (a, out, b, into) => {
+      const start = node(a), goal = node(b);
+      if (start < 0 || goal < 0) return null;
+      const inward = DIR[into] ^ 1, cost = new Float64Array(nx * ny * 4).fill(Infinity), prev = new Int32Array(nx * ny * 4).fill(-1);
+      const heap = [];
+      const push = (c, s) => {
+        heap.push([c, s]);
+        for (let k = heap.length - 1; k > 0;) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; }
+      };
+      const pop = () => {
+        const top = heap[0], last = heap.pop();
+        if (heap.length) {
+          heap[0] = last;
+          for (let k = 0; ;) {
+            const l = 2 * k + 1, r = l + 1;
+            let m = k;
+            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+            if (m === k) break;
+            [heap[m], heap[k]] = [heap[k], heap[m]]; k = m;
+          }
+        }
+        return top;
+      };
+      const first = start * 4 + DIR[out];
+      cost[first] = 0; push(0, first);
+      let best = null;
+      while (heap.length) {
+        const [c, s] = pop();
+        if (c > cost[s] || (best && c >= best[0])) continue;
+        const n = s >> 2, dir = s & 3;
+        if (n === goal) {
+          const total = c + (dir === inward ? 0 : BEND);
+          if (!best || total < best[0]) best = [total, s];
+          continue;
+        }
+        for (let d = 0; d < 4; d++) {
+          const m = next[n * 4 + d];
+          if (m < 0 || d === (dir ^ 1)) continue;
+          const p = pt(n), q = pt(m), t = m * 4 + d;
+          const step = Math.hypot(q[0] - p[0], q[1] - p[1]) + (d === dir ? 0 : BEND);
+          if (c + step < cost[t]) { cost[t] = c + step; prev[t] = s; push(cost[t], t); }
+        }
+      }
+      if (!best) return null;
+      const out2 = [];
+      for (let s = best[1]; s >= 0; s = prev[s]) out2.push(pt(s >> 2));
+      return out2.reverse();
+    };
+    return { path };
+  };
+  const layOut = (rects, arrows) => {
+    const sd = arrows.map((a) => sides(a.board, a.to));
+    const starts = arrows.map((a, i) => project(a.board, sd[i][0], [a.from.x + a.from.w / 2, a.from.y + a.from.h / 2]));
+    // Each arrow enters level with where it leaves when the side allows (a
+    // straight run between neighbours); ports into one side keep apart.
+    const ends = arrows.map((a, i) => project(a.to, sd[i][1], starts[i]));
+    const done = new Set();
+    arrows.forEach((a, i) => {
+      if (done.has(i)) return;
+      const into = sd[i][1], k = into === 'T' || into === 'B' ? 0 : 1;
+      const peers = arrows.map((_, j) => j).filter((j) => j >= i && arrows[j].target === a.target && sd[j][1] === into);
+      peers.forEach((j) => done.add(j));
+      peers.sort((p, q) => ends[p][k] - ends[q][k] || p - q);
+      const lo0 = k ? a.to.y : a.to.x, len = k ? a.to.h : a.to.w, inset = Math.min(INSET, len / 2);
+      const lo = lo0 + inset, hi = lo0 + len - inset, at = [];
+      for (const j of peers) at.push(Math.max(ends[j][k], at.length ? at[at.length - 1] + PORT_GAP : -Infinity));
+      const over = at.length ? Math.max(at[at.length - 1] - hi, 0) : 0;
+      peers.forEach((j, n) => { ends[j] = k ? [ends[j][0], Math.max(at[n] - over, lo)] : [Math.max(at[n] - over, lo), ends[j][1]]; });
+    });
+    const stub = (p, s) => [p[0] + OUT[s][0] * CLEAR, p[1] + OUT[s][1] * CLEAR];
+    const xs = [], ys = [];
+    for (const r of rects) { xs.push(r.x - CLEAR, r.x + r.w + CLEAR); ys.push(r.y - CLEAR, r.y + r.h + CLEAR); }
+    arrows.forEach((_, i) => {
+      for (const s of [stub(starts[i], sd[i][0]), stub(ends[i], sd[i][1])]) { xs.push(s[0]); ys.push(s[1]); }
+    });
+    const g = grid(xs, ys, rects);
+    return arrows.map((a, i) => {
+      const sa = stub(starts[i], sd[i][0]), sb = stub(ends[i], sd[i][1]);
+      const mid = g.path(sa, sd[i][0], sb, sd[i][1]) || [sa, sb];
+      return { path: simplify([starts[i], ...mid, ends[i]]) };
+    });
+  };
+  let wiresKey = null, wiresMemo = [];
+  const wiresFor = (rects, arrows) => {
+    const key = JSON.stringify([rects, arrows.map((a) => [a.board, a.from, a.to, a.target])]);
+    if (key !== wiresKey) { wiresKey = key; wiresMemo = layOut(rects, arrows); }
+    return wiresMemo;
+  };
+  // Overlapping runs on one gutter line move apart by `gap` (screen px);
+  // a path's first and last runs stay on their ports.
+  const nudge = (paths, gap) => {
+    const runs = [];
+    paths.forEach((p, w) => {
+      for (let k = 1; k < p.length - 2; k++) {
+        const a = p[k], b = p[k + 1];
+        if (Math.abs(a[1] - b[1]) < 0.01) runs.push([1, a[1], Math.min(a[0], b[0]), Math.max(a[0], b[0]), w, k]);
+        else if (Math.abs(a[0] - b[0]) < 0.01) runs.push([0, a[0], Math.min(a[1], b[1]), Math.max(a[1], b[1]), w, k]);
+      }
+    });
+    runs.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    for (let i = 0; i < runs.length;) {
+      let j = i;
+      while (j < runs.length && runs[j][0] === runs[i][0] && Math.abs(runs[j][1] - runs[i][1]) < 0.5) j++;
+      const ends = [], lanes = [];
+      for (const r of runs.slice(i, j)) {
+        let l = ends.findIndex((e) => e < r[2] - 0.5);
+        if (l < 0) { ends.push(-Infinity); l = ends.length - 1; }
+        ends[l] = r[3]; lanes.push(l);
+      }
+      runs.slice(i, j).forEach((r, k) => {
+        const off = (lanes[k] - (ends.length - 1) / 2) * gap, p = paths[r[4]];
+        for (const q of [r[5], r[5] + 1]) p[q] = r[0] ? [p[q][0], p[q][1] + off] : [p[q][0] + off, p[q][1]];
+      });
+      i = j;
+    }
+  };
+  // A label goes on its path's longest run (middle, then quarters), else
+  // the next, where it covers neither a board nor a label already placed;
+  // nowhere if nothing fits, unless its arrow is lit (`force`).
+  const labelSpot = (path, w, h, placed, rects, force) => {
+    const runs = [];
+    for (let k = 0; k < path.length - 1; k++) {
+      const a = path[k], b = path[k + 1], inner = k > 0 && k + 2 < path.length;
+      runs.push([Math.hypot(b[0] - a[0], b[1] - a[1]) * (inner ? 1 : 0.25), a, b]);
+    }
+    runs.sort((a, b) => b[0] - a[0]);
+    const box = (a, b, t) => { const c = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; return { x: c[0] - w / 2, y: c[1] - h / 2, w, h, c }; };
+    const hit = (p, b) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h;
+    const free = (b) => !placed.some((p) => hit(p, b)) && !rects.some((r) => hit(r, b));
+    let spot = runs.flatMap((r) => [0.5, 0.25, 0.75].map((t) => box(r[1], r[2], t))).find(free);
+    if (!spot && force && runs.length) spot = box(runs[0][1], runs[0][2], 0.5);
+    if (!spot) return null;
+    placed.push(spot);
+    return spot.c;
+  };
+  // Beside its marker at m: right, left, above, below — the first spot
+  // covering neither the marker, `keep` (titles, cards, markers), nor
+  // `rects` (boards); else the first clear of the marker and `keep`.
+  const cardSpot = (m, w, h, keep, rects) => {
+    const G = 14, E = 8;
+    const fit = (x, y) => ({ x: Math.max(Math.min(x, innerWidth - w - E), E), y: Math.max(Math.min(y, innerHeight - h - E), E), w, h });
+    const spots = [fit(m[0] + G, m[1] - 12), fit(m[0] - G - w, m[1] - 12), fit(m[0] - 12, m[1] - G - h), fit(m[0] - 12, m[1] + G)];
+    const hit = (p, b) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h;
+    const own = { x: m[0] - 10, y: m[1] - 10, w: 20, h: 20 };
+    const clear = (r) => !hit(r, own) && !keep.some((k) => hit(k, r));
+    return spots.find((r) => clear(r) && !rects.some((b) => hit(b, r))) || spots.find(clear) || spots[0];
+  };
+  const rounded = (pts, radius) => {
+    let d = `M${pts[0]}`;
+    for (let k = 1; k < pts.length - 1; k++) {
+      const a = pts[k - 1], c = pts[k], n = pts[k + 1];
+      const li = Math.hypot(c[0] - a[0], c[1] - a[1]), lo = Math.hypot(n[0] - c[0], n[1] - c[1]);
+      const r = Math.min(radius, li / 2, lo / 2);
+      const p1 = [c[0] - ((c[0] - a[0]) / (li || 1)) * r, c[1] - ((c[1] - a[1]) / (li || 1)) * r];
+      const p2 = [c[0] + ((n[0] - c[0]) / (lo || 1)) * r, c[1] + ((n[1] - c[1]) / (lo || 1)) * r];
+      d += ` L${p1} Q${c} ${p2}`;
+    }
+    return d + ` L${pts[pts.length - 1]}`;
+  };
+
+  // The canvas's annotations in canvas units (as Design's scene.rs).
+  const scene = () => {
+    const sections = annot.sections.map((s) => ({ ...s, rects: s.boards.filter((id) => boards.has(id)).map((id) => boardRect(boards.get(id))) }))
+      .filter((s) => s.rects.length);
+    const arrows = [], ids = [...boards.keys()];
+    for (const b of boards.values()) {
+      for (const e of b.exits) {
+        arrows.push({ fromBoard: b.id, board: boardRect(b), from: { x: b.x + e.r.x, y: b.y + e.r.y, w: e.r.w, h: e.r.h }, to: e.to,
+          label: e.label || null, name: e.label || e.text || null, el: e.el });
+      }
+    }
+    for (const l of annot.links) {
+      if (!boards.has(l.from) || !boards.has(l.to)) continue;
+      const b = boardRect(boards.get(l.from));
+      arrows.push({ fromBoard: l.from, board: b, from: b, to: l.to, label: l.label || null, name: l.label || null, el: null });
+    }
+    for (const a of arrows) a.target = ids.indexOf(a.to);
+    const rects = [...boards.values()].map(boardRect);
+    const wires = wiresFor(rects, arrows.map((a) => ({ board: a.board, from: a.from, to: rects[a.target], target: a.target })));
+    const notes = [];
+    for (const n of annot.notes) {
+      if (n.board == null) { notes.push({ ...n, at: [n.x, n.y] }); continue; }
+      const b = boards.get(n.board);
+      if (!b) continue;
+      if (!n.at) { notes.push({ ...n, at: [b.x + b.w, b.y] }); continue; }
+      const r = b.anchors[n.n];
+      if (r) notes.push({ ...n, at: [b.x + r.x + r.w, b.y + r.y] });
+    }
+    return { sections, arrows, notes, wires };
+  };
+  const choices = (from) => {
+    const out = [];
+    for (const a of scene().arrows.filter((a) => a.fromBoard === from)) {
+      const c = out.find((c) => c.to === a.to);
+      if (!c) out.push({ to: a.to, name: a.name });
+      else if (!c.name) c.name = a.name;
+    }
+    return out;
+  };
+
+  // Text that wraps or is hovered lives in HTML (#ink), built when the
+  // annotations change and only moved on each frame; lines in SVG.
+  let inkKey = null, inkSecs = [], inkLabels = [], inkNotes = [];
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const buildInk = (s) => {
+    ink.textContent = '';
+    const div = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; ink.append(d); return d; };
+    inkSecs = s.sections.map((x) => div('sec', `<div><b>${esc(x.title)}</b>` + (x.note ? `<span>${esc(x.note)}</span>` : '') + '</div>'));
+    inkLabels = s.arrows.map((a) => (a.label ? div('lbl', esc(a.label)) : null));
+    inkNotes = s.notes.map((n) => {
+      const d = div('note', `<div class="dot">${n.n}</div><div class="card">${esc(n.text)}</div>`);
+      d.querySelector('.dot').addEventListener('click', () => {
+        if (!openNotes.delete(n.n)) openNotes.add(n.n);
+        render();
+      });
+      return d;
+    });
+  };
+  const render = () => {
+    const s = scene();
+    const key = JSON.stringify([s.sections.map((x) => [x.title, x.note]), s.arrows.map((a) => a.label), s.notes.map((n) => [n.n, n.text])]);
+    if (key !== inkKey) { inkKey = key; buildInk(s); }
+    const step = tour ? tour.path[tour.path.length - 1] : null;
+    // Sections: regions under the boards, titles above them.
+    let u = '';
+    s.sections.forEach((x, i) => {
+      const r = sectionBox(x.rects.map(scr));
+      u += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10" fill="rgba(255,255,255,.035)" stroke="#2b2e34"/>`;
+      const el = inkSecs[i];
+      el.style.left = r.x + 2 + 'px'; el.style.top = r.y - 5 + 'px';
+      el.style.width = Math.min(640, Math.max(160, r.w)) + 'px';
+    });
+    under.innerHTML = u;
+    // Connectors: neutral hairlines; accent when they matter (the exit under
+    // the pointer, the tour step's way out), dim for the rest of a tour.
+    // Nothing crosses a page: a lit connector leaves the board's edge level
+    // with its exit, which is outlined.
+    const paths = s.wires.map((w) => w.path.map((q) => [cam.x + q[0] * cam.z, cam.y + q[1] * cam.z]));
+    nudge(paths, 6);
+    const look = (a) => {
+      if (hover && a.el && a.el === hover.el) return 2;
+      if (step) return a.fromBoard === step ? 2 : 0;
+      return 1;
+    };
+    const LOOK = [['rgba(201,204,210,.14)', 1.25], ['rgba(201,204,210,.42)', 1.5], ['var(--accent)', 2]];
+    let o = '';
+    // Labels never cover a page unless their arrow is lit; lit ones first.
+    const screens = [...boards.values()].map((b) => scr(boardRect(b)));
+    const placed = [], spots = [];
+    s.arrows.map((_, i) => i).sort((i, j) => look(s.arrows[j]) - look(s.arrows[i])).forEach((i) => {
+      const lbl = inkLabels[i];
+      if (lbl) lbl.style.display = '';
+      spots[i] = lbl ? labelSpot(paths[i], lbl.offsetWidth, lbl.offsetHeight, placed, screens, look(s.arrows[i]) === 2) : null;
+    });
+    const order = s.arrows.map((_, i) => i).sort((i, j) => look(s.arrows[i]) - look(s.arrows[j]));
+    for (const i of order) {
+      const a = s.arrows[i], path = paths[i], lk = look(a), [col, w] = LOOK[lk];
+      if (path.length < 2) continue;
+      o += `<path d="${rounded(path, 10)}" fill="none" style="stroke:${col}" stroke-width="${w}"/>`;
+      o += `<circle cx="${path[0][0]}" cy="${path[0][1]}" r="${2 + w / 2}" style="fill:${col}"/>`;
+      const tip = path[path.length - 1], prev = path[path.length - 2];
+      const len = Math.hypot(tip[0] - prev[0], tip[1] - prev[1]) || 1, dir = [(tip[0] - prev[0]) / len, (tip[1] - prev[1]) / len];
+      const base = [tip[0] - dir[0] * (8 + w), tip[1] - dir[1] * (8 + w)], half = 3.5 + w / 2;
+      o += `<polygon points="${tip} ${base[0] - dir[1] * half},${base[1] + dir[0] * half} ${base[0] + dir[1] * half},${base[1] - dir[0] * half}" style="fill:${col}"/>`;
+      const lbl = inkLabels[i];
+      if (lbl && !spots[i]) lbl.style.display = 'none';
+      else if (lbl) {
+        lbl.style.left = spots[i][0] + 'px'; lbl.style.top = spots[i][1] + 'px';
+        lbl.className = 'lbl ' + ['dim', 'plain', 'lit'][lk]; lbl.style.zIndex = lk;
+      }
+    }
+    // The hovered link / exit, and the tour step's exits.
+    const outline = (b, r, strong) => {
+      const q = scr({ x: b.x + r.x, y: b.y + r.y, w: r.w, h: r.h });
+      o += `<rect x="${q.x - 2}" y="${q.y - 2}" width="${q.w + 4}" height="${q.h + 4}" rx="4" fill="${strong ? 'rgba(61,214,245,.1)' : 'none'}"`
+        + ` stroke="rgba(61,214,245,${strong ? 1 : 0.55})" stroke-width="${strong ? 1.5 : 1}"/>`;
+    };
+    for (const b of boards.values()) {
+      for (const e of b.exits) if (b.id === step && !(hover && hover.el === e.el)) outline(b, e.r, false);
+      for (const h of [...b.exits, ...b.links]) if (hover && hover.el === h.el) outline(b, h.r, true);
+    }
+    over.innerHTML = o;
+    // Notes on top: markers always; cards open, on the tour's step, or
+    // hovered. A card goes beside its marker where it covers no title, other
+    // card, or marker — and no board, if it can (as Design's card_spot).
+    const marks = s.notes.map((n) => [cam.x + n.at[0] * cam.z, cam.y + n.at[1] * cam.z]);
+    const keep = [...screens.map((r) => ({ x: r.x, y: r.y - 22, w: r.w, h: 20 })),
+      ...inkSecs.map((el) => { const q = el.firstChild.getBoundingClientRect(); return { x: q.x, y: q.y, w: q.width, h: q.height }; })];
+    const isOpen = (n) => notesOpen || openNotes.has(n.n) || (step != null && n.board === step);
+    const noteOrder = s.notes.map((_, i) => i).sort((i, j) => isOpen(s.notes[j]) - isOpen(s.notes[i]));
+    for (const i of noteOrder) {
+      const n = s.notes[i], el = inkNotes[i], [x, y] = marks[i], card = el.lastChild;
+      el.style.left = x + 'px'; el.style.top = y + 'px';
+      // A marker off screen has no card (it would pile up at the edge).
+      const shown = x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight;
+      el.style.display = shown ? '' : 'none';
+      if (!shown) continue;
+      el.classList.toggle('open', isOpen(n));
+      const others = marks.filter((_, j) => j !== i).map(([mx, my]) => ({ x: mx - 9, y: my - 9, w: 18, h: 18 }));
+      const spot = cardSpot([x, y], card.offsetWidth, card.offsetHeight, [...keep, ...others], screens);
+      card.style.left = spot.x - x + 'px'; card.style.top = spot.y - y + 'px';
+      if (isOpen(n)) keep.push(spot);
+    }
+    document.getElementById('notes-btn').classList.toggle('on', notesOpen);
+    tourUi();
+  };
+
+  // ── Tours (as Design's tour.rs) ─────────────────────────────────────
+  const frameBoard = (b) => {
+    const W = innerWidth, H = innerHeight, pad = 48, reserve = 132;
+    const aw = Math.max(W - 2 * pad, 1), ah = Math.max(H - 2 * pad - reserve, 1);
+    const byWidth = Math.min(aw / b.w, 1), whole = Math.min(byWidth, ah / b.h);
+    if (b.w * whole < 0.5 * aw && byWidth > whole) return { z: byWidth, x: W / 2 - (b.x + b.w / 2) * byWidth, y: 40 - b.y * byWidth };
+    return { z: whole, x: W / 2 - (b.x + b.w / 2) * whole, y: (H - reserve) / 2 - (b.y + b.h / 2) * whole };
+  };
+  const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const lerp = (a, b, t) => {
+    const mx = innerWidth / 2, my = innerHeight / 2;
+    const ca = [(mx - a.x) / a.z, (my - a.y) / a.z], cb = [(mx - b.x) / b.z, (my - b.y) / b.z];
+    const z = a.z * Math.pow(b.z / a.z, t), c = [ca[0] + (cb[0] - ca[0]) * t, ca[1] + (cb[1] - ca[1]) * t];
+    return { z, x: mx - c[0] * z, y: my - c[1] * z };
+  };
+  const glideTo = (id) => {
+    const b = boards.get(id);
+    if (!b) return;
+    glide = { from: { ...cam }, to: frameBoard(b), start: performance.now() };
+    moved = true;
+    const tick = (now) => {
+      if (!glide) return;
+      const t = (now - glide.start) / 420;
+      cam = t >= 1 ? glide.to : lerp(glide.from, glide.to, ease(Math.max(t, 0)));
+      if (t >= 1) glide = null;
+      apply();
+      if (glide) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
+  const stepOf = () => tour.path[tour.path.length - 1];
+  const go = (to) => { if (stepOf() !== to) tour.path.push(to); glideTo(to); };
+  const follow = (from, to) => {
+    if (!tour) tour = { flow: null, path: [from] };
+    if (stepOf() !== from) tour.path.push(from);
+    go(to);
+  };
+  const startFlow = (f) => { flowsOpen = false; tour = { flow: f.title, path: [f.start] }; glideTo(f.start); };
+  const nav = (k) => {
+    if (k === 'notes') { notesOpen = !notesOpen; render(); return; }
+    if (k === 'end') { tour = null; flowsOpen = false; render(); return; }
+    if (!tour) return;
+    const c = choices(stepOf());
+    if (k === 'back') { if (tour.path.length > 1) { tour.path.pop(); glideTo(stepOf()); } }
+    else if (k === 'return') glideTo(stepOf());
+    else if (k === 'next') { if (c.length === 1) go(c[0].to); }
+    else if (typeof k === 'number' && c[k - 1]) go(c[k - 1].to);
+    render();
+  };
+  const titleOf = (id) => (boards.has(id) ? boards.get(id).title.textContent : id);
+  const button = (html, title, on) => {
+    const el = document.createElement('button');
+    el.innerHTML = html; el.title = title || '';
+    if (on) el.onclick = on; else el.disabled = true;
+    return el;
+  };
+  let tourKey = null;
+  const tourUi = () => {
+    const box = document.getElementById('tour'), list = document.getElementById('flows');
+    const c = tour ? choices(stepOf()) : [];
+    const key = tour ? JSON.stringify([tour, c]) : null;
+    box.style.display = tour ? 'block' : 'none';
+    list.style.display = !tour && flowsOpen ? 'block' : 'none';
+    if (!tour && flowsOpen && !list.childElementCount) {
+      for (const f of annot.flows) {
+        list.append(button(`${esc(f.title)}${f.note ? `<small>${esc(f.note)}</small>` : ''}`, '', () => startFlow(f)));
+      }
+    }
+    if (key === tourKey) return;
+    tourKey = key; box.textContent = '';
+    if (!tour) return;
+    if (c.length > 1) {
+      const picks = document.createElement('div'); picks.className = 'row picks';
+      c.slice(0, 9).forEach((x, i) => picks.append(button(
+        `${i + 1}&nbsp; ${x.name ? esc(x.name) + ' → ' : ''}${esc(titleOf(x.to))}`, '', () => nav(i + 1))));
+      box.append(picks);
+    }
+    const row = document.createElement('div'); row.className = 'row';
+    const where = document.createElement('div'); where.className = 'where';
+    where.innerHTML = `<small>${tour.flow ? esc(tour.flow) + ' · ' : ''}Step ${tour.path.length}</small><b>${esc(titleOf(stepOf()))}</b>`;
+    row.append(
+      button('‹', 'Back (←)', tour.path.length > 1 ? () => nav('back') : null), where,
+      button('›', 'Next (→)', c.length === 1 ? () => nav('next') : null));
+    if (!c.length) { const end = document.createElement('small'); end.textContent = 'End of the flow'; row.append(end); }
+    row.append(button('Return', 'Back to this step', () => nav('return')), button('×', 'End the tour (Esc)', () => nav('end')));
+    box.append(row);
+  };
+  document.getElementById('notes-btn').onclick = () => nav('notes');
+  document.getElementById('flows-btn').onclick = () => {
+    flowsOpen = !flowsOpen;
+    document.getElementById('flows').textContent = '';
+    render();
   };
 
   const load = async () => {
@@ -223,6 +813,8 @@
   plane.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') { touchMode(false); return; }
     touchMode(true);
+    // A tap on a note marker opens its card; it is not a pan.
+    if (e.target.closest && e.target.closest('.note')) return;
     plane.setPointerCapture(e.pointerId);
     fingerDown(e.pointerId, { x: e.clientX, y: e.clientY });
   });
@@ -240,8 +832,14 @@
   document.getElementById('in').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
   document.getElementById('out').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
   addEventListener('keydown', (e) => {
-    if (e.target !== document.body) return;
-    if (e.key === '0') { moved = false; fit(); }
+    if (e.target !== document.body && e.target.tagName !== 'BUTTON') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'ArrowRight') nav('next');
+    else if (e.key === 'ArrowLeft') nav('back');
+    else if (e.key === 'Escape') nav('end');
+    else if (e.key === 'n' || e.key === 'N') nav('notes');
+    else if (/^[1-9]$/.test(e.key) && tour) nav(+e.key);
+    else if (e.key === '0') { moved = false; fit(); }
     else if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
     else if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
   });

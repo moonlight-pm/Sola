@@ -355,6 +355,7 @@ mod tests {
             surface,
             grown: false,
             error: None,
+            marks: Default::default(),
             discarded: false,
         }
     }

@@ -24,6 +24,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::annot::Place;
 use crate::canvas;
 use crate::serve;
 
@@ -475,7 +476,23 @@ fn layout_json(site: &Site, token: &str, heights: &HashMap<String, u32>) -> serd
             })
         })
         .collect();
-    json!({"title": c.title, "artboards": boards})
+    let a = &c.annot;
+    let notes: Vec<serde_json::Value> = a
+        .notes
+        .iter()
+        .map(|n| match &n.place {
+            Place::Board { board, at } => json!({"n": n.n, "text": n.text, "board": board, "at": at}),
+            Place::Point { x, y } => json!({"n": n.n, "text": n.text, "x": x, "y": y}),
+        })
+        .collect();
+    json!({
+        "title": c.title,
+        "artboards": boards,
+        "sections": a.sections.iter().map(|s| json!({"title": s.title, "note": s.note, "boards": s.boards})).collect::<Vec<_>>(),
+        "links": a.links.iter().map(|l| json!({"from": l.from, "to": l.to, "label": l.label})).collect::<Vec<_>>(),
+        "notes": notes,
+        "flows": a.flows.iter().map(|f| json!({"id": f.id, "title": f.title, "start": f.start, "note": f.note})).collect::<Vec<_>>(),
+    })
 }
 
 /// A relative path as URL path segments (percent-escaped).
@@ -591,7 +608,8 @@ mod tests {
         let root = project("serve");
         std::fs::write(
             root.join("design/home/canvas.toml"),
-            "title = \"Home\"\n[[artboard]]\nsrc = \"a.html?x=1\"\nwidth = 100\nheight = \"auto\"\n",
+            "title = \"Home\"\n[[artboard]]\nsrc = \"a.html?x=1\"\nwidth = 100\nheight = \"auto\"\n\
+             [[note]]\nboard = \"a\"\nat = \".x\"\ntext = \"Look\"\n[[flow]]\ntitle = \"Walk\"\nstart = \"a\"\n",
         )
         .unwrap();
         let state = root.join("share.json");
@@ -618,6 +636,8 @@ mod tests {
             "{bare}"
         );
         let layout = get(addr, &format!("/{token}/~canvas.json"), "");
+        assert!(layout.contains(r#""notes":[{"at":".x","board":"a","n":1,"text":"Look"}]"#), "{layout}");
+        assert!(layout.contains(r#""flows":[{"id":"walk","note":null,"start":"a","title":"Walk"}]"#), "{layout}");
         assert!(
             layout.contains(&format!("\"src\":\"/{token}/design/home/a.html?x=1\"")),
             "{layout}"

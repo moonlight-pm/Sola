@@ -3,10 +3,10 @@
 //! A Super+click runs [`pick_script`] in that board (`AgentOp::Eval`). The
 //! page answers with the element under the point; iced draws its outline.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Element rect in the board's viewport (CSS px).
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,

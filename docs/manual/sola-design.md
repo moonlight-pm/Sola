@@ -28,7 +28,33 @@ y = 0
 width = 1440                    # the artboard's viewport (CSS px)
 height = 900                    # or "auto": grow to the page's content
 title = "Settings · desktop"    # optional label
+
+[[section]]                     # a titled region around artboards
+title = "Settings"
+boards = ["desktop", "phone"]
+note = "Desktop first; the phone stacks the panes."   # optional
+
+[[note]]                        # a numbered note: board (+ at = "css selector"), or x / y
+board = "desktop"
+at = ".danger-zone"
+text = "Delete is the only red button in the app."
+
+[[link]]                        # an arrow between whole artboards
+from = "desktop"
+to = "phone"
+label = "under 600 px"          # optional
+
+[[flow]]                        # a tour that follows exits and links
+title = "Change your email"
+start = "desktop"
+note = "Verify, then the new address takes over."     # optional
 ```
+
+In a page, `data-design-to="<artboard id>"` (and optionally
+`data-design-label="…"`) on a button or link makes it an **exit**: an arrow
+from it to that artboard, and a click there moves the camera. Names that are
+not artboards make `canvas.toml` an error; an exit to an unknown artboard,
+or a note whose `at` matches nothing, is listed in `solactl design status`.
 
 Each artboard is its own Chromium viewport, so media queries and `vw`/`vh`
 match its size. Design serves the project over http on this machine only
@@ -107,6 +133,45 @@ agent's reload (or a file edit) clears it.
 Page dialogs (`alert`, `confirm`) are accepted automatically and logins are
 cancelled — pages have no browser chrome here.
 
+## Sections, notes, and flows
+
+A big canvas can say how it is organised. Agents add this; you read and
+walk it. All of it is drawn by Design over the canvas, at a fixed size on
+screen, and none of it is in the pages or in an agent's screenshots.
+
+- **Sections** are titled regions behind a group of artboards, with an
+  optional line under the title. A fit leaves room above for their titles.
+- **Notes** are numbered amber markers on an artboard, an element in it, or
+  a spot on the canvas. Hover a marker to read it; click it to keep it open.
+  The notes button on the bottom bar (or **N** while no page has the
+  keyboard) opens every note.
+- **Arrows** show flow, through the gaps between artboards (never across
+  one): from the edge of an artboard, level with the button or link that
+  leads on, to the artboard it leads to — or between two whole artboards.
+  A label shows where it fits without covering an artboard, and always on
+  a lit arrow. Hover the button to outline it and light its arrow. Leave
+  room between artboards and the arrows (and labels) have room to run.
+- **Clicking** a button or link that leads to another artboard moves the
+  camera there (a short glide) instead of loading that page into the
+  artboard you clicked. That includes plain links between artboards, which
+  draw no arrow — so a sidebar's links take you around the canvas.
+
+**Tours.** When a canvas has flows, the bottom bar has a flows button. Pick
+a flow and the camera frames its first artboard, with the tour bar above
+the bottom bar: back, where you are (flow, step, artboard), next, **Return**
+(frame the step again after looking around), and end. Where an artboard
+leads several places, the tour bar lists them; pick one (or press its
+number). Clicking a button in the page follows it too, and outside a tour
+that starts one, so Back takes you back. **→** next, **←** back, **1–9** pick,
+**Esc** ends — while no page has the keyboard (click empty canvas first).
+The step's notes are open and its outgoing arrows are bright; the others
+dim. Panning and zooming never end a tour.
+
+Exits and note positions are read when a page finishes loading and again
+when its height changes, so an element that moves for another reason (a
+menu that opens) keeps its old arrow until the next reload. Zoomed far out,
+arrow labels hide where they do not fit and section titles can overlap.
+
 ## Agents
 
 Agents drive Design with `solactl design` or its MCP tools (see
@@ -157,8 +222,9 @@ refresh button beside it (or **Share → New Link**) makes a new one, copies
 it, and the old link stops working. Agents get it with `solactl design share`.
 
 The link shows the canvas as it is right now, laid out and handled as in
-Design — the same artboard heights Design measured, no titles, no
-scrollbars: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
+Design — the same artboard heights Design measured, each board's title
+above it, its sections, notes, arrows, and flows (Notes and Flows buttons on
+its bar, the same keys), no scrollbars: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
 frames everything (no element picking). On a phone the pages are for
 looking only: one finger pans anywhere, a pinch zooms, and there is no hint. When a file changes, viewers' pages reload within a couple
 of seconds. A link only reaches its own canvas: its folder, shared files in

@@ -104,6 +104,121 @@ pub fn merge_wire_damage(into: &mut Vec<DirtyRect>, extra: &[DirtyRect], w: u32,
     merge_damage(into, extra, w, h);
 }
 
+/// Side of the tiles [`changed_tiles`] compares.
+const TILE: u32 = 32;
+/// More changed runs than this: keep CEF's own rects.
+const MAX_TILE_RECTS: usize = 48;
+
+/// Where `src` (CEF's new buffer) differs from `dst` (the previous frame)
+/// inside `rects`, both full `w × h` BGRA: 32 px tiles, merged into runs
+/// along each tile row and then down equal runs. CEF reports one damage
+/// rect — the bounds of everything that moved — so two spinners far apart
+/// damage most of a page; this finds the two squares. Empty when nothing
+/// changed. Too many pieces: `rects` as given.
+pub fn changed_tiles(dst: &[u8], src: &[u8], w: u32, h: u32, rects: &[DirtyRect]) -> Vec<DirtyRect> {
+    let stride = w as usize * 4;
+    if dst.len() < stride * h as usize || src.len() < stride * h as usize {
+        return rects.to_vec();
+    }
+    let (cols, rows) = (w.div_ceil(TILE), h.div_ceil(TILE));
+    let mut changed = vec![false; (cols * rows) as usize];
+    for r in rects {
+        let (x0, y0) = (r.x.min(w), r.y.min(h));
+        let (x1, y1) = ((r.x + r.w).min(w), (r.y + r.h).min(h));
+        for ty in y0 / TILE..y1.div_ceil(TILE) {
+            for tx in x0 / TILE..x1.div_ceil(TILE) {
+                let cell = &mut changed[(ty * cols + tx) as usize];
+                if *cell {
+                    continue;
+                }
+                let (cx0, cx1) = ((tx * TILE).max(x0), ((tx + 1) * TILE).min(x1));
+                let (cy0, cy1) = ((ty * TILE).max(y0), ((ty + 1) * TILE).min(y1));
+                *cell = (cy0..cy1).any(|y| {
+                    let a = y as usize * stride + cx0 as usize * 4;
+                    let b = y as usize * stride + cx1 as usize * 4;
+                    src[a..b] != dst[a..b]
+                });
+            }
+        }
+    }
+    // Runs along each tile row, then grown down while the run below matches.
+    let mut out: Vec<DirtyRect> = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
+    for ty in 0..rows {
+        let mut next_open = Vec::new();
+        let mut tx = 0;
+        while tx < cols {
+            if !changed[(ty * cols + tx) as usize] {
+                tx += 1;
+                continue;
+            }
+            let start = tx;
+            while tx < cols && changed[(ty * cols + tx) as usize] {
+                tx += 1;
+            }
+            let x = start * TILE;
+            let rw = (tx * TILE).min(w) - x;
+            let y = ty * TILE;
+            let rh = ((ty + 1) * TILE).min(h) - y;
+            match open.iter().find(|&&i| out[i].x == x && out[i].w == rw && out[i].y + out[i].h == y) {
+                Some(&i) => {
+                    out[i].h += rh;
+                    next_open.push(i);
+                }
+                None => {
+                    out.push(DirtyRect { x, y, w: rw, h: rh });
+                    next_open.push(out.len() - 1);
+                }
+            }
+        }
+        if out.len() > MAX_TILE_RECTS {
+            return rects.to_vec();
+        }
+        open = next_open;
+    }
+    out
+}
+
+/// Bytes of `rects` packed row by row (a board patch).
+pub fn patch_bytes(rects: &[DirtyRect]) -> usize {
+    rects.iter().map(|r| r.pixel_bytes()).sum()
+}
+
+/// The `rects` of a full `width`-wide BGRA buffer, packed in order, row by
+/// row — what a board patch carries. Rects are clipped to the buffer.
+pub fn pack_patch(src: &[u8], width: u32, rects: &[DirtyRect]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(patch_bytes(rects));
+    let stride = width as usize * 4;
+    for r in rects {
+        let row = r.w as usize * 4;
+        for y in r.y..r.y + r.h {
+            let start = y as usize * stride + r.x as usize * 4;
+            match src.get(start..start + row) {
+                Some(bytes) => out.extend_from_slice(bytes),
+                None => out.resize(out.len() + row, 0),
+            }
+        }
+    }
+    out
+}
+
+/// Write a packed patch (see [`pack_patch`]) into a full `width`-wide
+/// BGRA buffer.
+pub fn apply_patch(dst: &mut [u8], width: u32, rects: &[DirtyRect], packed: &[u8]) {
+    let stride = width as usize * 4;
+    let mut at = 0;
+    for r in rects {
+        let row = r.w as usize * 4;
+        for y in r.y..r.y + r.h {
+            let start = y as usize * stride + r.x as usize * 4;
+            if let (Some(d), Some(s)) = (dst.get_mut(start..start + row), packed.get(at..at + row)) {
+                d.copy_from_slice(s);
+            }
+            at += row;
+        }
+    }
+}
+
 /// Pending damage that is not yet on a published frame.
 /// `None` = nothing. `Some([])` = full. `Some(rects)` = partial.
 pub fn absorb_pending(pending: &mut Option<Vec<DirtyRect>>, extra: &[DirtyRect], w: u32, h: u32) {
@@ -414,6 +529,50 @@ impl PixelRing {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn only_tiles_that_changed_are_damage() {
+        // 128 × 64: CEF says the whole width of the top 40 rows moved, but
+        // only a spot at (5, 5) and one at (100, 35) did.
+        let (w, h) = (128u32, 64u32);
+        let old = vec![0u8; (w * h * 4) as usize];
+        let mut new = old.clone();
+        for (x, y) in [(5u32, 5u32), (100, 35)] {
+            new[((y * w + x) * 4) as usize] = 255;
+        }
+        let damage = [DirtyRect { x: 0, y: 0, w, h: 40 }];
+        let tiles = changed_tiles(&old, &new, w, h, &damage);
+        assert_eq!(
+            tiles,
+            vec![DirtyRect { x: 0, y: 0, w: 32, h: 32 }, DirtyRect { x: 96, y: 32, w: 32, h: 32 }]
+        );
+        assert!(changed_tiles(&old, &old, w, h, &damage).is_empty(), "nothing moved");
+        // A run that repeats down the rows grows instead of stacking.
+        let mut band = old.clone();
+        for y in 0..64u32 {
+            band[((y * w + 40) * 4) as usize] = 9;
+        }
+        assert_eq!(
+            changed_tiles(&old, &band, w, h, &[DirtyRect { x: 0, y: 0, w, h }]),
+            vec![DirtyRect { x: 32, y: 0, w: 32, h: 64 }]
+        );
+    }
+
+    #[test]
+    fn a_packed_patch_lands_where_it_came_from() {
+        // 3 × 2 buffer, each pixel's bytes = its index.
+        let src: Vec<u8> = (0..6u8).flat_map(|p| [p; 4]).collect();
+        let rects = [DirtyRect { x: 1, y: 0, w: 2, h: 1 }, DirtyRect { x: 0, y: 1, w: 1, h: 1 }];
+        let packed = pack_patch(&src, 3, &rects);
+        assert_eq!(packed.len(), patch_bytes(&rects));
+        assert_eq!(packed, [[1; 4], [2; 4], [3; 4]].concat());
+        let mut dst = vec![9u8; 24];
+        apply_patch(&mut dst, 3, &rects, &packed);
+        assert_eq!(&dst[4..12], &src[4..12]);
+        assert_eq!(&dst[12..16], &src[12..16]);
+        assert_eq!(&dst[0..4], &[9; 4], "outside the patch: untouched");
+    }
+
     use super::*;
 
     #[test]

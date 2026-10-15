@@ -14,6 +14,7 @@ use sola_browser::engine::{BoardPace, Cmd, TabId};
 
 use super::budget::Admit;
 use super::{App, Pending};
+use crate::annot::Annotations;
 use crate::boards::Board;
 use crate::camera::{self, Camera};
 use crate::canvas;
@@ -33,6 +34,8 @@ pub(super) struct Live {
     /// The canvas web root in force (`root` in `canvas.toml`).
     pub web_root: Option<PathBuf>,
     pub boards: Vec<Board>,
+    /// Sections, notes, board links, and flows (last good `canvas.toml`).
+    pub annot: Annotations,
     /// Files each board loaded from outside `design/` (watched too).
     pub links: HashMap<u64, BTreeSet<PathBuf>>,
     /// Newest input file time the boards were (re)loaded at.
@@ -62,6 +65,16 @@ impl Parked {
             user_camera: false,
             human_camera: false,
         }
+    }
+}
+
+impl Live {
+    /// The camera that shows every board of this canvas in `view` (with
+    /// room above for section titles when it has sections).
+    pub fn fit_camera(&self, view: iced::Size) -> Option<Camera> {
+        let content = camera::bounds_of(self.boards.iter().map(Board::rect))?;
+        let top = if self.annot.sections.is_empty() { 0.0 } else { crate::routes::HEADER_ROOM };
+        Some(Camera::fit_below(content, view, 1.0, top))
     }
 }
 
@@ -128,6 +141,7 @@ impl App {
                 error: None,
                 web_root: None,
                 boards: Vec::new(),
+                annot: Annotations::default(),
                 links: HashMap::new(),
                 shown_at: None,
                 parked: None,
@@ -206,6 +220,7 @@ impl App {
         };
         self.focus_board(None);
         self.selection = None;
+        self.reset_tour();
         let parked = Parked {
             camera: self.camera,
             fit_pending: self.fit_pending,
@@ -284,9 +299,12 @@ impl App {
     pub(super) fn pace_boards(&mut self) {
         let busy = self.busy_tabs();
         let agents = self.agent_busy();
+        let readable = self.camera.zoom >= pace::READABLE_ZOOM;
         let mut want = Vec::new();
         let mut seen = Vec::new();
         let mut wake = Vec::new();
+        let mut visible = HashSet::new();
+        let mut fastest = 0;
         for l in &self.live {
             let key = l.at.key();
             let shown = self.is_shown(&key);
@@ -305,9 +323,15 @@ impl App {
                     busy: busy.contains(&b.tab.0),
                     in_view,
                     focused: self.focused,
+                    readable,
                     agent: agents.contains(&key),
                 };
-                want.push((b.tab, pace::pace(look)));
+                let pace = pace::pace(look);
+                if in_view {
+                    visible.insert(b.tab.0);
+                    fastest = fastest.max(pace::hz(pace));
+                }
+                want.push((b.tab, pace));
             }
         }
         let now = Instant::now();
@@ -319,6 +343,8 @@ impl App {
         for (tab, pace) in want {
             self.set_pace(tab, pace);
         }
+        // Only boards in view wake the window, no faster than they paint.
+        self.frames.set_visible(visible, fastest);
         if !wake.is_empty() {
             // The human's view: never refused.
             let _ = self.wake_boards(&wake, Admit::Always, "boards in view");
@@ -343,7 +369,9 @@ impl App {
                 Pending::Pick { tab, .. }
                 | Pending::Requery { tab }
                 | Pending::Call { tab, .. }
-                | Pending::Settle { tab, .. } => Some(*tab),
+                | Pending::Settle { tab, .. }
+                // A re-read waits on page frames: an asleep board never answers.
+                | Pending::Marks { tab, .. } => Some(*tab),
                 Pending::Height { .. } => None,
             })
             .collect();
@@ -368,10 +396,8 @@ impl App {
         let l = self.live_mut(key)?;
         if l.parked.is_none() {
             let mut p = Parked::fresh();
-            if let (Some(view), Some(content)) =
-                (plane, camera::bounds_of(l.boards.iter().map(Board::rect)))
-            {
-                p.camera = Camera::fit(content, view, 1.0);
+            if let Some(cam) = plane.and_then(|view| l.fit_camera(view)) {
+                p.camera = cam;
                 p.fit_pending = false;
             }
             l.parked = Some(p);
@@ -386,10 +412,10 @@ impl App {
         let Some(l) = self.live_mut(key) else {
             return;
         };
-        let content = camera::bounds_of(l.boards.iter().map(Board::rect));
-        if let (Some(p), Some(view), Some(content)) = (l.parked.as_mut(), plane, content) {
+        let cam = plane.and_then(|view| l.fit_camera(view));
+        if let (Some(p), Some(cam)) = (l.parked.as_mut(), cam) {
             if !p.user_camera {
-                p.camera = Camera::fit(content, view, 1.0);
+                p.camera = cam;
                 p.fit_pending = false;
             }
         }

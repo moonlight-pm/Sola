@@ -23,6 +23,8 @@ use crate::inspect;
 use crate::loads::LOAD_GRACE;
 use crate::memory;
 use crate::projects::{self, CanvasRef};
+use crate::report;
+use crate::routes;
 use crate::select;
 
 /// CSS px per inch (PDF paper size).
@@ -254,6 +256,7 @@ impl App {
             .boards
             .iter()
             .map(|b| {
+                let (exits, board_links) = report::exits(b, &live.boards);
                 json!({
                     "id": b.art.id,
                     "title": b.art.title,
@@ -277,6 +280,9 @@ impl App {
                     // page call, `wait`, or a look reopens it.
                     "discarded": b.discarded,
                     "loading": !b.discarded && loading.get(&b.tab.0).copied().unwrap_or(true),
+                    // What the page declares (read when it settles).
+                    "exits": exits,
+                    "board_links": board_links,
                 })
             })
             .collect();
@@ -293,6 +299,8 @@ impl App {
         json!({
             "canvas": canvas,
             "artboards": artboards,
+            // Sections, links, notes, flows from canvas.toml.
+            "annotations": report::annotations(&live.annot, &live.boards),
             // Files the boards loaded from outside design/; edits reload too.
             "linked": self.linked(key),
             "zoom": zoom,
@@ -469,8 +477,7 @@ impl App {
             }));
         }
         self.user_camera = true;
-        if p.get("artboard").is_some() {
-            let rect = self.target_board(key, p)?.rect();
+        if let Some(rect) = self.target_rect(key, p)? {
             self.camera = match zoom {
                 Some(z) => Camera::centered(rect, view, z),
                 None => Camera::fit(rect, view, 1.0),
@@ -482,7 +489,7 @@ impl App {
                 self.camera.set_zoom_at(c, z);
             }
         } else {
-            return Err("give --fit, --artboard, or --zoom".into());
+            return Err("give --fit, --artboard, --section, or --zoom".into());
         }
         Ok(json!({"zoom": self.camera.zoom, "moved": true, "shown": true}))
     }
@@ -503,21 +510,19 @@ impl App {
                 "reason": "the human framed this canvas; it stays where they put it",
             }));
         }
-        if p.get("artboard").is_some() {
-            let rect = self.target_board(key, p)?.rect();
+        if let Some(rect) = self.target_rect(key, p)? {
             camera = match zoom {
                 Some(z) => Camera::centered(rect, view, z),
                 None => Camera::fit(rect, view, 1.0),
             };
         } else if bool_param(p, "fit") {
-            let boards = &self.live(key).ok_or(NO_CANVAS)?.boards;
-            if let Some(content) = crate::camera::bounds_of(boards.iter().map(Board::rect)) {
-                camera = Camera::fit(content, view, 1.0);
+            if let Some(cam) = self.live(key).ok_or(NO_CANVAS)?.fit_camera(view) {
+                camera = cam;
             }
         } else if let Some(z) = zoom {
             camera.set_zoom_at(iced::Point::new(view.width / 2.0, view.height / 2.0), z);
         } else {
-            return Err("give --fit, --artboard, or --zoom".into());
+            return Err("give --fit, --artboard, --section, or --zoom".into());
         }
         if let Some(p) = self.live_mut(key).and_then(|l| l.parked.as_mut()) {
             p.camera = camera;
@@ -562,6 +567,30 @@ impl App {
 
     /// `--artboard`, else the human's pick on that canvas, else the only
     /// board.
+    /// What `view` frames: `--section` (its boards and padding) or
+    /// `--artboard`; `None` for neither.
+    fn target_rect(&self, key: &str, p: &Value) -> Result<Option<iced::Rectangle>, String> {
+        if let Some(id) = opt_str(p, "section") {
+            let live = self.live(key).ok_or(NO_CANVAS)?;
+            let section = live.annot.section(id).ok_or_else(|| {
+                let have: Vec<&str> = live.annot.sections.iter().map(|s| s.id.as_str()).collect();
+                format!("no section {id:?} on {} (have: {})", live.at.canvas, have.join(", "))
+            })?;
+            let rects = live
+                .boards
+                .iter()
+                .filter(|b| section.boards.contains(&b.art.id))
+                .map(Board::rect);
+            // Its region at 100% (the padding only grows on screen).
+            let rect = routes::section_box(rects, 1.0).ok_or("the section's artboards are not open")?;
+            return Ok(Some(rect));
+        }
+        if p.get("artboard").is_some() {
+            return Ok(Some(self.target_board(key, p)?.rect()));
+        }
+        Ok(None)
+    }
+
     fn target_board(&self, key: &str, p: &Value) -> Result<&Board, String> {
         let live = self.live(key).ok_or(NO_CANVAS)?;
         let ids = || {

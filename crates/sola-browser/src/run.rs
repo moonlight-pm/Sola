@@ -75,7 +75,7 @@ pub fn frame_stream<E: Engine>(
                 let mut g = slot.pending.lock().unwrap();
                 if let Some(old) = g.take() {
                     slot.osr.note_pending_drop();
-                    tagged.frame.absorb_damage(&old.frame);
+                    tagged.frame.absorb_damage(old.frame);
                 }
                 if !is_drag {
                     slot.parked_frames
@@ -90,7 +90,7 @@ pub fn frame_stream<E: Engine>(
             } else if tid == devtools_tab {
                 let mut g = slot.devtools_pending.lock().unwrap();
                 if let Some(old) = g.take() {
-                    tagged.frame.absorb_damage(&old.frame);
+                    tagged.frame.absorb_damage(old.frame);
                 }
                 *g = Some(crate::engine::PendingFrame {
                     tab_id: tagged.tab_id,

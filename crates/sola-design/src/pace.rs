@@ -4,7 +4,8 @@
 //!
 //! - A board doing work (loading, settling, answering a call) is `Live`.
 //! - On the canvas on screen, a board in view is `Live` while Design has
-//!   focus and `Slow` while it does not.
+//!   focus and the zoom is readable, and `Slow` otherwise (unfocused, or
+//!   so small on screen that motion does not read).
 //! - Any other board of a canvas an agent called on lately is `Slow`.
 //! - Every other board is `Asleep`. It keeps its last picture on the plane.
 
@@ -16,6 +17,8 @@ use crate::camera::Camera;
 /// Screen px around the plane that count as in view, so a short pan finds
 /// the next boards already awake.
 const MARGIN_PX: f32 = 256.0;
+/// Below this zoom a board's motion does not read: in view, it is `Slow`.
+pub const READABLE_ZOOM: f32 = 0.3;
 
 /// What a board's pace depends on.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,17 +29,29 @@ pub struct Look {
     pub in_view: bool,
     /// Design has keyboard focus.
     pub focused: bool,
+    /// The camera is at a zoom where motion reads ([`READABLE_ZOOM`]).
+    pub readable: bool,
     /// An agent called on its canvas lately.
     pub agent: bool,
 }
 
 pub fn pace(look: Look) -> BoardPace {
-    if look.busy || (look.in_view && look.focused) {
+    if look.busy || (look.in_view && look.focused && look.readable) {
         BoardPace::Live
     } else if look.in_view || look.agent {
         BoardPace::Slow
     } else {
         BoardPace::Asleep
+    }
+}
+
+/// Frames a second at `pace`: how often a board's frames may wake the
+/// window ([`crate::frames::BoardFrames::set_visible`]).
+pub fn hz(pace: BoardPace) -> u32 {
+    match pace {
+        BoardPace::Live => 60,
+        BoardPace::Slow => 1,
+        BoardPace::Asleep => 0,
     }
 }
 
@@ -58,7 +73,16 @@ mod tests {
             in_view,
             focused,
             agent,
+            readable: true,
         }
+    }
+
+    #[test]
+    fn tiny_on_screen_is_slow() {
+        let far = Look { readable: false, ..look(false, true, true, false) };
+        assert_eq!(pace(far), BoardPace::Slow);
+        assert_eq!(pace(Look { busy: true, ..far }), BoardPace::Live, "work still runs");
+        assert_eq!(hz(BoardPace::Live), 60);
     }
 
     #[test]

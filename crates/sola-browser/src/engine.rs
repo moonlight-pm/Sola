@@ -387,6 +387,10 @@ pub enum Cmd<E: Engine> {
         id: TabId,
         focused: bool,
     },
+    /// Paint a board tab whole again (its next frame is not a patch).
+    BoardRepaint {
+        id: TabId,
+    },
     /// How often one board tab paints (see [`BoardPace`]).
     BoardPace {
         id: TabId,
@@ -402,9 +406,11 @@ pub struct TaggedFrame<F> {
 }
 
 /// Merge damage from a dropped latest-wins frame into the one that replaced it.
+/// Takes the dropped frame whole, so its buffer can be reused (a board patch
+/// is written into the frame it replaced, not into a copy).
 /// Default is a no-op (tests / engines without dirty rects).
-pub trait AbsorbDamage {
-    fn absorb_damage(&mut self, _dropped: &Self) {}
+pub trait AbsorbDamage: Sized {
+    fn absorb_damage(&mut self, _dropped: Self) {}
 }
 
 /// Latest-wins handoff from the engine worker to iced.
@@ -445,7 +451,7 @@ impl<F: Send + AbsorbDamage> FrameMailbox<F> {
             let mut g = self.latest.lock().unwrap();
             match g.remove(&frame.tab_id.0) {
                 Some(old) => {
-                    frame.frame.absorb_damage(&old.frame);
+                    frame.frame.absorb_damage(old.frame);
                     g.insert(frame.tab_id.0, frame);
                     true
                 }
@@ -497,7 +503,7 @@ mod frame_mailbox_tests {
     struct Acc(Vec<u8>);
 
     impl AbsorbDamage for Acc {
-        fn absorb_damage(&mut self, dropped: &Self) {
+        fn absorb_damage(&mut self, dropped: Self) {
             self.0.extend_from_slice(&dropped.0);
         }
     }

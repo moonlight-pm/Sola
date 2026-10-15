@@ -81,7 +81,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "status",
-            "A canvas: artboards (size, scale, loading, discarded), watched outside files, zoom, shown, selection, memory",
+            "A canvas: artboards (size, scale, loading, discarded, exits), annotations (sections, links, notes, flows), watched outside files, zoom, shown, selection, memory",
             &[canvas()],
         ),
         method(
@@ -101,11 +101,12 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "view",
-            "Steer a canvas's camera: --fit, --artboard (fit it), --zoom. Off screen it frames the canvas for when the human opens it; once the human has moved it, it stays put (`moved: false`)",
+            "Steer a canvas's camera: --fit, --artboard / --section (fit it), --zoom. Off screen it frames the canvas for when the human opens it; once the human has moved it, it stays put (`moved: false`)",
             &[
                 canvas(),
                 flag("fit", 'f', "Fit every artboard"),
                 artboard(),
+                opt_s("section", Some('s'), "Section id (from canvas.toml)"),
                 opt("zoom", Some('z'), ArgType::Float, "Zoom (1 = 100%)"),
             ],
         ),

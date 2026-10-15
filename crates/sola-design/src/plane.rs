@@ -19,6 +19,7 @@ use iced::widget::shader::{self, Viewport};
 use iced::{Rectangle, mouse};
 use sola_browser::cef::cpu_import;
 use sola_browser::cef::engine::CefFrame;
+use sola_browser::cef::paint::{self, DirtyRect};
 use sola_browser::engine::BoardDetail;
 
 use crate::camera::Camera;
@@ -111,8 +112,10 @@ impl shader::Primitive for Primitive {
             let Some(item) = items.get(&tab) else {
                 continue;
             };
-            if pipe.upload(device, queue, item, &frame) {
-                changed.push(tab);
+            match pipe.upload(device, queue, item, &frame) {
+                Uploaded::Board(region) => changed.push((tab, region)),
+                Uploaded::Missed => self.frames.want_whole(tab),
+                Uploaded::Detail | Uploaded::Nothing => {}
             }
         }
         if !changed.is_empty() {
@@ -162,6 +165,25 @@ impl shader::Primitive for Primitive {
             pass.draw(d.first..d.first + 6, 0..1);
         }
     }
+}
+
+/// What one frame did to a board's textures.
+enum Uploaded {
+    Nothing,
+    /// The board's own picture changed: everywhere (`None`) or in a region
+    /// (its mips are rebuilt there).
+    Board(Option<DirtyRect>),
+    Detail,
+    /// A patch with no picture under it (a fresh texture, another view):
+    /// the board must paint whole.
+    Missed,
+}
+
+/// The bounds of `rects` clipped to `w × h`; `None` when nothing is left.
+fn clipped_bounds(rects: &[DirtyRect], (w, h): (u32, u32)) -> Option<DirtyRect> {
+    let b = paint::union_aabb(rects)?;
+    let (x1, y1) = ((b.x + b.w).min(w), (b.y + b.h).min(h));
+    (b.x < x1 && b.y < y1).then(|| DirtyRect { x: b.x, y: b.y, w: x1 - b.x, h: y1 - b.y })
 }
 
 struct BoardTexture {
@@ -325,14 +347,14 @@ impl Pipeline {
         queue: &wgpu::Queue,
         item: &Item,
         frame: &CefFrame,
-    ) -> bool {
+    ) -> Uploaded {
         let tab = item.tab;
         let size = (frame.width, frame.height);
         if size != item.surface {
-            return false;
+            return Uploaded::Nothing;
         }
         let Some(picture) = item.picture(frame.view) else {
-            return false;
+            return Uploaded::Nothing;
         };
         let same_view = self.last_view.insert(tab, frame.view) == Some(frame.view);
         match picture {
@@ -340,29 +362,47 @@ impl Pipeline {
                 let px = item.pixels;
                 if px.0 == 0 || px.1 == 0 || px.0 > self.max_side || px.1 > self.max_side {
                     tracing::warn!(tab, w = px.0, h = px.1, max = self.max_side, "board frame skipped");
-                    return false;
+                    return Uploaded::Nothing;
                 }
                 let fresh = self.textures.get(&tab).is_none_or(|t| t.size != px);
+                if frame.patch {
+                    // A patch lands only on the picture it was made over.
+                    let Some(tex) = self.textures.get(&tab).filter(|_| !fresh && same_view) else {
+                        return Uploaded::Missed;
+                    };
+                    if !cpu_import::upload_patch(queue, &tex.texture, frame, &mut self.staging, px) {
+                        return Uploaded::Missed;
+                    }
+                    return clipped_bounds(&frame.dirty, px).map_or(Uploaded::Nothing, |r| Uploaded::Board(Some(r)));
+                }
                 if fresh {
                     let tex = board_texture(device, &self.layout, &self.sampler, px, true);
                     self.textures.insert(tab, tex);
                 }
                 let tex = &self.textures[&tab];
-                cpu_import::upload_cropped(
-                    queue,
-                    &tex.texture,
-                    frame,
-                    &mut self.staging,
-                    fresh || !same_view,
-                    px,
-                );
-                true
+                let whole = fresh || !same_view || paint::is_full_damage(&frame.dirty, frame.width, frame.height);
+                cpu_import::upload_cropped(queue, &tex.texture, frame, &mut self.staging, whole, px);
+                if whole {
+                    Uploaded::Board(None)
+                } else {
+                    clipped_bounds(&frame.dirty, px).map_or(Uploaded::Nothing, |r| Uploaded::Board(Some(r)))
+                }
             }
             Some(shows) => {
                 if !item.detail || size.0 > self.max_side || size.1 > self.max_side {
-                    return false;
+                    return Uploaded::Nothing;
                 }
                 let fresh = self.details.get(&tab).is_none_or(|t| t.size != size);
+                if frame.patch {
+                    let Some(tex) = self.details.get_mut(&tab).filter(|t| !fresh && same_view && t.seq == frame.view) else {
+                        return Uploaded::Missed;
+                    };
+                    tex.shows = shows;
+                    if !cpu_import::upload_patch(queue, &tex.texture, frame, &mut self.staging, size) {
+                        return Uploaded::Missed;
+                    }
+                    return Uploaded::Detail;
+                }
                 if fresh {
                     let t = board_texture(device, &self.layout, &self.sampler, size, false);
                     self.details.insert(
@@ -381,20 +421,24 @@ impl Pipeline {
                 tex.seq = frame.view;
                 tex.shows = shows;
                 cpu_import::upload(queue, &tex.texture, frame, &mut self.staging, full);
-                false
+                Uploaded::Detail
             }
         }
     }
 
-    fn rebuild_mips(&self, device: &wgpu::Device, queue: &wgpu::Queue, tabs: &[u64]) {
+    /// Rebuild each board's mip chain below level 0 — only over `region`
+    /// (level-0 px) when there is one: a spinner does not redraw a tall
+    /// board's every level.
+    fn rebuild_mips(&self, device: &wgpu::Device, queue: &wgpu::Queue, tabs: &[(u64, Option<DirtyRect>)]) {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("design plane mips"),
         });
-        for tab in tabs {
+        for (tab, region) in tabs {
             let Some(t) = self.textures.get(tab) else {
                 continue;
             };
             for level in 1..t.mips {
+                let scissor = region.map(|r| mip_region(r, level, t.size));
                 let src = mip_view(&t.texture, level - 1);
                 let dst = mip_view(&t.texture, level);
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -417,7 +461,12 @@ impl Pipeline {
                         view: &dst,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            // A region keeps the rest of the level.
+                            load: if scissor.is_some() {
+                                wgpu::LoadOp::Load
+                            } else {
+                                wgpu::LoadOp::Clear(wgpu::Color::WHITE)
+                            },
                             store: wgpu::StoreOp::Store,
                         },
                         depth_slice: None,
@@ -426,6 +475,9 @@ impl Pipeline {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
+                if let Some(s) = scissor {
+                    pass.set_scissor_rect(s.x, s.y, s.w, s.h);
+                }
                 pass.set_pipeline(&self.mip_pipeline);
                 pass.set_bind_group(0, &bind_group, &[]);
                 pass.draw(0..3, 0..1);
@@ -565,6 +617,17 @@ fn mip_count(w: u32, h: u32) -> u32 {
     32 - w.max(h).max(1).leading_zeros()
 }
 
+/// Level-0 region `r` at mip `level` of a `size` texture, a texel wider all
+/// round (bilinear reads its neighbours).
+fn mip_region(r: DirtyRect, level: u32, (w, h): (u32, u32)) -> DirtyRect {
+    let (lw, lh) = ((w >> level).max(1), (h >> level).max(1));
+    let x0 = (r.x >> level).saturating_sub(1).min(lw - 1);
+    let y0 = (r.y >> level).saturating_sub(1).min(lh - 1);
+    let x1 = ((r.x + r.w) >> level).saturating_add(2).min(lw);
+    let y1 = ((r.y + r.h) >> level).saturating_add(2).min(lh);
+    DirtyRect { x: x0, y: y0, w: (x1 - x0).max(1), h: (y1 - y0).max(1) }
+}
+
 /// A board-sized texture; `mipped` for a board's own picture (minified),
 /// one level for a detail (drawn near 1:1).
 fn board_texture(
@@ -660,6 +723,16 @@ fn fs_main(in: Out) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mip_regions_scale_down_and_stay_on_the_level() {
+        let r = DirtyRect { x: 100, y: 40, w: 20, h: 20 };
+        assert_eq!(mip_region(r, 1, (1440, 6000)), DirtyRect { x: 49, y: 19, w: 13, h: 13 });
+        let corner = DirtyRect { x: 1430, y: 5990, w: 10, h: 10 };
+        let m = mip_region(corner, 3, (1440, 6000));
+        assert!(m.x + m.w <= 180 && m.y + m.h <= 750, "{m:?}");
+        assert_eq!(mip_region(r, 12, (1440, 6000)), DirtyRect { x: 0, y: 0, w: 1, h: 1 });
+    }
 
     #[test]
     fn mip_counts() {

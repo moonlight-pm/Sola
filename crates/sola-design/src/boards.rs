@@ -7,6 +7,7 @@
 use sola_browser::engine::{BoardSize, TabId};
 
 use crate::canvas::Artboard;
+use crate::marks::Marks;
 
 /// Raster scale a board renders at (through page zoom) when it fits: crisp
 /// to 200% at output scale 1 without a detail render. Fixed per board:
@@ -30,6 +31,9 @@ pub struct Board {
     pub grown: bool,
     /// Why the board does not show its page (missing `src`, HTTP 404).
     pub error: Option<String>,
+    /// What its page declares (exits, links, pinned elements), as of its
+    /// last settle.
+    pub marks: Marks,
     /// Its tab is closed to free memory ([`crate::memory`]); the plane keeps
     /// its last picture, and it reopens on a look or an agent's call.
     pub discarded: bool,
@@ -191,14 +195,15 @@ pub fn sync(
                     let resized = (art.width, art.height) != (prev.art.width, prev.art.height);
                     ops.push(Op::View { tab, size, resized });
                 }
-                let error = if prev.art.url == art.url { prev.error } else { None };
+                let same_page = prev.art.url == art.url;
                 boards.push(Board {
                     tab,
                     art,
                     scale: size.scale,
                     surface: size.surface,
                     grown: prev.grown,
-                    error,
+                    error: if same_page { prev.error } else { None },
+                    marks: if same_page { prev.marks } else { Marks::default() },
                     discarded: prev.discarded,
                 });
             }
@@ -218,6 +223,7 @@ pub fn sync(
                     surface: size.surface,
                     grown: false,
                     error: None,
+                    marks: Marks::default(),
                     discarded: false,
                 });
             }

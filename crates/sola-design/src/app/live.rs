@@ -15,6 +15,7 @@ use super::{App, Pending};
 use crate::boards::{self, Op};
 use crate::canvas;
 use crate::inspect;
+use crate::marks::Marks;
 use crate::memory;
 use crate::projects::CanvasRef;
 use crate::watch;
@@ -46,6 +47,8 @@ impl App {
         // A new web root changes what the same URLs serve: reload.
         let root_moved = live.web_root != canvas.web_root && !live.boards.is_empty();
         live.web_root = canvas.web_root.clone();
+        let pins_moved = live.annot.notes != canvas.annot.notes;
+        live.annot = canvas.annot.clone();
         let at = live.at.clone();
         let current = std::mem::take(&mut live.boards);
         let mut canvas = canvas;
@@ -78,6 +81,7 @@ impl App {
             self.apply(key, op, admit);
         }
         if self.is_shown(key) {
+            self.check_tour();
             if self.selection.as_ref().is_some_and(|s| !tabs.contains(&s.tab)) {
                 self.selection = None;
             }
@@ -93,7 +97,62 @@ impl App {
         if root_moved {
             let tabs: Vec<TabId> = tabs.into_iter().map(TabId).collect();
             self.reload_tabs(key, &tabs);
+        } else if pins_moved {
+            // Notes pinned to new elements: measure the pages again.
+            self.remeasure(key);
         }
+    }
+
+    /// Read what each settled board of `key` declares again (no reload).
+    fn remeasure(&mut self, key: &str) {
+        let tabs: Vec<u64> = self
+            .tabs_of(key)
+            .into_iter()
+            .filter(|&t| self.loads.is_settled(t) && self.frames.is_painted(t))
+            .collect();
+        for tab in tabs {
+            self.remeasure_tab(tab);
+        }
+    }
+
+    /// Read what board `tab`'s page declares again.
+    fn remeasure_tab(&mut self, tab: u64) {
+        let why = Pending::Marks {
+            tab,
+            generation: self.loads.generation(tab),
+        };
+        let expression = self.settle_script(tab);
+        self.agent(TabId(tab), AgentOp::Eval { expression }, Some(why));
+    }
+
+    /// A re-read of board `tab`'s marks (same load only).
+    pub(super) fn on_marks(&mut self, tab: u64, generation: u64, reply: AgentReply) {
+        if self.loads.generation(tab) != generation {
+            return;
+        }
+        let Some(data) = reply.ok.then_some(reply.data).flatten() else {
+            return;
+        };
+        let key = self.canvas_of_tab(tab);
+        let board = key
+            .and_then(|k| self.live_mut(&k))
+            .and_then(|l| l.boards.iter_mut().find(|b| b.tab.0 == tab));
+        if let Some(b) = board {
+            b.marks = Marks::from_settle(&data);
+        }
+    }
+
+    /// The settle script for board `tab`, with the notes pinned into it.
+    fn settle_script(&self, tab: u64) -> String {
+        let pins = self
+            .canvas_of_tab(tab)
+            .and_then(|key| {
+                let live = self.live(&key)?;
+                let board = live.boards.iter().find(|b| b.tab.0 == tab)?;
+                Some(live.annot.pins(&board.art.id))
+            })
+            .unwrap_or_default();
+        inspect::settle(&pins)
     }
 
     fn apply(&mut self, key: &str, op: Op, admit: Admit) {
@@ -350,7 +409,7 @@ impl App {
         let now = Instant::now();
         for (tab, generation) in self.loads.take_settles(now, idle) {
             let op = AgentOp::Eval {
-                expression: inspect::SETTLE.to_string(),
+                expression: self.settle_script(tab),
             };
             self.agent(TabId(tab), op, Some(Pending::Settle { tab, generation }));
         }
@@ -381,6 +440,7 @@ impl App {
             return;
         };
         if let Some(b) = live.boards.iter_mut().find(|b| b.tab.0 == tab) {
+            b.marks = Marks::from_settle(&data);
             if status >= 400 {
                 // A missing `src` (found at layout) says more than its 404.
                 if b.error.is_none() {
@@ -432,6 +492,8 @@ impl App {
             return;
         };
         self.watch_height(tab, generation, height);
+        // The page moved: its exits and pinned elements may have too.
+        self.remeasure_tab(tab);
         let reflow = data
             .as_ref()
             .and_then(|d| d.get("reflow"))

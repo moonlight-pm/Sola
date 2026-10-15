@@ -1,10 +1,15 @@
-//! Plane overlay: artboard frames, titles, the selection outline, and all
-//! pointer / key input over the canvas.
+//! Plane overlay: artboard frames, titles, annotations (see
+//! [`crate::annotate`]), the selection outline, and all pointer / key input
+//! over the canvas.
 //!
 //! Pages are always live: pointer and keys go to the artboard under the
 //! pointer. Super+click picks an element instead (Super+click on empty
-//! canvas clears the pick). Right-drag pans and the wheel zooms.
+//! canvas clears the pick). Right-drag pans and the wheel zooms. A click on
+//! an exit (or a plain link to another board) is the app's: the camera
+//! goes to that board. A click on a note marker keeps its card open. With
+//! no page focused, → ← Esc 1–9 drive a tour and N opens every note.
 
+use std::collections::HashSet;
 use std::time::Instant;
 
 use iced::alignment::Vertical;
@@ -16,10 +21,13 @@ use sola_browser::cef::engine::InputEvent;
 use sola_browser::cef::input;
 use sola_kit::fonts;
 
+use crate::annotate::{self, Focus};
 use crate::boards::{self, Board};
 use crate::camera::{self, Camera};
 use crate::glow;
+use crate::scene::Scene;
 use crate::select;
+use crate::tour::Nav;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -34,6 +42,12 @@ pub enum Event {
     Input(Vec<(u64, InputEvent)>),
     /// Click on empty canvas: no board has the keyboard.
     Blur,
+    /// A click on an exit / board link in board `tab`: go to board `to`.
+    Follow { tab: u64, to: String },
+    /// A click on note `n`'s marker.
+    ToggleNote(usize),
+    /// A tour / notes key while no page has the keyboard.
+    Nav(Nav),
 }
 
 pub struct Overlay<'a> {
@@ -50,6 +64,21 @@ pub struct Overlay<'a> {
     pub live: bool,
     /// What agents are touching (see [`crate::glow`]).
     pub glows: Vec<glow::Lit>,
+    /// The canvas's annotations (see [`crate::scene`]).
+    pub scene: Scene,
+    /// The tour's step board, while a tour is on.
+    pub step: Option<&'a str>,
+    /// Every note card open (the notes toggle).
+    pub notes_open: bool,
+    /// Note cards clicked open.
+    pub open_notes: &'a HashSet<usize>,
+}
+
+/// What a hover over the plane would act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Note(usize),
+    Hot(usize),
 }
 
 #[derive(Default)]
@@ -64,6 +93,9 @@ pub struct State {
     /// An IME preedit is live in the focused page: typed characters belong
     /// to it, not to the page as keys.
     composing: bool,
+    /// The note marker / clickable region under the pointer (redraw when
+    /// it changes).
+    mark: Option<Mark>,
 }
 
 /// Super is held. River eats a bare Super press (it reaches us as a bus
@@ -85,6 +117,19 @@ impl Overlay<'_> {
     fn hit(&self, local: Point) -> Option<(u64, f32, f32)> {
         let (b, (x, y)) = boards::hit(self.boards, self.camera.to_canvas(local))?;
         Some((b.tab.0, x, y))
+    }
+
+    /// The note marker, else the clickable region, under a widget-local
+    /// point. Super+click picks, so then there is none.
+    fn mark(&self, local: Point) -> Option<Mark> {
+        if super_held() {
+            return None;
+        }
+        if let Some(n) = annotate::note_at(&self.scene, self.camera, local) {
+            return Some(Mark::Note(n));
+        }
+        let (tab, x, y) = self.hit(local)?;
+        self.scene.hot_at(tab, x, y).map(Mark::Hot)
     }
 
     /// Board-local CSS px for any widget-local point (may be outside).
@@ -118,7 +163,13 @@ impl Overlay<'_> {
                     st.pan_last = Some(p);
                     return Some(Action::publish(Event::Pan(p - last)).and_capture());
                 }
-                self.page_move(st, local?, bounds, cursor)
+                let mark = cursor.position_in(bounds).and_then(|p| self.mark(p));
+                let moved_mark = std::mem::replace(&mut st.mark, mark) != mark;
+                match self.page_move(st, local?, bounds, cursor) {
+                    Some(action) => Some(action),
+                    None if moved_mark => Some(Action::request_redraw()),
+                    None => None,
+                }
             }
             mouse::Event::WheelScrolled { delta } => {
                 let at = cursor.position_in(bounds)?;
@@ -130,6 +181,20 @@ impl Overlay<'_> {
                 let ev = match self.hit(p) {
                     Some((tab, x, y)) => Event::Pick { tab, x, y },
                     None => Event::ClearSelection,
+                };
+                Some(Action::publish(ev).and_capture())
+            }
+            mouse::Event::ButtonPressed(Button::Left) if self.mark(cursor.position_in(bounds)?).is_some() => {
+                let p = cursor.position_in(bounds)?;
+                let ev = match self.mark(p)? {
+                    Mark::Note(n) => Event::ToggleNote(n),
+                    Mark::Hot(i) => {
+                        let hot = &self.scene.hots[i];
+                        Event::Follow {
+                            tab: hot.tab,
+                            to: hot.to.clone(),
+                        }
+                    }
                 };
                 Some(Action::publish(ev).and_capture())
             }
@@ -201,8 +266,11 @@ impl Overlay<'_> {
     }
 
     /// Keys go to the focused page. ⌘ chords are app / shell shortcuts.
+    /// With no page focused, tour and notes keys are the plane's.
     fn keyboard(&self, event: &keyboard::Event) -> Option<Action<Event>> {
-        let tab = self.focus?;
+        let Some(tab) = self.focus else {
+            return nav_key(event).map(|n| Action::publish(Event::Nav(n)).and_capture());
+        };
         let ev = match event {
             keyboard::Event::KeyPressed {
                 key,
@@ -310,8 +378,16 @@ impl canvas::Program<Event> for Overlay<'_> {
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        _cursor: Cursor,
+        cursor: Cursor,
     ) -> Vec<Geometry> {
+        let mark = cursor.position_in(bounds).and_then(|p| self.mark(p));
+        let focus = Focus {
+            step: self.step,
+            hover: match mark {
+                Some(Mark::Hot(i)) => Some(i),
+                _ => None,
+            },
+        };
         let p = theme.extended_palette();
         let border = p.background.strong.color;
         let placeholder = p.background.weak.color;
@@ -343,10 +419,11 @@ impl canvas::Program<Event> for Overlay<'_> {
                 Some(e) => (format!("{} — {e}", board.art.title), danger),
                 None => (board.art.title.clone(), label),
             };
+            // iced 0.14's `with_clip` clips but does not move the origin.
             frame.with_clip(title_box, |f| {
                 f.fill_text(Text {
                     content: title,
-                    position: Point::new(0.0, 16.0),
+                    position: Point::new(title_box.x, title_box.y + 16.0),
                     color,
                     size: 12.0.into(),
                     font: fonts::ui(),
@@ -355,6 +432,9 @@ impl canvas::Program<Event> for Overlay<'_> {
                 });
             });
         }
+        let heads = annotate::section_titles(&mut frame, &self.scene, self.camera, theme);
+        annotate::arrows(&mut frame, &self.scene, self.boards, self.camera, focus, theme);
+        annotate::hots(&mut frame, &self.scene, self.boards, self.camera, focus, theme);
         if let Some((tab, rect)) = self.selection {
             if let Some(b) = self.board(tab) {
                 let canvas_rect = Rectangle::new(
@@ -390,6 +470,25 @@ impl canvas::Program<Event> for Overlay<'_> {
             };
             glow::draw(&mut frame, self.camera.rect_to_screen(canvas_rect), lit, accent);
         }
+        // Notes on top of everything. On a tour step, its notes are open.
+        let step_notes: HashSet<usize> = self
+            .scene
+            .notes
+            .iter()
+            .filter(|n| self.step.is_some() && n.board.as_deref() == self.step)
+            .map(|n| n.n)
+            .collect();
+        let open = |n: usize| self.notes_open || self.open_notes.contains(&n) || step_notes.contains(&n);
+        let hover = match mark {
+            Some(Mark::Note(n)) => Some(n),
+            _ => None,
+        };
+        let around = annotate::Around {
+            boards: self.boards,
+            heads: &heads,
+            plane: bounds.size(),
+        };
+        annotate::notes(&mut frame, &self.scene, self.camera, around, open, hover, theme);
         vec![frame.into_geometry()]
     }
 
@@ -400,11 +499,37 @@ impl canvas::Program<Event> for Overlay<'_> {
         let Some(p) = cursor.position_in(bounds) else {
             return Interaction::default();
         };
+        if self.mark(p).is_some() {
+            return Interaction::Pointer;
+        }
         match self.hit(p) {
             Some(_) if super_held() => Interaction::Crosshair,
             Some(_) => CursorKind::from_u32(self.cursor).to_iced(),
             None => Interaction::default(),
         }
+    }
+}
+
+/// → ← Esc 1–9 N, without ⌘ / Ctrl / Alt.
+fn nav_key(event: &keyboard::Event) -> Option<Nav> {
+    use keyboard::Key;
+    use keyboard::key::Named;
+    let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
+        return None;
+    };
+    if modifiers.logo() || modifiers.control() || modifiers.alt() || super_held() {
+        return None;
+    }
+    match key.as_ref() {
+        Key::Named(Named::ArrowRight) => Some(Nav::Next),
+        Key::Named(Named::ArrowLeft) => Some(Nav::Back),
+        Key::Named(Named::Escape) => Some(Nav::End),
+        Key::Character(c) if c.eq_ignore_ascii_case("n") => Some(Nav::Notes),
+        Key::Character(c) => match c.parse::<usize>() {
+            Ok(d @ 1..=9) => Some(Nav::Pick(d)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

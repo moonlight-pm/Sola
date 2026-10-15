@@ -123,6 +123,33 @@ pub fn upload_cropped(
     }
 }
 
+/// Write a board patch (`frame.patch`: its `dirty` rects packed in order,
+/// see `paint::pack_patch`) into `texture`, clipped to its top-left
+/// `w × h`. False when the packed bytes do not match the rects (nothing is
+/// written).
+pub fn upload_patch(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    frame: &CefFrame,
+    staging: &mut Vec<u8>,
+    (w, h): (u32, u32),
+) -> bool {
+    let src = frame.pixels.as_slice();
+    if src.len() != crate::cef::paint::patch_bytes(&frame.dirty) {
+        return false;
+    }
+    let mut at = 0;
+    for r in &frame.dirty {
+        let rect = &src[at..at + r.pixel_bytes()];
+        at += r.pixel_bytes();
+        let (x1, y1) = ((r.x + r.w).min(w), (r.y + r.h).min(h));
+        if r.x < x1 && r.y < y1 {
+            upload_region(queue, texture, rect, r.w, (0, 0), (r.x, r.y), (x1 - r.x, y1 - r.y), staging);
+        }
+    }
+    true
+}
+
 fn upload_rect(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -132,6 +159,22 @@ fn upload_rect(
     y: u32,
     w: u32,
     h: u32,
+    staging: &mut Vec<u8>,
+) {
+    upload_region(queue, texture, src, src_w, (x, y), (x, y), (w, h), staging);
+}
+
+/// `w × h` px of `src` (rows `src_w` px wide) from `(x, y)` into `texture`
+/// at `to`.
+#[allow(clippy::too_many_arguments)]
+fn upload_region(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    src: &[u8],
+    src_w: u32,
+    (x, y): (u32, u32),
+    to: (u32, u32),
+    (w, h): (u32, u32),
     staging: &mut Vec<u8>,
 ) {
     if w == 0 || h == 0 {
@@ -152,7 +195,7 @@ fn upload_rect(
     let dest = wgpu::TexelCopyTextureInfo {
         texture,
         mip_level: 0,
-        origin: wgpu::Origin3d { x, y, z: 0 },
+        origin: wgpu::Origin3d { x: to.0, y: to.1, z: 0 },
         aspect: wgpu::TextureAspect::All,
     };
     let src_row = src_w as usize * 4;

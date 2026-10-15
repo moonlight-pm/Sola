@@ -286,3 +286,18 @@ in use do not fit.
       are carried 20 s, not 3.
 - [ ] Smoke a discard under real pressure (keeps the picture, reopens on
       pan / `screenshot`); refusal text read by an agent.
+
+## Slice 8 — annotations, exits, flows (2026-10-14)
+
+- [x] Board titles: iced 0.14 `Frame::with_clip` no longer translates; draw at the title box. Viewer titles back (12 px, cut at the board width).
+- [x] `annot.rs`: `[[section]]`, `[[note]]`, `[[link]]`, `[[flow]]` parsed with the layout and checked against board ids.
+- [x] `inspect::settle(pins)` reads exits (`data-design-to`), plain links, pinned-note anchors → `marks.rs` → `Board::marks`; re-read when notes move.
+- [x] `scene.rs` / `routes.rs` / `annotate.rs`: sections under the boards (own canvas layer), titles on plates, arrows (side choice, spread, label spots), hot outlines, note markers + cards.
+- [x] Overlay: clicks on exits / board links and note markers are the app's; → ← Esc 1–9 N with no page focused.
+- [x] `tour.rs` / `app/tour.rs`: tours (flow or exit click), camera glide, tour bar, flows list, notes toggle; fit leaves room for section titles.
+- [x] `status` `annotations`, per-board `exits` / `board_links`; `view --section`; MCP instructions.
+- [x] Share viewer: the same in JS (exits from its own frames); `~canvas.json` carries the annotations.
+- [x] Verified headless (Chrome over CDP) on a copy of Wicket foundation: fit, flows list, tour + fork pick, exit click inside a page, back, Esc, note hover, N. `status` exits / anchors / errors.
+- [x] Human looked in Design (Flowdemo → Foundation, a scratch copy of Wicket foundation): arrows across pages looked bad → arrows run through the gutters (orthogonal, level ports, lanes, labels only where they fit); note cards keep off titles and the screen edge. Approved 2026-10-14.
+- [x] Perf (the human saw a spinner stutter, then GPU 80–90%): board patches over the frame socket (changed tiles only), visible-only paced wakes, tiny-on-screen boards `Slow`, `--disable-gpu-compositing` for Design's helper. See PERFORMANCE.md.
+- [x] Merged with master's slice 7 (memory budget) and board pace; master's `BoardPace` kept, `Look::readable` added.
