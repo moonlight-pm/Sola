@@ -1,7 +1,7 @@
 # sola-design — HTML artboards on a canvas, edited by agents
 
 **Date:** 2026-10-12  
-**Status:** **Frozen** — slices 1–6 on master (2026-10-12), installed  
+**Status:** **Frozen** — slices 1–6 on master (2026-10-12), installed; slice 7 (annotations, exits, flows) specified 2026-10-14  
 **Related:** [sola-wrapper](2026-08-21-sola-wrapper-design.md) (CEF via the sola-browser lib); [browser agent control](2026-09-11-sola-browser-agent-control-design.md) (CDP wrap, call owner shape); [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md) (rail + `solactl` shape); plan [`plans/2026-10-12-sola-design-plan.md`](../plans/2026-10-12-sola-design-plan.md)
 
 | | |
@@ -129,6 +129,120 @@ resolved by `solactl` against the caller's cwd.
 Artboards are added, moved, and resized by editing `canvas.toml`; the
 CLI has no second way to do that. No raw `eval`.
 
+## Annotations, exits, and flows (slice 7, 2026-10-14)
+
+**Why.** A canvas with dozens of boards is hard to take in. At the zoom
+that shows them all, nothing says which boards belong together, which page
+leads to which, or what is not obvious; agents were writing that as
+comments in `canvas.toml` ("rows follow the admin menu"). A viewer (often
+on a share link) also wants to *walk* the product: click through a flow the
+way a user would, with the whole map still around them.
+
+**Policy (human, 2026-10-14).** Only agents edit designs. Annotations are
+part of the design — they say what is not obvious, give general
+information, and show flow. There are no human notes, comments, or
+feedback on the canvas.
+
+| What | Declared in | Drawn |
+|------|-------------|-------|
+| **Section** | `[[section]]` in `canvas.toml` | A titled region behind its boards (title and one-line note above it) |
+| **Note** | `[[note]]` in `canvas.toml` | A numbered marker on a board, an element in it, or a canvas point; its card opens on hover, with the notes toggle, or on a tour step |
+| **Exit** | `data-design-to="<board id>"` on an element in a page | An arrow from that element to the board; clicking the element moves the camera there |
+| **Link** | `[[link]]` in `canvas.toml` | An arrow between two whole boards (a step with no element: "after payment clears") |
+| **Flow** | `[[flow]]` in `canvas.toml` | A tour: start at a board, step along its exits and links |
+
+```toml
+[[section]]
+title = "Sign in"                       # required
+boards = ["signin", "signin-sent", "account"]   # required; its box is their bounds
+note = "Magic link only; no passwords." # optional line under the title
+id = "sign-in"                          # optional; default: slug of the title
+
+[[note]]
+board = "overview"                      # pinned to a board…
+at = ".lineage"                         # …optionally to the first element matching this selector
+text = """
+Lineage reads left to right. The cyan edge is the route being edited.
+"""
+# or a canvas point: x = -600, y = 0 (no board)
+
+[[link]]
+from = "checkout"
+to = "receipt"
+label = "after payment clears"          # optional
+
+[[flow]]
+title = "Sign in"                       # required
+start = "signin"                        # required: a board id
+note = "From a fresh browser to a signed-in session."   # optional
+id = "sign-in"                          # optional; default: slug of the title
+```
+
+In a page:
+
+```html
+<button data-design-to="signin-sent" data-design-label="email sent">Send link</button>
+```
+
+**Rules.**
+
+- Every board id named in `canvas.toml` (`boards`, `board`, `from`, `to`,
+  `start`) must exist, and section / flow ids are unique; otherwise the
+  file is an error like any other (the last good layout stays up). A note
+  has `board` **or** `x` + `y`, and non-empty `text` (plain text; blank
+  lines are paragraphs). `at` needs `board`.
+- Things a page declares are checked when it settles: an exit to an
+  unknown board, or a note `at` that matches nothing, is reported in
+  `status` and not drawn.
+- Plain links between boards draw **no** arrow (a shared sidebar would put
+  twenty on every board), but they work: clicking a link whose URL is
+  another board's page (path and query; the fragment too when that tells
+  boards apart) moves the camera to that board instead of loading the page
+  into the board you clicked. Links to anything else behave as before.
+- A flow does not list its steps. It starts at `start` and follows the
+  current board's exits and links; where there are several, the viewer
+  picks one.
+
+**Design.**
+
+- Sections draw under the boards (a canvas layer below the textures): a
+  faint rounded region around their boards' bounds — padding in canvas
+  units, never less than a few screen px, with room on top for the
+  boards' titles — and the title (and note) above its top-left corner at a
+  fixed screen size. A board may be in more than one section.
+- Arrows draw over the boards at a fixed screen width, as curves from the
+  side of the exit element (or source board) that faces the target to the
+  facing side of the target board, with an arrowhead and the label in a
+  small pill at the middle. Several arrows into one side spread along it.
+  An exit element under the pointer is outlined and its arrow brightens.
+- Clicking an exit (or a plain link to a board) is the app's, not the
+  page's: the page does not get the click. The camera glides (≈ 0.4 s) to
+  frame the target board; a tall board is framed by its width, top first.
+- Notes: a numbered marker (file order) at the element's / board's
+  top-right corner or the canvas point; hover shows the card (fixed screen
+  size, ~300 px wide) beside it; click keeps it open. The pill's notes
+  button (and **N** with no page focused) opens every card.
+- **Tours.** The pill's flows button lists the canvas's flows. Picking one
+  glides to its start and shows the tour bar: back, the step (flow title,
+  step number, board title), next — or, at a fork, the choices (exit label,
+  else the element's text, then the target's title; **1–9** pick) — return
+  (re-frame the step after looking around), and end. **→ / ←** step and
+  go back, **Esc** ends, while no page has the keyboard. The step's notes
+  open; arrows from other boards dim. Clicking an exit in a page follows it
+  (outside a tour this starts one, so Back works). Panning and zooming
+  never end a tour. Tour moves are the human's camera (an agent's `view`
+  no longer moves it).
+- None of this is in a page, so none of it is in a screenshot or PDF.
+
+**Share link.** The viewer draws the same: sections, arrows, notes, and
+tours (a flows button on its bar), with exits read from its own pages (they
+are same-origin) and clicks on exits and board links handled the same way.
+
+**Agent face.** No new write verbs: agents edit `canvas.toml` and the
+pages. `status` adds `sections`, `links`, `notes` (with any `at` error),
+`flows`, and per artboard its `exits` (`to`, `label`, `text`, `rect`,
+`error`). `view --section <id>` frames a section.
+
 ## Not this
 
 - Tools, inspector, layers panel, property editing, or any drawing UI.
@@ -138,6 +252,10 @@ CLI has no second way to do that. No raw `eval`.
   upload, and artboards would not have their own viewports.
 - Scrolling inside artboards (the wheel is zoom).
 - Worktree scanning (v1).
+- Human notes, comments, or feedback on the canvas (2026-10-14: only
+  agents edit designs; annotations belong to the design).
+- Drawing arrows or placing notes by hand; a full-screen prototype mode
+  (tours stay on the canvas).
 
 ## Slices
 
@@ -157,3 +275,7 @@ CLI has no second way to do that. No raw `eval`.
 6. Multi-agent canvases (agents never take the screen; `--canvas` on page
    calls; per-agent MCP canvas) and live share (D6: Design serves token
    links; Cloudflare Tunnel) — built, installed.
+7. Annotations, exits, flows (2026-10-14): sections, notes, `[[link]]`,
+   page exits (`data-design-to`) with arrows and click-to-follow, plain
+   board links move the camera, tours — in Design and the share viewer;
+   `status` + `view --section`.

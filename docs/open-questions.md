@@ -149,6 +149,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-14 | sola-design annotations | Only agents edit designs. Annotations (sections, notes, exits / links, flows) are part of the design — what is not obvious, general information, flow. No human notes, comments, or feedback on the canvas. Flows are tours on the canvas, not a full-screen prototype mode. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, manual |
 | 2026-10-12 | D6 sola-design share | **Live** share links served by Design (token per canvas, rotatable; only that canvas's files), through a Cloudflare Tunnel to `design.moonlight.pm`. Not snapshots. | freeze, capabilities, architecture, manual |
 | 2026-10-12 | sola-design multi-agent | Agents never bring a canvas to the human's screen; any number of canvases live at once, one shown; page calls name their canvas (MCP: the agent's own). | freeze, capabilities, architecture, manual |
 | 2026-10-12 | sola-design agent / human | Agent reads never depend on the human's view: screenshots / PDFs hold their board whole (no detail render from the camera reaches it) and the human's pointer leaves the page first; `view` moves the camera only until the human pans / zooms that canvas (`moved: false`). Agent touches glow on the overlay only. (Human ask: pan and zoom freely while an agent works.) | freeze, capabilities, architecture, manual |
