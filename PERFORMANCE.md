@@ -111,7 +111,7 @@ stop presenting storms and after opaque-region is actually live on tiled
 kit windows.
 
 **sola-design next:** smoke the pacing at the desk (zoom into an
-animated board: 60 fps; fit: 10); if the helper's tile compare still
+animated board: 60 fps; fit: 1); if the helper's tile compare still
 shows, compare only rows CEF's rect actually crosses per tile column.
 
 **Later / park**

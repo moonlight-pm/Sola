@@ -3,7 +3,7 @@
 **Date:** 2026-10-12  
 **Worktree:** `.worktrees/sola-design` · branch `sola-design`  
 **Design:** [`../specs/2026-10-12-sola-design-design.md`](../specs/2026-10-12-sola-design-design.md)  
-**Status:** slices 1–6 on master (2026-10-12), installed; slice 7 (memory budget) installed 2026-10-14
+**Status:** slices 1–6 on master (2026-10-12), installed; slice 7 (memory budget) installed 2026-10-14; slice 8 (annotations, exits, flows) installed 2026-10-14
 
 ---
 
@@ -301,3 +301,4 @@ in use do not fit.
 - [x] Human looked in Design (Flowdemo → Foundation, a scratch copy of Wicket foundation): arrows across pages looked bad → arrows run through the gutters (orthogonal, level ports, lanes, labels only where they fit); note cards keep off titles and the screen edge. Approved 2026-10-14.
 - [x] Perf (the human saw a spinner stutter, then GPU 80–90%): board patches over the frame socket (changed tiles only), visible-only paced wakes, tiny-on-screen boards `Slow`, `--disable-gpu-compositing` for Design's helper. See PERFORMANCE.md.
 - [x] Merged with master's slice 7 (memory budget) and board pace; master's `BoardPace` kept, `Look::readable` added.
+- [x] Fix (2026-10-15): boards are never `was_hidden`. Chromium keeps the frames of only 5 hidden views; an evicted board shown again got no BeginFrames and stayed white (21 of 26 on Wicket `foundation`). `Asleep` is 1 fps, shown. Installed `design`; Joshua confirmed every board renders.
