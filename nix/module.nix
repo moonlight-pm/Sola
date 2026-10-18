@@ -169,6 +169,8 @@ in
     services.udev.extraRules = ''
       # sola-kvm: seat user can open input event nodes after re-plug
       SUBSYSTEM=="input", KERNEL=="event[0-9]*", MODE="0660", GROUP="input", TAG+="uaccess"
+      # sola-shell: menubar mouse battery asks the Lamzu 4K receiver over hidraw
+      KERNEL=="hidraw*", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f510", MODE="0660", GROUP="input", TAG+="uaccess"
     '';
 
     # Binaries hardcode `/opt/sola/{bin,share,log}`.

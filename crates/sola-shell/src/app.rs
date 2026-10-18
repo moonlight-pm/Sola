@@ -171,6 +171,8 @@ pub enum Msg {
     Bluetooth(crate::bluetooth::Event),
     /// Panel controls (power, add, pair, disconnect, agent reply).
     BluetoothUi(crate::bluetooth::UiMsg),
+    /// Battery answer (or silence) from the Lamzu receiver.
+    Mouse(crate::mouse::Event),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
@@ -362,6 +364,8 @@ pub struct Shell {
     pub bluetooth: crate::bluetooth::Ui,
     /// Menubar volume chip + popover (PipeWire / wpctl).
     pub audio: crate::audio::Ui,
+    /// Menubar mouse battery chip (Lamzu receiver over hidraw).
+    pub mouse: crate::mouse::Ui,
     /// Window that should keep keyboard after a shell-initiated capture
     /// finishes. Set when a Super+Shift+3/4/5 capture starts.
     pub screenshot_return_focus: Option<u32>,
@@ -463,6 +467,7 @@ impl Shell {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -1875,6 +1880,7 @@ impl Shell {
             crate::stats::subscription().map(Msg::StatsTick),
             crate::bluetooth::subscription().map(Msg::Bluetooth),
             crate::audio::subscription().map(Msg::Audio),
+            crate::mouse::subscription().map(Msg::Mouse),
             iced::window::resize_events().map(|(id, size)| Msg::OverlayIcedResized { id, size }),
             kb,
         ])
@@ -2486,6 +2492,10 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
+            Msg::Mouse(ev) => {
+                self.mouse.on_event(ev, std::time::Instant::now());
+                iced::Task::none()
+            }
             Msg::Bluetooth(ev) => {
                 self.bluetooth.on_event(ev);
                 if self.bluetooth.snapshot.adapter.is_none()
@@ -2775,6 +2785,7 @@ mod pending_launch_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -2883,6 +2894,7 @@ mod hide_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),

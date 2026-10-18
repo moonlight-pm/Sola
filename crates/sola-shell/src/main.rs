@@ -17,6 +17,7 @@ pub mod launcher;
 pub mod media;
 pub mod menu;
 pub mod menubar;
+pub mod mouse;
 pub mod notify;
 mod power;
 mod screenshot;
