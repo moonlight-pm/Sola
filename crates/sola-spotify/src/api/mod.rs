@@ -20,4 +20,6 @@ impl fmt::Display for ApiSource {
     }
 }
 
-pub use client::{ApiClient, ApiError, NetActivity, PlayRequest, TokenProvider, WebTokens};
+pub use client::{
+    ApiClient, ApiError, NetActivity, PlayRequest, TokenProvider, WebTokens, background,
+};

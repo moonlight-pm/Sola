@@ -41,6 +41,10 @@ librespot-core = { git = "https://github.com/crmne/librespot", branch = "fastpot
 librespot-playback = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false, features = ["rodio-backend", "pulseaudio-backend", "rustls-tls-native-roots"] }
 librespot-connect = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false }
 librespot-metadata = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false }
+# Catalogue reads over the playback session (src/session_reads.rs): the
+# extended-metadata batch and the playlist4 rootlist are protobufs.
+librespot-protocol = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8", default-features = false }
+protobuf = "3"
 
 mpris-server = { version = "0.10", features = ["tokio"] }
 

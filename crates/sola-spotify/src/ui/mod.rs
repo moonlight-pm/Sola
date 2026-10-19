@@ -2,9 +2,9 @@
 
 mod nav;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
@@ -57,6 +57,12 @@ const COVER_ROW: f32 = 40.0;
 const COVER_TILE: f32 = 148.0;
 const COVER_PLAYER: f32 = 56.0;
 const MADE_SHELF: usize = 8;
+/// Decoded covers kept in memory; the worker's cache refills older ones.
+const ART_HELD: usize = 1_500;
+/// A cover that failed to load is asked for again after this long.
+const ART_RETRY: Duration = Duration::from_secs(60);
+/// A click whose song never starts stops holding the player bar after this.
+const PENDING_HOLD: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -86,6 +92,10 @@ pub enum Msg {
     Prev,
     SeekFrac(f32),
     Volume(u8),
+    SeekRelease,
+    VolumeRelease,
+    /// No slider change for a moment: send what the wheel or keys set.
+    SliderSettle(u64),
     Shuffle,
     Repeat,
     Like,
@@ -181,11 +191,26 @@ pub struct App {
     nav: NavHistory,
     body: Option<PageBody>,
     page_cache: HashMap<Page, PageBody>,
+    /// The page whose selected row was last scrolled to; a refresh of the
+    /// same page must not yank the scroll position.
+    snapped: Option<Page>,
+    /// The page a Load more is in flight for.
+    loading_more: Option<Page>,
     now: NowPlaying,
     devices: Vec<Device>,
     playlists: Vec<Playlist>,
+    /// `playlists` split once per change: Spotify's mixes (sorted) and the rest.
+    split: PlaylistSplit,
     art: HashMap<String, ImageHandle>,
+    /// Insertion order of `art`, oldest first, for the memory cap.
+    art_order: VecDeque<String>,
     art_inflight: HashSet<String>,
+    art_failed: HashMap<String, Instant>,
+    /// Slider positions while dragging; sent once on release, or once the
+    /// slider settles (the wheel and arrow keys never release).
+    drag_seek: Option<f32>,
+    drag_volume: Option<u8>,
+    slider_seq: u64,
     saved: HashMap<String, bool>,
     search: String,
     devices_open: bool,
@@ -193,6 +218,7 @@ pub struct App {
     settings: Settings,
     playing_since: Option<std::time::Instant>,
     pending_uri: Option<String>,
+    pending_since: Option<Instant>,
     player_art_hold: Option<ImageHandle>,
     skipped: Skipped,
     dirs: AppDirs,
@@ -244,11 +270,19 @@ impl App {
             nav,
             body: None,
             page_cache: HashMap::new(),
+            snapped: None,
+            loading_more: None,
             now: NowPlaying::default(),
             devices: Vec::new(),
             playlists: Vec::new(),
+            split: PlaylistSplit::default(),
             art: HashMap::new(),
+            art_order: VecDeque::new(),
             art_inflight: HashSet::new(),
+            art_failed: HashMap::new(),
+            drag_seek: None,
+            drag_volume: None,
+            slider_seq: 0,
             saved: HashMap::new(),
             search: current.search,
             devices_open: false,
@@ -256,6 +290,7 @@ impl App {
             settings,
             playing_since: None,
             pending_uri: None,
+            pending_since: None,
             player_art_hold: None,
             skipped,
             dirs,
@@ -271,7 +306,7 @@ impl App {
         }
         if let Some(home) = app.read_page_disk(&Page::Home) {
             if let PageBody::Home { playlists, .. } = &home {
-                app.playlists = playlists.clone();
+                app.set_playlists(playlists.clone());
             }
             app.page_cache.insert(Page::Home, home.clone());
             if page == Page::Home {
@@ -293,12 +328,18 @@ impl App {
         cache::read_json(&path)
     }
 
+    /// Written on the disk thread; the UI never waits on the filesystem.
     fn write_page_disk(&self, page: &Page, body: &PageBody) {
         let Some(key) = page.cache_key() else {
             return;
         };
         let path = self.dirs.page_cache_dir().join(format!("{key}.json"));
-        cache::write_json(&path, body);
+        cache::write_json_later(path, body.clone());
+    }
+
+    fn set_playlists(&mut self, playlists: Vec<Playlist>) {
+        self.split = PlaylistSplit::of(&playlists);
+        self.playlists = playlists;
     }
 
     pub fn boot() -> (Self, Task<Msg>) {
@@ -333,8 +374,12 @@ impl App {
             }
             _ => None,
         });
-        let tick = if self.now.playback == Playback::Playing || self.notice.is_some() {
-            iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick)
+        // Local playback reports its position every second, which redraws
+        // the bar; only a remote device's clock (interpolated between polls)
+        // and an expiring notice need a tick. The label shows seconds.
+        let remote_clock = self.now.playback == Playback::Playing && !self.now.is_local;
+        let tick = if remote_clock || self.notice.is_some() {
+            iced::time::every(Duration::from_secs(1)).map(|_| Msg::Tick)
         } else {
             Subscription::none()
         };
@@ -438,24 +483,29 @@ impl App {
                 bridge::send(Cmd::Media(crate::media::MediaCommand::Previous));
                 Task::none()
             }
+            // Dragging moves the handle only; one seek or volume command goes
+            // out on release (each would be a Web API call on a remote device).
             Msg::SeekFrac(frac) => {
-                if self.now.duration_ms > 0 {
-                    let pos = (frac.clamp(0.0, 1.0) * self.now.duration_ms as f32) as u32;
-                    bridge::send(Cmd::Media(crate::media::MediaCommand::SetPosition {
-                        track_uri: self.now.uri.clone(),
-                        position_ms: pos,
-                    }));
-                    self.now.position_ms = pos;
-                    self.playing_since =
-                        (self.now.playback == Playback::Playing).then(std::time::Instant::now);
-                }
+                self.drag_seek = Some(frac.clamp(0.0, 1.0));
+                self.settle_slider()
+            }
+            Msg::SeekRelease => {
+                self.flush_seek();
                 Task::none()
             }
             Msg::Volume(percent) => {
-                bridge::send(Cmd::Media(crate::media::MediaCommand::SetVolume(
-                    percent as f64 / 100.0,
-                )));
-                self.now.volume_percent = percent;
+                self.drag_volume = Some(percent);
+                self.settle_slider()
+            }
+            Msg::VolumeRelease => {
+                self.flush_volume();
+                Task::none()
+            }
+            Msg::SliderSettle(seq) => {
+                if seq == self.slider_seq {
+                    self.flush_seek();
+                    self.flush_volume();
+                }
                 Task::none()
             }
             Msg::Shuffle => {
@@ -546,7 +596,7 @@ impl App {
                 Task::none()
             }
             Msg::LoadMore => {
-                bridge::send(Cmd::LoadMore);
+                self.load_more();
                 Task::none()
             }
             Msg::DismissError => {
@@ -579,8 +629,36 @@ impl App {
     }
 
     fn navigate(&mut self, page: Page) {
+        // Choosing the page already shown asks Spotify again.
+        if page == self.page && page != Page::Search && self.body_matches(&page) {
+            bridge::send(Cmd::Refresh(page));
+            return;
+        }
         self.nav.push(page.clone(), self.search.clone());
         self.show(page);
+    }
+
+    /// Asks for the next chunk of the current list, once at a time.
+    fn load_more(&mut self) {
+        if self.loading_more.is_some() {
+            return;
+        }
+        let next = match &self.body {
+            Some(PageBody::Tracks { next, .. } | PageBody::Albums { next, .. }) => *next,
+            _ => None,
+        };
+        let Some(offset) = next.filter(|_| self.body_matches(&self.page)) else {
+            return;
+        };
+        self.loading_more = Some(self.page.clone());
+        bridge::send(Cmd::LoadMore {
+            page: self.page.clone(),
+            offset,
+        });
+    }
+
+    fn append_chunk(&mut self, chunk: &PageBody) -> bool {
+        append_chunk(&mut self.body, chunk)
     }
 
     fn go_back(&mut self) {
@@ -609,6 +687,7 @@ impl App {
 
     fn show(&mut self, page: Page) {
         self.add_to = None;
+        self.loading_more = None;
         self.page = page.clone();
         if page.persist_as_last() {
             self.settings.last_page = page.encode();
@@ -621,6 +700,11 @@ impl App {
             self.body = Some(cached);
         } else if !self.body_matches(&page) {
             self.body = None;
+        }
+        // Covers dropped from memory since this page was last shown.
+        if let Some(body) = self.body.take() {
+            self.want_page_art(&body);
+            self.body = Some(body);
         }
         match &page {
             Page::Search => bridge::send(Cmd::Search(self.search.clone())),
@@ -746,6 +830,7 @@ impl App {
         {
             self.remember_track(&track_uri);
             self.pending_uri = Some(track_uri.clone());
+            self.pending_since = Some(Instant::now());
             self.now.title = title;
             self.now.artists = artists;
             self.now.album = album;
@@ -786,6 +871,40 @@ impl App {
             request,
             device_id: None,
         });
+    }
+
+    /// Sends the slider values once changes stop for a moment, for the
+    /// wheel and arrow keys, which change a slider without releasing it.
+    fn settle_slider(&mut self) -> Task<Msg> {
+        self.slider_seq = self.slider_seq.wrapping_add(1);
+        let seq = self.slider_seq;
+        Task::perform(tokio::time::sleep(Duration::from_millis(350)), move |_| {
+            Msg::SliderSettle(seq)
+        })
+    }
+
+    fn flush_seek(&mut self) {
+        if let Some(frac) = self.drag_seek.take()
+            && self.now.duration_ms > 0
+        {
+            let pos = (frac * self.now.duration_ms as f32) as u32;
+            bridge::send(Cmd::Media(crate::media::MediaCommand::SetPosition {
+                track_uri: self.now.uri.clone(),
+                position_ms: pos,
+            }));
+            self.now.position_ms = pos;
+            self.playing_since =
+                (self.now.playback == Playback::Playing).then(std::time::Instant::now);
+        }
+    }
+
+    fn flush_volume(&mut self) {
+        if let Some(percent) = self.drag_volume.take() {
+            bridge::send(Cmd::Media(crate::media::MediaCommand::SetVolume(
+                percent as f64 / 100.0,
+            )));
+            self.now.volume_percent = percent;
+        }
     }
 
     fn transport_toggle(&self) {
@@ -1179,6 +1298,11 @@ impl App {
             Event::Auth(status) => {
                 let just_connected = matches!(status, AuthStatus::Connected { .. })
                     && !matches!(self.auth, AuthStatus::Connected { .. });
+                if status == AuthStatus::SignedOut {
+                    self.now = NowPlaying::default();
+                    self.playing_since = None;
+                    self.pending_uri = None;
+                }
                 self.auth = status;
                 if just_connected && !self.page.persist_as_last() {
                     self.show(self.page.clone());
@@ -1192,8 +1316,10 @@ impl App {
                     PageBody::Home { playlists, .. }
                     | PageBody::Playlists {
                         items: playlists, ..
-                    } => {
-                        self.playlists = playlists.clone();
+                    } if self.playlists.is_empty() => {
+                        // The sidebar follows `Event::Playlists`; this only
+                        // fills it before the first one arrives.
+                        self.set_playlists(playlists.clone());
                     }
                     PageBody::Albums { items, .. } => {
                         for album in items {
@@ -1213,42 +1339,44 @@ impl App {
                 }
                 self.want_page_art(&body);
                 let for_us = page == self.page;
-                match (&mut self.body, &body) {
-                    (
-                        Some(PageBody::Tracks {
-                            items,
-                            total,
-                            offset,
-                            ..
-                        }),
-                        PageBody::Tracks {
-                            items: more,
-                            offset: more_off,
-                            total: more_total,
-                            ..
-                        },
-                    ) if for_us && *more_off > 0 => {
-                        items.extend(more.iter().cloned());
-                        *total = *more_total;
-                        *offset = *more_off;
-                        if let Some(body) = self.body.clone() {
-                            self.page_cache.insert(page.clone(), body.clone());
-                            self.write_page_disk(&page, &body);
-                        }
+                if chunk_offset(&body) > 0 {
+                    // A Load more chunk: append it where it continues the
+                    // rows shown, and never store it as the whole page.
+                    if self.loading_more.as_ref() == Some(&page) {
+                        self.loading_more = None;
                     }
-                    _ => {
-                        self.page_cache.insert(page.clone(), body.clone());
-                        self.write_page_disk(&page, &body);
-                        if for_us {
-                            self.body = Some(body);
-                            return self.snap_selected();
-                        }
+                    if for_us
+                        && self.append_chunk(&body)
+                        && let Some(merged) = self.body.clone()
+                    {
+                        self.write_page_disk(&page, &merged);
+                        self.page_cache.insert(page, merged);
+                    }
+                    return Task::none();
+                }
+                self.write_page_disk(&page, &body);
+                self.page_cache.insert(page.clone(), body.clone());
+                if for_us {
+                    self.body = Some(body);
+                    // Scroll to the selected row on a page's first arrival,
+                    // not on every refresh of it.
+                    if self.snapped.as_ref() != Some(&page) {
+                        self.snapped = Some(page);
+                        return self.snap_selected();
                     }
                 }
             }
             Event::NowPlaying(mut now) => {
                 if now.uri.is_empty() && !self.now.uri.is_empty() {
                     return Task::none();
+                }
+                // A click whose song never started (refused, unavailable, or
+                // relinked to another id) stops holding the bar.
+                if self
+                    .pending_since
+                    .is_some_and(|since| since.elapsed() > PENDING_HOLD)
+                {
+                    self.pending_uri = None;
                 }
                 if let Some(pending) = &self.pending_uri {
                     if !now.uri.is_empty() && !same_track_uri(&now.uri, pending) {
@@ -1276,14 +1404,32 @@ impl App {
             Event::Devices(devices) => self.devices = devices,
             Event::Art { url, bytes } => {
                 self.art_inflight.remove(&url);
+                self.art_failed.remove(&url);
                 let handle = ImageHandle::from_bytes(bytes.to_vec());
                 if self.now.art_url.as_deref() == Some(url.as_str()) {
                     self.player_art_hold = Some(handle.clone());
                 }
-                self.art.insert(url, handle);
+                if self.art.insert(url.clone(), handle).is_none() {
+                    self.art_order.push_back(url);
+                }
+                while self.art.len() > ART_HELD {
+                    let Some(oldest) = self.art_order.pop_front() else {
+                        break;
+                    };
+                    self.art.remove(&oldest);
+                }
+            }
+            Event::ArtFailed(url) => {
+                self.art_inflight.remove(&url);
+                self.art_failed.insert(url, Instant::now());
             }
             Event::Saved { uri, saved } => {
                 self.remember_saved(&uri, saved);
+            }
+            Event::SavedMany(flags) => {
+                for (uri, saved) in flags {
+                    self.remember_saved(&uri, saved);
+                }
             }
             Event::Favorite { kind, id, saved } => {
                 self.remember_favorite(kind, &id, saved);
@@ -1295,7 +1441,7 @@ impl App {
                 }
             }
             Event::Playlists(items) => {
-                self.playlists = items.clone();
+                self.set_playlists(items.clone());
                 match &mut self.body {
                     Some(PageBody::Home { playlists, .. }) => *playlists = items,
                     Some(PageBody::Playlists { items: dest, .. }) => *dest = items,
@@ -1327,6 +1473,8 @@ impl App {
             Event::Error(err) => {
                 self.notice = None;
                 self.error = Some(err);
+                self.pending_uri = None;
+                self.loading_more = None;
             }
             Event::Raise => {
                 if let Some(id) = self.window_id {
@@ -1345,7 +1493,13 @@ impl App {
         let Some(url) = url.filter(|u| !u.is_empty()) else {
             return;
         };
-        if self.art.contains_key(url) || self.art_inflight.contains(url) {
+        if self.art.contains_key(url)
+            || self.art_inflight.contains(url)
+            || self
+                .art_failed
+                .get(url)
+                .is_some_and(|at| at.elapsed() < ART_RETRY)
+        {
             return;
         }
         self.art_inflight.insert(url.to_string());
@@ -1360,8 +1514,9 @@ impl App {
                 top_artists,
                 top_tracks,
             } => {
+                // Rows draw the 64px cover (`track_list`).
                 for t in recent.iter().chain(top_tracks.iter()) {
-                    self.want_art(t.image(200));
+                    self.want_art(t.image(64));
                 }
                 for p in playlists {
                     self.want_art(pick_image(&p.images, 200));
@@ -1373,7 +1528,7 @@ impl App {
             PageBody::Search(results) => {
                 if let Some(page) = &results.tracks {
                     for t in &page.items {
-                        self.want_art(t.image(200));
+                        self.want_art(t.image(64));
                     }
                 }
                 if let Some(page) = &results.albums {
@@ -1603,7 +1758,7 @@ impl App {
         );
 
         let mut sections = vec![SidebarSection::new("Library", browse)];
-        let (_, yours) = split_playlists(&self.playlists);
+        let yours = self.split.yours(&self.playlists);
         if !yours.is_empty() {
             let items: Vec<_> = yours
                 .iter()
@@ -1743,9 +1898,9 @@ impl App {
     fn view_home(&self) -> Element<'_, Msg> {
         let Some(PageBody::Home {
             recent,
-            playlists,
             top_artists,
             top_tracks,
+            ..
         }) = &self.body
         else {
             return Space::new().into();
@@ -1759,7 +1914,8 @@ impl App {
             col = col.push(kit_text::subheading("Top songs"));
             col = col.push(self.track_list(top_tracks, None));
         }
-        let (made, yours) = split_playlists(playlists);
+        let made = self.split.made(&self.playlists);
+        let yours = self.split.yours(&self.playlists);
         if !made.is_empty() {
             let total = made.len();
             let shelf: Vec<&Playlist> = made.iter().copied().take(MADE_SHELF).collect();
@@ -1792,12 +1948,7 @@ impl App {
     }
 
     fn view_made_for_you(&self) -> Element<'_, Msg> {
-        let items = match &self.body {
-            Some(PageBody::Playlists { items, .. }) => items.as_slice(),
-            _ => self.playlists.as_slice(),
-        };
-        let mut made: Vec<&Playlist> = items.iter().filter(|p| p.is_generated()).collect();
-        made.sort_by_key(|p| generated_sort_key(&p.name));
+        let made = self.split.made(&self.playlists);
         let mut col = column![
             kit_text::heading("Made for you"),
             kit_text::caption(format!("{} mixes", made.len())).style(kit_text::muted),
@@ -1864,7 +2015,7 @@ impl App {
             art,
             context_uri,
             items,
-            total,
+            next,
             album,
             ..
         }) = &self.body
@@ -1912,9 +2063,8 @@ impl App {
         header = header.push(titles);
         let list = self.track_list(items, context_uri.clone());
         let mut col = column![header, list].spacing(SPACE_XL).padding(SPACE_XL);
-        if items.len() < *total as usize {
-            col = col
-                .push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
+        if next.is_some() {
+            col = col.push(self.load_more_btn());
         }
         scrollable(col.width(Length::Fill))
             .id(tracks_scroll_id())
@@ -1924,20 +2074,29 @@ impl App {
     }
 
     fn view_albums(&self) -> Element<'_, Msg> {
-        let Some(PageBody::Albums { items, total, .. }) = &self.body else {
+        let Some(PageBody::Albums { items, next, .. }) = &self.body else {
             return Space::new().into();
         };
         let mut col = column![kit_text::heading("Albums"), self.album_grid(items)]
             .spacing(SPACE_XL)
             .padding(SPACE_XL);
-        if items.len() < *total as usize {
-            col = col
-                .push(kit_btn::labeled_sm("Load more", kit_btn::secondary).on_press(Msg::LoadMore));
+        if next.is_some() {
+            col = col.push(self.load_more_btn());
         }
         scrollable(col.width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    fn load_more_btn(&self) -> Element<'_, Msg> {
+        if self.loading_more.is_some() {
+            kit_btn::labeled_sm("Loading…", kit_btn::secondary).into()
+        } else {
+            kit_btn::labeled_sm("Load more", kit_btn::secondary)
+                .on_press(Msg::LoadMore)
+                .into()
+        }
     }
 
     fn view_artists(&self) -> Element<'_, Msg> {
@@ -2476,11 +2635,17 @@ impl App {
         } else {
             self.icons.play.clone()
         };
-        let pos = self.position_now();
-        let frac = if self.now.duration_ms == 0 {
-            0.0
-        } else {
-            pos as f32 / self.now.duration_ms as f32
+        let (pos, frac) = match self.drag_seek {
+            Some(frac) => ((frac * self.now.duration_ms as f32) as u32, frac),
+            None => {
+                let pos = self.position_now();
+                let frac = if self.now.duration_ms == 0 {
+                    0.0
+                } else {
+                    pos as f32 / self.now.duration_ms as f32
+                };
+                (pos, frac)
+            }
         };
         let like_btn = self.like_mark(
             self.now_saved(),
@@ -2535,7 +2700,9 @@ impl App {
             kit_text::caption(format_ms(pos))
                 .style(kit_text::muted)
                 .width(Length::Fixed(36.0)),
-            slider(0.0..=1.0, frac, Msg::SeekFrac).width(Length::FillPortion(3)),
+            slider(0.0..=1.0, frac, Msg::SeekFrac)
+                .on_release(Msg::SeekRelease)
+                .width(Length::FillPortion(3)),
             kit_text::caption(format_ms(self.now.duration_ms))
                 .style(kit_text::muted)
                 .width(Length::Fixed(36.0)),
@@ -2551,9 +2718,12 @@ impl App {
             add_btn,
             devices,
             icon_svg(self.icons.volume.clone(), 14),
-            slider(0.0..=100.0, self.now.volume_percent as f32, |v| {
-                Msg::Volume(v as u8)
-            })
+            slider(
+                0.0..=100.0,
+                self.drag_volume.unwrap_or(self.now.volume_percent) as f32,
+                |v| Msg::Volume(v as u8)
+            )
+            .on_release(Msg::VolumeRelease)
             .width(Length::Fixed(88.0)),
         ]
         .spacing(SPACE_MD)
@@ -2955,18 +3125,84 @@ fn key_msg(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
     }
 }
 
-fn split_playlists(playlists: &[Playlist]) -> (Vec<&Playlist>, Vec<&Playlist>) {
-    let mut made = Vec::new();
-    let mut yours = Vec::new();
-    for playlist in playlists {
-        if playlist.is_generated() {
-            made.push(playlist);
-        } else {
-            yours.push(playlist);
-        }
+/// Positions of Spotify's mixes (in mix order) and of everything else (in
+/// library order), computed when the playlists change rather than per frame.
+#[derive(Default)]
+struct PlaylistSplit {
+    made: Vec<usize>,
+    yours: Vec<usize>,
+}
+
+impl PlaylistSplit {
+    fn of(playlists: &[Playlist]) -> Self {
+        let (mut made, yours): (Vec<usize>, Vec<usize>) =
+            (0..playlists.len()).partition(|&index| playlists[index].is_generated());
+        made.sort_by_cached_key(|&index| generated_sort_key(&playlists[index].name));
+        Self { made, yours }
     }
-    made.sort_by_key(|p| generated_sort_key(&p.name));
-    (made, yours)
+
+    fn made<'a>(&self, playlists: &'a [Playlist]) -> Vec<&'a Playlist> {
+        self.made
+            .iter()
+            .filter_map(|&index| playlists.get(index))
+            .collect()
+    }
+
+    fn yours<'a>(&self, playlists: &'a [Playlist]) -> Vec<&'a Playlist> {
+        self.yours
+            .iter()
+            .filter_map(|&index| playlists.get(index))
+            .collect()
+    }
+}
+
+/// Appends a Load more chunk when it continues the rows on screen; anything
+/// else (a stale or replayed chunk) is dropped.
+fn append_chunk(body: &mut Option<PageBody>, chunk: &PageBody) -> bool {
+    match (body, chunk) {
+        (
+            Some(PageBody::Tracks {
+                items, total, next, ..
+            }),
+            PageBody::Tracks {
+                items: more,
+                offset: at,
+                total: more_total,
+                next: more_next,
+                ..
+            },
+        ) if *next == Some(*at) => {
+            items.extend(more.iter().cloned());
+            *total = *more_total;
+            *next = *more_next;
+            true
+        }
+        (
+            Some(PageBody::Albums {
+                items, total, next, ..
+            }),
+            PageBody::Albums {
+                items: more,
+                offset: at,
+                total: more_total,
+                next: more_next,
+            },
+        ) if *next == Some(*at) => {
+            items.extend(more.iter().cloned());
+            *total = *more_total;
+            *next = *more_next;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Where a page body's rows start; above zero for a Load more chunk.
+fn chunk_offset(body: &PageBody) -> u32 {
+    match body {
+        PageBody::Tracks { offset, .. } | PageBody::Albums { offset, .. } => *offset,
+        _ => 0,
+    }
 }
 
 fn artist_from_ref(artist: &ArtistRef) -> Option<Artist> {
@@ -3118,5 +3354,76 @@ fn cover_dim_style(theme: &Theme) -> container::Style {
         background: Some(Background::Color(wash)),
         border: hairline(p, RADIUS_SM),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tracks(uris: &[&str], offset: u32, next: Option<u32>) -> PageBody {
+        PageBody::Tracks {
+            title: String::new(),
+            subtitle: String::new(),
+            art: None,
+            context_uri: None,
+            items: uris
+                .iter()
+                .map(|uri| Track {
+                    uri: (*uri).into(),
+                    ..Track::default()
+                })
+                .collect(),
+            total: 6,
+            offset,
+            next,
+            album: None,
+        }
+    }
+
+    fn uris(body: &Option<PageBody>) -> Vec<String> {
+        match body {
+            Some(PageBody::Tracks { items, .. }) => items.iter().map(|t| t.uri.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_chunk_appends_only_where_it_continues_the_rows() {
+        let mut body = Some(tracks(&["a", "b"], 0, Some(2)));
+        assert!(append_chunk(&mut body, &tracks(&["c", "d"], 2, Some(4))));
+        assert_eq!(uris(&body), ["a", "b", "c", "d"]);
+        // The same chunk again (a double click, or a replay) is dropped.
+        assert!(!append_chunk(&mut body, &tracks(&["c", "d"], 2, Some(4))));
+        assert!(append_chunk(&mut body, &tracks(&["e", "f"], 4, None)));
+        assert_eq!(uris(&body).len(), 6);
+        // Nothing follows the end.
+        assert!(!append_chunk(&mut body, &tracks(&["g"], 6, None)));
+    }
+
+    #[test]
+    fn mixes_sort_apart_from_the_library() {
+        let playlist = |id: &str, name: &str, owner: &str| Playlist {
+            id: id.into(),
+            name: name.into(),
+            owner: crate::api::models::Owner {
+                id: Some(owner.into()),
+                ..Default::default()
+            },
+            ..Playlist::default()
+        };
+        let lists = vec![
+            playlist("1", "Gym", "me"),
+            playlist("2", "Daily Mix 1", "spotify"),
+            playlist("3", "Discover Weekly", "spotify"),
+        ];
+        let split = PlaylistSplit::of(&lists);
+        let names =
+            |found: Vec<&Playlist>| found.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            names(split.made(&lists)),
+            ["Discover Weekly", "Daily Mix 1"]
+        );
+        assert_eq!(names(split.yours(&lists)), ["Gym"]);
     }
 }

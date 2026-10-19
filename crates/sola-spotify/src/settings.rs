@@ -1,5 +1,7 @@
 //! Playback settings persisted under `~/.config/sola/spotify/settings.json`.
 
+use std::sync::Mutex;
+
 use serde::{Deserialize, Serialize};
 
 use crate::paths::AppDirs;
@@ -74,13 +76,21 @@ impl Settings {
         }
     }
 
+    /// Saves on the disk thread, through a temporary file, and only when
+    /// something changed: the UI saves on every page and track change.
     pub fn save(&self, dirs: &AppDirs) {
-        if let Some(parent) = dirs.settings_file().parent() {
-            let _ = std::fs::create_dir_all(parent);
+        static LAST: Mutex<String> = Mutex::new(String::new());
+        let Ok(text) = serde_json::to_string_pretty(self) else {
+            return;
+        };
+        {
+            let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
+            if *last == text {
+                return;
+            }
+            last.clone_from(&text);
         }
-        if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(dirs.settings_file(), text);
-        }
+        crate::cache::write_text_later(dirs.settings_file(), text);
     }
 }
 

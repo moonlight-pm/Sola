@@ -151,6 +151,9 @@ pub struct LocalState {
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub connected: bool,
+    /// This computer is the active Spotify Connect device. False after
+    /// another device takes playback over; a Load or Play activates it again.
+    pub connect_active: bool,
     pub username: String,
     pub active_client: String,
     pub error: Option<String>,
@@ -233,6 +236,7 @@ pub enum EngineEvent {
 pub type Notify = Arc<dyn Fn(EngineEvent) + Send + Sync>;
 
 pub struct Engine {
+    session: Session,
     player: Arc<Player>,
     spirc: Arc<Spirc>,
     mixer: Arc<dyn Mixer>,
@@ -278,7 +282,7 @@ impl Engine {
             ..LocalState::default()
         }));
         let session = Session::new(session_config, Some(cache));
-        let (sink_builder, volume) = sink_builder(config, &mixer);
+        let (sink_builder, volume) = sink_builder(config, &mixer)?;
         let player = Player::new(player_config, session.clone(), volume, sink_builder);
         let events = player.get_player_event_channel();
         tokio::spawn(run_events(events, Arc::clone(&state), Arc::clone(&notify)));
@@ -333,6 +337,7 @@ impl Engine {
         });
 
         Ok(Self {
+            session,
             player,
             spirc: Arc::new(spirc),
             mixer,
@@ -362,6 +367,19 @@ impl Engine {
         &self.device_id
     }
 
+    /// The streaming session, for catalogue reads that skip the Web API.
+    pub fn session(&self) -> Session {
+        self.session.clone()
+    }
+
+    /// Whether this computer is the active Spotify Connect device.
+    pub fn connect_active(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .connect_active
+    }
+
     pub fn shutdown(&self) {
         self.shutting_down
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -384,8 +402,18 @@ impl Engine {
         let spirc = &self.spirc;
         // librespot drops Load/Play/Next/… while this Connect device is
         // inactive (another speaker took over, or we never finished
-        // registering). Activate is a no-op when already active.
-        if !matches!(command, PlayerCommand::Activate) {
+        // registering). Activate is a no-op when already active. Volume,
+        // seek, pause, shuffle, and repeat never activate: touching them
+        // must not pull playback back from another device.
+        if matches!(
+            command,
+            PlayerCommand::Load(_)
+                | PlayerCommand::Play
+                | PlayerCommand::Toggle
+                | PlayerCommand::Next
+                | PlayerCommand::Previous
+                | PlayerCommand::AddToQueue(_)
+        ) {
             spirc.activate()?;
         }
         match command {
@@ -471,7 +499,7 @@ type SinkAndVolume = (
     Box<dyn librespot_playback::mixer::VolumeGetter + Send>,
 );
 
-fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> SinkAndVolume {
+fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> Result<SinkAndVolume> {
     let device = config.audio_device.clone();
     let preferred = config
         .backend
@@ -483,10 +511,12 @@ fn sink_builder(config: &EngineConfig, mixer: &Arc<dyn Mixer>) -> SinkAndVolume 
             tracing::info!(backend = name, "audio backend");
             let volume = mixer.get_soft_volume();
             let device = device.clone();
-            return (Box::new(move || builder(device, AudioFormat::S16)), volume);
+            return Ok((Box::new(move || builder(device, AudioFormat::S16)), volume));
         }
     }
-    panic!("no librespot audio backend available (tried pulseaudio, rodio, alsa)");
+    Err(anyhow!(
+        "no audio output is available (tried PulseAudio, rodio, and ALSA)"
+    ))
 }
 
 async fn run_events(
@@ -552,11 +582,12 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
             changed |= set(&mut state.error, None);
             changed
         }
+        // Always reported: the position anchor moves even when nothing else did.
         PlayerEvent::Playing { position_ms, .. } => {
-            let mut changed = set(&mut state.playback, Playback::Playing);
-            changed |= set(&mut state.position_ms, position_ms);
+            state.playback = Playback::Playing;
+            state.position_ms = position_ms;
             state.position_at = Some(Instant::now());
-            changed || true
+            true
         }
         PlayerEvent::Paused { position_ms, .. } => {
             let mut changed = set(&mut state.playback, Playback::Paused);
@@ -593,15 +624,21 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
             )),
         ),
         PlayerEvent::VolumeChanged { volume } => set(&mut state.volume, volume),
+        // Spirc emits this when this device becomes the active one.
         PlayerEvent::SessionConnected { user_name, .. } => {
             let mut changed = set(&mut state.connected, true);
+            changed |= set(&mut state.connect_active, true);
             changed |= set(&mut state.username, user_name);
             changed
         }
         // Connect became inactive (another device took over). The librespot
         // session is still alive; Load activates it again. Treating this as
         // a dead session leaves clicks no-op'ing forever.
-        PlayerEvent::SessionDisconnected { .. } => set(&mut state.active_client, String::new()),
+        PlayerEvent::SessionDisconnected { .. } => {
+            let mut changed = set(&mut state.active_client, String::new());
+            changed |= set(&mut state.connect_active, false);
+            changed
+        }
         PlayerEvent::SessionClientChanged { client_name, .. } => {
             set(&mut state.active_client, client_name)
         }
@@ -652,15 +689,19 @@ fn local_track(item: &AudioItem) -> LocalTrack {
             false,
         ),
     };
+    // The player bar shows a 56px cover and lists ask for 300px art, so the
+    // 300px cover is the one to share; the 640px one is never needed here.
     let mut covers: Vec<_> = item.covers.iter().collect();
-    covers.sort_by_key(|cover| std::cmp::Reverse(cover.width));
-    let art_url = covers.first().map(|cover| cover.url.clone());
-    let art_small_url = covers
-        .iter()
-        .rev()
-        .find(|cover| cover.width >= 64)
-        .or(covers.last())
-        .map(|cover| cover.url.clone());
+    covers.sort_by_key(|cover| cover.width);
+    let at_least = |width| {
+        covers
+            .iter()
+            .find(|cover| cover.width >= width)
+            .or(covers.last())
+            .map(|cover| cover.url.clone())
+    };
+    let art_url = at_least(300);
+    let art_small_url = at_least(64);
     LocalTrack {
         uri: item.uri.clone(),
         title: item.name.clone(),
@@ -736,6 +777,20 @@ mod tests {
             },
         ));
         assert!(state.connected);
+        assert!(!state.connect_active);
         assert!(state.active_client.is_empty());
+    }
+
+    #[test]
+    fn becoming_the_active_device_is_tracked() {
+        let mut state = LocalState::default();
+        assert!(apply_event(
+            &mut state,
+            PlayerEvent::SessionConnected {
+                connection_id: "connection".into(),
+                user_name: "listener".into(),
+            },
+        ));
+        assert!(state.connect_active);
     }
 }

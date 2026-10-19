@@ -12,6 +12,7 @@ mod media;
 mod mpris;
 mod paths;
 mod player;
+mod session_reads;
 mod settings;
 mod ui;
 mod worker;
@@ -30,7 +31,7 @@ fn main() -> iced::Result {
 
     startup(APP_ID);
     bridge::init_channels();
-    worker::start();
+    let worker_done = worker::start();
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
@@ -77,13 +78,19 @@ fn main() -> iced::Result {
         .window_menu()
         .install();
 
-    iced::application(App::boot, App::update, App::view)
+    let result = iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
         .window(window_settings_transparent(APP_ID))
-        .run()
+        .run();
+    // Quit already sent `Cmd::Shutdown`; a close from the compositor did
+    // not, and a second one is harmless. Let the worker unregister this
+    // Connect device before the process exits.
+    bridge::send(worker::Cmd::Shutdown);
+    let _ = worker_done.recv_timeout(std::time::Duration::from_secs(4));
+    result
 }
 
 fn item(id: &str, label: &str, shortcut: Option<sola_core::KeyChord>) -> MenuItem {

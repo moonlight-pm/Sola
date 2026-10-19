@@ -48,14 +48,26 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
 - Reopen restores the last playlist, the last track (graphite lift =
   selected; cyan play mark + accent title = playing), and page
   **Back / Forward** (up to 20 back steps, including Search queries).
-- Playlist pages show added dates on the header and on each row.
+- Playlist pages show added dates on the header and on each row. Long
+  lists and the Albums tab end in **Load more** (shows **Loading…**
+  until the next rows arrive).
 - **Albums** and **Artists** are wrapping catalogs (same as Made for you).
+- A page you opened in the last few minutes shows again at once without
+  asking Spotify (Home, library tabs, and Made for you for 10 minutes;
+  playlists, Liked Songs, and a search for 5; an artist for an hour; an
+  album for 6 hours). **Click the page you are on** (its library item or
+  shortcut) to load it fresh.
 - Bottom bar: now playing on the left (title, then artist · album),
   transport in the center. Idle is “Nothing playing” / “Pick a song”;
   setup copy only if this computer is not connected yet. Play/pause,
   skip, seek, shuffle, repeat, like, add to playlist, volume, device
   picker. **This computer** is always the first device. Other Spotify
-  Connect speakers sit under **Other devices**.
+  Connect speakers sit under **Other devices**; the list loads when the
+  picker opens. Seek and volume apply when you let go of the slider.
+- When another device (a phone, a speaker) is playing, the bar follows
+  it, and its controls drive that device: play/pause, skip, seek,
+  volume, shuffle, and repeat do not pull playback back to this
+  computer. Clicking a song still plays it here.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
 - **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
 
@@ -75,6 +87,6 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
   list-plus picker.
 - No podcasts UI, lyrics, Winamp skin, MilkDrop, or equalizer (Fastpotify has those).
 - No tray / close-to-background; quit from the menu or ⌘Q.
-- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). A 429 on that app keeps the session signed in; library fetches wait out the cooldown. Profile is not re-fetched every couple of seconds while cooling.
+- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). Spotify divides that app's rate limit among everyone using it, so the app spends it sparingly. With local playback set up, playlists, your playlist list, album pages, and an artist's popular songs come through the playback connection instead, which has no such limit. Search, Home's recent and top lists, Liked Songs, the Albums / Artists tabs, the queue, and another device's playback still use the shared app; a 429 there keeps the session signed in and those wait out the cooldown.
 - Album **Follow** is the primary artist only. Local files have no catalog page.
 - Local output uses librespot’s PulseAudio backend first, then rodio/ALSA. If another speaker took over, or the local session dropped, clicking a song makes this computer the active device again and starts the track.

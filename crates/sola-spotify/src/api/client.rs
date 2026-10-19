@@ -3,9 +3,11 @@
 //! Adapted from Fastpotify (MIT), https://github.com/crmne/fastpotify
 //!
 //! Typed calls share one `request` helper that adds the bearer token, limits
-//! concurrency, honors `Retry-After`, and formats API errors.
+//! concurrency, honors `Retry-After`, and formats API errors. Background
+//! work (polls, syncs, liked checks) runs inside [`background`] and gets a
+//! smaller budget, so it can never hold every slot a click needs.
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,8 +22,26 @@ use super::models::*;
 
 const BASE_URL: &str = "https://api.spotify.com/v1";
 const MAX_IN_FLIGHT: usize = 6;
+/// Background requests share at most this many of the in-flight slots.
+const MAX_BACKGROUND_IN_FLIGHT: usize = 4;
 const RATE_LIMIT_RETRIES: u32 = 3;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+/// Development Mode quota exhaustion lasts longer than a rate limit.
+const MAX_QUOTA_WAIT: Duration = Duration::from_secs(600);
+
+tokio::task_local! {
+    static BACKGROUND: ();
+}
+
+/// Runs `future` with the background request budget: requests nothing on
+/// screen is waiting for.
+pub async fn background<F: std::future::Future>(future: F) -> F::Output {
+    BACKGROUND.scope((), future).await
+}
+
+fn in_background() -> bool {
+    BACKGROUND.try_with(|_| ()).is_ok()
+}
 
 #[derive(Clone, Debug, Error)]
 pub enum ApiError {
@@ -62,12 +82,15 @@ impl From<reqwest::Error> for ApiError {
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 
-fn retry_after_wait(header: Option<&str>) -> Duration {
+fn retry_after(header: Option<&str>) -> Duration {
     header
         .and_then(|value| value.parse::<u64>().ok())
         .map_or(Duration::from_secs(5), Duration::from_secs)
         .max(Duration::from_secs(5))
-        .min(MAX_RETRY_AFTER)
+}
+
+fn retry_after_wait(header: Option<&str>) -> Duration {
+    retry_after(header).min(MAX_RETRY_AFTER)
 }
 
 fn is_quota_exhausted(body: &str) -> bool {
@@ -273,7 +296,13 @@ pub struct ApiClient {
     http: reqwest::Client,
     tokens: Mutex<Option<TokenProvider>>,
     limiter: Semaphore,
+    background_limiter: Semaphore,
     cooldown_until: tokio::sync::Mutex<Instant>,
+    /// Set by a 429 and cleared by the next answer that is not one. While
+    /// set, requests leave the cooldown one at a time behind `probe`, so a
+    /// queue of them does not fire together into a still-empty bucket.
+    recovering: AtomicBool,
+    probe: tokio::sync::Mutex<()>,
     search_limit: u32,
     artist_albums_limit: u32,
     source: ApiSource,
@@ -292,7 +321,10 @@ impl ApiClient {
             http,
             tokens: Mutex::new(None),
             limiter: Semaphore::new(MAX_IN_FLIGHT),
+            background_limiter: Semaphore::new(MAX_BACKGROUND_IN_FLIGHT),
             cooldown_until: tokio::sync::Mutex::new(Instant::now()),
+            recovering: AtomicBool::new(false),
+            probe: tokio::sync::Mutex::new(()),
             search_limit,
             artist_albums_limit,
             source,
@@ -316,12 +348,22 @@ impl ApiClient {
         *self.cooldown_until.lock().await > Instant::now()
     }
 
-    async fn wait_for_cooldown(&self) {
+    /// Waits out a `Retry-After`. Only quota exhaustion cools down longer
+    /// than a rate limit; nothing should sit on that, so it fails at once.
+    /// A player command (`urgent`) fails during any cooldown: a pause that
+    /// lands half a minute late can stop music the listener resumed since.
+    async fn wait_for_cooldown(&self, urgent: bool) -> Result<()> {
         loop {
             let until = *self.cooldown_until.lock().await;
             let Some(wait) = until.checked_duration_since(Instant::now()) else {
-                return;
+                return Ok(());
             };
+            if wait > MAX_RETRY_AFTER {
+                return Err(ApiError::QuotaExhausted);
+            }
+            if urgent {
+                return Err(ApiError::RateLimited);
+            }
             tokio::time::sleep(wait).await;
         }
     }
@@ -329,6 +371,18 @@ impl ApiClient {
     async fn extend_cooldown(&self, wait: Duration) {
         let mut until = self.cooldown_until.lock().await;
         *until = (*until).max(Instant::now() + wait);
+    }
+
+    /// While recovering from a 429, the probe lock lets one request out of
+    /// the cooldown at a time; the rest follow once an answer is not a 429.
+    async fn probe_turn(&self, urgent: bool) -> Result<Option<tokio::sync::MutexGuard<'_, ()>>> {
+        if !self.recovering.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let guard = self.probe.lock().await;
+        // The previous probe may have earned a fresh cooldown.
+        self.wait_for_cooldown(urgent).await?;
+        Ok(self.recovering.load(Ordering::SeqCst).then_some(guard))
     }
 
     // ---- transport -------------------------------------------------------
@@ -347,16 +401,31 @@ impl ApiClient {
         };
         let provider = self.provider()?;
         let started = Instant::now();
+        let background = in_background();
+        let urgent = method != Method::GET && path.starts_with("/me/player");
 
         let mut attempt = 0;
         loop {
             attempt += 1;
-            self.wait_for_cooldown().await;
+            let background_permit = if background {
+                Some(
+                    self.background_limiter
+                        .acquire()
+                        .await
+                        .map_err(|_| ApiError::NotSignedIn)?,
+                )
+            } else {
+                None
+            };
             let permit = self
                 .limiter
                 .acquire()
                 .await
                 .map_err(|_| ApiError::NotSignedIn)?;
+            // After the permit: a 429 answered while this request queued has
+            // extended the cooldown, and sending now would only earn another.
+            self.wait_for_cooldown(urgent).await?;
+            let mut probe = self.probe_turn(urgent).await?;
             self.activity.begin();
             let activity = ActivityGuard(&self.activity);
             let token = provider.access_token().await?;
@@ -373,23 +442,37 @@ impl ApiClient {
             let response = request.send().await?;
             let status = response.status();
 
+            let rate_limited = status == StatusCode::TOO_MANY_REQUESTS;
+            self.recovering.store(rate_limited, Ordering::SeqCst);
+            // After a 429 the probe is held until the new cooldown is
+            // recorded, so the next request in line cannot slip out first.
+            if !rate_limited {
+                drop(probe.take());
+            }
             if status == StatusCode::UNAUTHORIZED && attempt == 1 {
                 drop(activity);
                 drop(permit);
+                drop(background_permit);
                 provider.invalidate().await;
                 continue;
             }
-            if status == StatusCode::TOO_MANY_REQUESTS && attempt <= RATE_LIMIT_RETRIES {
-                let wait = retry_after_wait(
-                    response
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|value| value.to_str().ok()),
-                );
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                let header = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
                 let text = response.text().await.unwrap_or_default();
                 if is_quota_exhausted(&text) {
+                    let wait = retry_after(header.as_deref()).min(MAX_QUOTA_WAIT);
+                    tracing::warn!(
+                        "Spotify quota exhausted source={} path={path} wait={wait:?}",
+                        self.source
+                    );
+                    self.extend_cooldown(wait).await;
                     return Err(ApiError::QuotaExhausted);
                 }
+                let wait = retry_after_wait(header.as_deref());
                 tracing::warn!(
                     "Spotify rate limit source={} method={} path={path} wait={wait:?}",
                     self.source,
@@ -402,17 +485,20 @@ impl ApiClient {
                 );
                 drop(activity);
                 drop(permit);
+                drop(background_permit);
                 self.extend_cooldown(wait).await;
+                drop(probe.take());
+                if urgent || attempt > RATE_LIMIT_RETRIES {
+                    return Err(ApiError::RateLimited);
+                }
                 continue;
             }
             if status.is_server_error() && method == Method::GET && attempt == 1 {
                 drop(activity);
                 drop(permit);
+                drop(background_permit);
                 tokio::time::sleep(Duration::from_millis(800)).await;
                 continue;
-            }
-            if status == StatusCode::TOO_MANY_REQUESTS {
-                return Err(ApiError::RateLimited);
             }
             let text = response.text().await?;
             tracing::debug!(
@@ -642,50 +728,42 @@ impl ApiClient {
         .await
     }
 
-    /// Followed and created playlists, a few pages.
-    pub async fn my_playlists_all(&self, max: u32) -> Vec<Playlist> {
-        let mut items = Vec::new();
-        let mut offset = 0_u32;
-        while offset < max {
-            match self.my_playlists(offset, 50).await {
-                Ok(page) => {
-                    let n = page.items.len() as u32;
-                    items.extend(page.items);
-                    offset += 50;
-                    if n < 50 || page.next.is_none() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!("my playlists: {error}");
-                    break;
-                }
-            }
-        }
-        items
-    }
-
-    /// Spotify's "Made For You" category (Daily Mix, mixes, …).
-    /// Empty when the shared app cannot read Spotify-owned lists.
-    pub async fn made_for_you(&self) -> Vec<Playlist> {
+    /// Spotify's "Made For You" category (Daily Mix, mixes, …). Apps that
+    /// cannot read Spotify-owned lists get a 403 or 404.
+    pub async fn made_for_you(&self) -> Result<Vec<Playlist>> {
         const CATEGORY: &str = "0JQ5DAt0tbjZptfcdMSKl3";
-        match self
-            .get::<CategoryPlaylists>(
-                &format!("/browse/categories/{CATEGORY}/playlists"),
-                &[("limit", "50".into())],
-            )
-            .await
-        {
-            Ok(wrap) => wrap.playlists.items,
-            Err(error) => {
-                tracing::debug!("made for you: {error}");
-                Vec::new()
-            }
-        }
+        self.get::<CategoryPlaylists>(
+            &format!("/browse/categories/{CATEGORY}/playlists"),
+            &[("limit", "50".into())],
+        )
+        .await
+        .map(|wrap| wrap.playlists.items)
     }
 
     pub async fn playlist(&self, id: &str) -> Result<Playlist> {
         self.get(&format!("/playlists/{id}"), &[]).await
+    }
+
+    /// The playlist header and the first page of rows Spotify embeds in it
+    /// (up to 100), in one request instead of two.
+    pub async fn playlist_with_items(
+        &self,
+        id: &str,
+    ) -> Result<(Playlist, Option<Page<PlaylistItem>>)> {
+        let text = self
+            .send(
+                Method::GET,
+                &format!("/playlists/{id}"),
+                &[("additional_types", "track,episode".to_string())],
+                None,
+            )
+            .await?;
+        let playlist: Playlist =
+            serde_json::from_str(&text).map_err(|error| ApiError::Decode(error.to_string()))?;
+        let embedded = serde_json::from_str::<EmbeddedItems>(&text)
+            .ok()
+            .and_then(EmbeddedItems::page);
+        Ok((playlist, embedded))
     }
 
     pub async fn playlist_items(
@@ -1138,6 +1216,53 @@ mod tests {
         assert!(!is_quota_exhausted(
             r#"{"error":{"status":429,"message":"Too many requests"}}"#
         ));
+    }
+
+    #[tokio::test]
+    async fn after_a_rate_limit_requests_leave_the_cooldown_one_at_a_time() {
+        let client = ApiClient::new(
+            reqwest::Client::new(),
+            Arc::new(NetActivity::default()),
+            20,
+            50,
+            ApiSource::Shared,
+        );
+        assert!(client.probe_turn(false).await.unwrap().is_none());
+        client.recovering.store(true, Ordering::SeqCst);
+        let first = client.probe_turn(false).await.unwrap();
+        assert!(first.is_some());
+        // The next request waits for the probe's answer.
+        assert!(client.probe.try_lock().is_err());
+        client.recovering.store(false, Ordering::SeqCst);
+        drop(first);
+        assert!(client.probe_turn(false).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn long_or_player_cooldowns_fail_instead_of_holding_requests() {
+        let client = ApiClient::new(
+            reqwest::Client::new(),
+            Arc::new(NetActivity::default()),
+            20,
+            50,
+            ApiSource::Shared,
+        );
+        client.extend_cooldown(Duration::from_secs(5)).await;
+        assert!(matches!(
+            client.wait_for_cooldown(true).await,
+            Err(ApiError::RateLimited)
+        ));
+        client.extend_cooldown(Duration::from_secs(300)).await;
+        assert!(matches!(
+            client.wait_for_cooldown(false).await,
+            Err(ApiError::QuotaExhausted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn background_work_is_marked_for_its_own_budget() {
+        assert!(!in_background());
+        assert!(background(async { in_background() }).await);
     }
 
     #[tokio::test]

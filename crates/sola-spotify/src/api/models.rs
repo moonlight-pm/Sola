@@ -432,8 +432,14 @@ impl Playlist {
             .map_or(0, |count| count.total)
     }
 
+    /// The owner's display name, else their user id, else Spotify (whose
+    /// own lists often come without one).
     pub fn owner_name(&self) -> &str {
-        self.owner.display_name.as_deref().unwrap_or("Spotify")
+        match (self.owner.display_name.as_deref(), self.owner.id.as_deref()) {
+            (Some(name), _) if !name.is_empty() => name,
+            (_, Some(id)) if !id.is_empty() && id != "spotify" => id,
+            _ => "Spotify",
+        }
     }
 
     pub fn owned_by(&self, user_id: &str) -> bool {
@@ -588,6 +594,26 @@ pub struct PlaylistItem {
     pub item: Option<PlayableItem>,
     #[serde(default)]
     pub track: Option<PlayableItem>,
+}
+
+/// The first page of rows `GET /playlists/{id}` embeds: `items` since the
+/// 2026 changes, `tracks` before.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct EmbeddedItems {
+    #[serde(default)]
+    items: Option<Page<PlaylistItem>>,
+    #[serde(default)]
+    tracks: Option<Page<PlaylistItem>>,
+}
+
+impl EmbeddedItems {
+    /// The embedded page, unless Spotify sent only a count.
+    pub fn page(self) -> Option<Page<PlaylistItem>> {
+        self.items
+            .into_iter()
+            .chain(self.tracks)
+            .find(|page| !page.items.is_empty() || page.total == 0)
+    }
 }
 
 /// A bare user reference, as `added_by` carries it.
@@ -928,6 +954,26 @@ mod tests {
         )
         .unwrap();
         assert!(collab.can_add_tracks(Some("me")));
+    }
+
+    #[test]
+    fn embedded_rows_are_read_only_when_spotify_sent_them() {
+        let rows = r#"{"id":"p","items":{"items":[{"item":{"type":"track","id":"a","name":"One","uri":"spotify:track:a"}}],"total":1}}"#;
+        let page = serde_json::from_str::<EmbeddedItems>(rows)
+            .unwrap()
+            .page()
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        let count_only = r#"{"id":"p","items":{"total":12}}"#;
+        assert!(
+            serde_json::from_str::<EmbeddedItems>(count_only)
+                .unwrap()
+                .page()
+                .is_none()
+        );
+        let followed: Playlist =
+            serde_json::from_str(r#"{"id":"x","owner":{"id":"someone"}}"#).unwrap();
+        assert_eq!(followed.owner_name(), "someone");
     }
 
     #[test]
