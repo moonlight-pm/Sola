@@ -138,6 +138,23 @@ to the bus and tolerate compositor restarts.
    `compositor.screenshot` full/region uses `wlr-screencopy`; `--app` uses
    `ext-image-copy-capture` of the foreign toplevel (no raise).
 
+### D-Bus (deprecated)
+
+**D-Bus is deprecated as a requirement (2026-10-18).** Add no new D-Bus
+dependencies. The uses below are legacy; the target is Sola's own
+replacement on Sola Bus (facts) and sola-call (requests). Its shape is
+open — [T3](open-questions.md#t3--d-bus-replacement-on-sola-bus-p2).
+
+| Where | Bus | Use | How |
+|-------|-----|-----|-----|
+| `sola-shell` Bluetooth chip (`bluetooth/`) | system | `org.bluez` — adapters, devices, pairing agent | `zbus` in process |
+| `solactl media` (shell media keys) | session | finds the Playing MPRIS player | `zbus` in process |
+| `sola-spotify` (`mpris.rs`) | session | registers `org.mpris.MediaPlayer2.sola-spotify` | `mpris-server` |
+| `sola-shell` flower Restart / Shut Down (`power.rs`) | system | logind reboot / power-off | `loginctl` / `systemctl` |
+| `sola-session` app launch / stop | user systemd | `systemd-run --user --scope`, `systemctl --user stop` | CLI |
+| CEF (`sola-browser`, `sola-wrapper`, `sola-design`) | — | Chromium links `libdbus-1` (nix-ld list in `nix/module.nix`) | third-party |
+| Installer image | session | `dbus-run-session` around cage (`nix/image/installer-session.nix`) | image |
+
 ---
 
 ## Iced present / GPU idle (as-built)

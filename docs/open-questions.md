@@ -102,6 +102,14 @@ WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
 **CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
 comparison warrants a second engine.
 
+### T3 — D-Bus replacement on Sola Bus (P2)
+
+D-Bus is deprecated as a requirement (decision log 2026-10-18). The target
+is Sola's own replacement on Sola Bus / sola-call. Open: its shape — what
+replaces each legacy use, and how Sola reaches services and apps that only
+speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
+`libdbus`). Inventory: [architecture § D-Bus](architecture.md#d-bus-deprecated).
+
 ### D4 — sola-workspaces product forks (P2) — **closed (2026-10-08)**
 
 **Context:** Freeze is in; persist + spawn landed. Call plane owns fail-if-down
@@ -149,6 +157,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-18 | D-Bus | **D-Bus is deprecated as a requirement.** No new D-Bus dependencies; existing uses are legacy. In future Sola targets its own replacement on Sola Bus. Shape open (T3). | architecture, CURRENT locks, AGENTS, T3 |
 | 2026-10-14 | sola-design annotations | Only agents edit designs. Annotations (sections, notes, exits / links, flows) are part of the design — what is not obvious, general information, flow. No human notes, comments, or feedback on the canvas. Flows are tours on the canvas, not a full-screen prototype mode. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, manual |
 | 2026-10-13 | sola-design memory budget | Design holds its boards to a memory budget that **adapts** to what the machine has free (not a fixed size), if that can be done reliably. Over budget, Design first **discards idle boards** — boards nobody is looking at and no agent called lately: their page closes, their last picture stays on the canvas, and they reload from disk on the next look or call. A discard is not dropping a board (canvases are files; only in-page state such as scroll or typed text goes). Only when the boards in use still do not fit is Design **nice to the agent**: it refuses the new board / canvas with an error that says what is wrong (memory), what is live, and how to free room. (Ten agents' canvases filled 125G and froze the box; see CURRENT.) | CURRENT |
 | 2026-10-13 | sola-design board pace | Boards nobody looks at hibernate: off-screen canvases sleep unless an agent is working there (then 1 fps); on the canvas on screen only boards in view paint, at 60 fps while Design has focus and 1 fps while it does not; loading, settling, and agent calls run at full rate. Frame-transport work stays parked. | freeze, capabilities, architecture, manual, CURRENT |

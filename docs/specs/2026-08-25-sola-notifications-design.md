@@ -41,7 +41,7 @@ process exit. Notifications: Workspaces done-while-unfocused, web
 | Keyboard | Overlay does **not** steal focus. Pile is a menu panel (Escape dismisses). |
 | Sound | Not this slice. |
 | Actions | `Notification.actions` not this slice. |
-| D-Bus | Not this slice. First-party bus + browser JS intercept. `org.freedesktop.Notifications` later if other Linux apps need a daemon. |
+| D-Bus | Not this slice. First-party bus + browser JS intercept. `org.freedesktop.Notifications` later if other Linux apps need a daemon. *(2026-10-18: D-Bus is deprecated as a requirement — no new D-Bus service; other apps' notifications fall under [T3](../open-questions.md#t3--d-bus-replacement-on-sola-bus-p2).)* |
 
 ## Architecture
 

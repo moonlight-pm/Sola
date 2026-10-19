@@ -76,6 +76,7 @@ Living map: [`docs/architecture.md`](docs/architecture.md).
 - **Shell / apps:** Iced programs via `sola-kit` — Wayland clients + bus clients. Each is a separate process.
 - **Browser:** Custom iced chrome + CEF engine in a single `sola-browser` crate.
 - **IPC:** Sola Bus (events over Unix socket) + **sola-call** (request/reply) + Wayland protocols for surfaces/input
+- **D-Bus is deprecated as a requirement.** Add no new D-Bus dependencies; existing uses are legacy, and the future target is Sola's own replacement on Sola Bus ([inventory](docs/architecture.md#d-bus-deprecated), [T3](docs/open-questions.md#t3--d-bus-replacement-on-sola-bus-p2)).
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
 All components are independently restartable. Sola apps are resilient to bus and compositor restarts.

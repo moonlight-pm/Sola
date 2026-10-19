@@ -423,6 +423,7 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | UI stack | **Iced + sola-kit** only for new apps; WebView host is apocrypha |
 | Compositor | **River** external; **sola-river** is the bus ↔ Wayland bridge |
 | IPC | **Sola Bus** (fan-out) + **sola-call** (request/reply) + Wayland for surfaces/input |
+| D-Bus | **Deprecated as a requirement** (2026-10-18). No new D-Bus dependencies. Existing uses ([inventory](docs/architecture.md#d-bus-deprecated)) are legacy; the future target is Sola's own replacement on Sola Bus. Shape open: [T3](docs/open-questions.md#t3--d-bus-replacement-on-sola-bus-p2). |
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
