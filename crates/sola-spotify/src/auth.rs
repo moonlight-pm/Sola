@@ -2,10 +2,10 @@
 //!
 //! Adapted from Fastpotify (MIT), https://github.com/crmne/fastpotify
 //!
-//! Three independent grants may exist because Spotify treats them differently:
+//! Two independent grants exist because Spotify treats them differently:
 //!
-//! - The shared and optional personal **Web API grants** use separate
-//!   registered application identities, token files, and request sessions.
+//! - The **Web API grant** uses the shared registered application identity
+//!   and its own token file.
 //! - The **playback grant** uses Spotify's desktop client identity, the one
 //!   librespot streams with. Its access token is exchanged once for a
 //!   reusable credential that librespot caches itself.
@@ -98,18 +98,6 @@ impl Grant {
             redirect_port: WEB_REDIRECT_PORT,
             scopes: WEB_SCOPES,
         }
-    }
-
-    pub fn personal_web_api(client_id: &str) -> Result<Self> {
-        let client_id = client_id.trim();
-        if client_id.is_empty() {
-            bail!("a personal Spotify Client ID is required");
-        }
-        Ok(Self {
-            client_id: client_id.to_string(),
-            redirect_port: WEB_REDIRECT_PORT,
-            scopes: WEB_SCOPES,
-        })
     }
 
     pub fn redirect_uri(&self) -> String {
@@ -398,26 +386,6 @@ impl StoredToken {
     pub fn remove(path: &Path) {
         let _ = std::fs::remove_file(path);
     }
-
-    pub fn migrate_legacy(legacy: &Path, shared: &Path, personal: &Path) -> Result<()> {
-        let Some(token) = Self::load(legacy) else {
-            return Ok(());
-        };
-        let target = if token.client_id == DEFAULT_WEB_CLIENT_ID {
-            shared
-        } else {
-            personal
-        };
-        if let Some(existing) = Self::load(target) {
-            if existing != token {
-                return Ok(());
-            }
-        } else {
-            token.save(target)?;
-        }
-        Self::remove(legacy);
-        Ok(())
-    }
 }
 
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
@@ -496,12 +464,6 @@ mod tests {
     }
 
     #[test]
-    fn personal_client_id_is_validated_at_the_boundary() {
-        assert_eq!(Grant::personal_web_api("  abc ").unwrap().client_id, "abc");
-        assert!(Grant::personal_web_api("  ").is_err());
-    }
-
-    #[test]
     fn request_line_parsing() {
         let code =
             parse_request_line("GET /login?code=abc%20d&state=s1 HTTP/1.1\r\n", "s1").unwrap();
@@ -535,35 +497,6 @@ mod tests {
         token.save(&path).unwrap();
         assert_eq!(StoredToken::load(&path), Some(token));
         StoredToken::remove(&path);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn legacy_tokens_move_to_the_matching_session() {
-        let dir = std::env::temp_dir().join(format!(
-            "sola-spotify-token-migration-{}-{}",
-            std::process::id(),
-            now_secs()
-        ));
-        let legacy = dir.join("legacy.json");
-        let shared = dir.join("shared.json");
-        let personal = dir.join("personal.json");
-        for (client_id, target) in [
-            (DEFAULT_WEB_CLIENT_ID, &shared),
-            ("personal-client", &personal),
-        ] {
-            let token = StoredToken {
-                client_id: client_id.into(),
-                access_token: "access".into(),
-                refresh_token: "refresh".into(),
-                expires_at: now_secs() + 3600,
-                ..StoredToken::default()
-            };
-            token.save(&legacy).unwrap();
-            StoredToken::migrate_legacy(&legacy, &shared, &personal).unwrap();
-            assert_eq!(StoredToken::load(target), Some(token));
-            assert!(!legacy.exists());
-        }
         let _ = std::fs::remove_dir_all(dir);
     }
 }

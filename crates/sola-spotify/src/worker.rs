@@ -20,9 +20,7 @@ use tokio::sync::{mpsc, watch};
 use crate::cache::{Liked, Skipped};
 
 use crate::api::models::*;
-use crate::api::{
-    ApiClient, ApiError, ApiSource, NetActivity, PlayRequest, TokenProvider, WebTokens, background,
-};
+use crate::api::{ApiClient, ApiError, PlayRequest, TokenProvider, WebTokens, background};
 use crate::auth::{self, Grant, StoredToken};
 use crate::bridge;
 use crate::images::ArtLoader;
@@ -69,7 +67,6 @@ pub enum AuthStatus {
     Starting,
     SignedOut,
     WaitingForBrowser { url: String },
-    Connecting,
     Connected { username: String },
     Failed(String),
 }
@@ -261,7 +258,6 @@ pub enum Cmd {
     CancelSignIn,
     SignOut,
     AuthorizePlayback,
-    Player(PlayerCommand),
     Play {
         request: PlayRequest,
         device_id: Option<String>,
@@ -302,9 +298,7 @@ pub enum Cmd {
         name: String,
         uris: Vec<String>,
     },
-    RefreshPlayback,
     RefreshDevices,
-    SaveSettings(Settings),
     Media(MediaCommand),
     Shutdown,
 }
@@ -671,14 +665,7 @@ async fn run() {
         .user_agent("sola-spotify/0.1")
         .build()
         .expect("http client");
-    let activity = Arc::new(NetActivity::default());
-    let api = Arc::new(ApiClient::new(
-        http.clone(),
-        activity,
-        20,
-        50,
-        ApiSource::Shared,
-    ));
+    let api = Arc::new(ApiClient::new(http.clone(), 20, 50));
     let art = ArtLoader::new(http.clone(), dirs.art_cache_dir());
     {
         let art = art.clone();
@@ -737,6 +724,7 @@ async fn run() {
         signed_in: false,
         premium: None,
         user: None,
+        profile_fresh: false,
         profile_inflight: false,
         profile_retry_at: None,
         cancel_signin: None,
@@ -751,7 +739,6 @@ async fn run() {
         hold: std::sync::Arc::new(std::sync::Mutex::new(EngineHold::default())),
         last_engine_uri: None,
         now: NowPlaying::default(),
-        devices: Vec::new(),
         search_query: String::new(),
     };
 
@@ -833,6 +820,8 @@ struct Worker {
     signed_in: bool,
     premium: Option<bool>,
     user: Option<User>,
+    /// A profile arrived since sign-in; `user` may only be last run's.
+    profile_fresh: bool,
     profile_inflight: bool,
     profile_retry_at: Option<Instant>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -852,7 +841,6 @@ struct Worker {
     hold: std::sync::Arc<std::sync::Mutex<EngineHold>>,
     last_engine_uri: Option<String>,
     now: NowPlaying,
-    devices: Vec<Device>,
     search_query: String,
 }
 
@@ -876,10 +864,7 @@ impl Worker {
 
     fn restore_session(&mut self) {
         match StoredToken::load(&self.dirs.shared_web_token_file()) {
-            Some(token) if token.has_scopes(auth::WEB_SCOPES) => {
-                bridge::emit(Event::Auth(AuthStatus::Connecting));
-                self.on_web_signed_in(token);
-            }
+            Some(token) if token.has_scopes(auth::WEB_SCOPES) => self.on_web_signed_in(token),
             Some(_) => bridge::emit(Event::Auth(AuthStatus::Failed(
                 "Spotify permissions changed. Sign in again.".into(),
             ))),
@@ -888,17 +873,29 @@ impl Worker {
     }
 
     fn on_web_signed_in(&mut self, token: StoredToken) {
-        let tokens = WebTokens::new(
-            self.http.clone(),
-            token,
-            self.dirs.shared_web_token_file(),
-            ApiSource::Shared,
-        );
+        let tokens = WebTokens::new(self.http.clone(), token, self.dirs.shared_web_token_file());
         self.api
             .set_token_provider(Some(TokenProvider::Web(tokens)));
-        self.refresh_me();
         self.signed_in = true;
+        // The app opens on the saved token and last run's profile: waiting
+        // on `/me` held sign-in for a minute while the shared app was 429ing.
+        self.profile_fresh = false;
+        if self.user.is_none() {
+            self.user = crate::cache::read_json(&self.dirs.profile_file());
+        }
+        if let Some(user) = &self.user {
+            self.premium = user.product.as_deref().map(|p| p == "premium");
+            bridge::emit(Event::User(user.clone()));
+            bridge::emit(Event::Premium(self.premium));
+        }
+        bridge::emit(Event::Auth(AuthStatus::Connected {
+            username: self.user.as_ref().map_or("Spotify", User::name).to_string(),
+        }));
         self.resume_engine();
+        // A starting session brings the profile itself.
+        if !self.engine_busy {
+            self.refresh_me();
+        }
         if !self.liked.uris.is_empty() {
             bridge::emit(Event::Liked(self.liked.uris.iter().cloned().collect()));
         }
@@ -922,7 +919,6 @@ impl Worker {
             }
             Cmd::SignOut => self.sign_out(),
             Cmd::AuthorizePlayback => self.authorize_playback(),
-            Cmd::Player(command) => self.player(command),
             Cmd::Play { request, device_id } => self.play(request, device_id).await,
             Cmd::Transfer { device_id, play } => self.transfer(device_id, play).await,
             Cmd::Open(page) => self.open(page),
@@ -955,19 +951,7 @@ impl Worker {
                 uris,
             } => self.add_to_playlist(playlist_id, name, uris),
             Cmd::CreatePlaylist { name, uris } => self.create_playlist(name, uris),
-            Cmd::RefreshPlayback => {
-                self.remote_pushed = true;
-                self.poll_remote_if_due().await;
-            }
             Cmd::RefreshDevices => self.refresh_devices(),
-            Cmd::SaveSettings(settings) => {
-                settings.save(&self.dirs);
-                self.settings = settings.clone();
-                bridge::emit(Event::Settings(settings));
-                if self.engine.is_some() {
-                    self.reconnect_engine().await;
-                }
-            }
             Cmd::Media(command) => self.media(command).await,
             Cmd::Shutdown => {}
         }
@@ -996,6 +980,9 @@ impl Worker {
                         let device_id = engine.device_id().to_string();
                         tracing::info!(device_id = %device_id, "local playback ready");
                         self.watch_cluster(engine.session());
+                        if !self.profile_fresh {
+                            self.read_profile(engine.session());
+                        }
                         self.reconnects.clear();
                         let pending = self.pending_play.take();
                         let spec = if let Some(request) = pending {
@@ -1019,11 +1006,13 @@ impl Worker {
                         self.resume = None;
                         self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(error)));
+                        self.refresh_me();
                     }
                     _ => {
                         self.resume = None;
                         self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Unavailable));
+                        self.refresh_me();
                     }
                 }
             }
@@ -1107,8 +1096,10 @@ impl Worker {
         self.signed_in = false;
         self.user = None;
         self.premium = None;
+        self.profile_fresh = false;
         self.profile_inflight = false;
         self.profile_retry_at = None;
+        let _ = std::fs::remove_file(self.dirs.profile_file());
         self.resume_verify = None;
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
@@ -2269,7 +2260,8 @@ impl Worker {
             return;
         }
         if profile_poll_due(
-            self.user.is_some(),
+            // A starting session brings the profile itself.
+            self.profile_fresh || self.engine_busy,
             self.profile_inflight,
             self.profile_retry_at,
             Instant::now(),
@@ -2286,7 +2278,7 @@ impl Worker {
     }
 
     fn refresh_me(&mut self) {
-        if self.profile_inflight {
+        if self.profile_inflight || self.profile_fresh || !self.signed_in {
             return;
         }
         self.profile_inflight = true;
@@ -2299,7 +2291,7 @@ impl Worker {
                     tracing::warn!("profile fetch delayed; keeping the saved session");
                     Internal::ProfileSkipped
                 }
-                Err(ApiError::NotSignedIn | ApiError::SignInExpired { .. }) => {
+                Err(ApiError::NotSignedIn | ApiError::SignInExpired) => {
                     bridge::emit(Event::Auth(AuthStatus::Failed(
                         "Spotify sign-in expired. Sign in again.".into(),
                     )));
@@ -2314,12 +2306,37 @@ impl Worker {
         });
     }
 
-    fn on_profile(&mut self, user: User) {
+    /// The account as the playback session knows it, so `/me` is asked
+    /// only when there is no session.
+    fn read_profile(&mut self, session: Session) {
+        self.profile_inflight = true;
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(async move {
+            let user = session_reads::me(&session).await;
+            let _ = int_tx.send(Internal::ProfileOk(user));
+        });
+    }
+
+    fn on_profile(&mut self, mut user: User) {
         self.profile_inflight = false;
         self.profile_retry_at = None;
+        if !self.signed_in {
+            return;
+        }
+        self.profile_fresh = true;
+        // A session read can miss the display name or the plan.
+        if let Some(known) = self.user.as_ref().filter(|known| known.id == user.id) {
+            if user.display_name.is_none() {
+                user.display_name = known.display_name.clone();
+            }
+            if user.product.is_none() {
+                user.product = known.product.clone();
+            }
+        }
         let premium = user.product.as_deref().map(|p| p == "premium");
         self.user = Some(user.clone());
         self.premium = premium;
+        crate::cache::write_json_later(self.dirs.profile_file(), user.clone());
         if premium == Some(false)
             && let Some(engine) = self.engine.take()
         {
@@ -2334,16 +2351,15 @@ impl Worker {
         bridge::emit(Event::Auth(AuthStatus::Connected {
             username: user.name().to_string(),
         }));
+        // Last run's profile may have said free and held the engine back.
+        if premium == Some(true) {
+            self.resume_engine();
+        }
     }
 
     fn on_profile_skipped(&mut self) {
         self.profile_inflight = false;
         self.profile_retry_at = Some(Instant::now() + Duration::from_secs(300));
-        if !matches!(self.user, Some(_)) {
-            bridge::emit(Event::Auth(AuthStatus::Connected {
-                username: "Spotify".into(),
-            }));
-        }
     }
 
     fn arm_resume(&mut self, spec: LoadSpec, delay: Duration) {
@@ -2944,13 +2960,15 @@ fn friendly_player_error(error: &ApiError) -> String {
     }
 }
 
+/// Whether to ask `/me`. `settled`: a profile arrived since sign-in, or a
+/// starting session will bring one.
 fn profile_poll_due(
-    has_user: bool,
+    settled: bool,
     inflight: bool,
     retry_at: Option<Instant>,
     now: Instant,
 ) -> bool {
-    !has_user && !inflight && retry_at.is_none_or(|at| now >= at)
+    !settled && !inflight && retry_at.is_none_or(|at| now >= at)
 }
 
 fn now_playing_from_local(state: &LocalState) -> NowPlaying {

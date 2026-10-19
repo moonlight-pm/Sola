@@ -223,20 +223,6 @@ impl Album {
             .as_deref()
             .map(|date| &date[..date.len().min(4)])
     }
-
-    pub fn kind_label(&self) -> &'static str {
-        match self
-            .album_group
-            .as_deref()
-            .or(self.album_type.as_deref())
-            .unwrap_or("album")
-        {
-            "single" => "Single",
-            "compilation" => "Compilation",
-            "appears_on" => "Appears On",
-            _ => "Album",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -532,13 +518,6 @@ impl PlayableItem {
         }
     }
 
-    pub fn id(&self) -> Option<&str> {
-        match self {
-            Self::Track(track) => track.id.as_deref(),
-            Self::Episode(episode) => Some(&episode.id),
-        }
-    }
-
     pub fn name(&self) -> &str {
         match self {
             Self::Track(track) => &track.name,
@@ -704,20 +683,6 @@ pub struct SavedAlbum {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct SavedShow {
-    #[serde(default)]
-    pub added_at: Option<String>,
-    pub show: Show,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct SavedEpisode {
-    #[serde(default)]
-    pub added_at: Option<String>,
-    pub episode: Episode,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct FollowedArtists {
     pub artists: CursorPage<Artist>,
 }
@@ -872,18 +837,6 @@ impl User {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct TopTracks {
-    #[serde(default, deserialize_with = "skip_nulls")]
-    pub tracks: Vec<Track>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct RelatedArtists {
-    #[serde(default, deserialize_with = "skip_nulls")]
-    pub artists: Vec<Artist>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct Recommendations {
     #[serde(default, deserialize_with = "skip_nulls")]
     pub tracks: Vec<Track>,
 }

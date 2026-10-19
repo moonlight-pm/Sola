@@ -60,6 +60,11 @@ impl AppDirs {
         self.state.join("liked.json")
     }
 
+    /// The last profile seen, so a restart opens signed in without `/me`.
+    pub fn profile_file(&self) -> PathBuf {
+        self.state.join("profile.json")
+    }
+
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [
             &self.config,

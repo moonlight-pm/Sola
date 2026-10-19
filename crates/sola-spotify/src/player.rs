@@ -193,10 +193,6 @@ impl LocalState {
             _ => self.position_ms,
         }
     }
-
-    pub fn is_active(&self) -> bool {
-        self.track.is_some() && self.playback != Playback::Stopped
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -218,7 +214,6 @@ pub enum PlayerCommand {
     Pause,
     Next,
     Previous,
-    AddToQueue(String),
     Seek(u32),
     Volume(u16),
     Shuffle(bool),
@@ -412,7 +407,6 @@ impl Engine {
                 | PlayerCommand::Toggle
                 | PlayerCommand::Next
                 | PlayerCommand::Previous
-                | PlayerCommand::AddToQueue(_)
         ) {
             spirc.activate()?;
         }
@@ -422,7 +416,6 @@ impl Engine {
             PlayerCommand::Pause => spirc.pause()?,
             PlayerCommand::Next => spirc.next()?,
             PlayerCommand::Previous => spirc.prev()?,
-            PlayerCommand::AddToQueue(uri) => spirc.add_to_queue(uri)?,
             PlayerCommand::Seek(position_ms) => spirc.set_position_ms(position_ms)?,
             PlayerCommand::Volume(volume) => {
                 self.mixer.set_volume(volume);

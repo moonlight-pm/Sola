@@ -143,11 +143,9 @@ struct Icons {
     repeat: iced::widget::svg::Handle,
     speaker: iced::widget::svg::Handle,
     volume: iced::widget::svg::Handle,
-    settings: iced::widget::svg::Handle,
     plus: iced::widget::svg::Handle,
     minus: iced::widget::svg::Handle,
     list_plus: iced::widget::svg::Handle,
-    check: iced::widget::svg::Handle,
 }
 
 impl Icons {
@@ -169,11 +167,9 @@ impl Icons {
             repeat: icon_handle("lucide/repeat"),
             speaker: icon_handle("lucide/speaker"),
             volume: icon_handle("lucide/volume-2"),
-            settings: icon_handle("lucide/settings"),
             plus: icon_handle("lucide/circle-plus"),
             minus: icon_handle("lucide/circle-minus"),
             list_plus: icon_handle("lucide/list-plus"),
-            check: icon_handle("lucide/circle-check"),
         }
     }
 }
@@ -1608,7 +1604,7 @@ impl App {
             AuthStatus::SignedOut
             | AuthStatus::Failed(_)
             | AuthStatus::WaitingForBrowser { .. } => self.view_login(),
-            AuthStatus::Starting | AuthStatus::Connecting => self.view_connecting(),
+            AuthStatus::Starting => self.view_connecting(),
             AuthStatus::Connected { .. } => self.view_app(),
         };
         let body = if let Some(err) = &self.error {

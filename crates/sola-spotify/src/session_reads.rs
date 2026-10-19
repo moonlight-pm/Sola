@@ -36,7 +36,7 @@ use protobuf::{EnumOrUnknown, Message as _};
 use crate::api::ApiError;
 use crate::api::models::{
     Album, ArtistRef, Episode, Image, Owner, Page, PlayableItem, Playlist, PlaylistItem, Show,
-    Track, TrackCount, UserRef,
+    Track, TrackCount, User, UserRef,
 };
 
 const IMAGE_HOST: &str = "https://i.scdn.co/image/";
@@ -459,6 +459,25 @@ async fn user_name(session: &Session, user_id: &str) -> Option<String> {
         .ok()?;
     let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     profile_name(&json)
+}
+
+/// The signed-in account. Id, country and plan come with the login; the
+/// display name is read from the profile view, and is missing if that
+/// read fails.
+pub async fn me(session: &Session) -> User {
+    let id = session.username();
+    let display_name = tokio::time::timeout(READ_TIMEOUT, user_name(session, &id))
+        .await
+        .ok()
+        .flatten();
+    User {
+        uri: Some(format!("spotify:user:{id}")),
+        display_name,
+        images: Vec::new(),
+        product: session.get_user_attribute("type"),
+        country: non_empty(&session.country()),
+        id,
+    }
 }
 
 fn profile_name(json: &serde_json::Value) -> Option<String> {

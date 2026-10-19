@@ -19,13 +19,8 @@ use crate::player::{Playback, RepeatMode};
 const PLAYING_POSITION_INTERVAL: Duration = Duration::from_millis(1000);
 const TRACK_OBJECT_PATH_PREFIX: &str = "/computer/sola/Spotify/Track/";
 
-enum Update {
-    State(MediaState),
-    Seeked(u32),
-}
-
 pub struct MediaService {
-    updates: tokio_mpsc::UnboundedSender<Update>,
+    updates: tokio_mpsc::UnboundedSender<MediaState>,
     published: Option<MediaState>,
     last_position_update: Instant,
 }
@@ -81,14 +76,10 @@ impl MediaService {
         if !structural && (!position_changed || !position_due) {
             return;
         }
-        if self.updates.send(Update::State(state.clone())).is_ok() {
+        if self.updates.send(state.clone()).is_ok() {
             self.published = Some(state);
             self.last_position_update = Instant::now();
         }
-    }
-
-    pub fn seeked(&self, position_ms: u32) {
-        let _ = self.updates.send(Update::Seeked(position_ms));
     }
 }
 
@@ -102,7 +93,7 @@ fn same_except_position(left: &MediaState, right: &MediaState) -> bool {
 }
 
 async fn run(
-    mut updates: tokio_mpsc::UnboundedReceiver<Update>,
+    mut updates: tokio_mpsc::UnboundedReceiver<MediaState>,
     commands: tokio_mpsc::UnboundedSender<MediaCommand>,
 ) -> mpris_server::zbus::Result<()> {
     let player = Player::builder("sola-spotify")
@@ -199,35 +190,28 @@ async fn run(
     let server = player.run();
     let apply = async {
         let mut published: Option<MediaState> = None;
-        while let Some(update) = updates.recv().await {
-            match update {
-                Update::Seeked(position_ms) => {
-                    let _ = player.seeked(Time::from_millis(position_ms as i64)).await;
-                }
-                Update::State(state) => {
-                    let previous = published.as_ref();
-                    if previous.is_none_or(|p| p.playback != state.playback) {
-                        let _ = player
-                            .set_playback_status(playback_status(state.playback))
-                            .await;
-                    }
-                    if previous.is_none_or(|p| p.track != state.track) {
-                        let _ = player.set_metadata(metadata(state.track.as_ref())).await;
-                        let _ = player.set_can_seek(state.track.is_some()).await;
-                    }
-                    if previous.is_none_or(|p| (p.volume - state.volume).abs() >= 0.005) {
-                        let _ = player.set_volume(state.volume).await;
-                    }
-                    if previous.is_none_or(|p| p.shuffle != state.shuffle) {
-                        let _ = player.set_shuffle(state.shuffle).await;
-                    }
-                    if previous.is_none_or(|p| p.repeat != state.repeat) {
-                        let _ = player.set_loop_status(loop_status(state.repeat)).await;
-                    }
-                    player.set_position(Time::from_millis(state.position_ms as i64));
-                    published = Some(state);
-                }
+        while let Some(state) = updates.recv().await {
+            let previous = published.as_ref();
+            if previous.is_none_or(|p| p.playback != state.playback) {
+                let _ = player
+                    .set_playback_status(playback_status(state.playback))
+                    .await;
             }
+            if previous.is_none_or(|p| p.track != state.track) {
+                let _ = player.set_metadata(metadata(state.track.as_ref())).await;
+                let _ = player.set_can_seek(state.track.is_some()).await;
+            }
+            if previous.is_none_or(|p| (p.volume - state.volume).abs() >= 0.005) {
+                let _ = player.set_volume(state.volume).await;
+            }
+            if previous.is_none_or(|p| p.shuffle != state.shuffle) {
+                let _ = player.set_shuffle(state.shuffle).await;
+            }
+            if previous.is_none_or(|p| p.repeat != state.repeat) {
+                let _ = player.set_loop_status(loop_status(state.repeat)).await;
+            }
+            player.set_position(Time::from_millis(state.position_ms as i64));
+            published = Some(state);
         }
     };
     tokio::select! {

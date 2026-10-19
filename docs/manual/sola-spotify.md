@@ -14,7 +14,7 @@ Kit-native Spotify client. Browse the library, search, control Spotify Connect d
 
 1. Open **Spotify** from the launcher (Meta+Space).
 2. **Sign in with Spotify** opens sola-browser on Spotify’s consent page (Authorization Code + PKCE). Sola never sees the password.
-3. Tokens land in `~/.local/state/sola/spotify/` (`0600`). Sign in once per machine.
+3. Tokens land in `~/.local/state/sola/spotify/` (`0600`). Sign in once per machine; later launches open straight into the app, even while Spotify is rate limiting the shared app.
 
 Playing **here** is a second, one-time approval (**Playback → Set up playback here**, or Settings). Spotify treats streaming separately from the Web API. librespot then caches a reusable credential.
 
