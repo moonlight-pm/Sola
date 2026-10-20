@@ -40,13 +40,21 @@ impl App {
             ));
         } else {
             bar = bar
-                .push(tool("lucide/reply", "Reply", on(letter.is_some(), Msg::Reply { all: false })))
+                .push(tool(
+                    "lucide/reply",
+                    "Reply",
+                    on(letter.is_some(), Msg::Reply { all: false }),
+                ))
                 .push(tool(
                     "lucide/reply-all",
                     "Reply all",
                     on(letter.is_some(), Msg::Reply { all: true }),
                 ))
-                .push(tool("lucide/forward", "Forward", on(letter.is_some(), Msg::Forward)));
+                .push(tool(
+                    "lucide/forward",
+                    "Forward",
+                    on(letter.is_some(), Msg::Forward),
+                ));
         }
 
         bar = bar.push(Space::new().width(SPACE_MD));
@@ -115,9 +123,11 @@ impl App {
     pub(super) fn view_toast<'a>(&'a self, toast: &'a Toast) -> Element<'a, Msg> {
         let mut actions = row![].spacing(SPACE_SM);
         if toast.undo && self.moves.can_undo() {
-            actions = actions.push(kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo));
+            actions =
+                actions.push(kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo));
         }
-        actions = actions.push(kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast));
+        actions = actions
+            .push(kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast));
         strip(
             row![
                 kit_text::body(toast.text.as_str()),

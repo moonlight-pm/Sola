@@ -7,7 +7,9 @@ use sola_kit::components::style::{HAIRLINE_A, RADIUS_MD, mix_white};
 /// Window canvas, list pane and toolbars.
 pub fn canvas(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(theme.extended_palette().background.base.color)),
+        background: Some(Background::Color(
+            theme.extended_palette().background.base.color,
+        )),
         ..container::Style::default()
     }
 }

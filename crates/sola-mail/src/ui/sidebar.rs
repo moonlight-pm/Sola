@@ -10,9 +10,9 @@ use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use super::format::truncate;
 use super::widgets::status_dot;
 use super::{App, Msg, style};
+use crate::protocol::FolderRef;
 use crate::protocol::boxes::is_canonical;
 use crate::protocol::types::{folder_label, unread_badge};
-use crate::protocol::FolderRef;
 use crate::worker::LinkState;
 
 const SIDEBAR_W: f32 = 200.0;
@@ -33,8 +33,9 @@ impl App {
             .filter(|f| is_canonical(&f.name))
             .map(|f| {
                 let target = FolderRef::Mailbox(f.name.clone());
-                let mut item = SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(target.clone()))
-                    .active(*selected == target);
+                let mut item =
+                    SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(target.clone()))
+                        .active(*selected == target);
                 if let Some(badge) = unread_badge(f.unread) {
                     item = item.secondary(badge);
                 }
@@ -48,8 +49,9 @@ impl App {
                 .iter()
                 .map(|f| {
                     let target = FolderRef::Smart(f.name.clone());
-                    let mut item = SidebarItem::new(f.name.clone(), Msg::SelectFolder(target.clone()))
-                        .active(*selected == target);
+                    let mut item =
+                        SidebarItem::new(f.name.clone(), Msg::SelectFolder(target.clone()))
+                            .active(*selected == target);
                     if let Some(badge) = unread_badge(f.unread) {
                         item = item.secondary(badge);
                     }

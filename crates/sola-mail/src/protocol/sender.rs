@@ -81,7 +81,9 @@ pub fn build_message(msg: &Outgoing, draft: bool) -> anyhow::Result<Message> {
         match raw.parse::<Mailboxes>() {
             Ok(list) if &*name == "To" => builder = builder.mailbox(header::To::from(list)),
             Ok(list) => builder = builder.mailbox(header::Cc::from(list)),
-            Err(_) if draft => builder = builder.raw_header(HeaderValue::new(name, raw.to_string())),
+            Err(_) if draft => {
+                builder = builder.raw_header(HeaderValue::new(name, raw.to_string()))
+            }
             Err(_) => anyhow::bail!("can't read the {} addresses “{raw}”", &*name),
         }
     }
@@ -92,7 +94,12 @@ pub fn build_message(msg: &Outgoing, draft: bool) -> anyhow::Result<Message> {
         );
     }
 
-    if let Some(parent) = msg.in_reply_to.as_deref().map(angle).filter(|s| s.len() > 2) {
+    if let Some(parent) = msg
+        .in_reply_to
+        .as_deref()
+        .map(angle)
+        .filter(|s| s.len() > 2)
+    {
         let mut refs: Vec<String> = msg.references.iter().map(|r| angle(r)).collect();
         if !refs.contains(&parent) {
             refs.push(parent.clone());
@@ -183,12 +190,19 @@ mod tests {
         let parsed = MessageParser::default().parse(&raw).expect("parse");
         assert!(collect_attachments(&parsed).is_empty());
         assert!(parsed.body_text(0).is_some());
-        assert!(parsed.message_id().is_some_and(|id| id.ends_with("@example.com")));
+        assert!(
+            parsed
+                .message_id()
+                .is_some_and(|id| id.ends_with("@example.com"))
+        );
     }
 
     #[test]
     fn quoted_comma_names_parse_as_one_recipient() {
-        let raw = roundtrip(&outgoing(r#""Doe, Jane" <jane@example.com>, bob@example.com"#), false);
+        let raw = roundtrip(
+            &outgoing(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            false,
+        );
         let parsed = MessageParser::default().parse(&raw).expect("parse");
         assert_eq!(parsed.to().map(|a| a.iter().count()), Some(2));
     }

@@ -16,7 +16,10 @@ pub struct AccountCounts {
 /// combined top `limit` is exact: no account can have a newer row it
 /// did not send.
 pub fn pages(parts: Vec<Rows>, limit: u32) -> (Vec<MessageSummary>, u32) {
-    let total = parts.iter().map(|p| p.total).fold(0u32, u32::saturating_add);
+    let total = parts
+        .iter()
+        .map(|p| p.total)
+        .fold(0u32, u32::saturating_add);
     let mut rows: Vec<MessageSummary> = parts.into_iter().flat_map(|p| p.rows).collect();
     rows.sort_by(MessageSummary::cmp_recency);
     rows.truncate(limit as usize);

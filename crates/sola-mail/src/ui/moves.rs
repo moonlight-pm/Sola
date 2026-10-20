@@ -35,7 +35,10 @@ pub enum Confirmed {
     /// The dest UID just arrived for a pending undo: send this reverse.
     Reverse(MailId, String),
     /// The undo's reverse MOVE landed; the restored row now has this id.
-    Restored { old: MailId, new: MailId },
+    Restored {
+        old: MailId,
+        new: MailId,
+    },
     /// No dest UID was reported, so the undo cannot find the copy.
     UndoImpossible,
 }
@@ -198,7 +201,10 @@ mod tests {
         let mut m = Moves::default();
         m.begin(id(10), "Trash".into(), None);
         m.undo();
-        assert_eq!(m.confirmed(&id(10), "Trash", None), Confirmed::UndoImpossible);
+        assert_eq!(
+            m.confirmed(&id(10), "Trash", None),
+            Confirmed::UndoImpossible
+        );
     }
 
     #[test]

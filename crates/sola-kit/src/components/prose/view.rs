@@ -199,10 +199,9 @@ where
                 self.link,
                 self.sel_bg,
             );
-            let para = match prev
-                .next()
-                .filter(|p| p.width == line_w && p.text == line.text && same_spans(&p.spans, &spans))
-            {
+            let para = match prev.next().filter(|p| {
+                p.width == line_w && p.text == line.text && same_spans(&p.spans, &spans)
+            }) {
                 Some(p) => p.paragraph,
                 None => layout_paragraph(renderer, line_w, line, &spans),
             };

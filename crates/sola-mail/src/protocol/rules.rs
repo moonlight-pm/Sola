@@ -10,7 +10,10 @@ pub fn move_dest(rule: &MailRule) -> Option<&str> {
     if rule.action != MOVE {
         return None;
     }
-    rule.dest.as_deref().map(str::trim).filter(|d| !d.is_empty())
+    rule.dest
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
 }
 
 pub fn is_smart(rule: &MailRule) -> bool {
@@ -37,12 +40,14 @@ pub fn rule_matches(rule: &MailRule, from: &str, subject: &str, to: &[String]) -
     if rule.conditions.is_empty() {
         return false;
     }
-    rule.conditions.iter().all(|cond| match cond.field.as_str() {
-        "from" => condition_matches(cond, from, true),
-        "subject" => condition_matches(cond, subject, false),
-        "to" => to.iter().any(|r| condition_matches(cond, r, true)),
-        _ => false,
-    })
+    rule.conditions
+        .iter()
+        .all(|cond| match cond.field.as_str() {
+            "from" => condition_matches(cond, from, true),
+            "subject" => condition_matches(cond, subject, false),
+            "to" => to.iter().any(|r| condition_matches(cond, r, true)),
+            _ => false,
+        })
 }
 
 fn condition_matches(cond: &MailRuleCondition, field_value: &str, is_addr: bool) -> bool {
@@ -194,7 +199,10 @@ mod tests {
     #[test]
     fn to_condition_matches_any_recipient() {
         let rule = rule("to", "address", "list@example.com");
-        let to = vec!["Me <me@x.com>".to_string(), "List <list@example.com>".into()];
+        let to = vec![
+            "Me <me@x.com>".to_string(),
+            "List <list@example.com>".into(),
+        ];
         assert!(rule_matches(&rule, "", "", &to));
         assert!(!rule_matches(&rule, "", "", &to[..1]));
     }

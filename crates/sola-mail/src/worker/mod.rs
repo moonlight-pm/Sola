@@ -173,9 +173,11 @@ impl Coordinator {
             Input::Up { id, try_id, result } => self.on_up(&id, try_id, result),
             Input::Retry { id, try_id } => {
                 if let Some(i) = self.slot_index(&id)
-                    && self.slots[i].try_id == try_id && matches!(self.slots[i].link, Link::Failed) {
-                        self.connect(i);
-                    }
+                    && self.slots[i].try_id == try_id
+                    && matches!(self.slots[i].link, Link::Failed)
+                {
+                    self.connect(i);
+                }
             }
             Input::Part { job, account, part } => self.on_part(job, account, part),
         }
@@ -193,7 +195,9 @@ impl Coordinator {
                 }
             }
             MailCmd::ListFolders => {
-                self.start_job(JobKind::Counts, |job, _| Some(Req::Read(ReadReq::Counts { job })));
+                self.start_job(JobKind::Counts, |job, _| {
+                    Some(Req::Read(ReadReq::Counts { job }))
+                });
             }
             MailCmd::List {
                 epoch,
@@ -285,7 +289,10 @@ impl Coordinator {
                     })
                 });
                 if !started {
-                    fail(Op::Erase, &format!("no connected account has a {folder} mailbox"));
+                    fail(
+                        Op::Erase,
+                        &format!("no connected account has a {folder} mailbox"),
+                    );
                 }
             }
             MailCmd::Send(msg) => self.send(msg),
@@ -297,7 +304,10 @@ impl Coordinator {
     // ── Accounts ──────────────────────────────────────────────────────
 
     fn reconfigure(&mut self, cfg: MailConfig) {
-        let rules_changed = self.config.as_ref().is_none_or(|old| old.rules != cfg.rules);
+        let rules_changed = self
+            .config
+            .as_ref()
+            .is_none_or(|old| old.rules != cfg.rules);
         *self.rules.write().unwrap_or_else(|e| e.into_inner()) = cfg.rules.clone();
         let desired = Account::imap_accounts(&cfg);
 
@@ -365,7 +375,10 @@ impl Coordinator {
     }
 
     fn on_up(&mut self, id: &str, try_id: u64, result: Result<Box<AccountHandle>, String>) {
-        let Some(i) = self.slot_index(id).filter(|i| self.slots[*i].try_id == try_id) else {
+        let Some(i) = self
+            .slot_index(id)
+            .filter(|i| self.slots[*i].try_id == try_id)
+        else {
             // Superseded (config changed or a newer attempt): discard.
             if let Ok(handle) = result {
                 reap(*handle);
@@ -526,7 +539,10 @@ impl Coordinator {
         if !smtp.can_send() {
             return fail(
                 Op::Send,
-                &format!("no outgoing (SMTP) server is set up for {}", msg.from.trim()),
+                &format!(
+                    "no outgoing (SMTP) server is set up for {}",
+                    msg.from.trim()
+                ),
             );
         }
         let smtp_id = smtp.id();
@@ -576,9 +592,10 @@ impl Coordinator {
             replaces: same,
         });
         if let Some(id) = other
-            && let Some(h) = self.handle_for(&id.account) {
-                h.write(WriteCmd::Delete(id));
-            }
+            && let Some(h) = self.handle_for(&id.account)
+        {
+            h.write(WriteCmd::Delete(id));
+        }
     }
 }
 

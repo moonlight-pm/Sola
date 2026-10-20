@@ -29,7 +29,10 @@ pub fn merge_refresh(
         .into_iter()
         .filter(|m| !gone.contains(&m.id))
         .collect();
-    let oldest = out.iter().max_by(|a, b| MessageSummary::cmp_recency(a, b)).cloned();
+    let oldest = out
+        .iter()
+        .max_by(|a, b| MessageSummary::cmp_recency(a, b))
+        .cloned();
     let seen: HashSet<MailId> = out.iter().map(|m| m.id.clone()).collect();
     let partial = total > window_len;
     for m in current {
@@ -175,7 +178,13 @@ mod tests {
     #[test]
     fn failed_account_rows_stay() {
         let current = vec![sum_on("a", 5, 500), sum_on("b", 9, 400)];
-        let out = merge_refresh(&current, vec![sum_on("a", 5, 500)], 1, &HashSet::new(), &["b".into()]);
+        let out = merge_refresh(
+            &current,
+            vec![sum_on("a", 5, 500)],
+            1,
+            &HashSet::new(),
+            &["b".into()],
+        );
         assert_eq!(out.len(), 2);
     }
 

@@ -23,13 +23,14 @@ fn collect_into(parsed: &Message<'_>, out: &mut Vec<MailAttachment>) {
             continue;
         }
         if part.is_message()
-            && let Some(nested) = part.message() {
-                let before = out.len();
-                collect_into(nested, out);
-                if out.len() > before {
-                    continue;
-                }
+            && let Some(nested) = part.message()
+        {
+            let before = out.len();
+            collect_into(nested, out);
+            if out.len() > before {
+                continue;
             }
+        }
         push_part(part, out);
     }
 }

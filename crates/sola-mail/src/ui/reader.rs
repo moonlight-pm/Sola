@@ -91,7 +91,9 @@ impl App {
 
     fn view_letter<'a>(&'a self, letter: &'a Letter) -> Element<'a, Msg> {
         let body = &letter.body;
-        let mut col = column![letter_header(body)].spacing(20.0).width(Length::Fill);
+        let mut col = column![letter_header(body)]
+            .spacing(20.0)
+            .width(Length::Fill);
         if !body.attachments.is_empty() {
             col = col.push(received_attachments(&body.attachments));
         }
@@ -147,12 +149,17 @@ fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
         if !list.is_empty() {
             meta = meta.push(meta_row(
                 label,
-                kit_text::caption(list.join(", ")).style(kit_text::muted).into(),
+                kit_text::caption(list.join(", "))
+                    .style(kit_text::muted)
+                    .into(),
             ));
         }
     }
     column![
-        text(subject).font(fonts::ui_medium()).size(22).width(Length::Fill),
+        text(subject)
+            .font(fonts::ui_medium())
+            .size(22)
+            .width(Length::Fill),
         meta,
     ]
     .spacing(SPACE_XL)

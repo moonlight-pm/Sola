@@ -134,7 +134,10 @@ fn map_mailboxes(client: &mut ImapClient, account: &Account) -> anyhow::Result<M
             Ok(boxes::map_mailboxes(&client.list_mailbox_names()?))
         }
         Err(e) => {
-            warn!(account = account.id().as_str(), "CREATE Archive failed: {e}");
+            warn!(
+                account = account.id().as_str(),
+                "CREATE Archive failed: {e}"
+            );
             Ok(map)
         }
     }

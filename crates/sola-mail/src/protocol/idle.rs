@@ -74,7 +74,12 @@ impl IdleHandle {
 
     fn signal(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(sock) = self.socket.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if let Some(sock) = self
+            .socket
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             let _ = sock.shutdown(Shutdown::Both);
         }
     }
@@ -139,7 +144,10 @@ fn run<F: Fn(IdleChange)>(
         .map_err(|(e, _)| anyhow::anyhow!("login failed: {e}"))?;
 
     let mut last_exists = session.select("INBOX")?.exists;
-    debug!(account = account.id().as_str(), last_exists, "IDLE watching INBOX");
+    debug!(
+        account = account.id().as_str(),
+        last_exists, "IDLE watching INBOX"
+    );
     if !first {
         on_change(IdleChange::Reconnected);
     }

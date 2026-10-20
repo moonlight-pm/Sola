@@ -370,7 +370,8 @@ impl ImapClient {
         let op = if on { "+FLAGS" } else { "-FLAGS" };
         self.with_reconnect(|s| {
             s.ensure_selected(remote)?;
-            s.session.uid_store(uid.to_string(), format!("{op} ({flag})"))?;
+            s.session
+                .uid_store(uid.to_string(), format!("{op} ({flag})"))?;
             Ok(())
         })
     }
@@ -415,7 +416,10 @@ impl ImapClient {
                 dest_uid = s.find_copied_uid(dest, &ident)?;
             }
             if dest_uid.is_none() {
-                warn!(uid, dest, "move succeeded but destination UID was not identified");
+                warn!(
+                    uid,
+                    dest, "move succeeded but destination UID was not identified"
+                );
             }
             Ok(dest_uid)
         })
@@ -462,14 +466,20 @@ impl ImapClient {
         });
         // Fresh session so the next list/select starts at tag a1.
         if result.is_ok()
-            && let Err(e) = self.reconnect() {
-                warn!(remote, "IMAP reconnect after empty failed: {e}");
-            }
+            && let Err(e) = self.reconnect()
+        {
+            warn!(remote, "IMAP reconnect after empty failed: {e}");
+        }
         result
     }
 
     /// Append a raw message with `flags`.
-    pub fn append(&mut self, remote: &str, message: &[u8], flags: &[Flag<'_>]) -> anyhow::Result<()> {
+    pub fn append(
+        &mut self,
+        remote: &str,
+        message: &[u8],
+        flags: &[Flag<'_>],
+    ) -> anyhow::Result<()> {
         self.with_reconnect(|s| Ok(s.session.append_with_flags(remote, message, flags)?))
     }
 
@@ -575,7 +585,10 @@ impl ImapClient {
     ) -> anyhow::Result<T> {
         match run_caught(|| op(self)) {
             Err(e) if is_connection_error(&e) => {
-                warn!(host = self.account.imap_host.as_str(), "IMAP error, reconnecting once: {e}");
+                warn!(
+                    host = self.account.imap_host.as_str(),
+                    "IMAP error, reconnecting once: {e}"
+                );
                 self.reconnect()?;
                 run_caught(|| op(self))
             }

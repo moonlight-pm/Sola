@@ -29,7 +29,10 @@ pub fn parse_summary(fetch: &Fetch, account: &str, folder: &str) -> Option<Messa
         .and_then(|h| MessageParser::default().parse_headers(h));
     let (from, to, subject, header_date, forwarded_for) = match &headers {
         Some(m) => (
-            m.from().and_then(Address::first).map(format_addr).unwrap_or_default(),
+            m.from()
+                .and_then(Address::first)
+                .map(format_addr)
+                .unwrap_or_default(),
             addr_list(m.to()),
             m.subject().unwrap_or("").trim().to_string(),
             m.date().filter(|d| d.is_valid()).map(|d| d.to_timestamp()),
@@ -109,7 +112,12 @@ pub fn format_addr(a: &Addr<'_>) -> String {
 
 fn addr_list(field: Option<&Address<'_>>) -> Vec<String> {
     field
-        .map(|a| a.iter().map(format_addr).filter(|s| !s.is_empty()).collect())
+        .map(|a| {
+            a.iter()
+                .map(format_addr)
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -159,8 +167,12 @@ fn leaf_is_file(common: &imap_proto::types::BodyContentCommon<'_>, is_text: bool
             })
         })
     };
-    if named(common.disposition.as_ref().and_then(|d| d.params.as_deref()))
-        || named(common.ty.params.as_deref())
+    if named(
+        common
+            .disposition
+            .as_ref()
+            .and_then(|d| d.params.as_deref()),
+    ) || named(common.ty.params.as_deref())
     {
         return true;
     }

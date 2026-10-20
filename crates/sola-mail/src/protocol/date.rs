@@ -19,7 +19,10 @@ pub fn list_stamp(ts: i64, now: DateTime<Local>) -> String {
     let Some(dt) = local(ts) else {
         return String::new();
     };
-    let days = now.date_naive().signed_duration_since(dt.date_naive()).num_days();
+    let days = now
+        .date_naive()
+        .signed_duration_since(dt.date_naive())
+        .num_days();
     match days {
         0 => format!("{:02}:{:02}", dt.hour(), dt.minute()),
         1 => "Yesterday".into(),
@@ -104,18 +107,33 @@ mod tests {
     use super::*;
 
     fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(y, mo, d, h, mi, 0).single().expect("valid")
+        Local
+            .with_ymd_and_hms(y, mo, d, h, mi, 0)
+            .single()
+            .expect("valid")
     }
 
     #[test]
     fn list_stamp_steps() {
         let now = at(2026, 9, 10, 18, 0);
         assert_eq!(list_stamp(at(2026, 9, 10, 9, 5).timestamp(), now), "09:05");
-        assert_eq!(list_stamp(at(2026, 9, 9, 23, 0).timestamp(), now), "Yesterday");
+        assert_eq!(
+            list_stamp(at(2026, 9, 9, 23, 0).timestamp(), now),
+            "Yesterday"
+        );
         let wed = at(2026, 9, 7, 12, 0);
-        assert_eq!(list_stamp(wed.timestamp(), now), weekday_abbr(wed.weekday()));
-        assert_eq!(list_stamp(at(2026, 8, 25, 10, 0).timestamp(), now), "25 Aug");
-        assert_eq!(list_stamp(at(2024, 3, 4, 10, 0).timestamp(), now), "4 Mar 2024");
+        assert_eq!(
+            list_stamp(wed.timestamp(), now),
+            weekday_abbr(wed.weekday())
+        );
+        assert_eq!(
+            list_stamp(at(2026, 8, 25, 10, 0).timestamp(), now),
+            "25 Aug"
+        );
+        assert_eq!(
+            list_stamp(at(2024, 3, 4, 10, 0).timestamp(), now),
+            "4 Mar 2024"
+        );
         assert_eq!(list_stamp(0, now), "");
     }
 

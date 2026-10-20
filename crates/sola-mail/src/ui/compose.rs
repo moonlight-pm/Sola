@@ -157,7 +157,9 @@ impl Compose {
 
         let mut form = column![headers].spacing(SPACE_SM);
         if !d.attachments.is_empty() {
-            form = form.push(h_hairline()).push(attachment_list(&d.attachments));
+            form = form
+                .push(h_hairline())
+                .push(attachment_list(&d.attachments));
         }
         let form = form
             .push(h_hairline())
@@ -190,11 +192,12 @@ impl Compose {
             Some(Busy::Saving) => "Saving…",
             None => "Send",
         };
-        let send = kit_btn::labeled(label, kit_btn::primary)
-            .on_press_maybe(idle.then_some(Msg::Send));
+        let send =
+            kit_btn::labeled(label, kit_btn::primary).on_press_maybe(idle.then_some(Msg::Send));
         row![
             send,
-            kit_btn::labeled_sm("Attach", kit_btn::ghost).on_press_maybe(idle.then_some(Msg::Attach)),
+            kit_btn::labeled_sm("Attach", kit_btn::ghost)
+                .on_press_maybe(idle.then_some(Msg::Attach)),
             kit_btn::labeled_sm("Save Draft", kit_btn::ghost)
                 .on_press_maybe(idle.then_some(Msg::SaveDraft)),
             kit_btn::labeled_sm("Cancel", kit_btn::ghost)
@@ -344,7 +347,13 @@ fn quote(body: &MessageBody) -> String {
     let quoted = body
         .display_text()
         .lines()
-        .map(|l| if l.is_empty() { ">".to_string() } else { format!("> {l}") })
+        .map(|l| {
+            if l.is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {l}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!("\n\n{intro}\n{quoted}")
@@ -387,7 +396,11 @@ fn header_row<'a>(
     labeled(label, header_input(placeholder, value, on_input))
 }
 
-fn header_input<'a>(placeholder: &str, value: &str, on_input: fn(String) -> Msg) -> Element<'a, Msg> {
+fn header_input<'a>(
+    placeholder: &str,
+    value: &str,
+    on_input: fn(String) -> Msg,
+) -> Element<'a, Msg> {
     text_input(placeholder, value)
         .font(fonts::ui())
         .size(HEADER_SIZE)

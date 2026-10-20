@@ -72,8 +72,16 @@ fn main() -> iced::Result {
                 item("reply_all", "Reply All", Some(KeyCode::R.meta_shift())),
                 item("forward", "Forward", Some(KeyCode::F.meta_shift())),
                 MenuItem::Divider,
-                item("toggle_seen", "Mark as Read / Unread", Some(KeyCode::U.meta_shift())),
-                item("toggle_flag", "Flag / Unflag", Some(KeyCode::L.meta_shift())),
+                item(
+                    "toggle_seen",
+                    "Mark as Read / Unread",
+                    Some(KeyCode::U.meta_shift()),
+                ),
+                item(
+                    "toggle_flag",
+                    "Flag / Unflag",
+                    Some(KeyCode::L.meta_shift()),
+                ),
                 MenuItem::Divider,
                 item("archive", "Archive", Some(KeyCode::A.chord())),
                 item("inbox", "Move to Inbox", Some(KeyCode::I.chord())),

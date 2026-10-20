@@ -31,7 +31,9 @@ use sola_kit::theme::default_theme;
 use crate::bridge::{self, mail_send};
 use crate::protocol::from::pick_from_for_reply;
 use crate::protocol::types::folder_label;
-use crate::protocol::{Account, Folder, FolderRef, MailAttachment, MailId, MessageSummary, attachments};
+use crate::protocol::{
+    Account, Folder, FolderRef, MailAttachment, MailId, MessageSummary, attachments,
+};
 use crate::snapshot::{self, Snapshot};
 use crate::worker::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
 use chrome::Toast;
@@ -192,9 +194,14 @@ impl App {
         let (list, folders) = match snap {
             Some(s) => (
                 ListState::new(s.folder, s.rows, s.total),
-                Some(s.folders).filter(|f| !f.is_empty()).unwrap_or_else(empty_mailboxes),
+                Some(s.folders)
+                    .filter(|f| !f.is_empty())
+                    .unwrap_or_else(empty_mailboxes),
             ),
-            None => (ListState::new(FolderRef::inbox(), Vec::new(), 0), empty_mailboxes()),
+            None => (
+                ListState::new(FolderRef::inbox(), Vec::new(), 0),
+                empty_mailboxes(),
+            ),
         };
         let app = Self {
             theme: default_theme(),
@@ -377,16 +384,17 @@ impl App {
             Msg::Attach => self.begin_attach(),
             Msg::RemoveAttach(i) => {
                 if let Some(c) = self.compose.as_mut()
-                    && i < c.draft.attachments.len() {
-                        c.draft.attachments.remove(i);
-                        c.touch();
-                    }
+                    && i < c.draft.attachments.len()
+                {
+                    c.draft.attachments.remove(i);
+                    c.touch();
+                }
             }
             Msg::ClipboardPasted(Some(t)) => {
                 if let Some(c) = self.compose.as_mut() {
-                    c.apply(Edit::Body(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        Arc::new(t),
-                    ))));
+                    c.apply(Edit::Body(text_editor::Action::Edit(
+                        text_editor::Edit::Paste(Arc::new(t)),
+                    )));
                 }
             }
             Msg::ClipboardPasted(None) => {}
@@ -526,9 +534,10 @@ impl App {
                 self.folders = folders;
                 self.smart = smart;
                 if let FolderRef::Smart(name) = &self.list.folder
-                    && !self.smart.iter().any(|f| f.name == *name) {
-                        self.open_folder(FolderRef::inbox());
-                    }
+                    && !self.smart.iter().any(|f| f.name == *name)
+                {
+                    self.open_folder(FolderRef::inbox());
+                }
                 self.publish_inbox_unread();
             }
             MailEvent::Messages {
@@ -569,14 +578,17 @@ impl App {
                     }));
                 }
             }
-            MailEvent::Moved { id, dest, dest_uid } => match self.moves.confirmed(&id, &dest, dest_uid) {
-                Confirmed::Nothing => {}
-                Confirmed::Reverse(id, dest) => mail_send(MailCmd::Move { id, dest }),
-                Confirmed::Restored { old, new } => self.rewrite_id(&old, new),
-                Confirmed::UndoImpossible => {
-                    return self.show_toast("Couldn’t undo: the moved copy wasn’t found", false);
+            MailEvent::Moved { id, dest, dest_uid } => {
+                match self.moves.confirmed(&id, &dest, dest_uid) {
+                    Confirmed::Nothing => {}
+                    Confirmed::Reverse(id, dest) => mail_send(MailCmd::Move { id, dest }),
+                    Confirmed::Restored { old, new } => self.rewrite_id(&old, new),
+                    Confirmed::UndoImpossible => {
+                        return self
+                            .show_toast("Couldn’t undo: the moved copy wasn’t found", false);
+                    }
                 }
-            },
+            }
             MailEvent::MoveFailed { id, message } => {
                 if let Some((summary, dest)) = self.moves.failed(&id) {
                     self.restore_row(summary, &dest);
@@ -599,7 +611,12 @@ impl App {
             MailEvent::Sent => {
                 self.compose = None;
                 self.picker = None;
-                mail_send(MailCmd::ListFolders);
+                // A reopened draft was just deleted; Sent has a new row.
+                if self.list.folder.is("Drafts") || self.list.folder.is("Sent") {
+                    self.refresh(true);
+                } else {
+                    mail_send(MailCmd::ListFolders);
+                }
                 return self.show_toast("Message sent", false);
             }
             MailEvent::DraftSaved => {
@@ -655,7 +672,10 @@ impl App {
             .filter(|id| id.folder.eq_ignore_ascii_case(&mailbox))
             .count() as u32;
         self.list.total = total.saturating_sub(pending);
-        if self.selected.as_ref().is_some_and(|id| self.list.index_of(id).is_none())
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|id| self.list.index_of(id).is_none())
             && self.compose.is_none()
             && page != Page::More
         {
@@ -806,7 +826,9 @@ impl App {
         self.list.rows.clear();
         self.list.scroll_y = 0.0;
         let also = match &self.list.folder {
-            FolderRef::Mailbox(name) if matches!(name.as_str(), "Junk" | "Trash") => Some(name.clone()),
+            FolderRef::Mailbox(name) if matches!(name.as_str(), "Junk" | "Trash") => {
+                Some(name.clone())
+            }
             _ => None,
         };
         mail_send(MailCmd::Search {
@@ -845,7 +867,11 @@ impl App {
             self.reader = Reader::Loading;
         }
         mail_send(MailCmd::FetchBody(id.clone()));
-        let unread = self.list.row_mut(&id).filter(|m| !m.seen).map(|m| m.seen = true);
+        let unread = self
+            .list
+            .row_mut(&id)
+            .filter(|m| !m.seen)
+            .map(|m| m.seen = true);
         if unread.is_some() {
             mail_send(MailCmd::SetFlag {
                 id: id.clone(),
@@ -940,9 +966,11 @@ impl App {
         let generation = self.select_gen;
         Task::batch([
             toast,
-            Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| Msg::SettleSelect {
-                id: next,
-                generation,
+            Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
+                Msg::SettleSelect {
+                    id: next,
+                    generation,
+                }
             }),
         ])
     }
@@ -964,7 +992,8 @@ impl App {
     fn restore_row(&mut self, summary: MessageSummary, moved_to: &str) {
         let from = summary.id.folder.clone();
         self.adjust_counts(&summary, &from, moved_to, false);
-        let shown = self.list.search.is_some() || self.list.folder.mailbox().eq_ignore_ascii_case(&from);
+        let shown =
+            self.list.search.is_some() || self.list.folder.mailbox().eq_ignore_ascii_case(&from);
         if shown {
             self.list.total = self.list.total.saturating_add(1);
             list_sync::insert(&mut self.list.rows, summary);
@@ -980,9 +1009,10 @@ impl App {
             self.selected = Some(new.clone());
         }
         if let Some(l) = self.reader.letter_mut()
-            && l.body.id == *old {
-                l.body.id = new;
-            }
+            && l.body.id == *old
+        {
+            l.body.id = new;
+        }
         self.list.rows.sort_by(MessageSummary::cmp_recency);
     }
 
@@ -1024,11 +1054,16 @@ impl App {
     /// Open the compose pane with `make(self)`. Reply / forward / edit
     /// need an open letter; an edited draft is never replaced silently.
     fn start_compose(&mut self, make: impl FnOnce(&Self) -> compose::Draft) {
-        if let Some(c) = self.compose.as_mut()
-            && c.dirty() {
+        if let Some(c) = self.compose.as_mut() {
+            // Never swap out a draft that is mid-send or has edits.
+            if c.busy.is_some() {
+                return;
+            }
+            if c.dirty() {
                 c.confirm_discard = true;
                 return;
             }
+        }
         let draft = make(self);
         self.compose = Some(Box::new(Compose::new(draft)));
     }
@@ -1181,9 +1216,12 @@ impl App {
                 match kind {
                     PickerKind::Attach => self.attach_path(path),
                     PickerKind::Save { index } => {
-                        let result = self
-                            .attachment(index)
-                            .map(|att| (att.filename.clone(), std::fs::write(&path, att.bytes.as_ref())));
+                        let result = self.attachment(index).map(|att| {
+                            (
+                                att.filename.clone(),
+                                std::fs::write(&path, att.bytes.as_ref()),
+                            )
+                        });
                         match result {
                             Some((name, Ok(()))) => self.show_toast(format!("Saved {name}"), false),
                             Some((_, Err(e))) => self.show_toast(format!("Can’t save: {e}"), false),
@@ -1233,7 +1271,9 @@ impl App {
         let Some(sel) = c.draft.body.selection().filter(|s| !s.is_empty()) else {
             return Task::none();
         };
-        c.apply(Edit::Body(text_editor::Action::Edit(text_editor::Edit::Delete)));
+        c.apply(Edit::Body(text_editor::Action::Edit(
+            text_editor::Edit::Delete,
+        )));
         iced::clipboard::write(sel)
     }
 
@@ -1280,7 +1320,10 @@ impl App {
     }
 
     fn connected_accounts(&self) -> usize {
-        self.links.iter().filter(|l| l.state == LinkState::Ready).count()
+        self.links
+            .iter()
+            .filter(|l| l.state == LinkState::Ready)
+            .count()
     }
 
     fn account_addresses(&self) -> Vec<String> {
@@ -1392,14 +1435,19 @@ impl App {
             body,
         );
         match &self.picker {
-            Some((_, picker)) => iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into(),
+            Some((_, picker)) => {
+                iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into()
+            }
             None => framed,
         }
     }
 }
 
 fn bump(folders: &mut [Folder], name: &str, d_total: i32, d_unread: i32) {
-    let Some(f) = folders.iter_mut().find(|f| f.name.eq_ignore_ascii_case(name)) else {
+    let Some(f) = folders
+        .iter_mut()
+        .find(|f| f.name.eq_ignore_ascii_case(name))
+    else {
         return;
     };
     f.total = f.total.saturating_add_signed(d_total);

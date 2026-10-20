@@ -4,7 +4,9 @@ use chrono::{DateTime, Local};
 use std::time::Duration;
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, button, column, container, keyed_column, row, scrollable, text, tooltip};
+use iced::widget::{
+    Space, button, column, container, keyed_column, row, scrollable, text, tooltip,
+};
 use iced::{Element, Length, Padding};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::popover;
@@ -126,8 +128,8 @@ impl App {
             check_mark(list.checking()),
             kit_text::caption(count).style(kit_text::muted)
         ]
-            .spacing(SPACE_MD)
-            .align_y(iced::Alignment::Center);
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center);
         if !self.search_input.is_empty() || list.search.is_some() {
             header = header.push(tool("lucide/x", "Clear search", Some(Msg::SearchClear)));
         }
@@ -152,7 +154,10 @@ impl App {
 
         let body: Element<'_, Msg> = if list.rows.is_empty() && list.load != Load::Replacing {
             let caption = match &list.search {
-                Some(s) => format!("Nothing matches “{}” in Inbox, Sent, Archive or Drafts", s.query),
+                Some(s) => format!(
+                    "Nothing matches “{}” in Inbox, Sent, Archive or Drafts",
+                    s.query
+                ),
                 None if !self.any_ready() => "Connecting…".into(),
                 None => "No messages".into(),
             };
@@ -170,7 +175,12 @@ impl App {
             let rows: Vec<(u64, Element<'_, Msg>)> = list
                 .rows
                 .iter()
-                .map(|m| (row_key(m), message_row(m, self.selected.as_ref() == Some(&m.id), &ctx)))
+                .map(|m| {
+                    (
+                        row_key(m),
+                        message_row(m, self.selected.as_ref() == Some(&m.id), &ctx),
+                    )
+                })
                 .collect();
             keyed_column(rows).spacing(0).width(Length::Fill).into()
         };
@@ -208,7 +218,11 @@ fn message_row<'a>(m: &MessageSummary, selected: bool, ctx: &RowCtx<'_>) -> Elem
     };
     // Mail.app: unread is weight, not a leading dot. Both lines clip to
     // one row so the column stays scannable.
-    let weight = if m.seen { fonts::ui() } else { fonts::ui_medium() };
+    let weight = if m.seen {
+        fonts::ui()
+    } else {
+        fonts::ui_medium()
+    };
     let who = text(who)
         .font(weight)
         .size(13)

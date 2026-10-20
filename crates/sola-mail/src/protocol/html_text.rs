@@ -76,10 +76,11 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
                 _ => None,
             });
             if let Some(last) = runs.last_mut()
-                && last.url == url {
-                    last.text.push_str(&ts.s);
-                    continue;
-                }
+                && last.url == url
+            {
+                last.text.push_str(&ts.s);
+                continue;
+            }
             runs.push(ProseRun {
                 text: ts.s.clone(),
                 url,

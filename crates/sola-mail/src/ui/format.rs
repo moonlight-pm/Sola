@@ -70,7 +70,11 @@ pub fn account_tag(addr: &str, peers: &[String]) -> String {
             && p.split_once('@')
                 .is_some_and(|(_, d)| d.split('.').next() == Some(label))
     });
-    if shared { local.to_string() } else { label.to_string() }
+    if shared {
+        local.to_string()
+    } else {
+        label.to_string()
+    }
 }
 
 pub fn truncate(s: &str, max: usize) -> String {

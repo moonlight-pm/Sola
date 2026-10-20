@@ -84,9 +84,10 @@ pub fn spawn(
                     Ok(cmd) => w.handle(cmd),
                     Err(RecvTimeoutError::Timeout) => {
                         if let Some(c) = w.client.as_mut()
-                            && let Err(e) = c.noop() {
-                                warn!(account = w.id.as_str(), "write keepalive NOOP: {e}");
-                            }
+                            && let Err(e) = c.noop()
+                        {
+                            warn!(account = w.id.as_str(), "write keepalive NOOP: {e}");
+                        }
                     }
                 }
             }
@@ -152,9 +153,10 @@ impl Writer {
                     .remote(&folder)
                     .and_then(|remote| self.client()?.append(&remote, &raw, flags));
                 if result.is_ok()
-                    && let Some(old) = replaces {
-                        self.handle(WriteCmd::Delete(old));
-                    }
+                    && let Some(old) = replaces
+                {
+                    self.handle(WriteCmd::Delete(old));
+                }
                 match (result, draft) {
                     (Ok(()), true) => bridge::emit(MailEvent::DraftSaved),
                     (Ok(()), false) => {}
@@ -163,7 +165,10 @@ impl Writer {
                         message: e.to_string(),
                     }),
                     (Err(e), false) => {
-                        warn!(account = self.id.as_str(), folder, "saving a copy failed: {e}")
+                        warn!(
+                            account = self.id.as_str(),
+                            folder, "saving a copy failed: {e}"
+                        )
                     }
                 }
             }
@@ -213,7 +218,10 @@ impl Writer {
         let rows = match client.page(&inbox, "INBOX", None, page, &HashSet::new()) {
             Ok(p) => p.rows,
             Err(e) => {
-                warn!(account = id.as_str(), "move rules: listing INBOX failed: {e}");
+                warn!(
+                    account = id.as_str(),
+                    "move rules: listing INBOX failed: {e}"
+                );
                 return 0;
             }
         };

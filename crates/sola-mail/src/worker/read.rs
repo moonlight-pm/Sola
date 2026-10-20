@@ -176,7 +176,12 @@ impl Reader {
         }
     }
 
-    fn list(&mut self, folder: &FolderRef, before: Option<u32>, limit: u32) -> anyhow::Result<Rows> {
+    fn list(
+        &mut self,
+        folder: &FolderRef,
+        before: Option<u32>,
+        limit: u32,
+    ) -> anyhow::Result<Rows> {
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner()).clone();
         match folder {
             FolderRef::Smart(name) => match rules.iter().find(|r| is_smart(r) && r.name == *name) {
@@ -276,6 +281,9 @@ mod tests {
 
     #[test]
     fn stop_wins() {
-        assert_eq!(kinds(&prioritize(vec![body(1), ReadReq::Stop])), vec!["stop"]);
+        assert_eq!(
+            kinds(&prioritize(vec![body(1), ReadReq::Stop])),
+            vec!["stop"]
+        );
     }
 }
