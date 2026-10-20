@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent desk / 02 Waiting</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="agent-desk.css">
+<script src="agent-desk.js"></script>
+<style>
+  .anatomy { display: grid; grid-template-columns: 340px 340px 1fr; gap: 48px; align-items: start; }
+  .anatomy .label { margin-bottom: 12px; }
+  .parts { display: flex; flex-direction: column; gap: 14px; counter-reset: p; }
+  .part { display: grid; grid-template-columns: 110px 1fr; gap: 14px; font: 400 12.5px/18px var(--font-ui); }
+  .part dt { color: var(--text-primary); font-weight: 500; }
+  .part dd { margin: 0; color: var(--text-secondary); }
+  .part code { font: 400 11.5px/18px var(--font-mono); color: var(--text-ghost); }
+
+  .desk { position: relative; height: 640px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); background: var(--bg-primary); }
+  .desk .mb { position: absolute; left: 0; right: 0; top: 0; }
+  .desk .zones { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; }
+  .desk .zones > div { border-right: 1px solid var(--hairline); position: relative; }
+  .pane { padding: 18px 22px; font: 400 13px/22px var(--font-mono); color: var(--text-secondary); white-space: pre; }
+  .pane .hi { color: var(--text-primary); }
+  .pane .cy { color: var(--accent); }
+  .mail { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+  .mail .list { border-right: 1px solid var(--hairline); background: #0f1218; }
+  .mail .row { padding: 10px 14px; border-bottom: 1px solid var(--hairline); font: 400 12px/17px var(--font-ui); color: var(--text-tertiary); }
+  .mail .row b { display: block; color: var(--text-primary); font-weight: 500; font-size: 13px; }
+  .stack { position: absolute; right: 12px; top: 40px; display: flex; flex-direction: column; gap: 8px; }
+  .more { align-self: flex-end; font: 400 11px/14px var(--font-ui); color: var(--text-tertiary); padding-right: 4px; }
+
+  .seq { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .shot { border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); background: var(--bg-primary); height: 330px; position: relative; }
+  .shot .mb { position: absolute; left: 0; right: 0; top: 0; padding-right: 0; }
+  .shot .card { position: absolute; right: 12px; top: 40px; }
+  .shot__cap { display: flex; gap: 10px; align-items: baseline; margin-top: 10px; }
+  .shot__t { font: 400 11px/14px var(--font-mono); color: var(--accent); width: 56px; flex: none; }
+  .shot__x { font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .leaving { opacity: .35; transform: translateY(-10px); }
+
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; border-top: 1px solid var(--hairline); padding-top: 22px; }
+  .rules h4 { font: 500 13px/18px var(--font-ui); margin: 0 0 6px; }
+  .rules p { font: 400 12.5px/19px var(--font-ui); color: var(--text-secondary); margin: 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="head__row"><span class="head__num">02</span><span class="head__title">Waiting, answered in place</span></div>
+    <div class="head__lead">A waiting agent is the one thing on this desk allowed to interrupt. Its card drops from the bar and stays until it is answered. It carries the question, the lines just above it, and the agent's own options as keys, so most answers take one key and no trip to the pane.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">One card, 1:1</div>
+    <div class="anatomy">
+      <div>
+        <div class="eyebrow label">Resting</div>
+        <div class="card">
+          <div class="card__top" data-g="diamond"><span class="card__title">kit-foundation is waiting</span><span class="card__time">2:14</span></div>
+          <div class="card__src">SOLA · Claude · wants to run a command</div>
+<div class="well">Update(crates/sola-kit/src/fonts.rs)
+<span class="del">-  display: medium(ui_fam),</span>
+<span class="add">+  display: medium(display_fam),</span></div>
+          <div class="card__ask">Run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>?</div>
+          <div class="keys">
+            <span class="kv kv--primary"><span class="key">1</span>Yes</span>
+            <span class="kv"><span class="key">2</span>No, and tell Claude</span>
+            <span class="kv"><span class="key">↵</span>Open pane</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="eyebrow label">Armed · Super+A</div>
+        <div class="card card--armed">
+          <div class="card__top" data-g="diamond"><span class="card__title">kit-foundation is waiting</span><span class="card__time">2:16</span></div>
+          <div class="card__src">SOLA · Claude · wants to run a command</div>
+<div class="well">Update(crates/sola-kit/src/fonts.rs)
+<span class="del">-  display: medium(ui_fam),</span>
+<span class="add">+  display: medium(display_fam),</span></div>
+          <div class="card__ask">Run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>?</div>
+          <div class="keys">
+            <span class="kv kv--primary"><span class="key key--lit">1</span>Yes</span>
+            <span class="kv"><span class="key key--lit">2</span>No, and tell Claude</span>
+            <span class="kv"><span class="key key--lit">↵</span>Open pane</span>
+          </div>
+        </div>
+      </div>
+      <dl class="parts">
+        <div class="part"><dt>Title</dt><dd>The rail label and "is waiting". The timer counts from the moment the hook said so.</dd></div>
+        <div class="part"><dt>Source</dt><dd>Project, agent, and what kind of ask: run a command, edit a file, answer a question.</dd></div>
+        <div class="part"><dt>Context</dt><dd>The three lines above the prompt, read from the pane. Mono, in the field well, clipped, never wrapped.</dd></div>
+        <div class="part"><dt>Ask</dt><dd>One line from the hook payload: the tool and its input. A command is mono in cyan, because it is what will run.</dd></div>
+        <div class="part"><dt>Keys</dt><dd>The agent's own options, numbered as the pane numbers them. ↵ always opens the pane. Armed, the keys light cyan: they are live.</dd></div>
+        <div class="part"><dt>Size</dt><dd>340 wide like every desk card, 12px from the right edge. Height follows the content; three lines of context at most.</dd></div>
+      </dl>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Three waiting, on the desk at 1:1</div>
+    <div class="desk">
+      <div class="mb" data-app="Mail" data-menus="File Edit Message View Window" data-meters="short" data-seed="21">
+        <div class="strip">
+          <div class="chip chip--waiting chip--armed" data-g="diamond">kit-foundation <span class="chip__t">2:20</span></div>
+          <div class="chip chip--waiting" data-g="diamond">vault-panel <span class="chip__t">0:51</span></div>
+          <div class="chip chip--waiting" data-g="diamond">menubar-pass <span class="chip__t">0:09</span></div>
+          <div class="chip" data-g="ring">chat</div>
+        </div>
+      </div>
+      <div class="zones">
+        <div>
+<div class="pane"><span class="cy">~/Workspace/Wicket</span>
+<span class="hi">❯</span> git log --oneline -3
+<span class="hi">6b47539</span> resolve mail-only domains upstream
+a19c0de split resolver config by zone
+77e2f10 hub: make upgrade keeps the old unit
+<span class="hi">❯</span> <span style="background: var(--term-cursor); color: #000"> </span></div>
+        </div>
+        <div>
+          <div class="mail">
+            <div class="list">
+              <div class="row"><b>Hetzner Online</b>Invoice 0412 for October</div>
+              <div class="row"><b>Cal.com</b>Design review moved to Thursday</div>
+              <div class="row"><b>GitHub</b>[sola] CI passed on master</div>
+              <div class="row"><b>Fastmail</b>Your export is ready</div>
+            </div>
+            <div></div>
+          </div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card card--armed">
+          <div class="card__top" data-g="diamond"><span class="card__title">kit-foundation is waiting</span><span class="card__time">2:20</span></div>
+          <div class="card__src">SOLA · Claude · wants to run a command</div>
+<div class="well"><span class="del">-  display: medium(ui_fam),</span>
+<span class="add">+  display: medium(display_fam),</span></div>
+          <div class="card__ask">Run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>?</div>
+          <div class="keys">
+            <span class="kv kv--primary"><span class="key key--lit">1</span>Yes</span>
+            <span class="kv"><span class="key key--lit">2</span>No, and tell Claude</span>
+            <span class="kv"><span class="key key--lit">↵</span>Open</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card__top" data-g="diamond"><span class="card__title">vault-panel is waiting</span><span class="card__time">0:51</span></div>
+          <div class="card__src">WICKET · Codex · wants to edit a file</div>
+<div class="well">src/vault/panel.rs
+<span class="add">+  let lock_after = cfg.vault.lock_after;</span>
+<span class="add">+  timer.arm(lock_after);</span></div>
+          <div class="card__ask">Apply this edit?</div>
+          <div class="keys">
+            <span class="kv kv--primary"><span class="key">1</span>Yes</span>
+            <span class="kv"><span class="key">2</span>Yes, this session</span>
+            <span class="kv"><span class="key">3</span>No</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card__top" data-g="diamond"><span class="card__title">menubar-pass is waiting</span><span class="card__time">0:09</span></div>
+          <div class="card__src">SOLA · Grok · asks a question</div>
+          <div class="card__ask">Keep the switcher pill neutral, or tint it cyan? The count marks already carry the cyan.</div>
+          <div class="keys">
+            <span class="kv kv--primary"><span class="key">1</span>Neutral</span>
+            <span class="kv"><span class="key">2</span>Cyan</span>
+            <span class="kv"><span class="key">↵</span>Open pane</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">Longest wait on top. Super+A arms the top card; Tab moves the arm down the stack. A fourth agent that waits stays in the strip until a card leaves: the desk never holds more than three.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Answered: one key, then a whisper</div>
+    <div class="seq">
+      <div>
+        <div class="shot">
+          <div class="mb" data-app="Mail" data-menus="none" data-meters="none" data-extras="none" data-clock="14:34">
+            <div class="strip"><div class="chip chip--waiting chip--armed" data-g="diamond">kit-foundation <span class="chip__t">2:22</span></div></div>
+          </div>
+          <div class="card card--armed">
+            <div class="card__top" data-g="diamond"><span class="card__title">kit-foundation is waiting</span><span class="card__time">2:22</span></div>
+            <div class="card__src">SOLA · Claude · wants to run a command</div>
+            <div class="card__ask">Run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>?</div>
+            <div class="keys">
+              <span class="kv kv--primary"><span class="key key--down">1</span>Yes</span>
+              <span class="kv"><span class="key key--lit">2</span>No, and tell Claude</span>
+            </div>
+          </div>
+        </div>
+        <div class="shot__cap"><span class="shot__t">0 ms</span><span class="shot__x">1 goes down. The shell checks the pane still waits on this question, then sends the key.</span></div>
+      </div>
+      <div>
+        <div class="shot">
+          <div class="mb" data-app="Mail" data-menus="none" data-meters="none" data-extras="none" data-clock="14:34">
+            <div class="strip"><div class="chip" data-g="ring">kit-foundation</div></div>
+          </div>
+          <div class="card leaving">
+            <div class="card__top" data-g="diamond"><span class="card__title">kit-foundation is waiting</span><span class="card__time">2:22</span></div>
+            <div class="card__src">SOLA · Claude · wants to run a command</div>
+            <div class="card__ask">Run <span class="mono" style="color: var(--accent)">cargo make build sola-kit</span>?</div>
+            <div class="keys">
+              <span class="kv kv--primary"><span class="key">1</span>Yes</span>
+              <span class="kv"><span class="key">2</span>No, and tell Claude</span>
+            </div>
+          </div>
+        </div>
+        <div class="shot__cap"><span class="shot__t">140 ms</span><span class="shot__x">The card leaves on the desk cards' 140 ms exit. The chip is a ring again: Claude is building.</span></div>
+      </div>
+      <div>
+        <div class="shot">
+          <div class="mb" data-app="Mail" data-menus="none" data-meters="none" data-extras="none" data-clock="14:34">
+            <div class="mb__whisper" style="left: 92px; transform: none">kit-foundation <span class="dim">· Yes</span></div>
+            <div class="strip"><div class="chip" data-g="ring">kit-foundation</div></div>
+          </div>
+          <div style="position: absolute; inset: 28px 0 0 0; display: grid; place-items: center; color: var(--text-tertiary); font: 400 12px/18px var(--font-ui); text-align: center">The desk is clear.<br>Focus never left Mail.</div>
+        </div>
+        <div class="shot__cap"><span class="shot__t">0.2–3 s</span><span class="shot__x">A whisper confirms what was sent, in the card's words, then the bar is quiet.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rules">
+    <div><h4>Keys only while armed</h4><p>Super+A arms; while a card is armed the shell holds 1–9, Tab, ↵ and Esc, and lets them go on answer, on Esc, or after ten seconds without a key. Unarmed, every key belongs to the app with focus.</p></div>
+    <div><h4>One question, one key</h4><p>There is no answer-all and no "always allow" from the desk. An option that writes a standing rule, like Codex's "this session", says so in its own words and is still one press for one agent.</p></div>
+    <div><h4>Words go to the pane</h4><p>"No, and tell Claude" needs typing, so it opens the pane with the cursor in Claude's prompt. Clicking the card body does the same. A click on a key answers without moving focus.</p></div>
+  </div>
+</div>
+</body>
+</html>

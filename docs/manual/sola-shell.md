@@ -20,6 +20,10 @@ shell surfaces.
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
+Super+Tab opens with the previous app highlighted. An icon the pointer
+is already resting on stays unselected until the pointer moves.
+Releasing Super raises the highlighted app.
+
 The number pad types digits at session start (NumLock is turned on for
 each keyboard). Super+Numpad zoning still works if you turn NumLock off
 (the pad then sends Home / End / arrows). Press NumLock to toggle.
@@ -61,6 +65,17 @@ output is playing. Click the bars for the volume popover; there is no
 speaker glyph. The popover lists outputs and inputs — click a row to
 make it the default (`wpctl set-default`). Media keys still change
 volume on that default sink.
+
+A Lamzu mouse on its 4K receiver (`3554:f510`) shows its battery left
+of Bluetooth: a mouse glyph and a percent, amber at 20% and below, red
+at 10% and below, a charging glyph while it charges. A sleeping mouse
+does not answer, so the chip appears a few seconds after you first
+move the mouse; after that the shell asks once a minute. The number
+dims after ten minutes without an answer (mouse asleep, off, or out of
+range) and the chip disappears when the receiver is unplugged. It
+needs read/write on the receiver's hidraw node — the NixOS module's
+udev rule gives it to the `input` group. Other Lamzu receivers and the
+wired cable are not read yet.
 
 ## Window menu
 

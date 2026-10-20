@@ -2,8 +2,8 @@
 //! `bus.rs`; per-window handlers are filled in by tasks 5-10.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use sola_bus::topics::{
@@ -171,14 +171,22 @@ pub enum Msg {
     Bluetooth(crate::bluetooth::Event),
     /// Panel controls (power, add, pair, disconnect, agent reply).
     BluetoothUi(crate::bluetooth::UiMsg),
+    /// Battery answer (or silence) from the Lamzu receiver.
+    Mouse(crate::mouse::Event),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav {
         next: bool,
     },
-    /// Hover-select: mouse entered card at `index`.
+    /// Icon the pointer entered. Applied only after the pointer moves
+    /// (`SwitcherPointer`); the open-time enter is not a choice.
     SwitcherHover {
         index: usize,
+    },
+    /// Overlay-local pointer sample while the switcher is up.
+    SwitcherPointer {
+        x: f32,
+        y: f32,
     },
     /// Confirm selection: focus the MRU window of the selected app, deactivate.
     SwitcherConfirm,
@@ -356,6 +364,8 @@ pub struct Shell {
     pub bluetooth: crate::bluetooth::Ui,
     /// Menubar volume chip + popover (PipeWire / wpctl).
     pub audio: crate::audio::Ui,
+    /// Menubar mouse battery chip (Lamzu receiver over hidraw).
+    pub mouse: crate::mouse::Ui,
     /// Window that should keep keyboard after a shell-initiated capture
     /// finishes. Set when a Super+Shift+3/4/5 capture starts.
     pub screenshot_return_focus: Option<u32>,
@@ -457,6 +467,7 @@ impl Shell {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -605,6 +616,7 @@ impl Shell {
                 );
                 self.switcher.active = true;
                 self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+                self.switcher.prepare_open();
                 self.emit_registered_chords();
                 self.emit_composition();
                 iced::Task::none()
@@ -788,6 +800,7 @@ impl Shell {
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
         let app_id = n.app_id.clone();
+        let persist = n.persists();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
         if self
@@ -797,9 +810,13 @@ impl Shell {
         {
             self.ack_notify_badge(&app_id);
         }
-        let expire = iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
-            Msg::NotifyExpire(generation)
-        });
+        let expire = if persist {
+            iced::Task::none()
+        } else {
+            iced::Task::perform(tokio::time::sleep(crate::notify::HOLD), move |_| {
+                Msg::NotifyExpire(generation)
+            })
+        };
         iced::Task::batch([expire, self.notify_followup(now)])
     }
 
@@ -1863,6 +1880,7 @@ impl Shell {
             crate::stats::subscription().map(Msg::StatsTick),
             crate::bluetooth::subscription().map(Msg::Bluetooth),
             crate::audio::subscription().map(Msg::Audio),
+            crate::mouse::subscription().map(Msg::Mouse),
             iced::window::resize_events().map(|(id, size)| Msg::OverlayIcedResized { id, size }),
             kb,
         ])
@@ -2474,6 +2492,10 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
+            Msg::Mouse(ev) => {
+                self.mouse.on_event(ev, std::time::Instant::now());
+                iced::Task::none()
+            }
             Msg::Bluetooth(ev) => {
                 self.bluetooth.on_event(ev);
                 if self.bluetooth.snapshot.adapter.is_none()
@@ -2502,7 +2524,11 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::SwitcherHover { index } => {
-                self.switcher.selected = index.min(self.switcher.apps.len().saturating_sub(1));
+                self.switcher.note_hover(index);
+                iced::Task::none()
+            }
+            Msg::SwitcherPointer { x, y } => {
+                self.switcher.note_pointer(x, y);
                 iced::Task::none()
             }
             Msg::SwitcherConfirm => {
@@ -2759,6 +2785,7 @@ mod pending_launch_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),
@@ -2867,6 +2894,7 @@ mod hide_tests {
             notify: crate::notify::NotifyState::default(),
             bluetooth: crate::bluetooth::Ui::default(),
             audio: crate::audio::Ui::default(),
+            mouse: crate::mouse::Ui::default(),
             screenshot_return_focus: None,
             suppress_map_focus_for: None,
             zoning: ZoningState::new(),

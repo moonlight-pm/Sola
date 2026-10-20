@@ -1,10 +1,13 @@
 //! Project groups + workspace rows. `+` on the group opens a name modal.
 
-use iced::widget::{column, container, mouse_area, row, text_editor};
-use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
+use iced::widget::{checkbox, column, container, mouse_area, row, text_editor};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
+use sola_kit::components::form::checkbox_style;
+use sola_kit::components::status_mark;
+use sola_kit::components::style::SPACE_SM;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
@@ -17,10 +20,13 @@ use crate::workspace::{self, Project, Workspace};
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
 pub const ADD_INPUT_ID: &str = "ws-add-path";
+pub const RENAME_INPUT_ID: &str = "ws-tab-rename";
 
 pub struct SidebarState {
     pub width: f32,
     pub gestures: sola_kit::components::SidebarState,
+    /// `(workspace id, draft name)` while a tab is being renamed.
+    pub renaming: Option<(String, String)>,
 }
 
 impl Default for SidebarState {
@@ -28,6 +34,7 @@ impl Default for SidebarState {
         Self {
             width: SIDEBAR_W_DEFAULT,
             gestures: sola_kit::components::SidebarState::new(),
+            renaming: None,
         }
     }
 }
@@ -37,14 +44,19 @@ pub struct SpawnDraft {
     pub project_id: Option<String>,
     pub name: String,
     pub error: Option<String>,
+    /// Open in the project root (no worktree).
+    pub in_root: bool,
+    /// Root checkout's branch when the card opened (`None` = detached /
+    /// not git). Copy only.
+    pub root_branch: Option<String>,
 }
 
 impl SpawnDraft {
-    pub fn open(project_id: impl Into<String>) -> Self {
+    pub fn open(project_id: impl Into<String>, root_branch: Option<String>) -> Self {
         Self {
             project_id: Some(project_id.into()),
-            name: String::new(),
-            error: None,
+            root_branch,
+            ..Self::default()
         }
     }
 
@@ -101,30 +113,18 @@ pub fn view<'a>(
         let mut items = Vec::new();
         if !project.collapsed {
             for ws in workspace::ordered_for_project(&project.id, workspaces) {
-                let title = crate::cli::rail_label(ws);
-                let leaves = ws.layout().leaves();
-                let panes = leaves.iter().filter_map(|id| pane_status.get(id));
-                let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
-                    .active(ws.id == selected)
-                    .indicator(ws.status.indicator())
-                    .id(ws.id.clone());
-                let n = crate::status::grok_compaction(panes);
-                if n > 0 {
-                    item = item.secondary(format!("×{n}"));
-                }
-                // Kit list `on_close` — hover × (lucide/x), vertically
-                // centered. Not `hover_action` (session-card trash).
-                // Root stays; Drop Project unregisters the project.
-                if workspace::can_close(ws) {
-                    item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
-                }
-                items.push(item);
+                items.push(workspace_row(
+                    ws,
+                    selected,
+                    pane_status,
+                    state.renaming.as_ref(),
+                ));
             }
         }
         let mark = if project.collapsed { "▸ " } else { "" };
         sections.push(
             SidebarSection::new(format!("{mark}{}", project.name), items)
-                .on_label(Msg::ToggleProject(project.id.clone()))
+                .id(project.id.clone())
                 .on_add(Msg::OpenSpawn(project.id.clone())),
         );
     }
@@ -136,11 +136,61 @@ pub fn view<'a>(
         b: term_bg,
     };
 
-    let mut panel = SidebarPanel::new(sections).controller(&state.gestures, Msg::Sidebar);
+    let mut panel = SidebarPanel::new(sections)
+        .controller(&state.gestures, Msg::Sidebar)
+        .reorder_within_sections();
     if projects.is_empty() {
         panel = panel.footer(empty_footer());
     }
     panel.resizable_with(state.width, divider).build()
+}
+
+fn workspace_row<'a>(
+    ws: &'a Workspace,
+    selected: &str,
+    pane_status: &'a std::collections::HashMap<String, PaneStatus>,
+    renaming: Option<&(String, String)>,
+) -> SidebarItem<'a, Msg> {
+    let title = crate::cli::rail_label(ws);
+    let leaves = ws.layout().leaves();
+    let panes = leaves.iter().filter_map(|id| pane_status.get(id));
+    let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
+        .active(ws.id == selected)
+        .indicator(ws.status.indicator())
+        .id(ws.id.clone());
+    let n = crate::status::rail_compaction(panes);
+    if n > 0 {
+        item = item.secondary(format!("×{n}"));
+    }
+    // Kit list `on_close` — hover × (lucide/x), vertically
+    // centered. Not `hover_action` (session-card trash).
+    // Root stays; Drop Project unregisters the project.
+    if workspace::can_close(ws) {
+        item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
+    }
+    let editing = renaming.is_some_and(|(id, _)| id == &ws.id);
+    if editing {
+        let draft = renaming.map(|(_, d)| d.as_str()).unwrap_or("");
+        let field = text_input("label", draft)
+            .id(iced::widget::Id::new(RENAME_INPUT_ID))
+            .size(12)
+            .font(fonts::ui())
+            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+            .on_input(Msg::RenameInput)
+            .on_submit(Msg::RenameCommit)
+            .style(sola_kit::components::text_input::style)
+            .padding(Padding::from([1, 4]))
+            .width(Length::Fill);
+        let body = row![status_mark(ws.status.indicator()), field]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+        item = item.content(body);
+    } else if workspace::can_close(ws) {
+        // Worktree and root tabs: hover pencil (and double-click via kit Event::Edit).
+        item = item.on_edit(Msg::BeginRename(ws.id.clone()));
+    }
+    item
 }
 
 /// Dead PTY (Ctrl-D / shell exit). One action: start a new shell.
@@ -234,11 +284,13 @@ fn veil<'a>(card: Element<'a, Msg>) -> Element<'a, Msg> {
 
 fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg> {
     let slug = spawn::slug(&draft.name);
-    let hint = if slug.is_empty() {
-        format!("{}/<name>", spawn::WORKTREE_DIR)
-    } else {
-        format!("{}/{}", spawn::WORKTREE_DIR, slug)
-    };
+    let (root_label, hint) = spawn_copy(draft, &slug);
+    let in_root = checkbox(draft.in_root)
+        .label(root_label)
+        .font(fonts::ui())
+        .text_size(13)
+        .on_toggle(Msg::SpawnInRoot)
+        .style(checkbox_style);
     card::modal(
         container(
             column![
@@ -253,6 +305,7 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
                     draft.error.as_deref(),
                 )
                 .padding(0),
+                in_root,
                 sola_kit::components::text::caption(hint).style(sola_kit::components::text::muted),
                 row![
                     iced::widget::Space::new().width(Length::Fill),
@@ -269,6 +322,25 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
     )
     .width(Length::Shrink)
     .into()
+}
+
+/// Checkbox label + where-it-lands hint for the new-tab card.
+fn spawn_copy(draft: &SpawnDraft, slug: &str) -> (String, String) {
+    let label = match draft.root_branch.as_deref() {
+        Some(branch) => format!("No worktree — work on {branch} in the root"),
+        None => "No worktree — work in the project root".to_string(),
+    };
+    let hint = if draft.in_root {
+        match draft.root_branch.as_deref() {
+            Some(branch) => format!("Root checkout · {branch}"),
+            None => "Root checkout".to_string(),
+        }
+    } else if slug.is_empty() {
+        format!("{}/<name>", spawn::WORKTREE_DIR)
+    } else {
+        format!("{}/{}", spawn::WORKTREE_DIR, slug)
+    };
+    (label, hint)
 }
 
 fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 05 Dots and labels</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  .set { display: grid; grid-template-columns: repeat(16, 1fr); gap: 0; border-radius: 10px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--seam-hi); background: var(--panel); }
+  .set__cell { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 10px; box-shadow: inset -1px -1px 0 var(--seam); }
+  .set__cell .lbl { font-size: 9px; }
+  .set--35 { grid-template-columns: repeat(16, 1fr); }
+  .sizes { display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 24px; }
+  .size { background: var(--panel); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--seam-hi); padding: 18px; display: flex; flex-direction: column; gap: 18px; justify-content: space-between; min-height: 170px; }
+  .size__demo { display: flex; align-items: center; justify-content: center; flex: 1; }
+  .size__cap { display: flex; flex-direction: column; gap: 5px; }
+  .labels { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .spec { display: grid; grid-template-columns: 220px 1fr; align-items: baseline; gap: 20px; padding: 14px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .roles { display: flex; flex-direction: column; }
+  .role { display: grid; grid-template-columns: 140px 1.2fr 260px 1.4fr; gap: 24px; align-items: center; padding: 14px 0; box-shadow: inset 0 -1px 0 var(--seam); }
+  .role__face { font-size: 13px; color: var(--ink-2); }
+  .role__sample { color: var(--ink); }
+  .rules { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 40px; }
+  .rule { padding: 16px 0; box-shadow: inset 0 1px 0 var(--seam-hi); display: flex; flex-direction: column; gap: 6px; }
+  .rule__t { font-size: 14px; color: var(--ink); font-weight: 500; }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="05"></span><div class="head__title">Dots and labels</div></div>
+    <div class="head__lead">Two dot faces, one label face, and the rules that keep them from spreading. Both dot faces are drawn on the meters' cell: a 2 × 2 dot with a 1 px gutter in the bar. Shown here at 4 / 5 so the shapes can be checked.</div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">5×7 · readouts in panels, notices, the cover</span>
+    <div class="set" id="set57"></div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">3×5 · the bar's height · digits first, letters only for short codes</span>
+    <div class="set set--35" id="set35"></div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">One grid per display</span>
+    <div class="sizes">
+      <div class="size">
+        <div class="size__demo"><span data-dots="14:32" data-font="35"></span></div>
+        <div class="size__cap"><span class="lbl lbl--ink">Bar · 2 / 3</span><span class="note">3×5, five rows: the meters' height. Clock, counts, the agent cells. 1:1.</span></div>
+      </div>
+      <div class="size">
+        <div class="size__demo"><span class="readout"><span data-dots="83%" data-cols="23" data-align="right" data-dot="4" data-pitch="5" style="color: var(--lamp-look)"></span></span></div>
+        <div class="size__cap"><span class="lbl lbl--ink">Panel · 4 / 5</span><span class="note">5×7 in a recessed window. A drop panel's one value. 1:1.</span></div>
+      </div>
+      <div class="size">
+        <div class="size__demo"><span class="glow" data-dots="SOLA" data-dot="8" data-pitch="12" data-round="1.5"></span></div>
+        <div class="size__cap"><span class="lbl lbl--ink">Mark · 8 / 12</span><span class="note">The bar's grid at 4×. The cover and the installer. Never in working chrome. Shown at 1:1.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Engraved labels · Iosevka Fixed Extended Medium · caps · +0.12em</span>
+    <div class="labels">
+      <div>
+        <div class="spec"><span class="lbl lbl--9">CPU · GPU · MEM</span><span class="note">9 px · #8a8f98. Module labels in the bar, notice bands, keycap legends.</span></div>
+        <div class="spec"><span class="lbl">Last 60 seconds</span><span class="note">10 px · #8a8f98. Captions inside panels and section labels on sheets.</span></div>
+        <div class="spec"><span class="lbl lbl--11 lbl--ink">Keyboard shortcuts</span><span class="note">11 px · #b4b9c3. A sheet's title. The largest a label gets.</span></div>
+      </div>
+      <div>
+        <div class="spec"><span class="lbl lbl--9 lbl--lo">MIC · CAM</span><span class="note">Dark · #5c6068. A label whose lamp is off.</span></div>
+        <div class="spec"><span class="lbl lbl--9 lbl--ink">BT</span><span class="note">Lit · #b4b9c3. A label whose lamp is on.</span></div>
+        <div class="spec"><span class="lbl lbl--9" style="color: var(--fn-focus)">Workspaces</span><span class="note">Never colored, except a label that names the app with focus on the Keys sheet.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Type roles in chrome</span>
+    <div class="roles">
+      <div class="role"><span class="lbl lbl--ink">Label</span><span class="role__face">Iosevka Fixed Extended Medium, 9–11, caps</span><span class="role__sample lbl lbl--11 lbl--ink">Per-thread load</span><span class="note">New kit role. Module labels, bands, captions, keycap legends.</span></div>
+      <div class="role"><span class="lbl lbl--ink">Chrome</span><span class="role__face">SF Pro Text, 13</span><span class="role__sample" style="font-size:13px"><b>Workspaces</b>&nbsp;&nbsp;File&nbsp;&nbsp;Edit&nbsp;&nbsp;View</span><span class="note">Unchanged. App name (bold), menus, whispers.</span></div>
+      <div class="role"><span class="lbl lbl--ink">UI</span><span class="role__face">SF Pro Text, 12–14</span><span class="role__sample" style="font-size:14px">kit-foundation is waiting</span><span class="note">Unchanged. Launcher rows, notice copy, list names.</span></div>
+      <div class="role"><span class="lbl lbl--ink">Figures</span><span class="role__face">Iosevka Term Slab, 11</span><span class="role__sample" style="font-family:var(--font-mono-i);font-size:11px">21.4  14.8  8.2</span><span class="note">Numbers in lists and footers, where a readout would be too loud.</span></div>
+      <div class="role"><span class="lbl lbl--ink">Readout</span><span class="role__face">Dots, 3×5 or 5×7</span><span class="role__sample"><span data-dots="12" data-font="35" style="color: var(--fn-focus)"></span>&nbsp;&nbsp;&nbsp;<span data-dots="14:28" data-font="35"></span></span><span class="note">The clock, a count, a time, a drop panel's value. Rastered, not a font.</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Rules</span>
+    <div class="rules">
+      <div class="rule"><span class="rule__t">Dots for the number you came for.</span><span class="note">The clock, a count, a time, a panel's value. Words and everything else stay type.</span></div>
+      <div class="rule"><span class="rule__t">Readouts have fixed cells.</span><span class="note">A count of 1 and a count of 12 take the same space. Nothing in the bar reflows.</span></div>
+      <div class="rule"><span class="rule__t">Unlit dots stay faintly visible.</span><span class="note">The field shows a readout's capacity, and an empty readout reads as zero.</span></div>
+      <div class="rule"><span class="rule__t">One grid per display.</span><span class="note">The bar is 2 / 3, a drop panel 4 / 5. The mark's 8 / 12 is for the cover and the installer only.</span></div>
+      <div class="rule"><span class="rule__t">One color, one meaning.</span><span class="note">Four keys and two lamps. Lamps are steady: nothing in chrome blinks.</span></div>
+      <div class="rule"><span class="rule__t">A label only where a glyph won't do.</span><span class="note">Mail, bell, and the spectrum need none. Meters and lamps get one, engraved.</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const I = window.Instrument;
+    const cell = (font, ch) =>
+      `<div class="set__cell"><span data-dots="${ch === '"' ? "&quot;" : ch}" data-font="${font}" data-dot="4" data-pitch="5" data-pad="1"></span><span class="lbl lbl--lo">${ch === " " ? "sp" : ch}</span></div>`;
+    const order57 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:.·%-+/×↑↓";
+    document.getElementById("set57").innerHTML = [...order57].map((c) => cell("57", c)).join("");
+    const order35 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:.%-+/×↑↓";
+    document.getElementById("set35").innerHTML = [...order35].map((c) => cell("35", c)).join("");
+  })();
+</script>
+</body>
+</html>

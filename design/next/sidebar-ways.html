@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / The sidebar, continued</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<link rel="stylesheet" href="sidebar.css">
+<script src="next.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 05 · CONTINUED</span><span class="head__title">The sidebar and the apps' own lists</span></div>
+  <div class="head__lead">The master sidebar from 05, against the tab strips the apps already have, three ways to keep it on screen, and how it compares with board 04's workspace bubble.</div>
+</div>
+
+<div class="section">
+  <div class="label">Three lists in a row · desk x 0–1296, 1:1</div>
+  <div id="lists"></div>
+  <div class="cols2" style="margin-top:24px">
+    <div class="sample">
+      <div class="sample__head"><h4>Keep them</h4><span class="tag">AS DRAWN</span></div>
+      <p>The bar lists windows; Projects lists its agent tabs; the browser lists its pages. Each list stays in the app that owns its tabs. On one screen, though, that is three vertical strips in the first 1240 px, and they mean different things.</p>
+    </div>
+    <div class="sample">
+      <div class="sample__head"><h4>One list</h4><span class="tag">THE DESKS IDEA'S END STATE</span></div>
+      <div id="onelist"></div>
+      <p>An app's own tabs hang under its window row. The browser and Projects publish their tab lists and accept "show this one"; both already have call planes that list tabs. While the bar is up, the apps hide their own strips. This is the expensive one.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Docked, rail, or summoned · desk x 0–410, 1:1</div>
+  <div class="cols3" id="modes"></div>
+</div>
+
+<div class="section">
+  <div class="label">Against board 04</div>
+  <div class="asks">
+    <div class="ask"><span class="n">+</span><span><b>You can see what is behind.</b> Every window on the workspace, by zone, including the ones a zone is not showing. 04 only tells you which workspace you are on.</span></div>
+    <div class="ask"><span class="n">+</span><span><b>Zones become stacks.</b> Opening a window into a taken zone is fine: it goes on the stack and the bar lists it. Today a second window in a zone sits over the first, and nothing on screen says the first is there.</span></div>
+    <div class="ask"><span class="n">−</span><span><b>It costs width on every workspace.</b> 250 px docked. The rail costs 62; summoned costs nothing until you ask.</span></div>
+    <div class="ask"><span class="n">−</span><span><b>A second way to switch.</b> Super+Tab, Super+\` and the bar all move between windows. The bar has to be the one you reach for, or it is furniture.</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Yours to pick</div>
+  <div class="asks">
+    <div class="ask"><span class="n">A</span><span><b>Docked, rail, or summoned.</b> <span class="pick">Proposed: summoned from the workspace bubble, with docked as a setting.</span> It keeps 04's top row and adds the tree only when you want it.</span></div>
+    <div class="ask"><span class="n">B</span><span><b>Keep three lists, or one list.</b> <span class="pick">Proposed: keep them for now.</span> One list is the desks idea's panel model by another road.</span></div>
+    <div class="ask"><span class="n">C</span><span><b>Which zones.</b> Three thirds and Floating, as drawn, or the full numpad set (halves, top, bottom) as zone headers.</span></div>
+    <div class="ask"><span class="n">D</span><span><b>A new window's zone.</b> Onto the focused zone's stack, or the zone the app last used. <span class="pick">Proposed: the app's last zone, then the focused one.</span></span></div>
+  </div>
+</div>
+
+<script src="sidebar.js"></script>
+</body>
+</html>

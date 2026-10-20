@@ -1,0 +1,35 @@
+/* Board 06: one tab list. Builds on sidebar.css (the master bar). */
+.take { margin-bottom: 30px; }
+.take__head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.take__head h4 { font: 600 17px/1 var(--f-display); margin: 0; letter-spacing: -0.2px; }
+.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+
+/* The bar heads with the workspace it lists; the switcher is in the top row. */
+.mb__head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; font-weight: 600; }
+.mb__head .meta { margin-left: auto; font: 400 11px/1 var(--f-spec); color: var(--ink-3); font-weight: 400; }
+.mb__zone .add { color: var(--ink-4); display: flex; margin-left: 8px; }
+.mb__zone .c { margin-left: auto; }
+.mb__empty { height: 28px; margin: 0 8px 0 22px; border-radius: 7px; border: 1px dashed #ffffff1f; display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: var(--ink-4); }
+.mb__win .app { margin-left: auto; font: 400 10.5px/1 var(--f-spec); color: var(--ink-4); flex-shrink: 0; }
+.mb__win .mark + .app { margin-left: 8px; }
+
+/* One zone, two states: the bar's slice beside the zone's window */
+.pair { display: grid; grid-template-columns: 260px 1fr; gap: 16px; margin-bottom: 14px; }
+.pair__cap { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0 0 26px; }
+.pair__cap b { color: var(--ink); font-weight: 500; }
+
+.notes { display: flex; flex-direction: column; gap: 18px; }
+.notes div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+.notes b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 3px; }
+.row2 { display: grid; grid-template-columns: 700px 1fr; gap: 36px; align-items: start; }
+
+.asks { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+.ask { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--hairline); font: 400 13px/20px var(--f-chrome); color: var(--ink-2); }
+.ask b { color: var(--ink); font-weight: 500; }
+.ask .n { font: 500 11px/20px var(--f-spec); color: var(--warning); }
+.ask .pick { color: var(--accent); }
+
+.log { flex: 1; min-width: 0; background: var(--bg-primary); padding: 14px 18px; font: 400 13px/24px var(--f-mono); color: var(--ink-2); white-space: pre; overflow: hidden; }
+.log .i { color: var(--success); }
+.log .w { color: var(--warning); }
+.log .d { color: var(--ink-4); }

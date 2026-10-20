@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Shortcut-style kanban drag (OSR replica)</title>
+<style>
+  :root {
+    --bg: #101014;
+    --fg: #ececf1;
+    --muted: #8d8d98;
+    --col: #17171c;
+    --card: #22222a;
+    --line: #2c2c36;
+    --accent: #6c8cff;
+    --edge: #3dd6f5;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.4 "SF Pro Text", system-ui, sans-serif;
+  }
+  ::selection { background: #3dd6f588; color: var(--fg); }
+  header { padding: 20px 24px 4px; }
+  header h1 {
+    font-size: 24px; line-height: 1.2; font-weight: 650;
+    margin: 0 0 10px; letter-spacing: -0.02em;
+  }
+  header p {
+    margin: 0 0 10px; color: var(--muted); font-size: 13px;
+    line-height: 1.5; max-width: 62rem;
+  }
+  #log {
+    font: 12px/1.4 ui-monospace, "Iosevka Term Slab", monospace;
+    color: var(--accent); margin: 0 0 8px;
+  }
+  #hud {
+    font: 12px/1.45 ui-monospace, "Iosevka Term Slab", monospace;
+    color: var(--muted); margin: 0 0 12px; white-space: pre-wrap;
+    max-width: 72rem;
+  }
+  .modes { display: flex; gap: 8px; margin: 12px 0 0; }
+  .modes button {
+    appearance: none; border: 1px solid var(--line); background: var(--col);
+    color: var(--fg); padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    font: 13px/1.2 inherit;
+  }
+  .modes button[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent);
+  }
+  #board {
+    display: flex; gap: 12px; padding: 16px 24px 96px;
+    align-items: flex-start; overflow-x: auto;
+  }
+  .col {
+    flex: 0 0 260px; min-height: 520px; max-height: calc(100vh - 180px);
+    overflow: auto; background: var(--col); border: 1px solid var(--line);
+    border-radius: 12px; padding: 0 8px 12px;
+  }
+  .col.over { outline: 2px solid var(--accent); }
+  .col-h {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--col); padding: 12px 8px 10px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .card {
+    position: relative; display: block;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; margin: 0 0 8px;
+    color: inherit; text-decoration: none; user-select: none;
+    cursor: grab;
+  }
+  .card:active { cursor: grabbing; }
+  .card strong { display: block; font-size: 14px; font-weight: 600; }
+  .card span { font-size: 12px; color: var(--muted); }
+  .card.is-source { opacity: 0.35; }
+  .card.edge-before { box-shadow: inset 0 2px 0 var(--edge); }
+  .card.edge-after { box-shadow: inset 0 -2px 0 var(--edge); }
+  .placeholder {
+    border: 1px dashed #4a4a58; border-radius: 10px; margin: 0 0 8px;
+    background: #1a1a20;
+  }
+  #ghost {
+    position: fixed; z-index: 50; margin: 0; pointer-events: none;
+    box-shadow: 0 12px 32px #00000080;
+    will-change: transform;
+  }
+  #late {
+    position: absolute; left: 300px; top: 92px; width: 240px;
+    background: #2a1f12; border: 1px solid #c9862a; color: #f3d9a4;
+    border-radius: 10px; padding: 10px 12px; display: none; z-index: 4;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Shortcut-style kanban drag</h1>
+  <p>
+    Replica of live Shortcut Stories kanban. <b>Native</b> matches ticket cards:
+    <code>draggable="true"</code>, Atlassian pragmatic-drag-and-drop native adapter
+    (<code>application/vnd.pdnd</code>, <code>setDragImage</code>, closest-edge drop).
+    <b>Mouse lift</b> matches space/column reorder: react-beautiful-dnd
+    (<code>draggable="false"</code>, <code>position:fixed</code> +
+    <code>translate3d</code> ghost, in-flow placeholder).
+  </p>
+  <p id="log">idle</p>
+  <p id="hud">telem: waiting</p>
+  <div class="modes" role="group" aria-label="Drag technique">
+    <button type="button" id="mode-native" aria-pressed="true">Native HTML5 (tickets)</button>
+    <button type="button" id="mode-lift" aria-pressed="false">Mouse lift (rbd)</button>
+  </div>
+</header>
+<div id="late">Late layer — if this is missing until you hover it, dirty rects are still wrong.</div>
+<div id="board"></div>
+<script>
+const COLS = [
+  { id: "todo", title: "Unstarted" },
+  { id: "doing", title: "Started" },
+  { id: "review", title: "In Review" },
+  { id: "done", title: "Done" },
+];
+const TITLES = [
+  "Fill the gaps in the shared test setup",
+  "Switch remaining tests to shared setup",
+  "Look up the current pay rate in one way",
+  "Keep production screens loading",
+  "Simplify the timecard list query",
+  "Move cancellation notifications",
+  "Work out who to notify",
+  "Teach the new data layer three tables",
+  "Put AWS access in one shared place",
+  "A chat should not crash on disconnect",
+];
+
+let mode = "native";
+let items = [];
+COLS.forEach((c, ci) => {
+  for (let i = 0; i < 8; i++) {
+    items.push({
+      id: `${c.id}-${i}`,
+      col: c.id,
+      title: TITLES[(ci * 3 + i) % TITLES.length],
+      n: 19000 + ci * 10 + i,
+    });
+  }
+});
+
+const board = document.getElementById("board");
+const logEl = document.getElementById("log");
+const hudEl = document.getElementById("hud");
+function log(s) { logEl.textContent = s; }
+
+const telem = {
+  t0: performance.now(),
+  dragstart: 0, dragover: 0, dragend: 0, drop: 0,
+  pointermove: 0, lift: 0, raf: 0,
+  lastKind: "idle", lastAt: 0,
+};
+function bump(kind) {
+  telem[kind] = (telem[kind] || 0) + 1;
+  telem.lastKind = kind;
+  telem.lastAt = performance.now();
+}
+setInterval(() => {
+  const dt = Math.max(1, performance.now() - telem.t0);
+  const hz = (n) => ((n * 1000) / dt).toFixed(0);
+  const age = telem.lastAt ? (performance.now() - telem.lastAt).toFixed(0) : "—";
+  hudEl.textContent =
+    `page ${dt.toFixed(0)}ms  last=${telem.lastKind} age=${age}ms\n` +
+    `native  start=${telem.dragstart} over=${hz(telem.dragover)}/s end=${telem.dragend} drop=${telem.drop}\n` +
+    `lift    begin=${telem.lift} move=${hz(telem.pointermove)}/s raf=${hz(telem.raf)}/s`;
+  telem.t0 = performance.now();
+  telem.dragover = 0;
+  telem.pointermove = 0;
+  telem.raf = 0;
+}, 250);
+
+function render() {
+  board.innerHTML = "";
+  for (const col of COLS) {
+    const el = document.createElement("section");
+    el.className = "col";
+    el.dataset.col = col.id;
+    const h = document.createElement("div");
+    h.className = "col-h";
+    const n = items.filter((it) => it.col === col.id).length;
+    h.innerHTML = `<span>${col.title}</span><span>${n}</span>`;
+    el.appendChild(h);
+    for (const it of items.filter((x) => x.col === col.id)) {
+      el.appendChild(cardEl(it));
+    }
+    board.appendChild(el);
+  }
+  bind();
+}
+
+function cardEl(it) {
+  const a = document.createElement("a");
+  a.className = "card";
+  a.href = "#";
+  a.dataset.id = it.id;
+  a.innerHTML = `<strong>${it.title}</strong><span>sc-${it.n}</span>`;
+  if (mode === "native") {
+    a.draggable = true;
+    a.dataset.dropTargetForElement = "true";
+  } else {
+    a.draggable = false;
+  }
+  return a;
+}
+
+function bind() {
+  if (mode === "native") bindNative();
+  else bindLift();
+}
+
+function closestEdge(el, y) {
+  const r = el.getBoundingClientRect();
+  return y < r.top + r.height / 2 ? "before" : "after";
+}
+
+function bindNative() {
+  let dragging = null;
+  let preview = null;
+  document.querySelectorAll(".card").forEach((card) => {
+    card.addEventListener("click", (e) => e.preventDefault());
+    card.addEventListener("dragstart", (e) => {
+      bump("dragstart");
+      dragging = card;
+      e.dataTransfer.setData("application/vnd.pdnd", card.dataset.id);
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+      e.dataTransfer.effectAllowed = "move";
+      preview = card.cloneNode(true);
+      preview.style.cssText = `position:absolute;top:-1200px;left:0;width:${card.offsetWidth}px;`;
+      document.body.appendChild(preview);
+      e.dataTransfer.setDragImage(preview, e.offsetX, e.offsetY);
+      requestAnimationFrame(() => preview && preview.remove());
+      card.classList.add("is-source");
+      log(`native dragstart ${card.dataset.id} (pragmatic HTML5)`);
+    });
+    card.addEventListener("dragend", () => {
+      bump("dragend");
+      card.classList.remove("is-source");
+      dragging = null;
+      document.querySelectorAll(".edge-before,.edge-after,.over").forEach((n) => {
+        n.classList.remove("edge-before", "edge-after", "over");
+      });
+      log("native dragend");
+    });
+    card.addEventListener("dragover", (e) => {
+      bump("dragover");
+      if (!dragging || dragging === card) return;
+      e.preventDefault();
+      document.querySelectorAll(".card").forEach((n) => n.classList.remove("edge-before", "edge-after"));
+      card.classList.add(closestEdge(card, e.clientY) === "before" ? "edge-before" : "edge-after");
+    });
+  });
+  document.querySelectorAll(".col").forEach((col) => {
+    col.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      col.classList.add("over");
+    });
+    col.addEventListener("dragleave", () => col.classList.remove("over"));
+    col.addEventListener("drop", (e) => {
+      bump("drop");
+      e.preventDefault();
+      col.classList.remove("over");
+      const id = e.dataTransfer.getData("text/plain");
+      const it = items.find((x) => x.id === id);
+      if (!it) return;
+      const over = e.target.closest(".card");
+      it.col = col.dataset.col;
+      items = items.filter((x) => x.id !== id);
+      if (over && over.dataset.id !== id) {
+        const edge = closestEdge(over, e.clientY);
+        const idx = items.findIndex((x) => x.id === over.dataset.id);
+        items.splice(edge === "before" ? idx : idx + 1, 0, it);
+      } else {
+        items.push(it);
+      }
+      log(`native drop ${id} → ${col.dataset.col}`);
+      render();
+    });
+  });
+}
+
+function bindLift() {
+  let session = null;
+  document.querySelectorAll(".card").forEach((card) => {
+    card.addEventListener("click", (e) => e.preventDefault());
+    card.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const startX = e.clientX, startY = e.clientY;
+      const rect = card.getBoundingClientRect();
+      let lifted = false;
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY;
+        if (!lifted && Math.hypot(dx, dy) < 6) return;
+        bump("pointermove");
+        if (!lifted) {
+          lifted = true;
+          bump("lift");
+          const ph = document.createElement("div");
+          ph.className = "placeholder";
+          ph.style.height = rect.height + "px";
+          card.after(ph);
+          card.id = "ghost";
+          card.style.cssText += `position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;margin:0;transform:translate3d(0,0,0);will-change:transform;z-index:50;pointer-events:none;`;
+          session = { card, ph, startX, startY };
+          log(`rbd lift ${card.dataset.id} (position:fixed + translate3d)`);
+        }
+        card.style.transform = `translate3d(${ev.clientX - startX}px, ${ev.clientY - startY}px, 0)`;
+        bump("raf");
+        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+        const overCard = over && over.closest && over.closest(".card:not(#ghost)");
+        const overCol = over && over.closest && over.closest(".col");
+        document.querySelectorAll(".over").forEach((n) => n.classList.remove("over"));
+        if (overCol) overCol.classList.add("over");
+        document.querySelectorAll(".edge-before,.edge-after").forEach((n) => n.classList.remove("edge-before", "edge-after"));
+        if (overCard) {
+          overCard.classList.add(closestEdge(overCard, ev.clientY) === "before" ? "edge-before" : "edge-after");
+        }
+      };
+      const onUp = (ev) => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (!lifted) return;
+        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+        const overCol = over && over.closest && over.closest(".col");
+        const overCard = over && over.closest && over.closest(".card:not(#ghost)");
+        const it = items.find((x) => x.id === card.dataset.id);
+        if (it && overCol) {
+          it.col = overCol.dataset.col;
+          items = items.filter((x) => x.id !== it.id);
+          if (overCard && overCard.dataset.id !== it.id) {
+            const edge = closestEdge(overCard, ev.clientY);
+            const idx = items.findIndex((x) => x.id === overCard.dataset.id);
+            items.splice(edge === "before" ? idx : idx + 1, 0, it);
+          } else {
+            items.push(it);
+          }
+          log(`rbd drop ${it.id} → ${it.col}`);
+        } else {
+          log("rbd cancel");
+        }
+        session = null;
+        render();
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  });
+}
+
+document.getElementById("mode-native").onclick = () => {
+  mode = "native";
+  document.getElementById("mode-native").setAttribute("aria-pressed", "true");
+  document.getElementById("mode-lift").setAttribute("aria-pressed", "false");
+  log("mode: native HTML5 (Shortcut tickets)");
+  render();
+};
+document.getElementById("mode-lift").onclick = () => {
+  mode = "lift";
+  document.getElementById("mode-native").setAttribute("aria-pressed", "false");
+  document.getElementById("mode-lift").setAttribute("aria-pressed", "true");
+  log("mode: mouse lift (react-beautiful-dnd)");
+  render();
+};
+
+setTimeout(() => { document.getElementById("late").style.display = "block"; }, 400);
+render();
+</script>
+</body>
+</html>

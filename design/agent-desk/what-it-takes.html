@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent desk / 05 What it takes</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="agent-desk.css">
+<script src="agent-desk.js"></script>
+<style>
+  .tbl td:nth-child(1) { width: 150px; font-weight: 500; }
+  .tbl td:nth-child(2) { width: 470px; }
+  .tbl td:nth-child(4) { width: 80px; }
+  .tbl td p { margin: 0; }
+  .order { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; border-top: 1px solid var(--hairline); }
+  .step { padding: 14px 14px 0 0; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--hairline); margin-right: 14px; }
+  .step:last-child { border-right: 0; }
+  .step .n { font: 400 11px/1 var(--font-mono); color: var(--accent); }
+  .step h4 { margin: 0; font: 500 13px/18px var(--font-ui); }
+  .step p { margin: 0; font: 400 12px/17px var(--font-ui); color: var(--text-secondary); padding-bottom: 14px; }
+  .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 56px; }
+  .risks { display: flex; flex-direction: column; gap: 14px; }
+  .risk { display: grid; grid-template-columns: 170px 1fr; gap: 16px; font: 400 12.5px/19px var(--font-ui); border-top: 1px solid var(--hairline); padding-top: 12px; }
+  .risk b { color: var(--text-primary); font-weight: 500; }
+  .risk span { color: var(--text-secondary); }
+  .unsure { display: flex; flex-direction: column; gap: 12px; }
+  .q { border: 1px solid var(--hairline-strong); border-radius: var(--radius-md); padding: 12px 14px; font: 400 12.5px/19px var(--font-ui); color: var(--text-secondary); background: #0e1116; }
+  .q b { color: var(--text-primary); font-weight: 500; display: block; margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="head__row"><span class="head__num">05</span><span class="head__title">What it takes</span></div>
+    <div class="head__lead">Most of this is already half-built: Workspaces knows every agent's state from its hooks, the shell draws chips and cards from bus state, and River can draw colored borders. What is missing is one bus topic that carries agent state out of Workspaces, and a way to send a single key to a pane. Paths below are checked against master on 2026-10-13.</div>
+  </div>
+
+  <div class="section">
+    <table class="tbl">
+      <thead><tr><th>Piece</th><th>Today</th><th>Change</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Agent state on the bus</td>
+          <td>State lives inside Workspaces: <code>AgentStatus</code> working / waiting / done / idle, and the rail roll-up <code>rollup_tracked</code>, <code>loudest_agent</code> in <code>crates/sola-workspaces/src/status.rs</code>. It leaves the app only as <code>Topic::AppNotification</code> for an unfocused done or waiting (<code>emit_notice</code>, <code>maybe_toast_status</code> in <code>main.rs</code>).</td>
+          <td>A sticky <code>AgentState</code> topic keyed by pane id: label, project, agent, state, since, ask. Append it at the end of <code>define_topics!</code> in <code>crates/sola-bus/src/topics.rs</code> and install <code>bus</code> in the same replace, per the TopicKind rule in that file. <code>MailStatus</code> is the model: sticky, read by the menubar.</td>
+          <td><span class="cost cost--cheap">cheap</span></td>
+        </tr>
+        <tr>
+          <td>Agent strip</td>
+          <td>The menubar already draws chips from bus state: <code>mail_unread_chip</code>, <code>notify_pile_chip</code> in <code>crates/sola-shell/src/menubar/view.rs</code>. The kit marks are <code>SidebarIndicator</code> in <code>sola-kit/src/components/status_mark.rs</code>; the rail's ring spins.</td>
+          <td>One chip per live <code>AgentState</code>, ordered and folded as on board 01. In the bar the ring steps on the stats <code>TICK</code> (1000 ms, <code>stats/mod.rs</code>) instead of spinning, so the strip adds no presents (PERFORMANCE.md law).</td>
+          <td><span class="cost cost--cheap">cheap</span></td>
+        </tr>
+        <tr>
+          <td>Hover lines</td>
+          <td><code>pane.read --lines</code> on the <code>workspaces</code> call plane. The shell already calls the plane: <code>sola_call::invoke</code> in <code>crates/sola-shell/src/screenshot.rs</code>.</td>
+          <td>Read five lines on hover and again each second while the pointer rests.</td>
+          <td><span class="cost cost--cheap">cheap</span></td>
+        </tr>
+        <tr>
+          <td>Waiting card</td>
+          <td>The notify overlay <code>crates/sola-shell/src/notify/</code>: <code>MAX_LIVE</code> 3, <code>HOLD</code> 6 s, <code>ENTER</code> 180 ms, <code>LEAVE</code> 140 ms. A tag starting <code>sola-persist:</code> keeps a card up (<code>NOTIFICATION_PERSIST_PREFIX</code>). Hooks keep only the tool name: <code>MappedHook.tool</code> in <code>hooks/map.rs</code>.</td>
+          <td>Keep the hook's message and tool input (the command, the file) on <code>MappedHook</code> and in <code>AgentState</code>. A waiting variant of the card with its own height: <code>CARD_H</code> 76 assumes three rows of type. Options read from the pane's last lines.</td>
+          <td><span class="cost cost--medium">medium</span></td>
+        </tr>
+        <tr>
+          <td>Answer in place</td>
+          <td><code>pane.send</code> pastes bracketed then presses Enter (<code>paste_bracketed</code>, <code>send_enter</code> in <code>crates/sola-terminal/src/tmux.rs</code>). Shell chords already change with overlay state (<code>emit_registered_chords</code> in <code>app.rs</code>). Super+A is not bound.</td>
+          <td>A <code>pane.key</code> method (tmux <code>send-keys</code>, beside <code>send_enter</code>), since a menu may not take a paste as a key press. While a card is armed, register 1–9, Tab, Return and Escape, and release them after. Right before sending, check the pane still waits, on the same <code>session_id</code>.</td>
+          <td><span class="cost cost--medium">medium</span></td>
+        </tr>
+        <tr>
+          <td>Seam light</td>
+          <td>River draws solid borders per edge: <code>river_window_v1.set_borders(edges, width, r, g, b, a)</code>, premultiplied, only inside a render sequence, never on fullscreen. sola-river switches them off for every window on each pass (<code>client/manage.rs</code>).</td>
+          <td>sola-river maps window → app → the <code>AgentState</code> roll-up and sets 2px borders. A steady color, sent on change: cheap. The breath needs a render sequence per step; measure on the NVIDIA box first, and fall back to a steady 45% cyan.</td>
+          <td><span class="cost cost--medium">medium</span></td>
+        </tr>
+        <tr>
+          <td>@ in the launcher</td>
+          <td><code>filter(apps, query)</code> over <code>ApplicationsConfig</code> in <code>crates/sola-shell/src/launcher/state.rs</code>.</td>
+          <td>A leading @ switches the source to <code>AgentState</code>. Send is <code>pane.send --enter</code>; refused while the target waits.</td>
+          <td><span class="cost cost--cheap">cheap</span></td>
+        </tr>
+        <tr>
+          <td>Away recap</td>
+          <td>The shell has no idle signal. River creates the wlroots idle notifier (<code>wlr_idle_notifier_v1_create</code> in <code>/opt/sola/bin/river</code>), so <code>ext-idle-notify-v1</code> is there to bind. The bell pile already keeps history.</td>
+          <td>The shell binds idle notify at 10 min, records <code>AgentState</code> changes while idle, and opens the pile once with a recap section. The last message comes from the Claude and Codex transcripts Workspaces already reads for ×N.</td>
+          <td><span class="cost cost--medium">medium</span></td>
+        </tr>
+        <tr>
+          <td>Failed</td>
+          <td><code>StopFailure</code> maps to done (<code>hooks/map.rs</code>). <code>SidebarIndicator</code> has no failed mark.</td>
+          <td><code>AgentStatus::Failed</code> and a kit cross; rail, strip and seam pick it up. Touches kit and Workspaces.</td>
+          <td><span class="cost cost--cheap">cheap</span></td>
+        </tr>
+        <tr>
+          <td>Design and Bots</td>
+          <td>Design marks a canvas while an agent called there in the last 30 s (<code>AGENT_RECENT</code>, <code>crates/sola-design/src/app/canvases.rs</code>); it has no waiting. Bots stream turns over HTTP SSE <code>GET /events</code>.</td>
+          <td>Version one is Workspaces panes only. Later each app emits <code>AgentState</code>: Design as working only, Bots as working and done.</td>
+          <td><span class="cost cost--medium">medium</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Order to build · each step ships alone</div>
+    <div class="order">
+      <div class="step"><span class="n">1</span><h4>State on the bus</h4><p><code class="code">AgentState</code> topic and the failed state. Nothing visible yet.</p></div>
+      <div class="step"><span class="n">2</span><h4>Strip</h4><p>Chips, order, counts, hover lines. Click opens the pane.</p></div>
+      <div class="step"><span class="n">3</span><h4>Waiting cards</h4><p>Read-only first: the question and ↵ Open pane.</p></div>
+      <div class="step"><span class="n">4</span><h4>Keys</h4><p>Super+A, armed chords, <code class="code">pane.key</code>, the session check.</p></div>
+      <div class="step"><span class="n">5</span><h4>Seam</h4><p>Steady colors. Breath only after it is measured.</p></div>
+      <div class="step"><span class="n">6</span><h4>@ launcher</h4><p>List, token, send, refusal while waiting.</p></div>
+      <div class="step"><span class="n">7</span><h4>Recap</h4><p>Idle notify, the pile section, last messages.</p></div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="section">
+      <div class="eyebrow">Risks</div>
+      <div class="risks">
+        <div class="risk"><b>Key theft</b><span>Armed mode holds digits from the app with focus. It is visible (cyan edge on chip and card), times out after ten seconds, and Esc lets go.</span></div>
+        <div class="risk"><b>Answering the wrong prompt</b><span>The pane can move on between the card and the key. The state and session check runs right before the send; if it fails the card leaves and nothing is sent.</span></div>
+        <div class="risk"><b>Options from scrollback</b><span>Claude, Codex and Grok draw their menus differently and change between versions. When the options do not parse, the card shows only ↵ Open pane.</span></div>
+        <div class="risk"><b>Repaint cost</b><span>A breathing border is compositor frames on an idle desk. Steady colors cost nothing between changes; ship those first.</span></div>
+        <div class="risk"><b>Thin Codex cards</b><span>Codex panes on the app-server daemon get state from the rollout, not hooks, so their card may lack the tool input.</span></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="eyebrow">Not known yet</div>
+      <div class="unsure">
+        <div class="q"><b>Does River repaint only the border?</b>If a <code class="code">set_borders</code> change damages just the border, the breath is cheap. Needs a trace on the dogfood box.</div>
+        <div class="q"><b>Does a pasted "1" answer Claude's menu?</b>If it does, <code class="code">pane.key</code> waits; <code class="code">pane.send</code> without Enter would do.</div>
+        <div class="q"><b>Is failed its own state?</b>A product call: a new mark on the rail, or "done, with an error" in words only.</div>
+        <div class="q"><b>Is Super+A free in your hands?</b>Nothing in the shell binds it. An app shortcut you use with Super would decide.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

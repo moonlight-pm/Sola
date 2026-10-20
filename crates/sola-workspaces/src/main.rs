@@ -4,6 +4,7 @@
 //! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -154,13 +155,17 @@ enum Msg {
     TitleResize(iced::window::Direction),
     TitleClose,
     SelectWorkspace(String),
-    ToggleProject(String),
+    BeginRename(String),
+    RenameInput(String),
+    RenameCommit,
     OpenSpawn(String),
     OpenAdd,
     StartupAction(iced::widget::text_editor::Action),
     SaveStartup,
     DismissDialog,
     SpawnName(String),
+    /// New-tab card: open in the project root (no worktree).
+    SpawnInRoot(bool),
     Spawn,
     AddPath(String),
     AddProject,
@@ -171,6 +176,11 @@ enum Msg {
         force: bool,
     },
     DropProject(String),
+    /// `git worktree remove` failed after the tab was already closed.
+    GitRmFailed {
+        id: String,
+        error: String,
+    },
     RestartShell(String),
     PaneFocused(String),
     SplitDividerPress(String),
@@ -180,6 +190,61 @@ enum Msg {
     PresenceTick,
     Call(sola_call::Incoming),
     WindowFocus(bool),
+}
+
+/// PTY taken off the iced state so `tmux kill-session` / `git worktree remove`
+/// can run off the UI thread. `close()` matches [`App::teardown_pane`].
+struct DetachedPane {
+    backend: Option<PtyBackend>,
+    session: String,
+}
+
+impl DetachedPane {
+    fn close(self) {
+        if let Some(backend) = self.backend {
+            backend.close();
+        } else {
+            tmux::kill_session(&self.session);
+        }
+    }
+}
+
+/// Kill tmux (and optionally `git worktree remove`) after the rail has
+/// already dropped the tab. Both wait on subprocesses; doing them in
+/// `update` freezes every other pane.
+fn close_io_task(
+    panes: Vec<DetachedPane>,
+    checkout: Option<(PathBuf, PathBuf, bool)>,
+    workspace_id: String,
+) -> Task<Msg> {
+    Task::perform(
+        async move {
+            match tokio::task::spawn_blocking(move || {
+                for pane in panes {
+                    pane.close();
+                }
+                match checkout {
+                    Some((root, path, force)) => spawn::remove_worktree(&root, &path, force),
+                    None => Ok(()),
+                }
+            })
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(%e, "workspace teardown worker panicked");
+                    Ok(())
+                }
+            }
+        },
+        move |result| match result {
+            Ok(()) => Msg::Ignore,
+            Err(error) => Msg::GitRmFailed {
+                id: workspace_id,
+                error,
+            },
+        },
+    )
 }
 
 impl App {
@@ -340,9 +405,10 @@ impl App {
             }
             Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
-                let Some(id) = self.resolve_pane(&incoming.pane_id) else {
+                let Some(id) = self.resolve_hook_pane(&incoming) else {
                     tracing::debug!(
                         pane = %incoming.pane_id,
+                        cwd = ?incoming.cwd,
                         session = ?incoming.mapped.session_id,
                         "hook for unknown pane"
                     );
@@ -397,6 +463,20 @@ impl App {
                     .iter()
                     .flat_map(|w| w.layout().leaves())
                     .collect();
+                let mut claimed: HashSet<String> = HashSet::new();
+                for id in &ids {
+                    let Some(st) = self.pane_status.get(id) else {
+                        continue;
+                    };
+                    if !st.is_codex() {
+                        continue;
+                    }
+                    if let Some(sid) = st.owner_session.clone() {
+                        if status::codex_rollout_exists(&sid) {
+                            claimed.insert(sid);
+                        }
+                    }
+                }
                 let mut dirty = false;
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
@@ -405,6 +485,16 @@ impl App {
                     let st = self.pane_status.entry(id).or_default();
                     let before = (st.status, st.agent.clone());
                     st.apply_presence(who);
+                    if st.is_codex() {
+                        if let Some(cwd) = cwd.as_deref() {
+                            if st.observe_codex_turn(cwd, &claimed) {
+                                dirty = true;
+                            }
+                            if let Some(sid) = st.owner_session.clone() {
+                                claimed.insert(sid);
+                            }
+                        }
+                    }
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(cwd);
                     }
@@ -442,13 +532,6 @@ impl App {
                 self.dragging_split = Some(id);
                 Task::none()
             }
-            Msg::ToggleProject(id) => {
-                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
-                    p.collapsed = !p.collapsed;
-                    self.persist_catalog();
-                }
-                Task::none()
-            }
             Msg::OpenSpawn(project_id) => self.open_spawn(&project_id),
             Msg::OpenAdd => self.open_add(),
             Msg::StartupAction(action) => {
@@ -460,10 +543,16 @@ impl App {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
                 self.startup = sidebar::StartupDraft::default();
+                self.sidebar.renaming = None;
                 Task::none()
             }
             Msg::SpawnName(s) => {
                 self.spawn.name = s;
+                self.spawn.error = None;
+                Task::none()
+            }
+            Msg::SpawnInRoot(on) => {
+                self.spawn.in_root = on;
                 self.spawn.error = None;
                 Task::none()
             }
@@ -477,16 +566,26 @@ impl App {
             Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
             Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
+            Msg::GitRmFailed { id, error } => {
+                tracing::warn!(workspace = %id, %error, "git worktree remove failed");
+                self.emit_notice("Worktree leftover".into(), error, format!("git-rm-{id}"));
+                Task::none()
+            }
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::Sidebar(m) => {
-                if let Some(sola_kit::components::SidebarEvent::Resize { width }) =
-                    self.sidebar.gestures.update(m)
-                {
-                    self.sidebar.width = width;
-                    self.resize_all_panes();
+                if let Some(ev) = self.sidebar.gestures.update(m) {
+                    return self.on_sidebar_event(ev);
                 }
                 Task::none()
             }
+            Msg::BeginRename(id) => self.begin_rename(id),
+            Msg::RenameInput(s) => {
+                if let Some((_, draft)) = &mut self.sidebar.renaming {
+                    *draft = s;
+                }
+                Task::none()
+            }
+            Msg::RenameCommit => self.commit_rename(),
             Msg::PtyOutput(id) => {
                 if let Some(rt) = self.runtimes.get(&id) {
                     rt.cache.clear();
@@ -497,6 +596,13 @@ impl App {
                 tracing::info!(pane = %id, "pane PTY exited");
                 // Drop the client without `close()` (plain Drop keeps tmux).
                 self.runtimes.remove(&id);
+                // Tab already dropped (CLI / hover). The session is being
+                // killed off-thread — do not list-sessions or reattach.
+                if self.workspace_for_pane(&id).is_none() {
+                    self.pane_status.remove(&id);
+                    status::persist_all(&self.pane_status);
+                    return Task::none();
+                }
                 let want = tmux::session_name(&id);
                 let live = tmux::list_sessions().unwrap_or_default();
                 if live.iter().any(|s| s == &want) {
@@ -818,12 +924,14 @@ impl App {
         // `grok -r <session>` restores the conversation. `-A` reattach
         // ignores exec, so a live tmux is left as-is.
         let resume = if exec.is_empty() && !tmux::has_session(&tmux_session) {
-            self.grok_resume_argv(id)
+            self.resume_argv(id)
         } else {
             None
         };
-        if let Some(sid) = resume.as_ref().and_then(|a| a.get(2)) {
-            tracing::info!(pane = %id, session = %sid, "resuming grok session");
+        if let Some(args) = resume.as_ref() {
+            if let (Some(bin), Some(sid)) = (args.first(), args.last()) {
+                tracing::info!(pane = %id, agent = %bin, session = %sid, "resuming agent session");
+            }
         }
         let exec_refs: Vec<&str> = match resume.as_ref() {
             Some(args) => args.iter().map(String::as_str).collect(),
@@ -879,19 +987,83 @@ impl App {
         Task::none()
     }
 
-    /// `grok -r <id>` when last-status named Grok with a session still on disk.
-    fn grok_resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
+    /// `grok -r` or `claude --resume` when last-status still names that
+    /// agent and the session is on disk. A live tmux is left as-is.
+    fn resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
         let st = self.pane_status.get(pane_id)?;
         let sid = st.resume_session_id()?;
-        if !status::grok_session_exists(sid) {
-            tracing::warn!(
-                pane = %pane_id,
-                session = %sid,
-                "stored grok session not on disk; starting a shell"
-            );
-            return None;
+        if st.is_grok() {
+            if !status::grok_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored grok session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::grok_resume_argv(sid));
         }
-        Some(cli::grok_resume_argv(sid))
+        if st.is_claude() {
+            if !status::claude_session_exists(sid) {
+                tracing::warn!(
+                    pane = %pane_id,
+                    session = %sid,
+                    "stored claude session not on disk; starting a shell"
+                );
+                return None;
+            }
+            return Some(cli::claude_resume_argv(sid));
+        }
+        None
+    }
+
+    fn resolve_hook_pane(&self, incoming: &hooks::Incoming) -> Option<String> {
+        let header = self.resolve_pane(&incoming.pane_id);
+        let header_path = header
+            .as_deref()
+            .and_then(|id| self.workspace_for_pane(id))
+            .map(|ws| ws.path.clone());
+        let located: Vec<(String, std::path::PathBuf)> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                let path = ws.path.clone();
+                ws.layout()
+                    .leaves()
+                    .into_iter()
+                    .map(move |id| (id, path.clone()))
+            })
+            .collect();
+        let owned: Vec<(String, std::path::PathBuf, Option<String>, Option<String>)> = located
+            .into_iter()
+            .map(|(id, path)| {
+                let st = self.pane_status.get(&id);
+                (
+                    id,
+                    path,
+                    st.and_then(|s| s.agent.clone()),
+                    st.and_then(|s| s.owner_session.clone()),
+                )
+            })
+            .collect();
+        let leaves: Vec<hooks::server::HookLeaf<'_>> = owned
+            .iter()
+            .map(|(id, path, agent, session)| hooks::server::HookLeaf {
+                id,
+                path,
+                agent: agent.as_deref(),
+                session_id: session.as_deref(),
+            })
+            .collect();
+        hooks::server::resolve_hook_target(
+            header.as_deref(),
+            header_path.as_deref(),
+            incoming.cwd.as_deref().map(std::path::Path::new),
+            incoming.mapped.session_id.as_deref(),
+            &incoming.agent,
+            &leaves,
+        )
+        .and_then(|id| self.resolve_pane(&id))
     }
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
@@ -969,19 +1141,127 @@ impl App {
         });
     }
 
-    fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
-        if !self.projects.iter().any(|p| p.id == project_id) {
+    fn on_sidebar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
+        use sola_kit::components::{Dest, SidebarEvent};
+        match ev {
+            SidebarEvent::Activate { id } => self.select_workspace(&id),
+            SidebarEvent::ToggleSection { id } => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.collapsed = !p.collapsed;
+                    self.persist_catalog();
+                }
+                Task::none()
+            }
+            SidebarEvent::Edit { id } => self.begin_rename(id),
+            SidebarEvent::Resize { width } => {
+                self.sidebar.width = width;
+                self.resize_all_panes();
+                Task::none()
+            }
+            SidebarEvent::Drop(drop) => {
+                match drop.dest {
+                    Dest::Join { before, .. } => {
+                        if let Err(e) = workspace::move_workspace_before(
+                            &mut self.workspaces,
+                            &drop.id,
+                            before.as_deref(),
+                        ) {
+                            tracing::warn!("rail drop: {e}");
+                        } else {
+                            self.persist_catalog();
+                        }
+                    }
+                    Dest::BlockBefore { before } => {
+                        let before = self.project_before_target(before.as_deref());
+                        if let Err(e) = workspace::move_project_before(
+                            &mut self.projects,
+                            &drop.id,
+                            before.as_deref(),
+                        ) {
+                            tracing::warn!("project drop: {e}");
+                        } else {
+                            self.persist_catalog();
+                        }
+                    }
+                    Dest::Loose { .. } | Dest::BeforeGroup { .. } | Dest::Sections(_) => {}
+                }
+                Task::none()
+            }
+        }
+    }
+
+    fn project_before_target(&self, before: Option<&str>) -> Option<String> {
+        let id = before?;
+        if self.projects.iter().any(|p| p.id == id) {
+            return Some(id.to_string());
+        }
+        self.workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.project_id.clone())
+    }
+
+    fn begin_rename(&mut self, id: String) -> Task<Msg> {
+        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+            return Task::none();
+        };
+        if !workspace::can_close(ws) {
             return Task::none();
         }
+        self.sidebar.renaming = Some((id, cli::rail_label(ws)));
+        Task::batch([
+            iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::RENAME_INPUT_ID)),
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                    iced::widget::Id::new(sidebar::RENAME_INPUT_ID),
+                ),
+            ),
+        ])
+    }
+
+    fn commit_rename(&mut self) -> Task<Msg> {
+        let Some((id, name)) = self.sidebar.renaming.take() else {
+            return Task::none();
+        };
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+            if !workspace::can_close(ws) {
+                return Task::none();
+            }
+            cli::apply_rail_title(ws, &name);
+            self.persist_catalog();
+        }
+        Task::none()
+    }
+
+    fn select_workspace(&mut self, id: &str) -> Task<Msg> {
+        if self.workspaces.iter().all(|w| w.id != id) {
+            return Task::none();
+        }
+        self.sidebar.renaming = None;
+        self.selected = id.to_string();
+        if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
+            self.focused = ws.active_pane_id();
+        }
+        self.persist_catalog();
+        self.attach_workspace(id)
+    }
+
+    fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
+        let Some(project) = self.projects.iter().find(|p| p.id == project_id) else {
+            return Task::none();
+        };
+        let root_branch = spawn::current_branch(&project.root);
         self.add = sidebar::AddDraft::default();
         self.startup = sidebar::StartupDraft::default();
-        self.spawn = sidebar::SpawnDraft::open(project_id);
+        self.sidebar.renaming = None;
+        self.spawn = sidebar::SpawnDraft::open(project_id, root_branch);
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::SPAWN_INPUT_ID))
     }
 
     fn open_add(&mut self) -> Task<Msg> {
         self.spawn = sidebar::SpawnDraft::default();
         self.startup = sidebar::StartupDraft::default();
+        self.sidebar.renaming = None;
         self.add = sidebar::AddDraft {
             open: true,
             path: String::new(),
@@ -1032,7 +1312,18 @@ impl App {
             return Task::none();
         };
         let name = self.spawn.name.clone();
-        match self.spawn_workspace(&project_id, &name, None, None, None, None, None, true) {
+        let in_root = self.spawn.in_root;
+        match self.spawn_workspace(
+            &project_id,
+            &name,
+            None,
+            None,
+            None,
+            None,
+            None,
+            in_root,
+            true,
+        ) {
             Ok((id, startup_err)) => {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.maybe_toast_startup(startup_err, &id);
@@ -1045,9 +1336,10 @@ impl App {
         }
     }
 
-    /// Create a worktree + catalog row. Does not attach a PTY.
-    /// Second value is a startup-script error (workspace still exists).
-    /// `select` takes the rail (UI / `--select`). CLI default is false.
+    /// Create a worktree (or a root tab when `in_root`) + catalog row.
+    /// Does not attach a PTY. Second value is a startup-script error
+    /// (workspace still exists). `select` takes the rail (UI /
+    /// `--select`). CLI default is false.
     fn spawn_workspace(
         &mut self,
         project_q: &str,
@@ -1057,6 +1349,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        in_root: bool,
         select: bool,
     ) -> Result<(String, Option<String>), String> {
         let project = workspace::resolve_project(&self.projects, project_q)?.clone();
@@ -1064,14 +1357,20 @@ impl App {
         if slug.is_empty() {
             return Err("name needs a letter or number".into());
         }
-        if let Some(a) = agent {
-            if cli::canonical_agent(a).is_none() {
-                return Err(
-                    "only grok and codex are first-class; other agents are presence-only".into(),
-                );
+        let agent = cli::first_class_agent(agent)?;
+        let (dest, kind) = if in_root {
+            let given = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+            if given(branch) || given(base) {
+                return Err("--branch / --base-branch need a worktree (drop --root)".into());
             }
-        }
-        let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
+            if workspace::worktree_name_taken(&self.workspaces, &project.id, &slug, "") {
+                return Err(format!("workspace '{slug}' already exists"));
+            }
+            (project.root.clone(), workspace::Kind::Root)
+        } else {
+            let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
+            (dest, workspace::Kind::Worktree)
+        };
         let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
         let id = workspace::unique_id("ws", &slug, &taken);
         let parent = match parent {
@@ -1096,14 +1395,19 @@ impl App {
             name: name.trim().to_string(),
             title,
             path: dest,
-            kind: workspace::Kind::Worktree,
+            kind,
             parent,
             layout: None,
             active_pane: None,
             status: status::AgentStatus::Idle,
             agent: agent.map(str::to_string),
         };
-        let startup_err = startup::run(&project, &ws).err();
+        // Startup prepares a fresh worktree; a root tab has none.
+        let startup_err = if in_root {
+            None
+        } else {
+            startup::run(&project, &ws).err()
+        };
         if let Some(e) = &startup_err {
             tracing::warn!(workspace = %ws.id, "{e}");
         }
@@ -1259,6 +1563,7 @@ impl App {
                     param_str(params, "branch").as_deref(),
                     param_str(params, "base-branch").as_deref(),
                     param_str(params, "title").as_deref(),
+                    param_bool(params, "root"),
                     params
                         .get("select")
                         .and_then(|v| v.as_bool())
@@ -1277,7 +1582,7 @@ impl App {
                 if force && !checkout {
                     return (Err("--force needs --worktree".into()), Task::none());
                 }
-                match self.cli_rm(&ws) {
+                match self.cli_rm(&ws, checkout) {
                     // Reply first; teardown on the next tick so solactl
                     // (maybe running in a pane we are about to kill)
                     // gets {ok:true} instead of a hang / timeout.
@@ -1311,7 +1616,17 @@ impl App {
                         params.get("name").and_then(|v| v.as_str()),
                         params.get("title").and_then(|v| v.as_str()),
                         params.get("branch").and_then(|v| v.as_str()),
+                        param_before(params, "before"),
                     ),
+                    Task::none(),
+                )
+            }
+            "project.reorder" => {
+                let Some(q) = param_str(params, "project") else {
+                    return (Err("missing project".into()), Task::none());
+                };
+                (
+                    self.cli_reorder_project(&q, param_before(params, "before")),
                     Task::none(),
                 )
             }
@@ -1416,6 +1731,7 @@ impl App {
         branch: Option<&str>,
         base: Option<&str>,
         title: Option<&str>,
+        in_root: bool,
         select: bool,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let prompt = cli::read_prompt(prompt, prompt_file)?;
@@ -1424,8 +1740,9 @@ impl App {
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
-        let (id, startup_err) =
-            self.spawn_workspace(project, name, parent, agent, branch, base, title, select)?;
+        let (id, startup_err) = self.spawn_workspace(
+            project, name, parent, agent, branch, base, title, in_root, select,
+        )?;
         let task = if let Some(a) = agent {
             let args = cli::agent_argv(a, prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1472,10 +1789,16 @@ impl App {
         }))
     }
 
-    fn cli_rm(&self, q: &str) -> Result<String, String> {
+    fn cli_rm(&self, q: &str, checkout: bool) -> Result<String, String> {
         let ws = workspace::resolve_workspace(&self.workspaces, q)?;
         if !workspace::can_close(ws) {
             return Err("cannot close the project root".into());
+        }
+        if checkout && !workspace::has_worktree(ws) {
+            return Err(format!(
+                "{} has no worktree (root tab) — drop --worktree to close the tab",
+                ws.id
+            ));
         }
         Ok(ws.id.clone())
     }
@@ -1507,6 +1830,7 @@ impl App {
         name: Option<&str>,
         title: Option<&str>,
         branch: Option<&str>,
+        before: Option<Option<String>>,
     ) -> Result<serde_json::Value, String> {
         let id = workspace::resolve_workspace(&self.workspaces, q)?
             .id
@@ -1526,12 +1850,26 @@ impl App {
         }
         if let Some(raw) = title {
             if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
-                let t = raw.trim();
-                ws.title = if t.is_empty() {
-                    None
-                } else {
-                    Some(t.to_string())
+                cli::apply_rail_title(ws, raw);
+            }
+        }
+        if err.is_none() {
+            if let Some(before) = before {
+                let before_id = match before.as_deref() {
+                    None => None,
+                    Some(q) => Some(
+                        workspace::resolve_workspace(&self.workspaces, q)?
+                            .id
+                            .clone(),
+                    ),
                 };
+                if let Err(e) = workspace::move_workspace_before(
+                    &mut self.workspaces,
+                    &id,
+                    before_id.as_deref(),
+                ) {
+                    err = Some(e);
+                }
             }
         }
         self.persist_catalog();
@@ -1542,12 +1880,35 @@ impl App {
         Ok(cli::workspace_json(ws, Some(&self.selected)))
     }
 
+    fn cli_reorder_project(
+        &mut self,
+        q: &str,
+        before: Option<Option<String>>,
+    ) -> Result<serde_json::Value, String> {
+        let id = workspace::resolve_project(&self.projects, q)?.id.clone();
+        let before_id = match before {
+            None => None,
+            Some(None) => None,
+            Some(Some(q)) => Some(workspace::resolve_project(&self.projects, &q)?.id.clone()),
+        };
+        // Missing --before still moves to end when the method is called.
+        workspace::move_project_before(&mut self.projects, &id, before_id.as_deref())?;
+        self.persist_catalog();
+        Ok(cli::project_json(workspace::resolve_project(
+            &self.projects,
+            &id,
+        )?))
+    }
+
     /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
     fn rename_workspace(&mut self, id: &str, raw: &str) -> Result<(), String> {
         let slug = spawn::slug(raw);
         spawn::check_slug(&slug)?;
         let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind != workspace::Kind::Worktree {
+        if ws.kind == workspace::Kind::Root {
+            return Err("this tab has no worktree to move — use --title for the rail label".into());
+        }
+        if !workspace::has_worktree(ws) {
             return Err("cannot rename the project root".into());
         }
         let project_id = ws.project_id.clone();
@@ -1577,7 +1938,10 @@ impl App {
 
     fn rename_workspace_branch(&self, id: &str, raw: &str) -> Result<(), String> {
         let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind != workspace::Kind::Worktree {
+        if ws.kind == workspace::Kind::Root {
+            return Err("this tab has no worktree — it uses the project root's branch".into());
+        }
+        if !workspace::has_worktree(ws) {
             return Err("cannot rename the project root branch".into());
         }
         spawn::rename_branch(&ws.path, raw)
@@ -1745,10 +2109,7 @@ impl App {
 
     fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
         let session = tmux::session_name(id);
-        if !tmux::send_prompt(&session, text, enter) {
-            return Err("send failed".into());
-        }
-        Ok(())
+        tmux::send_prompt(&session, text, enter)
     }
 
     fn cli_send(&self, pane: Option<&str>, text: &str, enter: bool) -> Result<String, String> {
@@ -1955,13 +2316,20 @@ impl App {
     }
 
     fn teardown_pane(&mut self, id: &str) {
-        if let Some(rt) = self.runtimes.remove(id) {
-            rt.backend.close();
-        } else {
-            tmux::kill_session(&tmux::session_name(id));
-        }
+        self.detach_pane(id).close();
+    }
+
+    /// Stop drawing this pane. Caller must `close()` the result (on the
+    /// iced thread only when the tmux session name may be reused next,
+    /// e.g. last-leaf ⌘W).
+    fn detach_pane(&mut self, id: &str) -> DetachedPane {
+        let backend = self.runtimes.remove(id).map(|rt| rt.backend);
         self.pane_status.remove(id);
         self.pane_grids.remove(id);
+        DetachedPane {
+            backend,
+            session: tmux::session_name(id),
+        }
     }
 
     fn attach_selected_if_needed(&mut self) -> Task<Msg> {
@@ -1979,19 +2347,29 @@ impl App {
     /// Close a sibling tab. `checkout` also `git worktree remove`s (after
     /// tmux dies so the pane is not sitting in that cwd). Hover × leaves
     /// the folder. A gone path just prunes git metadata.
+    ///
+    /// The rail and catalog update here; `tmux kill-session` and git run
+    /// off the iced thread so a `solactl` rm (or hover ×) does not freeze
+    /// every other pane.
     fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
-        let Some((panes, path, project_id)) =
+        let Some((panes, path, project_id, has_worktree)) =
             self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
-                workspace::can_close(ws)
-                    .then(|| (ws.layout().leaves(), ws.path.clone(), ws.project_id.clone()))
+                workspace::can_close(ws).then(|| {
+                    (
+                        ws.layout().leaves(),
+                        ws.path.clone(),
+                        ws.project_id.clone(),
+                        workspace::has_worktree(ws),
+                    )
+                })
             })
         else {
             return Task::none();
         };
+        // A root tab's path is the project root — never `git worktree remove` it.
+        let checkout = checkout && has_worktree;
         tracing::info!(workspace = %id, checkout, "closing workspace");
-        for pane in &panes {
-            self.teardown_pane(pane);
-        }
+        let detached: Vec<DetachedPane> = panes.iter().map(|pane| self.detach_pane(pane)).collect();
         self.workspaces.retain(|w| w.id != id);
         for w in &mut self.workspaces {
             if w.parent.as_deref() == Some(id) {
@@ -2007,20 +2385,16 @@ impl App {
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        if checkout {
-            if let Some(root) = self
-                .projects
-                .iter()
-                .find(|p| p.id == project_id)
-                .map(|p| p.root.clone())
-            {
-                if let Err(e) = spawn::remove_worktree(&root, &path, force) {
-                    tracing::warn!(workspace = %id, %e, "git worktree remove failed");
-                    self.emit_notice("Worktree leftover".into(), e, format!("git-rm-{id}"));
-                }
-            }
-        }
-        self.attach_selected_if_needed()
+        let git = checkout
+            .then(|| {
+                self.projects
+                    .iter()
+                    .find(|p| p.id == project_id)
+                    .map(|p| (p.root.clone(), path.clone(), force))
+            })
+            .flatten();
+        let attach = self.attach_selected_if_needed();
+        Task::batch([attach, close_io_task(detached, git, id.to_string())])
     }
 
     /// If a sibling's checkout is already gone (`git worktree remove` from
@@ -2063,15 +2437,17 @@ impl App {
         self.projects = catalog.projects;
         self.workspaces = catalog.workspaces;
         self.selected = catalog.selected.unwrap_or_default();
-        for id in pane_ids {
-            self.teardown_pane(&id);
-        }
+        let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
         if removed.is_empty() {
-            return Task::none();
+            return close_io_task(detached, None, project_id.to_string());
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
-        self.attach_selected_if_needed()
+        let attach = self.attach_selected_if_needed();
+        Task::batch([
+            attach,
+            close_io_task(detached, None, project_id.to_string()),
+        ])
     }
 
     fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {
@@ -2227,6 +2603,12 @@ impl App {
         if self.add.open && !self.add.path.is_empty() {
             return iced::clipboard::write(self.add.path.clone());
         }
+        if let Some((_, draft)) = &self.sidebar.renaming {
+            if !draft.is_empty() {
+                return iced::clipboard::write(draft.clone());
+            }
+            return Task::none();
+        }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
         };
@@ -2261,6 +2643,10 @@ impl App {
             self.add.path.push_str(&text.replace('\n', ""));
             return Task::none();
         }
+        if let Some((_, draft)) = &mut self.sidebar.renaming {
+            draft.push_str(&text.replace('\n', ""));
+            return Task::none();
+        }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
         };
@@ -2291,6 +2677,10 @@ impl App {
             ..
         }) = &event
         {
+            if self.sidebar.renaming.is_some() {
+                self.sidebar.renaming = None;
+                return Task::none();
+            }
             if self.dialog_open() {
                 self.spawn = sidebar::SpawnDraft::default();
                 self.add = sidebar::AddDraft::default();
@@ -2298,7 +2688,7 @@ impl App {
                 return Task::none();
             }
         }
-        if self.dialog_open() {
+        if self.dialog_open() || self.sidebar.renaming.is_some() {
             return Task::none();
         }
 
@@ -2411,6 +2801,16 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// `None` = key omitted. `Some(None)` = empty / `end` (append).
+fn param_before(params: &serde_json::Value, key: &str) -> Option<Option<String>> {
+    let raw = params.get(key)?.as_str()?.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("end") {
+        Some(None)
+    } else {
+        Some(Some(raw.to_string()))
+    }
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> bool {

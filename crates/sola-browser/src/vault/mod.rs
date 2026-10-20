@@ -9,6 +9,7 @@
 
 pub mod bridge;
 mod client;
+mod edit;
 mod fill_js;
 mod generate;
 mod identity;
@@ -30,6 +31,7 @@ pub use client::{
     CardFillMaterial, CardSummary, FillMaterial, LoginOutcome, MatchSummary, TotpSummary,
     TwoFactorKind, VaultError, VaultService, VaultStatus,
 };
+pub use edit::{CustomDraft, DraftRow, ItemDraft, apply_draft};
 pub use fill_js::{
     fill_card_script, fill_credentials_script, fill_credentials_script_ex, fill_identity_script,
     fill_totp_script,

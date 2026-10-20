@@ -1,0 +1,32 @@
+[package]
+name = "sola-bots"
+version.workspace = true
+edition.workspace = true
+description = "Named informational LLM sessions (daemon + iced dialog)"
+license = "MIT"
+
+[[bin]]
+name = "sola-botsd"
+path = "src/bin/sola-botsd.rs"
+
+[[bin]]
+name = "sola-bots"
+path = "src/bin/sola-bots.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
+sola-core = { path = "../sola-core" }
+
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+tiny_http = "0.12"
+
+[dev-dependencies]
+tempfile = "3"

@@ -226,6 +226,14 @@ pub fn project_cursor_i32(point: Point, bounds: Rectangle, scale: f32) -> (i32, 
     (x as i32, y as i32)
 }
 
+/// Page-relative physical pixels; may be negative or past the view
+/// (HTML5 drag continuing over chrome).
+pub fn project_cursor_i32_signed(point: Point, bounds: Rectangle, scale: f32) -> (i32, i32) {
+    let x = ((point.x - bounds.x) * scale) as i32;
+    let y = ((point.y - bounds.y) * scale) as i32;
+    (x, y)
+}
+
 /// Derive the scale factor the shader last requested from widget bounds
 /// width vs last physical size.
 pub fn scale_from_last_size(bounds: Rectangle, last_req_w: u32, fallback: f32) -> f32 {
@@ -244,6 +252,20 @@ mod tests {
     fn cursor_roundtrip() {
         assert_eq!(CursorKind::from_u32(1), CursorKind::Pointer);
         assert_eq!(CursorKind::from_u32(99), CursorKind::Default);
+    }
+
+    #[test]
+    fn project_signed_allows_negative() {
+        let bounds = Rectangle {
+            x: 100.0,
+            y: 40.0,
+            width: 200.0,
+            height: 100.0,
+        };
+        let (x, y) = project_cursor_i32_signed(Point::new(80.0, 10.0), bounds, 1.0);
+        assert_eq!((x, y), (-20, -30));
+        let clamped = project_cursor_i32(Point::new(80.0, 10.0), bounds, 1.0);
+        assert_eq!(clamped, (0, 0));
     }
 
     #[test]

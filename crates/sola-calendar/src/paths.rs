@@ -24,6 +24,10 @@ impl AppDirs {
         self.state.join("store.json")
     }
 
+    pub fn reminders_file(&self) -> PathBuf {
+        self.state.join("reminders.json")
+    }
+
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.config)?;
         std::fs::create_dir_all(&self.state)?;

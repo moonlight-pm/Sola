@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / Cover</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .title { display: grid; grid-template-columns: 520px 1fr; gap: 48px; align-items: end; margin: 64px 0 72px; }
+  .title__name { font: 600 140px/0.9 var(--f-display); letter-spacing: -6px; margin-left: -6px; }
+  .title__name span { color: var(--sol); }
+  .title__meta { font: 400 11px/1 var(--f-spec); color: var(--ink-3); letter-spacing: 0.4px; margin-bottom: 20px; }
+  .title__thesis { font: 500 30px/1.18 var(--f-display); letter-spacing: -0.5px; margin-bottom: 18px; }
+  .title__lead { font: 400 15px/24px var(--f-chrome); color: var(--ink-2); }
+
+  .ba { display: grid; grid-template-columns: 640px 640px; gap: 16px; }
+  .ba .spec { margin-top: 8px; }
+
+  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .move { border-top: 1px solid var(--hairline); padding-top: 18px; }
+  .move__n { font: 500 11px/1 var(--f-spec); color: var(--accent); margin-bottom: 10px; }
+  .move h3 { font: 600 20px/1.2 var(--f-display); margin: 0 0 10px; letter-spacing: -0.2px; }
+  .move p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0 0 10px; }
+  .move p b { color: var(--ink); font-weight: 500; }
+
+  .nums { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--hairline); }
+  .num { padding: 18px 0 20px; border-bottom: 1px solid var(--hairline); }
+  .num__v { font: 500 30px/1 var(--f-display); letter-spacing: -0.5px; }
+  .num__v small { font: 400 13px/1 var(--f-chrome); color: var(--ink-3); letter-spacing: 0; margin-left: 4px; }
+  .num__k { font: 400 12px/18px var(--f-chrome); color: var(--ink-2); margin-top: 8px; padding-right: 24px; }
+
+  .kept { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .kept h4 { font: 600 15px/1.2 var(--f-display); margin: 0 0 8px; }
+  .kept ul { margin: 0; padding-left: 16px; font: 400 13px/21px var(--f-chrome); color: var(--ink-2); }
+
+  .asks { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .ask { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--hairline); font: 400 13px/20px var(--f-chrome); color: var(--ink-2); }
+  .ask b { color: var(--ink); font-weight: 500; }
+  .ask .n { font: 500 11px/20px var(--f-spec); color: var(--warning); }
+  .ask .pick { color: var(--accent); }
+</style>
+</head>
+<body class="board">
+
+<div class="frame" id="hero" style="width:1296px;height:520px"></div>
+<div class="spec" style="margin-top:12px">A 1296 × 520 output at 1:1, two tiles. Workspaces has focus with its app menu open, hanging from its own titlebar. The top row is the flower, the agents, mail, and the clock.</div>
+
+<div class="title">
+  <div class="title__name">Next<span>.</span></div>
+  <div>
+    <div class="title__meta">SOLA · FOUNDATION · 2026-10-14 · AFTER FOUNDATION V1 AND FOUR EXPLORATIONS</div>
+    <div class="title__thesis">Apps carry their own menus. Windows stand apart. The top of the desk belongs to the islands.</div>
+    <div class="title__lead">Today's bar holds the focused app's menus across the top of a 5120 px output, far from the window they act on, and that is why the bar exists at all. Next puts each app's menus in its own titlebar, gives every window one, and spaces windows one gap apart. With nothing left to hold, the bar goes away, and the top row of the gap grid is free for islands.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Before and after · a 2560 × 1080 output at 1:4</div>
+  <div class="ba">
+    <div><div class="crop" id="before" style="width:640px;height:270px"></div><div class="spec"><b>Today</b> · a 28 px bar with the focused app's menus; tiles flush, without titles</div></div>
+    <div><div class="crop" id="after" style="width:640px;height:270px"></div><div class="spec"><b>Next</b> · islands on the ground; every window titled, with its menus; 10 px gaps</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Three moves</div>
+  <div class="moves">
+    <div class="move">
+      <div class="move__n">01 · Menus on the window</div>
+      <h3>Menus move onto the app</h3>
+      <p>The menus each app already publishes — Workspaces' Project and Edit, Mail's Mailbox and Message — sit in that app's titlebar, after its name. <b>The name is the app menu</b>, as it is in the bar today, and the shell still adds Window last.</p>
+      <p>A menu acts on the window it hangs from, wherever that window is on 5120 px.</p>
+    </div>
+    <div class="move">
+      <div class="move__n">01 · Menus on the window</div>
+      <h3>Every window wears a titlebar</h3>
+      <p>Tiles get the 38 px titlebar the kit gives floats today: close, name, menus, title, and a zone glyph. <b>Focus is the window</b>: a brighter titlebar, a lit rim, a red close dot.</p>
+      <p>Apps that are not ours get a titlebar from sola-river when they accept server-side decorations, and keep their own when they do not.</p>
+    </div>
+    <div class="move">
+      <div class="move__n">02 · Gaps · 03 · The top row</div>
+      <h3>Gaps, and the top is islands</h3>
+      <p>One 10 px gap between windows, around the output, and above and below 28 px islands, so tiles start at 48. <b>The islands are the grid's top row</b>: the flower lines up with the first tile, the clock with the last.</p>
+      <p>No band behind them. The ground in the gaps is the ground under the islands.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The numbers</div>
+  <div class="nums">
+    <div class="num"><div class="num__v">10<small>px</small></div><div class="num__k">The gap: output edges, between tiles, above and below the islands.</div></div>
+    <div class="num"><div class="num__v">48<small>px</small></div><div class="num__k">Where tiles start. Today 28, Islands 40.</div></div>
+    <div class="num"><div class="num__v">38<small>px</small></div><div class="num__k">Titlebar, the kit's floating titlebar height today.</div></div>
+    <div class="num"><div class="num__v">96.1<small>%</small></div><div class="num__k">Of today's content area on 5120 × 2160, after gaps and titlebars.</div></div>
+    <div class="num"><div class="num__v">28<small>px</small></div><div class="num__k">Island height; corners 14, so every bubble is a pill.</div></div>
+    <div class="num"><div class="num__v">12<small>px</small></div><div class="num__k">Window corners, tiles and floats alike. Floats are 14 today.</div></div>
+    <div class="num"><div class="num__v">6<small>px</small></div><div class="num__k">Between bubbles in a group.</div></div>
+    <div class="num"><div class="num__v">#050505</div><div class="num__k">The ground under everything. The base around it is neutral dark grey; slate is gone.</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">What comes along</div>
+  <div class="kept">
+    <div><h4>From today's look</h4><ul><li>The type roles, the cyan accent, the status colors</li><li>Not the slate base: Next is neutral dark grey</li><li>One cyan signal; focus is not colored</li><li>LED meters, the spectrum, the gold flower</li><li>Shape-first marks: ring, diamond, check</li><li>Only floating things cast a shadow</li></ul></div>
+    <div><h4>From Islands</h4><ul><li>Smoked-glass bubbles with a 1 px rim</li><li>One live thing in the center</li><li>Surfaces grow from the island that owns them</li><li>Child corner = parent corner − gap</li></ul></div>
+    <div><h4>From the others</h4><ul><li>Agent desk: agents can ride the top row (a sample on 03)</li><li>Solar, Instrument: not taken into the foundation yet</li></ul></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Yours to pick · the samples on 01–03</div>
+  <div class="asks">
+    <div class="ask"><span class="n">A</span><span><b>The row.</b> One row, two rows, or name as menu. <span class="pick">Proposed: one row.</span></span></div>
+    <div class="ask"><span class="n">B</span><span><b>Unfocused menus.</b> Dim in place, or hidden until focus. <span class="pick">Proposed: dim.</span></span></div>
+    <div class="ask"><span class="n">C</span><span><b>The browser.</b> Titlebar then toolbar, or the location in the titlebar.</span></div>
+    <div class="ask"><span class="n">D</span><span><b>The gap.</b> 6, 10, or 16 px. <span class="pick">Proposed: 10.</span></span></div>
+    <div class="ask"><span class="n">E</span><span><b>Corners.</b> Square, 8, 12, or the floats' 14. <span class="pick">Proposed: 12.</span></span></div>
+    <div class="ask"><span class="n">F</span><span><b>Focus.</b> Lit rim, accent ring, or dim the rest. <span class="pick">Proposed: lit rim.</span></span></div>
+    <div class="ask"><span class="n">G</span><span><b>Ground.</b> Black, charcoal, or wallpaper. <span class="pick">Proposed: black.</span></span></div>
+    <div class="ask"><span class="n">H</span><span><b>The top row.</b> Three islands, a bubble per group, agents on the left, or search. <span class="pick">Proposed: a bubble per group.</span></span></div>
+  </div>
+</div>
+
+<script>
+  document.getElementById("hero").innerHTML = desk({
+    w: 1296, h: 520, apps: ["workspaces", "mail"], top: "hero", float: false, focus: 0,
+    open: { i: 0, menu: "Workspaces" },
+  });
+  const quarter = (html) => `<div style="position:absolute;left:0;top:0;transform:scale(0.25);transform-origin:0 0">${html}</div>`;
+  document.getElementById("before").innerHTML = quarter(todayDesk({ w: 2560, h: 1080 }));
+  document.getElementById("after").innerHTML = quarter(desk({ w: 2560, h: 1080, top: "bubbles", float: false }));
+  finish();
+</script>
+</body>
+</html>

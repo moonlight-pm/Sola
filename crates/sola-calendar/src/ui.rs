@@ -10,7 +10,7 @@ use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, text, toggler,
+    Space, button, checkbox, column, container, mouse_area, row, scrollable, text, toggler,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
@@ -18,27 +18,30 @@ use iced::{
 };
 use sola_bus::Message;
 use sola_bus::topics::{
-    google_calendar_client_id, CalendarConfig, CalendarShelf, SplitDir, Topic,
+    AppNotification, CalendarConfig, CalendarShelf, NOTIFICATION_PERSIST_PREFIX, SplitDir, Topic,
+    google_calendar_client_id,
 };
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::style::{
-    HAIRLINE_A, ON_FILL_DARK, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
-};
 use sola_kit::components::color_picker;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use sola_kit::components::prose::prose;
+use sola_kit::components::style::{
+    HAIRLINE_A, ON_FILL_DARK, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
+};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input as kit_input;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
     ColorPicker, DividerColors, SidebarItem, SidebarPanel, SidebarSection, button as kit_btn,
-    popover, popover_anchored, split_with, toggle_style,
+    checkbox_style, popover, popover_anchored, split_with, toggle_style,
 };
 use sola_kit::fonts;
 use sola_kit::theme::{color_to_hex, default_theme};
 
 use crate::bridge;
 use crate::model::{CalEvent, Calendar, Settings, Store, View, format_hm, parse_hex};
+use crate::paths::AppDirs;
+use crate::reminders::{self, ReminderBook};
 use crate::timeutil::{
     WEEKDAYS, day_title, first_of_month, month_span, month_title, month_weeks_filled, next_month,
     next_week, parse_pretty_date, pretty_date, prev_month, prev_week, today, week_of, week_title,
@@ -76,6 +79,9 @@ pub struct App {
     /// Last calendar-shelf fingerprint we published. Stops Snapshot from
     /// re-emitting (and re-applying) the same `CalendarConfig`.
     last_shelf_fp: Option<String>,
+    reminders: ReminderBook,
+    /// New-event reminders, held until the provider returns the saved id.
+    pending_remind: Option<PendingRemind>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +106,13 @@ struct Draft {
     remote_id: Option<String>,
     href: Option<String>,
     etag: Option<String>,
+    reminders: Vec<i64>,
+}
+
+struct PendingRemind {
+    requested_id: String,
+    offsets: Vec<i64>,
+    event: CalEvent,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +140,9 @@ pub enum Msg {
     DraftStart(String),
     DraftEnd(String),
     DraftAllDay(bool),
+    RemindSet(bool),
+    RemindAdd(i64),
+    RemindRemove(i64),
     DraftCalendar(String),
     ToggleCalPicker,
     DismissCalPicker,
@@ -180,6 +196,8 @@ impl Default for App {
             dragging_inspector: false,
             window_w: 0.0,
             last_shelf_fp: None,
+            reminders: ReminderBook::load(&AppDirs::discover().reminders_file()),
+            pending_remind: None,
         }
     }
 }
@@ -214,7 +232,7 @@ impl App {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::subscription().map(Msg::Worker),
-            iced::time::every(Duration::from_secs(60)).map(|_| Msg::Tick),
+            iced::time::every(Duration::from_secs(5)).map(|_| Msg::Tick),
             event::listen_with(|event, _status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed(key, modifiers))
@@ -250,7 +268,10 @@ impl App {
                 sola_kit::close_app(APP_ID);
                 Task::none()
             }
-            Msg::Tick => Task::none(),
+            Msg::Tick => {
+                self.deliver_due();
+                Task::none()
+            }
             Msg::Prev => {
                 self.cursor = match self.settings.view {
                     View::Month => prev_month(self.cursor),
@@ -295,7 +316,8 @@ impl App {
             }
             Msg::OpenEvent(id) => {
                 if let Some(ev) = self.store.events.iter().find(|e| e.id == id).cloned() {
-                    self.pane = Pane::Draft(draft_from_event(&ev));
+                    let reminders = self.reminders.offsets(&ev.id);
+                    self.pane = Pane::Draft(draft_from_event(&ev, reminders));
                 }
                 Task::none()
             }
@@ -330,6 +352,33 @@ impl App {
             Msg::DraftStart(s) => self.patch_draft(|d| d.start_time = s),
             Msg::DraftEnd(s) => self.patch_draft(|d| d.end_time = s),
             Msg::DraftAllDay(v) => self.patch_draft(|d| d.all_day = v),
+            Msg::RemindSet(on) => {
+                let _ = self.patch_draft(|d| {
+                    if on {
+                        if d.reminders.is_empty() {
+                            d.reminders.push(reminders::default_minutes(d.all_day));
+                        }
+                    } else {
+                        d.reminders.clear();
+                    }
+                });
+                self.persist_open_reminders();
+                Task::none()
+            }
+            Msg::RemindAdd(mins) => {
+                let _ = self.patch_draft(|d| {
+                    if !d.reminders.contains(&mins) {
+                        d.reminders.push(mins);
+                    }
+                });
+                self.persist_open_reminders();
+                Task::none()
+            }
+            Msg::RemindRemove(mins) => {
+                let _ = self.patch_draft(|d| d.reminders.retain(|m| *m != mins));
+                self.persist_open_reminders();
+                Task::none()
+            }
             Msg::DraftCalendar(id) => {
                 self.cal_picker_open = false;
                 self.patch_draft(|d| d.calendar_id = id)
@@ -344,9 +393,17 @@ impl App {
             }
             Msg::SaveDraft => self.save_draft(),
             Msg::DeleteDraft => {
-                if let Pane::Draft(d) = &self.pane {
-                    if let Some(id) = &d.original_id {
+                let (id, repeating) = match &self.pane {
+                    Pane::Draft(d) => (d.original_id.clone(), d.repeating),
+                    Pane::Day(_) => (None, false),
+                };
+                if let Some(id) = id {
+                    if !repeating {
                         bridge::send(CalCmd::DeleteEvent(id.clone()));
+                        self.reminders.remove(&id);
+                        if let Err(e) = self.reminders.save() {
+                            tracing::warn!("save reminders: {e}");
+                        }
                     }
                 }
                 self.show_day(self.cursor);
@@ -435,10 +492,7 @@ impl App {
             Msg::HideCal(id) => {
                 if let Some((rid, alias)) = self.renaming.take() {
                     if rid == id {
-                        bridge::send(CalCmd::SetAlias {
-                            id: rid,
-                            alias,
-                        });
+                        bridge::send(CalCmd::SetAlias { id: rid, alias });
                     }
                 }
                 self.color_picker = None;
@@ -451,14 +505,15 @@ impl App {
                     self.settings.default_calendar = next;
                     bridge::send(CalCmd::SaveSettings(self.settings.clone()));
                 }
-                bridge::send(CalCmd::SetHidden {
-                    id,
-                    hidden: true,
-                });
+                bridge::send(CalCmd::SetHidden { id, hidden: true });
                 Task::none()
             }
             Msg::ToggleColor(id) => {
-                if self.color_picker.as_ref().is_some_and(|(cid, _)| cid == &id) {
+                if self
+                    .color_picker
+                    .as_ref()
+                    .is_some_and(|(cid, _)| cid == &id)
+                {
                     self.color_picker = None;
                 } else {
                     let seed = self
@@ -499,6 +554,13 @@ impl App {
         if let Some(Topic::MenuAction(p)) = Topic::parse(message) {
             if p.app_id == APP_ID {
                 return self.on_menu(&p.action_id);
+            }
+        }
+        if let Some(Topic::NotificationActivate(a)) = Topic::parse(message) {
+            if a.app_id == APP_ID {
+                if let Some(id) = a.url.clone() {
+                    return self.update(Msg::OpenEvent(id));
+                }
             }
         }
         if let Some(Topic::CalendarConfig(cfg)) = Topic::parse(message) {
@@ -610,6 +672,25 @@ impl App {
                 self.store = store;
                 self.store.ensure_local();
                 self.maybe_emit_shelf();
+                self.deliver_due();
+            }
+            CalNotice::EventSaved {
+                requested_id,
+                saved_id,
+            } => {
+                if let Some(pending) = self.pending_remind.take() {
+                    if pending.requested_id == requested_id {
+                        let mut ev = pending.event;
+                        ev.id = saved_id;
+                        self.reminders.set_from_event(&ev, pending.offsets);
+                        if let Err(e) = self.reminders.save() {
+                            tracing::warn!("save reminders: {e}");
+                        }
+                    } else {
+                        self.pending_remind = Some(pending);
+                    }
+                }
+                self.deliver_due();
             }
             CalNotice::Settings(s) => {
                 self.settings = s;
@@ -630,9 +711,10 @@ impl App {
         self.toast_gen = self.toast_gen.saturating_add(1);
         self.toast = Some(msg);
         let generation = self.toast_gen;
-        Task::perform(async move { tokio::time::sleep(TOAST_TTL).await }, move |_| {
-            Msg::DismissToast { generation }
-        })
+        Task::perform(
+            async move { tokio::time::sleep(TOAST_TTL).await },
+            move |_| Msg::DismissToast { generation },
+        )
     }
 
     fn patch_draft(&mut self, f: impl FnOnce(&mut Draft)) -> Task<Msg> {
@@ -643,16 +725,18 @@ impl App {
     }
 
     fn new_draft(&self, day: NaiveDate) -> Draft {
-        let cal_id = if self.store.calendars.iter().any(|c| {
-            c.id == self.settings.default_calendar && !c.read_only && !c.hidden
-        }) {
+        let cal_id = if self
+            .store
+            .calendars
+            .iter()
+            .any(|c| c.id == self.settings.default_calendar && !c.read_only && !c.hidden)
+        {
             self.settings.default_calendar.clone()
         } else {
             self.store.pick_default(&self.settings.default_calendar)
         };
         let ev = CalEvent::new_local(&cal_id, day, Utc::now());
-        draft_from_event(&ev)
-            .tap_new()
+        draft_from_event(&ev, Vec::new()).tap_new()
     }
 
     fn save_draft(&mut self) -> Task<Msg> {
@@ -662,17 +746,64 @@ impl App {
         if d.read_only {
             return self.show_toast("this occurrence is read-only".into());
         }
-        match draft_to_event(d) {
-            Ok(ev) => {
-                let day = ev
-                    .start_date
-                    .unwrap_or_else(|| ev.start.with_timezone(&chrono::Local).date_naive());
-                bridge::send(CalCmd::SaveEvent(ev));
-                self.show_day(day);
-            }
+        let reminders = d.reminders.clone();
+        let is_new = d.original_id.is_none();
+        let ev = match draft_to_event(d) {
+            Ok(ev) => ev,
             Err(e) => return self.show_toast(e),
+        };
+        let day = ev
+            .start_date
+            .unwrap_or_else(|| ev.start.with_timezone(&chrono::Local).date_naive());
+        if is_new && !reminders.is_empty() {
+            self.pending_remind = Some(PendingRemind {
+                requested_id: ev.id.clone(),
+                offsets: reminders,
+                event: ev.clone(),
+            });
         }
+        bridge::send(CalCmd::SaveEvent(ev));
+        self.show_day(day);
         Task::none()
+    }
+
+    fn persist_open_reminders(&mut self) {
+        let Some((id, offsets)) = (match &self.pane {
+            Pane::Draft(d) => d.original_id.clone().map(|id| (id, d.reminders.clone())),
+            Pane::Day(_) => None,
+        }) else {
+            return;
+        };
+        let Some(ev) = self.store.events.iter().find(|e| e.id == id).cloned() else {
+            return;
+        };
+        self.reminders.set_from_event(&ev, offsets);
+        if let Err(e) = self.reminders.save() {
+            tracing::warn!("save reminders: {e}");
+        }
+        self.deliver_due();
+    }
+
+    fn deliver_due(&mut self) {
+        if self.reminders.note_events(&self.store.events) {
+            if let Err(e) = self.reminders.save() {
+                tracing::warn!("save reminders: {e}");
+            }
+        }
+        let due = self.reminders.pending(&self.store, Utc::now());
+        let mut wrote = false;
+        for item in due {
+            if emit_reminder(&item) {
+                self.reminders
+                    .mark_fired(&item.event_id, item.offset_min, item.fire_unix);
+                wrote = true;
+            }
+        }
+        if wrote {
+            if let Err(e) = self.reminders.save() {
+                tracing::warn!("save reminders: {e}");
+            }
+        }
     }
 
     fn show_day(&mut self, day: NaiveDate) {
@@ -780,10 +911,7 @@ impl App {
                 continue;
             }
             let disc = cal_disc(cal.display_color(), cal.visible);
-            let renaming = self
-                .renaming
-                .as_ref()
-                .is_some_and(|(id, _)| id == &cal.id);
+            let renaming = self.renaming.as_ref().is_some_and(|(id, _)| id == &cal.id);
             let item = if renaming {
                 let draft = self
                     .renaming
@@ -800,8 +928,8 @@ impl App {
                     .style(kit_input::style)
                     .padding(Padding::from([1, 4]))
                     .width(Length::Fill);
-                let fill = parse_hex(cal.display_color())
-                    .unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
+                let fill =
+                    parse_hex(cal.display_color()).unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
                 let swatch = rename_color_swatch(fill, Msg::ToggleColor(cal.id.clone()));
                 let trailing = row![
                     swatch,
@@ -847,10 +975,7 @@ impl App {
             items.push(item);
         }
         if items.is_empty() {
-            items.push(
-                SidebarItem::new("None shown", Msg::Tick)
-                    .subtitle("Settings → Calendar"),
-            );
+            items.push(SidebarItem::new("None shown", Msg::Tick).subtitle("Settings → Calendar"));
         }
         let today = today();
         let tomorrow = today.succ_opt().unwrap_or(today);
@@ -882,10 +1007,13 @@ impl App {
                 .map(|c| c.display_color().to_string())
                 .unwrap_or_else(|| "#7aa2f7".into());
             items.push(
-                SidebarItem::new(ev.display_title().to_string(), Msg::OpenEvent(ev.id.clone()))
-                    .id(format!("qv-{}", ev.id))
-                    .leading(cal_disc(&color, true))
-                    .subtitle(ev.timed_label()),
+                SidebarItem::new(
+                    ev.display_title().to_string(),
+                    Msg::OpenEvent(ev.id.clone()),
+                )
+                .id(format!("qv-{}", ev.id))
+                .leading(cal_disc(&color, true))
+                .subtitle(ev.timed_label()),
             );
         }
         if extra > 0 {
@@ -896,8 +1024,7 @@ impl App {
         }
         if items.is_empty() {
             items.push(
-                SidebarItem::new("Nothing scheduled", Msg::Tick)
-                    .id(format!("qv-empty-{day}")),
+                SidebarItem::new("Nothing scheduled", Msg::Tick).id(format!("qv-empty-{day}")),
             );
         }
         SidebarSection::new(title, items)
@@ -965,7 +1092,12 @@ impl App {
             let cells: Vec<Element<'_, Msg>> = week
                 .iter()
                 .map(|day| {
-                    self.month_cell(*day, *day == today, selected == Some(*day), day.month() == this_month)
+                    self.month_cell(
+                        *day,
+                        *day == today,
+                        selected == Some(*day),
+                        day.month() == this_month,
+                    )
                 })
                 .collect();
             rows.push(row(cells).spacing(1).height(Length::Fill).into());
@@ -1034,7 +1166,11 @@ impl App {
         let headers: Vec<Element<'_, Msg>> = week
             .iter()
             .map(|d| {
-                let label = format!("{} {}", WEEKDAYS[d.weekday().num_days_from_sunday() as usize], d.day());
+                let label = format!(
+                    "{} {}",
+                    WEEKDAYS[d.weekday().num_days_from_sunday() as usize],
+                    d.day()
+                );
                 let mut t = kit_text::caption(label);
                 if *d == today {
                     t = t.style(kit_text::accent);
@@ -1051,10 +1187,8 @@ impl App {
                 .into()
             })
             .collect();
-        let cols: Vec<Element<'_, Msg>> = week
-            .iter()
-            .map(|d| self.agenda_column(*d, false))
-            .collect();
+        let cols: Vec<Element<'_, Msg>> =
+            week.iter().map(|d| self.agenda_column(*d, false)).collect();
         column![
             row(headers).padding(Padding::from([0.0, SPACE_MD])),
             h_hairline(),
@@ -1079,10 +1213,7 @@ impl App {
             let cal = self.store.calendar(&ev.calendar_id);
             let time = kit_text::caption(ev.timed_label()).style(kit_text::muted);
             let title = kit_text::body(ev.display_title().to_string());
-            let disc = cal_disc(
-                cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"),
-                true,
-            );
+            let disc = cal_disc(cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"), true);
             let row = row![disc, column![title, time].spacing(2)]
                 .spacing(SPACE_MD)
                 .align_y(Alignment::Center)
@@ -1096,11 +1227,7 @@ impl App {
             );
         }
         if rows.is_empty() {
-            rows.push(
-                kit_text::caption("No events")
-                    .style(kit_text::muted)
-                    .into(),
-            );
+            rows.push(kit_text::caption("No events").style(kit_text::muted).into());
         }
         let inner = column(rows).spacing(SPACE_XS).padding(SPACE_SM);
         let _ = wide;
@@ -1159,10 +1286,7 @@ impl App {
 
     fn inspector_event_row<'a>(&'a self, ev: &'a CalEvent) -> Element<'a, Msg> {
         let cal = self.store.calendar(&ev.calendar_id);
-        let disc = cal_disc(
-            cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"),
-            true,
-        );
+        let disc = cal_disc(cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"), true);
         let when = kit_text::caption(ev.timed_label()).style(kit_text::muted);
         let title = kit_text::body(ev.display_title().to_string()).wrapping(Wrapping::Word);
         button(
@@ -1213,6 +1337,9 @@ impl App {
                 col = col.push(prose(blocks, &self.theme, Msg::OpenUrl));
             }
         }
+        col = col.push(Space::new().height(Length::Fixed(SPACE_MD)));
+        col = col.push(draft_hairline());
+        col = col.push(remind_section(d));
         if d.repeating {
             col = col.push(
                 kit_text::caption("Repeating — editing the series comes later.")
@@ -1273,6 +1400,8 @@ impl App {
             .spacing(SPACE_LG)
             .padding(SPACE_LG)
             .width(Length::Fill);
+        col = col.push(draft_hairline());
+        col = col.push(remind_section(d));
         if d.repeating {
             col = col.push(
                 kit_text::caption("Repeating — editing the series comes later.")
@@ -1357,9 +1486,11 @@ impl App {
     }
 
     fn view_draft_actions(&self, d: &Draft) -> Element<'_, Msg> {
-        let mut row = row![kit_btn::labeled("Save", kit_btn::primary)
-            .on_press(Msg::SaveDraft)
-            .width(Length::Fill)]
+        let mut row = row![
+            kit_btn::labeled("Save", kit_btn::primary)
+                .on_press(Msg::SaveDraft)
+                .width(Length::Fill)
+        ]
         .spacing(SPACE_SM)
         .width(Length::Fill);
         if d.original_id.is_some() && !d.repeating {
@@ -1389,7 +1520,7 @@ impl Draft {
     }
 }
 
-fn draft_from_event(ev: &CalEvent) -> Draft {
+fn draft_from_event(ev: &CalEvent, reminders: Vec<i64>) -> Draft {
     let local_start = ev.start.with_timezone(&chrono::Local);
     let local_end = ev.end.with_timezone(&chrono::Local);
     let date = if ev.all_day {
@@ -1412,6 +1543,7 @@ fn draft_from_event(ev: &CalEvent) -> Draft {
         remote_id: ev.remote_id.clone(),
         href: ev.href.clone(),
         etag: ev.etag.clone(),
+        reminders,
     }
 }
 
@@ -1495,14 +1627,15 @@ fn parse_time(s: &str) -> Result<NaiveTime, String> {
     };
     let (h, m) = if let Some((a, b)) = body.split_once(':') {
         (
-            a.trim().parse::<u32>().map_err(|_| "bad time".to_string())?,
-            b.trim().parse::<u32>().map_err(|_| "bad time".to_string())?,
+            a.trim()
+                .parse::<u32>()
+                .map_err(|_| "bad time".to_string())?,
+            b.trim()
+                .parse::<u32>()
+                .map_err(|_| "bad time".to_string())?,
         )
     } else {
-        (
-            body.parse::<u32>().map_err(|_| "bad time".to_string())?,
-            0,
-        )
+        (body.parse::<u32>().map_err(|_| "bad time".to_string())?, 0)
     };
     let hour = match pm {
         Some(true) if h < 12 => h + 12,
@@ -1525,6 +1658,91 @@ fn draft_when_line(d: &Draft) -> String {
 
 fn cal_rename_id() -> iced::widget::Id {
     iced::widget::Id::new("calendar-rename")
+}
+
+fn remind_section<'a>(d: &'a Draft) -> Element<'a, Msg> {
+    let on = !d.reminders.is_empty();
+    let toggle = row![
+        kit_text::body("Remind me").width(Length::Fill),
+        checkbox(on).on_toggle(Msg::RemindSet).style(checkbox_style),
+    ]
+    .spacing(SPACE_MD)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    if !on {
+        return toggle.into();
+    }
+
+    let mut rows: Vec<Element<'a, Msg>> = Vec::new();
+    for mins in reminders::display_order(&d.reminders) {
+        rows.push(
+            row![
+                kit_text::body(reminders::offset_label(mins, d.all_day)).width(Length::Fill),
+                button(icon_svg(icon_handle("lucide/x"), 12))
+                    .padding(Padding::from([2, 4]))
+                    .style(kit_btn::ghost)
+                    .on_press(Msg::RemindRemove(mins)),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .into(),
+        );
+    }
+
+    let extras: Vec<i64> = reminders::preset_minutes(d.all_day)
+        .iter()
+        .copied()
+        .filter(|mins| !d.reminders.contains(mins))
+        .collect();
+    if !extras.is_empty() {
+        let mut chip_rows: Vec<Element<'a, Msg>> = Vec::new();
+        for chunk in extras.chunks(2) {
+            let mut line = row![].spacing(SPACE_SM);
+            for mins in chunk {
+                line = line.push(
+                    kit_btn::labeled_sm(
+                        reminders::chip_label(*mins, d.all_day),
+                        kit_btn::secondary,
+                    )
+                    .on_press(Msg::RemindAdd(*mins)),
+                );
+            }
+            chip_rows.push(line.into());
+        }
+        rows.push(
+            column(chip_rows)
+                .spacing(SPACE_SM)
+                .width(Length::Fill)
+                .into(),
+        );
+    }
+
+    column![toggle, column(rows).spacing(SPACE_SM).width(Length::Fill)]
+        .spacing(SPACE_MD)
+        .width(Length::Fill)
+        .into()
+}
+
+fn emit_reminder(due: &reminders::Due) -> bool {
+    let note = AppNotification {
+        id: format!("cal-remind:{}:{}", due.event_id, due.offset_min),
+        app_id: APP_ID.into(),
+        source: "Calendar".into(),
+        title: due.title.clone(),
+        body: due.body.clone(),
+        tag: Some(format!(
+            "{NOTIFICATION_PERSIST_PREFIX}{}:{}",
+            due.event_id, due.offset_min
+        )),
+        tab_id: None,
+        url: Some(due.event_id.clone()),
+    };
+    sola_kit::app::bus()
+        .lock()
+        .map(|mut bus| bus.emit(Topic::AppNotification(note)).is_ok())
+        .unwrap_or(false)
 }
 
 fn draft_meta_row<'a>(
@@ -1719,11 +1937,7 @@ fn event_chip<'a>(ev: &'a CalEvent, cal: Option<&'a Calendar>) -> Element<'a, Ms
 
 fn cal_disc<'a>(hex: &str, visible: bool) -> Element<'a, Msg> {
     let color = parse_hex(hex).unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
-    let fill = if visible {
-        color
-    } else {
-        Color::TRANSPARENT
-    };
+    let fill = if visible { color } else { Color::TRANSPARENT };
     container(Space::new().width(10).height(10))
         .width(Length::Fixed(10.0))
         .height(Length::Fixed(10.0))
@@ -1812,4 +2026,3 @@ fn hairline_style(theme: &Theme) -> container::Style {
         ..container::Style::default()
     }
 }
-

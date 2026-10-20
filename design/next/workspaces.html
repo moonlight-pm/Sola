@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / Workspaces</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .take { margin-bottom: 30px; }
+  .take__head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .take__head h4 { font: 600 17px/1 var(--f-display); margin: 0; letter-spacing: -0.2px; }
+
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .chip { display: inline-flex; padding: 10px; background: var(--ground); border-radius: 10px; outline: 1px solid var(--hairline); outline-offset: -0.5px; }
+  .chip .top { position: static; height: auto; }
+  .sample .chipwrap { display: flex; }
+
+  .states { display: flex; gap: 28px; margin-top: 26px; flex-wrap: wrap; }
+  .state { display: flex; flex-direction: column; gap: 8px; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 380px; gap: 32px; align-items: start; }
+  .row2 p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0 0 10px; }
+  .row2 p b { color: var(--ink); font-weight: 500; }
+
+  /* The overview: the workspace bubble, grown */
+  .ov {
+    position: absolute; z-index: 8; border-radius: var(--r-bubble); padding: 0 0 10px;
+    background: linear-gradient(180deg, #ffffff0a, #ffffff00 40%), var(--sheet-fill);
+    box-shadow: inset 0 1px 0 #ffffff1f, 0 0 0 1px #000000a6, 0 22px 54px -12px #000000e6, 0 6px 16px #00000080;
+  }
+  .ov__row { height: 28px; display: flex; align-items: center; padding: 0 3px; gap: 1px; font-size: 13px; }
+  .ov__row .hint { margin-left: auto; padding-right: 12px; font: 400 11px/1 var(--f-spec); color: var(--ink-3); }
+  .ov__thumbs { display: flex; gap: 10px; padding: 8px 10px 0; }
+  .ov__t { display: flex; flex-direction: column; gap: 7px; }
+  .ov__img { position: relative; width: 220px; height: 93px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px #ffffff14; }
+  .ov__t.is-on .ov__img { box-shadow: 0 0 0 2px var(--ink-2); }
+  .ov__l { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); padding-left: 2px; }
+  .ov__t.is-on .ov__l { color: var(--ink); }
+  .ov__new { width: 120px; height: 93px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-3); font-size: 12.5px; box-shadow: inset 0 0 0 1px #ffffff1a; background: #ffffff05; }
+
+  .keys { display: grid; grid-template-columns: 220px 1fr; border-top: 1px solid var(--hairline); }
+  .keys > div { padding: 11px 0; border-bottom: 1px solid var(--hairline); font: 400 13px/19px var(--f-chrome); color: var(--ink-2); }
+  .keys .k { font: 400 12px/19px var(--f-spec); color: var(--ink); }
+
+  .asks { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .ask { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--hairline); font: 400 13px/20px var(--f-chrome); color: var(--ink-2); }
+  .ask b { color: var(--ink); font-weight: 500; }
+  .ask .n { font: 500 11px/20px var(--f-spec); color: var(--warning); }
+  .ask .pick { color: var(--accent); }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 04</span><span class="head__title">Workspaces</span></div>
+  <div class="head__lead">Workspaces in the usual OS sense: each one is a whole desk of windows, and switching swaps the set. Hidden workspaces keep running. The switcher is a bubble in the top row, next to the flower, where the old bar's app menus used to sit. This board assumes the agent app is renamed <b style="color:var(--ink);font-weight:500">Projects</b> (sola-workspaces → sola-projects), so the word means one thing.</div>
+</div>
+
+<div class="section">
+  <div class="label">Two workspaces · a 2560 × 1080 output at 1:2</div>
+  <div class="take">
+    <div class="take__head"><h4>1 · Sola</h4><span class="spec">Projects, Browser, Terminal. Mail's pill has a cyan dot: something unread over there.</span></div>
+    <div id="ws-sola"></div>
+  </div>
+  <div class="take">
+    <div class="take__head"><h4>2 · Mail</h4><span class="spec">Mail and Calendar. kit-foundation is waiting on Sola, so Sola's pill carries the diamond and the live bubble says where.</span></div>
+    <div id="ws-mail"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The switcher · four ways to draw it, 1:1 · Mail is showing, Sola has an agent waiting</div>
+  <div class="chips" id="styles"></div>
+  <div class="states" id="states"></div>
+</div>
+
+<div class="section">
+  <div class="label">Attention rolls up · the top row on Mail, 1:1</div>
+  <div class="row2">
+    <div id="attn"></div>
+    <div>
+      <p><b>The diamond sits on the workspace that needs you.</b> Only shapes the rest of Next already uses: a diamond for waiting, a cyan dot for unread. Working agents mark nothing, so the bubble is quiet most of the day.</p>
+      <p><b>The live bubble names the workspace.</b> "on Sola" tells you a click will take you there. Clicking switches to Sola and opens the card in place, the way it does on board 03.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Overview · the bubble grows into every workspace, 1:1</div>
+  <div class="row2">
+    <div id="overview"></div>
+    <div>
+      <p><b>Click the bubble, or hold Super on a workspace chord.</b> The bubble grows down into a row of live thumbnails; its top-left corner never moves, and its pills stay where they were.</p>
+      <p><b>New, rename, reorder live here.</b> Drag a thumbnail to reorder, double-click a name to rename, + adds one. A game workspace shows its game; while it is showing, the game is fullscreen and the top row steps aside.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Moving around</div>
+  <div class="keys">
+    <div class="k">Super+1 … 9</div><div>Show workspace N. Free today: zoning lives on the number pad.</div>
+    <div class="k">Super+Ctrl+1 … 9</div><div>Send the focused window to workspace N. Omarchy uses Super+Shift+N, but Super+Shift+3, 4, 5 are Sola's screenshots.</div>
+    <div class="k">Super+Ctrl+Tab</div><div>Next workspace; with Shift, the previous one.</div>
+    <div class="k">Super+Tab</div><div>The app switcher, unchanged: every app on every workspace. Picking a window that lives elsewhere takes you to its workspace.</div>
+    <div class="k">Click the bubble</div><div>Overview.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">What it takes</div>
+  <div class="asks">
+    <div class="ask"><span class="n">1</span><span><b>A workspace is a composition.</b> sola-river already shows only the windows in its last composition and River hides the rest, so switching sends a different set. Zones and the gap grid are per workspace.</span></div>
+    <div class="ask"><span class="n">2</span><span><b>Apps open a window per workspace.</b> The browser is one window today, and so are Projects and Mail. One engine, many windows: a page on Sola and a page on Mail share one browser process, one cookie jar, one vault.</span></div>
+    <div class="ask"><span class="n">3</span><span><b>The rename first.</b> sola-workspaces → sola-projects before any workspace code, so the word never means both. It reopens a locked model: crate, window, the <code>workspaces</code> call owner, solactl and MCP names, config path, skills.</span></div>
+    <div class="ask"><span class="n">4</span><span><b>The desks idea's panel model waits.</b> Shell-owned tab groups across apps stay parked; this needs none of it. The 2026-10-12 idea's sidebar becomes this bubble.</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Yours to pick</div>
+  <div class="asks">
+    <div class="ask"><span class="n">A</span><span><b>The switcher.</b> Names and marks, names, numbers, or dots. <span class="pick">Proposed: names and marks.</span></span></div>
+    <div class="ask"><span class="n">B</span><span><b>Super+Tab.</b> Every workspace, or only the one showing. <span class="pick">Proposed: every workspace.</span></span></div>
+    <div class="ask"><span class="n">C</span><span><b>Windows on every workspace.</b> Allow a float (a player, a call) to follow you, or keep every window in one place.</span></div>
+    <div class="ask"><span class="n">D</span><span><b>A fixed list or free.</b> Named workspaces you keep (Sola, Mail, Game), or Omarchy-style numbers that exist while they hold windows. <span class="pick">Proposed: named, kept.</span></span></div>
+  </div>
+</div>
+
+<script>
+{
+  const S = 1296 / 2560;
+  const view = (html, c) => {
+    const s = c.s || 1;
+    return `<div class="crop" style="width:${c.w}px;height:${c.h}px"><div style="position:absolute;left:${-c.x * s}px;top:${-c.y * s}px;transform:scale(${s});transform-origin:0 0">${html}</div></div>`;
+  };
+
+  const solaDesk = (w = 2560, h = 1080, extra = {}) => desk({
+    w, h, apps: ["projects", "browser", "terminal"], top: "spaces", float: false, focus: 0,
+    spaces: { current: 0, marks: { 1: wsMark.unread() } }, ...extra,
+  });
+  const mailDesk = (w = 2560, h = 1080, extra = {}) => desk({
+    w, h, apps: ["mail", "calendar"], top: "spaces", float: false, focus: 0,
+    spaces: { current: 1, marks: { 0: wsMark.waiting() } }, live: live.waitingOn("Sola"), ...extra,
+  });
+  const gameDesk = () => `<div class="desk" style="width:2560px;height:1080px">${arcadeBody()}</div>`;
+
+  document.getElementById("ws-sola").innerHTML = view(solaDesk(), { x: 0, y: 0, w: 1296, h: 547, s: S });
+  document.getElementById("ws-mail").innerHTML = view(mailDesk(), { x: 0, y: 0, w: 1296, h: 547, s: S });
+
+  /* Switcher styles */
+  const chip = (html) => `<div class="chip"><div class="top"><div class="top__l">${html}</div></div></div>`;
+  const marks = { 0: wsMark.waiting() };
+  const ST = [
+    ["Names and marks", "PROPOSED", "Number, name, and what needs you. Reads without color.", B.spaces({ current: 1, marks })],
+    ["Names", "", "Quieter; you learn about Sola's agent only from the live bubble.", B.spaces({ current: 1, style: "names" })],
+    ["Numbers", "OMARCHY", "Matches the chords. Says nothing about what is where.", B.spaces({ current: 1, style: "numbers", marks: { 0: mark.diamond(8) } })],
+    ["Dots", "", "Smallest. Fine for two or three; you count to find one.", B.spaces({ current: 1, style: "dots" })],
+  ];
+  document.getElementById("styles").innerHTML = ST.map(([h, tag, p, html]) => `
+    <div class="sample">
+      <div class="chipwrap">${chip(B.flower() + html)}</div>
+      <div class="sample__head"><h4>${h}</h4>${tag ? `<span class="tag${tag === "PROPOSED" ? " is-pick" : ""}">${tag}</span>` : ""}</div>
+      <p>${p}</p>
+    </div>`).join("");
+
+  const STATES = [
+    ["Showing", B.spaces({ current: 0 })],
+    ["Agent waiting elsewhere", B.spaces({ current: 1, marks: { 0: wsMark.waiting() } })],
+    ["Unread elsewhere", B.spaces({ current: 0, marks: { 1: wsMark.unread() } })],
+    ["Open (overview showing)", B.spaces({ current: 1, open: true })],
+  ];
+  document.getElementById("states").innerHTML = STATES.map(([h, html]) =>
+    `<div class="state">${chip(html)}<span class="spec">${h}</span></div>`).join("");
+
+  /* Attention: a 1296-wide output on Mail */
+  document.getElementById("attn").innerHTML = view(mailDesk(1296, 400, { top: "spacesHero" }), { x: 0, y: 0, w: 884, h: 96 });
+
+  /* Overview: the switcher grown into thumbnails */
+  const T = 220 / 2560;
+  const thumb = (html, n, name, m, on) => `<div class="ov__t${on ? " is-on" : ""}">
+      <div class="ov__img"><div style="position:absolute;left:0;top:0;transform:scale(${T});transform-origin:0 0">${html}</div></div>
+      <div class="ov__l"><span class="sp__n">${n}</span>${name}${m || ""}</div>
+    </div>`;
+  const pills = B.spaces({ current: 1, marks }).replace(/^<div class="bubble bubble--ws">/, "").replace(/<\/div>$/, "");
+  const card = `<div class="ov" style="left:44px;top:10px">
+      <div class="ov__row">${pills}<span class="hint">Super 1 … 9</span></div>
+      <div class="ov__thumbs">
+        ${thumb(solaDesk(), 1, "Sola", wsMark.waiting())}
+        ${thumb(mailDesk(), 2, "Mail", "", true)}
+        ${thumb(gameDesk(), 3, "Game")}
+        <div class="ov__t"><div class="ov__new">+ New</div></div>
+      </div>
+    </div>`;
+  document.getElementById("overview").innerHTML = view(mailDesk(1296, 400, { top: "spacesHero" }) + card, { x: 0, y: 0, w: 884, h: 220 });
+
+  finish();
+}
+</script>
+</body>
+</html>

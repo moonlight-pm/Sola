@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::{google_calendar_client_id, CalendarShelf};
+use sola_bus::topics::{CalendarShelf, google_calendar_client_id};
 use sola_core::Encrypted;
 
 pub const LOCAL_CAL_ID: &str = "local";
@@ -206,9 +206,7 @@ impl CalEvent {
     pub fn occurs_on(&self, day: NaiveDate) -> bool {
         if self.all_day {
             let start = self.start_date.unwrap_or_else(|| self.start.date_naive());
-            let end = self
-                .end_date
-                .unwrap_or_else(|| start + Duration::days(1));
+            let end = self.end_date.unwrap_or_else(|| start + Duration::days(1));
             return day >= start && day < end;
         }
         let start = self.start.with_timezone(&chrono::Local).date_naive();
@@ -362,11 +360,7 @@ impl Store {
     }
 
     pub fn pick_default(&self, current: &str) -> String {
-        if self
-            .calendars
-            .iter()
-            .any(|c| c.id == current && !c.hidden)
-        {
+        if self.calendars.iter().any(|c| c.id == current && !c.hidden) {
             return current.to_string();
         }
         self.calendars
@@ -488,8 +482,7 @@ pub fn parse_hex(s: &str) -> Option<iced::Color> {
 }
 
 pub fn next_palette(existing: &[Calendar]) -> String {
-    let used: std::collections::HashSet<&str> =
-        existing.iter().map(|c| c.color.as_str()).collect();
+    let used: std::collections::HashSet<&str> = existing.iter().map(|c| c.color.as_str()).collect();
     PALETTE
         .iter()
         .find(|c| !used.contains(*c))
@@ -537,7 +530,9 @@ mod tests {
         store.calendars[0].visible = false;
         assert!(!store.calendars[0].active());
         let day = NaiveDate::from_ymd_opt(2026, 9, 8).unwrap();
-        store.events.push(CalEvent::new_local(LOCAL_CAL_ID, day, Utc::now()));
+        store
+            .events
+            .push(CalEvent::new_local(LOCAL_CAL_ID, day, Utc::now()));
         assert!(store.visible_events_on(day).is_empty());
 
         let mut shelf = store.calendars[0].to_shelf();

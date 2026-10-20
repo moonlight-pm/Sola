@@ -18,16 +18,16 @@
 
 use std::hash::Hash;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use iced::Subscription;
 use iced::futures::{SinkExt, Stream, StreamExt as _};
 use iced::stream;
+use iced::Subscription;
 use iced_futures::subscription::{self, EventStream, Recipe};
 
-use crate::app::{App, DEFAULT_URL, Msg, VIEW_H, VIEW_W};
-use crate::engine::{ActiveHandle, Engine, FrameReceiver, FrameSlot};
+use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
+use crate::engine::{AbsorbDamage, ActiveHandle, Engine, FrameReceiver, FrameSlot};
 
 // ---------------------------------------------------------------------------
 // Frame stream
@@ -51,41 +51,58 @@ pub fn frame_stream<E: Engine>(
         let frames_thread = frames.clone();
         std::thread::Builder::new()
             .name("browser-frames".into())
-            .spawn(move || {
-                loop {
-                    match frames_thread.recv() {
-                        Ok(f) => {
-                            if tx.send(f).is_err() {
-                                break;
-                            }
+            .spawn(move || loop {
+                match frames_thread.recv() {
+                    Ok(f) => {
+                        if tx.send(f).is_err() {
+                            break;
                         }
-                        Err(()) => break,
                     }
+                    Err(()) => break,
                 }
             })
             .expect("spawn browser-frames thread");
 
-        while let Some(tagged) = rx.recv().await {
+        while let Some(mut tagged) = rx.recv().await {
             // Page and docked inspector may both update their shader slots.
             // Other tabs park only (no GPU upload).
             let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
             let devtools_tab = slot.devtools_tab.load(Ordering::Relaxed);
             let tid = tagged.tab_id.0;
-            slot.parked_frames
-                .lock()
-                .unwrap()
-                .insert(tid, tagged.frame.clone());
+            let is_drag = E::frame_is_page_drag(&tagged.frame);
             if tid == paint_tab {
-                *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                slot.page_drag.store(is_drag, Ordering::Relaxed);
+                let mut g = slot.pending.lock().unwrap();
+                if let Some(old) = g.take() {
+                    slot.osr.note_pending_drop();
+                    tagged.frame.absorb_damage(old.frame);
+                }
+                if !is_drag {
+                    slot.parked_frames
+                        .lock()
+                        .unwrap()
+                        .insert(tid, tagged.frame.clone());
+                }
+                *g = Some(crate::engine::PendingFrame {
                     tab_id: tagged.tab_id,
                     frame: tagged.frame,
                 });
             } else if tid == devtools_tab {
-                *slot.devtools_pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                let mut g = slot.devtools_pending.lock().unwrap();
+                if let Some(old) = g.take() {
+                    tagged.frame.absorb_damage(old.frame);
+                }
+                *g = Some(crate::engine::PendingFrame {
                     tab_id: tagged.tab_id,
                     frame: tagged.frame,
                 });
             } else {
+                if !is_drag {
+                    slot.parked_frames
+                        .lock()
+                        .unwrap()
+                        .insert(tid, tagged.frame.clone());
+                }
                 let mut need = slot.need_park_prime.lock().unwrap();
                 need.remove(&tid);
                 continue;
@@ -259,6 +276,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     for def in crate::integration::browser_app_menu(app_id).menus {
         bus = bus.app_menu_definition(def);
     }
+    bus = bus.calls(crate::calls::OWNER, crate::calls::methods());
     bus.install();
 
     // `engine` is moved into the App on first call. The iced application
@@ -310,9 +328,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     .title(move |app: &App<E>| {
         let profile = crate::profiles::active().name;
         match app.active_tab_info() {
-            Some(t) if !t.title.is_empty() => format!("{profile} — {}", t.title),
-            Some(t) if !t.url.is_empty() => format!("{profile} — {}", t.url),
-            _ => profile,
+            Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
+            None => crate::util::browser_window_title(&profile, "", ""),
         }
     })
     .subscription(App::<E>::subscription)

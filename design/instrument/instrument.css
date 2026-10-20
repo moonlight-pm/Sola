@@ -1,0 +1,441 @@
+/* Instrument: the chrome is a front panel.
+ * Shell surfaces only. App content keeps Graphite (../tokens.css). */
+:root {
+  /* Panel surfaces: neutral, not graphite blue */
+  --i-bg: #0c0c0d;
+  --panel: #0a0a0b;
+  --module: #121314;
+  --module-hi: #1a1b1e;
+  --module-lo: #050506;
+  --seam: #ffffff0f;
+  --seam-hi: #ffffff1a;
+
+  /* Engraved labels */
+  --engrave: #8a8f98;
+  --engrave-lo: #5c6068;
+
+  /* Ink */
+  --ink: #e9ecf2;
+  --ink-2: #b4b9c3;
+  --ink-3: #80858f;
+
+  /* Dots */
+  --dot-off: #e9ecf21f;
+  --dot-muted: #38fa6b6b;
+
+  /* Function key: four keys, two lamps. One meaning each. */
+  --fn-focus: #3dd6f5;
+  --fn-signal: #38fa6b;
+  --fn-value: #e9ecf2;
+  --fn-system: #ffb800;
+  --lamp-look: #ff8a3d;
+  --lamp-live: #ff4a3d;
+
+  /* Faces */
+  --font-label: "Iosevka Fixed", "Iosevka Term Slab", ui-monospace, monospace;
+  --font-chrome-i: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-display-i: "SF Pro Display", "Inter Display", system-ui, sans-serif;
+  --font-mono-i: "Iosevka Term Slab", "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+  background: var(--i-bg);
+  color: var(--ink);
+  font-family: var(--font-chrome-i);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Board frame ---------------------------------------------------------- */
+
+.board {
+  padding: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+.head {
+  border-top: 1px solid var(--seam-hi);
+  padding-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.head__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+.head__num {
+  color: var(--ink-2);
+  line-height: 0;
+  padding-bottom: 5px;
+}
+.head__title {
+  font-family: var(--font-display-i);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  line-height: 30px;
+}
+.head__lead {
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 22px;
+  max-width: 780px;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.note {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.note b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ---- Engraved labels ------------------------------------------------------ */
+
+.lbl {
+  font-family: var(--font-label);
+  font-stretch: expanded;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 12px;
+  text-transform: uppercase;
+  color: var(--engrave);
+  white-space: nowrap;
+}
+.lbl--9 {
+  font-size: 9px;
+  line-height: 10px;
+}
+.lbl--11 {
+  font-size: 11px;
+  line-height: 14px;
+}
+.lbl--lo {
+  color: var(--engrave-lo);
+}
+.lbl--ink {
+  color: var(--ink-2);
+}
+
+/* ---- Dots, meters, LEDs --------------------------------------------------- */
+
+[data-dots],
+[data-graph],
+[data-spectrum],
+[data-bar],
+[data-zone] {
+  display: inline-block;
+  line-height: 0;
+  flex-shrink: 0;
+}
+.dots {
+  display: block;
+}
+.dots__off rect {
+  fill: var(--dot-off);
+}
+.dots__on rect {
+  fill: currentColor;
+}
+.bar .dots__off rect,
+.dim-field .dots__off rect {
+  fill: #e9ecf212;
+}
+.meter {
+  display: block;
+}
+.glow .dots__on {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 45%, transparent));
+}
+
+.led {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #e9ecf224;
+  flex-shrink: 0;
+}
+.led--on {
+  background: var(--c, var(--fn-value));
+  box-shadow: 0 0 4px 0.5px color-mix(in srgb, var(--c, var(--fn-value)) 55%, transparent);
+}
+.bar .led--on[style*="lamp-live"] {
+  width: 5px;
+  height: 5px;
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--lamp-live) 60%, transparent);
+}
+.led--6 {
+  width: 6px;
+  height: 6px;
+}
+
+.readout {
+  display: inline-flex;
+  align-items: center;
+  background: var(--module-lo);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px #ffffff08;
+  padding: 5px 6px;
+  line-height: 0;
+}
+
+[data-icon] {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+[data-icon] svg {
+  width: 100%;
+  height: 100%;
+}
+[data-flower] {
+  display: inline-flex;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+/* ---- The front panel (menubar) ------------------------------------------- */
+
+.bar {
+  position: relative;
+  height: 28px;
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 4px;
+  width: 100%;
+  box-shadow: inset 0 -1px 0 var(--seam);
+}
+.bar__left,
+.bar__right {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.bar__sys {
+  width: 30px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bar__app,
+.bar__menu {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.bar__app {
+  font-weight: 700;
+  padding-left: 4px;
+}
+.bar__menu--open {
+  background: #e9ecf22e;
+}
+.bar__whisper {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.bar__mod {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+  position: relative;
+}
+.bar__mod + .bar__mod::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--seam-hi);
+}
+.bar__mod:last-child {
+  padding-right: 4px;
+}
+.bar__pair {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.bar__pair + .bar__pair {
+  margin-left: 4px;
+}
+.bar__pair--open {
+  align-self: stretch;
+  background: #e9ecf21f;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+.bar__lamps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+.bar__mid {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  min-width: 0;
+}
+.bar__mid-text {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.bar__break {
+  width: 9px;
+  height: 14px;
+  background: linear-gradient(115deg, transparent 0 38%, var(--engrave-lo) 38% 46%, transparent 46% 58%, var(--engrave-lo) 58% 66%, transparent 66%);
+  flex-shrink: 0;
+}
+.bar__glyph {
+  color: var(--ink);
+}
+.bar__glyph--dim {
+  color: var(--engrave-lo);
+}
+
+/* ---- Modules (overlays, drop panels) ------------------------------------- */
+
+.module {
+  background: var(--module);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 1px var(--seam-hi),
+    0 18px 48px #00000080,
+    0 2px 8px #00000066;
+}
+.module__band {
+  background: var(--panel);
+  border-radius: 10px 10px 0 0;
+  box-shadow: inset 0 -1px 0 var(--seam-hi);
+}
+.seam {
+  height: 1px;
+  background: var(--seam-hi);
+  flex-shrink: 0;
+}
+
+/* Stage: the dimmed desk behind an overlay */
+.stage {
+  position: relative;
+  background: #101114;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--seam);
+}
+.stage__scrim {
+  position: absolute;
+  inset: 0;
+  background: #00000099;
+}
+
+/* ---- Keycaps -------------------------------------------------------------- */
+
+.kc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--module-hi);
+  box-shadow:
+    inset 0 0 0 1px var(--seam-hi),
+    0 1px 0 #000;
+  font-family: var(--font-chrome-i);
+  font-size: 11px;
+  color: var(--ink-2);
+  line-height: 1;
+}
+.kc--lbl {
+  font-family: var(--font-label);
+  font-stretch: expanded;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---- Function key swatch -------------------------------------------------- */
+
+.knob {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--c);
+  position: relative;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px var(--module-lo), 0 0 0 5px var(--seam-hi);
+}
+.knob::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 2px;
+  height: 9px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: #0a0a0b;
+  opacity: 0.75;
+}
+.lamp {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--c) 55%, transparent);
+  flex-shrink: 0;
+  margin: 9px;
+}
+
+/* ---- Zone glyphs ---------------------------------------------------------- */
+
+.zone__desk {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  opacity: 0.45;
+}
+.zone__lit {
+  fill: currentColor;
+}
+.zone__bar {
+  fill: currentColor;
+  opacity: 0.45;
+}

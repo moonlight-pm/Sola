@@ -76,6 +76,7 @@ Living map: [`docs/architecture.md`](docs/architecture.md).
 - **Shell / apps:** Iced programs via `sola-kit` — Wayland clients + bus clients. Each is a separate process.
 - **Browser:** Custom iced chrome + CEF engine in a single `sola-browser` crate.
 - **IPC:** Sola Bus (events over Unix socket) + **sola-call** (request/reply) + Wayland protocols for surfaces/input
+- **D-Bus is deprecated as a requirement.** Add no new D-Bus dependencies; existing uses are legacy, and the future target is Sola's own replacement on Sola Bus ([inventory](docs/architecture.md#d-bus-deprecated), [T3](docs/open-questions.md#t3--d-bus-replacement-on-sola-bus-p2)).
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
 All components are independently restartable. Sola apps are resilient to bus and compositor restarts.
@@ -105,6 +106,7 @@ crates/
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
   sola-wrapper/        # Website wrappers as first-class apps (CEF via sola-browser lib)
+  sola-design/         # HTML artboards on a canvas, edited by agents (CEF board tabs)
   sola-scope/          # Pixel loupe (magnified grid under the pointer)
   sola-spotify/        # Kit-native Spotify client (librespot + Web API)
   sola-install/        # Kit installer wizard (image media)
@@ -131,15 +133,27 @@ docs/
 ## Development Rules
 
 ### Worktrees
-- Always use `.worktrees/` for git worktrees.
-- Only make code modifications in worktrees. Never commit code changes directly to master.
+- **Work where your tab is. Root tabs do not open worktrees unless asked.**
+  A root tab is the project's own tab (`solactl workspaces whoami` →
+  `kind: main`) or an extra tab opened with **No worktree** (`kind:
+  root`). In one, do the work right there on the root's branch (usually
+  master). Do **not** open a worktree (`workspace.spawn`, `git worktree
+  add`) or fan out to a sibling unless the user asks for one (create a
+  worktree / fan out / spawn a sibling / new workspace). Same in the root
+  checkout outside Workspaces.
+- Root tabs share one checkout — commit only your own changes; never
+  stash, reset, or discard edits you did not make. Close an extra root
+  tab with plain `workspace.rm` (never `--worktree`).
+- Worktrees, when asked for, live in `.worktrees/`. A worktree tab
+  (`kind: worktree`) works on its own branch.
 - Only merge worktree branches to master with explicit user permission.
-- **Approval = merge in the same turn, not cleanup.** When the user signals
-  the work is good — e.g. "nailed it", "looks good", "merge that", "ship it",
-  "LGTM", "perfect" — commit any uncommitted work if needed and merge the
-  branch to master. Do **not** wait for a second explicit "please merge"
-  (unless they say hold off). Leave the git worktree **and** the Workspaces
-  tab unless they asked to remove them.
+- **Approval = land it in the same turn, not cleanup.** When the user
+  signals the work is good — e.g. "nailed it", "looks good", "merge that",
+  "ship it", "LGTM", "perfect" — in a root tab, commit on that branch; in a
+  worktree, commit any uncommitted work if needed and merge the branch to
+  master. Do **not** wait for a second explicit "please merge" (unless they
+  say hold off). Leave the git worktree **and** the Workspaces tab unless
+  they asked to remove them.
 - **Do not remove a worktree or workspace tab unless they asked.** There is
   no default cleanup after merge. If a git worktree is removed, close the
   tab unless they said keep it. Phrases and sequence:

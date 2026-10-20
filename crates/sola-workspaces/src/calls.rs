@@ -46,20 +46,43 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
+            "project.reorder",
+            "Move a project group in the rail",
+            &[
+                req_s("project", Some('p'), "Project id or name"),
+                opt_s(
+                    "before",
+                    None,
+                    "Sit in front of this project; omit or `end` = last",
+                ),
+            ],
+        ),
+        method(
             "workspace.list",
             "List workspaces",
             &[opt_s("project", Some('p'), "Project id or name")],
         ),
         method_ms(
             "workspace.spawn",
-            "Create a sibling worktree and open a pane",
+            "Open a sibling tab: a new worktree, or the project root (--root)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
-                req_s("name", Some('n'), "Rail + .worktrees/ slug"),
+                req_s(
+                    "name",
+                    Some('n'),
+                    ".worktrees/ slug, or the tab name with --root (rail default)",
+                ),
+                arg(
+                    "root",
+                    false,
+                    ArgType::Bool,
+                    None,
+                    "No worktree: open in the project root on its branch (usually master)",
+                ),
                 opt_s("branch", Some('b'), "Git branch (default: same as name)"),
                 opt_s("base-branch", None, "Start-point (default: HEAD)"),
-                opt_s("title", None, "Rail subtitle (name · title)"),
-                opt_s("agent", Some('a'), "grok or codex"),
+                opt_s("title", None, "Rail label (default: name)"),
+                opt_s("agent", Some('a'), "grok, codex, or claude"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
                 opt(
                     "prompt-file",
@@ -86,7 +109,7 @@ pub fn methods() -> Vec<MethodSpec> {
                     false,
                     ArgType::Bool,
                     None,
-                    "Also git worktree remove the checkout",
+                    "Also git worktree remove the checkout (worktree tabs only)",
                 ),
                 flag(
                     "force",
@@ -108,22 +131,31 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s(
                     "name",
                     Some('n'),
-                    "Rail slug; also git worktree move to .worktrees/<name>",
+                    ".worktrees/<name> folder; git worktree move. Rail uses this when title is empty",
                 ),
-                opt_s("title", None, "Rail subtitle; empty clears"),
+                opt_s(
+                    "title",
+                    None,
+                    "Rail label; empty clears (falls back to name)",
+                ),
                 opt_s(
                     "branch",
                     Some('b'),
                     "Rename this checkout's git branch (does not move the folder)",
                 ),
+                opt_s(
+                    "before",
+                    None,
+                    "Rail order: sit in front of this workspace (same project); `end` = last",
+                ),
             ],
         ),
         method_ms(
             "workspace.exec",
-            "Start or brief Grok or Codex in an existing workspace",
+            "Start or brief Grok, Codex, or Claude in an existing workspace",
             &[
                 req_s("workspace", Some('w'), "Workspace id or name"),
-                opt_s("agent", Some('a'), "grok or codex (default grok)"),
+                opt_s("agent", Some('a'), "grok, codex, or claude (default grok)"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
                     "prompt-file",
@@ -259,6 +291,7 @@ mod tests {
             "project.add",
             "project.rm",
             "project.startup",
+            "project.reorder",
             "workspace.list",
             "workspace.spawn",
             "workspace.rm",
@@ -281,6 +314,9 @@ mod tests {
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
         assert!(spawn.args.iter().any(|a| a.name == "base-branch"));
         assert!(spawn.args.iter().any(|a| a.name == "branch"));
+        let root = spawn.args.iter().find(|a| a.name == "root").unwrap();
+        assert!(matches!(root.ty, ArgType::Bool));
+        assert!(!root.required);
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
@@ -293,5 +329,11 @@ mod tests {
         assert!(set.args.iter().any(|a| a.name == "name"));
         assert!(set.args.iter().any(|a| a.name == "title"));
         assert!(set.args.iter().any(|a| a.name == "branch"));
+        assert!(set.args.iter().any(|a| a.name == "before"));
+        let reorder = methods
+            .iter()
+            .find(|m| m.name == "project.reorder")
+            .unwrap();
+        assert!(reorder.args.iter().any(|a| a.name == "before"));
     }
 }

@@ -150,6 +150,10 @@ pub struct ItemRecord {
     pub totp_secret: Option<String>,
     pub totp_period: u32,
     pub has_passkey: bool,
+    /// Server said this cipher can be written (org policy / collection).
+    pub can_edit: bool,
+    /// False when the org hides the password from this user.
+    pub view_password: bool,
 }
 
 impl ItemRecord {
@@ -730,6 +734,8 @@ pub fn record_from_view(view: CipherView) -> Option<ItemRecord> {
         totp_secret,
         totp_period,
         has_passkey,
+        can_edit: view.edit,
+        view_password: view.view_password,
     })
 }
 

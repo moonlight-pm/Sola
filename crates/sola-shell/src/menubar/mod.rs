@@ -3,8 +3,8 @@
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
 //! - Right cluster: phrases, tight within and a breath between —
-//!   extras (mail / bell / bluetooth), spectrum, percents (CPU / GPU / MEM),
-//!   rates (RX / TX), clock.
+//!   extras (mail / bell / mouse battery / bluetooth), spectrum, percents
+//!   (CPU / GPU / MEM), rates (RX / TX), clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
 //! Density and type live in the view (compact chrome sizes, font roles);

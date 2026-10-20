@@ -34,6 +34,7 @@ const PAD_TOP: i32 = 6;
 const PAD_BOT: i32 = 12;
 const TITLE_INSET: f32 = 3.0;
 const ROW_INSET: f32 = 1.0;
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeafKind {
@@ -54,6 +55,11 @@ pub struct LeafMeta {
     pub kind: LeafKind,
     pub group: Option<String>,
     pub color: Option<Color>,
+    /// Morph2 collapsible pocket. Labeled (non-collapse) groups stay
+    /// flat so Workspaces section headers do not pick up a well.
+    pub pocket: bool,
+    /// Item may emit [`SidebarEvent::Edit`] on double-click.
+    pub editable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +76,7 @@ struct ViewRow {
     group: Option<String>,
     hole: bool,
     leaf: Option<usize>,
+    pocket: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -249,8 +256,47 @@ fn slot_at_group(y: i32, empty_at: usize, rects: &[Rest], view: &[ViewRow]) -> S
     }
 }
 
+/// Inclusive-exclusive `[start, end)` of a group's header + members.
+/// The drag hole is tagged with the held item's group so it stays in range.
+fn group_range(view: &[ViewRow], gid: &str) -> (usize, usize) {
+    let start = view
+        .iter()
+        .position(|r| r.group.as_deref() == Some(gid))
+        .unwrap_or(0);
+    let mut end = start;
+    while end < view.len() && view[end].group.as_deref() == Some(gid) {
+        end += 1;
+    }
+    (start, end)
+}
+
+fn clamp_item_slot(slot: usize, origin: usize, view: &[ViewRow], gid: &str) -> usize {
+    let (start, end) = group_range(view, gid);
+    let lo = if view
+        .get(start)
+        .is_some_and(|r| r.kind == Kind::Group && !r.hole)
+    {
+        start + 1
+    } else {
+        start
+    };
+    let hi = end.max(lo);
+    let mut s = slot.clamp(lo, hi);
+    if s == origin || s == origin + 1 {
+        s = origin + 1;
+    }
+    s
+}
+
 /// Insert index for the pointer. `origin + 1` means the hole stays put.
-fn slot_at(y: i32, origin: usize, rects: &[Rest], view: &[ViewRow], as_group: bool) -> Slot {
+fn slot_at(
+    y: i32,
+    origin: usize,
+    rects: &[Rest],
+    view: &[ViewRow],
+    as_group: bool,
+    lock_group: Option<String>,
+) -> Slot {
     if as_group {
         return slot_at_group(y, origin, rects, view);
     }
@@ -259,7 +305,11 @@ fn slot_at(y: i32, origin: usize, rects: &[Rest], view: &[ViewRow], as_group: bo
         if y >= o.y && y < o.y + o.h {
             return Slot {
                 slot: origin + 1,
-                absorb: seam_absorb(y, view, rects),
+                absorb: if lock_group.is_some() {
+                    None
+                } else {
+                    seam_absorb(y, view, rects)
+                },
             };
         }
     }
@@ -281,6 +331,13 @@ fn slot_at(y: i32, origin: usize, rects: &[Rest], view: &[ViewRow], as_group: bo
     };
     if to == origin || to == origin + 1 {
         to = origin + 1;
+    }
+    if let Some(gid) = lock_group.as_deref() {
+        to = clamp_item_slot(to, origin, view, gid);
+        return Slot {
+            slot: to,
+            absorb: None,
+        };
     }
     Slot {
         slot: to,
@@ -419,14 +476,21 @@ fn snapshot_visual(st: &StripState, now: Instant) -> HashMap<String, f32> {
     m
 }
 
-fn apply_dest(st: &mut StripState) -> bool {
+fn apply_dest(st: &mut StripState, locked: bool) -> bool {
     let Some(held) = st.held.as_ref() else {
         return false;
     };
     if st.rest.len() != st.view.len() {
         return false;
     }
-    let next = slot_at(st.pointer, st.hole_at, &st.rest, &st.view, held.as_group);
+    let next = slot_at(
+        st.pointer,
+        st.hole_at,
+        &st.rest,
+        &st.view,
+        held.as_group,
+        locked.then(|| held.group.clone()).flatten(),
+    );
     st.absorb = next.absorb;
     let Some(new_at) = move_hole(st.hole_at, next.slot) else {
         return false;
@@ -473,6 +537,7 @@ struct Held {
     as_group: bool,
     h: i32,
     grab: i32,
+    group: Option<String>,
 }
 
 struct StripState {
@@ -493,6 +558,7 @@ struct StripState {
     hole_origin: usize,
     /// Visual Y of each held id at release; FLIP into the committed slot.
     fly_from: HashMap<String, f32>,
+    last_click: Option<(String, Instant)>,
 }
 
 impl Default for StripState {
@@ -514,6 +580,7 @@ impl Default for StripState {
             ids_at_release: Vec::new(),
             hole_origin: 0,
             fly_from: HashMap::new(),
+            last_click: None,
         }
     }
 }
@@ -531,15 +598,17 @@ fn build_view(meta: &[LeafMeta], st: &StripState) -> Vec<ViewRow> {
             group: m.group.clone(),
             hole: false,
             leaf: Some(i),
+            pocket: m.pocket,
         });
     }
     if let Some(h) = held {
         let hole = ViewRow {
             id: "empty".into(),
             kind: if h.as_group { Kind::Group } else { Kind::Item },
-            group: None,
+            group: if h.as_group { None } else { h.group.clone() },
             hole: true,
             leaf: None,
+            pocket: false,
         };
         let at = st.hole_at.min(rows.len());
         rows.insert(at, hole);
@@ -547,7 +616,13 @@ fn build_view(meta: &[LeafMeta], st: &StripState) -> Vec<ViewRow> {
     rows
 }
 
-fn drop_of(held: &Held, view: &[ViewRow], hole_at: usize, absorb: Option<String>) -> Option<Drop> {
+fn drop_of(
+    held: &Held,
+    view: &[ViewRow],
+    hole_at: usize,
+    absorb: Option<String>,
+    locked: bool,
+) -> Option<Drop> {
     let id = held.ids.first()?.clone();
     if held.as_group {
         let before = view
@@ -558,6 +633,20 @@ fn drop_of(held: &Held, view: &[ViewRow], hole_at: usize, absorb: Option<String>
         return Some(Drop {
             id,
             dest: Dest::BlockBefore { before },
+        });
+    }
+    if locked {
+        let section = held.group.clone()?;
+        let before = view.iter().skip(hole_at + 1).find_map(|r| {
+            if !r.hole && r.kind == Kind::Item && r.group.as_deref() == Some(section.as_str()) {
+                Some(r.id.clone())
+            } else {
+                None
+            }
+        });
+        return Some(Drop {
+            id,
+            dest: Dest::Join { section, before },
         });
     }
     if let Some(g) = absorb {
@@ -597,6 +686,7 @@ pub struct ReorderStrip<'a, Message> {
     leaves: Vec<Element<'a, Message>>,
     meta: Vec<LeafMeta>,
     on_action: std::rc::Rc<dyn Fn(Msg) -> Message + 'a>,
+    locked: bool,
 }
 
 impl<'a, Message> ReorderStrip<'a, Message> {
@@ -606,11 +696,13 @@ impl<'a, Message> ReorderStrip<'a, Message> {
         _spans: Vec<SectionSpan>,
         _item_spacing: f32,
         on_action: std::rc::Rc<dyn Fn(Msg) -> Message + 'a>,
+        locked: bool,
     ) -> Self {
         Self {
             leaves,
             meta,
             on_action,
+            locked,
         }
     }
 }
@@ -901,6 +993,7 @@ where
                             .is_some_and(|m| m.kind == LeafKind::Header),
                         h: h.max(1),
                         grab,
+                        group: self.meta.get(origin).and_then(|m| m.group.clone()),
                     });
                     st.hole_at = vi;
                     st.hole_origin = vi;
@@ -924,14 +1017,28 @@ where
                 if !was {
                     st.held = None;
                     if let Some(m) = self.meta.get(origin) {
-                        let ev = match m.kind {
-                            LeafKind::Header => SidebarEvent::ToggleSection { id: m.id.clone() },
-                            LeafKind::Item => SidebarEvent::Activate { id: m.id.clone() },
+                        let now = Instant::now();
+                        let double = m.kind == LeafKind::Item
+                            && m.editable
+                            && st.last_click.as_ref().is_some_and(|(id, t)| {
+                                id == &m.id && now.saturating_duration_since(*t) <= DOUBLE_CLICK
+                            });
+                        let ev = if double {
+                            st.last_click = None;
+                            SidebarEvent::Edit { id: m.id.clone() }
+                        } else {
+                            st.last_click = Some((m.id.clone(), now));
+                            match m.kind {
+                                LeafKind::Header => {
+                                    SidebarEvent::ToggleSection { id: m.id.clone() }
+                                }
+                                LeafKind::Item => SidebarEvent::Activate { id: m.id.clone() },
+                            }
                         };
                         shell.publish((self.on_action)(Msg::Outcome(ev)));
                     }
                 } else if let Some(held) = st.held.as_ref() {
-                    let dest = drop_of(held, &st.view, st.hole_at, st.absorb.clone());
+                    let dest = drop_of(held, &st.view, st.hole_at, st.absorb.clone(), self.locked);
                     let pad = if held.as_group { WELL_PAD } else { 0 };
                     let from_y = st.pointer - held.grab - pad;
                     let mut fly = HashMap::new();
@@ -960,7 +1067,7 @@ where
                 shell.request_redraw();
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
-                if st.dragging && !st.settling && apply_dest(st) {
+                if st.dragging && !st.settling && apply_dest(st, self.locked) {
                     shell.invalidate_layout();
                 }
                 let flipping = st.flip.values().any(|a| a.is_animating(*now));
@@ -993,6 +1100,9 @@ where
         let children: Vec<Layout<'_>> = layout.children().collect();
         for (start, end) in group_spans(&st.view, st.absorb.as_deref()) {
             if start >= st.rest.len() || end == 0 || end - 1 >= st.rest.len() {
+                continue;
+            }
+            if !st.view.get(start).is_some_and(|r| r.pocket) {
                 continue;
             }
             let first_y = row_visual_y(st, start, now);
@@ -1277,6 +1387,7 @@ mod tests {
                 },
                 hole: id == "empty",
                 leaf: None,
+                pocket: kind == Kind::Group,
             },
             Rest { y, h: 32 },
         )
@@ -1307,7 +1418,7 @@ mod tests {
             row("u1", Kind::Loose, 192),
         ]);
         // pointer on C4 (below hole): yield after C4
-        let s = slot_at(140, 3, &rects, &view, false);
+        let s = slot_at(140, 3, &rects, &view, false, None);
         assert_eq!(s.slot, 5);
     }
 
@@ -1322,7 +1433,7 @@ mod tests {
             row("c5", Kind::Item, 160),
         ]);
         // pointer on C3: insert before C3
-        let s = slot_at(110, 4, &rects, &view, false);
+        let s = slot_at(110, 4, &rects, &view, false, None);
         assert_eq!(s.slot, 3);
     }
 
@@ -1334,7 +1445,7 @@ mod tests {
             row("empty", Kind::Item, 64),
             row("u1", Kind::Loose, 96),
         ]);
-        let s = slot_at(32 + 20, 2, &rects, &view, false);
+        let s = slot_at(32 + 20, 2, &rects, &view, false, None);
         assert_eq!(s.absorb.as_deref(), Some("c"));
     }
 
@@ -1346,7 +1457,86 @@ mod tests {
             row("empty", Kind::Item, 64),
             row("u1", Kind::Loose, 96),
         ]);
-        let s = slot_at(96 + 4, 2, &rects, &view, false);
+        let s = slot_at(96 + 4, 2, &rects, &view, false, None);
         assert_eq!(s.absorb, None);
+    }
+
+    #[test]
+    fn locked_item_does_not_absorb_or_leave_group() {
+        let (view, rects) = split(vec![
+            row("c", Kind::Group, 0),
+            row("c5", Kind::Item, 32),
+            row("empty", Kind::Item, 64),
+            row("u1", Kind::Loose, 96),
+        ]);
+        let s = slot_at(32 + 20, 2, &rects, &view, false, Some("c".into()));
+        assert_eq!(s.absorb, None);
+        assert!(s.slot <= 3, "slot stays in group, got {}", s.slot);
+        let s = slot_at(96 + 20, 2, &rects, &view, false, Some("c".into()));
+        assert_eq!(s.absorb, None);
+        let (start, end) = group_range(&view, "c");
+        assert_eq!((start, end), (0, 3));
+        assert!(s.slot >= 1 && s.slot <= 3);
+    }
+
+    #[test]
+    fn locked_drop_stays_join_in_group() {
+        let (view, _) = split(vec![
+            row("c", Kind::Group, 0),
+            row("c1", Kind::Item, 32),
+            row("empty", Kind::Item, 64),
+            row("c2", Kind::Item, 96),
+            row("d", Kind::Group, 128),
+        ]);
+        let held = Held {
+            start: 0,
+            end: 1,
+            ids: vec!["c3".into()],
+            as_group: false,
+            h: 32,
+            grab: 0,
+            group: Some("c".into()),
+        };
+        let drop = drop_of(&held, &view, 2, Some("d".into()), true).unwrap();
+        assert_eq!(
+            drop,
+            Drop {
+                id: "c3".into(),
+                dest: Dest::Join {
+                    section: "c".into(),
+                    before: Some("c2".into()),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn unlocked_drop_still_joins_foreign_group() {
+        let (view, _) = split(vec![
+            row("c", Kind::Group, 0),
+            row("empty", Kind::Item, 32),
+            row("d", Kind::Group, 64),
+            row("d1", Kind::Item, 96),
+        ]);
+        // d1's group in row() helper is "c" for Kind::Item — override.
+        let mut view = view;
+        view[3].group = Some("d".into());
+        let held = Held {
+            start: 0,
+            end: 1,
+            ids: vec!["u1".into()],
+            as_group: false,
+            h: 32,
+            grab: 0,
+            group: None,
+        };
+        let drop = drop_of(&held, &view, 1, Some("d".into()), false).unwrap();
+        assert_eq!(
+            drop.dest,
+            Dest::Join {
+                section: "d".into(),
+                before: Some("d1".into()),
+            }
+        );
     }
 }

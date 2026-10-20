@@ -78,7 +78,12 @@ pub fn day_title(date: NaiveDate) -> String {
 }
 
 pub fn pretty_date(date: NaiveDate) -> String {
-    format!("{} {}, {}", month_name(date.month()), date.day(), date.year())
+    format!(
+        "{} {}, {}",
+        month_name(date.month()),
+        date.day(),
+        date.year()
+    )
 }
 
 pub fn parse_pretty_date(s: &str) -> Option<NaiveDate> {
@@ -99,7 +104,13 @@ pub fn week_title(week: [NaiveDate; 7]) -> String {
     let a = week[0];
     let b = week[6];
     if a.month() == b.month() && a.year() == b.year() {
-        format!("{} {} – {}, {}", month_name(a.month()), a.day(), b.day(), a.year())
+        format!(
+            "{} {} – {}, {}",
+            month_name(a.month()),
+            a.day(),
+            b.day(),
+            a.year()
+        )
     } else if a.year() == b.year() {
         format!(
             "{} {} – {} {}, {}",

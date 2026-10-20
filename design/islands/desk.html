@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / The desk</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .desk { width: 2560px; height: 1080px; }
+  .notes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 40px; margin-top: 28px; width: 2560px; }
+  .notes h4 { font: 600 15px/1.2 var(--f-display); margin: 0 0 8px; }
+  .notes p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+</style>
+</head>
+<body class="board">
+
+<div class="head" style="width:2560px">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS</span><span class="head__title">The desk</span></div>
+  <div class="head__lead">Everything together at 1:1 on a 2560 × 1080 output, half the dogfood desk's width. On 5120 the islands keep their sizes; only the ground between them grows. Zones stay flush below the band, without titles. The floating Preview is the only window that wears the glass.</div>
+</div>
+
+<div class="label">A 2560 × 1080 output, 1:1</div>
+<div class="frame desk" id="desk"></div>
+
+<div class="notes">
+  <div><h4>Band, 40 px</h4><p>Opaque black and reserved, like Graphite's bar. Zones start at 40 instead of 28. The band is still one surface.</p></div>
+  <div><h4>Left: what has focus</h4><p>Workspaces is focused, so its name is the bold word and its menus fill the island. Nothing else in the band says which zone is live.</p></div>
+  <div><h4>Center: one live thing</h4><p>kit-foundation has been working for 4 minutes. When Claude stops to ask, this island becomes the card.</p></div>
+  <div><h4>Right: instruments</h4><p>Graphite's LEDs and clock, grouped on one island. The audio panel and calendar hang from their own group.</p></div>
+  <div><h4>Only the float wears glass</h4><p>Tiles stay opaque and square, so the compositor can skip what is under them. The float gets the rim, the 14 px corners, and the only shadow.</p></div>
+</div>
+
+<script>
+  document.getElementById("desk").innerHTML = `
+    ${band({ width: 2560 })}
+    <div class="zone" style="left:0;top:40px;width:1060px;bottom:0;display:flex">
+      <div style="width:220px;flex-shrink:0">${rail()}</div><div style="flex:1">${terminal()}</div>
+    </div>
+    <div class="zone" style="left:1060px;top:40px;width:820px;bottom:0">${browser()}</div>
+    <div class="zone" style="left:1880px;top:40px;width:680px;bottom:0">${mail()}</div>
+    ${previewWindow({ x: 1540, y: 560, w: 560, h: 400 })}
+  `;
+</script>
+</body>
+</html>

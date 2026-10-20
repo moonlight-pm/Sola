@@ -1,10 +1,14 @@
 //! Message list: state, header (search / count / erase) and rows.
 
 use chrono::{DateTime, Local};
+use std::time::Duration;
+
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, keyed_column, row, scrollable, text};
+use iced::widget::{Space, button, column, container, keyed_column, row, scrollable, text, tooltip};
 use iced::{Element, Length, Padding};
 use sola_kit::components::button as kit_btn;
+use sola_kit::components::popover;
+use sola_kit::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
@@ -70,6 +74,12 @@ impl ListState {
         self.rows.iter_mut().find(|m| m.id == *id)
     }
 
+    /// A first page is on its way (folder open, check, search): the
+    /// header ring. Load-more is not a check.
+    pub fn checking(&self) -> bool {
+        matches!(self.load, Load::Replacing | Load::Refreshing)
+    }
+
     /// Trash / Junk can be erased (not while searching).
     pub fn erasable(&self) -> Option<&str> {
         if self.search.is_some() {
@@ -111,7 +121,11 @@ impl App {
             (Some(_), _) => format!("{} found", format_count(list.rows.len() as u32)),
             (None, _) => format_count(list.total),
         };
-        let mut header = row![search, kit_text::caption(count).style(kit_text::muted)]
+        let mut header = row![
+            search,
+            check_mark(list.checking()),
+            kit_text::caption(count).style(kit_text::muted)
+        ]
             .spacing(SPACE_MD)
             .align_y(iced::Alignment::Center);
         if !self.search_input.is_empty() || list.search.is_some() {
@@ -256,4 +270,56 @@ fn row_key(m: &MessageSummary) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     m.id.hash(&mut h);
     h.finish()
+}
+
+/// Working ring while a check is in flight. The slot stays reserved so
+/// the count does not jump when the ring appears.
+fn check_mark<'a>(busy: bool) -> Element<'a, Msg> {
+    let slot: Element<'a, Msg> = if busy {
+        let tip = container(kit_text::caption("Checking mail"))
+            .padding(Padding {
+                top: 5.0,
+                right: 8.0,
+                bottom: 5.0,
+                left: 8.0,
+            })
+            .style(popover::style);
+        tooltip(
+            status_mark(SidebarIndicator::Working),
+            tip,
+            tooltip::Position::Bottom,
+        )
+        .gap(6)
+        .delay(Duration::from_millis(280))
+        .into()
+    } else {
+        Space::new()
+            .width(Length::Fixed(STATUS_MARK_SLOT))
+            .height(Length::Fixed(STATUS_MARK_SLOT))
+            .into()
+    };
+    container(slot)
+        .width(Length::Fixed(STATUS_MARK_SLOT))
+        .height(Length::Fixed(STATUS_MARK_SLOT))
+        .align_y(iced::Alignment::Center)
+        .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ring_tracks_first_pages_not_load_more() {
+        let mut list = ListState::new(FolderRef::inbox(), Vec::new(), 0);
+        for (load, busy) in [
+            (Load::Idle, false),
+            (Load::Replacing, true),
+            (Load::Refreshing, true),
+            (Load::More, false),
+        ] {
+            list.load = load;
+            assert_eq!(list.checking(), busy, "{load:?}");
+        }
+    }
 }

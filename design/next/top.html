@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / The top row is islands</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .arr { padding: 22px 0 26px; border-top: 1px solid var(--hairline); }
+  .arr:last-child { border-bottom: 1px solid var(--hairline); }
+  .arr__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .arr__head h4 { font: 600 17px/1 var(--f-display); margin: 0; letter-spacing: -0.2px; }
+  .arr__body { display: grid; grid-template-columns: 1fr 330px; gap: 32px; align-items: start; margin-top: 14px; }
+  .arr__body p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .arr__body p b { color: var(--ink); font-weight: 500; }
+
+  .parts { display: grid; grid-template-columns: repeat(3, max-content); gap: 22px 48px; align-items: start; }
+  .part { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+  .chip { display: inline-flex; padding: 10px; background: var(--ground); border-radius: 10px; outline: 1px solid var(--hairline); outline-offset: -0.5px; }
+  .chip .top { position: static; height: auto; }
+  .chip .top__r { margin-left: 0; }
+  .chip .top__c { position: static; transform: none; }
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pair3 { display: grid; grid-template-columns: 420px 1fr; gap: 16px; }
+
+  /* Surfaces that grow from their island */
+  .card {
+    position: absolute; z-index: 8;
+    background: linear-gradient(180deg, #ffffff0a, #ffffff00 40%), var(--sheet-fill);
+    box-shadow: inset 0 1px 0 #ffffff1f, 0 0 0 1px #000000a6, 0 22px 54px -12px #000000e6, 0 6px 16px #00000080;
+    color: var(--ink); font-size: 13px; line-height: 16px;
+  }
+  .launch { border-radius: var(--r-bubble); padding: 0 6px 6px; }
+  .launch__q { height: 28px; display: flex; align-items: center; gap: 10px; padding: 0 7px; font-size: 14px; }
+  .launch__q .caret { display: inline-block; width: 1.5px; height: 16px; background: var(--accent); margin-left: -8px; }
+  .launch__q .key { margin-left: auto; font: 400 11px/1 var(--f-spec); color: var(--ink-3); }
+  .launch .sep { margin: 2px 4px 6px; }
+  .launch .row { height: 34px; font-size: 14px; gap: 12px; color: var(--ink); }
+  .launch .row .ic { color: var(--ink-2); }
+  .launch .row.is-hot .ic { color: var(--ink); }
+  .wait { border-radius: 18px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .wait__top { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+  .wait__meta { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--ink-3); }
+  .wait__body { color: var(--ink-2); padding-left: 20px; white-space: nowrap; }
+  .wait__body code { font: 400 12.5px/1 var(--f-mono); color: var(--ink); background: #ffffff0f; padding: 2px 5px; border-radius: 5px; }
+  .wait__acts { display: flex; gap: 8px; padding-left: 20px; margin-top: 4px; align-items: center; }
+  .wait__acts .kbd { margin-left: auto; font-size: 11px; color: var(--ink-3); }
+  .btn--primary { background: linear-gradient(180deg, #4cd9f6, var(--accent)); color: var(--on-accent); box-shadow: 0 4px 14px var(--accent-glow); }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 03</span><span class="head__title">The top row is islands</span></div>
+  <div class="head__lead">With the menus on their windows, the top of the desk carries nothing but the shell's own islands: the flower, the one live thing, and the instruments. They sit on the ground, in the top row of the gap grid, with no band behind them. Four ways to fill the row, the bubbles as parts, and the surfaces that still grow out of them.</div>
+</div>
+
+<div class="section">
+  <div class="label">Four arrangements · a 2560 output at 1:2, then what differs at 1:1</div>
+  <div id="arrs"></div>
+</div>
+
+<div class="section">
+  <div class="label">The bubbles · 28 px tall, 14 px corners, 6 px apart, 1:1</div>
+  <div class="parts" id="parts"></div>
+</div>
+
+<div class="section">
+  <div class="label">Edges agree · the ends of the row over the tiles, 1:1</div>
+  <div class="pair3" id="align"></div>
+</div>
+
+<div class="section">
+  <div class="label">Surfaces still grow from their island · 1:1</div>
+  <div class="pair" id="grow"></div>
+</div>
+
+<script>
+{
+  const view = (o, c) => {
+    const s = c.s || 1;
+    return `<div class="crop" style="width:${c.w}px;height:${c.h}px"><div style="position:absolute;left:${-c.x * s}px;top:${-c.y * s}px;transform:scale(${s});transform-origin:0 0">${desk(o)}</div></div>`;
+  };
+  const S = 1296 / 2560;
+  const strip = (top, o = {}) => view({ w: 2560, h: 1080, top, float: false, ...o }, { x: 0, y: 0, w: 1296, h: Math.round(110 * S), s: S });
+
+  const A = [
+    {
+      top: "three", name: "Three islands", tag: "ISLANDS CANVAS",
+      crop: { x: 1700, w: 860 },
+      p: "<b>One island per side.</b> The Islands canvas as it was: every instrument grouped on the right, hugging its content. Reads as three things, but the right one is a long strip of mixed parts with no edges between them.",
+    },
+    {
+      top: "bubbles", name: "A bubble per group", tag: "PROPOSED", pick: true,
+      crop: { x: 1700, w: 860 },
+      p: "<b>Each group is its own pill.</b> Mail and alerts, the spectrum, the meters, the network, the clock. Each one is the thing you click, and each panel hangs from its own bubble.",
+    },
+    {
+      top: "agents", name: "Agents on the left", tag: "FROM AGENT DESK",
+      crop: { x: 0, w: 860 },
+      p: "<b>The left side gets a job.</b> The space the app menus held now shows Workspaces' agents, shape first. The center keeps the one live thing, here a track.",
+    },
+    {
+      top: "search", name: "Search on the left", tag: "",
+      crop: { x: 0, w: 860 },
+      p: "<b>The flower says what it does.</b> A quiet Search field with its chord. Friendlier on a new install; on this desk it spends a bubble saying what Super Space already knows.",
+    },
+  ];
+  document.getElementById("arrs").innerHTML = A.map((a) => `
+    <div class="arr">
+      <div class="arr__head"><h4>${a.name}</h4>${a.tag ? `<span class="tag${a.pick ? " is-pick" : ""}">${a.tag}</span>` : ""}</div>
+      ${strip(a.top)}
+      <div class="arr__body">
+        ${view({ w: 2560, h: 1080, top: a.top, float: false }, { x: a.crop.x, y: 0, w: a.crop.w, h: 60 })}
+        <p>${a.p}</p>
+      </div>
+    </div>`).join("");
+
+  /* Parts */
+  const chip = (html) => `<div class="chip"><div class="top"><div class="top__l">${html}</div></div></div>`;
+  const P = [
+    ["Flower", "The system menu; the launcher grows out of it.", B.flower()],
+    ["Live · working", "One live thing, center. Ring, name, verb, time.", B.live(live.working())],
+    ["Live · waiting", "Becomes the agent card when you look at it.", B.live(live.waiting())],
+    ["Live · meeting", "Due in 25 minutes or less.", B.live(live.countdown())],
+    ["Live · playing", "Lowest priority; anything above replaces it.", B.live(live.playing())],
+    ["Agents", "Workspaces' tabs that are not idle, shape first.", B.agents()],
+    ["Mail · alerts · Bluetooth", "Mail is cyan while something is unread.", B.extras()],
+    ["Spectrum", "12 phosphor bands; the audio panel hangs here.", B.spectrum()],
+    ["Meters", "Today's 12 × 5 LED graphs, unchanged.", B.stats()],
+    ["Network", "Receive and send.", B.net()],
+    ["Clock", "Tabular; the calendar hangs here.", B.clock()],
+    ["Open", "A bubble whose panel is showing.", B.spectrum(true)],
+  ];
+  document.getElementById("parts").innerHTML = P.map(([h, note, html]) => `
+    <div class="part">${chip(html)}<div class="spec"><b>${h}</b><br>${note}</div></div>`).join("");
+
+  /* Alignment: the two ends of the proposed row */
+  document.getElementById("align").innerHTML =
+    view({ w: 2560, h: 1080, top: "bubbles", float: false }, { x: 0, y: 0, w: 420, h: 150 }) +
+    view({ w: 2560, h: 1080, top: "bubbles", float: false }, { x: 2560 - 860, y: 0, w: 860, h: 150 });
+
+  /* Surfaces */
+  const launcher = `<div class="card launch" style="left:10px;top:10px;width:560px">
+      <div class="launch__q">${flower(14)}<span>ca</span><span class="caret"></span><span class="key">Super Space</span></div>
+      <div class="sep"></div>
+      <div class="row is-hot">${icon("calendar", 16)}Calendar<span class="row__key">↵ open</span></div>
+      <div class="row">${icon("calculator", 16)}Calculator</div>
+      <div class="row">${icon("capture", 16)}Capture area<span class="row__key">⇧⌘4</span></div>
+      <div class="row">${icon("gamepad", 16)}Arcade</div>
+      <div class="row">${icon("palette", 16)}Design</div>
+    </div>`;
+  const waiting = `<div class="card wait" style="left:${1280 - 220}px;top:10px;width:440px">
+      <div class="wait__top">${mark.diamond()}<span>kit-foundation is waiting</span><span class="wait__meta">Workspaces · now</span></div>
+      <div class="wait__body">Claude asks to run <code>cargo make build sola-kit</code></div>
+      <div class="wait__acts"><span class="btn btn--primary">Run build</span><span class="btn btn--quiet">Show pane</span><span class="kbd">↵ run · esc later</span></div>
+    </div>`;
+  const withCard = (card, o, c) => view(o, c).replace(/<\/div><\/div>$/, `${card}</div></div>`);
+  document.getElementById("grow").innerHTML = [
+    ["The launcher is the flower, grown", "Super Space. The flower bubble widens and drops into the launcher; its top-left corner never moves. The windows stay where they are, under it.",
+      withCard(launcher, { w: 2560, h: 1080, top: "bubbles", float: false, tbs: { 0: { open: undefined } } }, { x: 0, y: 0, w: 640, h: 300 })],
+    ["The live bubble becomes the card", "Claude stops to ask. The center bubble grows into the card in place, over Browser's titlebar, and goes back to a bubble when it is answered.",
+      withCard(waiting, { w: 2560, h: 1080, top: "bubbles", live: live.waiting(), float: false, focus: 1 }, { x: 960, y: 0, w: 640, h: 300 })],
+  ].map(([h, p, inner]) => `<div class="sample">${inner}<div class="sample__head"><h4>${h}</h4></div><p>${p}</p></div>`).join("");
+
+  finish();
+}
+</script>
+</body>
+</html>

@@ -11,6 +11,62 @@ use std::time::Instant;
 /// animations do not kick `Msg::NewFrame` (and rebuild chrome) every frame.
 pub const FRAME_PUMP_HANGOVER_MS: u64 = 50;
 
+/// Chrome-thread GPU upload counters (iced shader). 250 ms windows.
+#[derive(Default)]
+pub struct OsrChromeTelem {
+    win_ms: AtomicU64,
+    presents: AtomicU32,
+    full: AtomicU32,
+    partial: AtomicU32,
+    bytes: AtomicU64,
+    drag: AtomicU32,
+    pending_drop: AtomicU32,
+}
+
+impl OsrChromeTelem {
+    pub fn note_pending_drop(&self) {
+        self.pending_drop.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn note_present(&self, full: bool, bytes: u64, is_drag: bool) {
+        self.presents.fetch_add(1, Ordering::Relaxed);
+        if full {
+            self.full.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.partial.fetch_add(1, Ordering::Relaxed);
+        }
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        if is_drag {
+            self.drag.fetch_add(1, Ordering::Relaxed);
+        }
+        let now = monotonic_ms();
+        let start = self.win_ms.load(Ordering::Relaxed);
+        if start == 0 {
+            self.win_ms.store(now, Ordering::Relaxed);
+            return;
+        }
+        if now.saturating_sub(start) < 250 {
+            return;
+        }
+        if self.presents.load(Ordering::Relaxed) == 0 {
+            self.win_ms.store(now, Ordering::Relaxed);
+            return;
+        }
+        let dt = now.saturating_sub(start).max(1);
+        tracing::info!(
+            dt_ms = dt,
+            presents = self.presents.swap(0, Ordering::Relaxed),
+            gpu_full = self.full.swap(0, Ordering::Relaxed),
+            gpu_partial = self.partial.swap(0, Ordering::Relaxed),
+            gpu_mib = self.bytes.swap(0, Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            drag_frames = self.drag.swap(0, Ordering::Relaxed),
+            pending_drop = self.pending_drop.swap(0, Ordering::Relaxed),
+            "osr chrome present"
+        );
+        self.win_ms.store(now, Ordering::Relaxed);
+    }
+}
+
 pub fn monotonic_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
@@ -21,6 +77,56 @@ pub fn monotonic_ms() -> u64 {
 )]
 #[serde(transparent)]
 pub struct TabId(pub u64);
+
+/// A sola-design artboard's geometry. The page lays out at `width × height`
+/// CSS px and rasters at `scale` (page zoom), so the board's own pixels are
+/// `width·scale × height·scale`. `surface` is the OSR view in px — at least
+/// that; the extra room lets a [`BoardDetail`] cover the visible part of a
+/// small board. The layout stays pinned to the board whatever the surface.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BoardSize {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    pub surface: (u32, u32),
+}
+
+impl BoardSize {
+    /// The board's own pixels at its raster scale.
+    pub fn pixels(&self) -> (u32, u32) {
+        let px = |css: u32| ((f64::from(css) * self.scale).round() as u32).max(1);
+        (px(self.width), px(self.height))
+    }
+}
+
+/// A board re-rastered from board-local CSS point `(x, y)` at `scale`
+/// surface px per CSS px, no relayout: the surface's top-left shows that
+/// point, and it covers `surface / scale` CSS px. Sharp past the board's
+/// raster scale at any zoom.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BoardDetail {
+    pub x: f64,
+    pub y: f64,
+    pub scale: f64,
+}
+
+/// How often a sola-design board paints (`Cmd::BoardPace`). Boards are born
+/// `Live`. No board is ever a hidden tab (Chromium evicts hidden views'
+/// frames, and an evicted board never paints again): `Slow` and `Asleep`
+/// both paint at 1 fps; the app tells them apart (an asleep board's frames
+/// do not wake the window).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum BoardPace {
+    /// Shown at 60 fps.
+    #[default]
+    Live,
+    /// Shown at 1 fps: the page runs, animations crawl.
+    Slow,
+    /// Nobody looks: 1 fps, like `Slow`.
+    Asleep,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
@@ -250,6 +356,48 @@ pub enum Cmd<E: Engine> {
     HelperDied {
         profile_id: String,
     },
+    /// Agent control-plane request (snapshot / act / nav on a named tab).
+    Agent(crate::agent::AgentRequest),
+    /// Open a sola-design artboard tab at its own [`BoardSize`]: shown,
+    /// painting whether or not it is active. Browser / wrappers never send it.
+    OpenBoard {
+        id: TabId,
+        url: String,
+        title: String,
+        size: BoardSize,
+    },
+    /// Resize / re-scale a board tab (see `OpenBoard`).
+    SetBoard {
+        id: TabId,
+        size: BoardSize,
+    },
+    /// What a board's frames show from now on: the whole board at its
+    /// raster scale (`None`), or a [`BoardDetail`]. Frames carry the `seq` of
+    /// the request in force when they were painted (`CefFrame::view`).
+    BoardDetail {
+        id: TabId,
+        seq: u32,
+        detail: Option<BoardDetail>,
+    },
+    /// Pointer / key event for one board tab (not the active tab).
+    BoardInput {
+        id: TabId,
+        input: E::Input,
+    },
+    /// Keyboard focus for one board tab.
+    BoardFocus {
+        id: TabId,
+        focused: bool,
+    },
+    /// Paint a board tab whole again (its next frame is not a patch).
+    BoardRepaint {
+        id: TabId,
+    },
+    /// How often one board tab paints (see [`BoardPace`]).
+    BoardPace {
+        id: TabId,
+        pace: BoardPace,
+    },
     Quit,
 }
 
@@ -259,12 +407,21 @@ pub struct TaggedFrame<F> {
     pub frame: F,
 }
 
+/// Merge damage from a dropped latest-wins frame into the one that replaced it.
+/// Takes the dropped frame whole, so its buffer can be reused (a board patch
+/// is written into the frame it replaced, not into a copy).
+/// Default is a no-op (tests / engines without dirty rects).
+pub trait AbsorbDamage: Sized {
+    fn absorb_damage(&mut self, _dropped: Self) {}
+}
+
 /// Latest-wins handoff from the engine worker to iced.
 ///
 /// One slot **per tab id** so the page and a docked inspector can both
 /// paint. A capacity-1 notify that *dropped the newer frame* under load
 /// caused blackouts while scrolling; this keeps the newest buffer per
-/// id and drops the older (older `Drop` → recycle), then pings.
+/// id, **absorbs the dropped frame's dirty rects** into the survivor, then
+/// pings.
 pub struct FrameMailbox<F: Send> {
     latest: Mutex<HashMap<u64, TaggedFrame<F>>>,
     /// Capacity 1: `Full` means a wakeup is already queued.
@@ -272,7 +429,7 @@ pub struct FrameMailbox<F: Send> {
     notify_rx: Mutex<Receiver<()>>,
 }
 
-impl<F: Send> FrameMailbox<F> {
+impl<F: Send + AbsorbDamage> FrameMailbox<F> {
     pub fn new() -> Arc<Self> {
         let (notify_tx, notify_rx) = sync_channel(1);
         Arc::new(Self {
@@ -282,14 +439,30 @@ impl<F: Send> FrameMailbox<F> {
         })
     }
 
+    /// True when this tab already has a frame waiting (chrome has not
+    /// taken it). Overlay publish coalesces in that case so dirty rects
+    /// stay consecutive with what the GPU actually showed.
+    pub fn contains(&self, tab_id: u64) -> bool {
+        self.latest.lock().unwrap().contains_key(&tab_id)
+    }
+
     /// Producer path. Never blocks; prefer newest frame per tab id.
-    pub fn push(&self, frame: TaggedFrame<F>) -> bool {
-        let old = {
+    /// Replaced frames donate their dirty rects to the survivor.
+    pub fn push(&self, mut frame: TaggedFrame<F>) -> bool {
+        let replaced = {
             let mut g = self.latest.lock().unwrap();
-            g.insert(frame.tab_id.0, frame)
+            match g.remove(&frame.tab_id.0) {
+                Some(old) => {
+                    frame.frame.absorb_damage(old.frame);
+                    g.insert(frame.tab_id.0, frame);
+                    true
+                }
+                None => {
+                    g.insert(frame.tab_id.0, frame);
+                    false
+                }
+            }
         };
-        let replaced = old.is_some();
-        drop(old);
         match self.notify_tx.try_send(()) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {}
@@ -322,8 +495,20 @@ impl<F: Send> FrameMailbox<F> {
 }
 
 #[cfg(test)]
+impl AbsorbDamage for u8 {}
+
+#[cfg(test)]
 mod frame_mailbox_tests {
     use super::*;
+
+    #[derive(Debug, PartialEq)]
+    struct Acc(Vec<u8>);
+
+    impl AbsorbDamage for Acc {
+        fn absorb_damage(&mut self, dropped: Self) {
+            self.0.extend_from_slice(&dropped.0);
+        }
+    }
 
     #[test]
     fn keeps_latest_per_tab() {
@@ -346,6 +531,21 @@ mod frame_mailbox_tests {
         assert_eq!(got[0].frame, 2);
         assert_eq!(got[1].tab_id.0, 2);
         assert_eq!(got[1].frame, 3);
+    }
+
+    #[test]
+    fn absorbs_replaced_frame() {
+        let box_ = FrameMailbox::new();
+        assert!(!box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: Acc(vec![1]),
+        }));
+        assert!(box_.push(TaggedFrame {
+            tab_id: TabId(1),
+            frame: Acc(vec![2]),
+        }));
+        let got = box_.recv().unwrap();
+        assert_eq!(got.frame, Acc(vec![2, 1]));
     }
 }
 
@@ -409,6 +609,10 @@ pub struct FrameSlot<E: Engine> {
     /// Shader is already request_redraw-pumping; frame stream should not
     /// enqueue another `NewFrame` (that rebuilds chrome).
     pub pumping: AtomicBool,
+    /// HTML5 OSR drag overlay is live — keep `request_redraw` without a
+    /// chrome rebuild (same idea as Morph2 drag-only vsync).
+    pub page_drag: AtomicBool,
+    pub osr: OsrChromeTelem,
     /// Monotonic ms of the last accepted paint (shader hangover / kick).
     pub last_frame_ms: AtomicU64,
     /// Composition caret (helper) / last pointer fallback (chrome).
@@ -441,6 +645,8 @@ impl<E: Engine> FrameSlot<E> {
             blank_content: AtomicBool::new(false),
             redraw_queued: AtomicBool::new(false),
             pumping: AtomicBool::new(false),
+            page_drag: AtomicBool::new(false),
+            osr: OsrChromeTelem::default(),
             last_frame_ms: AtomicU64::new(0),
             ime,
         }
@@ -527,6 +733,8 @@ impl<E: Engine> FrameSlot<E> {
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
+/// Profile id of the helper currently filling [`tabs_handle`] / frames.
+pub type FrontProfileHandle = Arc<Mutex<String>>;
 /// Active / paint-tab id (`TabId.0`). Chrome writes optimistically on
 /// `switch_active_tab` so the worker can filter frames without waiting for
 /// the cmd pump. Worker also writes on `Cmd::SetActiveTab` (focus/resize).
@@ -647,9 +855,13 @@ pub struct FaviconIpc {
 /// A browser engine. Product path is [`crate::cef::CefEngine`].
 pub trait Engine: Sized + Send + Sync + 'static {
     /// Engine-specific raw frame (CEF: CPU BGRA buffer).
-    type Frame: Send + Clone + 'static;
+    type Frame: Send + Clone + AbsorbDamage + 'static;
     /// Pixel size of a parked frame (for same-size replay).
     fn frame_size(frame: &Self::Frame) -> (u32, u32);
+    /// Host-composited HTML5 drag overlay. Default false.
+    fn frame_is_page_drag(_frame: &Self::Frame) -> bool {
+        false
+    }
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
     /// Engine-specific native input event carried by `Cmd::Input`.
@@ -670,6 +882,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn alloc_tab_id(&self) -> TabId;
     fn cmd_sender(&self) -> Sender<Cmd<Self>>;
     fn tabs_handle(&self) -> TabsHandle;
+    fn front_profile_handle(&self) -> FrontProfileHandle;
     fn active_tab_handle(&self) -> ActiveHandle;
     fn cursor_handle(&self) -> CursorHandle;
     /// Shared slot the engine fills with copy text (page selection) for the
@@ -686,6 +899,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;
     fn devtools_handle(&self) -> DevToolsHandle;
+    fn agent_handle(&self) -> crate::agent::AgentHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     /// Second shader for a docked inspector. Default is the page program

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / What it takes</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<style>
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .col__head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 2px 6px; }
+  .col__head h3 { font: 600 20px/1 var(--f-display); margin: 0; }
+  .col__head .spec { font-size: 11px; }
+  .item { padding: 16px 18px; border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--hairline); }
+  .item h4 { font: 600 14px/1.25 var(--f-display); margin: 0 0 8px; }
+  .item p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0 0 10px; }
+  .item code { font: 400 11.5px/1 var(--f-spec); color: var(--ink); background: #ffffff0d; padding: 2px 5px; border-radius: 4px; }
+  .files { display: flex; flex-direction: column; gap: 3px; }
+  .files span { font: 400 11px/16px var(--f-spec); color: var(--ink-3); }
+  .cheap .col__head h3 { color: var(--success); }
+  .medium .col__head h3 { color: var(--warning); }
+  .hard .col__head h3 { color: var(--danger); }
+
+  .risks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px 40px; }
+  .risks h4 { font: 600 14px/1.25 var(--f-display); margin: 0 0 6px; }
+  .risks p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .risks p code { font: 400 11.5px/1 var(--f-spec); color: var(--ink); }
+
+  .order { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border-radius: var(--radius-lg); overflow: hidden; box-shadow: inset 0 0 0 1px var(--hairline); }
+  .order > div { padding: 18px 20px; border-left: 1px solid var(--hairline); }
+  .order > div:first-child { border-left: 0; }
+  .order .n { font: 400 11px/1 var(--f-spec); color: var(--accent); margin-bottom: 10px; }
+  .order h4 { font: 600 14px/1.25 var(--f-display); margin: 0 0 6px; }
+  .order p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS</span><span class="head__title">What it takes</span></div>
+  <div class="head__lead">Islands in iced 0.14 on River 0.4.5, with the bus theme carrying the new tokens. Most of it is styling and geometry the shell already owns. The morph is the one real piece of engineering; blur is the one thing Sola cannot do alone. Paths checked against the tree on 2026-10-13.</div>
+</div>
+
+<div class="section">
+  <div class="cols">
+    <div class="col cheap">
+      <div class="col__head"><h3>Cheap</h3><span class="spec">styling and constants</span></div>
+      <div class="item">
+        <h4>The band and three islands</h4>
+        <p><code>MENUBAR_HEIGHT</code> goes from 28 to 40; zoning, overlay frames, and the notify drop all derive from it. The menubar view wraps its left, center, and right groups in containers with a radius, a gradient fill, and a 1 px edge. The bar stays one opaque surface, so idle cost does not move.</p>
+        <div class="files"><span>crates/sola-shell/src/zoning.rs</span><span>crates/sola-shell/src/menubar/view.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Island tokens on the bus</h4>
+        <p>Add the shell-island-* and radius tokens to <code>ShellStyle</code> with per-token fallbacks, seed them in the palette, and give them rows on the storybook's Shell page.</p>
+        <div class="files"><span>crates/sola-kit/src/theme.rs</span><span>crates/sola-core/src/theme/palette.rs</span><span>crates/sola-kit/src/storybook/</span></div>
+      </div>
+      <div class="item">
+        <h4>Sheets in smoked glass</h4>
+        <p>Menus, the audio panel, and the calendar swap their container style: radius 14, edge, one shadow. iced quads already draw radius, border, gradient, and a shadow.</p>
+        <div class="files"><span>crates/sola-shell/src/menu/view.rs</span><span>crates/sola-shell/src/audio/view.rs</span><span>crates/sola-shell/src/calendar.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Hang from the owning group</h4>
+        <p>Menus, the audio panel, and the calendar already share one card-sized menu overlay, placed by <code>menu_anchor_x</code> from the bar's label positions. Islands only changes the anchors: rows align to the title's text, the panel to the spectrum, the calendar to the clock's right edge.</p>
+        <div class="files"><span>crates/sola-shell/src/menu/mod.rs</span><span>crates/sola-shell/src/zoning.rs (menu_live_frame)</span></div>
+      </div>
+    </div>
+
+    <div class="col medium">
+      <div class="col__head"><h3>Medium</h3><span class="spec">new state, new facts</span></div>
+      <div class="item">
+        <h4>The live center</h4>
+        <p>A small priority queue: agent waiting, agent working, a meeting due in 15 minutes, now playing, whisper. Waiting already arrives as <code>Topic::AppNotification</code>. Working time needs a new fact from Workspaces, which holds it for the rail. Now playing needs track metadata on the bus; today the shell only sends media keys through solactl.</p>
+        <div class="files"><span>crates/sola-shell/src/menubar/view.rs</span><span>crates/sola-shell/src/components/toast.rs</span><span>crates/sola-bus/src/topics.rs</span><span>crates/sola-shell/src/media.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Card-sized launcher and switcher</h4>
+        <p>Both open over the full usable area today (<code>overlay_open_rect</code>), and the launcher dims the desk with <code>backdrop_dim</code>. As islands they are cards, so their live Frame shrinks to the card plus a shadow pad, the move notify and Super+K already made. Less to present, not more.</p>
+        <div class="files"><span>crates/sola-shell/src/zoning.rs</span><span>crates/sola-shell/src/launcher/view.rs</span><span>crates/sola-shell/src/switcher/view.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Notify moves to the center</h4>
+        <p><code>notify_live_frame</code> already animates its Frame down from the bar with <code>enter_t</code>. Its x moves from the right margin to the center island, and its width to the card's.</p>
+        <div class="files"><span>crates/sola-shell/src/zoning.rs</span><span>crates/sola-shell/src/notify/view.rs</span></div>
+      </div>
+    </div>
+
+    <div class="col hard">
+      <div class="col__head"><h3>Hard</h3><span class="spec">engineering, or outside Sola</span></div>
+      <div class="item">
+        <h4>The morph</h4>
+        <p>The notify overlay takes one live Frame at the card's largest size plus shadow pad, centered over the island, and stays above the bar. It draws the island exactly as the bar does, so the handoff has no seam; then iced springs the shape inside the surface with <code>Animation</code> and a custom lilt easing. One swapchain size per morph, frames only for its ≤ 350 ms.</p>
+        <div class="files"><span>crates/sola-shell/src/zoning.rs</span><span>crates/sola-shell/src/notify/view.rs</span><span>iced_core 0.14 animation.rs (lilt Easing::Custom)</span></div>
+      </div>
+      <div class="item">
+        <h4>Clicks through the morph's pad</h4>
+        <p>Transparent pixels in that Frame still take the pointer. The patched iced_winit already sets the opaque region from the window fill; it would also need to set an input region to the shape, or the pad blocks a strip of the Browser for the card's life.</p>
+        <div class="files"><span>crates/iced_winit-patched/src/window/state.rs</span></div>
+      </div>
+      <div class="item">
+        <h4>Blur</h4>
+        <p>Not in River 0.4.5: neither /opt/sola/bin/river nor libwlroots-0.20 carries ext-background-effect-v1, and wlroots' scene renderer has no blur pass. It needs a River patch with a blur pass (the sway fork SwayFX gets one from SceneFX) or an upstream change. Until then the fill is opaque.</p>
+        <div class="files"><span>nix/patches/ (River + wlroots patches live here)</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Risks</div>
+  <div class="risks">
+    <div><h4>GPU idle stays where it is</h4><p>River GLES scans out ARGB only with a full opaque region, so tiled windows must look opaque (PERFORMANCE.md; architecture.md, "Tiled kit opaque-region"). Islands-only keeps every tile square and opaque. Gapped would not.</p></div>
+    <div><h4>Never resize per frame</h4><p>Overlays are parked 2 × 2 off-output and shown through a live Frame. The morph sets its Frame once and animates inside; a Frame per tick would reallocate the swapchain every frame.</p></div>
+    <div><h4>Presents only while moving</h4><p>Iced presents every window in the process after any message. Morph frames are requested only during the spring; a waiting card, a working ring, and a ticking timer redraw once a second at most.</p></div>
+    <div><h4>Flapping agents</h4><p>An agent that toggles between working and waiting would morph all day. The whisper holds at least 1.5 s; the card opens only for waiting, and only once per question.</p></div>
+    <div><h4>The top is far on a 2160 desk</h4><p>The switcher at the top center needs a desk test before it replaces the centered strip. The launcher at the top left has the same question at 5120 wide.</p></div>
+    <div><h4>Whole pixels</h4><p>The dogfood desk is 1×. Island y, heights, and the rim must land on whole pixels or the 1 px rim smears into two rows.</p></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Order, if approved</div>
+  <div class="order">
+    <div><div class="n">1</div><h4>Band and tokens</h4><p>40 px band, three islands, the shell-island-* tokens and storybook rows. Visible on day one; no new state.</p></div>
+    <div><div class="n">2</div><h4>Glass sheets and hanging</h4><p>Menus, audio, calendar restyled and anchored to their group.</p></div>
+    <div><div class="n">3</div><h4>The live center</h4><p>Priority queue, the working fact from Workspaces, notify moved to the center as a plain drop.</p></div>
+    <div><div class="n">4</div><h4>The morph</h4><p>One Frame per morph, springs inside, input region. Then launcher and switcher as cards.</p></div>
+  </div>
+</div>
+
+</body>
+</html>

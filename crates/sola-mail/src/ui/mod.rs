@@ -63,6 +63,8 @@ pub enum Msg {
     Bus(Arc<Message>),
     Worker(MailEvent),
     WindowReady(Option<iced::window::Id>),
+    /// Keyboard focus entered or left this window.
+    WindowFocus(bool),
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
@@ -146,6 +148,8 @@ pub struct App {
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// Last keyboard-focus state. Focus re-lists only on the rising edge.
+    window_focused: bool,
     config: MailConfig,
     setup: Setup,
     links: Vec<AccountLink>,
@@ -196,6 +200,7 @@ impl App {
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            window_focused: false,
             config: MailConfig::default(),
             setup: Setup::Unknown,
             links: Vec::new(),
@@ -243,6 +248,8 @@ impl App {
                         captured: status == event::Status::Captured,
                     })
                 }
+                Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
+                Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
                 _ => None,
             }),
             poll,
@@ -258,6 +265,15 @@ impl App {
             Msg::Bus(message) => return self.on_bus(&message),
             Msg::Worker(ev) => return self.on_worker(ev),
             Msg::WindowReady(id) => self.window_id = id,
+            Msg::WindowFocus(focused) => {
+                let rising = focused && !self.window_focused;
+                self.window_focused = focused;
+                // Switching to Mail checks now instead of waiting for IDLE
+                // or the poll. A page already in flight is that check.
+                if rising {
+                    self.refresh(false);
+                }
+            }
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
             Msg::TitleClose => sola_kit::close_app(APP_ID),

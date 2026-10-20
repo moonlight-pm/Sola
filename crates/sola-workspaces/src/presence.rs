@@ -1,6 +1,7 @@
 //! Process-tree presence. Tells us *who* is in the pane, not state.
 //!
-//! Grok is first. Other known CLIs are presence-only.
+//! Grok is preferred when several agents share a tree. OpenCode is
+//! presence-only; Grok, Codex, and Claude also get hooks.
 
 use sola_terminal::tmux;
 use std::collections::VecDeque;

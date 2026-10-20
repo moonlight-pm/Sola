@@ -22,6 +22,7 @@ pub fn workspace_json(w: &Workspace, selected: Option<&str>) -> serde_json::Valu
         "id": w.id,
         "name": title,
         "title": w.title,
+        "label": rail_label(w),
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -54,6 +55,7 @@ pub fn spawn_json(w: &Workspace, selected: bool) -> serde_json::Value {
         "id": w.id,
         "name": w.name,
         "title": w.title,
+        "label": rail_label(w),
         "path": w.path,
         "kind": kind_str(w.kind),
         "parent": w.parent,
@@ -70,14 +72,29 @@ pub fn display_name(w: &Workspace) -> &str {
     }
 }
 
-/// Rail label: `root`, `sc-1234`, or `sc-1234 · short title`.
+/// Rail label: `root`, the worktree slug, or `--title` when set.
+/// The folder slug is not prefixed onto a custom title.
 pub fn rail_label(w: &Workspace) -> String {
     if w.kind == Kind::Main {
         return "root".into();
     }
     match w.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(t) => format!("{} · {t}", w.name),
+        Some(t) => t.to_string(),
         None => w.name.clone(),
+    }
+}
+
+/// Set the rail display. Empty or equal to the worktree slug clears
+/// `title` so the row tracks `--name`.
+pub fn apply_rail_title(ws: &mut Workspace, raw: &str) {
+    if ws.kind == Kind::Main {
+        return;
+    }
+    let t = raw.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case(&ws.name) {
+        ws.title = None;
+    } else {
+        ws.title = Some(t.to_string());
     }
 }
 
@@ -122,6 +139,7 @@ pub fn kind_str(kind: Kind) -> &'static str {
         Kind::Main => "main",
         Kind::Worktree => "worktree",
         Kind::Folder => "folder",
+        Kind::Root => "root",
     }
 }
 
@@ -151,8 +169,8 @@ pub fn wait_timeout_secs(raw: Option<u64>) -> u64 {
     }
 }
 
-/// Spawn / exec first-class CLIs. Claude and others stay presence-only.
-pub const FIRST_CLASS: &[&str] = &["grok", "codex"];
+/// Spawn / exec first-class CLIs. OpenCode stays presence-only.
+pub const FIRST_CLASS: &[&str] = &["grok", "codex", "claude"];
 
 pub fn canonical_agent(name: &str) -> Option<&'static str> {
     FIRST_CLASS
@@ -252,6 +270,11 @@ pub fn grok_resume_argv(session_id: &str) -> Vec<String> {
     vec!["grok".into(), "-r".into(), session_id.to_string()]
 }
 
+/// Resume a known Claude Code session after tmux was lost (reboot).
+pub fn claude_resume_argv(session_id: &str) -> Vec<String> {
+    vec!["claude".into(), "--resume".into(), session_id.to_string()]
+}
+
 pub fn agent_shell_line(agent: &str, prompt: Option<&str>) -> String {
     match prompt {
         Some(p) if !p.trim().is_empty() => format!("{agent} {}", shell_single_quote(p)),
@@ -289,7 +312,7 @@ pub fn first_class_agent(agent: Option<&str>) -> Result<Option<&'static str>, St
         Some(name) => match canonical_agent(name) {
             Some(a) => Ok(Some(a)),
             None => Err(format!(
-                "only grok and codex are first-class; other agents are presence-only (got {name})"
+                "only grok, codex, and claude are first-class; other agents are presence-only (got {name})"
             )),
         },
     }
@@ -317,11 +340,18 @@ mod tests {
     }
 
     #[test]
-    fn rail_label_joins_title() {
+    fn rail_label_is_title_or_name() {
         let mut w = ws("ws-kid", "sc-1234", Kind::Worktree);
         assert_eq!(rail_label(&w), "sc-1234");
         w.title = Some("fix login".into());
-        assert_eq!(rail_label(&w), "sc-1234 · fix login");
+        assert_eq!(rail_label(&w), "fix login");
+        apply_rail_title(&mut w, "sc-1234");
+        assert_eq!(w.title, None);
+        assert_eq!(rail_label(&w), "sc-1234");
+        apply_rail_title(&mut w, " GPU idle ");
+        assert_eq!(w.title.as_deref(), Some("GPU idle"));
+        apply_rail_title(&mut w, "");
+        assert_eq!(w.title, None);
     }
 
     #[test]
@@ -330,14 +360,9 @@ mod tests {
             status_notice(Some("Sola"), "sola-workspaces", "grok", AgentStatus::Done).unwrap();
         assert_eq!(done.title, "Sola · sola-workspaces");
         assert_eq!(done.body, "grok is done");
-        let wait = status_notice(
-            Some("Illuno"),
-            "sc-1234 · fix login",
-            "grok",
-            AgentStatus::Waiting,
-        )
-        .unwrap();
-        assert_eq!(wait.title, "Illuno · sc-1234 · fix login");
+        let wait =
+            status_notice(Some("Illuno"), "fix login", "grok", AgentStatus::Waiting).unwrap();
+        assert_eq!(wait.title, "Illuno · fix login");
         assert_eq!(wait.body, "grok needs attention");
         let root = status_notice(Some("Sola"), "root", "grok", AgentStatus::Done).unwrap();
         assert_eq!(root.title, "Sola · root");
@@ -357,8 +382,20 @@ mod tests {
         let w = ws("ws-main", "Sola", Kind::Main);
         assert_eq!(display_name(&w), "root");
         assert_eq!(workspace_json(&w, Some("ws-main"))["name"], "root");
+        assert_eq!(workspace_json(&w, Some("ws-main"))["label"], "root");
         assert_eq!(workspace_json(&w, Some("ws-main"))["selected"], true);
         assert_eq!(workspace_json(&w, Some("ws-main"))["kind"], "main");
+    }
+
+    #[test]
+    fn root_tab_keeps_its_name_and_kind() {
+        let mut w = ws("ws-hotfix", "hotfix", Kind::Root);
+        assert_eq!(display_name(&w), "hotfix");
+        assert_eq!(rail_label(&w), "hotfix");
+        apply_rail_title(&mut w, "quick fix");
+        assert_eq!(rail_label(&w), "quick fix");
+        assert_eq!(workspace_json(&w, None)["kind"], "root");
+        assert_eq!(spawn_json(&w, false)["kind"], "root");
     }
 
     #[test]
@@ -421,6 +458,10 @@ mod tests {
         );
         assert_eq!(grok_argv(Some("go")), vec!["grok", "go"]);
         assert_eq!(grok_resume_argv("sid-live"), vec!["grok", "-r", "sid-live"]);
+        assert_eq!(
+            claude_resume_argv("sid-live"),
+            vec!["claude", "--resume", "sid-live"]
+        );
         assert_eq!(agent_argv("codex", Some("go")), vec!["codex", "go"]);
         assert_eq!(agent_shell_line("codex", None), "codex");
         assert_eq!(
@@ -448,8 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn first_class_rejects_claude() {
-        assert!(first_class_agent(Some("claude")).is_err());
+    fn first_class_accepts_claude() {
+        assert_eq!(first_class_agent(Some("claude")).unwrap(), Some("claude"));
+        assert_eq!(first_class_agent(Some("Claude")).unwrap(), Some("claude"));
         assert!(first_class_agent(Some("opencode")).is_err());
         assert_eq!(first_class_agent(Some("grok")).unwrap(), Some("grok"));
         assert_eq!(first_class_agent(Some("Codex")).unwrap(), Some("codex"));

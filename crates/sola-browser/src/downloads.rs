@@ -27,6 +27,8 @@ pub struct DownloadEntry {
     pub percent: Option<f32>,
     pub status: DownloadStatus,
     pub ended_unix: Option<u64>,
+    /// Interrupt reason when `Failed`.
+    pub error: String,
     /// Completed/failed since the panel was last opened.
     pub unseen: bool,
 }
@@ -162,6 +164,7 @@ impl DownloadList {
             status: DownloadStatus::InProgress,
             ended_unix: None,
             unseen: false,
+            error: String::new(),
         };
         fill_from_event(&mut entry, ev);
         // Newest in-progress first.
@@ -195,6 +198,7 @@ impl DownloadList {
                 status,
                 ended_unix: Some(unix_now()),
                 unseen: !panel_open,
+                error: ev.error.clone(),
             };
             fill_from_event(&mut entry, ev);
             self.items.insert(0, entry);
@@ -240,6 +244,9 @@ fn fill_from_event(e: &mut DownloadEntry, ev: &DownloadEvent) {
     }
     e.total = (ev.total > 0).then_some(ev.total as u64);
     e.percent = (ev.percent >= 0).then_some((ev.percent as f32 / 100.0).clamp(0.0, 1.0));
+    if !ev.error.is_empty() {
+        e.error = ev.error.clone();
+    }
 }
 
 /// Open a completed file with the host default app. Returns `false` if the
@@ -282,7 +289,7 @@ pub fn unique_dest(suggested: &str) -> PathBuf {
 pub fn unique_path(dir: &Path, suggested: &str) -> PathBuf {
     let name = sanitize_filename(suggested);
     let candidate = dir.join(&name);
-    if !candidate.exists() {
+    if !download_name_taken(&candidate) {
         return candidate;
     }
     let (stem, ext) = split_stem_ext(&name);
@@ -293,7 +300,7 @@ pub fn unique_path(dir: &Path, suggested: &str) -> PathBuf {
             format!("{stem} ({n}).{ext}")
         };
         let p = dir.join(next);
-        if !p.exists() {
+        if !download_name_taken(&p) {
             return p;
         }
     }
@@ -333,6 +340,18 @@ pub fn sanitize_filename(raw: &str) -> String {
     } else {
         cleaned.to_string()
     }
+}
+
+/// Chromium writes `name.crdownload` beside the final file. A leftover
+/// partial from a large download must not be reused — the next
+/// `Continue` fails when that temp file already exists.
+fn download_name_taken(final_path: &Path) -> bool {
+    if final_path.exists() {
+        return true;
+    }
+    let mut partial = final_path.as_os_str().to_owned();
+    partial.push(".crdownload");
+    Path::new(&partial).exists()
 }
 
 fn split_stem_ext(name: &str) -> (String, String) {
@@ -447,6 +466,8 @@ struct StoredItem {
     ended_unix: Option<u64>,
     #[serde(default)]
     failed: bool,
+    #[serde(default)]
+    error: String,
 }
 
 impl DownloadStore {
@@ -483,6 +504,7 @@ impl StoredItem {
             total: e.total,
             ended_unix: e.ended_unix,
             failed: e.status == DownloadStatus::Failed,
+            error: e.error.clone(),
         }
     }
 }
@@ -509,6 +531,7 @@ impl DownloadEntry {
             },
             ended_unix: s.ended_unix,
             unseen: false,
+            error: s.error,
         })
     }
 }
@@ -575,6 +598,10 @@ mod tests {
         std::fs::write(&b, b"y").unwrap();
         let c = unique_path(&dir, "report.pdf");
         assert_eq!(c.file_name().unwrap(), "report (2).pdf");
+        let partial = dir.join("fresh.bin.crdownload");
+        std::fs::write(&partial, b"partial").unwrap();
+        let d = unique_path(&dir, "fresh.bin");
+        assert_eq!(d.file_name().unwrap(), "fresh (1).bin");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -590,6 +617,7 @@ mod tests {
             total: 100,
             percent: 10,
             state: DownloadPhase::Progress,
+            error: String::new(),
         };
         list.apply("p1", ev.clone(), false);
         assert_eq!(list.items.len(), 1);
@@ -620,6 +648,7 @@ mod tests {
                 total: 10,
                 percent: 10,
                 state: DownloadPhase::Progress,
+                error: String::new(),
             },
             false,
         );
@@ -634,6 +663,7 @@ mod tests {
                 total: 10,
                 percent: 10,
                 state: DownloadPhase::Canceled,
+                error: String::new(),
             },
             false,
         );

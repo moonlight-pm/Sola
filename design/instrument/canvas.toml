@@ -1,0 +1,67 @@
+title = "Instrument"
+
+# Exploration after Graphite v1: the shell chrome as a front panel.
+# Apps stay Graphite; only the bar, overlays, and notices change.
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Instrument / Cover"
+
+[[artboard]]
+id = "panel"
+src = "panel.html"
+x = 0
+y = 1666
+width = 1440
+height = "auto"
+title = "Instrument / 01 The front panel"
+
+[[artboard]]
+id = "keys"
+src = "keys.html"
+x = 0
+y = 3490
+width = 1440
+height = "auto"
+title = "Instrument / 02 Keys"
+
+[[artboard]]
+id = "surfaces"
+src = "surfaces.html"
+x = 0
+y = 5223
+width = 1440
+height = "auto"
+title = "Instrument / 03 Launcher, switcher, notices"
+
+[[artboard]]
+id = "desk"
+src = "desk.html"
+x = 0
+y = 6834
+width = 1440
+height = "auto"
+title = "Instrument / 04 The desk"
+
+[[artboard]]
+id = "glyphs"
+src = "glyphs.html"
+x = 0
+y = 8881
+width = 1440
+height = "auto"
+title = "Instrument / 05 Dots and labels"
+
+[[artboard]]
+id = "takes"
+src = "takes.html"
+x = 0
+y = 11081
+width = 1440
+height = "auto"
+title = "Instrument / 06 What it takes"

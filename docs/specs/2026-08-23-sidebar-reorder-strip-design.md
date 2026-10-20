@@ -8,9 +8,9 @@
 
 | | |
 |--|--|
-| **Implementation** | `ReorderStrip` — morphing hole + FLIP |
-| **Dogfood** | kit storybook Sidebar; sola-browser tab strip |
-| **Gaps** | terminal migration |
+| **Implementation** | `ReorderStrip` — morphing hole + FLIP; `.reorder_within_sections()`; labeled (non-pocket) headers; `Event::Edit` on editable items |
+| **Dogfood** | kit storybook Sidebar; sola-browser tab strip (`.reorderable()`); sola-workspaces rail (`.reorder_within_sections()`) |
+| **Gaps** | workspaces rail **installed** `kit`+`workspaces` release, unsmoked |
 
 ---
 

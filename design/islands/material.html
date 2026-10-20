@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands / Material</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="islands.css">
+<script src="islands.js"></script>
+<style>
+  .top { display: grid; grid-template-columns: 640px 1fr; gap: 48px; align-items: center; }
+  .stack { position: relative; height: 440px; background: var(--band-bg); border-radius: var(--radius-lg); overflow: hidden; }
+  .ly { position: absolute; left: 70px; width: 300px; height: 120px; border-radius: 18px; transform: perspective(1400px) rotateX(58deg) rotateZ(-36deg); transform-origin: 50% 50%; }
+  .ly__lab { position: absolute; left: 430px; white-space: nowrap; font: 400 11px/1 var(--f-spec); color: var(--ink-3); }
+  .ly__lab b { color: var(--ink); font-weight: 500; margin-right: 6px; }
+  .ly__lab::before { content: ""; position: absolute; right: 100%; top: 5px; width: 60px; margin-right: 10px; border-top: 1px dashed #ffffff24; }
+  .layers { display: flex; flex-direction: column; }
+  .layers > div { display: grid; grid-template-columns: 24px 160px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 13px; line-height: 19px; }
+  .layers > div:last-child { border-bottom: 1px solid var(--hairline); }
+  .layers .n { font: 400 11px/19px var(--f-spec); color: var(--accent); }
+  .layers b { font-weight: 500; }
+  .layers p { margin: 0; color: var(--ink-2); }
+
+  .zoom { display: grid; grid-template-columns: 480px 1fr; gap: 40px; align-items: center; }
+  .zoom canvas { display: block; image-rendering: pixelated; border-radius: 8px; outline: 1px solid var(--hairline); }
+  .zoom .grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(#ffffff0d 1px, transparent 1px), linear-gradient(90deg, #ffffff0d 1px, transparent 1px); background-size: 12px 12px; border-radius: 8px; }
+
+  .tests { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .test { display: flex; flex-direction: column; gap: 10px; }
+  .test .frame { height: 280px; }
+  .test .term { font-size: 13px; line-height: 22px; padding: 12px 14px; }
+  .test .sheet { position: absolute; left: 22px; top: 54px; width: 230px; box-shadow: inset 0 1px 0 var(--island-rim), 0 0 0 1px var(--island-edge), var(--island-shadow); }
+  .test h4 { font: 600 14px/1 var(--f-display); margin: 0; display: flex; justify-content: space-between; }
+  .test p { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .verdict { margin-top: 20px; padding: 18px 22px; border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--accent-edge); font: 400 13.5px/21px var(--f-chrome); color: var(--ink-2); }
+  .verdict b { color: var(--ink); font-weight: 500; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 19px; }
+  th { text-align: left; font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; color: var(--ink-3); padding: 0 16px 10px 0; text-transform: uppercase; }
+  td { padding: 10px 16px 10px 0; border-top: 1px solid var(--hairline); vertical-align: top; color: var(--ink-2); }
+  td:first-child { font-family: var(--f-spec); font-size: 12px; color: var(--ink); white-space: nowrap; }
+  td.v { font-family: var(--f-spec); font-size: 12px; white-space: nowrap; color: var(--ink); }
+  td .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 8px; box-shadow: inset 0 0 0 1px #ffffff26; }
+  tr.cut td { color: var(--ink-3); text-decoration: line-through; text-decoration-color: #ffffff40; }
+  tr.cut td:last-child { text-decoration: none; }
+
+  .radii { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .rad { display: flex; flex-direction: column; gap: 10px; }
+  .rad__well { height: 190px; border-radius: var(--radius-lg); background: var(--band-bg); display: grid; place-items: center; }
+  .rad .o { position: relative; }
+  .rad .i { position: absolute; background: #ffffff14; box-shadow: inset 0 0 0 1px #ffffff26; }
+  .rad .lab { font: 400 11px/16px var(--f-spec); color: var(--ink-3); }
+  .rad .lab b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">ISLANDS</span><span class="head__title">Smoked glass</span></div>
+  <div class="head__lead">The material has to read as glass on a compositor that cannot blur. It does that with light, not transparency: a fill a step above the apps, a sheen that fades down, a 1 px rim where light catches the top edge, a dark edge to cut it from what is behind, and a shadow only when it floats over an app.</div>
+</div>
+
+<div class="section">
+  <div class="label">Layers, bottom to top</div>
+  <div class="top">
+    <div class="stack" id="stack"></div>
+    <div class="layers">
+      <div><span class="n">1</span><b>Shadow</b><p>Two soft shadows, deep and near. Only on floats: on the band the ground is already black and a shadow does nothing.</p></div>
+      <div><span class="n">2</span><b>Edge</b><p>1 px of black at 55% outside the shape. It separates a sheet from a mail list the same gray.</p></div>
+      <div><span class="n">3</span><b>Fill</b><p>#191d26, one step above bg-secondary, so a sheet lifts off any kit surface.</p></div>
+      <div><span class="n">4</span><b>Sheen</b><p>White at 4% at the top, gone by 55% of the height. Reads as overhead light.</p></div>
+      <div><span class="n">5</span><b>Rim</b><p>1 px of white at 12% just inside the top edge, curving out along the corners.</p></div>
+      <div><span class="n">6</span><b>Content</b><p>Chrome text and marks, unchanged from Graphite.</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The top-left corner at 12×, device pixels on a 1× desk</div>
+  <div class="zoom">
+    <div style="position:relative;width:480px;height:288px"><canvas id="px" width="40" height="24" style="width:480px;height:288px"></canvas><div class="grid"></div></div>
+    <div class="note" style="max-width:520px">
+      <p style="margin:0 0 12px"><b>The rim lands on whole pixels.</b> The island sits at y 6, not 6.5, so the rim is one row of device pixels. On the dogfood desk (5120 × 2160 at 1×) a half-pixel rim smears into two gray rows and the glass goes flat.</p>
+      <p style="margin:0 0 12px"><b>The corner gives the rim away.</b> The rim fades as the 10 px corner turns, which is what makes it read as light on a rounded edge instead of a border.</p>
+      <p style="margin:0"><b>Edge outside, rim inside.</b> The dark edge is drawn outside the shape and the rim inside it, so the island's 28 px stay 28 px of content.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">How transparent, with no blur · the same menu over Claude's transcript</div>
+  <div class="tests" id="tests"></div>
+  <div class="verdict"><b>Ship opaque. Turn on transparency with blur, never without it.</b> At 86% and 92% the transcript ghosts through the menu, the same readability complaint Liquid Glass met on LCD Macs. With blur, 72% reads as glass and stays legible. River 0.4.5 does not speak ext-background-effect-v1, so v1 is the third column. When it does, the fill's alpha becomes a setting, as macOS 27 made it one.</div>
+</div>
+
+<div class="section">
+  <div class="label">Tokens · proposed shell-* additions to the bus theme</div>
+  <table>
+    <tr><th>Token</th><th>Value</th><th>Where</th><th>In iced 0.14</th></tr>
+    <tr><td>shell-band-bg</td><td class="v"><span class="sw" style="background:#050608"></span>#050608</td><td>The band's ground. Same value as shell-menubar-bg today.</td><td>container background</td></tr>
+    <tr><td>shell-island-fill</td><td class="v"><span class="sw" style="background:#191d26"></span>#191d26</td><td>Islands, sheets, cards, the floating titlebar.</td><td>first stop of a linear Background::Gradient</td></tr>
+    <tr><td>shell-island-sheen</td><td class="v"><span class="sw" style="background:#ffffff0a"></span>#ffffff0a</td><td>Mixed into the fill at the top, gone by 55%.</td><td>gradient stops at 0 and 0.55</td></tr>
+    <tr><td>shell-island-rim</td><td class="v"><span class="sw" style="background:#ffffff1f"></span>#ffffff1f · 1 px</td><td>Inside the top edge.</td><td>a gradient stop at 1 px ÷ height, computed per surface</td></tr>
+    <tr><td>shell-island-edge</td><td class="v"><span class="sw" style="background:#0000008c"></span>#0000008c · 1 px</td><td>Outside the shape.</td><td>Border, on a quad 1 px larger (iced draws borders inside)</td></tr>
+    <tr><td>shell-island-shadow</td><td class="v">#000000b3 · y 16 · blur 40</td><td>Floats only. The near shadow in the mocks is a second layer iced does not have.</td><td>Shadow { color, offset, blur_radius }, one per quad</td></tr>
+    <tr><td>shell-band-height</td><td class="v">40</td><td>Band; islands at y 6, x 8 from the output's edges.</td><td>MENUBAR_HEIGHT in zoning.rs</td></tr>
+    <tr><td>shell-radius-*</td><td class="v">island 10 · pill 7 · sheet 14 · row 8 · card 18 · window 14</td><td>One family; see below.</td><td>border radius</td></tr>
+    <tr class="cut"><td>shell-island-grain</td><td class="v">noise, 7%, soft light</td><td>Tried in the first pass. Invisible on a dark fill at 1×, and iced has no noise fill: it would need a tiled image under every island.</td><td style="color:var(--ink-2)">cut</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <div class="label">One radius family · a child's corner is its parent's minus the gap</div>
+  <div class="radii" id="radii"></div>
+</div>
+
+<script>
+  // Exploded stack: each layer projected on its own, lifted by its index.
+  const L = [
+    ["shadow", "", "box-shadow: 0 40px 70px -10px #000000; background: #0a0b0e"],
+    ["edge", "#0000008c · 1 px", "box-shadow: 0 0 0 1.5px #3a3f4a; background: transparent"],
+    ["fill", "#191d26", "background: #191d26"],
+    ["sheen", "#ffffff0a → 0 at 55%", "background: linear-gradient(180deg, #ffffff30, #ffffff00 55%)"],
+    ["rim", "#ffffff1f · 1 px", "box-shadow: inset 0 2px 0 #ffffff80; background: transparent"],
+    ["content", "chrome text and marks", "display:flex;align-items:center;justify-content:center;gap:8px;font:600 15px/1 var(--f-chrome);color:var(--ink);background:transparent"],
+  ];
+  document.getElementById("stack").innerHTML = L.map(([n, v, st], i) => {
+    const top = 300 - i * 50;
+    return `<div class="ly" style="top:${top - 40}px; ${st}">${n === "content" ? mark.diamond(14) + "<span>kit-foundation is waiting</span>" : ""}</div>
+      <div class="ly__lab" style="top:${top + 14}px"><b>${i + 1} ${n}</b>${v}</div>`;
+  }).join("");
+
+  // Pixel zoom of the island's top-left corner at 1×.
+  (function () {
+    const c = document.getElementById("px"), g = c.getContext("2d");
+    g.fillStyle = "#050608"; g.fillRect(0, 0, 40, 24);
+    const rr = (p, dy = 0) => p.roundRect(8, 6 + dy, 120, 28, 10);
+    // edge, outside the shape
+    g.beginPath(); g.roundRect(7, 5, 122, 30, 11); g.fillStyle = "rgba(0,0,0,.55)"; g.fill();
+    // fill + sheen
+    g.beginPath(); rr(g); g.fillStyle = "#191d26"; g.fill();
+    const gr = g.createLinearGradient(0, 6, 0, 6 + 28 * 0.55);
+    gr.addColorStop(0, "rgba(255,255,255,.04)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr; g.fill();
+    // rim: the shape minus itself moved down 1 px, inside the shape
+    g.save(); g.beginPath(); rr(g); g.clip();
+    g.beginPath(); rr(g); rr(g, 1); g.fillStyle = "rgba(255,255,255,.12)"; g.fill("evenodd");
+    g.restore();
+  })();
+
+  // Transparency tests
+  const menu = `<div class="row">Reply<span class="row__key">⌘R</span></div>
+    <div class="row is-hot">Reply All<span class="row__key">⇧⌘R</span></div>
+    <div class="row">Forward<span class="row__key">⇧⌘F</span></div><div class="sep"></div>
+    <div class="row">Mark as Unread<span class="row__key">⇧⌘U</span></div>
+    <div class="row">Move to Junk<span class="row__key">X</span></div>`;
+  const T = [
+    ["86%", "#191d26db", "", "The transcript reads through the rows. Every line is a second, fainter menu."],
+    ["92%", "#191d26eb", "", "Less, but the diff colors still bleed. On a 1× LCD it reads as dirt on the glass."],
+    ["100%", "#191d26", "", "Glass by light alone: sheen, rim, edge, shadow. Legible over anything. Ships first.", true],
+    ["72% + blur", "#191d26b8", "backdrop-filter: blur(22px) saturate(1.3);", "Needs ext-background-effect-v1 in River. Reads as glass and stays legible."],
+  ];
+  document.getElementById("tests").innerHTML = T.map(([n, fill, extra, why, pick]) => `
+    <div class="test">
+      <div class="frame">${terminal({ style: "height:100%" })}
+        <div class="sheet" style="background: linear-gradient(180deg, var(--island-sheen), #ffffff00 55%), ${fill}; ${extra}">${menu}</div></div>
+      <h4>${n}<span class="spec" style="color:${pick ? "var(--accent)" : "var(--ink-3)"}">${pick ? "v1" : n.includes("blur") ? "later" : "no"}</span></h4>
+      <p>${why}</p>
+    </div>`).join("");
+
+  // Radius family: [parent, radius, w, h, child, radius, child box (x, y, w, h), note]
+  const R = [
+    ["card 18", 18, 220, 110, "button 8", 8, [10, 72, 92, 28], "pad 10"],
+    ["sheet 14", 14, 200, 110, "row 8", 8, [6, 6, 188, 26], "inset 6"],
+    ["island 10", 10, 200, 28, "pill 7", 7, [3, 3, 64, 22], "inset 3"],
+    ["window 14", 14, 220, 130, "titlebar", 0, [0, 0, 220, 36], "flush; one radius for every window, as in macOS 27"],
+  ];
+  document.getElementById("radii").innerHTML = R.map(([on, or, w, h, inn, ir, [x, y, cw, ch], note]) => `
+    <div class="rad">
+      <div class="rad__well"><div class="o glass glass--float" style="width:${w}px;height:${h}px;border-radius:${or}px;overflow:hidden">
+        <div class="i" style="left:${x}px;top:${y}px;width:${cw}px;height:${ch}px;border-radius:${ir}px"></div>
+      </div></div>
+      <div class="lab"><b>${on} → ${inn}</b><br>${note}</div>
+    </div>`).join("");
+</script>
+</body>
+</html>

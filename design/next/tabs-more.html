@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / One tab list, continued</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<link rel="stylesheet" href="sidebar.css">
+<link rel="stylesheet" href="tabs.css">
+<script src="next.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 06 · CONTINUED</span><span class="head__title">What the apps give up</span></div>
+  <div class="head__lead">Switching workspace swaps the bar, the apps without their own lists, what it takes, and what is yours to decide.</div>
+</div>
+
+<div class="section">
+  <div class="label">Switch to Mail · the bar swaps with the desk, 1:2</div>
+  <div id="mail"></div>
+  <div class="spec" style="margin-top:10px">Mail and Calendar. Right is empty, so Left and Center take half each and Right's header waits in the bar. Sola's pill carries the diamond: menubar-pass is waiting over there.</div>
+</div>
+
+<div class="section">
+  <div class="label">The apps lose their lists · 1:1</div>
+  <div class="cols2" id="before"></div>
+</div>
+
+<div class="section">
+  <div class="label">What it takes</div>
+  <div class="asks">
+    <div class="ask"><span class="n">1</span><span><b>A tab is a window.</b> Each page, shell, and agent session is its own toplevel; the engines stay one process each (one browser, one cookie jar, one vault). sola-river shows each zone's chosen window and leaves the rest out of the composition, which River already hides.</span></div>
+    <div class="ask"><span class="n">2</span><span><b>The shell owns the list.</b> Zone, order, and what shows live in the shell per workspace, with a restore token for each tab: a URL, a working directory, a tmux session. Apps keep their own session data.</span></div>
+    <div class="ask"><span class="n">3</span><span><b>Apps drop their strips.</b> The browser's vertical tabs and its colored groups, the Projects rail, the terminal's tabs. Tool anatomy stays: the location bar, Mail's list and reader, devtools.</span></div>
+    <div class="ask"><span class="n">4</span><span><b>This is the desks idea's panel model.</b> The 2026-10-12 idea put a tab strip on each group; here the one bar is every zone's strip. It is the windowing-model change that idea flagged, and it replaces zones-as-snaps.</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Yours to pick</div>
+  <div class="asks">
+    <div class="ask"><span class="n">A</span><span><b>Where Projects' projects go.</b> A workspace bound to a project (agents spawned on Sola use the Sola repo), or a project label on each agent tab. <span class="pick">Proposed: bind a workspace to a project.</span></span></div>
+    <div class="ask"><span class="n">B</span><span><b>The browser's groups.</b> Drop them, since zones and workspaces group now, or nest groups inside a zone in the bar. <span class="pick">Proposed: drop them.</span></span></div>
+    <div class="ask"><span class="n">C</span><span><b>Order inside a zone.</b> As you arrange it, mixed, or sorted by kind. <span class="pick">Proposed: as arranged.</span></span></div>
+    <div class="ask"><span class="n">D</span><span><b>Where a new tab lands.</b> The focused zone, or the zone its kind last used. <span class="pick">Proposed: the focused zone.</span></span></div>
+  </div>
+</div>
+
+<script src="tabs.js"></script>
+</body>
+</html>

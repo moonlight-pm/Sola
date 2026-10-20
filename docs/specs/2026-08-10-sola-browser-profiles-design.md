@@ -3,7 +3,8 @@
 **Date:** 2026-08-10  
 **Status:** **Frozen** — layout + Profiles menubar + chrome-bar select
 landed on master (2026-08-13); CEF helpers; parked last-frames
-for instant switch (miss blanks)  
+for instant switch (miss blanks). Chrome must not merge live helper
+tabs until that helper is the active profile (Primary→Tertius copy bug).  
 **Branch context:** landed on master (was `naturalethic/cef-browser`, earlier
 `naturalethic/browser`)  
 **Related:** [hardening plan](../plans/2026-08-09-sola-browser-hardening.md) P1.3;

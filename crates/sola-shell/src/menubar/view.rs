@@ -264,6 +264,11 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         };
         extras.push(notify_pile_chip(shell.notify.pile_count(), tint));
     }
+    // Left of Bluetooth: overlay anchors walk right-to-left from CPU, so
+    // nothing anchored moves when this chip comes and goes.
+    if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
+        extras.push(mouse_chip(chip, fg, muted));
+    }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         extras.push(bluetooth_chip(
             icon,
@@ -567,6 +572,32 @@ fn bluetooth_chip(
         Msg::ToggleBluetooth,
         extra_pad(),
     )
+    .into()
+}
+
+/// Mouse glyph + battery percent. Not a button: there is no panel.
+fn mouse_chip(chip: crate::mouse::BarChip, fg: Color, muted: Color) -> Element<'static, Msg> {
+    use crate::mouse::Tone;
+    let color = match chip.tone {
+        Tone::Normal => fg,
+        Tone::Low => crate::stats::AMBER,
+        Tone::Critical => crate::stats::RED,
+        Tone::Stale => muted,
+    };
+    container(chrome_nudge(
+        row![
+            icon_colored(chip.icon, ICON_SIZE, color),
+            text(chip.label)
+                .font(fonts::chrome())
+                .size(CHROME_SIZE)
+                .style(move |_: &Theme| iced::widget::text::Style { color: Some(color) }),
+        ]
+        .spacing(STAT_INNER_SPACING)
+        .align_y(Alignment::Center),
+    ))
+    .padding(extra_pad())
+    .height(Length::Fixed(BAR_H))
+    .align_y(Alignment::Center)
     .into()
 }
 

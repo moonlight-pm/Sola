@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / The solar line</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  .times { display: flex; flex-direction: column; gap: 22px; }
+  .time { display: flex; flex-direction: column; gap: 8px; }
+  .time__cap { display: flex; gap: 14px; align-items: baseline; }
+  .time__cap b { font-family: var(--font-figure); font-weight: 400; font-size: 13px; color: var(--text); width: 44px; }
+  .time__cap span { color: var(--text-2); font-size: 13px; }
+  .time__cap em { font-style: normal; margin-left: auto; font-size: 11px; color: var(--text-3); font-family: var(--font-figure); }
+  .time .bar { border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--hairline); }
+
+  .anatomy { display: grid; grid-template-columns: 760px 1fr; gap: 48px; align-items: center; }
+  .zoomwrap { border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); background: var(--bg); position: relative; }
+  .zoomwrap .bar { zoom: 3.6; width: 210px; padding: 0; }
+  .zoomwrap .ground { height: 60px; background: var(--raised); border-top: 1px solid var(--hairline); display: flex; align-items: center; padding-left: 18px; color: var(--text-3); font-size: 12px; }
+  .spec { display: flex; flex-direction: column; gap: 14px; }
+  .spec div { display: grid; grid-template-columns: 92px 1fr; gap: 12px; font-size: 13px; line-height: 19px; color: var(--text-2); }
+  .spec b { color: var(--text); font-weight: 600; }
+
+  .drops { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .drop { border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); height: 640px; position: relative; background: var(--bg); }
+  .drop .bar { position: absolute; top: 0; left: 0; right: 0; }
+  .cal-card { position: absolute; right: 8px; top: 34px; width: 248px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 12px; }
+  .cal-card h4 { margin: 0; font-size: 14px; font-weight: 600; }
+  .mini-strip { position: relative; height: 10px; border-radius: 5px; box-shadow: 0 0 0 1px var(--hairline-strong) inset; }
+  .mini-strip i { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--text); }
+  .mini-ticks { display: flex; justify-content: space-between; font-family: var(--font-figure); font-size: 10px; color: var(--text-3); margin-top: -6px; }
+  .sunrow { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .sunrow svg { width: 15px; height: 15px; stroke: var(--sol); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; filter: var(--flower-fx); }
+  .sunrow b { margin-left: auto; font-family: var(--font-figure); font-weight: 400; }
+  .daylen { font-size: 12px; color: var(--text-2); line-height: 17px; padding-left: 23px; margin-top: -8px; }
+  .next { font-size: 13px; padding: 8px 10px; border-radius: 7px; background: var(--signal-soft); }
+  .next span { color: var(--signal); font-weight: 600; }
+  .rule { height: 1px; background: var(--hairline); margin: 0 -14px; }
+  .month { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+  .month span { display: flex; gap: 6px; align-items: center; color: var(--text-2); font-weight: 400; font-size: 12px; }
+  .month svg { width: 14px; height: 14px; stroke: var(--text-2); fill: none; stroke-width: 2; stroke-linecap: round; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 2px; font-size: 12px; text-align: center; }
+  .grid .wd { color: var(--text-3); font-size: 11px; padding-bottom: 4px; }
+  .grid .d { height: 26px; line-height: 26px; border-radius: 13px; }
+  .grid .muted { color: var(--text-3); }
+  .grid .today { background: var(--signal); color: var(--on-signal); font-weight: 700; }
+  .foot { font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; }
+  .foot a { color: var(--signal); text-decoration: none; }
+</style>
+</head>
+<body class="l-night">
+<div class="page">
+  <div class="head">
+    <div class="head__row"><div class="head__num">1 px</div><div class="head__title">The solar line</div></div>
+    <div class="head__lead">The menubar's bottom edge becomes a horizon across the 5120 px bar. The bar is the sky; the desk below it is the ground. Between sunrise and sunset the sun sits where the hour falls, so across a day it crosses the bar left to right. At night the line dims and a moon tick keeps the hour. The bar shows no numbers for it; the clock dropdown has them.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Five times on Tuesday 2026-10-13 · each bar wears the light of its hour, fades included · drawn to 1296, x given on the 5120 bar</div>
+    <div class="times" id="times"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Anatomy · the sun at 11:40, 3.6×</div>
+    <div class="anatomy">
+      <div class="zoomwrap l-day" id="zoom"></div>
+      <div class="spec">
+        <div><b>Horizon</b><span>The bar's last pixel row, in its own token. Day #d3d9e1, night #1b2029. It replaces nothing: the bar had no bottom edge before.</span></div>
+        <div><b>Core</b><span>A 1px gradient along the horizon, 252 px long, gold to pale gold and back.</span></div>
+        <div><b>Dome</b><span>10 × 3 px of Sol gold sitting on the line, there only while the sun is up.</span></div>
+        <div><b>Bloom</b><span>A 420 × 28 radial wash, gold by day, peach at dawn, coral after sunset, none at night. Text sits on top of it.</span></div>
+        <div><b>Bounds</b><span>All of it stays inside the 28 px bar. The windows below are other surfaces, so the sun never spills onto them.</span></div>
+        <div><b>Motion</b><span>Today the sun moves 7.6 px a minute along the 5120 bar. It redraws on the clock's minute tick; nothing animates between ticks.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The clock dropdown · day at 11:40, night at 23:10, 1:1</div>
+    <div class="drops">
+      <div class="drop l-day">
+        <div data-bar='{"app":"Mail","menus":["File","Edit","Message"],"compact":true,"clock":"11:40 Tue 2026-10-13","clockOpen":true,"sky":"sun","x":0.4025}'></div>
+        <div class="card cal-card" id="drop-day"></div>
+      </div>
+      <div class="drop l-night">
+        <div data-bar='{"app":"Workspaces","menus":["File","Edit","View"],"compact":true,"clock":"23:10 Tue 2026-10-13","clockOpen":true,"sky":"moon","x":0.3745}'></div>
+        <div class="card cal-card" id="drop-night"></div>
+      </div>
+    </div>
+    <div class="note" style="width: 780px">The panel keeps today's month grid and gains a light section on top: a 24-hour strip with the hour marked, sunrise and sunset, the day's length against yesterday, and the next change of light. The footer says where the times come from and opens Settings.</div>
+  </div>
+</div>
+<script>
+window.afterMount = () => {
+  const date = new Date(2026, 9, 13);
+  const s = sunDay(date);
+  const at = (hm) => { const [h, m] = hm.split(":").map(Number); return h + m / 60; };
+  const night = 24 - s.sunset + sunDay(new Date(2026, 9, 14)).sunrise;
+  const rows = [
+    ["06:30", "Before sunrise. A bloom at the left end of the bar, no disc yet."],
+    ["07:20", "Just risen. The dome clears the horizon near the left end."],
+    ["12:46", "Solar noon. The sun is at the middle of the bar."],
+    ["17:58", "Low in the west, close to the right end. Day is fading to dusk."],
+    ["23:10", "Night. The line dims to the bar's own edge; the moon tick marks how far the night has gone."],
+  ];
+  const wrap = document.getElementById("times");
+  const names = { night: "Night", dawn: "Dawn", day: "Day", dusk: "Dusk" };
+  for (const [t, cap] of rows) {
+    const h = at(t);
+    const L = lightAt(h, s);
+    let kind, x;
+    if (h >= s.sunrise && h <= s.sunset) { kind = "sun"; x = (h - s.sunrise) / (s.sunset - s.sunrise); }
+    else if (h < s.sunrise && h >= s.civilDawn - FADE) { kind = "rise"; x = 0; }
+    else { kind = "moon"; x = ((h - s.sunset + 24) % 24) / night; }
+    const el = document.createElement("div");
+    el.className = "time";
+    const light = L.from === L.to ? names[L.from] : `${names[L.from]} → ${names[L.to]}, ${Math.round(L.t * 100)}%`;
+    el.innerHTML = `<div class="time__cap"><b>${t}</b><span>${cap}</span><em>${light} · ${kind === "moon" ? "moon" : "sun"} x ${Math.round(x * 5120)}</em></div><div class="lit"><div class="bar">${bar({ app: "Workspaces", menus: ["File", "Edit", "View", "Pane", "Tabs", "Window"], clock: `${t} Tue 2026-10-13`, sky: kind, x, seed: 50 + Math.round(h) })}</div></div>`;
+    wrap.appendChild(el);
+    const lit = el.querySelector(".lit");
+    if (L.from === L.to) lit.className = "lit l-" + L.from;
+    else applyVars(lit, blend(L.from, L.to, L.t));
+  }
+
+  // Anatomy: a 210 px piece of the day bar around the sun.
+  document.getElementById("zoom").innerHTML =
+    `<div class="bar" style="justify-content:flex-start"><div class="bar__left"><div class="bar__item">Window</div></div><div class="horizon"></div><div class="sun" style="left:62%"><div class="sun__bloom"></div><div class="sun__core"></div><div class="sun__disc"></div></div></div><div class="ground">The desk below: a window, not part of the bar</div>`;
+
+  // Clock dropdowns.
+  const strip = (now) => {
+    const pct = (h) => (h / 24 * 100).toFixed(2) + "%";
+    const st = { night: readState("night"), dawn: readState("dawn"), day: readState("day"), dusk: readState("dusk") };
+    const stops = [[0, "night"], [s.civilDawn - FADE, "night"], [s.civilDawn, "dawn"], [s.sunrise, "dawn"], [s.sunrise + FADE, "day"], [s.sunset - FADE, "day"], [s.sunset, "dusk"], [s.civilDusk, "dusk"], [s.civilDusk + FADE, "night"], [24, "night"]];
+    return `<div class="mini-strip" style="background:linear-gradient(90deg, ${dayStops(s)})"><i style="left:calc(${pct(now)} - 1px)"></i></div><div class="mini-ticks"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>`;
+  };
+  const days = () => {
+    let g = '<div class="grid">' + ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => `<div class="wd">${d}</div>`).join("");
+    for (const d of [28, 29, 30]) g += `<div class="d muted">${d}</div>`;
+    for (let d = 1; d <= 31; d++) g += `<div class="d${d === 13 ? " today" : ""}">${d}</div>`;
+    for (const d of [1]) g += `<div class="d muted">${d}</div>`;
+    return g + "</div>";
+  };
+  const card = (now, rise, set, len, next, nextLabel) => `
+    <h4>Tuesday, October 13</h4>
+    ${strip(now)}
+    <div class="sunrow">${icon("sunrise")}${rise[0]}<b>${rise[1]}</b></div>
+    <div class="sunrow">${icon("sunset")}${set[0]}<b>${set[1]}</b></div>
+    <div class="daylen">${len}</div>
+    <div class="next"><span>${nextLabel}</span> ${next}</div>
+    <div class="rule"></div>
+    <div class="month">October 2026<span>${icon("left")}Today${icon("right")}</span></div>
+    ${days()}
+    <div class="rule"></div>
+    <div class="foot"><span>Follows the sun · Denver</span><a>Settings…</a></div>`;
+  document.getElementById("drop-day").innerHTML = card(at("11:40"), ["Sunrise", "07:08"], ["Sunset", "18:24"], "11 h 16 min of daylight, 2 min 32 s less than yesterday", "Dusk fades in from 17:44", "Next");
+  document.getElementById("drop-night").innerHTML = card(at("23:10"), ["Sunrise tomorrow", "07:09"], ["Sunset tomorrow", "18:22"], "Tomorrow: 11 h 13 min of daylight, 2 min 32 s less", "Dawn fades in from 06:02", "Next");
+};
+</script>
+</body>
+</html>

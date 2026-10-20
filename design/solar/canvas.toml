@@ -1,0 +1,66 @@
+title = "Solar"
+
+# Sola keeps the sun's hours: four lit states, one structure.
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Solar / Cover"
+
+[[artboard]]
+id = "day"
+src = "day.html"
+x = 0
+y = 1590
+width = 1440
+height = "auto"
+title = "Solar / Day · things cast shadows"
+
+[[artboard]]
+id = "twilight"
+src = "twilight.html"
+x = 0
+y = 3143
+width = 1440
+height = "auto"
+title = "Solar / Dawn and dusk"
+
+[[artboard]]
+id = "four-lights"
+src = "four-lights.html"
+x = 0
+y = 5204
+width = 1440
+height = "auto"
+title = "Solar / One component, four lights"
+
+[[artboard]]
+id = "line"
+src = "line.html"
+x = 0
+y = 6782
+width = 1440
+height = "auto"
+title = "Solar / The solar line"
+
+[[artboard]]
+id = "tokens"
+src = "tokens.html"
+x = 0
+y = 8808
+width = 1440
+height = "auto"
+title = "Solar / Tokens and fades"
+
+[[artboard]]
+id = "what-it-takes"
+src = "what-it-takes.html"
+x = 0
+y = 11265
+width = 1440
+height = "auto"
+title = "Solar / What it takes"

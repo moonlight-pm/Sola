@@ -14,6 +14,7 @@ Month is the default view (Sunday-start, same as the menubar clock). Week and Da
 - Under the calendars list, **Today** and **Tomorrow** list the next events (click one to open it; **+N more** opens that day).
 - Drag the left rail divider to widen the sidebar.
 - Accounts, re-showing a hidden calendar, and editing its label or colour are **Settings → Calendar**.
+- **Remind me** is at the bottom of an open event (including read-only ones). Checking it adds one reminder: 30 minutes before, or 9:00 on the morning of an all-day event. The chips add the other quick sets (at time, 5, 10, 15, and 30 minutes, 1 and 2 hours, 1 day, 1 week; all-day is morning of, 1 day before, 2 days before, 1 week before). × drops one. The last × unchecks Remind me.
 
 ## Google
 
@@ -39,8 +40,15 @@ Sola ships a Desktop OAuth client (Google still requires that client’s secret 
 |------|------|
 | `~/.config/sola/calendar/settings.json` | View, default calendar, sidebar width, inspector width |
 | `~/.local/state/sola/calendar/store.json` | Calendars and events |
+| `~/.local/state/sola/calendar/reminders.json` | Reminders for events on this computer |
 | `Topic::CalendarConfig` (bus, age-encrypted secrets) | Accounts and calendar shelf (hidden / alias / colour) — **Settings → Calendar** |
+
+## Reminders
+
+Calendar has to be open. When a reminder comes due, a card stays on the desk until you dismiss it (×) or open it. Opening it shows that event. If Calendar was quit, launching it still shows a reminder whose event ended within the last 12 hours.
+
+The card stays up with the shell from this release. An older shell files it into the bell after a few seconds. Install `shell` and `calendar` together.
 
 ## Not in this pass
 
-Invites, alerts, authenticated ICS URLs, drag-create, time zone picker, menubar clock showing these events.
+Invites, provider alarms (Google / iCloud / CalDAV), authenticated ICS URLs, drag-create, time zone picker, menubar clock showing these events.

@@ -95,16 +95,11 @@ pub fn emit_vevent(event: &CalEvent) -> String {
         let start = event
             .start_date
             .unwrap_or_else(|| event.start.with_timezone(&chrono::Local).date_naive());
-        let end = event
-            .end_date
-            .unwrap_or_else(|| start + Duration::days(1));
+        let end = event.end_date.unwrap_or_else(|| start + Duration::days(1));
         lines.push(format!("DTSTART;VALUE=DATE:{}", ymd(start)));
         lines.push(format!("DTEND;VALUE=DATE:{}", ymd(end)));
     } else {
-        lines.push(format!(
-            "DTSTART:{}",
-            event.start.format("%Y%m%dT%H%M%SZ")
-        ));
+        lines.push(format!("DTSTART:{}", event.start.format("%Y%m%dT%H%M%SZ")));
         lines.push(format!("DTEND:{}", event.end.format("%Y%m%dT%H%M%SZ")));
     }
     lines.push(format!("SUMMARY:{}", escape(&event.title)));
@@ -145,7 +140,10 @@ pub fn to_cal_events(
         }
     });
     let duration = end_dt.utc - start_dt.utc;
-    let master_id = raw.uid.clone().unwrap_or_else(|| crate::model::new_id("ics"));
+    let master_id = raw
+        .uid
+        .clone()
+        .unwrap_or_else(|| crate::model::new_id("ics"));
     let dates = if let Some(rrule) = &raw.rrule {
         expand_rrule(start_dt.date, rrule, window, &raw.exdates)
     } else if start_dt.date >= window.0 && start_dt.date <= window.1 {
@@ -191,7 +189,9 @@ pub fn to_cal_events(
                 start,
                 end,
                 start_date: start_dt.all_day.then_some(date),
-                end_date: start_dt.all_day.then_some(date + (end_dt.date - start_dt.date)),
+                end_date: start_dt
+                    .all_day
+                    .then_some(date + (end_dt.date - start_dt.date)),
                 remote_id: Some(master_id.clone()),
                 href: href.clone(),
                 etag: etag.clone(),
@@ -297,7 +297,9 @@ fn parse_dt(params: &str, value: &str) -> Option<Dt> {
             .from_local_datetime(&date.and_time(NaiveTime::MIN))
             .single()
             .map(|d| d.with_timezone(&Utc))
-            .unwrap_or_else(|| DateTime::<Utc>::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc));
+            .unwrap_or_else(|| {
+                DateTime::<Utc>::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
+            });
         return Some(Dt {
             all_day: true,
             date,
@@ -339,7 +341,10 @@ fn parse_datetime(s: &str, tzid: Option<&str>) -> Option<DateTime<Utc>> {
     }
     if let Some(tzid) = tzid {
         if let Ok(tz) = tzid.parse::<chrono_tz::Tz>() {
-            return tz.from_local_datetime(&naive).single().map(|d| d.with_timezone(&Utc));
+            return tz
+                .from_local_datetime(&naive)
+                .single()
+                .map(|d| d.with_timezone(&Utc));
         }
     }
     chrono::Local
@@ -372,7 +377,10 @@ fn expand_rrule(
                 until = parse_ymd(&digits);
             }
             "BYDAY" => {
-                byday = v.split(',').filter_map(|d| weekday_token(d.trim())).collect();
+                byday = v
+                    .split(',')
+                    .filter_map(|d| weekday_token(d.trim()))
+                    .collect();
             }
             _ => {}
         }

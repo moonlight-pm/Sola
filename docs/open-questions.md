@@ -18,8 +18,10 @@ Progress model: [`progress-model.md`](progress-model.md).
 ### D1 — Permission fan-out when multiple agents attach — **closed (2026-08-28)**
 
 **Answered:** `crates/sola-agent` is retired (unused iced ACP/Grok-leader GUI).
-Daily agent work is Workspaces (`grok` CLI in PTYs). No multi-client ACP GUI;
-do not rebuild one. Permission fan-out for ACP clients is moot.
+Coding agent work is Workspaces (`grok` CLI in PTYs). Informational named
+sessions are **Bots** (2026-09-15 freeze): daemon owns `grok agent stdio`;
+UIs are dialog viewers, not that GUI. Do not rebuild `sola-agent`. Permission
+fan-out for a multi-client ACP *coding* GUI is moot; Bots yolo all tools.
 
 **Related:** `agent` capability (retired); historical ACP freezes.
 
@@ -58,6 +60,36 @@ install from agent sessions.
 
 ---
 
+### D5 — sola-design board origin: `file://` or a local http origin (P2) — **closed (2026-10-12)**
+
+**Answered:** serve boards over a loopback http origin, **project root as `/`**, one `*.localhost` host per board (per-board zoom → per-board raster scale).
+
+**Context:** Boards load from `file://`. That breaks root-absolute URLs
+(`/fonts/x.woff2` → filesystem root), fetch/XHR of local files, ES module
+scripts, and iframe `contentDocument` (Exit field report, 2026-10-12). Boards
+raster through page zoom, which Chromium keeps **per host**; every `file://`
+board shares one host, so a canvas has one raster scale and one board too big
+for 2× (Exit's 6800 px sheets) drops the whole canvas to 1×.
+
+**Option:** Design serves each project over a loopback http server
+(`127.0.0.1`, random port, GET only, files under the project root) and loads
+each board from its own `*.localhost` host
+(`http://<board>.<canvas>.localhost:<port>/design/<canvas>/page.html`).
+Fixes the file:// class, gives each board its own zoom (per-board scale), and
+lets boards link product assets the way the app does. Cost: an http server in
+Design; project files readable by any local process that finds the port; a
+per-canvas web root would still be needed for `/fonts/…`-style product URLs.
+Alternative for the scale half only: tile the plane's textures past 8192 px.
+
+**Ask:**
+
+1. Serve boards over a loopback http origin, or keep `file://`?
+2. If served: project root as `/`, or a per-canvas `root` in `canvas.toml`?
+
+**Related:** [sola-design freeze](specs/2026-10-12-sola-design-design.md); `design` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
@@ -70,23 +102,54 @@ WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
 **CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
 comparison warrants a second engine.
 
-### D4 — sola-workspaces product forks (P2)
+### T3 — D-Bus replacement on Sola Bus (P2)
+
+D-Bus is deprecated as a requirement (decision log 2026-10-18). The target
+is Sola's own replacement on Sola Bus / sola-call. Open: its shape — what
+replaces each legacy use, and how Sola reaches services and apps that only
+speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
+`libdbus`). Inventory: [architecture § D-Bus](architecture.md#d-bus-deprecated).
+
+### D4 — sola-workspaces product forks (P2) — **closed (2026-10-08)**
 
 **Context:** Freeze is in; persist + spawn landed. Call plane owns fail-if-down
-(was old D3.3). Remaining fork is Claude hooks.
+(was old D3.3). The last fork was Claude hooks.
 
 **Ask:**
 
 1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`.  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
-4. Claude in v1 — hook installer, or presence-only until Grok hooks are solid?
+4. ~~Claude in v1~~ **decided 2026-10-08:** first-class, same path as Codex.
+   `--agent claude` on spawn/exec. Hooks merge into `~/.claude/settings.json`
+   (permissions, plugins, and other hooks stay). Rail rollup. Quiet `×N`
+   counts `compact_boundary` in the session jsonl. A new tmux after reboot
+   runs `claude --resume <id>` when that transcript is still on disk.
+   OpenCode stays presence-only.
 
-**Until decided:** use freeze **Interim** table for (4). Do not invent
-Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
+**Closed.** OpenCode is presence-only by design, not an open fork.
 
 **Related:** `workspaces` capability;
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
+
+---
+
+### D6 — sola-design publish: where shared canvases live (P2) — **closed (2026-10-12)**
+
+**Answered:** **live**, not a snapshot. Design is the web server: a thin
+server that limits each link to its canvas, piped to `design.moonlight.pm`
+by a Cloudflare Tunnel. Every canvas gets a link automatically, rotatable.
+
+**Context:** the human asked to share canvases on the internet behind an
+unguessable path. A snapshot on R2 + a Worker (links that outlive the
+machine) was proposed; the human chose live sharing from Design.
+
+**As built:** 128-bit base32 token per canvas (`share.json`); the link
+reaches only that canvas's folder, shared `design/` files, its `root`, and
+the project files its boards load (real paths; no dotfiles); a viewer page
+lays the canvas out and reloads on change. Remotely managed tunnel
+`sola-design` (ingress → `127.0.0.1:47820`), proxied CNAME `design`; Design
+runs `cloudflared` while open. Links work only while Design runs.
 
 ---
 
@@ -94,28 +157,49 @@ Claude hook policy. Codex is first-class (2026-09-09) and is not this fork.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
-| 2026-09-09 | Browser agent control | Agent uses the **same** tabs as the human. It may create a normal tab group for its own work. No agent-only tab type or second profile. Chrome ships generic tab/group/page verbs; particular workflows (pocket, don’t steal the seat) are an agent skill. Face when built: `solactl browser`. Confirm still **D3**. | CURRENT locks, capabilities gap |
+| 2026-10-18 | D-Bus | **D-Bus is deprecated as a requirement.** No new D-Bus dependencies; existing uses are legacy. In future Sola targets its own replacement on Sola Bus. Shape open (T3). | architecture, CURRENT locks, AGENTS, T3 |
+| 2026-10-14 | sola-design annotations | Only agents edit designs. Annotations (sections, notes, exits / links, flows) are part of the design — what is not obvious, general information, flow. No human notes, comments, or feedback on the canvas. Flows are tours on the canvas, not a full-screen prototype mode. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, manual |
+| 2026-10-13 | sola-design memory budget | Design holds its boards to a memory budget that **adapts** to what the machine has free (not a fixed size), if that can be done reliably. Over budget, Design first **discards idle boards** — boards nobody is looking at and no agent called lately: their page closes, their last picture stays on the canvas, and they reload from disk on the next look or call. A discard is not dropping a board (canvases are files; only in-page state such as scroll or typed text goes). Only when the boards in use still do not fit is Design **nice to the agent**: it refuses the new board / canvas with an error that says what is wrong (memory), what is live, and how to free room. (Ten agents' canvases filled 125G and froze the box; see CURRENT.) | CURRENT |
+| 2026-10-13 | sola-design board pace | Boards nobody looks at hibernate: off-screen canvases sleep unless an agent is working there (then 1 fps); on the canvas on screen only boards in view paint, at 60 fps while Design has focus and 1 fps while it does not; loading, settling, and agent calls run at full rate. Frame-transport work stays parked. | freeze, capabilities, architecture, manual, CURRENT |
+| 2026-10-13 | sola-design share / pages | Share links stay without password or expiry — **New Link** (`share.rotate`) is how one is revoked. Pages stay shared between the human and agents (one tab per artboard; no hidden agent copy). | capabilities, freeze, manual, CURRENT |
+| 2026-10-12 | D6 sola-design share | **Live** share links served by Design (token per canvas, rotatable; only that canvas's files), through a Cloudflare Tunnel to `design.moonlight.pm`. Not snapshots. | freeze, capabilities, architecture, manual |
+| 2026-10-12 | sola-design multi-agent | Agents never bring a canvas to the human's screen; any number of canvases live at once, one shown; page calls name their canvas (MCP: the agent's own). | freeze, capabilities, architecture, manual |
+| 2026-10-12 | sola-design agent / human | Agent reads never depend on the human's view: screenshots / PDFs hold their board whole (no detail render from the camera reaches it) and the human's pointer leaves the page first; `view` moves the camera only until the human pans / zooms that canvas (`moved: false`). Agent touches glow on the overlay only. (Human ask: pan and zoom freely while an agent works.) | freeze, capabilities, architecture, manual |
+| 2026-10-12 | D5 sola-design origin | Boards are served over a loopback http origin (Design's own server: GET/HEAD, project files only, no dotfiles, Host must name a registered project), **project root as `/`**, one `*.localhost` host per board so each board has its own zoom / raster scale. Replaces `file://`. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, architecture, manual |
+| 2026-10-08 | workspaces Claude | Claude is first-class alongside Grok and Codex (D4.4 closed): `--agent grok\|codex\|claude`, spawn/exec argv, hooks merged into `~/.claude/settings.json` (other settings kept), rail rollup, `×N` from `compact_boundary`, reboot `claude --resume`. OpenCode stays presence-only. | freeze, CLI freeze, CURRENT, capabilities, architecture, manual/solactl, PRODUCT, design law |
+| 2026-09-17 | Bots | Write fence default remains the bot home. Joshua can explicitly order an escape (whole computer / drop the fence / a path outside home). Seat steal stays forbidden. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks |
+| 2026-09-15 | Bots | Informational named sessions (not coding). Yolo. Per-bot `~/Bots/<slug>/`. Dialog UI hides compaction. Native iOS. Daemon + ACP Grok. Soft write fence via foundation prompt. This computer is the sandbox; `solactl browser` for web. | [freeze](specs/2026-09-15-sola-bots-design.md), CURRENT locks, capabilities |
+| 2026-09-11 | Browser page snapshot | Agent-facing page is a **Playwright aria-snapshot YAML** (pruned AX tree + opaque refs), not JSON. Pipeline: `getFullAXTree` → Puppeteer interestingOnly → collapse nameless generic → ref=`backendDOMNodeId` (stale fails). `snapshot` vs later `read`; screenshot is fallback. Confirm still **D3**. | [freeze](specs/2026-09-11-sola-browser-agent-control-design.md), CURRENT locks |
+| 2026-09-11 | Browser agent control | Confirmed: agent stays in Workspaces; browser is a **user-equivalent** control plane (`solactl browser`). Same strip / profile; isolation is an ordinary group; **Agent** pocket is a skill convention (chrome does not special-case it). Aside is a loose oracle for the page harness, not the product. Method catalog shipped; confirm still **D3**. | [freeze](specs/2026-09-11-sola-browser-agent-control-design.md), CURRENT locks, capabilities |
+| 2026-09-09 | Browser agent control | Agent uses the **same** tabs as the human. It may create a normal tab group for its own work. No agent-only tab type or second profile. Chrome ships generic tab/group/page verbs; particular workflows (pocket, don’t steal the seat) are an agent skill. Face when built: `solactl browser`. Confirm still **D3**. | CURRENT locks, capabilities gap — **amended 2026-09-11** (freeze) |
 | 2026-09-09 | workspaces Codex | Codex is first-class alongside Grok: `--agent grok\|codex`, spawn/exec argv, hooks merged into `~/.codex/hooks.json` (Impeccable groups kept), rail rollup. Claude stays presence-only (D4.4). First Codex session may need `/hooks` trust. | freeze, CLI freeze, CURRENT, capabilities, manual/solactl, skill |
 | 2026-09-04 | mail From allowlist | Compose From is Settings-chosen identities. Inbox Send from is the Wicket `/api/auth/me` checklist (A–Z, no catch-alls). Extra SMTP accounts still type aliases. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-04 | mail multi-IMAP | Every `imap_enabled` account is connected. Sidebar is six canonical boxes combined. Moves/undo stay on that message’s account. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-03 | mail identities | One IMAP inbox. Extra accounts are SMTP send identities (forwarded Gmail, etc.). Inbox aliases are extra From addresses. `primary_from` is the default. Reply matches original To/Cc. Extra IMAP listed 2026-09-04. | [mail freeze](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual/sola-mail |
 | 2026-09-01 | cargo make | `build` / `install` default to **release**. `--debug` for unoptimized. `--release` still accepted. | sola-make, AGENTS, CONTRIBUTING, CURRENT locks |
 | 2026-09-01 | Screenshots | Super+Shift+3/4/5 copy Fastest PNG to the compositor clipboard (promised offer). No auto file / Preview. `solactl` still writes a path. | [image clipboard](specs/2026-09-01-image-clipboard-design.md), CURRENT, capabilities, manual/sola-shell |
+| 2026-09-28 | Browser agent control | `fill --file` + read-back (`value`/`matched`, or error). `get` / `wait --control` / `links` (DOM hrefs + media duration). `--control` uses the actions list, then a contenteditable/aria-label search if AX misses the node. | CURRENT, agent-control freeze, capabilities, architecture, manual/solactl |
+| 2026-09-28 | Browser agent control | `fill --file` + read-back (`value`/`matched`, or error). `get` / `wait --control` / `links` (DOM hrefs + media duration). `--control` uses the actions list, then a contenteditable/aria-label search if AX misses the node. | CURRENT, agent-control freeze, capabilities, architecture, manual/solactl |
+| 2026-09-24 | Browser agent control | `fill`/`type` paste the whole string into a contenteditable / ProseMirror root (AX wrapper may have a contenteditable descendant). `key --chord` is `rawKeyDown` + one `char` (not keyDown-with-text plus char). A dead iced subscription fails the invoke; a timeout while `browser` is still advertised names the wedged window and the recovery (close X / Flower, relaunch — bots must not kill). | CURRENT, agent-control freeze, capabilities, architecture, manual/solactl |
 | 2026-09-01 | Browser tab favicons | Tab strip shows a reserved 16px leading favicon (CEF `on_favicon_urlchange` + `download_image`). Globe while a http(s) page has no icon yet; empty slot on blank. No domain-name prefix. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-09-01 | Browser popups | `window.open` with features (`NEW_POPUP`) and `about:blank` stay windowless CEF so the site gets a `Window`; chrome paints that as a focused tab beside the opener. `target=_blank` focuses a new tab; ⌘-click stays background. No native OS popup windows. Wrapper off-site still sola-browser; huddle OSR unchanged. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-31 | Super+K / Window | Super+K is the system keyboard-shortcuts overlay (Omarchy chord). Kit Window menu is the mouse path for zones, float, hide, and cycle; the shell injects it when an app omits it. Paint Crop is Super+Shift+K. | [freeze](specs/2026-08-31-window-menu-and-shortcuts-design.md), CURRENT locks, capabilities, manual/sola-shell |
 | 2026-08-28 | D1 / T1 | `crates/sola-agent` retired. No ACP/Grok-leader GUI; Workspaces is the agent product. Multi-client ACP permission fan-out and pin UI are moot. Do not rebuild. | CURRENT, capabilities, architecture, this log |
+| 2026-09-11 | Browser vault | Item **Edit** on the record: same hanging card; all shown types; org items when writable; passkeys not edited; no delete. | [item edit freeze](specs/2026-09-11-sola-browser-vault-item-edit-design.md), CURRENT, capabilities, manual/sola-browser |
 | 2026-08-28 | Browser vault | One toolbar Bitwarden control (not login / authenticator / card widgets). Search + type chips + full item record (notes, identities, cards, TOTP). Click opens the record; Autofill **Fill** injects. Icon may change (lock / key / shield / fingerprint). | [unified panel freeze](specs/2026-08-28-sola-browser-vault-panel-design.md), CURRENT, capabilities, manual/sola-browser |
-| 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |
+| 2026-09-23 | workspaces | `workspace.rm` / hover × drop the tab on the next tick; `tmux kill-session` and `git worktree remove` run off the iced thread so a CLI rm does not freeze the rest of Workspaces. Last-leaf ⌘W still kills tmux on the UI thread (session name is reused). | CURRENT, CLI freeze, capabilities, architecture, manual/solactl |
+| 2026-09-21 | workspaces | Quiet `×N` is the loudest Grok **or** Codex session in the tab. Codex counts `type: compacted` records in `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. Grok still uses session-dir segments/checkpoints. Shell panes still do not contribute. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities, architecture |
+| 2026-08-25 | workspaces | Split workspaces stay one rail row (no grok/shell child tabs). The status mark rolls up every Grok pane in the tab: waiting (needs attention) > working > done > idle. `×N` is the loudest Grok session. **Amended 2026-09-21:** `×N` includes Codex. | CURRENT, DESIGN, PRODUCT, freeze header, capabilities |
 | 2026-08-28 | workspaces | Desk cards (not menubar whispers) for unfocused done/waiting. Title is `{project} · {tab}`; body is `grok is done` / `needs attention`. | CURRENT, DESIGN, notifications freeze, capabilities |
 | 2026-08-27 | workspaces | Cross-pane prompt is tmux bracketed paste + Enter, not raw PTY `write`/`send-keys -l`. Fixes clipped composer that needed a tab switch + mousewheel to submit. | CURRENT, CLI freeze, manual/solactl, skill |
-| 2026-09-03 | workspaces | `workspace.set --name` is the rail slug and `git worktree move --force` to `.worktrees/<name>` (promote an ad hoc tab to a ticket folder). Catalog id stays (tmux sessions keep working). `--branch` is `git branch -m` in that checkout and does not move the folder. Project root cannot be renamed. No UI rename modal yet. | CURRENT, CLI freeze, manual/solactl, skill |
+| 2026-09-14 | workspaces | Rail label is `--title` if set, else the worktree slug (`--name`). Do not prefix `slug ·` onto a custom title. Hover pencil / double-click is `--title` (empty or equal to slug clears). `--name` still moves `.worktrees/<slug>`. JSON `name` stays the slug/`root`; `label` is the rail. Resolve `--workspace` by id, pane, path, slug, then title. Drag reorders tabs inside a project and project groups. `--before` / `project.reorder` are the call-plane verbs. No project recolor. | CURRENT, CLI freeze, DESIGN, capabilities, manual/solactl |
+| 2026-09-03 | workspaces | `workspace.set --name` is `git worktree move --force` to `.worktrees/<name>` (promote an ad hoc tab to a ticket folder). Catalog id stays (tmux sessions keep working). `--branch` is `git branch -m` in that checkout and does not move the folder. Project root cannot be renamed. **Amended 2026-09-14:** `--name` is the folder (rail default); `--title` is the rail label; UI rename is `--title`. | CURRENT, CLI freeze, manual/solactl, skill |
 | 2026-09-03 | workspaces | A pane told to clean up its own worktree must not `git worktree remove` first (cwd dies; tab + working spinner stayed). `workspace.rm --worktree` replies, closes the tab, then `git worktree remove`. `--force` is toss/dirty. Hover × / plain `workspace.rm` still leave the checkout. A gone `.worktrees/<name>` path reaps the tab. | CURRENT, CLI freeze, manual/solactl, skill |
 | 2026-08-25 | workspaces | `workspace.rm` / `project.rm` reply `{ok:true}` then teardown on the next tick so a pane can close itself without hanging `solactl`. SessionStart idles a leftover working ring. Cleanup is one shell (`git worktree remove` && `workspace.rm`); splitting those as two Grok tools leaves the tab (cwd gone). **Superseded 2026-09-03:** use `workspace.rm --worktree`; gone paths reap. | CURRENT, CLI freeze header, manual/solactl, skill |
 | 2026-08-18 | workspaces | Per-project startup script after sibling spawn. Project menu + `project.startup`. Env: `PROJECT` / `WORKTREE` / `NAME`. | CURRENT, PRODUCT, CLI freeze, manual |
 | 2026-08-18 | workspaces CLI | Face is `solactl workspaces` (owner renamed from `ws`). First-class. New verbs: `project.add`, `project.startup`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.wait`, `whoami`. Spawn `--branch` / `--base-branch` / `--title`. `--prompt-file`; richer list/spawn payloads; Grok-leaf targeting; parent from `$SOLA_PANE_ID`. Confirm still **D3**. | [CLI freeze](specs/2026-08-18-workspaces-cli-design.md), CURRENT, capabilities, manual/solactl |
 | 2026-08-18 | D4.1 amend | Call owner is `workspaces` (`solactl workspaces …`). Tmux `sola-ws` / `sws-` unchanged. | CURRENT + freeze + PRODUCT |
-| 2026-08-18 | workspaces | ⌘W closes the focused pane. Drop Project is menu-only. Kit splits (⌘⇧↓ / ⌘⇧→); leaf rows only after a split; last pane close keeps the workspace (Start new shell); a split leaf that exits retracts; hover does not spawn. Quiet `×N` only on a Grok leaf. | CURRENT, DESIGN, freeze header, capabilities |
+| 2026-08-18 | workspaces | ⌘W closes the focused pane. Drop Project is menu-only. Kit splits (⌘⇧↓ / ⌘⇧→); leaf rows only after a split; last pane close keeps the workspace (Start new shell); a split leaf that exits retracts; hover does not spawn. Quiet `×N` only on a Grok leaf. **Amended 2026-09-21:** Codex leaves count too. | CURRENT, DESIGN, freeze header, capabilities |
 | 2026-08-31 | Browser tab groups | Pocket color: edit-mode swatch (default kit well fill) opens the kit picker; persist hex on the group; omit when default. | [freeze](specs/2026-08-15-sola-browser-tab-groups-design.md), CURRENT, capabilities, manual/sola-browser |
 | 2026-08-29 | Browser tab groups | New group is ⌘G on a selected loose tab (name focused and selected). Hover pencil to rename later. Strip right-click removed; join/leave stay drag. | [freeze](specs/2026-08-15-sola-browser-tab-groups-design.md), CURRENT, capabilities, manual/sola-browser |
 | 2026-08-29 | wrapper huddle popup | Slack huddle is `window.open('about:blank')` NEW_POPUP. Allow as windowless CEF OSR tab and paint it; `window.close` returns to the channel. Off-site http(s) still sola-browser. | [wrapper freeze](specs/2026-08-21-sola-wrapper-design.md), CURRENT, capabilities, manual |

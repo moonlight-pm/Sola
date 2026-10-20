@@ -9,7 +9,10 @@ pub fn to_blocks(raw: &str) -> Vec<ProseBlock> {
     }
     if looks_html(t) {
         let runs = html_runs(t);
-        if runs.iter().any(|r| !r.text.trim().is_empty() || r.url.is_some()) {
+        if runs
+            .iter()
+            .any(|r| !r.text.trim().is_empty() || r.url.is_some())
+        {
             return vec![ProseBlock::Paragraph(runs)];
         }
     }
@@ -93,10 +96,7 @@ fn take_anchor(s: &str) -> Option<(ProseRun, &str)> {
     let body = match_tag_name(body, "a")?;
     let (attrs, after_gt) = split_tag_end(body)?;
     let href = attr(attrs, "href")?;
-    let close = after_gt
-        .to_ascii_lowercase()
-        .find("</a>")
-        .map(|i| (i, 4))?;
+    let close = after_gt.to_ascii_lowercase().find("</a>").map(|i| (i, 4))?;
     let inner = &after_gt[..close.0];
     let after = &after_gt[close.0 + close.1..];
     let label = decode_entities(&strip_tags(inner));
@@ -133,7 +133,9 @@ fn take_break(s: &str) -> Option<(bool, &str)> {
         let after = skip_tag(s)?;
         return Some((true, after));
     }
-    if lower.starts_with("p") && (lower.len() == 1 || lower[1..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>'))
+    if lower.starts_with("p")
+        && (lower.len() == 1
+            || lower[1..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>'))
         || lower.starts_with("/p")
     {
         let after = skip_tag(s)?;
@@ -221,15 +223,15 @@ mod tests {
     #[test]
     fn html_anchor_uses_label() {
         let runs = first_runs(r#"Join <a href="https://meet.jit.si/x">the call</a> now"#);
-        assert!(runs.iter().any(|(t, u)| t == "the call" && u.as_deref() == Some("https://meet.jit.si/x")));
+        assert!(
+            runs.iter()
+                .any(|(t, u)| t == "the call" && u.as_deref() == Some("https://meet.jit.si/x"))
+        );
     }
 
     #[test]
     fn bare_url_still_links() {
         let runs = first_runs("https://example.com/room");
-        assert_eq!(
-            runs[0].1.as_deref(),
-            Some("https://example.com/room")
-        );
+        assert_eq!(runs[0].1.as_deref(), Some("https://example.com/room"));
     }
 }

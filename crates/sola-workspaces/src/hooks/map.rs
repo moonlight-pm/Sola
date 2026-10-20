@@ -1,4 +1,4 @@
-//! Grok / Codex hook events → status.
+//! Grok / Codex / Claude hook events → status.
 
 use serde_json::Value;
 
@@ -29,9 +29,17 @@ pub fn map_codex(payload: &Value) -> Option<MappedHook> {
     map_payload(payload, "codex")
 }
 
+/// Claude Code lifecycle events. Same vocab; `SessionStart` `source=compact`
+/// is a compaction, and `agent_id` marks a subagent hook.
+pub fn map_claude(payload: &Value) -> Option<MappedHook> {
+    map_payload(payload, "claude")
+}
+
 pub fn map_agent(agent: &str, payload: &Value) -> Option<MappedHook> {
     if agent.eq_ignore_ascii_case("codex") {
         map_codex(payload)
+    } else if agent.eq_ignore_ascii_case("claude") {
+        map_claude(payload)
     } else {
         map_grok(payload)
     }
@@ -53,6 +61,11 @@ fn map_payload(payload: &Value, kind: &str) -> Option<MappedHook> {
     if string_field(payload, &["subagentType", "subagent_type"]).is_some() {
         return None;
     }
+    // Claude tool hooks inside a subagent set `agent_id`. A main session
+    // started with `--agent` sets `agent_type` only and must still map.
+    if string_field(payload, &["agent_id", "agentId"]).is_some() {
+        return None;
+    }
 
     let session_id = string_field(payload, &["sessionId", "session_id"]);
     let prompt = string_field(payload, &["prompt", "userPrompt", "user_prompt"]);
@@ -62,7 +75,7 @@ fn map_payload(payload: &Value, kind: &str) -> Option<MappedHook> {
         // Codex fires SessionStart with source=compact mid-turn after a
         // compact. That is not a new session — do not idle the ring.
         let source = string_field(payload, &["source"]).unwrap_or_default();
-        if kind == "codex" && normalize_event(&source) == "compact" {
+        if matches!(kind, "codex" | "claude") && normalize_event(&source) == "compact" {
             return Some(MappedHook {
                 status: None,
                 clear_turn: false,
@@ -151,6 +164,12 @@ fn map_notification(payload: &Value) -> Option<AgentStatus> {
         && (level.is_empty() || level.eq_ignore_ascii_case("info"))
     {
         return None;
+    }
+    if ntype_n == "agent_needs_input"
+        || ntype_n == "elicitation_dialog"
+        || ntype_n == "elicitation_url_dialog"
+    {
+        return Some(AgentStatus::Waiting);
     }
     if ntype_n == "idle_prompt" || msg.contains("type your message") || msg.contains("enter send") {
         return Some(AgentStatus::Done);
@@ -367,5 +386,74 @@ mod tests {
         .unwrap();
         assert!(start.clear_turn);
         assert!(start.claim);
+    }
+
+    #[test]
+    fn claude_compact_permission_and_subagent() {
+        let compact = map_claude(&json!({
+            "hook_event_name": "SessionStart",
+            "source": "compact",
+            "session_id": "sid"
+        }))
+        .unwrap();
+        assert!(compact.compacted);
+        assert!(!compact.clear_turn);
+        assert_eq!(
+            map_claude(&json!({
+                "hook_event_name": "PermissionRequest",
+                "session_id": "sid"
+            }))
+            .unwrap()
+            .status,
+            Some(AgentStatus::Waiting)
+        );
+        assert_eq!(
+            map_claude(&json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "AskUserQuestion",
+                "session_id": "sid"
+            }))
+            .unwrap()
+            .status,
+            Some(AgentStatus::Waiting)
+        );
+        assert_eq!(
+            map_claude(&json!({
+                "hook_event_name": "StopFailure",
+                "session_id": "sid"
+            }))
+            .unwrap()
+            .status,
+            Some(AgentStatus::Done)
+        );
+        assert!(
+            map_claude(&json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "session_id": "child",
+                "agent_id": "agent-1",
+                "agent_type": "Explore"
+            }))
+            .is_none()
+        );
+        assert_eq!(
+            map_claude(&json!({
+                "hook_event_name": "Notification",
+                "notification_type": "agent_needs_input",
+                "session_id": "sid"
+            }))
+            .unwrap()
+            .status,
+            Some(AgentStatus::Waiting)
+        );
+        let start = map_claude(&json!({
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+            "session_id": "sid",
+            "agent_type": "reviewer"
+        }))
+        .unwrap();
+        assert!(start.claim);
+        assert!(start.clear_turn);
     }
 }

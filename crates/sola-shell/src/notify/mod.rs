@@ -17,6 +17,9 @@ use sola_kit::app::window_settings;
 pub const CARD_H: i32 = 76;
 pub const CARD_GAP: i32 = 8;
 pub const MAX_LIVE: usize = 3;
+/// Persist cards (calendar reminders) stay on the desk past [`MAX_LIVE`].
+/// Past this many, the oldest one folds into the bell pile.
+pub const PERSIST_CAP: usize = 6;
 /// Compact empty-state overlay (title + one line + pad).
 pub const PILE_MIN_HEIGHT: f32 = 96.0;
 const PILE_CHROME_H: f32 = 48.0;
@@ -292,8 +295,17 @@ impl NotifyState {
             }
         }
         while self.live.len() >= MAX_LIVE {
-            let old = self.live.remove(0);
-            self.push_pile(old.n);
+            if let Some(pos) = self.live.iter().position(|b| !b.n.persists()) {
+                let old = self.live.remove(pos);
+                self.push_pile(old.n);
+                continue;
+            }
+            if self.live.len() >= PERSIST_CAP {
+                let old = self.live.remove(0);
+                self.push_pile(old.n);
+                continue;
+            }
+            break;
         }
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
@@ -312,7 +324,7 @@ impl NotifyState {
         let Some(b) = self.live.iter_mut().find(|b| b.generation == generation) else {
             return false;
         };
-        if b.leaving {
+        if b.leaving || b.n.persists() {
             return false;
         }
         b.leaving = true;
@@ -659,6 +671,36 @@ mod tests {
             h > 150.0,
             "three listed rows, not one collapsed header: {h}"
         );
+    }
+
+    #[test]
+    fn persist_stays_and_is_not_evicted_by_a_normal_card() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        let g = s.push(n("stay", Some("sola-persist:ev:0")), t0);
+        assert!(
+            !s.begin_leave(g, t0),
+            "a persist card ignores the 6s expire"
+        );
+        assert_eq!(s.live.len(), 1);
+        for i in 0..MAX_LIVE {
+            s.push(n(&format!("n{i}"), None), t0);
+        }
+        assert!(s.live.iter().any(|b| b.n.id == "stay"));
+        assert!(s.pile.iter().any(|p| p.id == "n0"));
+    }
+
+    #[test]
+    fn persist_cap_folds_the_oldest_into_the_pile() {
+        let mut s = NotifyState::default();
+        let t0 = Instant::now();
+        for i in 0..(PERSIST_CAP + 1) {
+            let tag = format!("sola-persist:{i}");
+            s.push(n(&format!("p{i}"), Some(&tag)), t0);
+        }
+        assert_eq!(s.live.len(), PERSIST_CAP);
+        assert_eq!(s.pile.len(), 1);
+        assert_eq!(s.pile[0].id, "p0");
     }
 
     #[test]

@@ -18,9 +18,9 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DevToolsHandle, DownloadsHandle, FaviconsHandle,
-    FindResultsHandle, FrameMailbox, FrameReceiver, HttpAuthHandle, ImeCaret, ImeHandle,
-    JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId, TabInfo,
-    TabsHandle,
+    FindResultsHandle, FrameMailbox, FrameReceiver, FrontProfileHandle, HttpAuthHandle, ImeCaret,
+    ImeHandle, JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId,
+    TabInfo, TabsHandle,
 };
 use crate::profiles;
 
@@ -37,7 +37,7 @@ struct HelperSet {
 }
 
 struct Shared {
-    current: Mutex<String>,
+    current: FrontProfileHandle,
     frames: FrameReceiver<CefFrame>,
     tabs: TabsHandle,
     active: Arc<AtomicU64>,
@@ -54,6 +54,7 @@ struct Shared {
     favicons: FaviconsHandle,
     find_results: FindResultsHandle,
     devtools: DevToolsHandle,
+    agent: crate::agent::AgentHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
@@ -80,6 +81,8 @@ pub struct RouterHandles {
     pub favicons: FaviconsHandle,
     pub find_results: FindResultsHandle,
     pub devtools: DevToolsHandle,
+    pub agent: crate::agent::AgentHandle,
+    pub front_profile: FrontProfileHandle,
 }
 
 pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHandles {
@@ -101,9 +104,11 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
     let find_results: FindResultsHandle = Arc::new(Mutex::new(Vec::new()));
     let devtools: DevToolsHandle = Arc::new(Mutex::new(Vec::new()));
+    let agent: crate::agent::AgentHandle = Arc::new(Mutex::new(Vec::new()));
 
+    let front_profile: FrontProfileHandle = Arc::new(Mutex::new(String::new()));
     let shared = Arc::new(Shared {
-        current: Mutex::new(String::new()),
+        current: front_profile.clone(),
         frames: frames.clone(),
         tabs: tabs.clone(),
         active: active.clone(),
@@ -120,6 +125,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons: favicons.clone(),
         find_results: find_results.clone(),
         devtools: devtools.clone(),
+        agent: agent.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
     });
@@ -151,6 +157,8 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons,
         find_results,
         devtools,
+        agent,
+        front_profile,
     }
 }
 
@@ -330,7 +338,7 @@ fn router_main(
                 let set = helpers.lock().unwrap();
                 if let Some(h) = set.map.get(&current) {
                     if let Some(wire) = to_wire(other) {
-                        if let ToEngine::OpenTab { id, .. } = &wire {
+                        if let ToEngine::OpenTab { id, .. } | ToEngine::OpenBoard { id, .. } = &wire {
                             bump_next(&shared, *id);
                         }
                         let _ = h.to_engine.send(wire);
@@ -363,7 +371,19 @@ fn restore_dead_helper(
         return;
     };
     if let Some(mut child) = old.child {
-        let _ = child.try_wait();
+        // A reader can end on a decode error while the helper still runs.
+        // Its CEF holds the profile: a second helper would fail
+        // `cef::initialize` and Chromium would relaunch-notify the old one
+        // (a stray native window). Kill it before respawning.
+        if let Ok(None) = child.try_wait() {
+            tracing::warn!(
+                profile = %profile_id,
+                pid = child.id(),
+                "engine helper still running after its IPC ended — killing before respawn"
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
     let was_front = shared.current.lock().unwrap().as_str() == profile_id;
     let active = shared.active.load(Ordering::Relaxed);
@@ -556,6 +576,10 @@ fn spawn_helper(
                                 width: meta.width,
                                 height: meta.height,
                                 dirty: meta.dirty,
+                                drag: meta.drag,
+                                view: meta.view,
+                                board: meta.patch,
+                                patch: meta.patch,
                             },
                         });
                     }
@@ -698,6 +722,10 @@ fn handle_from(
                 shared.devtools.lock().unwrap().push(ev);
                 crate::chrome_wake::wake();
             }
+        }
+        FromEngine::Agent(reply) => {
+            shared.agent.lock().unwrap().push(reply);
+            crate::chrome_wake::wake();
         }
         FromEngine::Favicon { tab_id, png } => {
             if is_front {
@@ -842,6 +870,28 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::DevToolsInput(ev) => Some(ToEngine::DevToolsInput(ev)),
         Cmd::DevToolsFocus(f) => Some(ToEngine::DevToolsFocus(f)),
         Cmd::CloseDevTools => Some(ToEngine::CloseDevTools),
+        Cmd::Agent(req) => Some(ToEngine::Agent(req)),
+        Cmd::OpenBoard {
+            id,
+            url,
+            title,
+            size,
+        } => Some(ToEngine::OpenBoard {
+            id: id.0,
+            url,
+            title,
+            size,
+        }),
+        Cmd::SetBoard { id, size } => Some(ToEngine::SetBoard { id: id.0, size }),
+        Cmd::BoardDetail { id, seq, detail } => Some(ToEngine::BoardDetail {
+            id: id.0,
+            seq,
+            detail,
+        }),
+        Cmd::BoardInput { id, input } => Some(ToEngine::BoardInput { id: id.0, input }),
+        Cmd::BoardFocus { id, focused } => Some(ToEngine::BoardFocus { id: id.0, focused }),
+        Cmd::BoardRepaint { id } => Some(ToEngine::BoardRepaint { id: id.0 }),
+        Cmd::BoardPace { id, pace } => Some(ToEngine::BoardPace { id: id.0, pace }),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

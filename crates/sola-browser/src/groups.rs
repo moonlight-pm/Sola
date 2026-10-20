@@ -290,6 +290,17 @@ impl Groups {
         }
     }
 
+    pub fn set_collapsed(&mut self, group_id: &str, collapsed: bool) {
+        if let Some(g) = self.group_mut(group_id) {
+            g.collapsed = collapsed;
+        }
+    }
+
+    pub fn ungroup(&mut self, tab: TabId) {
+        self.leave(tab);
+        self.dissolve_empty();
+    }
+
     pub fn rename(&mut self, group_id: &str, name: String) {
         let name = name.trim().to_string();
         if name.is_empty() {

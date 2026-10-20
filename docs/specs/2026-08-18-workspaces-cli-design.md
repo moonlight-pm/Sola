@@ -6,9 +6,9 @@
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
 
-**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; `pane.list` / `whoami` include `session_id` (Grok owner session; new tmux after reboot runs `grok -r`); `--agent grok|codex` on spawn/exec (Codex leaf when requested)
-**Dogfood:** `solactl workspaces` still needs a desk smoke after install; grok `-r` after reboot unsmoked  
-**Gaps:** confirm gates remain **D3** (do not invent); Claude still presence-only (D4); Codex is first-class (`--agent grok|codex`); no UI rename modal / recolor / reorder; grok `-r` after reboot unsmoked
+**Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); the tab drops on the next tick, then `tmux kill-session` and `git worktree remove` run off the iced thread (the rail stays live); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; tmux pane/window `-t` is `=session:` (session commands stay `=session`); `pane.list` / `whoami` include `session_id` (Grok or Claude owner session; new tmux after reboot runs `grok -r` or `claude --resume`); `--agent grok|codex|claude` on spawn/exec (that agent's leaf when requested)
+**Dogfood:** split-tab `pane.read` smoked 2026-09-11; rest of `solactl workspaces` desk smoke pending; grok `-r` after reboot unsmoked; rm teardown off iced thread unsmoked; `--agent claude` **installed** `workspaces` release 2026-10-08, unsmoked  
+**Gaps:** confirm gates remain **D3** (do not invent); Claude is first-class (`--agent grok|codex|claude`) **installed** `workspaces` release 2026-10-08, unsmoked; OpenCode stays presence-only; no project recolor; rail rename / reorder **installed** `kit`+`workspaces` release, unsmoked; grok `-r` and `claude --resume` after reboot unsmoked
 
 ---
 
@@ -46,11 +46,11 @@ an agent needs to orchestrate is on the call plane.
 | Face | `solactl workspaces <method> [flags]`. Owner is `workspaces` (not `ws`). App or sola-call down → fail. No `sat` |
 | Audience | Operators **and** agents (a root Grok in a Workspaces pane) |
 | Fan-out | `workspace.spawn --prompt` / `--prompt-file` is the briefed sibling. No mailbox |
-| First-class CLI | **Grok and Codex** for `--agent`. Other names error |
-| Targeting | Explicit pane id wins. A workspace name prefers the Grok leaf, else the active leaf. `workspace.exec --agent codex` prefers the Codex leaf |
+| First-class CLI | **Grok, Codex, and Claude** for `--agent`. Other names error (OpenCode stays presence-only) |
+| Targeting | Explicit pane id wins. A workspace name prefers the Grok leaf, else the active leaf. `workspace.exec --agent codex` prefers the Codex leaf. `--agent claude` prefers the Claude leaf |
 | Parent | `--parent` accepts workspace id/name **or** pane id **or** path. `solactl` fills `--parent` from `SOLA_PANE_ID` when unset (so a sibling nests under the caller) |
 | Who am I | `whoami` reads `SOLA_PANE_ID` / `SOLA_WS_PATH` when flags are omitted |
-| Start an agent in an existing checkout | `workspace.exec` — reuse a leaf of that agent; else start `grok` or `codex` in the preferred pane |
+| Start an agent in an existing checkout | `workspace.exec` — reuse a leaf of that agent; else start `grok`, `codex`, or `claude` in the preferred pane |
 | Wait | `pane.wait` holds the call reply (does **not** block the iced thread). Default status `done`. `--fresh` waits for a *transition* onto that status |
 | Timeouts | MethodSpec may advertise `timeout_ms`. `solactl` uses that, or `timeout` arg + 2s slack. Spawn **60s**, add-project **15s**, wait default **300s** (arg overrides) |
 | Confirm | **D3** still open. Every live method is as privileged as the socket |
@@ -69,8 +69,8 @@ an agent needs to orchestrate is on the call plane.
 | `project.list` | — | `{projects:[{id,name,root}]}` |
 | `project.rm` | `--project` | `{ok:true}` |
 | `workspace.list` | `--project?` | `{workspaces:[{id,name,path,kind,parent,status,agent,project}]}` |
-| `workspace.spawn` | `--project --name [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` |
-| `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. |
+| `workspace.spawn` | `--project --name [--root] [--branch] [--base-branch] [--title] [--agent] [--prompt] [--prompt-file] [--parent] [--select]` | `{id,name,title,path,kind,parent,project,selected}` — `--root` (2026-10-12): no worktree; the tab sits in the project root (`kind: root`), no `--branch` / `--base-branch`, no startup script |
+| `workspace.rm` | `--workspace [--worktree] [--force]` | `{ok:true}` — `--worktree` also removes the git checkout (after tmux dies). `--force` needs `--worktree`. A `kind: root` tab has no worktree: `--worktree` is refused. |
 | `pane.list` | `--workspace?` | `{panes:[{id,status,agent,session_id}]}` |
 | `pane.send` | `--text [--pane] [--enter]` | `{ok:true, pane}` — bracketed paste into the tmux session, then optional Enter |
 | `pane.read` | `[--pane] [--lines]` | `{text, pane}` |
@@ -94,8 +94,9 @@ dedicated interrupt. Reply includes `selected: true|false`.
 |---|---|---|
 | `project.add` | `--path` | `{id,name,root,workspace}` — same as the Add project dialog (`~` expanded) |
 | `project.startup` | `--project? [--script]` | `{project,name,script}` — omit `--script` to read; pass it (including empty) to set. Runs after each sibling worktree is created. Script env: `PROJECT` (folder on disk), `WORKTREE` (this tab), `NAME` (tab name). |
+| `project.reorder` | `--project [--before]` | project JSON — sit in front of `--before` (omit or `end` = last) |
 | `workspace.select` | `--workspace` | `{id,selected:true}` — rail + attach |
-| `workspace.set` | `--workspace [--name] [--title] [--branch]` | workspace JSON — `--title` empty clears. `--name` slugs the rail label and `git worktree move --force`s to `.worktrees/<name>` (id stays; project root cannot rename). `--branch` is `git branch -m` in that checkout (does not move the folder). |
+| `workspace.set` | `--workspace [--name] [--title] [--branch] [--before]` | workspace JSON (`name` = slug/`root`, `label` = rail, `title` = override). `--title` is the rail label; empty (or equal to `--name`) clears so the rail tracks the slug. `--name` `git worktree move --force`s to `.worktrees/<name>` (id stays; project root cannot rename). `--branch` is `git branch -m` in that checkout (does not move the folder). `--before` is another workspace in the same project (`end` = last). |
 | `workspace.exec` | `--workspace [--agent] [--prompt] [--prompt-file]` | `{workspace,pane,started,sent}` |
 | `pane.wait` | `[--pane] [--status] [--timeout] [--fresh]` | `{pane,status}` or error `timeout` |
 | `whoami` | `[--pane] [--path]` | `{pane,workspace,workspace_name,project,project_name,path,kind,status,agent,session_id}` |
@@ -130,8 +131,8 @@ dedicated interrupt. Reply includes `selected: true|false`.
 
 ## Non-goals (this freeze)
 
-Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
-`--agent`. Split-from-CLI. UI rename modal / recolor / reorder.
+Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI.
+OpenCode `--agent`. Split-from-CLI. Project recolor.
 
 ---
 
@@ -144,7 +145,9 @@ Mailbox / `worker_done` / ask-reply. MCP adapter. D3 confirm UI. Claude
 - Shell-quoting for `grok '…'`
 - `solactl` bool-flag parse (`--enter --text` order; `--select --name` order)
 - Empty paste skips tmux; `pane.send` / exec `--prompt` use `paste-buffer -p` then Enter
+- Pane/window tmux `-t` is `=session:`; session commands stay `=session` (bare `=session` is an exact pane name)
 - CLI spawn leaves the previous workspace selected; `--select` and UI spawn switch
 - Wait-status parse + default timeout
 - `workspace.rm --worktree` / `--force`; gone worktree path reaps the tab
-- `workspace.set --name` moves `.worktrees/<slug>`; `--branch` renames HEAD; root cannot rename
+- `workspace.set --name` moves `.worktrees/<slug>`; `--title` is the rail label (empty = slug); `--branch` renames HEAD; root cannot rename
+- `workspace.set --before` stays in the same project; `project.reorder` moves groups

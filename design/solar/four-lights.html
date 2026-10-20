@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar / One component, four lights</title>
+<link rel="stylesheet" href="solar.css">
+<script src="solar.js"></script>
+<style>
+  .matrix { display: grid; grid-template-columns: 152px repeat(4, minmax(0, 1fr)); border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); }
+  .matrix > div { min-height: 64px; }
+  .rowname { padding: 22px 16px 22px 18px; background: var(--bg); color: var(--text-2); font-size: 12px; line-height: 17px; border-top: 1px solid var(--hairline); }
+  .rowname b { display: block; color: var(--text); font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .cell { background: var(--bg); padding: 22px 20px; display: flex; flex-direction: column; justify-content: center; gap: 8px; border-top: 1px solid var(--hairline); position: relative; min-width: 0; overflow: hidden; }
+  .colhead { background: var(--bg); padding: 18px 20px; display: flex; justify-content: space-between; align-items: baseline; }
+  .colhead b { font-family: var(--font-display); font-size: 20px; font-weight: 600; letter-spacing: -0.2px; }
+  .colhead span { font-family: var(--font-figure); font-size: 11px; color: var(--text-3); }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mini-term { background: var(--term-bg); border-radius: var(--r-md); padding: 10px 12px; font-family: var(--font-mono); font-size: 13px; line-height: 20px; white-space: pre; box-shadow: 0 0 0 1px var(--hairline) inset; color: var(--a15); }
+  .menu { padding: 6px; width: 100%; }
+  .menu div { display: flex; justify-content: space-between; padding: 5px 10px; border-radius: 5px; font-size: 13px; }
+  .menu div span { color: var(--text-3); font-size: 12px; }
+  .menu .hov { background: var(--menu-hover, var(--hover)); }
+  .cell .bar { border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--hairline); }
+  .tiles { display: flex; gap: 22px; align-items: center; padding: 6px 0 4px 6px; }
+  .tiles .tile { width: 72px; height: 72px; border-radius: 18px; }
+  .tiles .tile svg { width: 30px; height: 30px; }
+  .model { font-size: 11px; color: var(--text-3); }
+</style>
+</head>
+<body class="l-night">
+<div class="page">
+  <div class="head">
+    <div class="head__row"><div class="head__num">×4</div><div class="head__title">One component, four lights</div></div>
+    <div class="head__lead">The same parts in each light. Size, radius, and layout never change; color, depth, and focus do. Read across a row to see what the hour changes. Each column is one bus theme; nothing in a component knows what time it is.</div>
+  </div>
+  <div class="matrix" id="m"></div>
+</div>
+<script>
+window.afterMount = () => {
+  const states = [
+    ["dawn", "Dawn", "06:21–07:28", { sky: "rise", x: 0, clock: "06:52" }],
+    ["day", "Day", "07:28–18:04", { sky: "sun", x: 0.4, clock: "11:40" }],
+    ["dusk", "Dusk", "18:04–19:11", { sky: "set", x: 1, clock: "18:32" }],
+    ["night", "Night", "19:11–06:21", { sky: "moon", x: 0.37, clock: "23:10" }],
+  ];
+  const ring = '<span class="rail__mark"><span class="mark-ring"></span></span>';
+  const diamond = '<span class="rail__mark"><span class="mark-diamond"></span></span>';
+  const check = '<span class="rail__mark"><svg class="mark-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>';
+  const models = {
+    dawn: "Diffuse: soft shadow, faint glow",
+    day: "Casts: shadow, ring focus",
+    dusk: "Both: shadow plus rim and halo",
+    night: "Emits: rim light and glow",
+  };
+  const rows = [
+    ["Menubar", "Horizon and sun at that hour", (n, s) => `<div class="bar" data-x>${bar({ app: "Mail", menus: ["File", "Edit"], compact: true, clock: "", sky: s.sky, x: s.x, unread: true })}</div>`],
+    ["Buttons", "Primary, secondary, ghost, danger", () => `<div class="btns"><span class="btn btn--primary">Reply</span><span class="btn btn--secondary">Forward</span><span class="btn btn--ghost">Junk</span><span class="btn btn--danger">Delete</span></div>`],
+    ["Field, focused", "Day draws a ring; night a halo", () => `<div class="field field--focus">${icon("search")}invoice<span class="field__caret" style="margin-left:-6px"></span></div><div class="field">${icon("search")}<span style="color:var(--text-3)">Search mail</span></div>`],
+    ["Rail rows", "Working, waiting, done", () => `<div class="rail__row rail__row--sel">${ring}kit-foundation<span class="rail__count">×2</span></div><div class="rail__row">${diamond}menubar-pass</div><div class="rail__row">${check}mail-focus</div>`],
+    ["Menu", "A popover over the desk", () => `<div class="card menu"><div>Reply<span>⌘R</span></div><div class="hov">Reply All<span>⇧⌘R</span></div><div>Forward<span>⇧⌘F</span></div></div>`],
+    ["Notification", "A desk card", () => `<div class="card notify" style="width:100%"><div class="notify__icon">${icon("bot")}</div><div><div class="notify__app">Workspaces · sola</div><div class="notify__title">kit-foundation is waiting</div><div class="notify__body">Claude asks to run a build.</div></div></div>`],
+    ["Switcher", "Selected tile, count mark", () => `<div class="tiles"><div class="tile tile--sel">${icon("mail")}<span class="tile__badge">12</span></div><div class="tile">${icon("globe")}</div></div>`],
+    ["Terminal", "ANSI from the same light", () => `<div class="term mini-term"><span class="c3">502fa9ad</span> <span class="c4">(HEAD -&gt; master)</span>\n<span class="c2">+ toward(atoms.danger, fg)</span>\n<span class="c1">- lighten(atoms.danger)</span>\n<span class="c5">warn</span> <span class="c6">sola_kit</span>: <span class="c7">3 lints</span><span class="cur"> </span></div>`],
+    ["Light model", "How depth is drawn", (n) => `<div class="model" style="font-size:13px;color:var(--text-2)">${models[n]}</div>`],
+  ];
+  const m = document.getElementById("m");
+  let html = '<div class="colhead" style="background:var(--bg)"></div>';
+  for (const [n, name, when] of states) html += `<div class="colhead l-${n}"><b>${name}</b><span>${when}</span></div>`;
+  for (const [title, sub, fn] of rows) {
+    html += `<div class="rowname"><b>${title}</b>${sub}</div>`;
+    for (const [n, , , s] of states) html += `<div class="cell l-${n}">${fn(n, s)}</div>`;
+  }
+  m.innerHTML = html;
+};
+</script>
+</body>
+</html>

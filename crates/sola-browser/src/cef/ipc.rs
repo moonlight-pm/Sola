@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::cef::engine::InputEvent;
 use crate::cef::paint::DirtyRect;
-use crate::engine::{EditCmd, NavCmd, PageContext, TabInfo};
+use crate::engine::{BoardDetail, BoardPace, BoardSize, EditCmd, NavCmd, PageContext, TabInfo};
 
-/// Safety cap (4K BGRA ≈ 33 MiB). Larger is treated as a corrupt peer.
-const MAX_MSG: u32 = 64 * 1024 * 1024;
+/// Safety cap; larger is treated as a corrupt peer. A sola-design board
+/// frame can be up to 8192×5120 BGRA (160 MiB); a 4K page is ≈ 33 MiB.
+const MAX_MSG: u32 = 192 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToEngine {
@@ -92,6 +93,38 @@ pub enum ToEngine {
     StopFind {
         clear: bool,
     },
+    Agent(crate::agent::AgentRequest),
+    /// sola-design artboard (see `Cmd::OpenBoard` / `Cmd::SetBoard`).
+    OpenBoard {
+        id: u64,
+        url: String,
+        title: String,
+        size: BoardSize,
+    },
+    SetBoard {
+        id: u64,
+        size: BoardSize,
+    },
+    BoardDetail {
+        id: u64,
+        seq: u32,
+        detail: Option<BoardDetail>,
+    },
+    BoardInput {
+        id: u64,
+        input: InputEvent,
+    },
+    BoardFocus {
+        id: u64,
+        focused: bool,
+    },
+    BoardRepaint {
+        id: u64,
+    },
+    BoardPace {
+        id: u64,
+        pace: BoardPace,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +167,7 @@ pub enum FromEngine {
     HttpAuth(crate::http_auth::Event),
     FindResult(crate::engine::FindResult),
     DevTools(crate::engine::DevToolsEvent),
+    Agent(crate::agent::AgentReply),
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
@@ -158,6 +192,9 @@ pub struct DownloadEvent {
     /// 0..=100, or `-1` if CEF does not know the size.
     pub percent: i32,
     pub state: DownloadPhase,
+    /// Set on `Failed` (interrupt reason). Empty otherwise.
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -179,6 +216,16 @@ pub struct FrameMeta {
     /// a full `width × height` BGRA buffer (damage already applied by the
     /// helper); chrome may upload only these rects.
     pub dirty: Vec<DirtyRect>,
+    /// Host-composited HTML5 drag overlay. Default false for older writers.
+    #[serde(default)]
+    pub drag: bool,
+    /// Board view `seq` the frame shows (`Cmd::BoardDetail`); 0 elsewhere.
+    #[serde(default)]
+    pub view: u32,
+    /// The payload is only the `dirty` rects, packed (a board patch; see
+    /// `CefFrame::patch`), not a whole frame.
+    #[serde(default)]
+    pub patch: bool,
 }
 
 pub fn write_msg<T: Serialize>(stream: &mut UnixStream, msg: &T) -> io::Result<()> {
@@ -293,6 +340,48 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_agent_snapshot() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        let msg = ToEngine::Agent(crate::agent::AgentRequest {
+            id: 7,
+            tab: 41,
+            op: crate::agent::AgentOp::Snapshot {
+                interactive: false,
+                subtree_backend: None,
+                json: false,
+            },
+        });
+        write_msg(&mut a, &msg).unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Agent(r) => {
+                assert_eq!(r.id, 7);
+                assert_eq!(r.tab, 41);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_agent_ready_state() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        let msg = ToEngine::Agent(crate::agent::AgentRequest {
+            id: 8,
+            tab: 44,
+            op: crate::agent::AgentOp::ReadyState,
+        });
+        write_msg(&mut a, &msg).unwrap();
+        let got: ToEngine = read_msg(&mut b).unwrap();
+        match got {
+            ToEngine::Agent(r) => {
+                assert_eq!(r.id, 8);
+                assert!(matches!(r.op, crate::agent::AgentOp::ReadyState));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn round_trip_raw_frame() {
         let (mut a, mut b) = Pair::pair().unwrap();
         let meta = FrameMeta {
@@ -305,12 +394,16 @@ mod tests {
                 w: 1,
                 h: 1,
             }],
+            drag: true,
+            view: 3,
+            patch: false,
         };
         let pixels = vec![1, 2, 3, 4, 5, 6, 7, 8];
         write_frame(&mut a, &meta, &pixels).unwrap();
         let (got, pix) = read_frame(&mut b).unwrap();
         assert_eq!(got.tab_id, 7);
         assert_eq!(got.width, 2);
+        assert!(got.drag);
         assert_eq!(pix, pixels);
     }
 
@@ -350,6 +443,7 @@ mod tests {
                 total: 100,
                 percent: 10,
                 state: DownloadPhase::Progress,
+                error: String::new(),
             }),
         )
         .unwrap();

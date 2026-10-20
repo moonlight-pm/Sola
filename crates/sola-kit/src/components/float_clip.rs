@@ -70,10 +70,10 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for RoundedClip<'_, Message
         renderer: &iced::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let child =
-            self.content
-                .as_widget_mut()
-                .layout(&mut tree.children[0], renderer, limits);
+        let child = self
+            .content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
         let size = limits.resolve(Length::Fill, Length::Fill, child.size());
         layout::Node::with_children(size, vec![child])
     }

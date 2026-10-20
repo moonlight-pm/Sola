@@ -1,0 +1,96 @@
+title = "Next"
+
+# The canonical foundation that follows design/foundation/ (today, as built). Apps carry their own menus in a
+# titlebar, windows sit one gap apart, and the top row is only islands.
+# Tokens from ../tokens.css; geometry and parts in next.css / next.js.
+# Boards stack top to bottom; the desk board is wider (2560 at 1:1).
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Next / Cover"
+
+[[artboard]]
+id = "desk"
+src = "desk.html"
+x = 0
+y = 2726
+width = 2704
+height = "auto"
+title = "Next / The desk"
+
+[[artboard]]
+id = "titlebar"
+src = "titlebar.html"
+x = 0
+y = 4401
+width = 1440
+height = "auto"
+title = "Next / 01 Menus on the window"
+
+[[artboard]]
+id = "gaps"
+src = "gaps.html"
+x = 0
+y = 8467
+width = 1440
+height = "auto"
+title = "Next / 02 Gaps and the ground"
+
+[[artboard]]
+id = "top"
+src = "top.html"
+x = 0
+y = 11447
+width = 1440
+height = "auto"
+title = "Next / 03 The top row is islands"
+
+[[artboard]]
+id = "workspaces"
+src = "workspaces.html"
+x = 0
+y = 14110
+width = 1440
+height = "auto"
+title = "Next / 04 Workspaces"
+
+[[artboard]]
+id = "sidebar"
+src = "sidebar.html"
+x = 0
+y = 17485
+width = 1440
+height = "auto"
+title = "Next / 05 The master sidebar"
+
+[[artboard]]
+id = "sidebar-ways"
+src = "sidebar-ways.html"
+x = 0
+y = 20397
+width = 1440
+height = "auto"
+title = "Next / 05 The sidebar, continued"
+
+[[artboard]]
+id = "tabs"
+src = "tabs.html"
+x = 0
+y = 23027
+width = 1440
+height = "auto"
+title = "Next / 06 One tab list"
+
+[[artboard]]
+id = "tabs-more"
+src = "tabs-more.html"
+x = 0
+y = 25909
+width = 1440
+height = "auto"
+title = "Next / 06 One tab list, continued"

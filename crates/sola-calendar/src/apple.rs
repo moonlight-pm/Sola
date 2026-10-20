@@ -54,10 +54,7 @@ pub async fn fetch_events(
         return Ok(Vec::new());
     };
     let start = format!("{}T000000Z", ymd(window.0));
-    let end = format!(
-        "{}T000000Z",
-        ymd(window.1 + chrono::Duration::days(1))
-    );
+    let end = format!("{}T000000Z", ymd(window.1 + chrono::Duration::days(1)));
     let body = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="{NS_CAL}">
@@ -214,7 +211,10 @@ async fn list_calendars(
         if !resp.is_calendar {
             continue;
         }
-        if resp.components.iter().any(|c| c.eq_ignore_ascii_case("VTODO"))
+        if resp
+            .components
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("VTODO"))
             && !resp
                 .components
                 .iter()
@@ -344,9 +344,10 @@ fn parse_responses(xml: &str) -> Vec<DavResp> {
                 let local = local_name(e.local_name().as_ref());
                 match local.as_str() {
                     "href" => {
-                        if !stack.iter().any(|s| {
-                            s == "current-user-principal" || s == "calendar-home-set"
-                        }) {
+                        if !stack
+                            .iter()
+                            .any(|s| s == "current-user-principal" || s == "calendar-home-set")
+                        {
                             if cur.href.is_empty() {
                                 cur.href = text.trim().to_string();
                             }

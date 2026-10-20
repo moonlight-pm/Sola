@@ -86,6 +86,11 @@ lists accounts still connecting or that failed; failed accounts retry on
 their own (15 s, growing to 5 minutes) or now with **Retry Now** /
 Get New Mail.
 
+Switching to the Mail window checks the server right away (the open
+list and the mailbox counts); new mail also arrives on its own in the
+background. While a check is out, a small ring sits beside the message
+count — hover it: **Checking mail**.
+
 ## Not in this pass
 
 HTML engine (the letter is converted prose; CID images are files, not

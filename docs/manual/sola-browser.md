@@ -20,12 +20,14 @@ The location bar is **plain text** on the chrome until you click it (or
 `⌘L`); then it is an edit field. While idle, `https://` and the query
 string are omitted (the path stays). Typing searches **visit history**
 (top five matches as a list under the chrome — the field is not
-autocompleted and **keeps focus**). ↓ / `Ctrl+N` and ↑ / `Ctrl+P` (or a
-click) only highlight a row. Enter loads the highlighted row, or a
-typed URL (switching to a tab already on that site), or Kagi’s first
-result for a search. **Shift+Enter** always loads the Kagi results
-page. Further typing refines the list. Jumping from a new tab to a
-site already open closes the unused blank tab.
+autocompleted and **keeps focus**). The first row is not selected for
+you. ↓ / `Ctrl+N` and ↑ / `Ctrl+P`, or a click, highlight a row. Enter
+loads that highlighted row, or the URL you typed in this tab, or Kagi’s
+first result for a search.
+**Shift+Enter** always loads the Kagi results page. Further typing
+refines the list. A new blank tab that names a site already open
+switches to that tab and closes the blank. The exact URL of another
+open tab is focused instead of loaded again.
 `⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
 `⌘R` reloads; `⌘⇧R` (Browser → **Hard Reload**) bypasses HTTP cache for
 this navigation. Shift-click the reload button does the same. It does
@@ -42,7 +44,10 @@ Bitwarden vault when built with `bitwarden`) plus a **CEF** CPU OSR engine in
 one binary, `sola-browser`.
 
 Launch from the shell launcher (**Browser**), or
-`/opt/sola/bin/sola-browser`.
+`/opt/sola/bin/sola-browser`. The same window is also a call-plane owner:
+`solactl browser` lists tabs, opens/moves them, and snapshots/clicks the
+page (YAML + refs). See [solactl](solactl.md). Chrome or sola-call down
+fails; it does not launch a window.
 
 ## Default URL handler
 
@@ -211,8 +216,10 @@ There is no F12 binding (media-key keyboards).
 
 Toolbar **download** icon (right of vault) is always there.
 
-- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists
-  the next file is `report (1).pdf`. There is no Save dialog.
+- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists,
+  or a leftover `report.pdf.crdownload` is still there, the next file is
+  `report (1).pdf`. There is no Save dialog. A failed row names the reason
+  (no space, timed out, incomplete).
 - While a file is coming in, the icon goes accent and a thin progress line
   grows on the button. The panel does not open by itself.
 - Click the icon for the list (flat rows). Long hash names shorten in the
@@ -290,6 +297,12 @@ passkey ceremony. The open panel’s icon is the accent wash.
   vault **first**, then fills every username and password field on the
   page (including confirm). If the page has no fields yet, the item is
   still saved.
+- **Edit** is on the item record (next to **Fill**). Name, login / card /
+  identity / note / SSH / bank / license / passport fields, websites,
+  notes, and custom fields are writable. **Save** writes the cipher;
+  Cancel returns to the record. Passkeys stay attached (not edited here).
+  Org items you cannot write hide **Edit**. License and passport dates
+  are `YYYY-MM-DD`. There is no delete in this panel.
 - **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
   the vault panel opens (unlock first if needed) with a **list of matching
   passkeys** — pick one to complete sign-in. The intercept is installed at
@@ -322,8 +335,12 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 extracts the selection in the engine helper and writes the system
 clipboard; paste reads the compositor clipboard and inserts **once** into
 the focused field. An image offer (`image/png` and siblings) is a `File`
-paste event (so Slack and similar composers accept a screenshot); text
-is inserted as before. Chromium’s own clipboard never reaches Wayland.
+paste event (so Slack and similar composers accept a screenshot). Text
+is a `paste` event with `text/plain` (newlines kept in contenteditable
+lyrics); if the page does not handle it, a textarea gets the value and
+a contenteditable gets a line break between lines. `solactl browser fill`
+and `type` use that same paste into the snapshot ref (including a
+ProseMirror editor nested under the AX node). `key --chord` inserts once. Chromium’s own clipboard never reaches Wayland.
 In-page **Copy** buttons (`navigator.clipboard.writeText` and
 `document.execCommand('copy')`) are hooked the same way. Newlines in the
 copied text are kept. Triple-click selects a line / field the way

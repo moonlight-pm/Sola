@@ -512,7 +512,13 @@ pub async fn initialize_user_crypto(
             upgrade_token: None,
         })
         .await
-        .map_err(|e| format!("crypto init: {e}"))
+        .map_err(|e| format!("crypto init: {e}"))?;
+    // V1 init leaves security-state at 1. Leave it there.
+    // Version >= 2 makes decrypt drop login URIs that have no checksum,
+    // so the current-page Autofill list comes back empty while search
+    // still finds the item by name. Personal writes raise the version
+    // only for `ciphers().encrypt` (`BlobCipherWrites`).
+    Ok(())
 }
 
 /// Restore tokens + user crypto from a persisted session (no master password).

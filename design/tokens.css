@@ -1,0 +1,148 @@
+/* Sola design tokens. Color names are the bus palette keys.
+ * Shared by every canvas in design/ (../tokens.css). */
+:root {
+  /* Surfaces */
+  --bg-primary: #0c0e12;
+  --bg-chrome: #121722;
+  --bg-secondary: #151922;
+  --bg-hover: #1e2533;
+  --selection: #2c333e;
+
+  /* Lines */
+  --border: #2a3344;
+  --hairline: #252931;
+  --hairline-strong: #31353d;
+
+  /* Fields */
+  --field-well: #050608;
+  --field-edge: #232426;
+  --field-focus: #24788a;
+
+  /* Text */
+  --text-primary: #e9ecf2;
+  --text-secondary: #8b94a8;
+  --text-tertiary: #6b7385;
+  --text-ghost: #acb3c2;
+
+  /* Accent */
+  --accent: #3dd6f5;
+  --accent-hover: #58dcf6;
+  --accent-dim: #3dd6f51a;
+  --accent-soft: #3dd6f524;
+  --accent-edge: #3dd6f547;
+  --accent-wash: #3dd6f58c;
+  --accent-glow: #3dd6f559;
+  --on-accent: #041018;
+
+  /* Status */
+  --success: #3ecf8e;
+  --success-soft: #3ecf8e24;
+  --success-edge: #3ecf8e47;
+  --warning: #e8b84a;
+  --warning-soft: #e8b84a24;
+  --warning-edge: #e8b84a47;
+  --danger: #f07178;
+  --danger-soft: #f0717824;
+  --danger-edge: #f0717847;
+  --on-danger: #1a0608;
+
+  /* Buttons */
+  --danger-outline-fill: #2b222b;
+  --danger-outline-edge: #713e46;
+  --danger-outline-text: #f28288;
+  --secondary-fill: #1e222b;
+  --secondary-edge: #393d44;
+  --secondary-hover: #2c323f;
+  --ghost-hover: #1e2533b3;
+
+  /* Menus */
+  --menu-hover: #1e2533bf;
+  --menubar-active: #e9ecf22e;
+
+  /* Shell chrome */
+  --shell-menubar-bg: #050608;
+  --shell-backdrop-dim: #00000099;
+  --shell-switcher-bg: #151922e6;
+  --shell-switcher-border: #ffffff1a;
+  --shell-switcher-icon-bg: #ffffff2e;
+
+  /* Details */
+  --close-dot: #ff5f57;
+  --term-cursor: #ffb800;
+
+  /* Shadows */
+  --shadow: #00000047;
+  --shadow-deep: #00000061;
+
+  /* Space */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-xxl: 24px;
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* Metrics */
+  --menubar-height: 28px;
+  --sidebar-width: 220px;
+
+  /* Type scale */
+  --type-badge: 10px;
+  --type-caption: 11px;
+  --type-small: 12px;
+  --type-body: 13px;
+  --type-prose: 14px;
+  --type-title: 15px;
+  --type-heading: 22px;
+  --type-display: 32px;
+
+  /* Faces: the kit fallbacks (Inter for SF Pro Text, JetBrains Mono for Iosevka Term Slab) */
+  --font-ui: Inter, system-ui, sans-serif;
+  --font-display: Inter, system-ui, sans-serif;
+  --font-chrome: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Enamel: identity colors */
+  --enamel-teal: #61adb8;
+  --enamel-iris: #7a8ac7;
+  --enamel-clay: #b8856b;
+  --enamel-sage: #75a380;
+  --enamel-dusk: #ad7a94;
+  --enamel-olive: #949e66;
+  --enamel-ink: #6685b3;
+  --enamel-brass: #bd9e66;
+
+  /* Sol, LEDs, phosphor */
+  --sol: #ffb800;
+  --led-off: #e9ecf21f;
+  --stat-label: #e9ecf29e;
+  --phosphor-1: #38fa6b;
+  --phosphor-2: #1febe0;
+  --phosphor-3: #6185ff;
+  --phosphor-4: #c752ff;
+  --phosphor-5: #ff942e;
+
+  /* Proposed */
+  --text-tertiary-proposed: #7d8597;
+  --rail-hover: #232731;
+  --rail-selected: #333741;
+  --rail-lip: #4b4f57;
+  --rail-text: #ffffffb3;
+}
+
+*, ::before, ::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-primary);
+}

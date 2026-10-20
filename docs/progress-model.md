@@ -95,7 +95,7 @@ Active freezes under `docs/specs/` should open with:
 **Implementation:** shipped | partial | not started
 **Dogfood:** none | local TTY | …
 **Gaps:** (bullets or “none for v0”)
-**As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
+**As-built:** [capabilities.md](capabilities.md) · [architecture.md](architecture.md)
 ```
 
 - Freezes stay **normative desired shape** — not progress trackers.  
@@ -187,7 +187,7 @@ a **process failure**.
 
 | Default | Rule |
 |---------|------|
-| Worktrees | Feature code in `.worktrees/`; never commit product code directly to master without explicit ask |
+| Worktrees | Work where your tab is: root tabs (`kind: main` / `root`) work on master and open a worktree only when asked; worktree tabs merge to master only with explicit permission |
 | Install | Never `cargo make install` without express permission for that install |
 | Build verify | `cargo make build` is enough; user installs and smokes on TTY |
 | UI stack | Iced + sola-kit only; `apocrypha/` WebView is reference, not product |

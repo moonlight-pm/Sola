@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent desk / 01 Agent strip</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="agent-desk.css">
+<script src="agent-desk.js"></script>
+<style>
+  .moments { display: flex; flex-direction: column; gap: 22px; }
+  .moment { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .moment__cap { display: flex; gap: 14px; align-items: baseline; }
+  .moment__name { font: 500 13px/18px var(--font-ui); color: var(--text-primary); width: 92px; flex: none; }
+  .moment__text { font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .bar-frame { border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline); position: relative; }
+  .bar-frame .desk-edge { height: 16px; background: var(--bg-primary); display: flex; }
+  .bar-frame .desk-edge div { flex: 1; border-right: 1px solid var(--hairline); }
+
+  .anatomy { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: start; }
+  .zoom { zoom: 3; width: fit-content; }
+  .spec { display: grid; grid-template-columns: 150px 1fr; gap: 6px 18px; font: 400 12.5px/18px var(--font-ui); }
+  .spec dt { color: var(--text-tertiary); }
+  .spec dd { margin: 0; color: var(--text-secondary); }
+  .spec code { font: 400 11.5px/18px var(--font-mono); color: var(--text-ghost); }
+  .variants { display: grid; grid-template-columns: 1fr 1fr; gap: 36px 56px; }
+  .variant { display: flex; flex-direction: column; gap: 14px; }
+  .variant .what { font: 400 12.5px/18px var(--font-ui); color: var(--text-secondary); }
+  .variant .what b { color: var(--text-primary); font-weight: 500; }
+  .bar-chip { background: var(--shell-menubar-bg); height: 28px; display: flex; align-items: center; padding: 0 4px; border-radius: 3px; width: fit-content; }
+
+  .hover-stage { position: relative; height: 330px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline);
+    background: var(--bg-primary); }
+  .hover-stage .mb { position: absolute; left: 0; right: 0; top: 0; }
+  .hover-stage .zones { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: 220px 1fr 1fr; }
+  .hover-stage .zones > div { border-right: 1px solid var(--hairline); }
+  .hover-stage .zones .ln { margin: 22px 26px; height: 120px; background: repeating-linear-gradient(180deg, #1d222c 0 7px, transparent 7px 22px); }
+  .hover-stage .zones .rail { background: var(--bg-chrome); }
+  .hcard { position: absolute; width: 380px; background: var(--bg-secondary); border-radius: var(--radius-lg);
+    box-shadow: 0 0 0 1px var(--hairline-strong), 0 12px 32px var(--shadow-deep), 0 2px 6px var(--shadow);
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .hcard__top { display: flex; align-items: center; gap: 8px; }
+  .hcard__name { font: 500 13px/16px var(--font-ui); flex: 1; }
+  .hcard__state { font: 400 11px/1 var(--font-mono); color: var(--text-secondary); }
+  .hcard__src { font: 400 11px/14px var(--font-ui); color: var(--text-tertiary); margin-top: -6px; padding-left: 20px; }
+  .hcard__foot { display: flex; justify-content: space-between; font: 400 11px/14px var(--font-ui); color: var(--text-tertiary); }
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; border-top: 1px solid var(--hairline); padding-top: 22px; }
+  .rules h4 { font: 500 13px/18px var(--font-ui); margin: 0 0 6px; }
+  .rules p { font: 400 12.5px/19px var(--font-ui); color: var(--text-secondary); margin: 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="head__row"><span class="head__num">01</span><span class="head__title">Agent strip</span></div>
+    <div class="head__lead">One chip per live agent, between the app menus and the instruments. A chip says what a rail row says, no more: shape, name, and how long it has been blocked. The bars below are compressed to 1296; type and spacing are 1:1.</div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Six moments</div>
+    <div class="moments">
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">Quiet</span><span class="moment__text">No live agents, no strip. The bar is Graphite's. Idle panes never show.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Mail" data-menus="File Edit Message View Window" data-meters="short" data-seed="3"></div></div>
+      </div>
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">At work</span><span class="moment__text">Working is a ring and a name at the meters' label weight. The ring ticks once a second with the meters, so the bar draws no extra frames.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Browser" data-menus="File Edit View History Window" data-meters="short" data-seed="5">
+          <div class="strip">
+            <div class="chip" data-g="ring">menubar-pass</div>
+            <div class="chip" data-g="ring">vault-panel <span class="chip__n">×1</span></div>
+            <div class="chip" data-g="ring">chat</div>
+          </div>
+        </div></div>
+      </div>
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">One waits</span><span class="moment__text">A waiting chip steps to the front and fills amber. The timer counts how long the agent has been blocked on you.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Browser" data-menus="File Edit View History Window" data-meters="short" data-seed="5">
+          <div class="strip">
+            <div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__n" style="color: var(--text-secondary)">×2</span> <span class="chip__t">0:12</span></div>
+            <div class="chip" data-g="ring">menubar-pass</div>
+            <div class="chip" data-g="ring">vault-panel <span class="chip__n">×1</span></div>
+            <div class="chip" data-g="ring">chat</div>
+          </div>
+        </div></div>
+      </div>
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">Armed</span><span class="moment__text">Super+A arms the front waiting agent. Its chip and its card take the cyan edge; 1, 2 or ↵ answer it and Esc lets go. Focus stays in Browser.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Browser" data-menus="File Edit View History Window" data-meters="short" data-seed="5">
+          <div class="strip">
+            <div class="chip chip--waiting chip--armed" data-g="diamond">kit-foundation <span class="chip__n" style="color: var(--text-secondary)">×2</span> <span class="chip__t">0:31</span></div>
+            <div class="chip" data-g="ring">menubar-pass</div>
+            <div class="chip" data-g="ring">vault-panel <span class="chip__n">×1</span></div>
+            <div class="chip" data-g="ring">chat</div>
+          </div>
+        </div></div>
+      </div>
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">Busy</span><span class="moment__text">Past six chips, working and done fold into counts. Waiting chips keep their names. Hover a count for the list.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Workspaces" data-meters="short" data-seed="9">
+          <div class="strip">
+            <div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__t">2:14</span></div>
+            <div class="chip chip--waiting" data-g="diamond">vault-panel <span class="chip__t">0:51</span></div>
+            <div class="chip chip--count" data-g="ring"><span class="chip__t">5</span></div>
+            <div class="chip chip--count" data-g="check"><span class="chip__t">2</span></div>
+          </div>
+        </div></div>
+      </div>
+      <div class="moment">
+        <div class="moment__cap"><span class="moment__name">Done</span><span class="moment__text">Done whispers once in the middle of the bar for three seconds (here moved left of the strip; the real bar is 5120 wide), then keeps a check chip for a minute.</span></div>
+        <div class="bar-frame"><div class="mb" data-app="Calendar" data-menus="File Edit View Window" data-meters="short" data-seed="13">
+          <div class="mb__whisper" style="left: 380px; transform: none">mail-focus <span class="dim">· Claude is done</span></div>
+          <div class="strip">
+            <div class="chip" data-g="ring">vault-panel <span class="chip__n">×1</span></div>
+            <div class="chip" data-g="ring">chat</div>
+            <div class="chip" data-g="check">mail-focus</div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Chip, at 3×</div>
+    <div class="variants">
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip" data-g="ring">vault-panel <span class="chip__n">×1</span></div></div></div>
+        <div class="what"><b>Working.</b> 20px tall, radius 5, 5px in on the glyph side and 7 at the end. Glyph in its 12px box, 5px gap, name in SF Pro Text 12 at the meters' label color (62%). Compactions as ×N in Iosevka Term Slab 10, tertiary.</div>
+      </div>
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__t">2:14</span></div></div></div>
+        <div class="what"><b>Waiting.</b> warning-soft fill with a 1px warning-edge inside, name at full text. The timer is Iosevka 11 in warning: minutes and seconds, then hours past 59:59.</div>
+      </div>
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip chip--waiting chip--armed" data-g="diamond">kit-foundation <span class="chip__t">0:31</span></div></div></div>
+        <div class="what"><b>Armed.</b> The amber fill stays; the edge turns cyan, because keys now go to this agent. Only one chip is ever armed.</div>
+      </div>
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip" data-g="check">mail-focus</div><div class="chip" data-g="failed">menubar-pass</div></div></div>
+        <div class="what"><b>Done and failed.</b> Done keeps its check for 60 s. Failed keeps its cross until you open the pane.</div>
+      </div>
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip chip--count" data-g="ring"><span class="chip__t">5</span></div><div class="chip chip--count" data-g="check"><span class="chip__t">2</span></div></div></div>
+        <div class="what"><b>Counts.</b> A glyph and a number, nothing else. Waiting never folds into a count.</div>
+      </div>
+      <div class="variant">
+        <div class="zoom"><div class="bar-chip"><div class="chip chip--hover" data-g="ring">vault-panel <span class="chip__n">×1</span></div></div></div>
+        <div class="what"><b>Hover.</b> The menubar's open-menu fill (text at 18%), the name at full text. Same hit box as a menu title: the full 28px.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Hover: the pane's last lines</div>
+    <div class="hover-stage">
+      <div class="mb" data-app="Browser" data-menus="File Edit View History Window" data-meters="short" data-seed="5">
+        <div class="strip">
+          <div class="chip chip--waiting" data-g="diamond">kit-foundation <span class="chip__t">0:12</span></div>
+          <div class="chip" data-g="ring">menubar-pass</div>
+          <div class="chip chip--hover" data-g="ring">vault-panel <span class="chip__n">×1</span></div>
+          <div class="chip" data-g="ring">chat</div>
+        </div>
+      </div>
+      <div class="zones"><div class="rail"></div><div><div class="ln"></div></div><div><div class="ln"></div></div></div>
+      <div class="hcard" id="hc" style="top: 34px">
+        <div class="hcard__top" data-g="ring"><span class="hcard__name">vault-panel</span><span class="hcard__state">working · 11:40</span></div>
+        <div class="hcard__src">WICKET · Codex · 1 compaction</div>
+<div class="well">• Edited src/vault/panel.rs <span class="add">+42</span> <span class="del">−7</span>
+• Ran cargo test -p wicket-vault
+  test vault::panel::unlock ... <span class="add">ok</span>
+  test vault::panel::lock_on_idle ... <span class="add">ok</span>
+<span class="hi">• Writing the lock timer into settings</span></div>
+        <div class="hcard__foot"><span>Click to open the pane</span><span class="mono">last 5 lines · live</span></div>
+      </div>
+    </div>
+    <div class="note">The card drops 6px below the bar under its chip, like a menu, and follows the pane while the pointer rests. Click opens the pane: Workspaces comes forward on that tab.</div>
+  </div>
+
+  <div class="rules">
+    <div><h4>Order</h4><p>Waiting first, longest wait leftmost. Then working, oldest first. Done last, newest first. A chip moves only when its state changes, never while you read.</p></div>
+    <div><h4>Names</h4><p>The chip uses the rail label: the worktree slug or the tab's title. When two live agents share a label, the project goes in front in caps: SOLA master, EXIT master.</p></div>
+    <div><h4>What it never shows</h4><p>Idle panes, plain shells, and the pane you are looking at. The strip is a list of who might need you, not a process list.</p></div>
+  </div>
+</div>
+<script>
+  // Put the hover card under its chip once the bar is built.
+  addEventListener("load", () => {
+    const chip = document.querySelector(".hover-stage .chip--hover");
+    const stage = document.querySelector(".hover-stage");
+    const hc = document.getElementById("hc");
+    const a = chip.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    hc.style.left = Math.min(a.left - s.left - 8, s.width - 392) + "px";
+  });
+</script>
+</body>
+</html>

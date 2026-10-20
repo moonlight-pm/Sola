@@ -42,10 +42,11 @@ use crate::page_menu::{self, PageMenuKind};
 use crate::session::{self, SessionGroup, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
-    ItemFilter, ItemKind, ItemRecord, ItemSummary, MatchSummary, PasskeyCandidate,
-    PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle, VaultStatus, apex_domain,
-    create_account_hint, fill_card_script, fill_credentials_script, fill_credentials_script_ex,
-    fill_identity_script, fill_totp_script, filter_items, generate_password, totp_remaining_secs,
+    CustomDraft, ItemDraft, ItemFilter, ItemKind, ItemRecord, ItemSummary, MatchSummary,
+    PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle,
+    VaultStatus, apex_domain, create_account_hint, fill_card_script, fill_credentials_script,
+    fill_credentials_script_ex, fill_identity_script, fill_totp_script, filter_items,
+    generate_password, totp_remaining_secs,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -122,6 +123,8 @@ pub enum Msg {
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
+    /// `solactl browser` invoke.
+    Call(sola_call::Incoming),
     /// Kit sidebar gesture. Forward into [`SidebarState::update`].
     Sidebar(sidebar::Msg),
 
@@ -247,6 +250,47 @@ pub enum Msg {
     VaultCreateUrl(String),
     #[cfg(feature = "bitwarden")]
     VaultCreateRegenerate,
+    /// Open the edit form for the current item record.
+    #[cfg(feature = "bitwarden")]
+    VaultItemEditOpen,
+    #[cfg(feature = "bitwarden")]
+    VaultItemEditCancel,
+    #[cfg(feature = "bitwarden")]
+    VaultItemEditSave,
+    #[cfg(feature = "bitwarden")]
+    VaultEditName(String),
+    #[cfg(feature = "bitwarden")]
+    VaultEditNotes(String),
+    #[cfg(feature = "bitwarden")]
+    VaultEditRow {
+        key: String,
+        value: String,
+    },
+    #[cfg(feature = "bitwarden")]
+    VaultEditUri {
+        index: usize,
+        value: String,
+    },
+    #[cfg(feature = "bitwarden")]
+    VaultEditAddUri,
+    #[cfg(feature = "bitwarden")]
+    VaultEditRemoveUri(usize),
+    #[cfg(feature = "bitwarden")]
+    VaultEditCustomName {
+        index: usize,
+        value: String,
+    },
+    #[cfg(feature = "bitwarden")]
+    VaultEditCustomValue {
+        index: usize,
+        value: String,
+    },
+    #[cfg(feature = "bitwarden")]
+    VaultEditAddCustom,
+    #[cfg(feature = "bitwarden")]
+    VaultEditRemoveCustom(usize),
+    #[cfg(feature = "bitwarden")]
+    VaultEditRegenerate,
     /// Tab / Shift+Tab while vault panel is open.
     VaultFocusNext,
     VaultFocusPrev,
@@ -365,6 +409,8 @@ enum VaultPanelPhase {
     CreateSaved,
     /// Full record for one vault item.
     ItemDetail,
+    /// Edit the open vault item.
+    ItemEdit,
 }
 
 /// In-flight WebAuthn get() / create() waiting for the user.
@@ -410,6 +456,8 @@ enum VaultPasteTarget {
     CreateUsername,
     CreatePassword,
     CreateUrl,
+    /// A field on the item-edit form (`vault_edit_focus` names it).
+    Edit,
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -426,6 +474,10 @@ pub struct App<E: Engine> {
     /// Live tab snapshot, owned by the engine. We re-read on
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
+    /// Helper currently filling `tabs_handle`. Ignore live tabs until this
+    /// matches the active profile (otherwise a switch copies the previous
+    /// profile's strip into the next).
+    front_profile: crate::engine::FrontProfileHandle,
     /// Active-tab id (worker is the sole writer after startup).
     /// Chrome keeps `cached_active` for optimistic paint.
     pub active_handle: Arc<AtomicU64>,
@@ -436,7 +488,7 @@ pub struct App<E: Engine> {
     pub cached_active: TabId,
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
-    closed_tabs: HashSet<TabId>,
+    pub(crate) closed_tabs: HashSet<TabId>,
     /// True after the helper has reported a non-empty tab list this run.
     /// When it later goes empty (helper death), chrome re-opens `cached_tabs`.
     engine_tabs_seen: bool,
@@ -454,7 +506,8 @@ pub struct App<E: Engine> {
     pub sidebar_w: f32,
     /// Kit-owned hover / drag / animation.
     sidebar: SidebarState,
-    groups: Groups,
+    pub(crate) groups: Groups,
+    pub(crate) agent: crate::agent::AgentState,
     context_menu: Option<(iced::Point, CtxTarget)>,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
@@ -477,6 +530,11 @@ pub struct App<E: Engine> {
     visits: crate::visit_history::VisitHistory,
     /// Highlight in the omnibox history list (`None` = none yet).
     omnibox_sel: Option<usize>,
+    /// Set only by ↓ / ↑ / Ctrl+N / Ctrl+P or a click on a history row.
+    /// Enter ignores the list until this is set — the first hit is not implied.
+    omnibox_armed: bool,
+    /// Load we asked for, held until the engine leaves the previous URL.
+    pending_nav: Option<PendingNav>,
     find_open: bool,
     find_query: String,
     find_count: i32,
@@ -540,6 +598,12 @@ pub struct App<E: Engine> {
     vault_item_loading: bool,
     #[cfg(feature = "bitwarden")]
     vault_item_id: Option<String>,
+    /// Live edit buffer while `VaultPanelPhase::ItemEdit`.
+    #[cfg(feature = "bitwarden")]
+    vault_edit: Option<ItemDraft>,
+    /// Which edit field last received input (⌘V target).
+    #[cfg(feature = "bitwarden")]
+    vault_edit_focus: String,
     #[cfg(feature = "bitwarden")]
     vault_revealed: HashSet<String>,
     #[cfg(feature = "bitwarden")]
@@ -601,7 +665,7 @@ pub struct App<E: Engine> {
     /// Logical window height for divider drag.
     window_h: f32,
     /// Live tab favicons (CEF PNG → iced handle).
-    favicons: HashMap<TabId, iced::widget::image::Handle>,
+    pub(crate) favicons: HashMap<TabId, iced::widget::image::Handle>,
     /// Parked favicons per profile so a switch does not wait for CEF.
     favicon_park: HashMap<String, HashMap<TabId, iced::widget::image::Handle>>,
     globe: iced::widget::svg::Handle,
@@ -627,11 +691,13 @@ impl<E: Engine> App<E> {
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
+        let front_profile = engine.front_profile_handle();
         let mut app = Self {
             engine,
             slot,
             cmd_tx,
             tabs_handle,
+            front_profile,
             active_handle,
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
@@ -644,6 +710,7 @@ impl<E: Engine> App<E> {
             sidebar_w,
             sidebar: SidebarState::new(),
             groups: Groups::default(),
+            agent: crate::agent::AgentState::default(),
             context_menu: None,
             nav_hold: None,
             page_menus,
@@ -656,6 +723,8 @@ impl<E: Engine> App<E> {
             url_bar_activating: false,
             visits: crate::visit_history::VisitHistory::load(),
             omnibox_sel: None,
+            omnibox_armed: false,
+            pending_nav: None,
             find_open: false,
             find_query: String::new(),
             find_count: 0,
@@ -712,6 +781,10 @@ impl<E: Engine> App<E> {
             vault_item_loading: false,
             #[cfg(feature = "bitwarden")]
             vault_item_id: None,
+            #[cfg(feature = "bitwarden")]
+            vault_edit: None,
+            #[cfg(feature = "bitwarden")]
+            vault_edit_focus: String::new(),
             #[cfg(feature = "bitwarden")]
             vault_revealed: HashSet::new(),
             #[cfg(feature = "bitwarden")]
@@ -794,6 +867,7 @@ impl<E: Engine> App<E> {
         URL_BAR_FOCUSED.store(on, Ordering::Relaxed);
         if !on {
             self.omnibox_sel = None;
+            self.omnibox_armed = false;
         }
     }
 
@@ -808,37 +882,21 @@ impl<E: Engine> App<E> {
         self.visits.record(url, title);
     }
 
-    fn tab_already_at(&self, url: &str) -> Option<TabId> {
-        let want = crate::util::normalize_url(url);
-        if let Some(t) = self
-            .cached_tabs
-            .iter()
-            .find(|t| crate::util::normalize_url(&t.url) == want)
-        {
-            return Some(t.id);
-        }
-        // Lucky / SERP URLs share kagi.com with any previous search — switching
-        // would skip the new query.
-        if crate::util::is_kagi_search_url(&want) {
-            return None;
-        }
-        let on_site: Vec<TabId> = self
-            .cached_tabs
-            .iter()
-            .filter(|t| crate::util::same_site(&t.url, url))
-            .map(|t| t.id)
-            .collect();
-        if on_site.iter().any(|id| *id == self.cached_active) {
-            return Some(self.cached_active);
-        }
-        on_site.first().copied()
-    }
-
     fn open_omnibox_url(&mut self, url: String) -> Task<Msg> {
         if url.is_empty() {
             return Task::none();
         }
-        if let Some(id) = self.tab_already_at(&url) {
+        let scratch = self
+            .cached_tabs
+            .iter()
+            .find(|t| t.id == self.cached_active)
+            .is_some_and(tab_is_scratch_blank);
+        if let Some(id) = omnibox_existing_tab(
+            self.cached_tabs.iter().map(|t| (t.id, t.url.as_str())),
+            self.cached_active,
+            scratch,
+            &url,
+        ) {
             let leaving = self.cached_active;
             if id != leaving {
                 self.switch_active_tab(id);
@@ -881,6 +939,14 @@ impl<E: Engine> App<E> {
         if url.is_empty() {
             return Task::none();
         }
+        let previous = self
+            .active_tab_info()
+            .map(|t| t.url.clone())
+            .unwrap_or_default();
+        self.pending_nav = Some(PendingNav {
+            previous,
+            requested: url.clone(),
+        });
         self.url_field = url.clone();
         self.last_seen_url = url.clone();
         self.set_url_bar_focused(false);
@@ -905,12 +971,46 @@ impl<E: Engine> App<E> {
             return Task::none();
         }
         let hits = self.visits.search(&typed);
-        let highlighted = self
-            .omnibox_sel
-            .and_then(|i| hits.get(i).map(|v| v.url.as_str()));
+        let highlighted = chosen_history_url(
+            hits.iter().map(|v| v.url.as_str()),
+            self.omnibox_sel,
+            self.omnibox_armed,
+        );
         let url = crate::util::omnibox_submit_url(&typed, highlighted, search_results);
+        tracing::debug!(
+            %typed,
+            selected = ?self.omnibox_sel,
+            armed = self.omnibox_armed,
+            history = highlighted.is_some(),
+            %url,
+            "omnibox submit"
+        );
         self.omnibox_sel = None;
+        self.omnibox_armed = false;
         self.open_omnibox_url(url)
+    }
+
+    /// Keep a submitted URL on the active tab while the engine is still
+    /// reporting the page we left. A redirect (engine URL is neither) shows.
+    fn hold_pending_navigation(&mut self) {
+        let Some(pending) = self.pending_nav.clone() else {
+            return;
+        };
+        let Some(tab) = self
+            .cached_tabs
+            .iter_mut()
+            .find(|t| t.id == self.cached_active)
+        else {
+            self.pending_nav = None;
+            return;
+        };
+        match held_navigation_url(&tab.url, &pending) {
+            Some(hold) => {
+                tab.url = hold;
+                tab.is_loading = true;
+            }
+            None => self.pending_nav = None,
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -984,8 +1084,13 @@ impl<E: Engine> App<E> {
         self.vault_item = None;
         self.vault_item_loading = false;
         self.vault_item_id = None;
+        self.vault_edit = None;
+        self.vault_edit_focus.clear();
         self.vault_revealed.clear();
-        if matches!(self.vault_phase, VaultPanelPhase::ItemDetail) {
+        if matches!(
+            self.vault_phase,
+            VaultPanelPhase::ItemDetail | VaultPanelPhase::ItemEdit
+        ) {
             self.vault_phase = VaultPanelPhase::Credentials;
         }
     }
@@ -999,6 +1104,88 @@ impl<E: Engine> App<E> {
         self.vault_revealed.clear();
         self.vault_error = None;
         self.vault.send(VaultCmd::GetItem { id });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn open_item_edit(&mut self) {
+        if self.vault_busy || !self.vault_status.unlocked {
+            return;
+        }
+        let Some(item) = self.vault_item.as_ref() else {
+            return;
+        };
+        if !item.can_edit {
+            self.vault_error = Some("This item cannot be edited.".into());
+            return;
+        }
+        self.vault_edit = Some(ItemDraft::from_record(item));
+        self.vault_edit_focus = "name".into();
+        self.vault_paste_target = VaultPasteTarget::Edit;
+        self.vault_error = None;
+        self.vault_phase = VaultPanelPhase::ItemEdit;
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn cancel_item_edit(&mut self) {
+        self.vault_edit = None;
+        self.vault_edit_focus.clear();
+        self.vault_busy = false;
+        self.vault_error = None;
+        if self.vault_item.is_some() {
+            self.vault_phase = VaultPanelPhase::ItemDetail;
+        } else {
+            self.vault_phase = VaultPanelPhase::Credentials;
+        }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn submit_item_edit(&mut self) {
+        if self.vault_busy || !self.vault_status.unlocked {
+            return;
+        }
+        let Some(draft) = self.vault_edit.clone() else {
+            return;
+        };
+        if !draft.can_edit {
+            self.vault_error = Some("This item cannot be edited.".into());
+            return;
+        }
+        self.vault_busy = true;
+        self.vault_error = None;
+        self.vault.send(VaultCmd::UpdateItem { draft });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn apply_vault_edit_paste(&mut self, text: String) {
+        let Some(draft) = self.vault_edit.as_mut() else {
+            return;
+        };
+        let focus = self.vault_edit_focus.clone();
+        if focus == "name" {
+            draft.name = text;
+        } else if focus == "notes" {
+            draft.notes = text;
+        } else if let Some(rest) = focus.strip_prefix("uri:") {
+            if let Ok(i) = rest.parse::<usize>() {
+                if let Some(u) = draft.uris.get_mut(i) {
+                    *u = text;
+                }
+            }
+        } else if let Some(rest) = focus.strip_prefix("custom-name:") {
+            if let Ok(i) = rest.parse::<usize>() {
+                if let Some(c) = draft.custom.get_mut(i) {
+                    c.name = text;
+                }
+            }
+        } else if let Some(rest) = focus.strip_prefix("custom:") {
+            if let Ok(i) = rest.parse::<usize>() {
+                if let Some(c) = draft.custom.get_mut(i) {
+                    c.value = text;
+                }
+            }
+        } else {
+            draft.set_row(&focus, text);
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1263,6 +1450,7 @@ impl<E: Engine> App<E> {
             self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
 
+        self.engine_tabs_seen = false;
         self.devtools = None;
         self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
         self.slot.devtools_pending.lock().unwrap().take();
@@ -1476,11 +1664,28 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
+    fn front_helper_is_active(&self) -> bool {
+        let front = self.front_profile.lock().unwrap().clone();
+        let active = crate::profiles::active_if_bound()
+            .map(|p| p.id)
+            .unwrap_or_default();
+        front_matches_active(&front, &active)
+    }
+
+    /// Live helper tabs, or empty while the router is still on another profile.
+    fn live_tabs_for_active_profile(&self) -> Vec<TabInfo> {
+        if !self.front_helper_is_active() {
+            return Vec::new();
+        }
+        self.tabs_handle.lock().unwrap().clone()
+    }
+
     /// Write session to disk if the tab list / active / sidebar changed.
     pub fn persist_session(&mut self) {
         // Merge so a mid-navigation engine `about:blank` does not persist
-        // over the URL we just committed.
-        let live = self.tabs_handle.lock().unwrap().clone();
+        // over the URL we just committed. Skip live merge while the helper
+        // is still the *previous* profile (switch is async).
+        let live = self.live_tabs_for_active_profile();
         let tabs = if live.is_empty() {
             self.cached_tabs.clone()
         } else {
@@ -1529,6 +1734,7 @@ impl<E: Engine> App<E> {
                 self.groups.apply_kit_drop(&mut self.cached_tabs, &drop);
                 self.persist_session();
             }
+            SidebarEvent::Edit { .. } => {}
         }
     }
 
@@ -1568,6 +1774,7 @@ impl<E: Engine> App<E> {
                                     | VaultPanelPhase::CreateLogin
                                     | VaultPanelPhase::CreateSaved
                                     | VaultPanelPhase::ItemDetail
+                                    | VaultPanelPhase::ItemEdit
                             ) {
                                 self.vault_phase = VaultPanelPhase::Credentials;
                             }
@@ -1599,7 +1806,11 @@ impl<E: Engine> App<E> {
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultItemBack => {
-                self.clear_vault_item();
+                if matches!(self.vault_phase, VaultPanelPhase::ItemEdit) {
+                    self.cancel_item_edit();
+                } else {
+                    self.clear_vault_item();
+                }
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultReveal(key) => {
@@ -1699,6 +1910,119 @@ impl<E: Engine> App<E> {
                     self.vault_create_password = generate_password();
                 }
             }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultItemEditOpen => {
+                self.open_item_edit();
+                return iced::widget::operation::focus(vault_edit_field_id("name"));
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultItemEditCancel => {
+                self.cancel_item_edit();
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultItemEditSave => {
+                self.submit_item_edit();
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditName(s) => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    d.name = s;
+                }
+                self.vault_edit_focus = "name".into();
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditNotes(s) => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    d.notes = s;
+                }
+                self.vault_edit_focus = "notes".into();
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditRow { key, value } => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    d.set_row(&key, value);
+                }
+                self.vault_edit_focus = key;
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditUri { index, value } => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    if let Some(u) = d.uris.get_mut(index) {
+                        *u = value;
+                    }
+                }
+                self.vault_edit_focus = format!("uri:{index}");
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditAddUri => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    d.uris.push(String::new());
+                    self.vault_edit_focus = format!("uri:{}", d.uris.len().saturating_sub(1));
+                }
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditRemoveUri(index) => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    if index < d.uris.len() {
+                        d.uris.remove(index);
+                    }
+                }
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditCustomName { index, value } => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    if let Some(c) = d.custom.get_mut(index) {
+                        c.name = value;
+                    }
+                }
+                self.vault_edit_focus = format!("custom-name:{index}");
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditCustomValue { index, value } => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    if let Some(c) = d.custom.get_mut(index) {
+                        c.value = value;
+                    }
+                }
+                self.vault_edit_focus = format!("custom:{index}");
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditAddCustom => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    d.custom.push(CustomDraft {
+                        index: None,
+                        name: String::new(),
+                        value: String::new(),
+                        hidden: false,
+                    });
+                    self.vault_edit_focus =
+                        format!("custom-name:{}", d.custom.len().saturating_sub(1));
+                }
+                self.vault_paste_target = VaultPasteTarget::Edit;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditRemoveCustom(index) => {
+                if let Some(d) = self.vault_edit.as_mut() {
+                    if index < d.custom.len() {
+                        d.custom.remove(index);
+                    }
+                }
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultEditRegenerate => {
+                if !self.vault_busy {
+                    if let Some(d) = self.vault_edit.as_mut() {
+                        d.set_row("password", generate_password());
+                    }
+                }
+            }
             Msg::VaultEmail(s) => {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -1778,7 +2102,8 @@ impl<E: Engine> App<E> {
                         | VaultPanelPhase::PasskeyCreate
                         | VaultPanelPhase::CreateLogin
                         | VaultPanelPhase::CreateSaved
-                        | VaultPanelPhase::ItemDetail => {
+                        | VaultPanelPhase::ItemDetail
+                        | VaultPanelPhase::ItemEdit => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -1814,7 +2139,8 @@ impl<E: Engine> App<E> {
                         | VaultPanelPhase::PasskeyCreate
                         | VaultPanelPhase::CreateLogin
                         | VaultPanelPhase::CreateSaved
-                        | VaultPanelPhase::ItemDetail => {
+                        | VaultPanelPhase::ItemDetail
+                        | VaultPanelPhase::ItemEdit => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -1888,6 +2214,7 @@ impl<E: Engine> App<E> {
                             total: e.total.map(|t| t as i64).unwrap_or(-1),
                             percent: e.percent.map(|p| (p * 100.0) as i32).unwrap_or(-1),
                             state: crate::cef::ipc::DownloadPhase::Canceled,
+                            error: String::new(),
                         },
                         self.downloads_panel_open,
                     );
@@ -1922,6 +2249,8 @@ impl<E: Engine> App<E> {
             }
             Msg::UrlBarActivate => {
                 self.set_url_bar_focused(true);
+                self.omnibox_sel = None;
+                self.omnibox_armed = false;
                 self.url_bar_activating = true;
                 let _ = self.cmd_tx.send(Cmd::Focus(false));
                 return Task::batch([
@@ -2097,6 +2426,7 @@ impl<E: Engine> App<E> {
                 self.url_field = s;
                 self.set_url_bar_focused(true);
                 self.omnibox_sel = None;
+                self.omnibox_armed = false;
                 return crate::integration::focus_url_bar();
             }
             Msg::UrlSubmit => {
@@ -2114,6 +2444,7 @@ impl<E: Engine> App<E> {
                     None => 0,
                     Some(i) => (i + 1).min(n - 1),
                 });
+                self.omnibox_armed = true;
                 return crate::integration::focus_url_bar();
             }
             Msg::OmniboxSelectPrev => {
@@ -2121,12 +2452,14 @@ impl<E: Engine> App<E> {
                     None | Some(0) => None,
                     Some(i) => Some(i - 1),
                 };
+                self.omnibox_armed = self.omnibox_sel.is_some();
                 return crate::integration::focus_url_bar();
             }
             Msg::OmniboxPick(i) => {
                 let n = self.omnibox_hits().len();
                 if i < n {
                     self.omnibox_sel = Some(i);
+                    self.omnibox_armed = true;
                 }
                 return crate::integration::focus_url_bar();
             }
@@ -2165,6 +2498,7 @@ impl<E: Engine> App<E> {
                 self.switch_active_tab(id);
                 self.persist_session();
             }
+            Msg::Call(inc) => return self.on_call(inc),
             Msg::Tick => {
                 crate::chrome_wake::take_queued();
                 if self
@@ -2232,7 +2566,7 @@ impl<E: Engine> App<E> {
                 // empty title until the page finishes loading (esp. inactive
                 // restored tabs). Keep the last known title so the strip does
                 // not blank out after session restore.
-                let live = self.tabs_handle.lock().unwrap().clone();
+                let live = self.live_tabs_for_active_profile();
                 if !live.is_empty() {
                     self.engine_tabs_seen = true;
                     let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
@@ -2257,7 +2591,10 @@ impl<E: Engine> App<E> {
                             .unwrap_or(*new_popups.last().unwrap());
                         self.switch_active_tab(focus);
                     }
-                } else if self.engine_tabs_seen && !self.cached_tabs.is_empty() {
+                } else if self.front_helper_is_active()
+                    && self.engine_tabs_seen
+                    && !self.cached_tabs.is_empty()
+                {
                     // Helper died and came back empty. Reopen chrome's list
                     // (not the helper's last snapshot — that resurrected
                     // tabs the user had already closed).
@@ -2290,6 +2627,7 @@ impl<E: Engine> App<E> {
                 {
                     self.cached_active = candidate;
                 }
+                self.hold_pending_navigation();
                 let active_url = self.active_tab_info().map(|t| t.url.clone());
                 if let Some(url) = active_url {
                     let (field, seen) = apply_omnibar_url(
@@ -2376,6 +2714,7 @@ impl<E: Engine> App<E> {
                     .take()
                     .map(iced::clipboard::write)
                     .unwrap_or_else(Task::none);
+                let agent = self.drain_agent();
                 #[cfg(feature = "bitwarden")]
                 if focus_otp {
                     return Task::batch([
@@ -2383,13 +2722,14 @@ impl<E: Engine> App<E> {
                         totp_clip,
                         js_dlg,
                         http_auth,
+                        agent,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip, js_dlg, http_auth]);
+                return Task::batch([clip, totp_clip, js_dlg, http_auth, agent]);
                 #[cfg(not(feature = "bitwarden"))]
-                return Task::batch([clip, js_dlg, http_auth]);
+                return Task::batch([clip, js_dlg, http_auth, agent]);
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);
@@ -2560,6 +2900,9 @@ impl<E: Engine> App<E> {
                             VaultPasteTarget::CreateUrl => {
                                 iced::widget::operation::focus(vault_create_url_id())
                             }
+                            VaultPasteTarget::Edit => iced::widget::operation::focus(
+                                vault_edit_field_id(&self.vault_edit_focus),
+                            ),
                         },
                         EditCmd::Copy => {
                             let raw = match self.vault_paste_target {
@@ -2573,6 +2916,12 @@ impl<E: Engine> App<E> {
                                     self.vault_create_password.clone()
                                 }
                                 VaultPasteTarget::CreateUrl => self.vault_create_url.clone(),
+                                VaultPasteTarget::Edit => match self.vault_edit.as_ref() {
+                                    Some(d) if self.vault_edit_focus == "name" => d.name.clone(),
+                                    Some(d) if self.vault_edit_focus == "notes" => d.notes.clone(),
+                                    Some(d) => d.row_value(&self.vault_edit_focus).to_string(),
+                                    None => return Task::none(),
+                                },
                             };
                             match crate::util::usable_clipboard_text(Some(raw)) {
                                 Some(t) => iced::clipboard::write(t),
@@ -2686,6 +3035,9 @@ impl<E: Engine> App<E> {
                             self.vault_paste_target = VaultPasteTarget::CreateUsername;
                         }
                     },
+                    VaultPanelPhase::ItemEdit => {
+                        self.apply_vault_edit_paste(cleaned.clone());
+                    }
                     VaultPanelPhase::PasskeyPick
                     | VaultPanelPhase::PasskeyCreate
                     | VaultPanelPhase::CreateSaved
@@ -2699,7 +3051,7 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
-    fn remember_closed(&mut self, id: TabId) {
+    pub(crate) fn remember_closed(&mut self, id: TabId) {
         let Some(index) = self.cached_tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -2888,6 +3240,7 @@ impl<E: Engine> App<E> {
         self.cached_active = id;
         // Optimistic: worker frame filter reads this before SetActiveTab is
         // pumped. Without this, every buffer-rendered is drop_bg → black page.
+        self.pending_nav = None;
         self.active_handle
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Same-size park → pending this frame. Miss → blank now (do not
@@ -3834,6 +4187,8 @@ impl<E: Engine> App<E> {
                 self.vault_matches.clear();
                 self.vault_item = None;
                 self.vault_item_id = None;
+                self.vault_edit = None;
+                self.vault_edit_focus.clear();
                 self.vault_search.clear();
                 self.vault_filter = ItemFilter::All;
                 self.vault_revealed.clear();
@@ -3887,7 +4242,9 @@ impl<E: Engine> App<E> {
                         self.request_vault_matches();
                     }
                     if let Some(id) = self.vault_item_id.clone() {
-                        self.vault.send(VaultCmd::GetItem { id });
+                        if !matches!(self.vault_phase, VaultPanelPhase::ItemEdit) {
+                            self.vault.send(VaultCmd::GetItem { id });
+                        }
                     }
                 }
             }
@@ -3909,10 +4266,22 @@ impl<E: Engine> App<E> {
             }
             VaultEvent::ItemReady(item) => {
                 self.vault_item_loading = false;
+                if matches!(self.vault_phase, VaultPanelPhase::ItemEdit) {
+                    return;
+                }
                 if self.vault_item_id.as_deref() == Some(item.id.as_str()) {
                     self.vault_item = Some(item);
                     self.vault_phase = VaultPanelPhase::ItemDetail;
                 }
+            }
+            VaultEvent::ItemUpdated(item) => {
+                self.vault_busy = false;
+                self.vault_edit = None;
+                self.vault_edit_focus.clear();
+                self.vault_item_id = Some(item.id.clone());
+                self.vault_item = Some(item);
+                self.vault_phase = VaultPanelPhase::ItemDetail;
+                self.request_vault_items();
             }
             VaultEvent::Totp(list) => {
                 let _ = list;
@@ -5236,8 +5605,13 @@ impl<E: Engine> App<E> {
         let mut head = row![back, title]
             .spacing(SPACE_SM)
             .align_y(Alignment::Center);
+        head = head.push(Space::new().width(Length::Fill));
+        if item.can_edit && !self.vault_busy {
+            head = head.push(
+                kit_button::labeled_sm("Edit", kit_button::ghost).on_press(Msg::VaultItemEditOpen),
+            );
+        }
         if item.can_fill() && !self.vault_busy {
-            head = head.push(Space::new().width(Length::Fill));
             head = head.push(
                 kit_button::labeled_sm("Fill", kit_button::primary)
                     .on_press(Msg::VaultFillItem(item.id.clone())),
@@ -5345,6 +5719,199 @@ impl<E: Engine> App<E> {
                 .spacing(2),
             );
         }
+
+        col = col.push(
+            scrollable(container(fields).width(Length::Fill).padding(Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 0.0,
+            }))
+            .height(Length::Fixed(360.0))
+            .width(Length::Fill),
+        );
+        col.into()
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn view_vault_item_edit(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let back = button(icon_svg(vault_icon_back(), 16))
+            .padding(PAD_CONTROL_SM)
+            .style(kit_button::ghost)
+            .on_press(Msg::VaultItemEditCancel);
+
+        let Some(draft) = self.vault_edit.as_ref() else {
+            return column![
+                row![
+                    back,
+                    text("Edit").size(15).font(sola_kit::fonts::ui_medium())
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center),
+                text("Could not open this item for edit.").size(13),
+            ]
+            .spacing(SPACE_SM)
+            .into();
+        };
+
+        let busy = self.vault_busy;
+        let title = text("Edit item")
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+        let mut save =
+            kit_button::labeled(if busy { "Saving…" } else { "Save" }, kit_button::primary);
+        if !busy {
+            save = save.on_press(Msg::VaultItemEditSave);
+        }
+        let cancel =
+            kit_button::labeled_sm("Cancel", kit_button::ghost).on_press(Msg::VaultItemEditCancel);
+        let mut head = row![back, title]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+        head = head.push(Space::new().width(Length::Fill));
+        head = head.push(cancel);
+        head = head.push(save);
+
+        let mut col = column![head].spacing(SPACE_SM).width(Length::Fill);
+        col = col.push(
+            text(draft.kind.label())
+                .size(11)
+                .style(|theme: &iced::Theme| {
+                    let t = theme.extended_palette().background.base.text;
+                    iced::widget::text::Style {
+                        color: Some(iced::Color { a: 0.62, ..t }),
+                    }
+                }),
+        );
+        if let Some(err) = self.vault_error.as_ref() {
+            col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                iced::widget::text::Style {
+                    color: Some(theme.extended_palette().danger.base.color),
+                }
+            }));
+        }
+
+        let mut name = text_input("Name", &draft.name)
+            .id(vault_edit_field_id("name"))
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fill);
+        if !busy {
+            name = name
+                .on_input(Msg::VaultEditName)
+                .on_submit(Msg::VaultItemEditSave);
+        }
+        let mut notes = text_input("Notes", &draft.notes)
+            .id(vault_edit_field_id("notes"))
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fill);
+        if !busy {
+            notes = notes.on_input(Msg::VaultEditNotes);
+        }
+
+        let mut fields = column![field("Name", name, None, None)].spacing(SPACE_MD);
+
+        for row in &draft.rows {
+            let key = row.key.clone();
+            let mut input = text_input(row.label.as_str(), &row.value)
+                .id(vault_edit_field_id(&row.key))
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            if !busy {
+                input = input
+                    .on_input({
+                        let key = key.clone();
+                        move |value| Msg::VaultEditRow {
+                            key: key.clone(),
+                            value,
+                        }
+                    })
+                    .on_submit(Msg::VaultItemEditSave);
+            }
+            let help = match row.key.as_str() {
+                "dob" | "issued" | "expires" => Some("YYYY-MM-DD"),
+                "exp_month" => Some("MM"),
+                "exp_year" => Some("YYYY or YY"),
+                "totp" => Some("otpauth:// or secret"),
+                _ => None,
+            };
+            if row.regen {
+                let mut regen = kit_button::labeled_sm("Regenerate", kit_button::ghost);
+                if !busy {
+                    regen = regen.on_press(Msg::VaultEditRegenerate);
+                }
+                fields = fields.push(
+                    column![field(row.label.as_str(), input, help, None), regen].spacing(4.0),
+                );
+            } else {
+                fields = fields.push(field(row.label.as_str(), input, help, None));
+            }
+        }
+
+        if matches!(draft.kind, ItemKind::Login) {
+            for (i, uri) in draft.uris.iter().enumerate() {
+                let mut input = text_input("Website", uri)
+                    .id(vault_edit_field_id(&format!("uri:{i}")))
+                    .size(13)
+                    .style(sola_kit::components::text_input::style)
+                    .width(Length::Fill);
+                if !busy {
+                    input = input
+                        .on_input(move |value| Msg::VaultEditUri { index: i, value })
+                        .on_submit(Msg::VaultItemEditSave);
+                }
+                let label = if i == 0 {
+                    "Website".to_string()
+                } else {
+                    format!("Website {}", i + 1)
+                };
+                let mut remove = kit_button::labeled_sm("Remove", kit_button::ghost);
+                if !busy {
+                    remove = remove.on_press(Msg::VaultEditRemoveUri(i));
+                }
+                fields = fields.push(column![field(label, input, None, None), remove].spacing(4.0));
+            }
+            let mut add = kit_button::labeled_sm("Add website", kit_button::ghost);
+            if !busy {
+                add = add.on_press(Msg::VaultEditAddUri);
+            }
+            fields = fields.push(add);
+        }
+
+        for (i, custom) in draft.custom.iter().enumerate() {
+            let mut name_in = text_input("Field name", &custom.name)
+                .id(vault_edit_field_id(&format!("custom-name:{i}")))
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            let mut value_in = text_input("Value", &custom.value)
+                .id(vault_edit_field_id(&format!("custom:{i}")))
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill);
+            if !busy {
+                name_in =
+                    name_in.on_input(move |value| Msg::VaultEditCustomName { index: i, value });
+                value_in =
+                    value_in.on_input(move |value| Msg::VaultEditCustomValue { index: i, value });
+            }
+            let mut remove = kit_button::labeled_sm("Remove", kit_button::ghost);
+            if !busy {
+                remove = remove.on_press(Msg::VaultEditRemoveCustom(i));
+            }
+            fields = fields
+                .push(column![field("Field", name_in, None, None), value_in, remove,].spacing(4.0));
+        }
+        let mut add_custom = kit_button::labeled_sm("Add field", kit_button::ghost);
+        if !busy {
+            add_custom = add_custom.on_press(Msg::VaultEditAddCustom);
+        }
+        fields = fields.push(add_custom);
+        fields = fields.push(field("Notes", notes, None, None));
 
         col = col.push(
             scrollable(container(fields).width(Length::Fill).padding(Padding {
@@ -5688,6 +6255,10 @@ impl<E: Engine> App<E> {
             col = col.push(cancel);
             col.into()
         } else if self.vault_status.unlocked
+            && matches!(self.vault_phase, VaultPanelPhase::ItemEdit)
+        {
+            self.view_vault_item_edit()
+        } else if self.vault_status.unlocked
             && (matches!(self.vault_phase, VaultPanelPhase::ItemDetail)
                 || self.vault_item_id.is_some())
         {
@@ -5784,7 +6355,7 @@ impl<E: Engine> App<E> {
                 VaultPanelPhase::CreateLogin | VaultPanelPhase::CreateSaved => {
                     text("Unlock the vault to create a login.").size(13).into()
                 }
-                VaultPanelPhase::ItemDetail => {
+                VaultPanelPhase::ItemDetail | VaultPanelPhase::ItemEdit => {
                     text("Unlock the vault to view this item.").size(13).into()
                 }
                 VaultPanelPhase::Credentials => {
@@ -6018,7 +6589,13 @@ impl<E: Engine> App<E> {
                         .filter(|n| *n > 0)
                         .map(format_bytes)
                         .unwrap_or_default(),
-                    DownloadStatus::Failed => "Failed".into(),
+                    DownloadStatus::Failed => {
+                        if e.error.is_empty() {
+                            "Failed".into()
+                        } else {
+                            format!("Failed · {}", e.error)
+                        }
+                    }
                 };
                 let failed = e.status == DownloadStatus::Failed;
                 let meta_el = caption(meta, failed);
@@ -6129,6 +6706,7 @@ impl<E: Engine> App<E> {
         let mut subs = vec![
             crate::run::frame_subscription::<E>(frames, slot, active),
             sola_kit::app::bus_subscription().map(Msg::Bus),
+            sola_kit::call_subscription().map(Msg::Call),
             chrome_drain_subscription(),
             self.sidebar.subscription().map(Msg::Sidebar),
             event::listen_with(|event, status, _| {
@@ -6708,6 +7286,11 @@ fn vault_create_url_id() -> iced::widget::Id {
 }
 
 #[cfg(feature = "bitwarden")]
+fn vault_edit_field_id(key: &str) -> iced::widget::Id {
+    iced::widget::Id::from(format!("sola-browser-vault-edit-{key}"))
+}
+
+#[cfg(feature = "bitwarden")]
 fn pretty_totp_code(code: &str) -> String {
     if code.len() == 6 {
         format!("{} {}", &code[..3], &code[3..])
@@ -6729,6 +7312,10 @@ impl<E: Engine> Drop for App<E> {
 
 /// Empty / `about:blank` mid-navigation — do not flash these in the omnibar
 /// over a URL the user just committed.
+fn front_matches_active(front: &str, active: &str) -> bool {
+    !front.is_empty() && front == active
+}
+
 fn is_transient_nav_url(url: &str) -> bool {
     url.is_empty() || url == BLANK_URL
 }
@@ -6736,6 +7323,72 @@ fn is_transient_nav_url(url: &str) -> bool {
 /// Fresh ⌘T tab: blank URL and no real session history.
 fn tab_is_scratch_blank(t: &TabInfo) -> bool {
     is_transient_nav_url(&t.url) && t.history.iter().all(|e| is_transient_nav_url(&e.url))
+}
+
+/// Tab to focus instead of loading `url`. `None` means load it here.
+///
+/// An exact URL focuses that tab. A different path on the same site loads
+/// in the current tab — matching only the host used to unfocus and leave
+/// the page where it was. A fresh blank tab still jumps to a tab already
+/// on that site (⌘T). Kagi search URLs always load, so a new query is not
+/// dropped onto an older results tab.
+fn omnibox_existing_tab<'a, I>(
+    tabs: I,
+    active: TabId,
+    active_is_scratch: bool,
+    url: &str,
+) -> Option<TabId>
+where
+    I: IntoIterator<Item = (TabId, &'a str)>,
+{
+    let tabs: Vec<(TabId, &str)> = tabs.into_iter().collect();
+    let want = crate::util::normalize_url(url);
+    if let Some((id, _)) = tabs
+        .iter()
+        .find(|(_, tab_url)| crate::util::normalize_url(tab_url) == want)
+    {
+        return Some(*id);
+    }
+    if !active_is_scratch || crate::util::is_kagi_search_url(&want) {
+        return None;
+    }
+    tabs.into_iter()
+        .find(|(id, tab_url)| *id != active && crate::util::same_site(tab_url, url))
+        .map(|(id, _)| id)
+}
+
+/// Visit-history URL for Enter. `None` unless the user highlighted a row
+/// after the current text (`armed`). The first search hit is not implied.
+fn chosen_history_url<'a, I>(hits: I, selected: Option<usize>, armed: bool) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    if !armed {
+        return None;
+    }
+    let hits: Vec<&str> = hits.into_iter().collect();
+    selected
+        .and_then(|index| hits.get(index).copied())
+        .filter(|url| !url.is_empty())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingNav {
+    previous: String,
+    requested: String,
+}
+
+/// URL to keep showing while `pending` is in flight.
+/// `None` means the engine has arrived or gone elsewhere — show its URL.
+fn held_navigation_url(engine_url: &str, pending: &PendingNav) -> Option<String> {
+    if engine_url == pending.requested {
+        return None;
+    }
+    if is_transient_nav_url(engine_url) || engine_url == pending.previous {
+        Some(pending.requested.clone())
+    } else {
+        None
+    }
 }
 
 /// Apply an engine URL to the omnibar. Never blanks a committed field, and
@@ -6884,6 +7537,58 @@ mod tests {
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
         TabInfo::chrome(TabId(id), url, title)
+    }
+
+    #[test]
+    fn live_tabs_ignored_until_front_helper_matches() {
+        assert!(!front_matches_active("", "tertius"));
+        assert!(!front_matches_active("primary", "tertius"));
+        assert!(front_matches_active("tertius", "tertius"));
+    }
+
+    #[test]
+    fn omnibox_edit_loads_a_new_path_on_the_same_site() {
+        let tabs = [
+            (TabId(1), "https://exitgroup.dev/home"),
+            (TabId(2), "https://github.com/sola/app"),
+        ];
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/pricing"),
+            None
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://example.com/"),
+            None
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/home"),
+            Some(TabId(1))
+        );
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), false, "https://github.com/sola/app"),
+            Some(TabId(2))
+        );
+    }
+
+    #[test]
+    fn omnibox_blank_tab_jumps_to_an_open_site() {
+        let tabs = [
+            (TabId(1), "about:blank"),
+            (TabId(2), "https://github.com/sola/app"),
+        ];
+        assert_eq!(
+            omnibox_existing_tab(tabs, TabId(1), true, "https://github.com/other"),
+            Some(TabId(2))
+        );
+        assert_eq!(
+            omnibox_existing_tab(
+                tabs,
+                TabId(1),
+                true,
+                "https://kagi.com/search?q=%5Cweather"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -7069,5 +7774,52 @@ mod tests {
         let (field, seen) = apply_omnibar_url("exa", BLANK_URL, "https://elsewhere.example/", true);
         assert_eq!(field, "exa");
         assert_eq!(seen, BLANK_URL);
+    }
+
+    #[test]
+    fn enter_ignores_the_first_history_hit_until_a_row_is_chosen() {
+        let hits = [
+            "https://exitgroup.dev/login/magic",
+            "https://exitgroup.dev/home",
+        ];
+        let typed = "https://exitgroup.dev/admin";
+        assert_eq!(chosen_history_url(hits, None, false), None);
+        assert_eq!(chosen_history_url(hits, Some(0), false), None);
+        assert_eq!(
+            crate::util::omnibox_submit_url(typed, chosen_history_url(hits, Some(0), false), false),
+            typed
+        );
+        assert_eq!(
+            chosen_history_url(hits, Some(0), true),
+            Some("https://exitgroup.dev/login/magic")
+        );
+        assert_eq!(
+            crate::util::omnibox_submit_url(typed, chosen_history_url(hits, Some(1), true), false),
+            "https://exitgroup.dev/home"
+        );
+    }
+
+    #[test]
+    fn submitted_url_stays_until_the_engine_leaves_the_previous_page() {
+        let pending = PendingNav {
+            previous: "https://exitgroup.dev/login/magic".into(),
+            requested: "https://exitgroup.dev/admin".into(),
+        };
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/login/magic", &pending).as_deref(),
+            Some("https://exitgroup.dev/admin")
+        );
+        assert_eq!(
+            held_navigation_url("about:blank", &pending).as_deref(),
+            Some("https://exitgroup.dev/admin")
+        );
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/admin", &pending),
+            None
+        );
+        assert_eq!(
+            held_navigation_url("https://exitgroup.dev/login/magic?next=1", &pending),
+            None
+        );
     }
 }

@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 02 Keys</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="instrument.css">
+<style>
+  :root { --u: 54px; --cap: 50px; }
+  .sheet { padding: 26px 28px 28px; display: flex; flex-direction: column; gap: 22px; }
+  .sheet__head { display: flex; justify-content: space-between; align-items: center; }
+  .sheet__focus { display: flex; align-items: center; gap: 8px; }
+  .filter {
+    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px 0 12px;
+    background: var(--module-lo); border-radius: 6px; box-shadow: inset 0 0 0 1px var(--seam-hi);
+    color: var(--ink-3); font-size: 13px;
+  }
+  .filter [data-icon] { width: 14px; height: 14px; color: var(--ink-3); }
+  .filter__sp { flex: 1; }
+  .kb { display: flex; gap: 22px; align-items: flex-start; }
+  .kb__block { position: relative; }
+  .cap {
+    position: absolute; height: var(--cap); border-radius: 6px;
+    background: #0f1012; box-shadow: inset 0 0 0 1px #ffffff0a, 0 1px 0 #000;
+    padding: 6px 7px; display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .cap__g { font-size: 12px; line-height: 14px; color: var(--engrave-lo); white-space: nowrap; }
+  .cap__f {
+    font-family: var(--font-label); font-stretch: expanded; font-size: 9px; line-height: 10px;
+    letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; color: var(--ink-2);
+  }
+  .cap .led { position: absolute; top: 7px; right: 7px; }
+  .cap--on { background: var(--module-hi); box-shadow: inset 0 0 0 1px var(--seam-hi), 0 1px 0 #000; }
+  .cap--on .cap__g { color: var(--ink); }
+  .cap--app .cap__f { color: var(--fn-focus); }
+  .cap--held { background: #08090a; box-shadow: inset 0 1px 2px #000, inset 0 0 0 1px #ffffff12; }
+  .cap--held .cap__g { color: var(--ink); }
+  .cap--sys .cap__g, .cap--sys .cap__f { color: var(--fn-system); }
+  .cap [data-zone] { color: var(--ink); }
+  .lists { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0 36px; padding-top: 4px; }
+  .group { display: flex; flex-direction: column; gap: 2px; }
+  .group__head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; box-shadow: inset 0 -1px 0 var(--seam-hi); margin-bottom: 6px; }
+  .row { display: flex; justify-content: space-between; align-items: center; height: 26px; }
+  .row__l { font-size: 12.5px; color: var(--ink-2); }
+  .chord { display: flex; gap: 3px; }
+  .chord .kc { height: 18px; min-width: 18px; font-size: 10.5px; padding: 0 4px; }
+  .chord .kc--sys { color: var(--fn-system); }
+  .two { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  .legend-row { display: flex; gap: 40px; align-items: center; }
+  .legend-row > div { display: flex; align-items: center; gap: 10px; }
+  .swatch-cap { width: 22px; height: 22px; border-radius: 5px; position: relative; flex-shrink: 0; }
+  .swatch-cap .led { position: absolute; top: 4px; right: 4px; }
+</style>
+<script src="parts.js"></script>
+<script src="instrument.js"></script>
+</head>
+<body>
+<div class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num dim-field" data-dots="02"></span><div class="head__title">Keys</div></div>
+    <div class="head__lead">Super+K today is a filtered list. Here it is the keyboard itself: hold Super and the keys that do something light, labelled with what they do. White is the shell, cyan is the app with focus, gold is the key you are holding. The numpad draws each zone it sends a window to. The list stays below, and typing still filters it.</div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Super held · Workspaces has focus · 1:1</span>
+    <div class="module sheet" id="sheetA">
+      <div class="sheet__head">
+        <span class="lbl lbl--11 lbl--ink">Keyboard shortcuts</span>
+        <span class="sheet__focus"><span class="led led--on" style="--c: var(--fn-focus)"></span><span class="lbl">Workspaces</span></span>
+      </div>
+      <div class="filter"><span data-icon="search"></span><span>Type to filter</span><span class="filter__sp"></span><span class="kc kc--lbl">esc</span></div>
+      <div class="kb" data-kb="super"></div>
+      <div class="lists">
+        <div class="group">
+          <div class="group__head"><span class="led led--on"></span><span class="lbl">Shell</span></div>
+          <div class="row"><span class="row__l">Launch Application</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc kc--lbl">Space</span></span></div>
+          <div class="row"><span class="row__l">App Switcher</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc kc--lbl">Tab</span></span></div>
+          <div class="row"><span class="row__l">Keyboard Shortcuts</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">K</span></span></div>
+          <div class="row"><span class="row__l">Hide App</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">H</span></span></div>
+          <div class="row"><span class="row__l">Close App</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">Q</span></span></div>
+          <div class="row"><span class="row__l">Cycle Windows</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">`</span></span></div>
+        </div>
+        <div class="group">
+          <div class="group__head"><span class="led led--on"></span><span class="lbl">Window</span></div>
+          <div class="row"><span class="row__l">Left · Right</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">4</span><span class="kc">6</span></span></div>
+          <div class="row"><span class="row__l">Top · Bottom</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">=</span><span class="kc">.</span></span></div>
+          <div class="row"><span class="row__l">Middle: top, full, bottom</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">8</span><span class="kc">5</span><span class="kc">2</span></span></div>
+          <div class="row"><span class="row__l">Middle Right</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">+</span></span></div>
+          <div class="row"><span class="row__l">Float</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">*</span></span></div>
+          <div class="row"><span class="row__l">Fullscreen · Cinema</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">0</span><span class="kc kc--lbl">Ent</span></span></div>
+        </div>
+        <div class="group">
+          <div class="group__head"><span class="led led--on"></span><span class="lbl">Capture</span></div>
+          <div class="row"><span class="row__l">Screenshot Screen</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">⇧</span><span class="kc">3</span></span></div>
+          <div class="row"><span class="row__l">Screenshot Selection</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">⇧</span><span class="kc">4</span></span></div>
+          <div class="row"><span class="row__l">Screenshot Window</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">⇧</span><span class="kc">5</span></span></div>
+        </div>
+        <div class="group">
+          <div class="group__head"><span class="led led--on" style="--c: var(--fn-focus)"></span><span class="lbl">Workspaces</span></div>
+          <div class="row"><span class="row__l">Spawn Sibling</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">T</span></span></div>
+          <div class="row"><span class="row__l">Close Pane</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">W</span></span></div>
+          <div class="row"><span class="row__l">New Project…</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">N</span></span></div>
+          <div class="row"><span class="row__l">Split Down · Right</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">⇧</span><span class="kc">↓</span><span class="kc">→</span></span></div>
+          <div class="row"><span class="row__l">Copy · Paste</span><span class="chord"><span class="kc kc--sys">⌘</span><span class="kc">C</span><span class="kc">V</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Add Shift · the map changes under your hand · 1:1</span>
+    <div class="module sheet">
+      <div class="sheet__head">
+        <span class="lbl lbl--11 lbl--ink">Keyboard shortcuts</span>
+        <span class="sheet__focus"><span class="led led--on" style="--c: var(--fn-focus)"></span><span class="lbl">Workspaces</span></span>
+      </div>
+      <div class="kb" data-kb="shift"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="lbl">Key states</span>
+    <div class="legend-row">
+      <div><span class="swatch-cap" style="background:#0f1012;box-shadow:inset 0 0 0 1px #ffffff0a"></span><span class="note">Does nothing with this chord</span></div>
+      <div><span class="swatch-cap" style="background:var(--module-hi);box-shadow:inset 0 0 0 1px var(--seam-hi)"><span class="led led--on"></span></span><span class="note">Shell</span></div>
+      <div><span class="swatch-cap" style="background:var(--module-hi);box-shadow:inset 0 0 0 1px var(--seam-hi)"><span class="led led--on" style="--c:var(--fn-focus)"></span></span><span class="note">The app with focus</span></div>
+      <div><span class="swatch-cap" style="background:#08090a;box-shadow:inset 0 1px 2px #000,inset 0 0 0 1px #ffffff12"><span class="led led--on" style="--c:var(--fn-system)"></span></span><span class="note">Held: Super is gold, Shift is white</span></div>
+    </div>
+    <div class="note" style="max-width: 900px">Chords come from what the shell already knows: <b>shell_rows</b> and <b>window_rows</b> in sola-shell/src/shortcuts/state.rs, plus the focused app's published menus. The physical layout is an ANSI table with an extended numpad; other layouts fall back to the list.</div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const U = 54, CAP = 50;
+    // [glyph, width in u, id]
+    const MAIN = [
+      [["`", 1, "grave"], ["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"], ["8"], ["9"], ["0"], ["-"], ["="], ["⌫", 2]],
+      [["Tab", 1.5, "tab"], ["Q"], ["W"], ["E"], ["R"], ["T"], ["Y"], ["U"], ["I"], ["O"], ["P"], ["["], ["]"], ["\\", 1.5]],
+      [["Caps", 1.75], ["A"], ["S"], ["D"], ["F"], ["G"], ["H"], ["J"], ["K"], ["L"], [";"], ["'"], ["Return", 2.25]],
+      [["Shift", 2.25, "shiftL"], ["Z"], ["X"], ["C"], ["V"], ["B"], ["N"], ["M"], [","], ["."], ["/"], ["Shift", 2.75, "shiftR"]],
+      [["Ctrl", 1.25], ["⌘", 1.25, "superL"], ["Alt", 1.25], ["", 6.25, "space"], ["Alt", 1.25], ["⌘", 1.25, "superR"], ["Menu", 1.25], ["Ctrl", 1.25]],
+    ];
+    const ARROWS = [ // [glyph, x u, y row, id]
+      ["↑", 1, 3, "up"], ["←", 0, 4, "left"], ["↓", 1, 4, "down"], ["→", 2, 4, "right"],
+    ];
+    const PAD = [ // [glyph, x, y, w, h, id]
+      ["Clear", 0, 0, 1, 1, "kpclear"], ["=", 1, 0, 1, 1, "kpeq"], ["/", 2, 0, 1, 1, "kpdiv"], ["*", 3, 0, 1, 1, "kpmul"],
+      ["7", 0, 1, 1, 1, "kp7"], ["8", 1, 1, 1, 1, "kp8"], ["9", 2, 1, 1, 1, "kp9"], ["−", 3, 1, 1, 1, "kpsub"],
+      ["4", 0, 2, 1, 1, "kp4"], ["5", 1, 2, 1, 1, "kp5"], ["6", 2, 2, 1, 1, "kp6"], ["+", 3, 2, 1, 1, "kpadd"],
+      ["1", 0, 3, 1, 1, "kp1"], ["2", 1, 3, 1, 1, "kp2"], ["3", 2, 3, 1, 1, "kp3"], ["Enter", 3, 3, 1, 2, "kpent"],
+      ["0", 0, 4, 2, 1, "kp0"], [".", 2, 4, 1, 1, "kpdot"],
+    ];
+    // Bindings per held state. kind: shell | app | zone
+    const SUPER = {
+      held: { superL: "sys", superR: "sys" },
+      keys: {
+        space: ["shell", "Launch"], tab: ["shell", "Switch"], K: ["shell", "Keys"], H: ["shell", "Hide"],
+        Q: ["shell", "Close"], grave: ["shell", "Cycle"],
+        T: ["app", "Sibling"], W: ["app", "Pane ×"], N: ["app", "Project"], C: ["app", "Copy"], V: ["app", "Paste"],
+        kpmul: ["zone", "float"], kp4: ["zone", "left"], kp6: ["zone", "right"], kpeq: ["zone", "top"],
+        kpdot: ["zone", "bottom"], kp8: ["zone", "top-middle"], kp5: ["zone", "full-middle"],
+        kp2: ["zone", "bottom-middle"], kpadd: ["zone", "middle-right"], kp0: ["zone", "fullscreen"], kpent: ["zone", "cinema"],
+      },
+    };
+    const SHIFT = {
+      held: { superL: "sys", superR: "sys", shiftL: "held", shiftR: "held" },
+      keys: {
+        "3": ["shell", "Screen"], "4": ["shell", "Area"], "5": ["shell", "Window"],
+        down: ["app", "Split"], right: ["app", "Split"],
+      },
+    };
+
+    function cap(glyph, id, x, y, w, h, map) {
+      const el = document.createElement("div");
+      el.className = "cap";
+      el.style.left = `${x * U}px`;
+      el.style.top = `${y * U}px`;
+      el.style.width = `${w * U - (U - CAP)}px`;
+      el.style.height = `${h * U - (U - CAP)}px`;
+      const key = id || glyph;
+      const held = map.held[key];
+      const bind = map.keys[key];
+      let fn = "";
+      let led = "";
+      if (held === "sys") {
+        el.classList.add("cap--held", "cap--sys");
+        fn = "Super";
+        led = `<span class="led led--on" style="--c:var(--fn-system)"></span>`;
+      } else if (held === "held") {
+        el.classList.add("cap--held");
+        led = `<span class="led led--on"></span>`;
+      } else if (bind) {
+        const [kind, what] = bind;
+        el.classList.add("cap--on");
+        if (kind === "app") {
+          el.classList.add("cap--app");
+          led = `<span class="led led--on" style="--c:var(--fn-focus)"></span>`;
+        } else led = `<span class="led led--on"></span>`;
+        fn = kind === "zone" ? `<span data-zone="${what}" data-w="26"></span>` : what;
+      }
+      el.innerHTML = `<span class="cap__g">${glyph}</span><span class="cap__f">${fn}</span>${led}`;
+      return el;
+    }
+
+    function keyboard(host, map) {
+      const main = document.createElement("div");
+      main.className = "kb__block";
+      main.style.width = `${15 * U - (U - CAP)}px`;
+      main.style.height = `${5 * U - (U - CAP)}px`;
+      MAIN.forEach((row, y) => {
+        let x = 0;
+        row.forEach(([g, w = 1, id]) => {
+          main.appendChild(cap(g, id || g, x, y, w, 1, map));
+          x += w;
+        });
+      });
+      const arrows = document.createElement("div");
+      arrows.className = "kb__block";
+      arrows.style.width = `${3 * U - (U - CAP)}px`;
+      arrows.style.height = main.style.height;
+      ARROWS.forEach(([g, x, y, id]) => arrows.appendChild(cap(g, id, x, y, 1, 1, map)));
+      const pad = document.createElement("div");
+      pad.className = "kb__block";
+      pad.style.width = `${4 * U - (U - CAP)}px`;
+      pad.style.height = main.style.height;
+      PAD.forEach(([g, x, y, w, h, id]) => pad.appendChild(cap(g, id, x, y, w, h, map)));
+      host.append(main, arrows, pad);
+    }
+
+    keyboard(document.querySelector('[data-kb="super"]'), SUPER);
+    keyboard(document.querySelector('[data-kb="shift"]'), SHIFT);
+  })();
+</script>
+</body>
+</html>

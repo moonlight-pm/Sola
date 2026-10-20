@@ -40,10 +40,21 @@ pub enum Msg {
 /// Semantic outcome after [`State::update`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    Activate { id: String },
-    ToggleSection { id: String },
+    Activate {
+        id: String,
+    },
+    ToggleSection {
+        id: String,
+    },
+    /// Double-click on an editable item (inline rename). Headers still
+    /// toggle; group rename stays on the hover pencil.
+    Edit {
+        id: String,
+    },
     Drop(Drop),
-    Resize { width: f32 },
+    Resize {
+        width: f32,
+    },
 }
 
 /// A finished drag of one visible row.

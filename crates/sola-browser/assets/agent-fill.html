@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>agent fill fixture</title>
+  <style>
+    body { font: 16px/1.4 sans-serif; max-width: 40rem; margin: 2rem auto; }
+    label { display: block; margin: 1rem 0 0.25rem; }
+    textarea, [contenteditable], #prose { border: 1px solid #444; min-height: 6rem; padding: 0.5rem; white-space: pre-wrap; }
+    #prose { min-height: 8rem; }
+    .count { color: #666; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <p>Local repro for <code>solactl browser fill</code> / <code>type</code> / <code>key</code>.
+     Open this file in sola-browser (background tab). Snapshot, then fill each box
+     with a lyric sheet that has blank lines between stanzas.</p>
+
+  <label for="title">Title (input)</label>
+  <input id="title" role="textbox" aria-label="Title">
+
+  <label for="style">Style (textarea)</label>
+  <textarea id="style" aria-label="Style"></textarea>
+
+  <label>Lyrics (contenteditable)</label>
+  <div id="lyrics" contenteditable="true" role="textbox" aria-label="Lyrics"></div>
+  <p class="count">contenteditable chars: <span id="ce-count">0</span></p>
+
+  <label>Lyrics (ProseMirror-shaped: paste only; textContent writes are reverted)</label>
+  <div id="wrap" role="textbox" aria-label="Custom lyrics">
+    <div id="prose" contenteditable="true"></div>
+  </div>
+  <p class="count">prose chars: <span id="pm-count">0</span> of 5000</p>
+
+  <script>
+    const lyrics = document.getElementById('lyrics');
+    const prose = document.getElementById('prose');
+    const ceCount = document.getElementById('ce-count');
+    const pmCount = document.getElementById('pm-count');
+
+    function countOf(el) { return (el.innerText || '').length; }
+    function refresh() {
+      ceCount.textContent = String(countOf(lyrics));
+      pmCount.textContent = String(countOf(prose));
+    }
+
+    lyrics.addEventListener('input', refresh);
+
+    // ProseMirror stand-in: only `paste` with text/plain (or insertLineBreak
+    // fallback) may change the doc. Direct textContent / innerHTML writes
+    // are reverted — that is what Suno Advanced does to `fill` today.
+    let allowed = '';
+    function snapshot() { allowed = prose.innerHTML; }
+    snapshot();
+    prose.addEventListener('paste', (e) => {
+      const t = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (t == null) return;
+      e.preventDefault();
+      const html = String(t)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\r\n|\n|\r/g, '<br>');
+      allowed = html;
+      prose.innerHTML = html;
+      refresh();
+    });
+    const mo = new MutationObserver(() => {
+      if (prose.innerHTML !== allowed) {
+        prose.innerHTML = allowed;
+      }
+      refresh();
+    });
+    mo.observe(prose, { childList: true, subtree: true, characterData: true });
+    refresh();
+  </script>
+</body>
+</html>

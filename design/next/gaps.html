@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next / Gaps and the ground</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="next.css">
+<script src="next.js"></script>
+<style>
+  .grid3 { display: grid; grid-template-columns: repeat(3, 410px); gap: 20px 33px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 306px); gap: 20px 24px; }
+  .facts { display: grid; grid-template-columns: repeat(3, 410px); gap: 33px; margin-top: 14px; }
+  .facts div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+  .facts .num { font: 400 12px/18px var(--f-spec); color: var(--ink); }
+  .head2 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+  .head2 h4 { font: 600 15px/1.2 var(--f-display); margin: 0; }
+  .rule { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; margin-top: 24px; }
+  .rule div { font: 400 12.5px/19px var(--f-chrome); color: var(--ink-2); }
+  .rule b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 3px; }
+  .rowlabel { font: 400 11px/1 var(--f-spec); color: var(--ink-3); margin: 18px 0 8px; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__eyebrow">NEXT · 02</span><span class="head__title">Gaps and the ground</span></div>
+  <div class="head__lead">Tiles stop meeting edge to edge. One gap sits between every window, around the output, and above and below the islands, so the islands line up with the windows under them. Samples of the gap, the corner, how focus reads across a gap, and what the gaps show.</div>
+</div>
+
+<div class="section">
+  <div class="label">The grid · the desk's top-left corner at 2×</div>
+  <div class="crop" id="grid" style="width:1296px;height:380px"></div>
+  <div class="rule">
+    <div><b>One number</b>The gap is 10 px. It is the margin to every output edge, the space between tiles, and the space above and below the 28 px islands.</div>
+    <div><b>Tiles start at 48</b>Gap, island, gap. Today's bar is 28 px and Islands' band was 40 px; Next spends 48 px, and none of it is a surface.</div>
+    <div><b>Edges agree</b>The flower's left edge is the first tile's left edge; the clock's right edge is the last tile's right edge. The islands are the top row of the same grid.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The gap · three sizes, each at 1:1 · the output's corner, then a seam</div>
+  <div class="grid3" id="gapsize"></div>
+  <div class="facts" id="gapfacts"></div>
+</div>
+
+<div class="section">
+  <div class="label">The corner · a seam at 2× · gap 10</div>
+  <div class="grid4" id="corners"></div>
+</div>
+
+<div class="section">
+  <div class="label">Focus across a gap · Workspaces has focus, Browser does not · 1:1</div>
+  <div class="grid3" id="focus"></div>
+</div>
+
+<div class="section">
+  <div class="label">The ground · what the gaps show</div>
+  <div class="grid3" id="ground"></div>
+</div>
+
+<script>
+  /* A view onto a desk: crop (x, y, w, h) of it, at a scale. */
+  const view = (o, c) => {
+    const s = c.s || 1;
+    return `<div class="crop" style="width:${c.w}px;height:${c.h}px"><div class="desk-wrap" style="position:absolute;left:${-c.x * s}px;top:${-c.y * s}px;transform:scale(${s});transform-origin:0 0">${desk(o)}</div></div>`;
+  };
+  const sample = (title, tag, body, p) => `<div class="sample">
+      <div class="head2"><h4>${title}</h4>${tag ? `<span class="tag${tag.pick ? " is-pick" : ""}">${tag.t}</span>` : ""}</div>
+      ${body}${p ? `<p>${p}</p>` : ""}</div>`;
+
+  /* The grid at 2×, with dimension marks drawn over it. */
+  {
+    const D = { w: 1296, h: 400, top: "corner", float: false, focus: 0 };
+    const html = view(D, { x: 0, y: 0, w: 1296, h: 380, s: 2 });
+    const g = 10, s = 2, seamL = 429, seamR = 439;
+    const marks = [
+      // vertical stack beside the flower: gap, island, gap
+      `<div class="dm dm--v" style="left:${70 * s}px;top:0;height:${g * s}px"><span>10</span></div>`,
+      `<div class="dm dm--v" style="left:${70 * s}px;top:${g * s}px;height:${28 * s}px"><span>28 · island</span></div>`,
+      `<div class="dm dm--v" style="left:${70 * s}px;top:${(g + 28) * s}px;height:${g * s}px"><span>10</span></div>`,
+      // outer gap and the seam
+      `<div class="dm dm--h" style="left:0;top:${150 * s}px;width:${g * s}px"><span style="left:${g * s + 4}px;transform:none">10</span></div>`,
+      `<div class="dm dm--h" style="left:${seamL * s}px;top:${150 * s}px;width:${(seamR - seamL) * s}px"><span>10</span></div>`,
+    ];
+    document.getElementById("grid").outerHTML = `<div style="position:relative;width:1296px;height:380px">${html}${marks.join("")}</div>`;
+  }
+
+  /* Gap sizes */
+  const G = [[6, "TIGHT"], [10, "PROPOSED", true], [16, "AIRY"]];
+  const corner = (g) => view({ w: 2560, h: 1080, gap: g, top: "bubbles", float: false }, { x: 0, y: 0, w: 410, h: 210 });
+  const seam = (g) => {
+    const r = tiles(2560, 1080, 3, g);
+    const mid = Math.round((r[0].x + r[0].w + r[1].x) / 2);
+    return view({ w: 2560, h: 1080, gap: g, top: "hero", float: false }, { x: mid - 205, y: 0, w: 410, h: 210 });
+  };
+  document.getElementById("gapsize").innerHTML =
+    G.map(([g, t, pick]) => sample(`${g} px`, { t, pick }, corner(g))).join("") +
+    G.map(([g]) => seam(g)).join("");
+  const TODAY = 5120 * 2132;
+  document.getElementById("gapfacts").innerHTML = G.map(([g]) => {
+    const w = (5120 - 4 * g) / 3, h = 2160 - (3 * g + 28) - 38;
+    const pct = ((3 * w * h) / TODAY) * 100;
+    return `<div><span class="num">top row ${2 * g + 28} px · tile ${w.toFixed(0)} × ${2160 - (3 * g + 28)}<br>${pct.toFixed(1)}% of today's content area on 5120 × 2160</span><br>${
+      g === 6 ? "Seams read as lines, not space. Islands crowd the windows." :
+      g === 10 ? "The gap reads as ground. Rims and corners have room; the islands sit clear of the titlebars." :
+      "Calm, and every window is a card. 16 px on each side costs most on a split or a quarter."
+    }</div>`;
+  }).join("");
+
+  /* Corners */
+  const R = [[0, "Square", ""], [8, "8 px", ""], [12, "12 px", "PROPOSED"], [14, "14 px", "KIT FLOAT TODAY"]];
+  document.getElementById("corners").innerHTML = R.map(([r, name, tag]) => {
+    const t = tiles(2560, 1080, 3, 10);
+    const mid = Math.round((t[0].x + t[0].w + t[1].x) / 2);
+    return sample(name, tag ? { t: tag, pick: tag === "PROPOSED" } : null,
+      view({ w: 2560, h: 1080, radius: r, top: "none", float: false }, { x: mid - 76, y: 30, w: 306, h: 160, s: 2 }));
+  }).join("");
+
+  /* Focus */
+  const FO = [
+    ["Lit rim", { t: "PROPOSED", pick: true }, "", "A 1 px rim at 18% white and a brighter titlebar. The one-cyan rule holds: no color for focus."],
+    ["Accent ring", { t: "OMARCHY" }, "focus--ring", "A 2 px cyan border, the tiling-WM habit. Unmissable from across the room, and it spends the accent on something that is always true."],
+    ["Dim the rest", null, "focus--dim", "Unfocused windows drop 45% toward the ground. Clearest, but a dimmed terminal you are reading is a cost."],
+  ];
+  document.getElementById("focus").innerHTML = FO.map(([name, tag, cls, p]) => {
+    const t = tiles(2560, 1080, 3, 10);
+    const mid = Math.round((t[0].x + t[0].w + t[1].x) / 2);
+    return sample(name, tag, view({ w: 2560, h: 1080, top: "none", float: false, cls, focus: 0 }, { x: mid - 205, y: 30, w: 410, h: 230 }), p);
+  }).join("");
+
+  /* Ground */
+  const GR = [
+    ["Black", { t: "PROPOSED", pick: true }, "", "#050505, the old bar's black without its blue. The islands' glass reads against it, and a flat ground lets sola-river fake round corners on square apps."],
+    ["Charcoal", null, "desk--charcoal", "#0c0c0c. Softer, but so close to the terminal's #0b0b0b that tiles lose their edge."],
+    ["Wallpaper", null, "desk--wall", "A picture under the gaps. The most personal, and the one that needs real blur before the islands read on it."],
+  ];
+  document.getElementById("ground").innerHTML = GR.map(([name, tag, cls, p]) =>
+    sample(name, tag,
+      view({ w: 2560, h: 1080, cls, top: "bubbles" }, { x: 0, y: 0, w: 410, h: 173, s: 410 / 2560 }) +
+      `<div class="rowlabel">Desk x 0–410 at 1:1</div>` +
+      view({ w: 2560, h: 1080, cls, top: "bubbles" }, { x: 0, y: 0, w: 410, h: 180 }),
+      p)).join("");
+
+  finish();
+</script>
+</body>
+</html>

@@ -11,6 +11,7 @@ use super::client::{
     CardSummary, LoginOutcome, MatchSummary, TotpSummary, TwoFactorKind, VaultError, VaultService,
     VaultStatus,
 };
+use super::edit::ItemDraft;
 use super::item::{IdentityFillMaterial, ItemRecord, ItemSummary};
 use super::passkey::PasskeyCandidate;
 
@@ -73,6 +74,10 @@ pub enum VaultCmd {
         username: String,
         password: String,
         uri: String,
+    },
+    /// Save edits to an existing cipher.
+    UpdateItem {
+        draft: ItemDraft,
     },
     /// List passkeys for a WebAuthn get() RP so chrome can show a picker.
     PasskeyList {
@@ -142,6 +147,8 @@ pub enum VaultEvent {
     Totp(Vec<TotpSummary>),
     Items(Vec<ItemSummary>),
     ItemReady(ItemRecord),
+    /// Cipher saved after an edit.
+    ItemUpdated(ItemRecord),
     IdentityFillReady(IdentityFillMaterial),
     TotpFillReady {
         code: String,
@@ -586,6 +593,25 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     },
                 ),
             },
+            VaultCmd::UpdateItem { draft } => {
+                let id = draft.id.clone();
+                match svc.update_item(draft).await {
+                    Ok(item) => {
+                        crate::vault::VaultPrefs::touch_cipher(&id);
+                        tracing::info!(%id, "vault: item updated");
+                        emit(&event_tx, VaultEvent::ItemUpdated(item));
+                    }
+                    Err(e) => {
+                        tracing::warn!(%id, error = %e, "vault: update item failed");
+                        emit(
+                            &event_tx,
+                            VaultEvent::Error {
+                                message: e.to_string(),
+                            },
+                        );
+                    }
+                }
+            }
             VaultCmd::FillIdentity { id } => match svc.fill_identity(&id).await {
                 Ok(material) => {
                     crate::vault::VaultPrefs::touch_cipher(&id);

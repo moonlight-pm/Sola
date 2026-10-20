@@ -8,6 +8,7 @@ mod rich;
 mod ics;
 mod model;
 mod paths;
+mod reminders;
 mod store;
 mod timeutil;
 mod ui;

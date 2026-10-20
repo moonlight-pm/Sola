@@ -1,18 +1,26 @@
 //! Tokio worker: PKCE, Web API, librespot engine, artwork, MPRIS.
+//!
+//! Web API traffic is budgeted: the shared app's quota is split among every
+//! user of its client id, so pages are reused while fresh, catalogue reads
+//! go through the playback session when it is up (`session_reads`), liked
+//! state comes from the synced `liked.json`, and playback on another device
+//! is polled slowly unless a command or a Connect push says it changed.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use iced::futures::StreamExt;
+use librespot_core::Session;
 use librespot_core::authentication::Credentials;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
-use crate::cache::{self, Liked, Skipped};
+use crate::cache::{Liked, Skipped};
 
 use crate::api::models::*;
-use crate::api::{
-    ApiClient, ApiError, ApiSource, NetActivity, PlayRequest, TokenProvider, WebTokens,
-};
+use crate::api::{ApiClient, ApiError, PlayRequest, TokenProvider, WebTokens, background};
 use crate::auth::{self, Grant, StoredToken};
 use crate::bridge;
 use crate::images::ArtLoader;
@@ -22,17 +30,43 @@ use crate::paths::AppDirs;
 use crate::player::{
     Engine, EngineConfig, EngineEvent, LoadSpec, LocalState, Playback, PlayerCommand, RepeatMode,
 };
+use crate::session_reads::{self, Failure};
 use crate::settings::Settings;
 
 const PREMIUM_NEEDED: &str = "Playing on this computer needs Spotify Premium.";
 const PAGE_SIZE: u32 = 50;
+/// Playlist rows per page when the playback session reads them.
+const SESSION_PAGE_SIZE: u32 = 100;
+/// Playback on another device is polled this often without a session...
+const REMOTE_POLL: Duration = Duration::from_secs(15);
+/// ...and this often with one, whose Connect pushes say when to look sooner.
+const REMOTE_POLL_PUSHED: Duration = Duration::from_secs(60);
+/// After a command to another device, poll quickly for this long so the
+/// result is confirmed.
+const REMOTE_POLL_ACTIVE: Duration = Duration::from_secs(4);
+const REMOTE_COMMAND_WINDOW: Duration = Duration::from_secs(10);
+/// A Connect push is followed by a poll no sooner than this after the last.
+const REMOTE_PUSH_GAP: Duration = Duration::from_secs(2);
+/// Liked Songs are re-synced this often (usually one request).
+const LIKED_REFRESH: Duration = Duration::from_secs(15 * 60);
+/// Library playlists (sidebar, Home, Made for you) stay fresh this long...
+const LIBRARY_FRESH: Duration = Duration::from_secs(10 * 60);
+/// ...or this long when part of the read failed.
+const LIBRARY_RETRY: Duration = Duration::from_secs(60);
+/// Playlists read from the Web API when the playback session cannot answer.
+const LIBRARY_MAX: u32 = 200;
+/// A read that prefers the playback session waits this long for it to
+/// finish connecting before asking the Web API.
+const SESSION_WAIT: Duration = Duration::from_secs(6);
+/// Cached page files untouched this long are pruned at startup.
+const PAGE_CACHE_LIMIT: u64 = 64 * 1024 * 1024;
+const PAGE_CACHE_TARGET: u64 = 48 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AuthStatus {
     Starting,
     SignedOut,
     WaitingForBrowser { url: String },
-    Connecting,
     Connected { username: String },
     Failed(String),
 }
@@ -123,6 +157,19 @@ impl Page {
     pub fn persist_as_last(&self) -> bool {
         !matches!(self, Page::Search | Page::Queue | Page::Settings)
     }
+
+    /// How long a fetched page is shown again without asking Spotify.
+    /// Back/Forward and revisits inside this window cost no request.
+    fn fresh_for(&self) -> Duration {
+        const MINUTE: u64 = 60;
+        Duration::from_secs(match self {
+            Page::Home | Page::MadeForYou | Page::Albums | Page::Artists => 10 * MINUTE,
+            Page::Liked | Page::Playlist(_) | Page::Search => 5 * MINUTE,
+            Page::Artist(_) => 60 * MINUTE,
+            Page::Album(_) => 6 * 60 * MINUTE,
+            Page::Queue | Page::Settings => 0,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,7 +193,12 @@ pub enum PageBody {
         context_uri: Option<String>,
         items: Vec<Track>,
         total: u32,
+        /// Where this chunk of rows starts.
         offset: u32,
+        /// Where the next chunk starts, while rows remain. Rows Spotify
+        /// returns empty are dropped, so this is not `offset + items.len()`.
+        #[serde(default)]
+        next: Option<u32>,
         /// Set when this collection is an album page (Save / Follow chrome).
         #[serde(default)]
         album: Option<Album>,
@@ -155,6 +207,8 @@ pub enum PageBody {
         items: Vec<Album>,
         total: u32,
         offset: u32,
+        #[serde(default)]
+        next: Option<u32>,
     },
     Artists {
         items: Vec<Artist>,
@@ -192,7 +246,7 @@ pub struct NowPlaying {
     pub saved: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FavoriteKind {
     Album,
     Artist,
@@ -204,7 +258,6 @@ pub enum Cmd {
     CancelSignIn,
     SignOut,
     AuthorizePlayback,
-    Player(PlayerCommand),
     Play {
         request: PlayRequest,
         device_id: Option<String>,
@@ -214,8 +267,14 @@ pub enum Cmd {
         play: bool,
     },
     Open(Page),
+    /// Open `page` asking Spotify again even while it is fresh.
+    Refresh(Page),
     Search(String),
-    LoadMore,
+    /// The next page of `page`, starting at `offset` (the rows already shown).
+    LoadMore {
+        page: Page,
+        offset: u32,
+    },
     FetchArt(String),
     SetSaved {
         uri: String,
@@ -239,9 +298,7 @@ pub enum Cmd {
         name: String,
         uris: Vec<String>,
     },
-    RefreshPlayback,
     RefreshDevices,
-    SaveSettings(Settings),
     Media(MediaCommand),
     Shutdown,
 }
@@ -262,10 +319,14 @@ pub enum Event {
         url: String,
         bytes: Arc<[u8]>,
     },
+    /// The cover could not be loaded; the UI may ask again later.
+    ArtFailed(String),
     Saved {
         uri: String,
         saved: bool,
     },
+    /// Liked state for a batch of tracks, as one update.
+    SavedMany(Vec<(String, bool)>),
     Favorite {
         kind: FavoriteKind,
         id: String,
@@ -306,21 +367,290 @@ enum Internal {
     /// `/me` said the grant is dead; do not keep polling.
     ProfileFailed,
     /// Check that a Load after reconnect (or a click) actually started.
-    VerifyResume,
+    /// Only the latest arm's generation counts.
+    VerifyResume(u64),
+    /// A page loaded; reuse it while fresh.
+    PageFetched(Page),
+    /// The playback poll answered: what plays on another device, if anything.
+    RemoteState(Option<NowPlaying>),
+    /// The playback poll failed; poll again on schedule.
+    RemoteFailed,
+    /// Spotify Connect pushed a cluster change: something played, paused, or
+    /// moved on some device.
+    ClusterChanged,
+    /// Liked Songs as Spotify has them now.
+    LikedSynced(HashSet<String>),
+    LikedSyncEnded,
 }
 
-pub fn start() {
+/// The playback session, shared with spawned reads. Reads that prefer it
+/// wait briefly while the engine is still connecting.
+#[derive(Clone)]
+struct SessionSlot {
+    session: Arc<watch::Sender<Option<Session>>>,
+    connecting: Arc<AtomicBool>,
+    /// The session's Connect cluster pushes are subscribed and flowing.
+    pushes: Arc<AtomicBool>,
+}
+
+impl SessionSlot {
+    fn new() -> Self {
+        Self {
+            session: Arc::new(watch::channel(None).0),
+            connecting: Arc::new(AtomicBool::new(false)),
+            pushes: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn set(&self, session: Option<Session>) {
+        if session.is_none() {
+            self.pushes.store(false, Ordering::SeqCst);
+        }
+        self.session.send_replace(session);
+    }
+
+    fn set_connecting(&self, connecting: bool) {
+        self.connecting.store(connecting, Ordering::SeqCst);
+        if !connecting {
+            // Wake waiters so a failed connect does not hold them.
+            self.session.send_modify(|_| {});
+        }
+    }
+
+    fn pushes(&self) -> bool {
+        self.pushes.load(Ordering::SeqCst)
+    }
+
+    async fn wait(&self) -> Option<Session> {
+        let mut changes = self.session.subscribe();
+        let ready = async {
+            loop {
+                if let Some(session) = changes.borrow_and_update().clone() {
+                    return Some(session);
+                }
+                if !self.connecting.load(Ordering::SeqCst) {
+                    return None;
+                }
+                if changes.changed().await.is_err() {
+                    return None;
+                }
+            }
+        };
+        tokio::time::timeout(SESSION_WAIT, ready)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
+/// Library playlists, read at most once at a time and reused while fresh,
+/// so Home, Made for you, and the sidebar share one fetch.
+#[derive(Default)]
+struct Library {
+    lists: tokio::sync::Mutex<Option<HeldLibrary>>,
+    /// Spotify's Made For You category refused this app (403/404); stop asking.
+    no_made_for_you: AtomicBool,
+}
+
+struct HeldLibrary {
+    at: Instant,
+    lists: Vec<Playlist>,
+    /// Every part of the read answered. A partial list is held only until a
+    /// retry, and never replaces a complete one.
+    complete: bool,
+}
+
+impl HeldLibrary {
+    fn fresh(&self) -> bool {
+        let keep = if self.complete {
+            LIBRARY_FRESH
+        } else {
+            LIBRARY_RETRY
+        };
+        self.at.elapsed() < keep
+    }
+}
+
+impl Library {
+    async fn playlists(
+        &self,
+        api: &ApiClient,
+        session: &SessionSlot,
+        force: bool,
+    ) -> Vec<Playlist> {
+        let mut held = self.lists.lock().await;
+        if !force
+            && let Some(library) = held.as_ref()
+            && library.fresh()
+        {
+            return library.lists.clone();
+        }
+        let (lists, complete) = self.fetch(api, session).await;
+        let keep_old = held
+            .as_ref()
+            .is_some_and(|old| lists.is_empty() || (!complete && old.complete));
+        // A failed or partial read (rate limit, no session) must not replace
+        // a good list; a stale one is read again on the next visit.
+        if keep_old && let Some(old) = held.as_ref() {
+            return old.lists.clone();
+        }
+        if !lists.is_empty() {
+            *held = Some(HeldLibrary {
+                at: Instant::now(),
+                lists: lists.clone(),
+                complete,
+            });
+        }
+        lists
+    }
+
+    /// The library and whether every part of the read answered.
+    async fn fetch(&self, api: &ApiClient, session: &SessionSlot) -> (Vec<Playlist>, bool) {
+        let from_session = async {
+            let session = session.wait().await?;
+            match session_reads::within(session_reads::library(&session)).await {
+                Ok(lists) => Some(lists),
+                Err(failure) => {
+                    tracing::info!("library over the playback session: {failure}");
+                    None
+                }
+            }
+        };
+        let made = async {
+            if self.no_made_for_you.load(Ordering::SeqCst) {
+                return (Vec::new(), true);
+            }
+            match background(api.made_for_you()).await {
+                Ok(lists) => (lists, true),
+                Err(error) => {
+                    let refused = matches!(error.status(), Some(403 | 404));
+                    if refused {
+                        self.no_made_for_you.store(true, Ordering::SeqCst);
+                    }
+                    tracing::debug!("made for you: {error}");
+                    (Vec::new(), refused)
+                }
+            }
+        };
+        let (from_session, (made, made_complete)) = tokio::join!(from_session, made);
+        let (mine, mine_complete) = match from_session {
+            Some(lists) => (lists, true),
+            None => web_library(api).await,
+        };
+        (
+            Worker::merge_playlists(mine, made),
+            mine_complete && made_complete,
+        )
+    }
+
+    /// Puts a playlist this app just made at the top without a refetch.
+    async fn add_front(&self, playlist: Playlist) -> Option<Vec<Playlist>> {
+        let mut held = self.lists.lock().await;
+        let library = held.as_mut()?;
+        library.lists.retain(|existing| existing.id != playlist.id);
+        library.lists.insert(0, playlist);
+        Some(library.lists.clone())
+    }
+
+    async fn clear(&self) {
+        *self.lists.lock().await = None;
+    }
+}
+
+/// The account's playlists from the Web API, a page at a time, and whether
+/// every page answered.
+async fn web_library(api: &ApiClient) -> (Vec<Playlist>, bool) {
+    let mut lists = Vec::new();
+    let mut offset = 0_u32;
+    while offset < LIBRARY_MAX {
+        match api.my_playlists(offset, PAGE_SIZE).await {
+            Ok(page) => {
+                let next = page.next_offset();
+                lists.extend(page.items);
+                match next {
+                    Some(next) if next > offset => offset = next,
+                    _ => return (lists, true),
+                }
+            }
+            Err(error) => {
+                tracing::debug!("library playlists: {error}");
+                return (lists, false);
+            }
+        }
+    }
+    (lists, true)
+}
+
+/// When the playback poll is next due. `command_at` is the last command to
+/// another device; `pushed` means a Connect push arrived since the last
+/// poll; `pushes` means the session delivers them at all; `playing` is the
+/// remote song's `(position, duration)` at the last poll.
+fn remote_poll_due(
+    polled_at: Option<Instant>,
+    command_at: Option<Instant>,
+    pushed: bool,
+    pushes: bool,
+    playing: Option<(u32, u32)>,
+    now: Instant,
+) -> bool {
+    let Some(polled_at) = polled_at else {
+        return true;
+    };
+    let elapsed = now.saturating_duration_since(polled_at);
+    let commanded =
+        command_at.is_some_and(|at| now.saturating_duration_since(at) < REMOTE_COMMAND_WINDOW);
+    let interval = if commanded {
+        REMOTE_POLL_ACTIVE
+    } else if pushes {
+        REMOTE_POLL_PUSHED
+    } else {
+        REMOTE_POLL
+    };
+    if elapsed >= interval || (pushed && elapsed >= REMOTE_PUSH_GAP) {
+        return true;
+    }
+    // Without pushes, look once just after the remote song should end.
+    if !pushes && let Some((position, duration)) = playing.filter(|(_, duration)| *duration > 0) {
+        let left = Duration::from_millis(u64::from(duration.saturating_sub(position)) + 1_000);
+        return elapsed >= left.max(REMOTE_POLL_ACTIVE);
+    }
+    false
+}
+
+/// Whether an incremental Liked Songs read has seen enough. Spotify lists
+/// the newest likes first: once a whole page is songs already known and the
+/// known songs plus the new ones add up to Spotify's total, nothing older
+/// can have changed. Returns the settled set.
+fn liked_settled(
+    known: &HashSet<String>,
+    seen: &[String],
+    page_all_known: bool,
+    total: u32,
+) -> Option<HashSet<String>> {
+    if known.is_empty() || !page_all_known {
+        return None;
+    }
+    let merged: HashSet<String> = known.iter().chain(seen).cloned().collect();
+    (merged.len() == total as usize).then_some(merged)
+}
+
+/// Starts the worker thread. The receiver hears once the worker has shut
+/// down (local playback unregistered), so `main` can wait for it on quit.
+pub fn start() -> std::sync::mpsc::Receiver<()> {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("sola-spotify-worker".into())
-        .spawn(|| {
+        .spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("sola-spotify-rt")
                 .build()
                 .expect("spotify tokio runtime");
             rt.block_on(run());
+            let _ = done_tx.send(());
         })
         .expect("spawn spotify worker");
+    done_rx
 }
 
 async fn run() {
@@ -335,15 +665,16 @@ async fn run() {
         .user_agent("sola-spotify/0.1")
         .build()
         .expect("http client");
-    let activity = Arc::new(NetActivity::default());
-    let api = Arc::new(ApiClient::new(
-        http.clone(),
-        activity,
-        20,
-        50,
-        ApiSource::Shared,
-    ));
+    let api = Arc::new(ApiClient::new(http.clone(), 20, 50));
     let art = ArtLoader::new(http.clone(), dirs.art_cache_dir());
+    {
+        let art = art.clone();
+        let pages = dirs.page_cache_dir();
+        tokio::task::spawn_blocking(move || {
+            art.prune_disk();
+            crate::images::prune_dir(&pages, PAGE_CACHE_LIMIT, PAGE_CACHE_TARGET);
+        });
+    }
 
     let (int_tx, mut int_rx) = mpsc::unbounded_channel::<Internal>();
     let std_rx = bridge::take_cmd_rx();
@@ -361,9 +692,27 @@ async fn run() {
     // would otherwise ready-spin the worker loop.
     let mut mpris_commands = true;
 
+    let liked = Liked::load(&dirs);
     let mut worker = Worker {
         skipped: Skipped::load(&dirs),
-        liked: Liked::load(&dirs),
+        // A liked set from the last run is good enough to mark rows at once;
+        // the sync shortly after start corrects it in (usually) one request.
+        liked_ready: Arc::new(AtomicBool::new(!liked.uris.is_empty())),
+        liked,
+        liked_synced_at: None,
+        liked_syncing: false,
+        session: SessionSlot::new(),
+        library: Arc::new(Library::default()),
+        fetched: HashMap::new(),
+        favorites: Arc::default(),
+        search_gen: Arc::new(AtomicU64::new(0)),
+        last_search: None,
+        remote: None,
+        remote_polled_at: None,
+        remote_inflight: false,
+        remote_command_at: None,
+        remote_pushed: false,
+        resume_gen: 0,
         dirs,
         settings,
         http,
@@ -375,6 +724,7 @@ async fn run() {
         signed_in: false,
         premium: None,
         user: None,
+        profile_fresh: false,
         profile_inflight: false,
         profile_retry_at: None,
         cancel_signin: None,
@@ -389,11 +739,6 @@ async fn run() {
         hold: std::sync::Arc::new(std::sync::Mutex::new(EngineHold::default())),
         last_engine_uri: None,
         now: NowPlaying::default(),
-        devices: Vec::new(),
-        last_devices_at: Instant::now(),
-        page: Page::Home,
-        page_offset: 0,
-        page_total: 0,
         search_query: String::new(),
     };
 
@@ -414,6 +759,8 @@ async fn run() {
             internal = int_rx.recv() => {
                 let Some(internal) = internal else { break; };
                 worker.handle_internal(internal).await;
+                // A Connect push or a command can make a poll due at once.
+                worker.poll_remote_if_due().await;
             }
             // Media keys used to drain only on the 2s playback poll.
             media = media_rx.recv(), if mpris_commands => {
@@ -432,8 +779,10 @@ async fn run() {
         }
         mpris.update(worker.media_state());
     }
+    // Unregister this Connect device before the process goes, so it does
+    // not linger in other apps' device lists.
     if let Some(engine) = worker.engine.take() {
-        engine.shutdown();
+        engine.shutdown_wait().await;
     }
 }
 
@@ -443,12 +792,36 @@ struct Worker {
     http: reqwest::Client,
     api: Arc<ApiClient>,
     art: ArtLoader,
+    session: SessionSlot,
+    library: Arc<Library>,
+    /// When each page last loaded; reused while `Page::fresh_for` allows.
+    fetched: HashMap<Page, Instant>,
+    /// Album saved / artist followed answers, kept for the session.
+    favorites: Arc<std::sync::Mutex<HashMap<(FavoriteKind, String), bool>>>,
+    /// Bumped per search, so a slow older answer never replaces a newer one.
+    search_gen: Arc<AtomicU64>,
+    last_search: Option<(String, Instant)>,
+    /// Playback on another device, from the last poll.
+    remote: Option<NowPlaying>,
+    remote_polled_at: Option<Instant>,
+    remote_inflight: bool,
+    remote_command_at: Option<Instant>,
+    /// A Connect push arrived since the last poll.
+    remote_pushed: bool,
+    /// Generation of the latest `arm_resume`; older verify timers are ignored.
+    resume_gen: u64,
+    /// The liked set is complete enough to mark rows without asking Spotify.
+    liked_ready: Arc<AtomicBool>,
+    liked_synced_at: Option<Instant>,
+    liked_syncing: bool,
     int_tx: mpsc::UnboundedSender<Internal>,
     engine: Option<Engine>,
     engine_busy: bool,
     signed_in: bool,
     premium: Option<bool>,
     user: Option<User>,
+    /// A profile arrived since sign-in; `user` may only be last run's.
+    profile_fresh: bool,
     profile_inflight: bool,
     profile_retry_at: Option<Instant>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -468,11 +841,6 @@ struct Worker {
     hold: std::sync::Arc<std::sync::Mutex<EngineHold>>,
     last_engine_uri: Option<String>,
     now: NowPlaying,
-    devices: Vec<Device>,
-    last_devices_at: Instant,
-    page: Page,
-    page_offset: u32,
-    page_total: u32,
     search_query: String,
 }
 
@@ -496,10 +864,7 @@ impl Worker {
 
     fn restore_session(&mut self) {
         match StoredToken::load(&self.dirs.shared_web_token_file()) {
-            Some(token) if token.has_scopes(auth::WEB_SCOPES) => {
-                bridge::emit(Event::Auth(AuthStatus::Connecting));
-                self.on_web_signed_in(token);
-            }
+            Some(token) if token.has_scopes(auth::WEB_SCOPES) => self.on_web_signed_in(token),
             Some(_) => bridge::emit(Event::Auth(AuthStatus::Failed(
                 "Spotify permissions changed. Sign in again.".into(),
             ))),
@@ -508,26 +873,37 @@ impl Worker {
     }
 
     fn on_web_signed_in(&mut self, token: StoredToken) {
-        let tokens = WebTokens::new(
-            self.http.clone(),
-            token,
-            self.dirs.shared_web_token_file(),
-            ApiSource::Shared,
-        );
+        let tokens = WebTokens::new(self.http.clone(), token, self.dirs.shared_web_token_file());
         self.api
             .set_token_provider(Some(TokenProvider::Web(tokens)));
-        self.refresh_me();
         self.signed_in = true;
+        // The app opens on the saved token and last run's profile: waiting
+        // on `/me` held sign-in for a minute while the shared app was 429ing.
+        self.profile_fresh = false;
+        if self.user.is_none() {
+            self.user = crate::cache::read_json(&self.dirs.profile_file());
+        }
+        if let Some(user) = &self.user {
+            self.premium = user.product.as_deref().map(|p| p == "premium");
+            bridge::emit(Event::User(user.clone()));
+            bridge::emit(Event::Premium(self.premium));
+        }
+        bridge::emit(Event::Auth(AuthStatus::Connected {
+            username: self.user.as_ref().map_or("Spotify", User::name).to_string(),
+        }));
         self.resume_engine();
+        // A starting session brings the profile itself.
+        if !self.engine_busy {
+            self.refresh_me();
+        }
         if !self.liked.uris.is_empty() {
             bridge::emit(Event::Liked(self.liked.uris.iter().cloned().collect()));
         }
         let last = Page::decode(&self.settings.last_page).unwrap_or(Page::Home);
         self.open(last);
-        self.refresh_library_playlists();
-        self.refresh_devices();
+        self.refresh_library_playlists(false);
         self.refresh_playback();
-        self.refresh_liked();
+        self.sync_liked(Duration::from_millis(1_200));
     }
 
     async fn handle(&mut self, cmd: Cmd) {
@@ -543,15 +919,28 @@ impl Worker {
             }
             Cmd::SignOut => self.sign_out(),
             Cmd::AuthorizePlayback => self.authorize_playback(),
-            Cmd::Player(command) => self.player(command),
             Cmd::Play { request, device_id } => self.play(request, device_id).await,
             Cmd::Transfer { device_id, play } => self.transfer(device_id, play).await,
             Cmd::Open(page) => self.open(page),
+            Cmd::Refresh(page) => {
+                self.fetched.remove(&page);
+                match page {
+                    // The library is re-read in the spawned load; taking its
+                    // lock here would hold the loop for the whole fetch.
+                    Page::Home => self.load_home(true),
+                    Page::MadeForYou => self.load_made_for_you(true),
+                    Page::Search => {
+                        self.last_search = None;
+                        self.open(page);
+                    }
+                    page => self.open(page),
+                }
+            }
             Cmd::Search(query) => {
                 self.search_query = query;
                 self.open(Page::Search);
             }
-            Cmd::LoadMore => self.load_more(),
+            Cmd::LoadMore { page, offset } => self.load_more(page, offset),
             Cmd::FetchArt(url) => self.fetch_art(url),
             Cmd::SetSaved { uri, saved } => self.set_saved(uri, saved),
             Cmd::SetFavorite { kind, id, saved } => self.set_favorite(kind, id, saved),
@@ -562,16 +951,7 @@ impl Worker {
                 uris,
             } => self.add_to_playlist(playlist_id, name, uris),
             Cmd::CreatePlaylist { name, uris } => self.create_playlist(name, uris),
-            Cmd::RefreshPlayback => self.refresh_playback(),
             Cmd::RefreshDevices => self.refresh_devices(),
-            Cmd::SaveSettings(settings) => {
-                settings.save(&self.dirs);
-                self.settings = settings.clone();
-                bridge::emit(Event::Settings(settings));
-                if self.engine.is_some() {
-                    self.reconnect_engine().await;
-                }
-            }
             Cmd::Media(command) => self.media(command).await,
             Cmd::Shutdown => {}
         }
@@ -592,10 +972,17 @@ impl Worker {
             }
             Internal::EngineConnected { engine, error } => {
                 self.engine_busy = false;
+                self.session
+                    .set(engine.as_ref().map(crate::player::Engine::session));
+                self.session.set_connecting(false);
                 match (engine, error) {
                     (Some(engine), _) => {
                         let device_id = engine.device_id().to_string();
                         tracing::info!(device_id = %device_id, "local playback ready");
+                        self.watch_cluster(engine.session());
+                        if !self.profile_fresh {
+                            self.read_profile(engine.session());
+                        }
                         self.reconnects.clear();
                         let pending = self.pending_play.take();
                         let spec = if let Some(request) = pending {
@@ -619,11 +1006,13 @@ impl Worker {
                         self.resume = None;
                         self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(error)));
+                        self.refresh_me();
                     }
                     _ => {
                         self.resume = None;
                         self.resume_verify = None;
                         bridge::emit(Event::LocalPlayback(LocalPlayback::Unavailable));
+                        self.refresh_me();
                     }
                 }
             }
@@ -636,7 +1025,26 @@ impl Worker {
                 self.profile_inflight = false;
                 self.profile_retry_at = Some(Instant::now() + Duration::from_secs(300));
             }
-            Internal::VerifyResume => self.verify_resume(),
+            Internal::VerifyResume(generation) => {
+                if generation == self.resume_gen {
+                    self.verify_resume();
+                }
+            }
+            Internal::PageFetched(page) => self.on_page_fetched(page),
+            Internal::RemoteState(now) => self.on_remote_state(now),
+            Internal::RemoteFailed => self.remote_inflight = false,
+            Internal::ClusterChanged => self.remote_pushed = true,
+            Internal::LikedSynced(uris) => {
+                self.liked_syncing = false;
+                self.liked_ready.store(true, Ordering::SeqCst);
+                if uris != self.liked.uris {
+                    self.liked.uris = uris;
+                    self.liked.save(&self.dirs);
+                    self.fetched.remove(&Page::Liked);
+                    bridge::emit(Event::Liked(self.liked.uris.iter().cloned().collect()));
+                }
+            }
+            Internal::LikedSyncEnded => self.liked_syncing = false,
         }
     }
 
@@ -688,8 +1096,10 @@ impl Worker {
         self.signed_in = false;
         self.user = None;
         self.premium = None;
+        self.profile_fresh = false;
         self.profile_inflight = false;
         self.profile_retry_at = None;
+        let _ = std::fs::remove_file(self.dirs.profile_file());
         self.resume_verify = None;
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
@@ -698,6 +1108,17 @@ impl Worker {
             let _ = cancel.send(true);
         }
         self.api.set_token_provider(None);
+        self.session.set(None);
+        self.session.set_connecting(false);
+        self.fetched.clear();
+        self.favorites
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.remote = None;
+        self.last_search = None;
+        let library = Arc::clone(&self.library);
+        tokio::spawn(async move { library.clear().await });
         StoredToken::remove(&self.dirs.shared_web_token_file());
         let _ = std::fs::remove_file(self.dirs.credentials_dir().join("credentials.json"));
         self.pending_play = None;
@@ -771,6 +1192,7 @@ impl Worker {
             return;
         }
         self.resume_verify = None;
+        self.session.set(None);
         if let Some(engine) = self.engine.take() {
             self.resume = engine.interrupted().map(|interrupted| LoadSpec {
                 uris: vec![interrupted.uri],
@@ -810,6 +1232,7 @@ impl Worker {
         }
         self.cancel_signin = None;
         self.engine_busy = true;
+        self.session.set_connecting(true);
         bridge::emit(Event::LocalPlayback(LocalPlayback::Connecting));
         let config = self.engine_config();
         let int_tx = self.int_tx.clone();
@@ -821,7 +1244,13 @@ impl Worker {
                     if !hold_allows(&hold, &state) {
                         return;
                     }
-                    apply_local_state(state.clone());
+                    // While another device has playback, the poll of that
+                    // device owns the player bar.
+                    if state.connect_active {
+                        apply_local_state(state.clone());
+                    } else if let Some(error) = state.error.clone() {
+                        bridge::emit(Event::Error(error));
+                    }
                     let _ = int_tx.send(Internal::EngineState(state));
                 }
                 EngineEvent::SessionEnded => {
@@ -926,7 +1355,7 @@ impl Worker {
         }
     }
 
-    async fn transfer(&self, device_id: String, play: bool) {
+    async fn transfer(&mut self, device_id: String, play: bool) {
         if let Some(engine) = &self.engine
             && engine.device_id() == device_id
         {
@@ -936,6 +1365,7 @@ impl Worker {
             }
             return;
         }
+        self.remote_command_at = Some(Instant::now());
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             if let Err(error) = api.transfer(&device_id, play).await {
@@ -944,13 +1374,15 @@ impl Worker {
         });
     }
 
+    /// Loads `page` unless it loaded recently: the UI already shows what it
+    /// holds, so a revisit inside `Page::fresh_for` costs no request.
     fn open(&mut self, page: Page) {
-        self.page = page.clone();
-        self.page_offset = 0;
-        self.emit_cached(&page);
+        if self.is_fresh(&page) {
+            return;
+        }
         match &page {
-            Page::Home => self.load_home(),
-            Page::MadeForYou => self.load_made_for_you(),
+            Page::Home => self.load_home(false),
+            Page::MadeForYou => self.load_made_for_you(false),
             Page::Search => self.load_search(),
             Page::Liked => self.load_liked(0),
             Page::Albums => self.load_albums(0),
@@ -968,41 +1400,48 @@ impl Worker {
         }
     }
 
-    fn emit_cached(&self, page: &Page) {
-        let Some(key) = page.cache_key() else {
-            return;
-        };
-        let path = self.dirs.page_cache_dir().join(format!("{key}.json"));
-        if let Some(body) = cache::read_json::<PageBody>(&path) {
-            bridge::emit(Event::Page {
-                page: page.clone(),
-                body,
+    fn is_fresh(&self, page: &Page) -> bool {
+        if *page == Page::Search {
+            return self.last_search.as_ref().is_some_and(|(query, at)| {
+                query == self.search_query.trim() && at.elapsed() < page.fresh_for()
             });
+        }
+        self.fetched
+            .get(page)
+            .is_some_and(|at| at.elapsed() < page.fresh_for())
+    }
+
+    fn on_page_fetched(&mut self, page: Page) {
+        if page == Page::Search {
+            self.last_search = Some((self.search_query.trim().to_string(), Instant::now()));
+        } else {
+            self.fetched.insert(page, Instant::now());
         }
     }
 
-    fn load_more(&mut self) {
-        if self.page_offset + PAGE_SIZE >= self.page_total && self.page_total > 0 {
-            return;
-        }
-        let next = self.page_offset + PAGE_SIZE;
-        match self.page.clone() {
-            Page::Liked => self.load_liked(next),
-            Page::Albums => self.load_albums(next),
-            Page::Playlist(id) => self.load_playlist(id, next),
+    fn load_more(&mut self, page: Page, offset: u32) {
+        match page {
+            Page::Liked => self.load_liked(offset),
+            Page::Albums => self.load_albums(offset),
+            Page::Playlist(id) => self.load_playlist(id, offset),
             _ => {}
         }
     }
 
-    fn load_home(&self) {
+    fn load_home(&self, fresh_library: bool) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let library = Arc::clone(&self.library);
+        let liked_ready = Arc::clone(&self.liked_ready);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             let (recent, playlists, top_artists, top_tracks) = tokio::join!(
                 api.recently_played(20, None, None),
-                Worker::library_playlists_fast(&api),
+                library.playlists(&api, &session, fresh_library),
                 api.top_artists("medium_term", 12),
                 api.top_tracks("medium_term", 10, 0),
             );
+            let complete = recent.is_ok() && top_artists.is_ok() && top_tracks.is_ok();
             let recent = match recent {
                 Ok(page) => page.items.into_iter().map(|h| h.track).collect(),
                 Err(error) => {
@@ -1027,14 +1466,18 @@ impl Worker {
                     top_tracks,
                 },
             });
-            Worker::emit_contains(Arc::clone(&api), like_uris);
-            Worker::library_playlists_rest(api, playlists).await;
+            if !playlists.is_empty() {
+                bridge::emit(Event::Playlists(playlists));
+            }
+            if complete {
+                let _ = int_tx.send(Internal::PageFetched(Page::Home));
+            }
+            Worker::emit_contains(api, &liked_ready, like_uris);
         });
     }
 
     fn merge_playlists(mut into: Vec<Playlist>, extra: Vec<Playlist>) -> Vec<Playlist> {
-        let mut seen: std::collections::HashSet<String> =
-            into.iter().map(|p| p.id.clone()).collect();
+        let mut seen: HashSet<String> = into.iter().map(|p| p.id.clone()).collect();
         for playlist in extra {
             if seen.insert(playlist.id.clone()) {
                 into.push(playlist);
@@ -1043,48 +1486,26 @@ impl Worker {
         into
     }
 
-    async fn library_playlists_fast(api: &ApiClient) -> Vec<Playlist> {
-        let (mine, extra) =
-            tokio::join!(api.my_playlists(0, 50), async { api.made_for_you().await });
-        let mine = mine.map(|page| page.items).unwrap_or_default();
-        Worker::merge_playlists(mine, extra)
-    }
-
-    async fn library_playlists_rest(api: Arc<ApiClient>, first: Vec<Playlist>) {
-        let mut playlists = first;
-        let mut offset = 50_u32;
-        for _ in 0..3 {
-            match api.my_playlists(offset, 50).await {
-                Ok(page) => {
-                    let n = page.items.len() as u32;
-                    if n == 0 {
-                        break;
-                    }
-                    playlists = Worker::merge_playlists(playlists, page.items);
-                    offset += 50;
-                    if n < 50 || page.next.is_none() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        bridge::emit(Event::Playlists(playlists));
-    }
-
-    fn refresh_library_playlists(&self) {
+    fn refresh_library_playlists(&self, force: bool) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let library = Arc::clone(&self.library);
         tokio::spawn(async move {
-            let first = Worker::library_playlists_fast(&api).await;
-            bridge::emit(Event::Playlists(first.clone()));
-            Worker::library_playlists_rest(api, first).await;
+            let playlists = library.playlists(&api, &session, force).await;
+            if !playlists.is_empty() {
+                bridge::emit(Event::Playlists(playlists));
+            }
         });
     }
 
-    fn load_made_for_you(&self) {
+    fn load_made_for_you(&self, fresh_library: bool) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let library = Arc::clone(&self.library);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
-            let playlists = Worker::library_playlists_fast(&api).await;
+            let playlists = library.playlists(&api, &session, fresh_library).await;
+            let found = !playlists.is_empty();
             bridge::emit(Event::Page {
                 page: Page::MadeForYou,
                 body: PageBody::Playlists {
@@ -1093,7 +1514,11 @@ impl Worker {
                     items: playlists.clone(),
                 },
             });
-            Worker::library_playlists_rest(api, playlists).await;
+            // An empty answer may be a failed read: show it, ask again next time.
+            if found {
+                bridge::emit(Event::Playlists(playlists));
+                let _ = int_tx.send(Internal::PageFetched(Page::MadeForYou));
+            }
         });
     }
 
@@ -1106,15 +1531,23 @@ impl Worker {
             });
             return;
         }
+        let generation = self.search_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let search_gen = Arc::clone(&self.search_gen);
         let api = Arc::clone(&self.api);
+        let liked_ready = Arc::clone(&self.liked_ready);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
-            match api
+            let result = api
                 .search(
                     &query,
                     &["track", "artist", "album", "playlist", "show", "episode"],
                 )
-                .await
-            {
+                .await;
+            // A newer search started while this one waited: its answer wins.
+            if search_gen.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            match result {
                 Ok(results) => {
                     let like_uris: Vec<String> = results
                         .tracks
@@ -1131,18 +1564,21 @@ impl Worker {
                         page: Page::Search,
                         body: PageBody::Search(results),
                     });
-                    Worker::emit_contains(api, like_uris);
+                    let _ = int_tx.send(Internal::PageFetched(Page::Search));
+                    Worker::emit_contains(api, &liked_ready, like_uris);
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
     }
 
-    fn load_liked(&mut self, offset: u32) {
+    fn load_liked(&self, offset: u32) {
         let api = Arc::clone(&self.api);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             match api.saved_tracks(offset, PAGE_SIZE).await {
                 Ok(page) => {
+                    let next = page.next_offset();
                     let items: Vec<Track> = page
                         .items
                         .into_iter()
@@ -1154,14 +1590,13 @@ impl Worker {
                             track
                         })
                         .collect();
-                    for track in &items {
-                        if !track.uri.is_empty() {
-                            bridge::emit(Event::Saved {
-                                uri: track.uri.clone(),
-                                saved: true,
-                            });
-                        }
-                    }
+                    bridge::emit(Event::SavedMany(
+                        items
+                            .iter()
+                            .filter(|track| !track.uri.is_empty())
+                            .map(|track| (track.uri.clone(), true))
+                            .collect(),
+                    ));
                     bridge::emit(Event::Page {
                         page: Page::Liked,
                         body: PageBody::Tracks {
@@ -1179,122 +1614,147 @@ impl Worker {
                             items,
                             total: page.total,
                             offset: page.offset,
+                            next,
                             album: None,
                         },
                     });
+                    if offset == 0 {
+                        let _ = int_tx.send(Internal::PageFetched(Page::Liked));
+                    }
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
-        self.page_offset = offset;
     }
 
-    fn load_albums(&mut self, offset: u32) {
+    fn load_albums(&self, offset: u32) {
         let api = Arc::clone(&self.api);
+        let favorites = Arc::clone(&self.favorites);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             match api.saved_albums(offset, PAGE_SIZE).await {
                 Ok(page) => {
+                    let next = page.next_offset();
                     let items: Vec<Album> = page.items.into_iter().map(|s| s.album).collect();
+                    remember_favorites(
+                        &favorites,
+                        FavoriteKind::Album,
+                        items.iter().filter_map(Album::catalog_id),
+                    );
                     bridge::emit(Event::Page {
                         page: Page::Albums,
                         body: PageBody::Albums {
                             items,
                             total: page.total,
                             offset: page.offset,
+                            next,
                         },
                     });
+                    if offset == 0 {
+                        let _ = int_tx.send(Internal::PageFetched(Page::Albums));
+                    }
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
-        self.page_offset = offset;
     }
 
     fn load_artists(&self) {
         let api = Arc::clone(&self.api);
+        let favorites = Arc::clone(&self.favorites);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             match api.followed_artists(None, 50).await {
-                Ok(page) => bridge::emit(Event::Page {
-                    page: Page::Artists,
-                    body: PageBody::Artists { items: page.items },
-                }),
+                Ok(page) => {
+                    remember_favorites(
+                        &favorites,
+                        FavoriteKind::Artist,
+                        page.items.iter().map(|artist| artist.id.as_str()),
+                    );
+                    bridge::emit(Event::Page {
+                        page: Page::Artists,
+                        body: PageBody::Artists { items: page.items },
+                    });
+                    let _ = int_tx.send(Internal::PageFetched(Page::Artists));
+                }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
     }
 
-    fn load_playlist(&mut self, id: String, offset: u32) {
+    fn load_playlist(&self, id: String, offset: u32) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let liked_ready = Arc::clone(&self.liked_ready);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
-            let (playlist, items) = tokio::join!(
-                api.playlist(&id),
-                api.playlist_items(&id, offset, PAGE_SIZE),
-            );
-            let playlist = match playlist {
-                Ok(p) => p,
+            let (playlist, page) = match read_playlist(&api, &session, &id, offset).await {
+                Ok(read) => read,
                 Err(error) => {
                     bridge::emit(Event::Error(error.to_string()));
                     return;
                 }
             };
-            match items {
-                Ok(page) => {
-                    let items: Vec<Track> = page
-                        .items
-                        .iter()
-                        .filter_map(PlaylistItem::into_track)
-                        .collect();
-                    let art =
-                        crate::api::models::pick_image(&playlist.images, 300).map(str::to_string);
-                    let title = playlist.name.clone();
-                    let mut subtitle = format!(
-                        "{} · {} songs",
-                        playlist.owner_name(),
-                        playlist.track_total()
-                    );
-                    if playlist.is_generated() {
-                        subtitle.push_str(" · Made for you");
-                    }
-                    if let Some(span) = crate::api::models::added_span(&items) {
-                        subtitle.push_str(" · ");
-                        subtitle.push_str(&span);
-                    }
-                    let total = page.total.max(playlist.track_total());
-                    let context_uri = if playlist.uri.is_empty() {
-                        format!("spotify:playlist:{id}")
-                    } else {
-                        playlist.uri.clone()
-                    };
-                    let like_uris: Vec<String> = items
-                        .iter()
-                        .filter(|t| !t.uri.is_empty())
-                        .map(|t| t.uri.clone())
-                        .collect();
-                    bridge::emit(Event::Page {
-                        page: Page::Playlist(id.clone()),
-                        body: PageBody::Tracks {
-                            title,
-                            subtitle,
-                            art,
-                            context_uri: Some(context_uri),
-                            items,
-                            total,
-                            offset: page.offset,
-                            album: None,
-                        },
-                    });
-                    Worker::emit_contains(api.clone(), like_uris);
-                }
-                Err(error) => bridge::emit(Event::Error(error.to_string())),
+            let next = page.next_offset();
+            let items: Vec<Track> = page
+                .items
+                .iter()
+                .filter_map(PlaylistItem::into_track)
+                .collect();
+            let art = crate::api::models::pick_image(&playlist.images, 300).map(str::to_string);
+            let title = playlist.name.clone();
+            let mut subtitle = format!(
+                "{} · {} songs",
+                playlist.owner_name(),
+                playlist.track_total()
+            );
+            if playlist.is_generated() {
+                subtitle.push_str(" · Made for you");
             }
+            if let Some(span) = crate::api::models::added_span(&items) {
+                subtitle.push_str(" · ");
+                subtitle.push_str(&span);
+            }
+            let total = page.total.max(playlist.track_total());
+            let context_uri = if playlist.uri.is_empty() {
+                format!("spotify:playlist:{id}")
+            } else {
+                playlist.uri.clone()
+            };
+            let like_uris: Vec<String> = items
+                .iter()
+                .filter(|t| !t.uri.is_empty())
+                .map(|t| t.uri.clone())
+                .collect();
+            bridge::emit(Event::Page {
+                page: Page::Playlist(id.clone()),
+                body: PageBody::Tracks {
+                    title,
+                    subtitle,
+                    art,
+                    context_uri: Some(context_uri),
+                    items,
+                    total,
+                    offset: page.offset,
+                    next,
+                    album: None,
+                },
+            });
+            if offset == 0 {
+                let _ = int_tx.send(Internal::PageFetched(Page::Playlist(id)));
+            }
+            Worker::emit_contains(api, &liked_ready, like_uris);
         });
-        self.page_offset = offset;
     }
 
     fn load_album(&self, id: String) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let favorites = Arc::clone(&self.favorites);
+        let liked_ready = Arc::clone(&self.liked_ready);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
-            match api.album(&id).await {
+            match read_album(&api, &session, &id).await {
                 Ok(album) => {
                     let items = match &album.tracks {
                         Some(page) if !page.items.is_empty() => {
@@ -1349,7 +1809,7 @@ impl Worker {
                         album.uri.clone()
                     };
                     bridge::emit(Event::Page {
-                        page: Page::Album(id),
+                        page: Page::Album(id.clone()),
                         body: PageBody::Tracks {
                             title: album.name,
                             subtitle: format!("{artists} · {year}"),
@@ -1357,12 +1817,14 @@ impl Worker {
                             context_uri: Some(context_uri),
                             total: items.len() as u32,
                             offset: 0,
+                            next: None,
                             items,
                             album: Some(header),
                         },
                     });
-                    Worker::emit_contains(api.clone(), like_uris);
-                    Worker::emit_library_state(api, Some(album_id), artist_id);
+                    let _ = int_tx.send(Internal::PageFetched(Page::Album(id)));
+                    Worker::emit_contains(api.clone(), &liked_ready, like_uris);
+                    Worker::emit_library_state(api, favorites, Some(album_id), artist_id);
                 }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
@@ -1371,10 +1833,14 @@ impl Worker {
 
     fn load_artist(&self, id: String) {
         let api = Arc::clone(&self.api);
+        let session = self.session.clone();
+        let favorites = Arc::clone(&self.favorites);
+        let liked_ready = Arc::clone(&self.liked_ready);
+        let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             let (artist, top, albums) = tokio::join!(
                 api.artist(&id),
-                api.artist_top_tracks(&id),
+                read_top_tracks(&api, &session, &id),
                 api.artist_albums(&id, "album,single", 0, 20),
             );
             let artist = match artist {
@@ -1384,6 +1850,7 @@ impl Worker {
                     return;
                 }
             };
+            let complete = top.is_ok() && albums.is_ok();
             let top = top.unwrap_or_default();
             let albums = albums.map(|p| p.items).unwrap_or_default();
             let like_uris: Vec<String> = top
@@ -1397,15 +1864,18 @@ impl Worker {
                 artist.id.clone()
             };
             bridge::emit(Event::Page {
-                page: Page::Artist(id),
+                page: Page::Artist(id.clone()),
                 body: PageBody::Artist {
                     artist,
                     top,
                     albums,
                 },
             });
-            Worker::emit_contains(api.clone(), like_uris);
-            Worker::emit_library_state(api, None, Some(artist_id));
+            if complete {
+                let _ = int_tx.send(Internal::PageFetched(Page::Artist(id)));
+            }
+            Worker::emit_contains(api.clone(), &liked_ready, like_uris);
+            Worker::emit_library_state(api, favorites, None, Some(artist_id));
         });
     }
 
@@ -1427,7 +1897,10 @@ impl Worker {
         tokio::spawn(async move {
             match art.fetch(&url).await {
                 Ok(bytes) => bridge::emit(Event::Art { url, bytes }),
-                Err(error) => tracing::debug!("art {url}: {error}"),
+                Err(error) => {
+                    tracing::debug!("art {url}: {error}");
+                    bridge::emit(Event::ArtFailed(url));
+                }
             }
         });
     }
@@ -1465,7 +1938,8 @@ impl Worker {
                 .is_some_and(|u| u == uri || uri_ids_match(u, uri))
     }
 
-    fn add_to_playlist(&self, playlist_id: String, name: String, uris: Vec<String>) {
+    fn add_to_playlist(&mut self, playlist_id: String, name: String, uris: Vec<String>) {
+        self.fetched.remove(&Page::Playlist(playlist_id.clone()));
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             match api.add_playlist_items(&playlist_id, &uris, None).await {
@@ -1481,23 +1955,25 @@ impl Worker {
 
     fn create_playlist(&self, name: String, uris: Vec<String>) {
         let api = Arc::clone(&self.api);
+        let library = Arc::clone(&self.library);
         tokio::spawn(async move {
             match api.create_playlist(&name, false, "").await {
-                Ok(playlist) => {
+                Ok(mut playlist) => {
                     let playlist_id = playlist.id.clone();
-                    let playlist_name = if playlist.name.is_empty() {
-                        name
-                    } else {
-                        playlist.name
-                    };
-                    if !uris.is_empty()
-                        && let Err(error) = api.add_playlist_items(&playlist_id, &uris, None).await
-                    {
-                        bridge::emit(Event::Error(error.to_string()));
-                        return;
+                    if playlist.name.is_empty() {
+                        playlist.name = name;
                     }
-                    let lists = api.my_playlists_all(400).await;
-                    if !lists.is_empty() {
+                    let playlist_name = playlist.name.clone();
+                    if !uris.is_empty() {
+                        if let Err(error) = api.add_playlist_items(&playlist_id, &uris, None).await
+                        {
+                            bridge::emit(Event::Error(error.to_string()));
+                            return;
+                        }
+                        playlist.bump_track_total(uris.len() as u32);
+                    }
+                    // The new list goes on top of the held library; no refetch.
+                    if let Some(lists) = library.add_front(playlist).await {
                         bridge::emit(Event::Playlists(lists));
                     }
                     bridge::emit(Event::AddedToPlaylist {
@@ -1511,55 +1987,87 @@ impl Worker {
         });
     }
 
-    fn set_favorite(&self, kind: FavoriteKind, id: String, saved: bool) {
+    fn set_favorite(&mut self, kind: FavoriteKind, id: String, saved: bool) {
         if id.is_empty() {
             return;
         }
+        self.fetched.remove(match kind {
+            FavoriteKind::Album => &Page::Albums,
+            FavoriteKind::Artist => &Page::Artists,
+        });
         let api = Arc::clone(&self.api);
+        let favorites = Arc::clone(&self.favorites);
         tokio::spawn(async move {
             let result = match kind {
                 FavoriteKind::Album => api.set_saved_album(&id, saved).await,
                 FavoriteKind::Artist => api.set_followed_artist(&id, saved).await,
             };
             match result {
-                Ok(()) => bridge::emit(Event::Favorite { kind, id, saved }),
+                Ok(()) => {
+                    favorites
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert((kind, id.clone()), saved);
+                    bridge::emit(Event::Favorite { kind, id, saved })
+                }
                 Err(error) => bridge::emit(Event::Error(error.to_string())),
             }
         });
     }
 
+    /// Album saved / artist followed for a page's buttons: from what this
+    /// session already knows, else one background request each.
     fn emit_library_state(
         api: Arc<ApiClient>,
+        favorites: Favorites,
         album_id: Option<String>,
         artist_id: Option<String>,
     ) {
-        tokio::spawn(async move {
-            if let Some(id) = album_id {
-                match api.album_is_saved(&id).await {
-                    Ok(saved) => bridge::emit(Event::Favorite {
-                        kind: FavoriteKind::Album,
-                        id,
-                        saved,
-                    }),
-                    Err(error) => tracing::debug!("album contains: {error}"),
-                }
+        tokio::spawn(background(async move {
+            let wanted = [
+                (FavoriteKind::Album, album_id),
+                (FavoriteKind::Artist, artist_id),
+            ];
+            for (kind, id) in wanted {
+                let Some(id) = id else {
+                    continue;
+                };
+                let known = favorites
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&(kind, id.clone()))
+                    .copied();
+                let saved = match known {
+                    Some(saved) => saved,
+                    None => {
+                        let answer = match kind {
+                            FavoriteKind::Album => api.album_is_saved(&id).await,
+                            FavoriteKind::Artist => api.artist_is_followed(&id).await,
+                        };
+                        match answer {
+                            Ok(saved) => {
+                                favorites
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .insert((kind, id.clone()), saved);
+                                saved
+                            }
+                            Err(error) => {
+                                tracing::debug!("library state {kind:?}: {error}");
+                                continue;
+                            }
+                        }
+                    }
+                };
+                bridge::emit(Event::Favorite { kind, id, saved });
             }
-            if let Some(id) = artist_id {
-                match api.artist_is_followed(&id).await {
-                    Ok(saved) => bridge::emit(Event::Favorite {
-                        kind: FavoriteKind::Artist,
-                        id,
-                        saved,
-                    }),
-                    Err(error) => tracing::debug!("artist contains: {error}"),
-                }
-            }
-        });
+        }));
     }
 
     fn set_saved(&mut self, uri: String, saved: bool) {
         self.liked.set(uri.clone(), saved);
         self.liked.save(&self.dirs);
+        self.fetched.remove(&Page::Liked);
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             let result = if saved {
@@ -1574,74 +2082,49 @@ impl Worker {
         });
     }
 
-    fn refresh_liked(&self) {
+    /// Brings `liked.json` up to date with Spotify after `delay`, in the
+    /// background. Usually one request; see [`liked_settled`].
+    fn sync_liked(&mut self, delay: Duration) {
+        if self.liked_syncing {
+            return;
+        }
+        self.liked_syncing = true;
+        self.liked_synced_at = Some(Instant::now());
         let api = Arc::clone(&self.api);
-        let dirs = self.dirs.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(1200)).await;
-            let mut uris = Vec::new();
-            let mut offset = 0_u32;
-            loop {
-                if api.cooling_down().await {
-                    break;
-                }
-                match api.saved_tracks(offset, PAGE_SIZE).await {
-                    Ok(page) => {
-                        if page.items.is_empty() {
-                            break;
-                        }
-                        for saved in page.items {
-                            if !saved.track.uri.is_empty() {
-                                uris.push(saved.track.uri);
-                            } else if let Some(id) = saved.track.id {
-                                uris.push(format!("spotify:track:{id}"));
-                            }
-                        }
-                        offset += PAGE_SIZE;
-                        if offset >= page.total {
-                            break;
-                        }
+        let known = self.liked.uris.clone();
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(background(async move {
+            tokio::time::sleep(delay).await;
+            let message = match read_liked(&api, &known).await {
+                Some(uris) => Internal::LikedSynced(uris),
+                None => Internal::LikedSyncEnded,
+            };
+            let _ = int_tx.send(message);
+        }));
+    }
+
+    /// Liked state for rows, only while the synced liked set is not ready:
+    /// once it is, the UI marks rows from it without asking Spotify.
+    fn emit_contains(api: Arc<ApiClient>, liked_ready: &AtomicBool, uris: Vec<String>) {
+        if uris.is_empty() || liked_ready.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::spawn(background(async move {
+            for chunk in uris.chunks(50) {
+                match api.contains(chunk).await {
+                    Ok(flags) => {
+                        bridge::emit(Event::SavedMany(chunk.iter().cloned().zip(flags).collect()))
                     }
                     Err(error) => {
-                        tracing::warn!("liked library: {error}");
+                        tracing::warn!("contains: {error}");
                         break;
                     }
                 }
             }
-            if uris.is_empty() {
-                return;
-            }
-            let liked = Liked {
-                uris: uris.iter().cloned().collect(),
-            };
-            liked.save(&dirs);
-            bridge::emit(Event::Liked(uris));
-        });
-    }
-
-    fn emit_contains(api: Arc<ApiClient>, uris: Vec<String>) {
-        if uris.is_empty() {
-            return;
-        }
-        tokio::spawn(async move {
-            for chunk in uris.chunks(50) {
-                match api.contains(chunk).await {
-                    Ok(flags) => {
-                        for (uri, saved) in chunk.iter().zip(flags) {
-                            bridge::emit(Event::Saved {
-                                uri: uri.clone(),
-                                saved,
-                            });
-                        }
-                    }
-                    Err(error) => tracing::warn!("contains: {error}"),
-                }
-            }
-        });
+        }));
     }
 
     fn refresh_devices(&mut self) {
-        self.last_devices_at = Instant::now();
         let api = Arc::clone(&self.api);
         tokio::spawn(async move {
             match api.devices().await {
@@ -1652,32 +2135,120 @@ impl Worker {
         });
     }
 
-    fn refresh_playback(&self) {
-        if self.engine.is_some() {
+    fn local_active(&self) -> bool {
+        self.engine
+            .as_ref()
+            .is_some_and(crate::player::Engine::connect_active)
+    }
+
+    /// Whether the player bar follows another device: signed in, and this
+    /// computer is not the active Connect device.
+    fn watching_remote(&self) -> bool {
+        self.signed_in && !self.engine_busy && !self.local_active()
+    }
+
+    /// Polls playback on another device when [`remote_poll_due`] says so.
+    async fn poll_remote_if_due(&mut self) {
+        if !self.watching_remote() {
+            self.remote_pushed = false;
             return;
         }
+        if self.remote_inflight || self.api.cooling_down().await {
+            return;
+        }
+        let playing = self
+            .remote
+            .as_ref()
+            .filter(|now| now.playback == Playback::Playing)
+            .map(|now| (now.position_ms, now.duration_ms));
+        if remote_poll_due(
+            self.remote_polled_at,
+            self.remote_command_at,
+            self.remote_pushed,
+            self.session.pushes(),
+            playing,
+            Instant::now(),
+        ) {
+            self.refresh_playback();
+        }
+    }
+
+    /// Asks Spotify what plays on another device; one request in flight.
+    fn refresh_playback(&mut self) {
+        if self.remote_inflight || !self.signed_in {
+            return;
+        }
+        self.remote_inflight = true;
+        self.remote_pushed = false;
+        self.remote_polled_at = Some(Instant::now());
         let api = Arc::clone(&self.api);
-        tokio::spawn(async move {
-            match api.playback_state().await {
-                Ok(Some(state)) => {
-                    let now = now_from_remote(&state);
-                    if !now.uri.is_empty() {
-                        let api = api.clone();
-                        let uri = now.uri.clone();
-                        tokio::spawn(async move {
-                            if let Ok(flags) = api.contains(&[uri.clone()]).await
-                                && let Some(saved) = flags.first().copied()
-                            {
-                                bridge::emit(Event::Saved { uri, saved });
-                            }
-                        });
-                    }
-                    bridge::emit(Event::NowPlaying(now));
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(background(async move {
+            let message = match api.playback_state().await {
+                Ok(state) => Internal::RemoteState(state.as_ref().map(now_from_remote)),
+                Err(ApiError::NotSignedIn) => Internal::RemoteFailed,
+                Err(error) => {
+                    tracing::debug!("playback: {error}");
+                    Internal::RemoteFailed
                 }
-                Ok(None) => {}
-                Err(ApiError::NotSignedIn) => {}
-                Err(error) => tracing::debug!("playback: {error}"),
+            };
+            let _ = int_tx.send(message);
+        }));
+    }
+
+    fn on_remote_state(&mut self, now: Option<NowPlaying>) {
+        self.remote_inflight = false;
+        // This computer in the answer is the engine's to report.
+        let local_id = self
+            .engine
+            .as_ref()
+            .map(|engine| engine.device_id().to_string());
+        let now = now.filter(|now| now.device_id.is_none() || now.device_id != local_id);
+        self.remote = now.clone();
+        if self.local_active() {
+            return;
+        }
+        let Some(mut now) = now else {
+            // Nothing plays anywhere now: stop the remote clock on the bar.
+            if !self.now.is_local && self.now.playback == Playback::Playing {
+                self.now.playback = Playback::Paused;
+                bridge::emit(Event::NowPlaying(self.now.clone()));
             }
+            return;
+        };
+        // Before the liked set is synced, "not in it" is not an answer.
+        now.saved = self
+            .liked_ready
+            .load(Ordering::SeqCst)
+            .then(|| self.liked.uris.contains(&now.uri));
+        self.now = now.clone();
+        bridge::emit(Event::NowPlaying(now));
+    }
+
+    /// Spotify Connect pushes a cluster update to every device of the account
+    /// whenever playback changes on any of them: a hint to poll sooner.
+    fn watch_cluster(&self, session: Session) {
+        let updates = match session
+            .dealer()
+            .add_listen_for("hm://connect-state/v1/cluster")
+        {
+            Ok(updates) => updates,
+            Err(error) => {
+                tracing::debug!("Connect pushes unavailable: {error}");
+                return;
+            }
+        };
+        let int_tx = self.int_tx.clone();
+        let pushes = Arc::clone(&self.session.pushes);
+        pushes.store(true, Ordering::SeqCst);
+        tokio::spawn(async move {
+            let mut updates = Box::pin(updates);
+            while updates.next().await.is_some() {
+                if int_tx.send(Internal::ClusterChanged).is_err() {
+                    break;
+                }
+            }
+            pushes.store(false, Ordering::SeqCst);
         });
     }
 
@@ -1689,23 +2260,25 @@ impl Worker {
             return;
         }
         if profile_poll_due(
-            self.user.is_some(),
+            // A starting session brings the profile itself.
+            self.profile_fresh || self.engine_busy,
             self.profile_inflight,
             self.profile_retry_at,
             Instant::now(),
         ) {
             self.refresh_me();
         }
-        if self.engine.is_none() && !self.engine_busy {
-            self.refresh_playback();
-        }
-        if self.last_devices_at.elapsed() >= Duration::from_secs(30) {
-            self.refresh_devices();
+        self.poll_remote_if_due().await;
+        if self
+            .liked_synced_at
+            .is_some_and(|at| at.elapsed() >= LIKED_REFRESH)
+        {
+            self.sync_liked(Duration::ZERO);
         }
     }
 
     fn refresh_me(&mut self) {
-        if self.profile_inflight {
+        if self.profile_inflight || self.profile_fresh || !self.signed_in {
             return;
         }
         self.profile_inflight = true;
@@ -1718,7 +2291,7 @@ impl Worker {
                     tracing::warn!("profile fetch delayed; keeping the saved session");
                     Internal::ProfileSkipped
                 }
-                Err(ApiError::NotSignedIn | ApiError::SignInExpired { .. }) => {
+                Err(ApiError::NotSignedIn | ApiError::SignInExpired) => {
                     bridge::emit(Event::Auth(AuthStatus::Failed(
                         "Spotify sign-in expired. Sign in again.".into(),
                     )));
@@ -1733,15 +2306,41 @@ impl Worker {
         });
     }
 
-    fn on_profile(&mut self, user: User) {
+    /// The account as the playback session knows it, so `/me` is asked
+    /// only when there is no session.
+    fn read_profile(&mut self, session: Session) {
+        self.profile_inflight = true;
+        let int_tx = self.int_tx.clone();
+        tokio::spawn(async move {
+            let user = session_reads::me(&session).await;
+            let _ = int_tx.send(Internal::ProfileOk(user));
+        });
+    }
+
+    fn on_profile(&mut self, mut user: User) {
         self.profile_inflight = false;
         self.profile_retry_at = None;
+        if !self.signed_in {
+            return;
+        }
+        self.profile_fresh = true;
+        // A session read can miss the display name or the plan.
+        if let Some(known) = self.user.as_ref().filter(|known| known.id == user.id) {
+            if user.display_name.is_none() {
+                user.display_name = known.display_name.clone();
+            }
+            if user.product.is_none() {
+                user.product = known.product.clone();
+            }
+        }
         let premium = user.product.as_deref().map(|p| p == "premium");
         self.user = Some(user.clone());
         self.premium = premium;
+        crate::cache::write_json_later(self.dirs.profile_file(), user.clone());
         if premium == Some(false)
             && let Some(engine) = self.engine.take()
         {
+            self.session.set(None);
             engine.shutdown();
             bridge::emit(Event::LocalPlayback(LocalPlayback::Failed(
                 PREMIUM_NEEDED.into(),
@@ -1752,24 +2351,31 @@ impl Worker {
         bridge::emit(Event::Auth(AuthStatus::Connected {
             username: user.name().to_string(),
         }));
+        // Last run's profile may have said free and held the engine back.
+        if premium == Some(true) {
+            self.resume_engine();
+        }
     }
 
     fn on_profile_skipped(&mut self) {
         self.profile_inflight = false;
         self.profile_retry_at = Some(Instant::now() + Duration::from_secs(300));
-        if !matches!(self.user, Some(_)) {
-            bridge::emit(Event::Auth(AuthStatus::Connected {
-                username: "Spotify".into(),
-            }));
-        }
     }
 
     fn arm_resume(&mut self, spec: LoadSpec, delay: Duration) {
         self.resume_verify = Some((spec, 0));
+        self.schedule_verify(delay);
+    }
+
+    /// One verify timer counts at a time: a newer arm makes older timers
+    /// no-ops, so two quick clicks cannot run two retry chains.
+    fn schedule_verify(&mut self, delay: Duration) {
+        self.resume_gen = self.resume_gen.wrapping_add(1);
+        let generation = self.resume_gen;
         let int_tx = self.int_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            let _ = int_tx.send(Internal::VerifyResume);
+            let _ = int_tx.send(Internal::VerifyResume(generation));
         });
     }
 
@@ -1807,101 +2413,121 @@ impl Worker {
             tracing::warn!("unable to start playback: {error}");
         }
         self.resume_verify = Some((spec, attempts + 1));
-        let int_tx = self.int_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(4)).await;
-            let _ = int_tx.send(Internal::VerifyResume);
-        });
+        self.schedule_verify(Duration::from_secs(4));
     }
 
     async fn media(&mut self, command: MediaCommand) {
         match command {
             MediaCommand::Play => {
-                if self.engine.is_some() {
+                if self.local_target() {
                     self.player(PlayerCommand::Play);
+                } else if let Some(device) = self.remote_device() {
+                    self.show_remote_playback(Playback::Playing);
+                    self.remote_command(
+                        move |api| async move { api.play(Some(&device), None).await },
+                    );
                 } else {
                     self.play(self.now_as_play_request(), None).await;
                 }
             }
             MediaCommand::Pause | MediaCommand::Stop => {
-                self.transport(PlayerCommand::Pause, |api, id| async move {
-                    api.pause(id.as_deref()).await
-                })
-                .await
+                if self.local_target() {
+                    self.player(PlayerCommand::Pause);
+                } else {
+                    self.show_remote_playback(Playback::Paused);
+                    let device = self.remote_device();
+                    self.remote_command(
+                        move |api| async move { api.pause(device.as_deref()).await },
+                    );
+                }
             }
             MediaCommand::PlayPause => {
-                if self.engine.is_some() {
+                if self.local_target() {
                     self.player(PlayerCommand::Toggle);
                 } else if self.now.playback == Playback::Playing {
-                    self.transport(PlayerCommand::Pause, |api, id| async move {
-                        api.pause(id.as_deref()).await
-                    })
-                    .await
+                    self.show_remote_playback(Playback::Paused);
+                    let device = self.remote_device();
+                    self.remote_command(
+                        move |api| async move { api.pause(device.as_deref()).await },
+                    );
+                } else if let Some(device) = self.remote_device() {
+                    self.show_remote_playback(Playback::Playing);
+                    self.remote_command(
+                        move |api| async move { api.play(Some(&device), None).await },
+                    );
                 } else {
                     self.play(self.now_as_play_request(), None).await;
                 }
             }
             MediaCommand::Next => {
-                self.ignore_current_track();
-                self.advance_gen = self.advance_gen.wrapping_add(1);
-                self.transport(PlayerCommand::Next, |api, id| async move {
-                    api.next(id.as_deref()).await
-                })
-                .await
+                if self.local_target() {
+                    self.ignore_current_track();
+                    self.advance_gen = self.advance_gen.wrapping_add(1);
+                    self.player(PlayerCommand::Next);
+                } else {
+                    let device = self.remote_device();
+                    self.remote_command(
+                        move |api| async move { api.next(device.as_deref()).await },
+                    );
+                }
             }
             MediaCommand::Previous => {
-                self.ignore_current_track();
-                self.advance_gen = self.advance_gen.wrapping_add(1);
-                self.transport(PlayerCommand::Previous, |api, id| async move {
-                    api.previous(id.as_deref()).await
-                })
-                .await
+                if self.local_target() {
+                    self.ignore_current_track();
+                    self.advance_gen = self.advance_gen.wrapping_add(1);
+                    self.player(PlayerCommand::Previous);
+                } else {
+                    let device = self.remote_device();
+                    self.remote_command(
+                        move |api| async move { api.previous(device.as_deref()).await },
+                    );
+                }
             }
             MediaCommand::SeekBy(delta) => {
                 let pos = self.now.position_ms as i64 + delta;
                 let pos = pos.max(0) as u32;
-                self.seek(pos).await;
+                self.seek(pos);
             }
             MediaCommand::SetPosition {
                 track_uri,
                 position_ms,
             } => {
                 if self.now.uri == track_uri || self.now.uri.is_empty() {
-                    self.seek(position_ms).await;
+                    self.seek(position_ms);
                 }
             }
             MediaCommand::SetVolume(volume) => {
                 let percent = (volume * 100.0).clamp(0.0, 100.0) as u8;
                 let librespot = ((percent as u32) * 65535 / 100) as u16;
-                if self.engine.is_some() {
+                if self.local_target() {
                     self.player(PlayerCommand::Volume(librespot));
                 } else {
-                    let api = Arc::clone(&self.api);
-                    let device = self.now.device_id.clone();
-                    tokio::spawn(async move {
-                        let _ = api.set_volume(percent, device.as_deref()).await;
+                    self.now.volume_percent = percent;
+                    let device = self.remote_device();
+                    self.remote_command(move |api| async move {
+                        api.set_volume(percent, device.as_deref()).await
                     });
                 }
             }
             MediaCommand::SetShuffle(shuffle) => {
-                if self.engine.is_some() {
+                if self.local_target() {
                     self.player(PlayerCommand::Shuffle(shuffle));
                 } else {
-                    let api = Arc::clone(&self.api);
-                    let device = self.now.device_id.clone();
-                    tokio::spawn(async move {
-                        let _ = api.set_shuffle(shuffle, device.as_deref()).await;
+                    self.now.shuffle = shuffle;
+                    let device = self.remote_device();
+                    self.remote_command(move |api| async move {
+                        api.set_shuffle(shuffle, device.as_deref()).await
                     });
                 }
             }
             MediaCommand::SetRepeat(mode) => {
-                if self.engine.is_some() {
+                if self.local_target() {
                     self.player(PlayerCommand::Repeat(mode));
                 } else {
-                    let api = Arc::clone(&self.api);
-                    let device = self.now.device_id.clone();
-                    tokio::spawn(async move {
-                        let _ = api.set_repeat(mode.api_name(), device.as_deref()).await;
+                    self.now.repeat = mode;
+                    let device = self.remote_device();
+                    self.remote_command(move |api| async move {
+                        api.set_repeat(mode.api_name(), device.as_deref()).await
                     });
                 }
             }
@@ -1916,6 +2542,49 @@ impl Worker {
             MediaCommand::Raise => bridge::emit(Event::Raise),
             MediaCommand::Quit => bridge::emit(Event::Quit),
         }
+    }
+
+    /// Transport goes to this computer when it is the active Connect device,
+    /// or when nothing plays elsewhere (so Play starts it here).
+    fn local_target(&self) -> bool {
+        self.engine.is_some() && (self.local_active() || self.remote_device().is_none())
+    }
+
+    /// The other device playing or paused, from the last poll.
+    fn remote_device(&self) -> Option<String> {
+        self.remote
+            .as_ref()
+            .filter(|now| now.playback != Playback::Stopped)
+            .and_then(|now| now.device_id.clone())
+    }
+
+    /// Sends a command to another device without holding the worker loop:
+    /// a rate-limited Web API can take a minute to answer. Polls quickly for
+    /// a few seconds afterwards to confirm what happened.
+    fn remote_command<F, Fut>(&mut self, command: F)
+    where
+        F: FnOnce(Arc<ApiClient>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<(), ApiError>> + Send,
+    {
+        self.remote_command_at = Some(Instant::now());
+        let api = Arc::clone(&self.api);
+        tokio::spawn(async move {
+            if let Err(error) = command(api).await {
+                bridge::emit(Event::Error(friendly_player_error(&error)));
+            }
+        });
+    }
+
+    /// Shows a play/pause on another device at once; the next poll confirms.
+    fn show_remote_playback(&mut self, playback: Playback) {
+        if self.now.uri.is_empty() {
+            return;
+        }
+        self.now.playback = playback;
+        if let Some(remote) = &mut self.remote {
+            remote.playback = playback;
+        }
+        bridge::emit(Event::NowPlaying(self.now.clone()));
     }
 
     fn hold_play(&mut self, request: &PlayRequest) {
@@ -1956,6 +2625,17 @@ impl Worker {
     }
 
     fn on_engine_state(&mut self, state: crate::player::LocalState) {
+        if !state.connect_active {
+            // Another device took playback. Its poll owns the player bar,
+            // and the local player stopping is not ours to advance past.
+            if self.last_playback != Playback::Stopped {
+                self.last_playback = Playback::Stopped;
+                self.advance_gen = self.advance_gen.wrapping_add(1);
+                self.remote_command_at = Some(Instant::now());
+                self.remote_pushed = true;
+            }
+            return;
+        }
         let was_going = matches!(self.last_playback, Playback::Playing | Playback::Loading);
         let now_stopped = state.playback == Playback::Stopped;
         let uri = state.track.as_ref().map(|t| t.uri.clone());
@@ -2051,32 +2731,16 @@ impl Worker {
         }
     }
 
-    async fn transport<F, Fut>(&self, local: PlayerCommand, remote: F)
-    where
-        F: FnOnce(Arc<ApiClient>, Option<String>) -> Fut,
-        Fut: std::future::Future<Output = Result<(), ApiError>>,
-    {
-        if self.engine.is_some() {
-            self.player(local);
-            return;
-        }
-        let api = Arc::clone(&self.api);
-        let device = self.now.device_id.clone();
-        if let Err(error) = remote(api, device).await {
-            bridge::emit(Event::Error(friendly_player_error(&error)));
-        }
-    }
-
-    async fn seek(&self, position_ms: u32) {
-        if self.engine.is_some() {
+    fn seek(&mut self, position_ms: u32) {
+        if self.local_target() {
             self.player(PlayerCommand::Seek(position_ms));
             return;
         }
-        let api = Arc::clone(&self.api);
-        let device = self.now.device_id.clone();
-        tokio::spawn(async move {
-            let _ = api.seek(position_ms, device.as_deref()).await;
-        });
+        self.now.position_ms = position_ms;
+        let device = self.remote_device();
+        self.remote_command(
+            move |api| async move { api.seek(position_ms, device.as_deref()).await },
+        );
     }
 
     fn media_state(&self) -> MediaState {
@@ -2142,6 +2806,131 @@ fn hold_allows(
     true
 }
 
+type Favorites = Arc<std::sync::Mutex<HashMap<(FavoriteKind, String), bool>>>;
+
+fn remember_favorites<'a>(
+    favorites: &Favorites,
+    kind: FavoriteKind,
+    ids: impl Iterator<Item = &'a str>,
+) {
+    let mut known = favorites.lock().unwrap_or_else(|p| p.into_inner());
+    for id in ids.filter(|id| !id.is_empty()) {
+        known.insert((kind, id.to_string()), true);
+    }
+}
+
+/// Tries the playback session first: it has no per-app quota. A refusal it
+/// gives is final; anything else falls back to the Web API.
+async fn from_session<T, F, Fut>(
+    session: &SessionSlot,
+    what: &str,
+    read: F,
+) -> Option<Result<T, ApiError>>
+where
+    F: FnOnce(Session) -> Fut,
+    Fut: std::future::Future<Output = Result<T, Failure>>,
+{
+    let session = session.wait().await?;
+    match session_reads::within(read(session)).await {
+        Ok(found) => Some(Ok(found)),
+        Err(Failure::Definitive(error)) => Some(Err(error)),
+        Err(Failure::Retry(reason)) => {
+            tracing::info!("{what} over the playback session failed; asking the Web API: {reason}");
+            None
+        }
+    }
+}
+
+async fn read_playlist(
+    api: &ApiClient,
+    session: &SessionSlot,
+    id: &str,
+    offset: u32,
+) -> Result<(Playlist, crate::api::models::Page<PlaylistItem>), ApiError> {
+    let read = from_session(session, "playlist", |session| async move {
+        session_reads::playlist_page(&session, id, offset, SESSION_PAGE_SIZE).await
+    });
+    if let Some(found) = read.await {
+        return found;
+    }
+    if offset > 0 {
+        // Only the rows are merged into a page already showing its header.
+        let page = api.playlist_items(id, offset, PAGE_SIZE).await?;
+        return Ok((Playlist::default(), page));
+    }
+    let (playlist, embedded) = api.playlist_with_items(id).await?;
+    let page = match embedded {
+        Some(page) => page,
+        None => api.playlist_items(id, 0, PAGE_SIZE).await?,
+    };
+    Ok((playlist, page))
+}
+
+async fn read_album(api: &ApiClient, session: &SessionSlot, id: &str) -> Result<Album, ApiError> {
+    let read = from_session(session, "album", |session| async move {
+        session_reads::album(&session, id).await
+    });
+    if let Some(found) = read.await {
+        return found;
+    }
+    api.album(id).await
+}
+
+async fn read_top_tracks(
+    api: &ApiClient,
+    session: &SessionSlot,
+    id: &str,
+) -> Result<Vec<Track>, ApiError> {
+    let read = from_session(session, "popular tracks", |session| async move {
+        session_reads::artist_top_tracks(&session, id).await
+    });
+    if let Some(found) = read.await {
+        return found;
+    }
+    api.artist_top_tracks(id).await
+}
+
+fn saved_uri(track: &Track) -> Option<String> {
+    if !track.uri.is_empty() {
+        return Some(track.uri.clone());
+    }
+    track.id.as_ref().map(|id| format!("spotify:track:{id}"))
+}
+
+/// Liked Songs as Spotify has them now, read newest first until
+/// [`liked_settled`] says the rest is unchanged. `None` when Spotify could
+/// not answer; the known set stands.
+async fn read_liked(api: &ApiClient, known: &HashSet<String>) -> Option<HashSet<String>> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0_u32;
+    loop {
+        if api.cooling_down().await {
+            return None;
+        }
+        let page = match api.saved_tracks(offset, PAGE_SIZE).await {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!("liked library: {error}");
+                return None;
+            }
+        };
+        let uris: Vec<String> = page
+            .items
+            .iter()
+            .filter_map(|saved| saved_uri(&saved.track))
+            .collect();
+        let all_known = !uris.is_empty() && uris.iter().all(|uri| known.contains(uri));
+        seen.extend(uris);
+        if let Some(settled) = liked_settled(known, &seen, all_known, page.total) {
+            return Some(settled);
+        }
+        match page.next_offset() {
+            Some(next) if next > offset => offset = next,
+            _ => return Some(seen.into_iter().collect()),
+        }
+    }
+}
+
 fn uri_ids_match(a: &str, b: &str) -> bool {
     a.rsplit(':').next() == b.rsplit(':').next()
 }
@@ -2171,13 +2960,15 @@ fn friendly_player_error(error: &ApiError) -> String {
     }
 }
 
+/// Whether to ask `/me`. `settled`: a profile arrived since sign-in, or a
+/// starting session will bring one.
 fn profile_poll_due(
-    has_user: bool,
+    settled: bool,
     inflight: bool,
     retry_at: Option<Instant>,
     now: Instant,
 ) -> bool {
-    !has_user && !inflight && retry_at.is_none_or(|at| now >= at)
+    !settled && !inflight && retry_at.is_none_or(|at| now >= at)
 }
 
 fn now_playing_from_local(state: &LocalState) -> NowPlaying {
@@ -2396,6 +3187,79 @@ mod tests {
         assert_eq!(now.uri, "spotify:track:a");
         assert_eq!(now.playback, Playback::Playing);
         assert!(now.is_local);
+    }
+
+    #[test]
+    fn remote_playback_is_polled_slowly_unless_something_changed() {
+        let now = Instant::now();
+        let ago = |secs| Some(now - Duration::from_secs(secs));
+        assert!(remote_poll_due(None, None, false, false, None, now));
+        // Without a session: every 15 seconds.
+        assert!(!remote_poll_due(ago(10), None, false, false, None, now));
+        assert!(remote_poll_due(ago(15), None, false, false, None, now));
+        // With Connect pushes: a minute, or soon after a push.
+        assert!(!remote_poll_due(ago(30), None, false, true, None, now));
+        assert!(remote_poll_due(ago(60), None, false, true, None, now));
+        assert!(!remote_poll_due(ago(1), None, true, true, None, now));
+        assert!(remote_poll_due(ago(2), None, true, true, None, now));
+        // Shortly after a command: every 4 seconds.
+        assert!(remote_poll_due(ago(4), ago(3), false, true, None, now));
+        assert!(!remote_poll_due(ago(4), ago(20), false, true, None, now));
+    }
+
+    #[test]
+    fn a_remote_song_ending_is_looked_at_once_without_pushes() {
+        let now = Instant::now();
+        let polled = Some(now - Duration::from_secs(6));
+        // 5 seconds were left at the last poll: due a second after it ends.
+        assert!(remote_poll_due(
+            polled,
+            None,
+            false,
+            false,
+            Some((175_000, 180_000)),
+            now
+        ));
+        // Plenty left: wait for the regular interval.
+        assert!(!remote_poll_due(
+            polled,
+            None,
+            false,
+            false,
+            Some((10_000, 180_000)),
+            now
+        ));
+        // Pushes announce the next song themselves.
+        assert!(!remote_poll_due(
+            polled,
+            None,
+            false,
+            true,
+            Some((175_000, 180_000)),
+            now
+        ));
+    }
+
+    #[test]
+    fn liked_songs_settle_after_one_page_when_nothing_changed() {
+        let known: HashSet<String> = ["a", "b", "c"].map(String::from).into();
+        let seen = ["a", "b"].map(String::from);
+        assert_eq!(liked_settled(&known, &seen, true, 3), Some(known.clone()));
+        // A new like on top: the page was not all known.
+        let seen = ["z", "a"].map(String::from);
+        assert_eq!(liked_settled(&known, &seen, false, 4), None);
+        // An unlike elsewhere: the count does not add up, so read on.
+        let seen = ["a", "b"].map(String::from);
+        assert_eq!(liked_settled(&known, &seen, true, 2), None);
+        // Nothing known yet: the whole list must be read.
+        assert_eq!(liked_settled(&HashSet::new(), &seen, true, 2), None);
+    }
+
+    #[test]
+    fn catalogue_pages_stay_fresh_longer_than_library_pages() {
+        assert!(Page::Album("a".into()).fresh_for() > Page::Playlist("p".into()).fresh_for());
+        assert!(Page::Home.fresh_for() >= Duration::from_secs(60));
+        assert_eq!(Page::Queue.fresh_for(), Duration::ZERO);
     }
 
     #[test]

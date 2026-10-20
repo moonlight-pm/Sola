@@ -7,19 +7,20 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
 use crate::cef::paint::{self, DirtyRect, PixelRing};
 
+use crate::cef::board::BoardView;
 use crate::engine::{
-    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine, FrameReceiver,
-    FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext, PageMenusHandle,
-    PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
+    AbsorbDamage, ActiveHandle, ClipboardHandle, Cmd, CursorHandle, DownloadsHandle, Engine,
+    FrameReceiver, FrameSlot, HistoryEntry, NavCmd, NotificationsHandle, PageContext,
+    PageMenusHandle, PasskeysHandle, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -42,6 +43,62 @@ pub struct CefFrame {
     pub height: u32,
     /// Empty = full buffer is new. Otherwise chrome may upload only these.
     pub dirty: Vec<crate::cef::paint::DirtyRect>,
+    /// Host-composited HTML5 drag overlay. Shader pumps while this is set;
+    /// chrome must not park it as the tab's last clean frame.
+    pub drag: bool,
+    /// sola-design board view `seq` this frame shows (`Cmd::BoardDetail`);
+    /// 0 for every other tab and before a board's first request.
+    pub view: u32,
+    /// A sola-design board's frame: the helper may send only its damage
+    /// across the frame socket (see [`CefFrame::patch`]).
+    pub board: bool,
+    /// `pixels` holds only the `dirty` rects, in order, each packed row by
+    /// row (`w × 4` bytes a row) — a patch over the board's previous frame.
+    /// Only board frames are sent this way, and only after a whole frame of
+    /// the same size and view.
+    pub patch: bool,
+}
+
+impl AbsorbDamage for CefFrame {
+    fn absorb_damage(&mut self, dropped: Self) {
+        let same = self.width == dropped.width && self.height == dropped.height && self.view == dropped.view;
+        if self.patch {
+            if !same {
+                // The writer sends a whole frame first after a size or view
+                // change, so this cannot follow; keep the newer picture.
+                tracing::warn!(w = self.width, h = self.height, view = self.view, "board patch after another picture");
+                return;
+            }
+            let w = self.width;
+            if dropped.patch {
+                // Both are patches: apply the older first.
+                let mut pixels = Arc::try_unwrap(dropped.pixels).unwrap_or_else(|a| a.to_vec());
+                pixels.extend_from_slice(&self.pixels);
+                let mut dirty = dropped.dirty;
+                dirty.extend_from_slice(&self.dirty);
+                self.pixels = Arc::new(pixels);
+                self.dirty = dirty;
+            } else {
+                // A whole frame under a patch: the patch is written into
+                // it (in place — the mailbox owns it alone).
+                let mut base = dropped.pixels;
+                let buf: &mut Vec<u8> = Arc::make_mut(&mut base);
+                paint::apply_patch(buf, w, &self.dirty, &self.pixels);
+                let mut dirty = dropped.dirty;
+                paint::merge_wire_damage(&mut dirty, &self.dirty, w, self.height);
+                self.pixels = base;
+                self.dirty = dirty;
+                self.patch = false;
+            }
+            return;
+        }
+        // Another view's frame is a different picture: all of this one is new.
+        if !same {
+            self.dirty.clear();
+            return;
+        }
+        paint::merge_wire_damage(&mut self.dirty, &dropped.dirty, self.width, self.height);
+    }
 }
 
 /// CEF-specific input event. Uses CEF's integer-pixel coordinates and
@@ -103,6 +160,12 @@ pub enum InputEvent {
         y: i32,
         modifiers: u32,
     },
+    /// Cancel an in-page HTML5 drag (Escape, pointer-up outside the page,
+    /// or the window lost the pointer).
+    DragCancel {
+        x: i32,
+        y: i32,
+    },
 }
 
 fn default_click_count() -> u32 {
@@ -146,6 +209,8 @@ pub struct CefEngine {
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
     devtools: crate::engine::DevToolsHandle,
+    agent: crate::agent::AgentHandle,
+    front_profile: crate::engine::FrontProfileHandle,
 }
 
 impl Engine for CefEngine {
@@ -156,6 +221,10 @@ impl Engine for CefEngine {
 
     fn frame_size(frame: &Self::Frame) -> (u32, u32) {
         (frame.width, frame.height)
+    }
+
+    fn frame_is_page_drag(frame: &Self::Frame) -> bool {
+        frame.drag
     }
 
     /// CEF subprocess gate. Must run first in `main`, before logging
@@ -220,6 +289,8 @@ impl Engine for CefEngine {
             favicons: handles.favicons,
             find_results: handles.find_results,
             devtools: handles.devtools,
+            agent: handles.agent,
+            front_profile: handles.front_profile,
         }
     }
 
@@ -236,6 +307,10 @@ impl Engine for CefEngine {
 
     fn tabs_handle(&self) -> TabsHandle {
         self.tabs.clone()
+    }
+
+    fn front_profile_handle(&self) -> crate::engine::FrontProfileHandle {
+        self.front_profile.clone()
     }
 
     fn active_tab_handle(&self) -> ActiveHandle {
@@ -292,6 +367,10 @@ impl Engine for CefEngine {
 
     fn devtools_handle(&self) -> crate::engine::DevToolsHandle {
         self.devtools.clone()
+    }
+
+    fn agent_handle(&self) -> crate::agent::AgentHandle {
+        self.agent.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {
@@ -406,10 +485,16 @@ struct CefThreadState {
     /// `open_tab` sets this so `on_after_created` can adopt the browser
     /// with the chrome-chosen id. `None` means a `window.open` popup.
     pending_created_id: Cell<Option<TabId>>,
+    /// Board view of the browser `OpenBoard` is creating: its view rect and
+    /// screen info are asked for before the tab is in `tabs`.
+    pending_board: Cell<Option<BoardView>>,
     pending_created_url: RefCell<String>,
     pending_created_title: RefCell<String>,
     /// Last emitted (monotonic_ms, percent) per download — throttle Progress.
     download_last: RefCell<std::collections::HashMap<u32, (u64, i32)>>,
+    /// Path / name / truncated URL captured once. Progress ticks must not
+    /// re-copy a multi-megabyte `data:` URL onto the UI thread.
+    download_meta: RefCell<std::collections::HashMap<u32, DownloadMeta>>,
     /// ⌘/Ctrl+left-press: JS href fallback. If Chromium already opened a
     /// tab via `on_before_popup`, this is ignored so we do not double-open.
     pending_new_tab_click: Cell<Option<(i32, i32, u32, u32)>>,
@@ -419,6 +504,7 @@ struct CefThreadState {
     cmd_click_opened: Cell<bool>,
     /// In-page HTML5 drag (OSR `start_dragging`).
     osr_drag: RefCell<Option<OsrDrag>>,
+    osr: crate::cef::osr_telem::HelperTelem,
     /// Remote-debugging port for DevTools-as-a-tab.
     debug_port: Cell<u16>,
     /// Inspect-element coords to run once the inspector frontend has loaded.
@@ -437,10 +523,20 @@ struct OsrDrag {
     x: i32,
     y: i32,
     ghost: Option<DragGhost>,
+    last_ghost_rect: Option<DirtyRect>,
+    /// Triple-buffer for the host ghost composite. Must not also keep the
+    /// published `Arc` on the session — that pinned the latest buffer at
+    /// 3 refs and forced a 19 MiB alloc on every pointer move.
+    overlay_ring: PixelRing,
+    /// Ghost / view dirty skipped while the helper mailbox still held a
+    /// frame. Merged into the next published overlay so GPU damage is
+    /// continuous since the last upload.
+    pending_dirty: Option<Vec<DirtyRect>>,
 }
 
 /// Bitmap we composite onto the page while an HTML5 drag is live.
 /// Chromium expects the host to draw this; OSR has no OS ghost.
+#[derive(Clone)]
 struct DragGhost {
     pixels: Vec<u8>,
     w: u32,
@@ -487,6 +583,71 @@ struct CefTabState {
     paint_bufs: RefCell<PixelRing>,
     /// `<select>` / date-picker OSR popup (PET_POPUP). Blitted onto VIEW.
     popup: RefCell<OsrPopup>,
+    /// Keeps the DevTools-protocol observer alive for agent snapshot/act.
+    #[allow(dead_code)]
+    agent_obs: RefCell<Option<cef::Registration>>,
+    /// sola-design artboard view. `None` for every browser / wrapper tab.
+    board: Cell<Option<BoardView>>,
+}
+
+/// Keep a board page zoomed to its raster scale (zoom is per host in
+/// Chromium; served boards each have their own host).
+fn apply_board_zoom(host: &cef::BrowserHost, board: &BoardView) {
+    let level = board.zoom_level();
+    if (host.zoom_level() - level).abs() > 1e-6 {
+        host.set_zoom_level(level);
+    }
+}
+
+/// Board-local CSS px → that board's view px.
+fn board_input(ev: InputEvent, b: BoardView) -> InputEvent {
+    match ev {
+        InputEvent::PointerMove { x, y, modifiers } => InputEvent::PointerMove {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            modifiers,
+        },
+        InputEvent::PointerButton {
+            down,
+            x,
+            y,
+            button,
+            modifiers,
+            click_count,
+        } => InputEvent::PointerButton {
+            down,
+            x: b.to_view(x),
+            y: b.to_view(y),
+            button,
+            modifiers,
+            click_count,
+        },
+        InputEvent::Scroll {
+            x,
+            y,
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        } => InputEvent::Scroll {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+        },
+        InputEvent::PointerLeave { x, y, modifiers } => InputEvent::PointerLeave {
+            x: b.to_view(x),
+            y: b.to_view(y),
+            modifiers,
+        },
+        InputEvent::DragCancel { x, y } => InputEvent::DragCancel {
+            x: b.to_view(x),
+            y: b.to_view(y),
+        },
+        other => other,
+    }
 }
 
 /// Windowless DevTools browser, attached to one page tab.
@@ -570,13 +731,16 @@ pub(super) fn run_worker(
         next_http_auth_id: Cell::new(1),
         http_auth_offered: RefCell::new(std::collections::HashSet::new()),
         pending_created_id: Cell::new(None),
+        pending_board: Cell::new(None),
         pending_created_url: RefCell::new(String::new()),
         pending_created_title: RefCell::new(String::new()),
         download_last: RefCell::new(std::collections::HashMap::new()),
+        download_meta: RefCell::new(std::collections::HashMap::new()),
         pending_new_tab_click: Cell::new(None),
         new_tab_click_armed: Cell::new(false),
         cmd_click_opened: Cell::new(false),
         osr_drag: RefCell::new(None),
+        osr: crate::cef::osr_telem::HelperTelem::default(),
         debug_port: Cell::new(0),
         pending_inspect: Cell::new(None),
         pending_favicon: RefCell::new(std::collections::HashMap::new()),
@@ -587,6 +751,9 @@ pub(super) fn run_worker(
             .map_err(|_| ())
             .expect("CEF_STATE set twice");
     });
+    if let Some(tx) = &state.ipc_events {
+        crate::cef::agent::init(tx.clone());
+    }
 
     initialize_cef(app_id);
     *state.request_context.borrow_mut() = None;
@@ -727,6 +894,30 @@ cef::wrap_app! {
                 let autoplay_val = CefString::from("no-user-gesture-required");
                 cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
 
+                // Sliced/parallel downloads fail or stall on large files
+                // when the server mishandles range requests (FILE_TOO_SHORT
+                // / hash mismatch / restart from zero). One stream is slower
+                // and finishes.
+                let no_parallel = CefString::from("disable-features");
+                let no_parallel_val = CefString::from("ParallelDownloading");
+                cmd.append_switch_with_value(Some(&no_parallel), Some(&no_parallel_val));
+
+                // sola-design artboards never scroll by pointer, and a
+                // scrollbar steals layout width: a tall page laid out at
+                // its first 900 px viewport wrapped narrower and measured
+                // 20 px taller than at its own height.
+                if self.app_id == "sola-design" {
+                    let k = CefString::from("hide-scrollbars");
+                    cmd.append_switch(Some(&k));
+                    // Boards are CPU frames (no shared textures). With GPU
+                    // compositing Chromium reads every frame back whole from
+                    // the GPU — a 10 px spinner on a zoomed board cost ~40%
+                    // of the GPU. Software compositing redraws the damage
+                    // straight into the paint buffer.
+                    let k = CefString::from("disable-gpu-compositing");
+                    cmd.append_switch(Some(&k));
+                }
+
                 // Chrome-runtime CEF 147 often ignores Settings.remote_debugging_port
                 // unless the switch is also on the command line. Subprocesses get 0.
                 if self.debug_port != 0 {
@@ -801,6 +992,8 @@ cef::wrap_render_handler! {
             let state = cef_state();
             let (w, h) = osr_view_size(&state, browser.as_deref());
             if let Some(si) = screen_info {
+                // OSR here paints at 1× whatever the device scale says (even
+                // `--force-device-scale-factor`); boards raster via page zoom.
                 si.device_scale_factor = 1.0;
                 si.depth = 24;
                 si.depth_per_component = 8;
@@ -911,12 +1104,14 @@ cef::wrap_render_handler! {
             let Some(tab_id) = tab_by_browser_id(&state, bid) else {
                 return;
             };
-            if state.active.get() != tab_id {
-                return;
-            }
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
+            // sola-design artboards paint side by side; everything else
+            // paints only while it is the active tab.
+            if state.active.get() != tab_id && tab.board.get().is_none() {
+                return;
+            }
             if is_popup {
                 publish_popup_paint(&state, &tab, src, w, h, dirty);
             } else {
@@ -956,8 +1151,10 @@ cef::wrap_render_handler! {
                 return 0;
             };
             let state = cef_state();
-            let ghost = drag_ghost_from_data(&owned)
-                .or_else(|| drag_ghost_from_last_frame(&state, x, y));
+            let ghost = drag_ghost_from_data(&owned);
+            let from_cef_image = ghost.is_some();
+            let ghost = ghost.or_else(|| drag_ghost_from_last_frame(&state, x, y));
+            let ghost_sz = ghost.as_ref().map(|g| (g.w, g.h));
             let mut session = OsrDrag {
                 data: owned,
                 allowed: allowed_ops,
@@ -965,12 +1162,16 @@ cef::wrap_render_handler! {
                 x,
                 y,
                 ghost,
+                last_ghost_rect: None,
+                overlay_ring: PixelRing::default(),
+                pending_dirty: None,
             };
             if let Some(host) = browser.and_then(|b| b.host()) {
                 osr_drag_enter(&host, &mut session, x, y);
             }
             *state.osr_drag.borrow_mut() = Some(session);
-            publish_drag_overlay(&state);
+            state.osr.note_start_dragging(x, y, ghost_sz, from_cef_image);
+            publish_drag_overlay(&state, OverlayDamage::GhostOnly);
             1
         }
 
@@ -1067,6 +1268,7 @@ cef::wrap_life_span_handler! {
                 if close_devtools_browser(&state, bid) {
                     return;
                 }
+                crate::cef::agent::forget_browser(bid);
                 let removed = {
                     let mut tabs = state.tabs.borrow_mut();
                     if let Some(pos) = tabs.iter().position(|t| t.browser_id == bid) {
@@ -1365,7 +1567,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_url_title_by_browser_id(&state, bid, Some(s), None) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1378,7 +1580,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_load_progress_by_browser_id(&state, bid, progress as f32) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1412,7 +1614,7 @@ cef::wrap_display_handler! {
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
             if set_tab_url_title_by_browser_id(&state, bid, None, Some(s)) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
             }
         }
 
@@ -1504,7 +1706,11 @@ cef::wrap_load_handler! {
                 can_go_back != 0,
                 can_go_forward != 0,
             ) {
-                state.snapshot_dirty.set(true);
+                mark_snapshot_dirty(&state);
+            }
+            // A navigation can land on another host's zoom: keep the board's.
+            if let (Some(board), Some(host)) = (board_view(&state, Some(browser)), browser.host()) {
+                apply_board_zoom(&host, &board);
             }
         }
 
@@ -1799,12 +2005,19 @@ cef::wrap_download_handler! {
                 let path = cef::CefString::from(dest_s.as_str());
                 cb.cont(Some(&path), 0);
             }
-            let ev = download_event_from_item(
+            let url = download_url(item);
+            let filename = dest
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&suggested)
+                .to_string();
+            remember_download(item.id(), &dest_s, &filename, &url);
+            emit_download(download_event_from_item(
                 item,
                 crate::cef::ipc::DownloadPhase::Progress,
                 Some(&dest_s),
-            );
-            emit_download(ev);
+            ));
+            tracing::info!(id = item.id(), path = %dest_s, "download started");
             1
         }
 
@@ -1822,8 +2035,14 @@ cef::wrap_download_handler! {
             }
             let id = item.id();
             let state = cef_state();
+            // Called on every received chunk. Cloning the callback each
+            // time stalls the UI thread for a large file and slows the
+            // download that is pumped on that same loop.
             if let Some(cb) = callback {
-                state.download_cbs.borrow_mut().insert(id, cb.clone());
+                let mut cbs = state.download_cbs.borrow_mut();
+                if !cbs.contains_key(&id) {
+                    cbs.insert(id, cb.clone());
+                }
             }
             let phase = if item.is_complete() != 0 {
                 DownloadPhase::Complete
@@ -1834,19 +2053,67 @@ cef::wrap_download_handler! {
             } else {
                 DownloadPhase::Progress
             };
-            if phase == DownloadPhase::Progress && !should_emit_progress(&state, id, item.percent_complete()) {
+            if phase == DownloadPhase::Progress
+                && !should_emit_progress(&state, id, item.percent_complete())
+            {
                 return;
+            }
+            if phase == DownloadPhase::Failed {
+                let reason = item.interrupt_reason();
+                tracing::warn!(
+                    id,
+                    reason = ?reason,
+                    received = item.received_bytes(),
+                    total = item.total_bytes(),
+                    "download interrupted"
+                );
             }
             if phase != DownloadPhase::Progress {
                 state.download_cbs.borrow_mut().remove(&id);
                 state.download_last.borrow_mut().remove(&id);
             }
             emit_download(download_event_from_item(item, phase, None));
+            if phase != DownloadPhase::Progress {
+                state.download_meta.borrow_mut().remove(&id);
+            }
         }
     }
 }
 
 use crate::cef::ipc::{DownloadEvent, DownloadPhase};
+
+#[derive(Clone)]
+struct DownloadMeta {
+    filename: String,
+    path: String,
+    url: String,
+}
+
+fn remember_download(id: u32, path: &str, filename: &str, url: &str) {
+    cef_state().download_meta.borrow_mut().insert(
+        id,
+        DownloadMeta {
+            filename: filename.to_string(),
+            path: path.to_string(),
+            url: url.to_string(),
+        },
+    );
+}
+
+/// CEF `url()` on a `data:` download is the file. Never copy that on the
+/// progress path or onto the control socket.
+fn download_url(item: &mut cef::DownloadItem) -> String {
+    use cef::ImplDownloadItem;
+    let raw = cef_string_userfree_display(&item.url());
+    const MAX: usize = 512;
+    if raw.len() <= MAX {
+        raw
+    } else {
+        let mut s = raw.chars().take(MAX).collect::<String>();
+        s.push('…');
+        s
+    }
+}
 
 fn download_event_from_item(
     item: &mut cef::DownloadItem,
@@ -1854,30 +2121,78 @@ fn download_event_from_item(
     path_override: Option<&str>,
 ) -> DownloadEvent {
     use cef::ImplDownloadItem;
-    let path = path_override
+    let id = item.id();
+    let cached = cef_state().download_meta.borrow().get(&id).cloned();
+    // CEF's in-progress path is `file.crdownload`. The name we continue()d
+    // with is the finished file. Prefer a non-empty live path, then cache.
+    let live = path_override
         .map(str::to_string)
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| cef_string_userfree_display(&item.full_path()));
+    let path = strip_crdownload(&if live.is_empty() {
+        cached.as_ref().map(|m| m.path.clone()).unwrap_or_default()
+    } else {
+        live
+    });
     let filename = std::path::Path::new(&path)
         .file_name()
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| cef_string_userfree_display(&item.suggested_file_name()));
-    let filename = if filename.is_empty() {
-        crate::downloads::sanitize_filename("download")
+        .or_else(|| cached.as_ref().map(|m| m.filename.clone()))
+        .unwrap_or_else(|| crate::downloads::sanitize_filename("download"));
+    let url = cached.map(|m| m.url).unwrap_or_else(|| download_url(item));
+    let error = if state == DownloadPhase::Failed {
+        interrupt_label(item.interrupt_reason())
     } else {
-        filename
+        String::new()
     };
     DownloadEvent {
-        id: item.id(),
+        id,
         filename,
         path,
-        url: cef_string_userfree_display(&item.url()),
+        url,
         received: item.received_bytes(),
         total: item.total_bytes(),
         percent: item.percent_complete(),
         state,
+        error,
     }
+}
+
+fn strip_crdownload(path: &str) -> String {
+    path.strip_suffix(".crdownload").unwrap_or(path).to_string()
+}
+
+fn interrupt_label(reason: cef::DownloadInterruptReason) -> String {
+    use cef::DownloadInterruptReason as R;
+    if reason == R::NONE {
+        return String::new();
+    }
+    let label = if reason == R::FILE_NO_SPACE {
+        "no space"
+    } else if reason == R::FILE_ACCESS_DENIED {
+        "access denied"
+    } else if reason == R::FILE_TOO_LARGE {
+        "file too large"
+    } else if reason == R::FILE_NAME_TOO_LONG {
+        "name too long"
+    } else if reason == R::FILE_FAILED || reason == R::FILE_TRANSIENT_ERROR {
+        "could not write file"
+    } else if reason == R::FILE_TOO_SHORT || reason == R::FILE_HASH_MISMATCH {
+        "incomplete"
+    } else if reason == R::FILE_BLOCKED || reason == R::FILE_VIRUS_INFECTED {
+        "blocked"
+    } else if reason == R::NETWORK_TIMEOUT {
+        "timed out"
+    } else if reason == R::NETWORK_DISCONNECTED {
+        "disconnected"
+    } else if reason == R::NETWORK_FAILED || reason == R::NETWORK_SERVER_DOWN {
+        "network error"
+    } else {
+        return format!("interrupted ({reason:?})");
+    };
+    label.to_string()
 }
 
 fn should_emit_progress(state: &CefThreadState, id: u32, percent: i32) -> bool {
@@ -2065,7 +2380,9 @@ cef::wrap_navigation_entry_visitor! {
             self.entries.borrow_mut().push(HistoryEntry {
                 index,
                 url: cef_string_userfree_display(&entry.url()),
-                title: cef_string_userfree_display(&entry.title()),
+                title: crate::util::wayland_title_text(&cef_string_userfree_display(
+                    &entry.title(),
+                )),
             });
             if current != 0 {
                 self.current.set(index);
@@ -2704,6 +3021,14 @@ fn cmd_waiter(
     }
 }
 
+/// A CEF callback changed tab url / title / loading. Flush the snapshot on
+/// the next drain, and post one: an idle chrome (sola-design after a reload)
+/// sends no commands, and the snapshot only rebuilds after a drain.
+fn mark_snapshot_dirty(state: &CefThreadState) {
+    state.snapshot_dirty.set(true);
+    post_drain(&state.drain_posted);
+}
+
 fn post_drain(drain_posted: &AtomicBool) {
     if drain_posted
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -2725,26 +3050,89 @@ fn publish_view_paint(
     h: u32,
     dirty: Vec<DirtyRect>,
 ) {
-    let len = (w as usize) * (h as usize) * 4;
-    let mut ring = tab.paint_bufs.borrow_mut();
-    let mut bytes = ring.take(len);
-    paint::apply_paint(&mut bytes, src, w, h, &dirty);
-    paint::ensure_bgra_dirty(&mut bytes, w, h, &dirty);
+    let (mut bytes, complete) = take_view_dst(tab, w, h);
+    let full = paint::is_full_damage(&dirty, w, h);
+    // A board's damage, cut down to the tiles that changed: CEF reports
+    // the bounds of all of it (two spinners → most of the page), and a
+    // board's damage crosses the frame socket as a patch.
+    let board = tab.board.get().is_some();
+    let mut unchanged = false;
+    let dirty = if board && complete && !full {
+        let tiles = paint::changed_tiles(&bytes, src, w, h, &dirty);
+        unchanged = tiles.is_empty();
+        if unchanged { dirty } else { tiles }
+    } else {
+        dirty
+    };
+    paint::apply_paint(&mut bytes, src, w, h, &dirty, complete);
+    // Incomplete dest is a full blit of CEF's buffer — swizzle the whole
+    // region, not just `dirty` (ARGB holes otherwise).
+    let swizzle: &[DirtyRect] = if complete { &dirty } else { &[] };
+    paint::ensure_bgra_dirty(&mut bytes, w, h, swizzle);
     let dirty = composite_popup(tab, &mut bytes, w, h, dirty);
-    let pixels = ring.publish(bytes);
-    drop(ring);
+    let pixels = Arc::new(bytes);
+    state.osr.note_paint(
+        full,
+        !complete,
+        crate::cef::osr_telem::dirty_px(&dirty, w, h),
+    );
     tracing::trace!(w, h, dirty = dirty.len(), ?tab.id, "CEF on_paint VIEW");
     let frame = CefFrame {
         pixels,
         width: w,
         height: h,
         dirty,
+        drag: false,
+        view: board_tag(tab),
+        board: tab.board.get().is_some(),
+        patch: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
-    state.frames.push(TaggedFrame {
+    if unchanged {
+        // CEF repainted the same pixels: nothing to send.
+        return;
+    }
+    if drag_has_ghost(state) {
+        publish_drag_overlay_on(state, tab, OverlayDamage::View(&frame.dirty));
+        return;
+    }
+    if state.frames.push(TaggedFrame {
         tab_id: tab.id,
         frame,
-    });
+    }) {
+        state.osr.note_mailbox_drop();
+    }
+}
+
+/// Prefer uniquely unwrapping the previous complete last_frame so partial
+/// dirty copies are valid. Shared last_frame (mailbox still holds it) is
+/// stashed for later recycle — never published as the ring's latest, or
+/// `try_unwrap` fails every paint. Any other dest is incomplete.
+fn take_view_dst(tab: &CefTabState, w: u32, h: u32) -> (Vec<u8>, bool) {
+    let need = (w as usize).saturating_mul(h as usize).saturating_mul(4);
+    let prev = tab.last_frame.borrow_mut().take();
+    if let Some(frame) = prev {
+        match Arc::try_unwrap(frame.pixels) {
+            Ok(mut v) => {
+                if v.len() == need {
+                    return (v, true);
+                }
+                v.resize(need, 0);
+                return (v, false);
+            }
+            Err(arc) => tab.paint_bufs.borrow_mut().stash(arc),
+        }
+    }
+    let (v, _) = tab.paint_bufs.borrow_mut().take_recycled(need);
+    (v, false)
+}
+
+fn drag_has_ghost(state: &CefThreadState) -> bool {
+    state
+        .osr_drag
+        .borrow()
+        .as_ref()
+        .is_some_and(|d| d.ghost.is_some())
 }
 
 fn publish_popup_paint(
@@ -2764,8 +3152,11 @@ fn publish_popup_paint(
         if popup.h == 0 {
             popup.h = h;
         }
-        paint::apply_paint(&mut popup.pixels, src, w, h, &dirty);
-        paint::ensure_bgra_dirty(&mut popup.pixels, w, h, &dirty);
+        let complete =
+            popup.pixels.len() == (w as usize) * (h as usize) * 4 && popup.w == w && popup.h == h;
+        paint::apply_paint(&mut popup.pixels, src, w, h, &dirty, complete);
+        let swizzle: &[DirtyRect] = if complete { &dirty } else { &[] };
+        paint::ensure_bgra_dirty(&mut popup.pixels, w, h, swizzle);
         popup.w = w;
         popup.h = h;
     }
@@ -2774,8 +3165,7 @@ fn publish_popup_paint(
         return;
     };
     let need = (view.width as usize) * (view.height as usize) * 4;
-    let mut ring = tab.paint_bufs.borrow_mut();
-    let mut bytes = ring.take(need);
+    let mut bytes = tab.paint_bufs.borrow_mut().take(need);
     if view.pixels.len() == need {
         bytes.copy_from_slice(&view.pixels);
     } else {
@@ -2785,8 +3175,7 @@ fn publish_popup_paint(
         bytes[..n].copy_from_slice(&view.pixels[..n]);
     }
     let dirty = composite_popup(tab, &mut bytes, view.width, view.height, Vec::new());
-    let pixels = ring.publish(bytes);
-    drop(ring);
+    let pixels = Arc::new(bytes);
     tracing::debug!(
         view_w = view.width,
         view_h = view.height,
@@ -2800,6 +3189,10 @@ fn publish_popup_paint(
         width: view.width,
         height: view.height,
         dirty,
+        drag: false,
+        view: board_tag(tab),
+        board: tab.board.get().is_some(),
+        patch: false,
     };
     *tab.last_frame.borrow_mut() = Some(frame.clone());
     state.frames.push(TaggedFrame {
@@ -2860,6 +3253,58 @@ fn set_host_hidden(host: &cef::BrowserHost, hidden: bool) {
     host.set_focus(if hidden { 0 } else { 1 });
     host.was_hidden(if hidden { 1 } else { 0 });
     host.set_windowless_frame_rate(if hidden { 1 } else { 60 });
+}
+
+thread_local! {
+    static AGENT_REVEALED: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// Show a background tab for CDP mouse/keyboard without switching chrome's
+/// seat. `on_paint` still drops non-active frames, so the user does not see it.
+pub(super) fn reveal_agent_tab(browser_id: i32) {
+    let state = cef_state();
+    let Some(tab_id) = tab_id_by_browser_id(&state, browser_id) else {
+        return;
+    };
+    if tab_id == state.active.get() && state.is_front.get() {
+        return;
+    }
+    if let Some(host) = host_for_browser_id(browser_id) {
+        host.was_hidden(0);
+        host.set_focus(1);
+        host.was_resized();
+    }
+    AGENT_REVEALED.with(|c| c.set(browser_id));
+}
+
+pub(super) fn conceal_agent_tab() {
+    let bid = AGENT_REVEALED.with(|c| c.replace(0));
+    if bid == 0 {
+        return;
+    }
+    let state = cef_state();
+    let still_front =
+        tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
+    if still_front || is_board_browser(&state, bid) {
+        return;
+    }
+    if let Some(host) = host_for_browser_id(bid) {
+        set_host_hidden(&host, true);
+    }
+    if state.is_front.get() {
+        if let Some(tab) = active_tab(&state) {
+            if let Some(host) = tab.browser.host() {
+                set_host_hidden(&host, false);
+            }
+        }
+    }
+}
+
+pub(super) fn agent_load_url(browser_id: i32, url: &str) {
+    let state = cef_state();
+    for_tab_by_browser_id(&state, browser_id, |tab| {
+        dispatch_nav(&tab.browser, NavCmd::LoadUrl(url.to_string()));
+    });
 }
 
 cef::wrap_task! {
@@ -3152,6 +3597,53 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             activate_tab(state, id);
         }
+        Cmd::OpenBoard {
+            id,
+            url,
+            title,
+            size,
+        } => {
+            let next = id.0.saturating_add(1);
+            if next > state.next_id.load(std::sync::atomic::Ordering::Relaxed) {
+                state
+                    .next_id
+                    .store(next, std::sync::atomic::Ordering::Relaxed);
+            }
+            state.pending_board.set(Some(BoardView::new(size)));
+            open_tab(state, id, url, title);
+            state.pending_board.set(None);
+        }
+        Cmd::SetBoard { id, size } => {
+            set_board(state, id, size);
+        }
+        Cmd::BoardDetail { id, seq, detail } => {
+            set_board_detail(state, id, seq, detail);
+        }
+        Cmd::BoardInput { id, input } => {
+            let target = tab_state_by_id(state, id)
+                .and_then(|t| Some((t.browser.host()?, t.board.get()?)));
+            if let Some((host, board)) = target {
+                dispatch_input(state, &host, board_input(input, board));
+            }
+        }
+        Cmd::BoardFocus { id, focused } => {
+            let host = tab_state_by_id(state, id).and_then(|t| t.browser.host());
+            if let Some(host) = host {
+                host.set_focus(if focused { 1 } else { 0 });
+                if focused {
+                    host.invalidate(cef::PaintElementType::VIEW);
+                }
+            }
+        }
+        Cmd::BoardRepaint { id } => {
+            // A whole repaint: the frame socket sends it whole, not a patch.
+            if let Some(host) = tab_state_by_id(state, id).and_then(|t| t.browser.host()) {
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
+        }
+        Cmd::BoardPace { id, pace } => {
+            set_board_pace(state, id, pace);
+        }
         Cmd::ShowDevTools {
             panel,
             inspect_x,
@@ -3231,6 +3723,7 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 cb.cancel();
             }
         }
+        Cmd::Agent(req) => handle_agent_cmd(state, req),
         Cmd::HelperDied { .. } => {}
         Cmd::Quit => {
             state.shutting_down.set(true);
@@ -3268,6 +3761,105 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
 /// landing on the worker.
 fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
     tab_state_by_id(state, state.active.get())
+}
+
+pub(super) fn host_for_browser_id(browser_id: i32) -> Option<cef::BrowserHost> {
+    let state = cef_state();
+    let tabs = state.tabs.borrow();
+    tabs.iter()
+        .find(|t| t.browser_id == browser_id)
+        .and_then(|t| t.browser.host())
+}
+
+fn handle_agent_cmd(state: &CefThreadState, req: crate::agent::AgentRequest) {
+    let tab_id = TabId(req.tab);
+    let Some(tab) = tab_state_by_id(state, tab_id) else {
+        if let Some(tx) = &state.ipc_events {
+            let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                crate::agent::AgentReply::fail(req.id, req.tab, "unknown tab"),
+            ));
+        }
+        return;
+    };
+    match &req.op {
+        crate::agent::AgentOp::Nav(nav) => {
+            dispatch_nav(&tab.browser, nav.clone());
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply {
+                        id: req.id,
+                        tab: req.tab,
+                        ok: true,
+                        error: None,
+                        yaml: None,
+                        refs: Vec::new(),
+                        url: None,
+                        title: None,
+                        focused: None,
+                        dialog_open: false,
+                        json: false,
+                        path: None,
+                        ready: None,
+                        data: None,
+                    },
+                ));
+            }
+        }
+        crate::agent::AgentOp::FindPage {
+            text,
+            forward,
+            next,
+        } => {
+            if let Some(host) = tab.browser.host() {
+                let needle: cef::CefString = text.as_str().into();
+                host.find(Some(&needle), *forward as _, 0, *next as _);
+            }
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply {
+                        id: req.id,
+                        tab: req.tab,
+                        ok: true,
+                        error: None,
+                        yaml: None,
+                        refs: Vec::new(),
+                        url: None,
+                        title: None,
+                        focused: None,
+                        dialog_open: false,
+                        json: false,
+                        path: None,
+                        ready: None,
+                        data: None,
+                    },
+                ));
+            }
+        }
+        _ => {
+            // Board tabs paint at their pace (the app wakes one before it
+            // asks); revealing one would also take focus.
+            let needs_show = tab.board.get().is_none()
+                && !matches!(
+                    req.op,
+                    crate::agent::AgentOp::Snapshot { .. }
+                        | crate::agent::AgentOp::ReadyState
+                        | crate::agent::AgentOp::Eval { .. }
+                );
+            let browser_id = tab.browser_id;
+            let host = tab.browser.host();
+            drop(tab);
+            if needs_show {
+                reveal_agent_tab(browser_id);
+            }
+            if let Some(host) = host {
+                crate::cef::agent::begin(&host, browser_id, req);
+            } else if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::Agent(
+                    crate::agent::AgentReply::fail(req.id, req.tab, "no host"),
+                ));
+            }
+        }
+    }
 }
 
 fn tab_id_by_browser_id(state: &CefThreadState, browser_id: i32) -> Option<TabId> {
@@ -3394,7 +3986,22 @@ fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32
             return *state.devtools_size.lock().unwrap();
         }
     }
+    if let Some(board) = board_view(state, browser) {
+        return board.surface();
+    }
     *state.size.lock().unwrap()
+}
+
+/// Board view for this browser, if it is a sola-design artboard. `try_borrow`
+/// because CEF may ask for the view rect while a tab list edit is in flight.
+fn board_view(state: &CefThreadState, browser: Option<&cef::Browser>) -> Option<BoardView> {
+    let bid = browser?.identifier();
+    let tabs = state.tabs.try_borrow().ok()?;
+    match tabs.iter().find(|t| t.browser_id == bid) {
+        Some(tab) => tab.board.get(),
+        // Mid-`OpenBoard`: the new browser is not in `tabs` yet.
+        None => state.pending_board.get(),
+    }
 }
 
 fn is_devtools_browser(state: &CefThreadState, browser_id: i32) -> bool {
@@ -3467,6 +4074,8 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         last_frame: RefCell::new(None),
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
+        agent_obs: RefCell::new(None),
+        board: Cell::new(None),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -3559,6 +4168,8 @@ fn set_tab_url_title_by_browser_id(
     url: Option<String>,
     title: Option<String>,
 ) -> bool {
+    // Wayland set_title panics on NUL. Strip before the snapshot reaches chrome.
+    let title = title.map(|t| crate::util::wayland_title_text(&t));
     for tab in state.tabs.borrow().iter() {
         if tab.browser_id == browser_id {
             if let Some(u) = url {
@@ -3673,7 +4284,8 @@ fn osr_drag_move(
     drag.x = x;
     drag.y = y;
     drop(slot);
-    publish_drag_overlay(state);
+    state.osr.note_move();
+    publish_drag_overlay(state, OverlayDamage::GhostOnly);
     true
 }
 
@@ -3684,26 +4296,49 @@ fn osr_drag_drop(
     y: i32,
     modifiers: u32,
 ) -> bool {
-    let Some(mut drag) = state.osr_drag.borrow_mut().take() else {
+    let size = *state.size.lock().unwrap();
+    let entered = state.osr_drag.borrow().as_ref().is_some_and(|d| d.entered);
+    if !entered || x < 0 || y < 0 || x >= size.0 as i32 || y >= size.1 as i32 {
+        return osr_drag_cancel(state, host, x, y);
+    }
+    let Some(drag) = state.osr_drag.borrow_mut().take() else {
         return false;
     };
-    if !drag.entered {
-        osr_drag_enter(host, &mut drag, x, y);
-    }
     let me = osr_drag_mouse(x, y, modifiers);
     host.drag_target_drop(Some(&me));
     host.drag_source_ended_at(x, y, drag.allowed);
     host.drag_source_system_drag_ended();
-    // Restore a clean frame (no ghost) from the last CEF paint.
-    if let Some(tab) = active_tab(state) {
-        if let Some(frame) = tab.last_frame.borrow().clone() {
-            state.frames.push(TaggedFrame {
-                tab_id: tab.id,
-                frame,
-            });
-        }
-    }
+    state.osr.note_drag_end("drop");
+    push_clean_last_frame(state);
     true
+}
+
+fn osr_drag_cancel(state: &CefThreadState, host: &cef::BrowserHost, x: i32, y: i32) -> bool {
+    let Some(drag) = state.osr_drag.borrow_mut().take() else {
+        return false;
+    };
+    if drag.entered {
+        host.drag_target_drag_leave();
+    }
+    host.drag_source_ended_at(x, y, cef::DragOperationsMask::default());
+    host.drag_source_system_drag_ended();
+    state.osr.note_drag_end("cancel");
+    push_clean_last_frame(state);
+    true
+}
+
+fn push_clean_last_frame(state: &CefThreadState) {
+    let Some(tab) = active_tab(state) else {
+        return;
+    };
+    if let Some(mut frame) = tab.last_frame.borrow().clone() {
+        frame.drag = false;
+        frame.dirty.clear();
+        state.frames.push(TaggedFrame {
+            tab_id: tab.id,
+            frame,
+        });
+    }
 }
 
 fn drag_ghost_from_data(data: &cef::DragData) -> Option<DragGhost> {
@@ -3773,31 +4408,157 @@ fn drag_ghost_from_last_frame(state: &CefThreadState, x: i32, y: i32) -> Option<
     })
 }
 
-fn publish_drag_overlay(state: &CefThreadState) {
-    let drag = state.osr_drag.borrow();
-    let Some(drag) = drag.as_ref() else {
+/// What changed besides the ghost. `View` with an empty slice is a full
+/// CEF paint (must full-blit last_frame + ghost).
+enum OverlayDamage<'a> {
+    GhostOnly,
+    View(&'a [DirtyRect]),
+}
+
+fn publish_drag_overlay(state: &CefThreadState, extra: OverlayDamage<'_>) {
+    let Some(tab) = active_tab(state) else {
+        return;
+    };
+    publish_drag_overlay_on(state, &tab, extra);
+}
+
+fn publish_drag_overlay_on(state: &CefThreadState, tab: &CefTabState, extra: OverlayDamage<'_>) {
+    let Some(base) = tab.last_frame.borrow().clone() else {
+        return;
+    };
+    let tab_id = tab.id;
+    let view_w = base.width;
+    let view_h = base.height;
+    // Latest-wins would drop this overlay before chrome presents it, and
+    // the next dirty (old∪new of consecutive helper frames) would not
+    // erase the ghost still on the GPU → trails. Wait until the mailbox
+    // is empty so each presented frame is consecutive — but keep the
+    // skipped ghost/view damage so the next upload covers every hole.
+    if state.frames.contains(tab_id.0) {
+        note_overlay_skip(state, extra, view_w, view_h);
+        return;
+    }
+
+    let (pixels, dirty, full, unique_buf) = {
+        let mut slot = state.osr_drag.borrow_mut();
+        let Some(drag) = slot.as_mut() else {
+            return;
+        };
+        let Some(ghost) = drag.ghost.clone() else {
+            return;
+        };
+        let gx = drag.x;
+        let gy = drag.y;
+        let new_rect = paint::overlay_dirty(
+            gx - ghost.hot_x,
+            gy - ghost.hot_y,
+            ghost.w,
+            ghost.h,
+            view_w,
+            view_h,
+        );
+        let old_rect = drag.last_ghost_rect;
+        let mut dirty = overlay_damage_rects(extra, old_rect, new_rect, view_w, view_h);
+        if let Some(pending) = drag.pending_dirty.take() {
+            paint::merge_wire_damage(&mut dirty, &pending, view_w, view_h);
+        }
+        let need = (view_w as usize)
+            .saturating_mul(view_h as usize)
+            .saturating_mul(4);
+        let (mut dst, unique_buf) = take_overlay_pixels(drag, need);
+        // Recycled ring slots can contain a ghost from several moves ago.
+        // Always rebuild from the clean CEF last_frame, then blit.
+        dst.clear();
+        let src = base.pixels.as_slice();
+        if src.len() >= need {
+            dst.extend_from_slice(&src[..need]);
+        } else {
+            dst.extend_from_slice(src);
+            dst.resize(need, 0);
+        }
+        blit_ghost(&mut dst, view_w, view_h, &ghost, gx, gy);
+        drag.last_ghost_rect = new_rect;
+        let pixels = drag.overlay_ring.publish(dst);
+        let full = paint::is_full_damage(&dirty, view_w, view_h);
+        (pixels, dirty, full, unique_buf)
+    };
+    state.osr.note_overlay(
+        full,
+        unique_buf,
+        crate::cef::osr_telem::dirty_px(&dirty, view_w, view_h),
+    );
+    if state.frames.push(TaggedFrame {
+        tab_id,
+        frame: CefFrame {
+            pixels,
+            width: view_w,
+            height: view_h,
+            dirty,
+            drag: true,
+            view: 0,
+            board: false,
+            patch: false,
+        },
+    }) {
+        state.osr.note_mailbox_drop();
+    }
+}
+
+fn note_overlay_skip(state: &CefThreadState, extra: OverlayDamage<'_>, view_w: u32, view_h: u32) {
+    let mut slot = state.osr_drag.borrow_mut();
+    let Some(drag) = slot.as_mut() else {
         return;
     };
     let Some(ghost) = drag.ghost.as_ref() else {
         return;
     };
-    let Some(tab) = active_tab(state) else {
-        return;
-    };
-    let Some(base) = tab.last_frame.borrow().clone() else {
-        return;
-    };
-    let mut pixels = (*base.pixels).clone();
-    blit_ghost(&mut pixels, base.width, base.height, ghost, drag.x, drag.y);
-    state.frames.push(TaggedFrame {
-        tab_id: tab.id,
-        frame: CefFrame {
-            pixels: Arc::new(pixels),
-            width: base.width,
-            height: base.height,
-            dirty: Vec::new(),
-        },
-    });
+    let new_rect = paint::overlay_dirty(
+        drag.x - ghost.hot_x,
+        drag.y - ghost.hot_y,
+        ghost.w,
+        ghost.h,
+        view_w,
+        view_h,
+    );
+    let extra_rects = overlay_damage_rects(extra, drag.last_ghost_rect, new_rect, view_w, view_h);
+    paint::absorb_pending(&mut drag.pending_dirty, &extra_rects, view_w, view_h);
+    drag.last_ghost_rect = new_rect;
+}
+
+fn overlay_damage_rects(
+    extra: OverlayDamage<'_>,
+    old_ghost: Option<DirtyRect>,
+    new_ghost: Option<DirtyRect>,
+    view_w: u32,
+    view_h: u32,
+) -> Vec<DirtyRect> {
+    match extra {
+        OverlayDamage::View(d) if paint::is_full_damage(d, view_w, view_h) => Vec::new(),
+        OverlayDamage::View(d) => {
+            let mut out = d.to_vec();
+            if let Some(r) = old_ghost {
+                out.push(r);
+            }
+            if let Some(r) = new_ghost {
+                out.push(r);
+            }
+            out
+        }
+        OverlayDamage::GhostOnly => {
+            let mut out = Vec::new();
+            if let Some(r) = old_ghost {
+                out.push(r);
+            }
+            if let Some(r) = new_ghost {
+                out.push(r);
+            }
+            out
+        }
+    }
+}
+
+fn take_overlay_pixels(drag: &mut OsrDrag, need: usize) -> (Vec<u8>, bool) {
+    drag.overlay_ring.take_recycled(need)
 }
 
 fn blit_ghost(dst: &mut [u8], dw: u32, dh: u32, ghost: &DragGhost, cx: i32, cy: i32) {
@@ -4093,6 +4854,107 @@ fn frontend_url_from_json_list(body: &str, page_url: &str, panel: &str) -> Optio
 }
 
 #[cfg(test)]
+mod frame_absorb_tests {
+    use super::*;
+    use crate::cef::paint::DirtyRect;
+    use crate::engine::AbsorbDamage;
+
+    fn frame(dirty: Vec<DirtyRect>) -> CefFrame {
+        CefFrame {
+            pixels: Arc::new(vec![0; 16]),
+            width: 2,
+            height: 2,
+            dirty,
+            view: 0,
+            drag: false,
+            board: false,
+            patch: false,
+        }
+    }
+
+    fn rect(x: u32, y: u32, w: u32, h: u32) -> DirtyRect {
+        DirtyRect { x, y, w, h }
+    }
+
+    fn patch(dirty: Vec<DirtyRect>, fill: u8) -> CefFrame {
+        let len = dirty.iter().map(|r| r.pixel_bytes()).sum();
+        CefFrame {
+            pixels: Arc::new(vec![fill; len]),
+            board: true,
+            patch: true,
+            ..frame(dirty)
+        }
+    }
+
+    #[test]
+    fn patches_keep_every_rect_when_coalesced() {
+        let mut newer = patch(vec![rect(1, 1, 1, 1)], 9);
+        newer.absorb_damage(patch(vec![rect(0, 0, 1, 1)], 5));
+        assert!(newer.patch);
+        assert_eq!(newer.dirty, vec![rect(0, 0, 1, 1), rect(1, 1, 1, 1)], "older first");
+        assert_eq!(*newer.pixels, vec![5, 5, 5, 5, 9, 9, 9, 9]);
+    }
+
+    #[test]
+    fn a_patch_over_a_whole_frame_becomes_a_whole_frame() {
+        let mut newer = patch(vec![rect(1, 0, 1, 1)], 7);
+        let base = CefFrame {
+            pixels: Arc::new((0..16).collect()),
+            ..frame(vec![])
+        };
+        newer.absorb_damage(base);
+        assert!(!newer.patch);
+        assert!(newer.dirty.is_empty(), "the base was a full frame");
+        assert_eq!(&newer.pixels[..8], &[0, 1, 2, 3, 7, 7, 7, 7]);
+        assert_eq!(&newer.pixels[8..], &(8..16).collect::<Vec<u8>>()[..]);
+    }
+
+    #[test]
+    fn absorb_unions_partial() {
+        let dropped = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        let mut kept = frame(vec![DirtyRect {
+            x: 1,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        kept.absorb_damage(dropped);
+        assert_eq!(kept.dirty.len(), 2);
+    }
+
+    #[test]
+    fn absorb_full_kept_stays_full() {
+        let dropped = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        let mut kept = frame(vec![]);
+        kept.absorb_damage(dropped);
+        assert!(kept.dirty.is_empty());
+    }
+
+    #[test]
+    fn absorb_full_dropped_makes_full() {
+        let dropped = frame(vec![]);
+        let mut kept = frame(vec![DirtyRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        }]);
+        kept.absorb_damage(dropped);
+        assert!(kept.dirty.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod devtools_frontend_tests {
     use super::frontend_url_from_json_list;
 
@@ -4149,8 +5011,11 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
         if let Some(prev_tab) = tab_state_by_id(state, prev) {
             if let Some(host) = prev_tab.browser.host() {
                 // OSR multi-browser: hide inactive so CEF stops painting them
-                // and treats the next show as needing a full frame.
-                set_host_hidden(&host, true);
+                // and treats the next show as needing a full frame. Boards
+                // stay shown.
+                if prev_tab.board.get().is_none() {
+                    set_host_hidden(&host, true);
+                }
             }
         }
     }
@@ -4171,6 +5036,7 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
                 // Parked buffer is a complete composite — never a dirty patch
                 // against the previous tab's GPU texture.
                 frame.dirty.clear();
+                frame.drag = false;
                 state.frames.push(TaggedFrame { tab_id: id, frame });
             }
             ok
@@ -4198,6 +5064,134 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
         }
     }
     tracing::debug!(?id, prev = ?prev, "CEF active tab");
+}
+
+/// Make `id` a sola-design artboard (or update its view). Resized and
+/// repainted at its own size and raster scale at its pace; never hidden by
+/// a tab switch. `notify_screen_info_changed` re-reads the device scale.
+fn set_board(state: &CefThreadState, id: TabId, size: crate::engine::BoardSize) {
+    let (host, browser_id, view) = {
+        let Some(tab) = tab_state_by_id(state, id) else {
+            tracing::warn!(?id, "SetBoard: unknown tab");
+            return;
+        };
+        let Some(prev) = tab.board.get() else {
+            return;
+        };
+        let view = BoardView {
+            want: prev.want,
+            tag: prev.tag,
+            pace: prev.pace,
+            ..BoardView::new(size)
+        };
+        if view == prev {
+            return;
+        }
+        tab.board.set(Some(view));
+        (tab.browser.host(), tab.browser_id, view)
+    };
+    let Some(host) = host else {
+        return;
+    };
+    apply_board_pace(&host, view.pace);
+    apply_board_zoom(&host, &view);
+    // The pinned layout follows the new size; the view in force is re-sent.
+    crate::cef::board::request(&host, browser_id, id, &view);
+    host.was_resized();
+    host.invalidate(cef::PaintElementType::VIEW);
+    tracing::debug!(?id, size = ?view.size, "board view");
+}
+
+/// How often board `id` paints (`Cmd::BoardPace`).
+fn set_board_pace(state: &CefThreadState, id: TabId, pace: crate::engine::BoardPace) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    let Some(mut view) = tab.board.get() else {
+        return;
+    };
+    if view.pace == pace {
+        return;
+    }
+    view.pace = pace;
+    tab.board.set(Some(view));
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    apply_board_pace(&host, pace);
+    tracing::debug!(?id, ?pace, "board pace");
+}
+
+/// A board is never `was_hidden`: Chromium keeps the last frame of only a
+/// few hidden views (5 here) and evicts the rest, and an evicted OSR view
+/// that is shown again gets no BeginFrames — its board stays CEF's white
+/// background for good. A board nobody looks at only paints slowly.
+fn apply_board_pace(host: &cef::BrowserHost, pace: crate::engine::BoardPace) {
+    use crate::engine::BoardPace;
+    host.was_hidden(0);
+    host.set_windowless_frame_rate(if pace == BoardPace::Live { 60 } else { 1 });
+}
+
+/// A board's view request (`Cmd::BoardDetail`).
+fn set_board_detail(
+    state: &CefThreadState,
+    id: TabId,
+    seq: u32,
+    detail: Option<crate::engine::BoardDetail>,
+) {
+    let target = tab_state_by_id(state, id).and_then(|tab| {
+        let mut view = tab.board.get()?;
+        view.want = (seq, detail);
+        tab.board.set(Some(view));
+        Some((tab.browser.host()?, tab.browser_id, view))
+    });
+    if let Some((host, browser_id, view)) = target {
+        crate::cef::board::request(&host, browser_id, id, &view);
+    }
+}
+
+/// A DevTools answer for a board call (see [`crate::cef::board`]). False
+/// when the call was not a board's.
+pub(crate) fn on_board_cdp_result(browser_id: i32, message_id: i32, success: bool, json: &str) -> bool {
+    use crate::cef::board::{self, Answer};
+    let answer = board::on_result(browser_id, message_id, success, json);
+    let state = cef_state();
+    match answer {
+        Answer::NotOurs => return false,
+        Answer::Done => {}
+        Answer::Applied { tab, seq } => {
+            if let Some(t) = tab_state_by_id(&state, tab) {
+                if let Some(mut view) = t.board.get() {
+                    // Answers can overtake each other; requests only grow.
+                    view.tag = view.tag.max(seq);
+                    t.board.set(Some(view));
+                }
+            }
+        }
+        Answer::Scroll { tab, seq, scroll } => {
+            let target = tab_state_by_id(&state, tab).and_then(|t| {
+                let view = t.board.get()?;
+                (view.want.0 == seq).then_some((t.browser.host()?, t.browser_id, view))
+            });
+            if let Some((host, bid, view)) = target {
+                board::send_detail(&host, bid, tab, &view, scroll);
+            }
+        }
+    }
+    true
+}
+
+/// View `seq` a board frame shows (0 for every other tab).
+fn board_tag(tab: &CefTabState) -> u32 {
+    tab.board.get().map_or(0, |b| b.tag)
+}
+
+fn is_board_browser(state: &CefThreadState, browser_id: i32) -> bool {
+    state
+        .tabs
+        .borrow()
+        .iter()
+        .any(|t| t.browser_id == browser_id && t.board.get().is_some())
 }
 
 /// Absolute path string for CEF cache dirs (must be absolute per CEF docs).
@@ -4354,7 +5348,7 @@ fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
 #[allow(dead_code)]
 fn cef_evict_parks(state: &CefThreadState) {
     use crate::engine::TabInfo;
-    use crate::tab_cache::{WorkspaceSnapshot, eviction_victims};
+    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
     use std::collections::HashMap;
     use std::time::Instant;
 
@@ -4386,8 +5380,12 @@ fn cef_evict_parks(state: &CefThreadState) {
 }
 
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {
+    let initial_title = crate::util::wayland_title_text(&initial_title);
     let mut window_info = cef::WindowInfo::default();
-    let (w, h) = *state.size.lock().unwrap();
+    let (w, h) = match state.pending_board.get() {
+        Some(b) => b.surface(),
+        None => *state.size.lock().unwrap(),
+    };
     apply_osr_window_info(&mut window_info, w, h);
 
     let mut browser_settings = cef::BrowserSettings::default();
@@ -4446,13 +5444,24 @@ fn push_tab(
     let title = Arc::new(Mutex::new(initial_title));
 
     // Background tabs start hidden so only the active OSR surface paints.
+    // A board (mid-`OpenBoard`) is born shown at its own view.
     let is_active = state.active.get() == id;
-    if let Some(host) = browser.host() {
+    let board = state.pending_board.take();
+    let agent_obs = if let Some(mut host) = browser.host() {
         // Even the "active" tab stays hidden until this helper is front.
         // (Prewarm / parked profiles must not composite.)
-        let show = is_active && state.is_front.get();
+        let show = (is_active || board.is_some()) && state.is_front.get();
         set_host_hidden(&host, !show);
-    }
+        let obs = crate::cef::agent::attach(&mut host);
+        if let Some(b) = board {
+            apply_board_zoom(&host, &b);
+            // Pin the layout to the board before the page lays out.
+            crate::cef::board::request(&host, browser_id, id, &b);
+        }
+        obs
+    } else {
+        None
+    };
 
     state.tabs.borrow_mut().push(CefTabState {
         id,
@@ -4467,6 +5476,8 @@ fn push_tab(
         last_frame: RefCell::new(None),
         paint_bufs: RefCell::new(PixelRing::default()),
         popup: RefCell::new(OsrPopup::default()),
+        agent_obs: RefCell::new(agent_obs),
+        board: Cell::new(board),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
@@ -4617,6 +5628,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
             let me = MouseEvent { x, y, modifiers };
             host.send_mouse_move_event(Some(&me), 0);
         }
+        InputEvent::DragCancel { x, y } => {
+            osr_drag_cancel(state, host, x, y);
+        }
         InputEvent::PointerButton {
             down,
             x,
@@ -4716,6 +5730,9 @@ fn dispatch_input(state: &CefThreadState, host: &cef::BrowserHost, ev: InputEven
             ke.native_key_code = 0;
             ke.is_system_key = 0;
             if down {
+                if vk == 0x1B {
+                    osr_drag_cancel(state, host, 0, 0);
+                }
                 ke.type_ = KeyEventType::RAWKEYDOWN;
                 host.send_key_event(Some(&ke));
                 if let Some(ch) = character {

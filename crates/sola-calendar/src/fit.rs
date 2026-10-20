@@ -8,9 +8,7 @@ use iced::advanced::text::{self, Text};
 use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
-use iced::{
-    Element, Event, Length, Pixels, Point, Rectangle, Size, Theme, Vector, alignment,
-};
+use iced::{Element, Event, Length, Pixels, Point, Rectangle, Size, Theme, Vector, alignment};
 use sola_kit::fonts;
 
 const SPACING: f32 = 1.0;
@@ -213,9 +211,15 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for FitStack<'_, Message> {
             .zip(&tree.children)
             .zip(layout.children())
         {
-            child
-                .as_widget()
-                .draw(state, renderer, theme, style, child_layout, cursor, &visible);
+            child.as_widget().draw(
+                state,
+                renderer,
+                theme,
+                style,
+                child_layout,
+                cursor,
+                &visible,
+            );
         }
         let extra = tree.state.downcast_ref::<State>().extra;
         if extra == 0 {

@@ -85,14 +85,72 @@ impl shader::Program<crate::app::Msg> for CefProgram {
         match event {
             iced::Event::Mouse(m) => {
                 let over = cursor.position_in(bounds);
+                let page_drag = self
+                    .slot
+                    .page_drag
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let capturing = page_drag || state.held_button_mods != 0;
                 if over.is_none() {
+                    let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
+                    let (x, y) = cursor
+                        .position()
+                        .map(|p| crate::input::project_cursor_i32_signed(p, bounds, scale))
+                        .or(state.last_pointer)
+                        .unwrap_or((0, 0));
+                    if matches!(m, mouse::Event::CursorLeft) && capturing {
+                        self.send_input(crate::cef::engine::InputEvent::DragCancel { x, y });
+                        state.held_button_mods = 0;
+                        state.pointer_in = false;
+                        return Some(iced::widget::shader::Action::capture());
+                    }
+                    if capturing {
+                        state.last_pointer = Some((x, y));
+                        match m {
+                            mouse::Event::CursorMoved { .. } => {
+                                self.send_input(input::pointer_move(
+                                    x,
+                                    y,
+                                    state.held_button_mods,
+                                    kbd_mods,
+                                ));
+                                if should_pump(&self.slot, self.surface) {
+                                    return Some(
+                                        iced::widget::shader::Action::request_redraw()
+                                            .and_capture(),
+                                    );
+                                }
+                                return Some(iced::widget::shader::Action::capture());
+                            }
+                            mouse::Event::ButtonReleased(b) => {
+                                if let Some(button) = input::button_number(*b) {
+                                    state.held_button_mods &= !input::button_to_modifier(button);
+                                    self.send_input(input::pointer_button(
+                                        false,
+                                        button,
+                                        x,
+                                        y,
+                                        state.held_button_mods,
+                                        kbd_mods,
+                                        state.last_click_count.max(1),
+                                    ));
+                                    if should_pump(&self.slot, self.surface) {
+                                        return Some(
+                                            iced::widget::shader::Action::request_redraw()
+                                                .and_capture(),
+                                        );
+                                    }
+                                    return Some(iced::widget::shader::Action::capture());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     if matches!(m, mouse::Event::CursorMoved { .. }) && state.pointer_in {
                         state.pointer_in = false;
-                        if let Some((x, y)) = state.last_pointer {
-                            let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
+                        if let Some((lx, ly)) = state.last_pointer {
                             self.send_input(input::pointer_leave(
-                                x,
-                                y,
+                                lx,
+                                ly,
                                 state.held_button_mods,
                                 kbd_mods,
                             ));
@@ -319,6 +377,14 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                         }
                     }
                     WE::Unfocused if self.surface == PaintSurface::Page => {
+                        if self
+                            .slot
+                            .page_drag
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            let (x, y) = state.last_pointer.unwrap_or((0, 0));
+                            self.send_input(crate::cef::engine::InputEvent::DragCancel { x, y });
+                        }
                         let _ = self.slot.cmd_tx.send(Cmd::Focus(false));
                         let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(false));
                     }
@@ -383,6 +449,7 @@ impl CefImporter {
         bind_group_layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
         frame: CefFrame,
+        telem: &crate::engine::OsrChromeTelem,
     ) -> Option<ImportedTexture> {
         let need_new = match &self.texture {
             Some(cur) => {
@@ -397,13 +464,14 @@ impl CefImporter {
             self.bind_group = None;
         }
         let uploaded = self.texture.as_ref()?;
-        cpu_import::upload(
+        let (full, bytes) = cpu_import::upload(
             queue,
             &uploaded.texture,
             &frame,
             &mut self.staging,
             need_new,
         );
+        telem.note_present(full, bytes, frame.drag);
         if self.bind_group.is_none() {
             let view = uploaded
                 .texture
@@ -449,7 +517,8 @@ fn should_pump(slot: &FrameSlot<CefEngine>, surface: PaintSurface) -> bool {
     let recent = last != 0
         && crate::engine::monotonic_ms().saturating_sub(last)
             < crate::engine::FRAME_PUMP_HANGOVER_MS;
-    if pending || recent {
+    let dragging = slot.page_drag.load(Ordering::Relaxed);
+    if pending || recent || dragging {
         slot.pumping.store(true, Ordering::Relaxed);
         return true;
     }
@@ -500,6 +569,7 @@ impl shader::Primitive for CefPrimitive {
                     &pipe.sample.bind_group_layout,
                     &pipe.sample.sampler,
                     pending.frame,
+                    &self.slot.osr,
                 ) {
                     pipe.sample.install(imported);
                     pipe.sample.note_frame();

@@ -113,7 +113,10 @@ stays stable during that phase, then normal zone/float sizing applies.
 
 When the game process exits (in-game quit), the nested-steam helper detects the
 gone `AppId=<id>` reaper and kills the nested Steam client so the host window
-closes. **Stop** in Arcade does the same path via `CloseApp` + local pkill.
+closes. Steam **install-script** reapers (`AppId=<id> Install=1`,
+`iscriptevaluator.exe`) are not the game — Arcade waits through VC redist /
+prepare so Proton titles (Palworld) are not torn down after ~10s. **Stop** in
+Arcade does the same path via `CloseApp` + local pkill.
 
 ### Host window vs nest size
 

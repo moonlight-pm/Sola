@@ -83,6 +83,7 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
             runs.push(ProseRun {
                 text: ts.s.clone(),
                 url,
+                ..ProseRun::default()
             });
         }
 
@@ -267,6 +268,7 @@ fn collapse_blank_blocks(blocks: Vec<ProseBlock>) -> Vec<ProseBlock> {
         .into_iter()
         .filter(|b| match b {
             ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs_have_words(runs),
+            _ => true,
         })
         .collect()
 }
@@ -315,6 +317,7 @@ mod tests {
             ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs
                 .iter()
                 .any(|r| r.url.as_deref() == Some("https://example.com/path")),
+            _ => false,
         });
         assert!(has_link, "{blocks:?}");
         let plain = flatten(&blocks);
@@ -332,7 +335,10 @@ mod tests {
         let labels: Vec<String> = blocks
             .iter()
             .flat_map(|b| match b {
-                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs.iter(),
+                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => {
+                    runs.iter().collect::<Vec<_>>()
+                }
+                _ => Vec::new(),
             })
             .filter(|r| r.url.is_some())
             .map(|r| r.text.clone())
@@ -396,7 +402,10 @@ mod tests {
         blocks
             .iter()
             .flat_map(|b| match b {
-                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs.iter(),
+                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => {
+                    runs.iter().collect::<Vec<_>>()
+                }
+                _ => Vec::new(),
             })
             .filter_map(|r| r.url.clone())
             .collect()
@@ -406,7 +415,10 @@ mod tests {
         blocks
             .iter()
             .flat_map(|b| match b {
-                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => runs.iter(),
+                ProseBlock::Paragraph(runs) | ProseBlock::Quote(runs) => {
+                    runs.iter().collect::<Vec<_>>()
+                }
+                _ => Vec::new(),
             })
             .filter(|r| r.url.is_some())
             .map(|r| r.text.clone())

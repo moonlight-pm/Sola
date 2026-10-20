@@ -541,11 +541,7 @@ pub fn calendar_url_label(url: &str) -> String {
     let hostport = rest.split('/').next().unwrap_or(rest);
     let hostport = hostport.split('@').next_back().unwrap_or(hostport);
     let host = hostport.split(':').next().unwrap_or(hostport);
-    if host.is_empty() {
-        n
-    } else {
-        host.to_string()
-    }
+    if host.is_empty() { n } else { host.to_string() }
 }
 
 impl MailConfig {
@@ -1087,6 +1083,11 @@ pub struct AppNotification {
     pub body: String,
     /// HTML5 `Notification.tag` / replace key. Same (`app_id`, `tag`)
     /// replaces an in-flight banner.
+    ///
+    /// A tag that starts with [`NOTIFICATION_PERSIST_PREFIX`] asks the
+    /// shell to keep the desk card up until it is dismissed. The prefix
+    /// is the signal so this struct's postcard layout stays compatible
+    /// with shells and emitters that do not know about it.
     #[serde(default)]
     pub tag: Option<String>,
     /// Browser tab to focus on click.
@@ -1094,6 +1095,18 @@ pub struct AppNotification {
     pub tab_id: Option<u64>,
     #[serde(default)]
     pub url: Option<String>,
+}
+
+/// Tag prefix for a desk card that stays until × or click.
+/// See [`AppNotification::persists`].
+pub const NOTIFICATION_PERSIST_PREFIX: &str = "sola-persist:";
+
+impl AppNotification {
+    pub fn persists(&self) -> bool {
+        self.tag
+            .as_deref()
+            .is_some_and(|tag| tag.starts_with(NOTIFICATION_PERSIST_PREFIX))
+    }
 }
 
 /// Shell → source app after the user clicks a notification (or pile row).
@@ -1501,6 +1514,12 @@ mod tests {
             Topic::AppNotification(got) => assert_eq!(got, n),
             other => panic!("expected AppNotification, got {other:?}"),
         }
+        assert!(!n.persists());
+        let sticky = AppNotification {
+            tag: Some(format!("{NOTIFICATION_PERSIST_PREFIX}ev:30")),
+            ..n.clone()
+        };
+        assert!(sticky.persists());
         assert_eq!(TopicKind::AppNotification.as_str(), "AppNotification");
         assert_eq!(
             TopicKind::NotificationActivate.as_str(),
@@ -2334,7 +2353,10 @@ mod tests {
                 assert_eq!(back.google_client_id, cfg.google_client_id);
                 assert_eq!(back.accounts.len(), 3);
                 assert_eq!(back.accounts[0].kind, CalendarAccountKind::Apple);
-                assert_eq!(back.accounts[0].app_password.as_ref().unwrap().0, "xxxx-xxxx");
+                assert_eq!(
+                    back.accounts[0].app_password.as_ref().unwrap().0,
+                    "xxxx-xxxx"
+                );
                 assert_eq!(back.accounts[1].kind, CalendarAccountKind::Url);
                 assert_eq!(back.accounts[1].url, cfg.accounts[1].url);
                 assert_eq!(back.accounts[2].kind, CalendarAccountKind::Caldav);

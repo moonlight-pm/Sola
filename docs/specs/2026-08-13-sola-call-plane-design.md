@@ -111,7 +111,8 @@ These are real follow-ups. Not v1 blockers.
 | **Host built-ins** | `ping`, richer `list` filters, cancel in-flight. |
 | **Monitor UI** | **Done (merged 2026-08-21):** observer role + traces; live owners/methods in sola-monitor. Catalog sticky on the bus still later. |
 | **Dogfood / install** | Supervisor will not start `sola-call` until this worktree is installed. |
-| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `ws`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
+| **Workspaces methods** | First kit consumer of `CallSetup` / `BusSetup::calls`. Owner `workspaces`; CLI freeze [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md). Desk smoke pending. |
+| **`browser` owner** | Agent control of sola-browser (`solactl browser`). Freeze [`2026-09-11-sola-browser-agent-control-design.md`](2026-09-11-sola-browser-agent-control-design.md). Desk-smoked on Tertius. Confirm **D3**. |
 
 **Dropped in this slice (were fake request/reply on the bus):** `Evaluate` / `Evaluation`, `CaptureScreen` / `Screenshot`, `SimulatePointer` / `SimulateKey`. Payload types `CaptureScreenPayload`, `CaptureTarget`, `PointerAction`, `PointerButton` remain for the call path.
 

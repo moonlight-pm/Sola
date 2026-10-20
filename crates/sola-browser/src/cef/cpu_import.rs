@@ -58,16 +58,11 @@ pub fn upload(
     frame: &CefFrame,
     staging: &mut Vec<u8>,
     force_full: bool,
-) {
-    let dirty = if force_full
-        || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height)
-    {
-        None
-    } else {
-        Some(frame.dirty.as_slice())
-    };
-    match dirty {
-        None => upload_rect(
+) -> (bool, u64) {
+    let full =
+        force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height);
+    if full {
+        upload_rect(
             queue,
             texture,
             frame.pixels.as_slice(),
@@ -77,23 +72,82 @@ pub fn upload(
             frame.width,
             frame.height,
             staging,
-        ),
-        Some(rects) => {
-            for r in rects {
-                upload_rect(
-                    queue,
-                    texture,
-                    frame.pixels.as_slice(),
-                    frame.width,
-                    r.x,
-                    r.y,
-                    r.w,
-                    r.h,
-                    staging,
-                );
-            }
+        );
+        return (
+            true,
+            u64::from(frame.width).saturating_mul(u64::from(frame.height)) * 4,
+        );
+    }
+    let mut bytes = 0u64;
+    for r in &frame.dirty {
+        upload_rect(
+            queue,
+            texture,
+            frame.pixels.as_slice(),
+            frame.width,
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            staging,
+        );
+        bytes = bytes.saturating_add(u64::from(r.w).saturating_mul(u64::from(r.h)) * 4);
+    }
+    (false, bytes)
+}
+
+/// [`upload`] for the top-left `w × h` of `frame` only, into a texture of
+/// that size (a frame larger than the picture it carries). Dirty rects are
+/// clipped to it.
+pub fn upload_cropped(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    frame: &CefFrame,
+    staging: &mut Vec<u8>,
+    force_full: bool,
+    (w, h): (u32, u32),
+) {
+    let (w, h) = (w.min(frame.width), h.min(frame.height));
+    let full =
+        force_full || crate::cef::paint::is_full_damage(&frame.dirty, frame.width, frame.height);
+    let src = frame.pixels.as_slice();
+    if full {
+        upload_rect(queue, texture, src, frame.width, 0, 0, w, h, staging);
+        return;
+    }
+    for r in &frame.dirty {
+        let (x1, y1) = ((r.x + r.w).min(w), (r.y + r.h).min(h));
+        if r.x < x1 && r.y < y1 {
+            upload_rect(queue, texture, src, frame.width, r.x, r.y, x1 - r.x, y1 - r.y, staging);
         }
     }
+}
+
+/// Write a board patch (`frame.patch`: its `dirty` rects packed in order,
+/// see `paint::pack_patch`) into `texture`, clipped to its top-left
+/// `w × h`. False when the packed bytes do not match the rects (nothing is
+/// written).
+pub fn upload_patch(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    frame: &CefFrame,
+    staging: &mut Vec<u8>,
+    (w, h): (u32, u32),
+) -> bool {
+    let src = frame.pixels.as_slice();
+    if src.len() != crate::cef::paint::patch_bytes(&frame.dirty) {
+        return false;
+    }
+    let mut at = 0;
+    for r in &frame.dirty {
+        let rect = &src[at..at + r.pixel_bytes()];
+        at += r.pixel_bytes();
+        let (x1, y1) = ((r.x + r.w).min(w), (r.y + r.h).min(h));
+        if r.x < x1 && r.y < y1 {
+            upload_region(queue, texture, rect, r.w, (0, 0), (r.x, r.y), (x1 - r.x, y1 - r.y), staging);
+        }
+    }
+    true
 }
 
 fn upload_rect(
@@ -105,6 +159,22 @@ fn upload_rect(
     y: u32,
     w: u32,
     h: u32,
+    staging: &mut Vec<u8>,
+) {
+    upload_region(queue, texture, src, src_w, (x, y), (x, y), (w, h), staging);
+}
+
+/// `w × h` px of `src` (rows `src_w` px wide) from `(x, y)` into `texture`
+/// at `to`.
+#[allow(clippy::too_many_arguments)]
+fn upload_region(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    src: &[u8],
+    src_w: u32,
+    (x, y): (u32, u32),
+    to: (u32, u32),
+    (w, h): (u32, u32),
     staging: &mut Vec<u8>,
 ) {
     if w == 0 || h == 0 {
@@ -125,7 +195,7 @@ fn upload_rect(
     let dest = wgpu::TexelCopyTextureInfo {
         texture,
         mip_level: 0,
-        origin: wgpu::Origin3d { x, y, z: 0 },
+        origin: wgpu::Origin3d { x: to.0, y: to.1, z: 0 },
         aspect: wgpu::TextureAspect::All,
     };
     let src_row = src_w as usize * 4;

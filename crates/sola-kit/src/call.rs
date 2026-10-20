@@ -112,8 +112,15 @@ fn ensure_call_poller() {
                     Some(inc) => {
                         let mut slot = CALL_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
                         if let Some(tx) = slot.as_ref() {
-                            if tx.unbounded_send(inc).is_err() {
+                            if let Err(e) = tx.unbounded_send(inc) {
                                 *slot = None;
+                                // Subscription died while the window is still
+                                // up — fail now. A host timeout with no
+                                // diagnosis is what a wedged sola-browser
+                                // looked like to bots.
+                                e.into_inner().reply.err(
+                                    "the app is running but its UI loop is not draining calls. Close that window (window X or Flower) and launch it again. Do not kill the process from a bot.",
+                                );
                             }
                         }
                         // No iced subscription yet: drop. The caller is waiting;

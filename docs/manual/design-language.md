@@ -2,6 +2,7 @@
 
 **Status:** living reference  
 **Audience:** humans redesigning sola-kit / sola-shell, and agents (Grok Build) implementing visual work  
+**Visual authority:** the sola-design canvas [`design/foundation/`](../../design/foundation/) and [`DESIGN.md`](../../DESIGN.md) (tokens, roles, proposals)  
 **Related:** `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`, `docs/specs/2026-06-06-shell-customization-design.md`, Apple [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
 
 ---
@@ -190,7 +191,7 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Menubar | Menu bar | Left: system + app menus. Right: status (stats, clock). Compact, quiet, high scanability. |
 | App menus | Menu bar menus | Standard hierarchy, separators, key equivalents. |
 | Launcher | Spotlight | Single focused field + results list; dimmed backdrop; not a dashboard. |
-| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. Count mark on the icon is pending attention (live + pile; Mail unread). |
+| Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. A pointer already on an icon does not select until it moves. Count mark on the icon is pending attention (live + pile; Mail unread). |
 | Stat indicators | Menu bar extras | Right cluster is four phrases (icon extras, percents, rates, clock). CPU / GPU / MEM / RX / TX show a muted label plus a fixed btop-style dithered pixel graph (numbers live in the dropdown). |
 | Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
 | Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph **left of volume**; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
@@ -258,7 +259,7 @@ Verification for Sola is not a web browser loop:
 
 1. Capture current surface(s) (idle menubar, open menu, launcher, switcher, storybook).  
 2. Agree a short visual plan (keep / change / forbidden).  
-3. Implement in a **worktree**.  
+3. Implement where your tab is (a root tab works on master; a worktree only when asked).  
 4. `cargo make build` (user installs and runs from TTY).  
 5. New screenshots → critique against this doc and macOS reference.  
 6. Commit when the pass is good; start the next pass clean.

@@ -1,0 +1,29 @@
+[package]
+name = "sola-design"
+version.workspace = true
+edition.workspace = true
+description = "HTML artboards on a canvas, edited by agents"
+
+[[bin]]
+name = "sola-design"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
+sola-core = { path = "../sola-core" }
+# Engine only — no Bitwarden / chrome vault. CefEngine + bind_external.
+sola-browser = { path = "../sola-browser", default-features = false }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "canvas"] }
+iced_futures = { version = "0.14", features = ["tokio"] }
+# Same wgpu as iced 0.14 / sola-browser's shader import.
+wgpu = "27"
+bytemuck = { version = "1", features = ["derive"] }
+notify = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+libc = "0.2"

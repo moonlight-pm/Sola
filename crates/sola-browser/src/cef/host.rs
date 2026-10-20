@@ -4,6 +4,7 @@
 //! profile's `…/cef/` so cookies persist. Chrome talks to us over a Unix
 //! socket — the user never sees this process in the app switcher.
 
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -86,7 +87,17 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let _ = fs::write(&pid_path, std::process::id().to_string());
+    // The helper before a chrome self-restart (`execv`) may still be shutting
+    // down: CEF will not start a second browser process on its cache dir.
+    let me = std::process::id();
+    if let Some(prev) = fs::read_to_string(&pid_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&pid| pid != me && is_helper_of(pid, profile_id))
+    {
+        await_helper_exit(prev, profile_id);
+    }
+    let _ = fs::write(&pid_path, me.to_string());
     tracing::info!(
         profile = %profile_id,
         path = %sock.display(),
@@ -167,23 +178,37 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
     thread::Builder::new()
         .name("engine-ipc-frames".into())
         .spawn(move || {
+            // Per board tab, the picture (size, view) chrome last got whole:
+            // after that, small damage crosses as a patch, not the frame.
+            let mut whole: HashMap<u64, (u32, u32, u32)> = HashMap::new();
             loop {
                 match frames_w.recv() {
                     Ok(tagged) => {
+                        let f = &tagged.frame;
+                        let picture = (f.width, f.height, f.view);
+                        let patch = f.board
+                            && whole.get(&tagged.tab_id.0) == Some(&picture)
+                            && worth_patching(&f.dirty, f.width, f.height);
                         let meta = ipc::FrameMeta {
                             tab_id: tagged.tab_id.0,
-                            width: tagged.frame.width,
-                            height: tagged.frame.height,
-                            dirty: tagged.frame.dirty.clone(),
+                            width: f.width,
+                            height: f.height,
+                            dirty: f.dirty.clone(),
+                            drag: f.drag,
+                            view: f.view,
+                            patch,
                         };
-                        // Write the Arc slice directly — no extra 8 MiB clone.
-                        if ipc::write_frame(
-                            &mut frame_writer,
-                            &meta,
-                            tagged.frame.pixels.as_slice(),
-                        )
-                        .is_err()
-                        {
+                        let sent = if patch {
+                            let packed = crate::cef::paint::pack_patch(&f.pixels, f.width, &f.dirty);
+                            ipc::write_frame(&mut frame_writer, &meta, &packed)
+                        } else {
+                            if f.board {
+                                whole.insert(tagged.tab_id.0, picture);
+                            }
+                            // Write the Arc slice directly — no extra 8 MiB clone.
+                            ipc::write_frame(&mut frame_writer, &meta, f.pixels.as_slice())
+                        };
+                        if sent.is_err() {
                             break;
                         }
                     }
@@ -199,7 +224,13 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
         .spawn(move || {
             while let Ok(msg) = event_rx.recv() {
                 let mut g = writer_e.lock().unwrap();
-                if ipc::write_msg(&mut g, &msg).is_err() {
+                if let Err(e) = ipc::write_msg(&mut g, &msg) {
+                    // One oversized payload (a data: URL on a download
+                    // progress event) must not tear down the helper channel.
+                    if e.kind() == std::io::ErrorKind::InvalidData {
+                        tracing::warn!(error = %e, "engine ipc event dropped");
+                        continue;
+                    }
                     break;
                 }
             }
@@ -343,6 +374,40 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             next,
         },
         ToEngine::StopFind { clear } => Cmd::StopFind { clear },
+        ToEngine::Agent(req) => Cmd::Agent(req),
+        ToEngine::OpenBoard {
+            id,
+            url,
+            title,
+            size,
+        } => Cmd::OpenBoard {
+            id: TabId(id),
+            url,
+            title,
+            size,
+        },
+        ToEngine::SetBoard { id, size } => Cmd::SetBoard {
+            id: TabId(id),
+            size,
+        },
+        ToEngine::BoardDetail { id, seq, detail } => Cmd::BoardDetail {
+            id: TabId(id),
+            seq,
+            detail,
+        },
+        ToEngine::BoardInput { id, input } => Cmd::BoardInput {
+            id: TabId(id),
+            input,
+        },
+        ToEngine::BoardFocus { id, focused } => Cmd::BoardFocus {
+            id: TabId(id),
+            focused,
+        },
+        ToEngine::BoardRepaint { id } => Cmd::BoardRepaint { id: TabId(id) },
+        ToEngine::BoardPace { id, pace } => Cmd::BoardPace {
+            id: TabId(id),
+            pace,
+        },
         ToEngine::Shutdown => return None,
     })
 }
@@ -388,6 +453,47 @@ fn stop_profile_engine(profile_id: &str) {
     let _ = fs::remove_file(&sock);
     let _ = fs::remove_file(profiles::engine_frame_sock_path(profile_id));
     let _ = fs::remove_file(&pid_path);
+}
+
+/// `pid` is a live (not zombie) `--engine` helper for `profile_id`.
+fn is_helper_of(pid: u32, profile_id: &str) -> bool {
+    let running = fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| stat.rsplit_once(") ").map(|(_, rest)| rest.to_string()))
+        .is_some_and(|rest| !rest.starts_with('Z') && !rest.starts_with('X'));
+    let argv = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let args: Vec<&[u8]> = argv.split(|&b| b == 0).collect();
+    let profile = format!("--profile={profile_id}");
+    running
+        && args.iter().any(|a| *a == b"--engine")
+        && args.iter().any(|a| *a == profile.as_bytes())
+}
+
+/// Wait for a previous helper of this profile to finish shutting down;
+/// SIGTERM it if it takes too long.
+fn await_helper_exit(pid: u32, profile_id: &str) {
+    let gone = |timeout: Duration| {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if !is_helper_of(pid, profile_id) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+        !is_helper_of(pid, profile_id)
+    };
+    tracing::info!(%profile_id, pid, "engine helper: waiting for the previous helper to exit");
+    if gone(Duration::from_secs(5)) {
+        return;
+    }
+    tracing::warn!(%profile_id, pid, "engine helper: previous helper still up — SIGTERM");
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+    if !gone(Duration::from_secs(3)) {
+        tracing::error!(%profile_id, pid, "engine helper: previous helper did not exit; CEF may refuse to start");
+    }
 }
 
 fn wait_pid_gone(pid: u32, timeout: Duration) -> bool {
@@ -497,6 +603,13 @@ enum ReapDecision {
         parked: bool,
         engine: bool,
     },
+}
+
+/// A board frame's damage is worth sending alone: partial, and well under
+/// the whole frame (a spinner, a caret — not a scroll or a relayout).
+fn worth_patching(dirty: &[crate::cef::paint::DirtyRect], w: u32, h: u32) -> bool {
+    !crate::cef::paint::is_full_damage(dirty, w, h)
+        && crate::cef::paint::patch_bytes(dirty) * 2 < w as usize * h as usize * 4
 }
 
 fn cmdline_is_sola_browser(text: &str) -> bool {

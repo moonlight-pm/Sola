@@ -17,20 +17,22 @@ pub fn run(args: Vec<String>) -> i32 {
             return 3;
         }
     };
-    let Some(entry) = owners.iter().find(|o| o.owner == *owner || o.app_id == *owner)
+    let Some(entry) = owners
+        .iter()
+        .find(|o| o.owner == *owner || o.app_id == *owner)
     else {
         eprintln!("solactl: {owner} is not running");
         return 3;
     };
 
     if args.len() == 1 || matches!(args.get(1).map(String::as_str), Some("-h" | "--help")) {
-        println!("solactl {owner} — {}", entry.app_id);
+        crate::call::print_stdout(&format!("solactl {owner} — {}", entry.app_id));
         if entry.methods.is_empty() {
-            println!("  (no methods advertised)");
+            crate::call::print_stdout("  (no methods advertised)");
             return 0;
         }
         for m in &entry.methods {
-            println!("  {:<16} {}", m.name, m.summary);
+            crate::call::print_stdout(&format!("  {:<16} {}", m.name, m.summary));
         }
         return 0;
     }
@@ -50,6 +52,13 @@ pub fn run(args: Vec<String>) -> i32 {
             if entry.owner == "workspaces" {
                 inject_ws_context(method, &mut params);
             }
+            if entry.owner == "design" {
+                inject_design_context(method, &mut params);
+            }
+            if let Err(e) = apply_bot_policy(&entry.owner, method, &params) {
+                eprintln!("solactl: {e}");
+                return 3;
+            }
             let timeout = invoke_timeout_secs(spec, &params);
             call::run(&entry.owner, method, params, timeout)
         }
@@ -60,7 +69,81 @@ pub fn run(args: Vec<String>) -> i32 {
     }
 }
 
-fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
+fn is_sola_bot() -> bool {
+    matches!(
+        std::env::var("SOLA_BOT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes")
+    )
+}
+
+/// Named informational bots never steal the human seat or default to it.
+pub(crate) fn apply_bot_policy(owner: &str, method: &str, params: &serde_json::Value) -> Result<(), String> {
+    bot_browser_policy(is_sola_bot(), owner, method, params)
+}
+
+fn bot_browser_policy(
+    bot: bool,
+    owner: &str,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<(), String> {
+    if !bot || owner != "browser" {
+        return Ok(());
+    }
+    if method == "tab.focus" {
+        return Err("SOLA_BOT=1: tab.focus is refused (would steal the seat)".into());
+    }
+    if param_is_true(params, "select") {
+        return Err("SOLA_BOT=1: --select is refused (would steal the seat)".into());
+    }
+    const NEED_TAB: &[&str] = &[
+        "snapshot",
+        "click",
+        "hover",
+        "type",
+        "fill",
+        "get",
+        "links",
+        "select",
+        "wait",
+        "screenshot",
+        "goto",
+        "back",
+        "forward",
+        "reload",
+        "stop",
+        "find.page",
+        "find",
+        "key",
+        "scroll",
+        "tab.close",
+        "tab.move",
+    ];
+    if NEED_TAB.contains(&method) {
+        let tab = params.get("tab").and_then(|v| {
+            v.as_str()
+                .map(|s| !s.is_empty())
+                .or_else(|| v.as_i64().map(|_| true))
+                .or_else(|| v.as_u64().map(|_| true))
+        });
+        if tab != Some(true) {
+            return Err("SOLA_BOT=1: --tab is required (do not default to the focused tab)".into());
+        }
+    }
+    Ok(())
+}
+
+fn param_is_true(params: &serde_json::Value, key: &str) -> bool {
+    params
+        .get(key)
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
     let Some(map) = params.as_object_mut() else {
         return;
     };
@@ -89,7 +172,20 @@ fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
     }
 }
 
-fn invoke_timeout_secs(spec: &MethodSpec, params: &serde_json::Value) -> u64 {
+/// `design canvas.new` without `--path` makes the canvas in the caller's
+/// project: this shell's (or the MCP server's) working directory.
+pub(crate) fn inject_design_context(method: &str, params: &mut serde_json::Value) {
+    let Some(map) = params.as_object_mut() else {
+        return;
+    };
+    if method == "canvas.new" && !map.contains_key("path") {
+        if let Ok(cwd) = std::env::current_dir() {
+            map.insert("path".into(), serde_json::Value::String(cwd.display().to_string()));
+        }
+    }
+}
+
+pub(crate) fn invoke_timeout_secs(spec: &MethodSpec, params: &serde_json::Value) -> u64 {
     if let Some(secs) = params.get("timeout").and_then(json_u64) {
         return secs.saturating_add(2).max(8);
     }
@@ -104,12 +200,12 @@ fn json_u64(v: &serde_json::Value) -> Option<u64> {
 }
 
 fn print_method_help(owner: &str, spec: &MethodSpec) {
-    println!("solactl {owner} {} — {}", spec.name, spec.summary);
+    crate::call::print_stdout(&format!("solactl {owner} {} — {}", spec.name, spec.summary));
     if spec.args.is_empty() {
-        println!("  (no flags)");
+        crate::call::print_stdout("  (no flags)");
         return;
     }
-    println!();
+    crate::call::print_stdout("");
     for a in &spec.args {
         let long = a.long.as_deref().unwrap_or(a.name.as_str());
         let mut flag = format!("--{long}");
@@ -121,9 +217,9 @@ fn print_method_help(owner: &str, spec: &MethodSpec) {
         }
         let req = if a.required { "required" } else { "optional" };
         if a.help.is_empty() {
-            println!("  {flag:<28} ({req})");
+            crate::call::print_stdout(&format!("  {flag:<28} ({req})"));
         } else {
-            println!("  {flag:<28} {} ({req})", a.help);
+            crate::call::print_stdout(&format!("  {flag:<28} {} ({req})", a.help));
         }
     }
 }
@@ -158,7 +254,10 @@ fn params_from_args(spec: &MethodSpec, rest: &[&str]) -> Result<serde_json::Valu
             continue;
         }
         // Positional: fill the next required arg that isn't set.
-        if let Some(arg) = spec.args.iter().find(|a| a.required && !map.contains_key(&a.name))
+        if let Some(arg) = spec
+            .args
+            .iter()
+            .find(|a| a.required && !map.contains_key(&a.name))
         {
             map.insert(arg.name.clone(), coerce(spec, &arg.name, tok));
             i += 1;
@@ -220,16 +319,60 @@ fn coerce(spec: &MethodSpec, name: &str, raw: &str) -> serde_json::Value {
             .map(serde_json::Value::from)
             .unwrap_or_else(|_| serde_json::Value::String(raw.into())),
         ArgType::Bool => serde_json::Value::Bool(raw != "false" && raw != "0"),
-        ArgType::Json => serde_json::from_str(raw)
-            .unwrap_or_else(|_| serde_json::Value::String(raw.into())),
-        ArgType::String | ArgType::Path => serde_json::Value::String(raw.into()),
+        ArgType::Json => {
+            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.into()))
+        }
+        ArgType::String => serde_json::Value::String(raw.into()),
+        ArgType::Path => serde_json::Value::String(absolute_path(raw)),
     }
+}
+
+/// `~` expands and a relative path resolves against this shell's cwd — the
+/// owner reads the file in its own process, with its own cwd.
+pub(crate) fn absolute_path(raw: &str) -> String {
+    let home = || std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let path = match (raw, raw.strip_prefix("~/")) {
+        ("~", _) => home(),
+        (_, Some(rest)) => home().map(|h| h.join(rest)),
+        _ => None,
+    }
+    .unwrap_or_else(|| std::path::PathBuf::from(raw));
+    if path.is_absolute() {
+        return path.display().to_string();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(&path).display().to_string())
+        .unwrap_or_else(|_| raw.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sola_call::{ArgSpec, ArgType, MethodSpec};
+
+    #[test]
+    fn design_canvas_new_defaults_to_the_cwd() {
+        let mut p = serde_json::json!({"name": "onboarding"});
+        inject_design_context("canvas.new", &mut p);
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(p["path"], cwd.display().to_string());
+        let mut q = serde_json::json!({"name": "x", "path": "/tmp/p"});
+        inject_design_context("canvas.new", &mut q);
+        assert_eq!(q["path"], "/tmp/p");
+        let mut r = serde_json::json!({});
+        inject_design_context("status", &mut r);
+        assert!(r.get("path").is_none());
+    }
+
+    #[test]
+    fn path_args_resolve_against_the_callers_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(absolute_path("design/home"), cwd.join("design/home").display().to_string());
+        assert_eq!(absolute_path("/etc/x"), "/etc/x");
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(absolute_path("~/a b"), format!("{home}/a b"));
+        assert_eq!(absolute_path("~"), home);
+    }
 
     fn spec() -> MethodSpec {
         MethodSpec {
@@ -280,6 +423,44 @@ mod tests {
         assert_eq!(p["text"], "hi");
     }
 
+    #[test]
+    fn wait_load_is_a_bool_flag() {
+        let spec = MethodSpec {
+            name: "wait".into(),
+            summary: String::new(),
+            args: vec![
+                ArgSpec {
+                    name: "tab".into(),
+                    long: Some("tab".into()),
+                    short: Some('t'),
+                    ty: ArgType::String,
+                    required: false,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "load".into(),
+                    long: Some("load".into()),
+                    short: Some('l'),
+                    ty: ArgType::Bool,
+                    required: false,
+                    help: String::new(),
+                },
+                ArgSpec {
+                    name: "text".into(),
+                    long: Some("text".into()),
+                    short: Some('q'),
+                    ty: ArgType::String,
+                    required: false,
+                    help: String::new(),
+                },
+            ],
+            timeout_ms: Some(32_000),
+        };
+        let p = params_from_args(&spec, &["--load", "--tab", "44"]).unwrap();
+        assert_eq!(p["load"], true);
+        assert_eq!(p["tab"], "44");
+    }
+
     fn spawn_spec() -> MethodSpec {
         MethodSpec {
             name: "workspace.spawn".into(),
@@ -312,6 +493,32 @@ mod tests {
             ],
             timeout_ms: Some(60_000),
         }
+    }
+
+    #[test]
+    fn bot_policy_refuses_focus_select_and_missing_tab() {
+        assert!(bot_browser_policy(false, "browser", "tab.focus", &serde_json::json!({})).is_ok());
+        assert!(bot_browser_policy(true, "browser", "tab.focus", &serde_json::json!({})).is_err());
+        assert!(
+            bot_browser_policy(
+                true,
+                "browser",
+                "tab.open",
+                &serde_json::json!({"url": "https://example.com", "select": true})
+            )
+            .is_err()
+        );
+        assert!(bot_browser_policy(true, "browser", "snapshot", &serde_json::json!({})).is_err());
+        assert!(
+            bot_browser_policy(
+                true,
+                "browser",
+                "click",
+                &serde_json::json!({"tab": "9", "x": 1, "y": 2})
+            )
+            .is_ok()
+        );
+        assert!(bot_browser_policy(true, "browser", "tabs", &serde_json::json!({})).is_ok());
     }
 
     #[test]
