@@ -93,17 +93,32 @@ pub fn compose_field(theme: &Theme) -> container::Style {
 }
 
 /// Borderless compose header field (From / To / Cc / Subject).
+/// Compose header field: flat at rest, a soft well on hover, a well with
+/// an accent edge while focused — so it reads as a field, not a label.
 pub fn compose_header_input(
     theme: &Theme,
-    _status: sola_kit::components::text_input::Status,
+    status: sola_kit::components::text_input::Status,
 ) -> sola_kit::components::text_input::Style {
+    use sola_kit::components::text_input::Status;
     let p = theme.extended_palette();
+    let base = p.background.base.color;
+    let (fill, edge) = match status {
+        Status::Focused { .. } => (
+            mix_white(base, 0.05),
+            Color {
+                a: 0.55,
+                ..p.primary.base.color
+            },
+        ),
+        Status::Hovered => (mix_white(base, 0.03), Color::TRANSPARENT),
+        _ => (Color::TRANSPARENT, Color::TRANSPARENT),
+    };
     sola_kit::components::text_input::Style {
-        background: Background::Color(Color::TRANSPARENT),
+        background: Background::Color(fill),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 0.0.into(),
+            color: edge,
+            width: 1.0,
+            radius: RADIUS_MD.into(),
         },
         icon: p.secondary.base.text,
         placeholder: Color {

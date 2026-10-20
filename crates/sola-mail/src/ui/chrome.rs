@@ -18,8 +18,10 @@ pub struct Toast {
 
 impl App {
     pub(super) fn view_toolbar(&self) -> Element<'_, Msg> {
+        // Message actions stay live while composing: they act on the
+        // selected row, and a reply / forward goes through the draft guard.
         let composing = self.compose.is_some();
-        let selected = self.selected.as_ref().filter(|_| !composing);
+        let selected = self.selected.as_ref();
         let letter = selected.and_then(|id| self.reader.body().filter(|b| b.id == *id));
         let row_msg = selected.and_then(|id| self.list.rows.iter().find(|m| m.id == *id));
         let in_drafts = selected.is_some_and(|id| id.folder == "Drafts");

@@ -209,7 +209,13 @@ Do not invent product policy.
    focus re-list + Checking mail ring.
    HTML `<hN>` now render as prose headings (were `### ` text; Forward
    quoted them).
-   **Next:** reinstall `mail` for the heading fix; desk-smoke the freeze
+   Compose follow-up (desk report: tiny `to@` / `cc@` fields, no Tab,
+   clicks seemed ignored): real fields + focus well, Tab order, address
+   suggestions, per-address check on Send, centred discard card, toolbar
+   live while composing, slow update / view logging (no stall found in
+   the log; the UI thread was idle — likely the greyed toolbar + the
+   bottom-of-pane discard bar).
+   **Next:** reinstall `mail` (heading fix + compose follow-up); desk-smoke the freeze
    checklist items 11–15 (list dates / tags / decoded subjects and Forward
    seen working); then merge `sola-mail`.
    **Install:** standing OK to `install mail` after each finished round

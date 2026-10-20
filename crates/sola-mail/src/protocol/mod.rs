@@ -10,6 +10,7 @@ pub mod html_text;
 pub mod idle;
 pub mod imap;
 pub mod parse;
+pub mod recipients;
 pub mod rules;
 pub mod sender;
 pub mod types;

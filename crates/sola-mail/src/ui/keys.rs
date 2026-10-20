@@ -22,11 +22,20 @@ impl App {
             return Task::none();
         }
         if let Some(c) = self.compose.as_mut() {
+            // Tab / Shift+Tab walk To → Cc → Subject → body (a text field
+            // ignores Tab; the body keeps it as a tab character).
+            if matches!(key, Key::Named(Named::Tab)) && !captured {
+                let back = mods.shift();
+                return super::compose::focused_field()
+                    .map(move |from| Msg::TabFrom { from, back });
+            }
             if !escape {
                 return Task::none();
             }
             if c.from_open {
                 c.from_open = false;
+            } else if c.active.is_some() {
+                c.active = None;
             } else if c.confirm_discard {
                 c.confirm_discard = false;
                 c.then_open = None;

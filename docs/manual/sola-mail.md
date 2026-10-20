@@ -70,8 +70,22 @@ Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
 - **Save Draft** files it in Drafts and closes compose. Open it from
   Drafts and press **Edit draft** to continue; sending (or saving again)
   replaces the saved copy.
+- **Fields** — **Tab** / **Shift+Tab** move To → Cc → Subject → body
+  (Tab inside the body types a tab). Enter in To / Cc takes the top
+  suggestion, else moves on. A new message or forward starts in To; a
+  reply starts in the body.
+- **Suggestions** — typing two or more letters in To / Cc lists people
+  you have mail from or to (name or address match; no-reply senders
+  left out). Click one, or press Enter for the top one.
+- **Send** checks each address first and marks the one it can’t read
+  under its field.
 - **Esc**, **Cancel**, or clicking another message with an edited draft
-  asks first: Keep Editing, Save Draft, or Discard.
+  shows a **Discard this draft?** card over the compose pane: Keep
+  Editing, Save Draft, or Discard. Esc first closes suggestions or the
+  From menu.
+- The toolbar stays live while composing: Archive / Trash / Junk act on
+  the selected message (the draft stays open); Reply / Forward replace an
+  untouched draft or ask about an edited one.
 
 ### Erasing
 

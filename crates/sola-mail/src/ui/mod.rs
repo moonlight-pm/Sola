@@ -2,6 +2,7 @@
 
 mod chrome;
 mod compose;
+mod contacts;
 mod format;
 mod keys;
 mod list;
@@ -12,9 +13,10 @@ mod sidebar;
 mod style;
 mod widgets;
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
@@ -37,7 +39,8 @@ use crate::protocol::{
 use crate::snapshot::{self, Snapshot};
 use crate::worker::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
 use chrome::Toast;
-use compose::{Compose, Edit};
+use compose::{Compose, Edit, Field};
+use contacts::Contacts;
 use list::{ListState, Load, SearchState};
 use moves::{Confirmed, Moves};
 use reader::{Letter, Reader};
@@ -55,6 +58,8 @@ const SETTLE_SELECT: Duration = Duration::from_millis(120);
 const POLL: Duration = Duration::from_secs(45);
 /// Shared list-header / reader-toolbar height so icons sit on one line.
 const CHROME_H: f32 = 40.0;
+/// An update or view slower than this is logged (UI felt frozen).
+const SLOW: Duration = Duration::from_millis(150);
 
 fn list_scroll_id() -> ScrollId {
     ScrollId::new("mail-message-list")
@@ -124,6 +129,16 @@ pub enum Msg {
     RemoveAttach(usize),
     ClipboardPasted(Option<String>),
     Picker(PickerMsg),
+    /// Enter in a compose field: take the top suggestion, else move on.
+    ComposeSubmit(Field),
+    ComposeSuggest(Field, String),
+    /// Tab / Shift+Tab, once we know which field has focus.
+    TabFrom {
+        from: Option<Field>,
+        back: bool,
+    },
+    /// Swallows a click (the discard card's background).
+    Noop,
 
     DismissToast,
     /// Auto-hide a toast after [`TOAST_TTL`]; ignored if a newer one replaced it.
@@ -170,6 +185,8 @@ pub struct App {
     confirm: Option<String>,
     picker: Option<(PickerKind, FilePicker)>,
     last_picker_dir: Option<PathBuf>,
+    /// Addresses seen in mail (To / Cc suggestions).
+    contacts: Contacts,
     /// Last inbox unread we published on `Topic::MailStatus`.
     published_unread: Option<u32>,
     /// Bumped on every selection change so delayed body fetches can cancel.
@@ -191,6 +208,10 @@ impl App {
     pub fn boot() -> (Self, Task<Msg>) {
         // Open on the last list instead of a blocking Connecting screen.
         let snap = snapshot::load();
+        let mut contacts = Contacts::default();
+        for m in snap.iter().flat_map(|s| &s.rows) {
+            learn(&mut contacts, m);
+        }
         let (list, folders) = match snap {
             Some(s) => (
                 ListState::new(s.folder, s.rows, s.total),
@@ -224,6 +245,7 @@ impl App {
             confirm: None,
             picker: None,
             last_picker_dir: None,
+            contacts,
             published_unread: None,
             select_gen: 0,
         };
@@ -264,6 +286,21 @@ impl App {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let what: Cow<'static, str> = match &msg {
+            Msg::Worker(ev) => Cow::Borrowed(worker_label(ev)),
+            Msg::Bus(_) => Cow::Borrowed("bus"),
+            other => Cow::Owned(format::truncate(&format!("{other:?}"), 80)),
+        };
+        let started = Instant::now();
+        let task = self.handle(msg);
+        let took = started.elapsed();
+        if took > SLOW {
+            tracing::warn!(took_ms = took.as_millis() as u64, msg = %what, "slow update");
+        }
+        task
+    }
+
+    fn handle(&mut self, msg: Msg) -> Task<Msg> {
         let needs_letter = matches!(msg, Msg::Reply { .. } | Msg::Forward | Msg::EditDraft);
         if needs_letter && self.reader.body().is_none() {
             return Task::none();
@@ -323,8 +360,10 @@ impl App {
             Msg::OpenAttachment(i) => return self.open_attachment(i),
             Msg::SaveAttachment(i) => self.begin_save_attachment(i),
 
+            // Toolbar moves act on the selected row even while composing
+            // (the draft stays); the single-letter keys stay off then.
             Msg::MoveSelected(dest) => {
-                if let Some(id) = self.selected.clone().filter(|_| self.compose.is_none()) {
+                if let Some(id) = self.selected.clone() {
                     return self.move_and_advance(id, dest);
                 }
             }
@@ -339,25 +378,33 @@ impl App {
             }
             Msg::CancelConfirm => self.confirm = None,
 
-            Msg::Compose => self.start_compose(|app| compose::blank(app.default_from())),
-            Msg::Reply { all } => self.start_compose(|app| {
-                let body = app.reader.body().expect("guarded in update");
-                let from = app.reply_from(body);
-                compose::reply(body, from, all, &|a| app.is_self(a))
-            }),
-            Msg::Forward => self.start_compose(|app| {
-                let body = app.reader.body().expect("guarded in update");
-                compose::forward(body, app.reply_from(body))
-            }),
-            Msg::EditDraft => self.start_compose(|app| {
-                let body = app.reader.body().expect("guarded in update");
-                let from = app
-                    .identities()
-                    .into_iter()
-                    .find(|i| mail_addr_key(i) == mail_addr_key(&body.from))
-                    .unwrap_or_else(|| app.default_from());
-                compose::reopen(body, from)
-            }),
+            Msg::Compose => {
+                return self.start_compose(|app| compose::blank(app.default_from()));
+            }
+            Msg::Reply { all } => {
+                return self.start_compose(|app| {
+                    let body = app.reader.body().expect("guarded in update");
+                    let from = app.reply_from(body);
+                    compose::reply(body, from, all, &|a| app.is_self(a))
+                });
+            }
+            Msg::Forward => {
+                return self.start_compose(|app| {
+                    let body = app.reader.body().expect("guarded in update");
+                    compose::forward(body, app.reply_from(body))
+                });
+            }
+            Msg::EditDraft => {
+                return self.start_compose(|app| {
+                    let body = app.reader.body().expect("guarded in update");
+                    let from = app
+                        .identities()
+                        .into_iter()
+                        .find(|i| mail_addr_key(i) == mail_addr_key(&body.from))
+                        .unwrap_or_else(|| app.default_from());
+                    compose::reopen(body, from)
+                });
+            }
             Msg::Draft(edit) => {
                 if let Some(c) = self.compose.as_mut() {
                     c.apply(edit);
@@ -400,6 +447,25 @@ impl App {
             Msg::ClipboardPasted(None) => {}
             Msg::Picker(m) => return self.on_picker(m),
 
+            Msg::ComposeSubmit(field) => return self.compose_submit(field),
+            Msg::ComposeSuggest(field, chosen) => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.complete(field, &chosen);
+                }
+                return field.focus();
+            }
+            Msg::TabFrom { from, back } => {
+                let next = match from {
+                    Some(field) => field.step(back),
+                    None if back => Field::Subject,
+                    None => Field::To,
+                };
+                if let Some(c) = self.compose.as_mut() {
+                    c.active = None;
+                }
+                return next.focus();
+            }
+            Msg::Noop => {}
             Msg::DismissToast => self.clear_toast(),
             Msg::ToastExpired { generation } => {
                 if self.toast_gen == generation {
@@ -547,7 +613,12 @@ impl App {
                 rows,
                 total,
                 failed,
-            } => self.on_messages(epoch, folder, page, rows, total, failed),
+            } => {
+                for m in &rows {
+                    learn(&mut self.contacts, m);
+                }
+                self.on_messages(epoch, folder, page, rows, total, failed);
+            }
             MailEvent::SearchResults {
                 epoch,
                 rows,
@@ -555,6 +626,9 @@ impl App {
             } => {
                 if epoch != self.list.epoch {
                     return Task::none();
+                }
+                for m in &rows {
+                    learn(&mut self.contacts, m);
                 }
                 if let Some(search) = self.list.search.as_mut() {
                     search.capped = capped;
@@ -564,6 +638,13 @@ impl App {
                 }
             }
             MailEvent::Body(body) => {
+                for addr in std::iter::once(&body.from)
+                    .chain(&body.reply_to)
+                    .chain(&body.to)
+                    .chain(&body.cc)
+                {
+                    self.contacts.add(addr);
+                }
                 if self.selected.as_ref() == Some(&body.id) {
                     tracing::debug!(
                         uid = body.id.uid,
@@ -1053,19 +1134,38 @@ impl App {
 
     /// Open the compose pane with `make(self)`. Reply / forward / edit
     /// need an open letter; an edited draft is never replaced silently.
-    fn start_compose(&mut self, make: impl FnOnce(&Self) -> compose::Draft) {
+    fn start_compose(&mut self, make: impl FnOnce(&Self) -> compose::Draft) -> Task<Msg> {
         if let Some(c) = self.compose.as_mut() {
             // Never swap out a draft that is mid-send or has edits.
             if c.busy.is_some() {
-                return;
+                return Task::none();
             }
             if c.dirty() {
                 c.confirm_discard = true;
-                return;
+                return Task::none();
             }
         }
-        let draft = make(self);
-        self.compose = Some(Box::new(Compose::new(draft)));
+        let compose = Compose::new(make(self));
+        // New / forward: To. Reply / reopened draft: the body.
+        let first = compose.first_field();
+        self.compose = Some(Box::new(compose));
+        first.focus()
+    }
+
+    /// Enter in To / Cc takes the top suggestion; otherwise (and in
+    /// Subject) the cursor moves to the next field.
+    fn compose_submit(&mut self, field: Field) -> Task<Msg> {
+        let Some(c) = self.compose.as_mut() else {
+            return Task::none();
+        };
+        if c.active == Some(field)
+            && let Some(top) = self.contacts.suggest(c.field_text(field), 1).pop()
+        {
+            c.complete(field, &top);
+            return Task::none();
+        }
+        c.active = None;
+        field.step(false).focus()
     }
 
     fn close_compose(&mut self) {
@@ -1083,8 +1183,8 @@ impl App {
         if c.busy.is_some() {
             return Task::none();
         }
-        if c.draft.to.trim().is_empty() {
-            return self.show_toast("Add at least one recipient", false);
+        if let Some(problem) = c.send_problem() {
+            return self.show_toast(problem, false);
         }
         c.busy = Some(compose::Busy::Sending);
         c.confirm_discard = false;
@@ -1372,6 +1472,20 @@ impl App {
     // ── View ──────────────────────────────────────────────────────────
 
     pub fn view(&self) -> Element<'_, Msg> {
+        let started = Instant::now();
+        let view = self.build_view();
+        let took = started.elapsed();
+        if took > SLOW {
+            tracing::warn!(
+                took_ms = took.as_millis() as u64,
+                rows = self.list.rows.len(),
+                "slow view"
+            );
+        }
+        view
+    }
+
+    fn build_view(&self) -> Element<'_, Msg> {
         let content: Element<'_, Msg> = if self.setup == Setup::Missing {
             container(
                 column![
@@ -1388,7 +1502,7 @@ impl App {
             .into()
         } else {
             let pane = match &self.compose {
-                Some(c) => c.view(&self.identities()),
+                Some(c) => c.view(&self.identities(), &self.contacts),
                 None => self.view_reader(),
             };
             row![
@@ -1452,4 +1566,31 @@ fn bump(folders: &mut [Folder], name: &str, d_total: i32, d_unread: i32) {
     };
     f.total = f.total.saturating_add_signed(d_total);
     f.unread = f.unread.saturating_add_signed(d_unread);
+}
+
+/// Senders and recipients of a list row, for suggestions.
+fn learn(contacts: &mut Contacts, m: &MessageSummary) {
+    contacts.add(&m.from);
+    for addr in &m.to {
+        contacts.add(addr);
+    }
+}
+
+fn worker_label(ev: &MailEvent) -> &'static str {
+    match ev {
+        MailEvent::AccountLink { .. } => "worker:account-link",
+        MailEvent::Changed => "worker:changed",
+        MailEvent::NotConfigured => "worker:not-configured",
+        MailEvent::Folders { .. } => "worker:folders",
+        MailEvent::Messages { .. } => "worker:messages",
+        MailEvent::SearchResults { .. } => "worker:search",
+        MailEvent::Body(_) => "worker:body",
+        MailEvent::Moved { .. } => "worker:moved",
+        MailEvent::MoveFailed { .. } => "worker:move-failed",
+        MailEvent::Emptied { .. } => "worker:emptied",
+        MailEvent::Sent => "worker:sent",
+        MailEvent::DraftSaved => "worker:draft-saved",
+        MailEvent::NewMail => "worker:new-mail",
+        MailEvent::Failed { .. } => "worker:failed",
+    }
 }

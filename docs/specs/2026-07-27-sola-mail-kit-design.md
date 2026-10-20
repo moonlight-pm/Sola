@@ -325,6 +325,7 @@ Install rustls crypto provider once at process start (same as apocrypha).
 13. Esc in a typed draft → Discard? bar (Keep Editing / Save Draft / Discard). Save Draft → Drafts; open it → Edit draft → send replaces it.
 14. Forward → files come along; Reply to a list with Reply-To → goes to the list.
 15. Mark unread / Flag from the toolbar; flag shows on the row.
+16. Compose: Tab / Shift+Tab walk To → Cc → Subject → body; typing `an` in To suggests known people; Send with `half typed@` marks that address and does not send.
 10. Empty / invalid config → clear “configure in Settings” state (no panic).
 
 ## Build / install / runtime
