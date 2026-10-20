@@ -101,9 +101,11 @@ fn chapterEntry(entry!: Loaded) -> Node {
     </li>
 }
 
+## The title is one span, so a title with code in it wraps as a line of
+## text beside the number instead of as separate pieces.
 fn link(heading!: Heading, chapter!: Chapter) -> Node {
     <a href={"#{heading.id}"}>
         <span class="number">{heading.number}</span>
-        {markdown.title(heading, chapter)}
+        <span class="title">{markdown.title(heading, chapter)}</span>
     </a>
 }

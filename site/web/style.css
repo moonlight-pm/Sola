@@ -397,6 +397,8 @@ footer.site a { color: var(--prose); }
     font-variant-numeric: tabular-nums;
 }
 
+.toc .title { min-width: 0; }
+
 .toc code {
     padding: 0;
     background: none;
