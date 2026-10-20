@@ -24,13 +24,13 @@ conform Page to Component {
                 <link rel="preconnect" href="https://fonts.gstatic.com" />
                 <link
                     rel="stylesheet"
-                    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+                    href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..600&family=JetBrains+Mono:wght@400;500&display=swap"
                 />
                 <link rel="stylesheet" href="/style.css" />
             </head>
             <body>
                 <a class="skip" href="#main">Skip to content</a>
-                <header class="bar">
+                <header class="site">
                     <nav aria-label="Site">
                         <a class="brand" href="/">
                             <span class="mark" aria-hidden="true"></span>
@@ -42,9 +42,8 @@ conform Page to Component {
                 </header>
                 {children}
                 <footer class="site">
-                    <span class="mark" aria-hidden="true"></span>
                     <p>
-                        Sola is pre-release. Source:
+                        Sola is pre-release. Source and issues:
                         <a href={repository}>github.com/moonlight-pm/Sola</a>. This site is a
                         Thoxa program in <a href={"{repository}/tree/master/site"}>site/</a>.
                     </p>

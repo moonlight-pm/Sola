@@ -8,28 +8,30 @@ two lists the same).
 
 | Chapter | Contents |
 |---------|----------|
-| [Introduction](introduction.md) | What Sola is, requirements, the NixOS module, building, starting a session, paths |
-| [Fonts](distribution.md) | The font families Sola needs installed system-wide |
-| [Shell](sola-shell.md) | Menubar, launcher, switcher, zones, keyboard shortcuts |
-| [Browser](sola-browser.md) | sola-browser: tabs, profiles, the Bitwarden vault, downloads |
-| [Mail](sola-mail.md) | sola-mail |
-| [Calendar](sola-calendar.md) | sola-calendar and its accounts |
-| [Spotify](sola-spotify.md) | sola-spotify |
-| [Arcade](sola-arcade.md) | The Steam library and nested games |
-| [Paint](sola-paint.md) | The default image viewer and editor |
-| [Preview](sola-preview.md) | The quick image viewer |
-| [Website wrappers](sola-wrapper.md) | A website as its own application |
-| [Design](sola-design.md) | HTML artboards on a canvas, for agents |
-| [Monitor](sola-monitor.md) | The bus and call-plane inspector |
-| [Scope](sola-scope.md) | The pixel loupe |
-| [KVM](sola-kvm-operator.md) | One keyboard and mouse across two machines |
-| [solactl](solactl.md) | The command line: every verb |
+| [Introduction](introduction.md) | What Sola is, requirements, the NixOS module, fonts, building, starting a session, paths |
+| [Architecture](architecture.md) | How a session is put together: the processes, the three planes, sockets, start-up, restarts |
+| [Process manager](process-manager.md) | `sola`: what it starts, in what order, restart policy, binary watch, ending the session |
+| [The bus](bus.md) | `sola-bus`: socket, wire format, every topic, sticky and persisted state, reconnects |
+| [The call plane](call.md) | `sola-call`: owners and methods, the wire format, timeouts, observers, MCP |
+| [Compositor](compositor.md) | River and `sola-river`: window management, focus, zones, outputs, screenshots, input |
+| [Session manager](session.md) | `sola-session`: launching, tracking, and closing applications; opening URLs and files |
+| [Shell](sola-shell.md) | `sola-shell`: menubar, launcher, switcher, zones, keyboard shortcuts |
+| [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates |
+| [solactl](solactl.md) | The command line: every command, method, and flag |
+| [Applications](applications.md) | The applications, one line each, with links to their notes |
 
-Not chapters yet: Terminal, Workspaces, Settings.
+Application notes — kept here, linked from the Applications chapter, not on
+the page: [Browser](sola-browser.md), [Mail](sola-mail.md),
+[Calendar](sola-calendar.md), [Spotify](sola-spotify.md),
+[Arcade](sola-arcade.md), [Paint](sola-paint.md), [Preview](sola-preview.md),
+[Website wrappers](sola-wrapper.md), [Design](sola-design.md),
+[Monitor](sola-monitor.md), [Scope](sola-scope.md),
+[KVM](sola-kvm-operator.md), [Fonts](distribution.md). They follow the same
+rules.
 
-Kept here as developer notes, not on the site:
-[design-language.md](design-language.md) (the visual law for kit and
-shell work), [cursor-theme-loading.md](cursor-theme-loading.md), and
+Developer notes, not on the site: [design-language.md](design-language.md)
+(the visual law for kit and shell work),
+[cursor-theme-loading.md](cursor-theme-loading.md), and
 [sola-river-layer-shell.md](sola-river-layer-shell.md).
 
 Engineering status lives elsewhere: [`../capabilities.md`](../capabilities.md)

@@ -190,11 +190,11 @@ run it from inside another desktop session.**
    ```sh
    /opt/sola/bin/sola
    ```
-   Debug logging to the log dir:
+   Debug logging (every process writes `/opt/sola/log` itself):
    ```sh
-   RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
+   RUST_LOG=debug /opt/sola/bin/sola
    ```
-5. Quit via the menubar’s “Quit Sola”, or `pkill sola` from another TTY.
+5. Quit via the menubar’s “Quit Sola”, or `pkill -x sola` from another TTY (plain `pkill sola` also matches `sola-bus`, `sola-session`, …).
 
 ## 4. Day-to-day workflow
 
@@ -240,7 +240,7 @@ Canonical map: `AGENTS.md` and `docs/architecture.md`. Headline pieces:
   `tail -F /opt/sola/log/sola.log` from a second TTY.
 - `RUST_LOG=info,sola_kit=trace,cef=warn`.
 - `solactl compositor windows` — running apps + window IDs.
-- `solactl logs <app>` — tail one app.
+- `solactl logs <name>` — print `/opt/sola/log/<name>.log`; `-f` follows it (apps are `app-<app_id>`).
 - `solactl compositor screenshot` / `solactl session launch` talk to
   `sola-call` (not the bus). Owner down → fail.
 - `solactl emit <Topic> '<json-payload>'` — bus poke from the CLI.

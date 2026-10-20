@@ -16,7 +16,7 @@ desktop.
 | `app/markdown.thx` | Markdown to nodes (from thoxa.moonlight.pm): chapter links become anchors, other relative links go to GitHub |
 | `app/highlight.thx` | Code blocks: comments in shell, Nix, and TOML |
 | `app/config.thx` | Listen port, asset root, and manual root from the environment |
-| `web/` | `style.css` and the flower mark |
+| `web/` | `style.css`, the flower mark, and `desk.png` |
 
 The look follows [`DESIGN.md`](../DESIGN.md): graphite, one cyan signal.
 
@@ -28,6 +28,11 @@ process, or the release state changes, update the page with
 [`docs/architecture.md`](../docs/architecture.md). The application list is
 `appList()` and the process table `partList()` in `app/pages/home.thx`; an
 application's `chapter` links its name to the manual.
+
+`web/desk.png` is the `Desk` element (`data-name="Desk"`, 1296 × 760 CSS
+px) of [`design/foundation/07-desk.html`](../design/foundation/07-desk.html),
+captured at 2× in headless Chrome after `document.fonts.ready`. Render it
+again when that board changes; the caption says it is a drawing.
 
 The manual is read from disk at each request (locally) and copied into the
 image, so a change to `docs/manual` reaches the site at the next deploy. A

@@ -11,21 +11,16 @@ import { warn } from "std/logging"
 ## Chapter files, in page order. docs/manual/README.md lists the same.
 export let names = [
     "introduction",
-    "distribution",
+    "architecture",
+    "process-manager",
+    "bus",
+    "call",
+    "compositor",
+    "session",
     "sola-shell",
-    "sola-browser",
-    "sola-mail",
-    "sola-calendar",
-    "sola-spotify",
-    "sola-arcade",
-    "sola-paint",
-    "sola-preview",
-    "sola-wrapper",
-    "sola-design",
-    "sola-monitor",
-    "sola-scope",
-    "sola-kvm-operator",
+    "theme",
     "solactl",
+    "applications",
 ]
 
 type Loaded(chapter: Chapter, text: String, headings: Array<Heading>)
@@ -43,11 +38,12 @@ export fn page(request!: Request) -> Response {
                     <header class="manual-head">
                         <h1>The Sola Manual</h1>
                         <p>
-                            How to set Sola up and use its shell and applications, as they
-                            work today. Built from <a href={"{repository}/tree/master/docs/manual"}>docs/manual</a>
+                            How Sola is put together and how to run it, as it works today:
+                            setting it up, the processes of a session, the bus and the call
+                            plane, the compositor, the shell, the theme, and the command
+                            line. Built from <a href={"{repository}/tree/master/docs/manual"}>docs/manual</a>
                             in the repository; a change in behaviour changes these pages in
-                            the same commit. Terminal, Workspaces, and Settings have no
-                            chapter yet.
+                            the same commit.
                         </p>
                         <details class="contents-inline">
                             <summary>Contents</summary>

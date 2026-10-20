@@ -8,6 +8,7 @@ export fn page(request!: Request) -> Response {
         <Page title="Sola" request={request} current="home">
             <main class="home" id="main">
                 {intro()}
+                {desk()}
                 {design()}
                 {applications()}
                 {architecture()}
@@ -33,14 +34,14 @@ export fn missing(request!: Request) -> Response {
 
 fn intro() -> Node {
     <header class="intro">
-        <h1>Sola</h1>
+        <h1><span class="mark" aria-hidden="true"></span>Sola</h1>
         <p class="lede">
             A desktop environment for Linux on Wayland, written in Rust. Sola runs the
             session, the shell, and its own applications, all drawn with one toolkit and
             one theme. River is the compositor.
         </p>
         <p class="facts">
-            <span class="stage">Pre-release</span>
+            <span>Pre-release</span>
             <span>NixOS, x86-64</span>
             <span>No releases yet</span>
             <a href="/manual">Manual</a>
@@ -49,7 +50,23 @@ fn intro() -> Node {
     </header>
 }
 
-## A command and what it does, for the code block under Design.
+fn desk() -> Node {
+    <figure class="desk">
+        <img
+            src="/desk.png"
+            width="1296"
+            height="760"
+            alt="The Sola desk: a menubar across the top; Workspaces with a Claude Code session waiting on a build; Mail with a letter open; a notification card; a floating Preview window."
+        />
+        <figcaption>
+            The desk, drawn at 1:1 in Sola's
+            <a href={"{repository}/blob/master/design/foundation/07-desk.html"}>design foundation</a>:
+            Workspaces and Mail in zones, Preview floating.
+        </figcaption>
+    </figure>
+}
+
+## A command and what it does, for code blocks.
 type Line(command: String, note: String)
 
 fn controlLines() -> Array<Line> {
@@ -63,167 +80,141 @@ fn controlLines() -> Array<Line> {
 }
 
 fn codeLine(line!: Line) -> Node {
-    <span>{line.command}<span class="comment">{line.note}</span>{"\n"}</span>
+    <span>{line.command}<span class="tk-cm">{line.note}</span>{"\n"}</span>
 }
 
 fn design() -> Node {
     <section id="design">
         <h2>Design</h2>
-        <div class="body">
-            <p>
-                <strong>One toolkit for the whole desktop.</strong>
-                The shell and every first-party application are Iced programs built on
-                sola-kit, which supplies the buttons, fields, sidebars, menus, type roles,
-                and colors. The theme travels on Sola's bus: change a color or a font and
-                every running application redraws with it, without a restart.
-            </p>
-            <p>
-                <strong>Separate processes, each restartable.</strong>
-                A process manager, <code>sola</code>, supervises the event bus, the
-                request/reply host, the bridge to the compositor, the shell, and the
-                session manager. When one of them exits it is started again, and the rest of
-                the session carries on. Applications are separate processes too, and they
-                reconnect when the bus or the compositor bridge comes back.
-            </p>
-            <p>
-                <strong>Native, not web.</strong>
-                The shell and the applications draw with Iced on the GPU. There is no HTML in
-                the desktop's own interface. A web engine (Chromium, through CEF) runs only
-                where web pages are the content: the browser, website wrappers, and Design's
-                artboards.
-            </p>
-            <p>
-                <strong>Scriptable, by people and by agents.</strong>
-                Each application registers its methods with the request/reply host, and
-                <a href="/manual#solactl"><code>solactl</code></a> calls them from a shell. <code>solactl mcp</code> offers
-                every live method to an AI agent as an MCP tool; the list changes as
-                applications start and quit.
-            </p>
-            <pre><code>{for line in controlLines() { codeLine(line) }}</code></pre>
-        </div>
+        <p>
+            <strong>One toolkit for the whole desktop.</strong>
+            The shell and every first-party application are Iced programs built on
+            sola-kit, which supplies the buttons, fields, sidebars, menus, type roles,
+            and colors. The theme travels on Sola's bus: change a color or a font and
+            every running application redraws with it, without a restart.
+        </p>
+        <p>
+            <strong>Separate processes, each restartable.</strong>
+            A process manager, <code>sola</code>, supervises the event bus, the
+            request/reply host, the bridge to the compositor, the shell, and the session
+            manager. When one of them exits it is started again, and the rest of the
+            session carries on. Applications are separate processes too, and they
+            reconnect when the bus or the compositor bridge comes back.
+        </p>
+        <p>
+            <strong>Native, not web.</strong>
+            The shell and the applications draw with Iced on the GPU. There is no HTML in
+            the desktop's own interface. A web engine (Chromium, through CEF) runs only
+            where web pages are the content: the browser, website wrappers, and Design's
+            artboards.
+        </p>
+        <p>
+            <strong>Scriptable, by people and by agents.</strong>
+            Each application registers its methods with the request/reply host, and
+            <a href="/manual#solactl"><code>solactl</code></a> calls them from a shell.
+            <code>solactl mcp</code> offers every live method to an AI agent as an MCP
+            tool; the list changes as applications start and quit.
+        </p>
+        <pre><code>{for line in controlLines() { codeLine(line) }}</code></pre>
     </section>
 }
 
-## `chapter` is the manual chapter for the app, or "" when it has none.
-type App(name: String, detail: String, crate: String, chapter: String)
+type Entry(name: String, detail: String)
 
-fn appList() -> Array<App> {
+fn appList() -> Array<Entry> {
     [
-        App(name: "Shell", detail: "Menubar with application menus and system status, launcher (Super+Space), window switcher (Super+Tab), notifications, and window zones.", crate: "sola-shell", chapter: "sola-shell"),
-        App(name: "Terminal", detail: "A terminal on Alacritty's grid, with tabs.", crate: "sola-terminal", chapter: ""),
-        App(name: "Workspaces", detail: "Projects and their git worktrees in a rail, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done.", crate: "sola-workspaces", chapter: ""),
-        App(name: "Browser", detail: "Chromium's engine under Sola's own chrome: vertical tabs and tab groups, profiles, a Bitwarden vault, downloads, and developer tools.", crate: "sola-browser", chapter: "sola-browser"),
-        App(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments.", crate: "sola-mail", chapter: "sola-mail"),
-        App(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders.", crate: "sola-calendar", chapter: "sola-calendar"),
-        App(name: "Settings", detail: "Theme, fonts, and mail and calendar accounts.", crate: "sola-settings", chapter: ""),
-        App(name: "Arcade", detail: "The Steam library in a window. Each game runs in a nested session sized to it.", crate: "sola-arcade", chapter: "sola-arcade"),
-        App(name: "Spotify", detail: "Playback through librespot, playlists, the library, and Spotify Connect.", crate: "sola-spotify", chapter: "sola-spotify"),
-        App(name: "Paint", detail: "The default image viewer and editor.", crate: "sola-paint", chapter: "sola-paint"),
-        App(name: "Preview", detail: "A quick viewer for screenshots and images.", crate: "sola-preview", chapter: "sola-preview"),
-        App(name: "Design", detail: "HTML artboards on a canvas, written and edited by AI agents.", crate: "sola-design", chapter: "sola-design"),
-        App(name: "Wrappers", detail: "A website as an application of its own, with a launcher entry and desktop notifications.", crate: "sola-wrapper", chapter: "sola-wrapper"),
-        App(name: "Monitor", detail: "A live view of bus traffic and of the methods each application offers.", crate: "sola-monitor", chapter: "sola-monitor"),
-        App(name: "Scope", detail: "A pixel loupe: the screen under the pointer, magnified.", crate: "sola-scope", chapter: "sola-scope"),
-        App(name: "KVM", detail: "One keyboard and mouse across two machines, with a shared clipboard.", crate: "sola-kvm", chapter: "sola-kvm-operator"),
+        Entry(name: "Shell", detail: "Menubar with application menus and system status, launcher (Super+Space), window switcher (Super+Tab), notifications, and window zones."),
+        Entry(name: "Terminal", detail: "A terminal on Alacritty's grid, with tabs."),
+        Entry(name: "Workspaces", detail: "Projects and their git worktrees in a rail, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
+        Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: vertical tabs and tab groups, profiles, a Bitwarden vault, downloads, and developer tools."),
+        Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
+        Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
+        Entry(name: "Settings", detail: "Applications in the launcher, website wrappers, and mail and calendar accounts."),
+        Entry(name: "Arcade", detail: "The Steam library in a window. Each game runs in a nested session sized to it."),
+        Entry(name: "Spotify", detail: "Playback through librespot, playlists, the library, and Spotify Connect."),
+        Entry(name: "Paint", detail: "The default image viewer and editor."),
+        Entry(name: "Preview", detail: "A quick viewer for screenshots and images."),
+        Entry(name: "Design", detail: "HTML artboards on a canvas, written and edited by AI agents."),
+        Entry(name: "Wrappers", detail: "A website as an application of its own, with a launcher entry and desktop notifications."),
+        Entry(name: "Monitor", detail: "A live view of bus traffic and of the methods each application offers."),
+        Entry(name: "Scope", detail: "A pixel loupe: the screen under the pointer, magnified."),
+        Entry(name: "KVM", detail: "One keyboard and mouse across two machines, with a shared clipboard."),
     ]
-}
-
-fn appName(app!: App) -> Node {
-    if app.chapter.isEmpty() {
-        <>{app.name}</>
-    } else {
-        <a href={"/manual#{app.chapter}"}>{app.name}</a>
-    }
 }
 
 fn applications() -> Node {
     <section id="applications">
         <h2>Applications</h2>
-        <div class="body">
-            <p>
-                Each is its own process and its own window. The shell is stable in daily use.
-                The applications are early, and each is incomplete. The
-                <a href="/manual">manual</a> has a chapter for most of them, and
-                <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>
-                lists what each can do and what it lacks.
-            </p>
-            <table class="rows apps">
-                <tbody>
-                    {for app in appList() {
-                        <tr>
-                            <th scope="row">{appName(app)}</th>
-                            <td>{app.detail}</td>
-                            <td class="crate"><code>{app.crate}</code></td>
-                        </tr>
-                    }}
-                </tbody>
-            </table>
-        </div>
+        <p>
+            Each is its own process and its own window. The shell is stable in daily use;
+            the applications are early, and each is incomplete.
+            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>
+            lists what each can do and what it lacks.
+        </p>
+        <dl class="entries">
+            {for app in appList() {
+                <div>
+                    <dt>{app.name}</dt>
+                    <dd>{app.detail}</dd>
+                </div>
+            }}
+        </dl>
     </section>
 }
 
-type Part(name: String, role: String)
+## A process of the session and the manual chapter that covers it.
+type Part(name: String, role: String, chapter: String)
 
 fn partList() -> Array<Part> {
     [
-        Part(name: "sola", role: "Process manager. Starts each component below and restarts any that exits. It has no desktop logic of its own."),
-        Part(name: "sola-bus", role: "Event bus on a Unix socket. Fans facts out to every client: focus, windows, the theme, application menus."),
-        Part(name: "sola-call", role: "Request/reply host. Applications register methods here; solactl and agents call them."),
-        Part(name: "sola-river", role: "Bridge between River, the Wayland compositor, and the bus. Also takes screenshots and synthesizes input."),
-        Part(name: "sola-shell", role: "One Iced program for the menubar, launcher, switcher, and notifications."),
-        Part(name: "sola-session", role: "Launches applications and tracks them."),
-        Part(name: "sola-kit", role: "The shared Iced toolkit, with a storybook that shows every component."),
+        Part(name: "sola", role: "Process manager. Starts each component below and restarts any that exits.", chapter: "process-manager"),
+        Part(name: "sola-bus", role: "Event bus on a Unix socket. Fans facts out to every client: focus, windows, the theme, application menus.", chapter: "bus"),
+        Part(name: "sola-call", role: "Request/reply host. Applications register methods; solactl and agents call them.", chapter: "call"),
+        Part(name: "sola-river", role: "Window manager for River, the Wayland compositor, and its bridge to the bus.", chapter: "compositor"),
+        Part(name: "sola-session", role: "Launches applications and tracks them.", chapter: "session"),
+        Part(name: "sola-shell", role: "Menubar, launcher, switcher, and notifications, in one Iced program.", chapter: "sola-shell"),
+        Part(name: "sola-kit", role: "The shared Iced toolkit and the theme every application follows.", chapter: "theme"),
     ]
 }
 
 fn architecture() -> Node {
     <section id="architecture">
         <h2>Architecture</h2>
-        <div class="body">
-            <p>
-                Sola is a Cargo workspace of about thirty crates. A session is these
-                processes, plus one for each application that is open:
-            </p>
-            <table class="rows parts">
-                <tbody>
-                    {for part in partList() {
-                        <tr>
-                            <th scope="row"><code>{part.name}</code></th>
-                            <td>{part.role}</td>
-                        </tr>
-                    }}
-                </tbody>
-            </table>
-            <p>
-                River 0.4.5 is the compositor, with a few patches that the NixOS module carries.
-                <a href={"{repository}/blob/master/docs/architecture.md"}>docs/architecture.md</a>
-                maps the processes, sockets, and paths.
-            </p>
-        </div>
+        <p>
+            A session is these processes, plus one for each application that is open.
+            The <a href="/manual#architecture">manual</a> covers each in full: sockets,
+            wire formats, topics, restart rules, and the command line.
+        </p>
+        <dl class="entries parts">
+            {for part in partList() {
+                <div>
+                    <dt><a href={"/manual#{part.chapter}"}><code>{part.name}</code></a></dt>
+                    <dd>{part.role}</dd>
+                </div>
+            }}
+        </dl>
     </section>
 }
 
 fn status() -> Node {
     <section id="status">
         <h2>Status</h2>
-        <div class="body">
-            <p>
-                Sola is pre-release. It is developed on, and used every day on, one NixOS
-                workstation. There are no releases or install images. Not there yet:
-            </p>
-            <ul>
-                <li>Releases. Build from source; x86-64 is the only platform.</li>
-                <li>An install image. The ISO and its installer are tested in a virtual machine and not published.</li>
-                <li>Other distributions. The binaries expect NixOS paths, and Nix on another distribution is not supported.</li>
-                <li>Complete applications. Each has gaps, and the capability list names them.</li>
-            </ul>
-            <p>
-                The work under way is in
-                <a href={"{repository}/blob/master/CURRENT.md"}>CURRENT.md</a>, and what each
-                part can do in
-                <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>.
-            </p>
-        </div>
+        <p>
+            Sola is pre-release. It is developed on, and used every day on, one NixOS
+            workstation. There are no releases or install images. Not there yet:
+        </p>
+        <ul>
+            <li>Releases. Build from source; x86-64 is the only platform.</li>
+            <li>An install image. The ISO and its installer are tested in a virtual machine and not published.</li>
+            <li>Other distributions. The binaries expect NixOS paths, and Nix on another distribution is not supported.</li>
+            <li>Complete applications. Each has gaps, and the capability list names them.</li>
+        </ul>
+        <p>
+            The work under way is in
+            <a href={"{repository}/blob/master/CURRENT.md"}>CURRENT.md</a>, and what each
+            part can do in
+            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>.
+        </p>
     </section>
 }
 
@@ -240,19 +231,15 @@ fn buildLines() -> Array<Line> {
 fn building() -> Node {
     <section id="building">
         <h2>Building</h2>
-        <div class="body">
-            <p>
-                You need NixOS on x86-64, a Mesa or NVIDIA graphics stack, and Rust 1.85 or
-                later. Sola's NixOS module prepares the host: the patched River, the
-                libraries the browser engine loads, and the fonts. Then, from a clone:
-            </p>
-            <pre><code>{for line in buildLines() { codeLine(line) }}</code></pre>
-            <p>
-                The <a href="/manual#introduction">manual's introduction</a> covers the
-                module, starting a session, and updating;
-                <a href={"{repository}/blob/master/CONTRIBUTING.md"}>CONTRIBUTING.md</a> has the
-                rest of the development setup.
-            </p>
-        </div>
+        <p>
+            You need NixOS on x86-64, an NVIDIA or Mesa graphics stack (Mesa needs one
+            setting; see the manual), and Rust 1.85 or later. Sola's NixOS module prepares the host: the patched River, the
+            libraries the browser engine loads, and the fonts. Then, from a clone:
+        </p>
+        <pre><code>{for line in buildLines() { codeLine(line) }}</code></pre>
+        <p>
+            The <a href="/manual#introduction">manual's introduction</a> covers the module,
+            starting a session, and updating.
+        </p>
     </section>
 }

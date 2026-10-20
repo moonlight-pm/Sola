@@ -90,6 +90,35 @@ Alternative for the scale half only: tile the plane's textures past 8192 px.
 
 ---
 
+### D7 — Bots HTTP API exposure (P0)
+
+**Context (found 2026-10-19, writing the manual):** `sola-botsd` is a managed
+component, so it runs in every session, and it binds `0.0.0.0:27419`
+(`crates/sola-bots/src/auth.rs`). The bearer token is a constant in that
+file, and the repo is public, so the token is public (in history since
+2026-09-15). The NixOS firewall is off on the desk, so anyone on the LAN
+who reads the source can drive bot sessions, which run `grok agent stdio`
+in yolo mode in `~/Bots/<slug>/`. `bot.sola.computer` does not answer from
+outside today. The iOS SolaBot app compiles in the same token.
+
+**Ask:**
+
+1. Rotate the token and move it out of source (a file under
+   `~/.config/sola/`, or a secret the module provides), rebuilding SolaBot to
+   match?
+2. Bind to loopback or the LAN address only, or keep `0.0.0.0` behind a
+   firewall rule (turn the firewall on and open 27419 only to the proxy)?
+3. Should `sola-botsd` stay a managed component in every session, or start
+   only when enabled?
+
+**Until decided:** do not publish `bot.sola.computer` again; the manual
+states the port is open in every session and does not print the token.
+
+**Related:** `bots` capability; [process manager](manual/process-manager.md);
+[solactl § Bots](manual/solactl.md#bots-solactl-bots).
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**

@@ -28,7 +28,7 @@ use.
 
 ## Other families
 
-The font picker (Settings, or the `sola-kit` storybook) offers any family
+The font picker in Kit (the `sola-kit` storybook) offers any family
 fontconfig finds installed, in addition to the families above.
 
 A family you select in the picker must be installed system-wide. Picking

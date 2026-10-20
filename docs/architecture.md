@@ -45,8 +45,9 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          └──── Wayland (surfaces / input) ─────────────┘
 ```
 
-All managed components are **independently restartable**. Kit apps reconnect
-to the bus and tolerate compositor restarts.
+Every managed component except River is **independently restartable**; River
+exiting ends the session. Kit apps reconnect to the bus and tolerate
+`sola-river` restarts.
 
 ---
 
@@ -107,7 +108,7 @@ to the bus and tolerate compositor restarts.
 | Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
 | Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
-| Persistent stickies | Bus writes `~/.config/sola/state.toml` |
+| Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`) |
 | Browser vault session | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + user key; **Log out** deletes). Prefs `~/.config/sola/browser/vault.json`. |
 | Browser HTTP auth | Per-profile `profiles/<uuid>/http-auth.json` (age-encrypted Basic/Digest; kit Sign in). |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |

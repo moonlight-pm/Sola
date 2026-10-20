@@ -41,12 +41,16 @@ thoxa.moonlight.pm and oath.moonlight.pm.
 
 `/manual` is [`docs/manual`](../manual/README.md) rendered as one numbered
 page with a contents column; its README holds the chapter order and the
-Markdown subset.
+Markdown subset. The manual is about the system — setup, architecture, each
+core component, solactl in full — and lists the applications rather than
+documenting them.
 
 `/`:
 
-1. **Intro** — "Sola"; one-paragraph definition; facts line (Pre-release ·
-   NixOS, x86-64 · No releases yet · Manual · Source).
+1. **Intro** — flower + "Sola"; one-paragraph definition; facts line
+   (Pre-release · NixOS, x86-64 · No releases yet · Manual · Source); then
+   the desk from `design/foundation/07-desk.html`, rendered to
+   `site/web/desk.png` and captioned as a drawing.
 2. **Design** — four bold-lead paragraphs: one toolkit + live theme;
    separate restartable processes; native, not web (CEF only where pages
    are the content); scriptable (`solactl`, `solactl mcp`), with a short

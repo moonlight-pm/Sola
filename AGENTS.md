@@ -79,7 +79,7 @@ Living map: [`docs/architecture.md`](docs/architecture.md).
 - **D-Bus is deprecated as a requirement.** Add no new D-Bus dependencies; existing uses are legacy, and the future target is Sola's own replacement on Sola Bus ([inventory](docs/architecture.md#d-bus-deprecated), [T3](docs/open-questions.md#t3--d-bus-replacement-on-sola-bus-p2)).
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
-All components are independently restartable. Sola apps are resilient to bus and compositor restarts.
+Every managed component except River restarts on its own; River exiting ends the session. Sola apps are resilient to bus and compositor-bridge (`sola-river`) restarts.
 
 ## Workspace Structure
 
@@ -168,7 +168,7 @@ docs/
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
-  `sola-call` → `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
+  `sola-call` → `sola-botsd` → `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
   other apps) with a **1s settle gap** between actual replaces so the
   process manager can restart each component before the next kill.
   CLI order is ignored for that sequence (`install shell river` still
@@ -232,8 +232,8 @@ make = "run -q -p sola-make --"
 
 ### Debugging Workflow
 ```bash
-# Run sola from a TTY with debug logging, logs go to file AND terminal
-RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
+# Run sola from a TTY with debug logging (every process writes /opt/sola/log itself)
+RUST_LOG=debug /opt/sola/bin/sola
 
 # Check recent logs
 tail -100 /opt/sola/log/sola.log
@@ -270,14 +270,17 @@ end of this file apply to `sola-browser` (CEF engine module), not to the Iced ki
 
 `sola-kit` is the shared Iced app kit + a `sola-kit` **storybook** binary that
 dogfoods every component (each widget has a showcase page, so regressions show
-up there first). Library surface in `src/lib.rs`: `App`, `BusSetup`, `CallSetup`, `run`,
-`default_theme`, plus re-exported `iced` and `sola_bus` (so consumers don't take
-their own direct deps just to spell trait bounds or reference bus types).
+up there first). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
+`apply_theme_update`, `default_theme`, the `components` / `fonts` / `theme` /
+`menu` / `float` / `clipboard` modules, plus re-exported `iced`, `sola_bus`, and
+`sola_call` (so consumers don't take their own direct deps just to spell trait
+bounds or reference bus types). Operator-level detail:
+[`docs/manual/theme.md`](docs/manual/theme.md).
 
 ### App scaffolding (`src/app.rs`)
 
-- **`App` trait** — currently just `const APP_ID: &'static str`. One source of
-  truth for the wayland `xdg_toplevel.app_id` and the bus app id.
+- **App id** — one `&str` per app, passed to `startup` and `BusSetup::new`, and
+  used as the Wayland `xdg_toplevel.app_id` (there is no `App` trait).
 - **`startup(app_id)`** — the standard boot flow every kit app runs *before*
   handing the thread to iced: log init → `activate_wayland_session` →
   `wait_for_wayland_socket` (cold-boot race guard) → `activate_gpu_env` (points
@@ -295,9 +298,9 @@ their own direct deps just to spell trait bounds or reference bus types).
   client's sync `recv` into an unbounded channel feeding `stream::channel`. Use
   this **or** a manual `bus().lock().try_recv()` loop, never both (one receiver
   per process).
-- **`run::<A>()`** — still just a placeholder over `startup`. There is no generic
-  iced wrapper yet: each app builds its own `iced::application`/`iced::daemon`
-  because update/view/subscription types differ. Promote shared logic here only
+- **No generic runner** — each app builds its own
+  `iced::application`/`iced::daemon` because update/view/subscription types
+  differ. Promote shared logic here only
   once a second app justifies it.
 
 ### Theme protocol (`src/theme.rs`)
@@ -305,28 +308,28 @@ their own direct deps just to spell trait bounds or reference bus types).
 The kit bridges three representations of the palette:
 
 1. **Compile-time defaults** — the `hex::*` constants.
-2. **`Atoms`** — 10 editable `iced::Color`s: `bg`, `bg_raised`, `bg_hover`,
-   `border`, `fg`, `fg_muted`, `accent`, `success`, `warning`, `danger`. The
-   editable bridge the storybook mutates.
+2. **`Atoms`** — 11 editable `iced::Color`s: `bg`, `bg_raised`, `bg_hover`,
+   `border`, `fg`, `fg_muted`, `accent`, `success`, `warning`, `danger`,
+   `selection` (no iced palette slot; installed process-wide). The editable
+   bridge the storybook mutates.
 3. **Bus theme** — `sola_core::theme::Theme`, broadcast as the persistent
    `Topic::Theme` and shared with every other sola process.
 
 Conversions: `Atoms` → `iced::Theme` via `iced_theme_from_atoms`; `Atoms` →
-bus via `bus_theme_from_atoms`. **`from_bus_theme(&BusTheme) -> iced::Theme`**
-is the consumer path — it maps named palette tokens (`bg-primary`,
-`bg-secondary`, `bg-tertiary`, `border`, `text-primary`, `text-tertiary`,
-`accent`, `success`, `warning`, `danger`) onto an iced `Extended` palette,
-falling back to compile-time defaults for any missing/malformed atom, **and as
-a side effect installs the font role table** so font tokens land alongside
-colours. Wire it into `update` on `Topic::Theme`, then return `self.theme.clone()`
-from `App::theme`. `to_bus_theme()` is canned-default-only — the iced→bus
+bus via `bus_theme_from_atoms`. **`theme_from_bus(&BusTheme) -> iced::Theme`**
+maps the named palette tokens onto an iced `Extended` palette, falling back to
+compile-time defaults for any missing/malformed token. The consumer path is
+**`apply_theme_update(&msg, &mut theme)`**: on `Topic::Theme` it rebuilds the
+theme, installs the font role table, and installs the selection colour. Call
+it in `update` for bus messages, then return `self.theme.clone()` from the
+app's theme function. `to_bus_theme()` is canned-default-only — the iced→bus
 direction is lossy by design (iced derives many colours from a few atoms), so a
 real theme editor should emit the bus value directly, not reverse it out of an
 iced `Theme`.
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
-**Shell chrome** rides the same palette as `shell-*` tokens (4 alpha-capable
+**Shell chrome** rides the same palette as `shell-*` tokens (7 alpha-capable
 colors + 4 spacing values, group `"shell"`). `ShellStyle` is the typed view:
 `shell_style_from_bus_theme` extracts (per-token fallback to compile-time
 defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every

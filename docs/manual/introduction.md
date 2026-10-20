@@ -15,9 +15,12 @@ part can do, and what it lacks, is listed in
 
 - NixOS on x86-64 (`nixos-unstable`, or 25.05 and later). Nix on another
   distribution is not supported: the binaries expect NixOS library paths.
-- A Mesa (Intel, AMD) or NVIDIA graphics stack.
+- An NVIDIA or Mesa (Intel, AMD) graphics stack. Sola points Vulkan at the
+  NVIDIA driver when `VK_ICD_FILENAMES` is unset; on Mesa, set it to your
+  driver's file in `/run/opengl-driver/share/vulkan/icd.d/` before starting
+  `sola`.
 - Rust 1.85 or later, and `sudo`.
-- The font families in [Fonts](distribution.md), installed system-wide.
+- The font families in [Fonts](#fonts), installed system-wide.
 
 ## Setting up the host
 
@@ -60,6 +63,22 @@ Builds are optimized by default. `cargo make install shell` builds and
 installs one component; `--debug` builds without optimization. The first
 install also fetches the icon and cursor packs into `/opt/sola/share`.
 
+## Fonts
+
+Sola does not ship fonts. Applications find font families by name through
+fontconfig, so a family must be installed system-wide before Sola runs. The
+NixOS module installs **Inter** and **JetBrains Mono**, which Sola uses for
+interface and mono text. When **SF Pro Text** and **Iosevka Term Slab** are
+installed, Sola prefers them. SF Pro is licensed and not in nixpkgs: put its
+`.ttf` or `.otf` files in `~/.local/share/fonts/` and run `fc-cache -f`.
+
+```bash
+fc-list : family | grep -E 'Inter|JetBrains Mono|SF Pro Text|Iosevka Term Slab'
+```
+
+[Theme and toolkit](theme.md) covers font roles and how a family is chosen
+and changed.
+
 ## Starting a session
 
 Sola owns the display and input, so it starts from a text console, not
@@ -68,8 +87,8 @@ inside another desktop.
 1. Log out of any graphical session and switch to a console
    (`Ctrl+Alt+F2`).
 2. Log in and run `/opt/sola/bin/sola`.
-3. To leave, choose **Quit Sola** from the menubar, or run `pkill sola`
-   from another console.
+3. To leave, choose **Quit Sola** from the menubar, or run
+   `pkill -x sola` from another console.
 
 ## Updating
 
@@ -87,8 +106,9 @@ ends the session.
 | `/opt/sola/log` | Logs: `sola.log` for the session, `river.log`, and `app-<app id>.log` for each application |
 | `~/.cache/sola/cef-<version>/` | The browser engine |
 
-`solactl logs <app>` follows one application's log. For more detail, start
-the session with `RUST_LOG=debug /opt/sola/bin/sola`.
+`solactl logs <name>` prints `/opt/sola/log/<name>.log`; add `-f` to keep
+following it (`solactl logs app-sola-mail -f`). For more detail, start the
+session with `RUST_LOG=debug /opt/sola/bin/sola`.
 
 ## First-run problems
 
