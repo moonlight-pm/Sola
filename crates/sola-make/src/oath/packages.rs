@@ -28,11 +28,12 @@ impl Package {
     }
 }
 
-/// Oath's base build packs: the toolchain and the GNU tools every plan
-/// builds with (oath-make's `BASE`).
+/// The toolchain and GNU tools every Sola plan builds with: oath-make's
+/// `BASE` without `patch`, which Sola's build never runs and the desk
+/// profile does not ship.
 pub const BASE: &[&str] = &[
     "gcc", "glibc", "bash", "coreutils", "sed", "grep", "gawk", "findutils", "diffutils",
-    "patch", "tar", "gzip", "xz", "bzip2", "make",
+    "tar", "gzip", "xz", "bzip2", "make",
 ];
 
 /// In apply order: a package comes after the ones it needs.
