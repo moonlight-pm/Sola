@@ -9255,7 +9255,6 @@ name = "sola-mail"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "chrono",
  "html2text",
  "iced",
@@ -9272,7 +9271,6 @@ dependencies = [
  "sola-kit",
  "tokio",
  "tracing",
- "ureq",
 ]
 
 [[package]]

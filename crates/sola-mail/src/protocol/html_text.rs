@@ -1,12 +1,24 @@
 //! HTML message bodies → readable letter blocks (no HTML engine in the UI).
 
 use html2text::render::{RichAnnotation, TaggedLine};
-use sola_kit::components::prose::{ProseBlock, ProseRun, flatten, parse_plain};
+use sola_kit::components::prose::{ProseBlock, ProseRun, parse_plain};
 
-/// Convert HTML mail into plain text suitable for copy / reply quoting.
-#[allow(dead_code)] // used by tests; reading pane goes through `to_blocks`.
-pub fn to_plain(html: &str) -> String {
-    flatten(&to_blocks(html))
+/// Letter blocks for the reading pane. Prefer HTML whenever it is
+/// present — that is the part mail apps actually render.
+pub fn reading_blocks(html: Option<&str>, text: &str) -> Vec<ProseBlock> {
+    if let Some(html) = html.filter(|h| !h.trim().is_empty()) {
+        // mail-parser lists text/plain parts in `html_body` too and
+        // `body_html` then synthesizes `<br/>` HTML. Prefer the real
+        // plaintext so bare URLs (Wicket magic links) stay links.
+        if !is_synthesized_plain_html(html) || text.trim().is_empty() {
+            return to_blocks(html);
+        }
+    }
+    if text.trim().is_empty() {
+        Vec::new()
+    } else {
+        parse_plain(text)
+    }
 }
 
 /// Convert HTML into kit prose blocks.
@@ -63,12 +75,11 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
                 RichAnnotation::Link(u) if is_http_url(u) => Some(u.clone()),
                 _ => None,
             });
-            if let Some(last) = runs.last_mut() {
-                if last.url == url {
+            if let Some(last) = runs.last_mut()
+                && last.url == url {
                     last.text.push_str(&ts.s);
                     continue;
                 }
-            }
             runs.push(ProseRun {
                 text: ts.s.clone(),
                 url,
@@ -284,36 +295,14 @@ pub fn is_synthesized_plain_html(html: &str) -> bool {
     !inner.replace("<br/>", "").contains('<')
 }
 
-/// True when the multipart/plain part is a generator stub and the HTML
-/// is the real letter.
-#[allow(dead_code)] // reading pane always prefers HTML; kept for tests / callers.
-pub fn plain_looks_like_stub(plain: &str, html: &str) -> bool {
-    let plain = plain.trim();
-    if plain.is_empty() {
-        return !html.trim().is_empty();
-    }
-    let lower = plain.to_ascii_lowercase();
-    if lower.contains("this is an html")
-        || (lower.contains("html")
-            && (lower.contains("view") || lower.contains("browser") || lower.contains("requires")))
-    {
-        return true;
-    }
-    // URL-dense plaintext is the ESP dump; HTML has the real letter.
-    let url_hits = lower.matches("http://").count() + lower.matches("https://").count();
-    if url_hits >= 3 && html.len() > 40 {
-        return true;
-    }
-    html.len() > plain.len().saturating_mul(3) && plain.len() < 400
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sola_kit::components::prose::flatten;
 
     #[test]
     fn strips_simple_markup() {
-        let plain = to_plain("<p>Hello <b>world</b></p>");
+        let plain = flatten(&to_blocks("<p>Hello <b>world</b></p>"));
         assert!(plain.to_lowercase().contains("hello"));
         assert!(plain.to_lowercase().contains("world"));
         assert!(!plain.contains("<b>"));
@@ -425,18 +414,13 @@ mod tests {
     }
 
     #[test]
-    fn stub_plain_prefers_html() {
-        assert!(plain_looks_like_stub(
-            "This is an HTML email. View it in a browser.",
-            &"<p>".repeat(80)
-        ));
-        assert!(plain_looks_like_stub(
-            "see https://a.com/x https://b.com/y https://c.com/z and more tracking",
-            "<p>A real letter with a <a href=\"https://example.com\">button</a></p>"
-        ));
-        assert!(!plain_looks_like_stub(
-            "A real plaintext letter with enough body that we should keep it.",
-            "<p>also html</p>"
-        ));
+    fn synthesized_html_plain_keeps_magic_link() {
+        let token = "A".repeat(43);
+        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
+        let text =
+            format!("Use this link to sign in to Wicket:\n\n  {url}\n\nIt expires shortly.\n");
+        let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
+        let blocks = reading_blocks(Some(&html), &text);
+        assert!(link_urls(&blocks).contains(&url), "{blocks:?}");
     }
 }

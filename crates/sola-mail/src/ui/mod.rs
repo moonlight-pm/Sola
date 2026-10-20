@@ -1,72 +1,58 @@
-//! Kit UI: three-pane mail client (graphite list + reading composition).
+//! Kit UI: three-pane mail client (mailboxes · list · letter / compose).
 
+mod chrome;
+mod compose;
+mod format;
+mod keys;
+mod list;
 mod list_sync;
+mod moves;
+mod reader;
+mod sidebar;
+mod style;
+mod widgets;
 
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
-use iced::event;
-use iced::keyboard;
-use iced::keyboard::key::Named as NamedKey;
 use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
-use iced::widget::text::Wrapping;
-use iced::widget::{
-    Space, button, column, container, keyed_column, row, scrollable, text, text_editor,
-};
-use iced::{
-    Background, Border, Color, Element, Event, Length, Padding, Shadow, Subscription, Task, Theme,
-    Vector,
-};
+use iced::widget::{Space, column, container, row, text_editor};
+use iced::{Element, Event, Length, Padding, Subscription, Task, Theme, event, keyboard};
 use sola_bus::Message;
-use sola_bus::topics::{MailConfig, MailRule, Topic, mail_addr_key};
+use sola_bus::topics::{MailConfig, Topic, mail_addr_key};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
-use sola_kit::components::icon::{icon_handle, icon_svg};
-use sola_kit::components::prose::prose_selectable;
-use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{
-    HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, mix_white,
-};
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
-use sola_kit::components::text_input::text_input;
-use sola_kit::components::toolbar::toolbar_icon_tip;
-use sola_kit::components::{
-    ProseBlock, SidebarItem, SidebarSection, button as kit_btn, readable, sidebar,
-};
-use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
-use crate::protocol::attachments;
-use crate::protocol::rules::extract_address;
-use crate::protocol::{
-    Account, Folder, MailAttachment, MailId, MessageBody, MessageSummary, folder_count_badge,
-    folder_label, pick_from_for_reply,
-};
+use crate::protocol::from::pick_from_for_reply;
+use crate::protocol::types::folder_label;
+use crate::protocol::{Account, Folder, FolderRef, MailAttachment, MailId, MessageSummary, attachments};
 use crate::snapshot::{self, Snapshot};
-use crate::worker::{LinkState, MailCmd, MailEvent};
+use crate::worker::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
+use chrome::Toast;
+use compose::{Compose, Edit};
+use list::{ListState, Load, SearchState};
+use moves::{Confirmed, Moves};
+use reader::{Letter, Reader};
+use sidebar::AccountLink;
 
 const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
-const LIST_W: f32 = 328.0;
-const SIDEBAR_W: f32 = 200.0;
+/// A quiet refresh re-fetches at most this many newest rows.
+const REFRESH_MAX: u32 = 150;
 /// Undo / status toast stays long enough to click Undo, then leaves.
 const TOAST_TTL: Duration = Duration::from_secs(5);
-/// Compose header label column — wide enough for “Subject” at caption size.
-const COMPOSE_LABEL_W: f32 = 56.0;
-/// Header fields (From/To/Cc/Subject) — quieter than kit body.
-const COMPOSE_HEADER_SIZE: f32 = 11.0;
-/// Compose body — kit body size, not iced’s 16px default.
-const COMPOSE_BODY_SIZE: f32 = 13.0;
-/// Shared list-header / reader-toolbar height so icons sit on one line.
-const CHROME_H: f32 = 40.0;
-/// Comfortable reading measure (~65ch at 14px prose).
-const READ_MAX_W: f32 = 640.0;
 /// Wait for rapid deletes to settle before fetching the next body.
 const SETTLE_SELECT: Duration = Duration::from_millis(120);
+/// Safety net when IDLE stays quiet (another client's expunge, other boxes).
+const POLL: Duration = Duration::from_secs(45);
+/// Shared list-header / reader-toolbar height so icons sit on one line.
+const CHROME_H: f32 = 40.0;
 
 fn list_scroll_id() -> ScrollId {
     ScrollId::new("mail-message-list")
@@ -76,58 +62,70 @@ fn list_scroll_id() -> ScrollId {
 pub enum Msg {
     Bus(Arc<Message>),
     Worker(MailEvent),
-    SelectFolder(String),
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
+    KeyPressed {
+        key: keyboard::Key,
+        mods: keyboard::Modifiers,
+        captured: bool,
+    },
+
+    SelectFolder(FolderRef),
     SelectMessage(MailId),
-    SearchChanged(String),
-    SearchSubmit,
-    SearchClear,
-    LoadMore,
-    ListScrolled(Viewport),
-    Compose,
-    Reply {
-        all: bool,
-    },
-    CancelCompose,
-    ComposeFrom(String),
-    ToggleFromMenu,
-    DismissFromMenu,
-    ComposeTo(String),
-    ComposeCc(String),
-    ComposeSubject(String),
-    ComposeBodyAction(text_editor::Action),
-    ClipboardPasted(Option<String>),
-    Send,
-    CopyBody,
-    MoveSelected(String),
-    Undo,
-    EmptyFolder,
-    EmptyNamed(String),
-    Refresh,
-    OpenUrl(String),
-    /// Visible letter selection (None = caret / cleared).
-    BodySelect(Option<String>),
-    DismissToast,
-    /// Auto-hide a toast after [`TOAST_TTL`]; ignored if a newer toast replaced it.
-    ToastExpired {
-        generation: u64,
-    },
-    KeyPressed(keyboard::Key, keyboard::Modifiers),
-    /// Quiet background re-fetch (IDLE + multi-client safety net).
-    PollRefresh,
     /// After rapid delete/advance, load the body of the row we landed on.
     SettleSelect {
         id: MailId,
         generation: u64,
     },
-    WindowReady(Option<iced::window::Id>),
-    TitleDrag,
-    TitleResize(iced::window::Direction),
-    TitleClose,
-    Attach,
-    RemoveAttach(usize),
+    SearchChanged(String),
+    SearchSubmit,
+    SearchClear,
+    ListScrolled(Viewport),
+    /// Quiet background re-fetch (IDLE + multi-client safety net).
+    PollRefresh,
+    /// Get New Mail: reconnect failed accounts and refresh now.
+    Refresh,
+
+    OpenUrl(String),
+    /// Visible letter selection (None = caret / cleared).
+    BodySelect(Option<String>),
+    CopyBody,
+    RetryBody,
     OpenAttachment(usize),
     SaveAttachment(usize),
+
+    MoveSelected(String),
+    Undo,
+    ToggleSeen,
+    ToggleFlag,
+    AskErase(String),
+    ConfirmErase,
+    CancelConfirm,
+
+    Compose,
+    Reply {
+        all: bool,
+    },
+    Forward,
+    EditDraft,
+    Draft(Edit),
+    Send,
+    SaveDraft,
+    CancelCompose,
+    DiscardDraft,
+    KeepEditing,
+    Attach,
+    RemoveAttach(usize),
+    ClipboardPasted(Option<String>),
     Picker(PickerMsg),
+
+    DismissToast,
+    /// Auto-hide a toast after [`TOAST_TTL`]; ignored if a newer one replaced it.
+    ToastExpired {
+        generation: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -136,95 +134,40 @@ enum PickerKind {
     Save { index: usize },
 }
 
-#[derive(Debug, Clone)]
-struct LastMove {
-    account: String,
-    uid: u32,
-    /// UID in `to_folder` once IMAP COPY/MOVE reports it. Undo must use this
-    /// — source UIDs are not valid in the destination mailbox.
-    dest_uid: Option<u32>,
-    from_folder: String,
-    to_folder: String,
-    list_id: String,
-    summary: Option<MessageSummary>,
-    undo_requested: bool,
-    undo_imap_sent: bool,
-}
-
-struct RemovedMail {
-    summary: MessageSummary,
-    from_folder: String,
-    to_folder: String,
-    selected_folder: String,
-}
-
-struct ComposeDraft {
-    from: String,
-    to: String,
-    cc: String,
-    subject: String,
-    body: text_editor::Content,
-    in_reply_to: Option<String>,
-    attachments: Vec<MailAttachment>,
+/// Mail is usable only once a config with an IMAP account has arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Setup {
+    Unknown,
+    Missing,
+    Ready,
 }
 
 pub struct App {
     theme: Theme,
-    mail_config: MailConfig,
-    connected: bool,
-    not_configured: bool,
-    folders: Vec<Folder>,
-    smart_counts: Vec<Folder>,
-    selected_folder: String,
-    messages: Vec<MessageSummary>,
-    total_messages: u32,
-    selected: Option<MailId>,
-    message_body: Option<MessageBody>,
-    /// Visible in-body selection (drag or Select All). Copy uses this.
-    body_selection: Option<String>,
-    /// Bump to force the letter widget to select everything.
-    prose_select_all: u64,
-    /// Cached letter blocks for the open message.
-    reading_blocks: Vec<ProseBlock>,
-    from_addresses: Vec<String>,
-    rules: Vec<MailRule>,
-    search_query: String,
-    search_active: bool,
-    search_total: u32,
-    loading: bool,
-    folder_loading: bool,
-    is_loading_more: bool,
-    toast: Option<String>,
-    /// When set, toast (and reading toolbar) offer Undo.
-    toast_undo: bool,
-    /// Bumped on every toast so a late expiry cannot hide a newer one.
-    toast_gen: u64,
-    composing: bool,
-    from_open: bool,
-    draft: ComposeDraft,
-    last_move: Option<LastMove>,
-    /// UIDs removed from the list before IMAP MOVE finishes.
-    pending_gone: HashSet<(String, String, u32)>,
-    pending_removed: HashMap<(String, u32), RemovedMail>,
-    /// Bumped on every selection change so delayed body fetches can cancel.
-    select_gen: u64,
-    /// Last list scroll Y. Load-more only after the user scrolls down —
-    /// shrinking the list (delete) must not look like a fetch of older mail.
-    list_scroll_y: f32,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
-    /// Last inbox unread we published on `Topic::MailStatus`.
-    published_inbox_unread: Option<u32>,
+    config: MailConfig,
+    setup: Setup,
+    links: Vec<AccountLink>,
+    folders: Vec<Folder>,
+    smart: Vec<Folder>,
+    list: ListState,
+    search_input: String,
+    selected: Option<MailId>,
+    reader: Reader,
+    compose: Option<Box<Compose>>,
+    moves: Moves,
+    toast: Option<Toast>,
+    /// Bumped on every toast so a late expiry cannot hide a newer one.
+    toast_gen: u64,
+    /// Mailbox waiting on "Erase every message?".
+    confirm: Option<String>,
     picker: Option<(PickerKind, FilePicker)>,
     last_picker_dir: Option<PathBuf>,
-    account_links: Vec<AccountLink>,
-}
-
-#[derive(Debug, Clone)]
-struct AccountLink {
-    id: String,
-    email: String,
-    state: LinkState,
+    /// Last inbox unread we published on `Topic::MailStatus`.
+    published_unread: Option<u32>,
+    /// Bumped on every selection change so delayed body fetches can cancel.
+    select_gen: u64,
 }
 
 fn empty_mailboxes() -> Vec<Folder> {
@@ -238,103 +181,41 @@ fn empty_mailboxes() -> Vec<Folder> {
         .collect()
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let snap = snapshot::load();
-        Self {
-            theme: default_theme(),
-            mail_config: MailConfig::default(),
-            connected: false,
-            not_configured: false,
-            folders: snap
-                .as_ref()
-                .map(|s| s.folders.clone())
-                .filter(|f| !f.is_empty())
-                .unwrap_or_else(empty_mailboxes),
-            smart_counts: Vec::new(),
-            selected_folder: snap
-                .as_ref()
-                .map(|s| s.folder.clone())
-                .unwrap_or_else(|| "INBOX".into()),
-            messages: snap
-                .as_ref()
-                .map(|s| s.messages.clone())
-                .unwrap_or_default(),
-            total_messages: snap.as_ref().map(|s| s.total).unwrap_or(0),
-            selected: None,
-            message_body: None,
-            body_selection: None,
-            prose_select_all: 0,
-            reading_blocks: Vec::new(),
-            from_addresses: snap
-                .as_ref()
-                .map(|s| s.from_addresses.clone())
-                .unwrap_or_default(),
-            rules: Vec::new(),
-            search_query: String::new(),
-            search_active: false,
-            search_total: 0,
-            loading: false,
-            folder_loading: false,
-            is_loading_more: false,
-            toast: None,
-            toast_undo: false,
-            toast_gen: 0,
-            composing: false,
-            from_open: false,
-            draft: empty_draft(""),
-            last_move: None,
-            pending_gone: HashSet::new(),
-            pending_removed: HashMap::new(),
-            select_gen: 0,
-            list_scroll_y: 0.0,
-            float: sola_kit::FloatState::new(APP_ID),
-            window_id: None,
-            published_inbox_unread: None,
-            picker: None,
-            last_picker_dir: None,
-            account_links: Vec::new(),
-        }
-    }
-}
-
-fn empty_draft(from: &str) -> ComposeDraft {
-    ComposeDraft {
-        from: from.to_string(),
-        to: String::new(),
-        cc: String::new(),
-        subject: String::new(),
-        body: text_editor::Content::new(),
-        in_reply_to: None,
-        attachments: Vec::new(),
-    }
-}
-
-fn draft_with_body(
-    from: String,
-    to: String,
-    cc: String,
-    subject: String,
-    body: String,
-    in_reply_to: Option<String>,
-) -> ComposeDraft {
-    ComposeDraft {
-        from,
-        to,
-        cc,
-        subject,
-        body: text_editor::Content::with_text(&body),
-        in_reply_to,
-        attachments: Vec::new(),
-    }
-}
-
 impl App {
     pub fn boot() -> (Self, Task<Msg>) {
-        (
-            Self::default(),
-            sola_kit::window_ready_task(Msg::WindowReady),
-        )
+        // Open on the last list instead of a blocking Connecting screen.
+        let snap = snapshot::load();
+        let (list, folders) = match snap {
+            Some(s) => (
+                ListState::new(s.folder, s.rows, s.total),
+                Some(s.folders).filter(|f| !f.is_empty()).unwrap_or_else(empty_mailboxes),
+            ),
+            None => (ListState::new(FolderRef::inbox(), Vec::new(), 0), empty_mailboxes()),
+        };
+        let app = Self {
+            theme: default_theme(),
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
+            config: MailConfig::default(),
+            setup: Setup::Unknown,
+            links: Vec::new(),
+            folders,
+            smart: Vec::new(),
+            list,
+            search_input: String::new(),
+            selected: None,
+            reader: Reader::Empty,
+            compose: None,
+            moves: Moves::default(),
+            toast: None,
+            toast_gen: 0,
+            confirm: None,
+            picker: None,
+            last_picker_dir: None,
+            published_unread: None,
+            select_gen: 0,
+        };
+        (app, sola_kit::window_ready_task(Msg::WindowReady))
     }
 
     pub fn title(&self) -> String {
@@ -346,19 +227,21 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        // Periodic refresh catches deletes when IDLE is quiet or the server
-        // only notifies on keepalive (common with multi-client expunge).
-        let poll = if self.connected && !self.loading {
-            iced::time::every(std::time::Duration::from_secs(45)).map(|_| Msg::PollRefresh)
+        let poll = if self.any_ready() {
+            iced::time::every(POLL).map(|_| Msg::PollRefresh)
         } else {
             Subscription::none()
         };
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::mail_subscription().map(Msg::Worker),
-            event::listen_with(|event, _status, _id| match event {
+            event::listen_with(|event, status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    Some(Msg::KeyPressed(key, modifiers))
+                    Some(Msg::KeyPressed {
+                        key,
+                        mods: modifiers,
+                        captured: status == event::Status::Captured,
+                    })
                 }
                 _ => None,
             }),
@@ -367,1006 +250,868 @@ impl App {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let needs_letter = matches!(msg, Msg::Reply { .. } | Msg::Forward | Msg::EditDraft);
+        if needs_letter && self.reader.body().is_none() {
+            return Task::none();
+        }
         match msg {
-            Msg::Bus(message) => self.on_bus(&message),
-            Msg::WindowReady(id) => {
-                self.window_id = id;
-                Task::none()
-            }
-            Msg::TitleDrag => sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => {
-                sola_kit::close_app(APP_ID);
-                Task::none()
-            }
-            Msg::Worker(ev) => self.on_worker(ev),
-            Msg::SelectFolder(name) => {
-                self.selected_folder = name.clone();
-                self.selected = None;
-                self.message_body = None;
-                self.body_selection = None;
-                self.reading_blocks.clear();
-                self.composing = false;
-                self.picker = None;
-                self.search_active = false;
-                self.search_query.clear();
-                self.select_gen = self.select_gen.saturating_add(1);
-                self.pending_gone.clear();
-                self.list_scroll_y = 0.0;
-                self.load_folder(name);
-                Task::none()
-            }
-            Msg::SelectMessage(id) => {
-                self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(id);
-                Task::none()
-            }
+            Msg::Bus(message) => return self.on_bus(&message),
+            Msg::Worker(ev) => return self.on_worker(ev),
+            Msg::WindowReady(id) => self.window_id = id,
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => sola_kit::close_app(APP_ID),
+            Msg::KeyPressed {
+                key,
+                mods,
+                captured,
+            } => return self.on_key(key, mods, captured),
+
+            Msg::SelectFolder(folder) => self.open_folder(folder),
+            Msg::SelectMessage(id) => self.request_select(id),
             Msg::SettleSelect { id, generation } => {
-                if generation != self.select_gen || self.selected.as_ref() != Some(&id) {
-                    return Task::none();
-                }
-                self.select_message(id);
-                Task::none()
-            }
-            Msg::SearchChanged(q) => {
-                self.search_query = q;
-                Task::none()
-            }
-            Msg::SearchClear => {
-                self.search_query.clear();
-                if self.search_active {
-                    self.search_active = false;
-                    self.search_total = 0;
-                    self.list_scroll_y = 0.0;
-                    self.load_folder(self.selected_folder.clone());
-                }
-                Task::none()
-            }
-            Msg::SearchSubmit => {
-                let q = self.search_query.trim().to_string();
-                if q.is_empty() {
-                    return Task::none();
-                }
-                self.search_active = true;
-                self.folder_loading = true;
-                self.list_scroll_y = 0.0;
-                mail_send(MailCmd::Search { query: q });
-                Task::none()
-            }
-            Msg::LoadMore => self.load_more(),
-            Msg::ListScrolled(vp) => {
-                let y = vp.absolute_offset().y;
-                let scrolled_down = y > self.list_scroll_y + 1.0;
-                self.list_scroll_y = y;
-                if !scrolled_down {
-                    return Task::none();
-                }
-                let remain = vp.content_bounds().height - vp.bounds().height - y;
-                if remain < 280.0 {
-                    return self.update(Msg::LoadMore);
-                }
-                Task::none()
-            }
-            Msg::Compose => {
-                let from = self.default_from();
-                self.draft = empty_draft(&from);
-                self.composing = true;
-                self.from_open = false;
-                Task::none()
-            }
-            Msg::Reply { all } => {
-                let Some(body) = self.message_body.clone() else {
-                    return Task::none();
-                };
-                let from = self.reply_from(&body);
-                let to = body.from.clone();
-                let mut cc = String::new();
-                if all {
-                    let mut others: Vec<String> = body
-                        .to
-                        .split(',')
-                        .chain(body.cc.split(','))
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .filter(|s| !self.is_self_addr(s))
-                        .collect();
-                    others.sort();
-                    others.dedup();
-                    if !others.is_empty() {
-                        cc = others.join(", ");
-                    }
-                }
-                let subj = if body.subject.to_lowercase().starts_with("re:") {
-                    body.subject.clone()
-                } else {
-                    format!("Re: {}", body.subject)
-                };
-                let quoted = body
-                    .display_text()
-                    .lines()
-                    .map(|l| format!("> {l}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.draft = draft_with_body(
-                    from,
-                    to,
-                    cc,
-                    subj,
-                    format!("\n\nOn {} {} wrote:\n{quoted}", body.date, body.from),
-                    body.message_id.clone(),
-                );
-                self.composing = true;
-                self.from_open = false;
-                Task::none()
-            }
-            Msg::CancelCompose => {
-                self.composing = false;
-                self.from_open = false;
-                self.picker = None;
-                Task::none()
-            }
-            Msg::ComposeFrom(s) => {
-                self.draft.from = s;
-                self.from_open = false;
-                Task::none()
-            }
-            Msg::ToggleFromMenu => {
-                self.from_open = !self.from_open;
-                Task::none()
-            }
-            Msg::DismissFromMenu => {
-                self.from_open = false;
-                Task::none()
-            }
-            Msg::ComposeTo(s) => {
-                self.draft.to = s;
-                Task::none()
-            }
-            Msg::ComposeCc(s) => {
-                self.draft.cc = s;
-                Task::none()
-            }
-            Msg::ComposeSubject(s) => {
-                self.draft.subject = s;
-                Task::none()
-            }
-            Msg::ComposeBodyAction(action) => {
-                self.draft.body.perform(action);
-                Task::none()
-            }
-            Msg::ClipboardPasted(text) => {
-                if self.composing {
-                    if let Some(t) = text {
-                        self.draft.body.perform(text_editor::Action::Edit(
-                            text_editor::Edit::Paste(std::sync::Arc::new(t)),
-                        ));
-                    }
-                }
-                Task::none()
-            }
-            Msg::CopyBody => {
-                let t = sola_kit::components::prose::flatten(&self.reading_blocks);
-                if t.is_empty() {
-                    Task::none()
-                } else {
-                    iced::clipboard::write(t)
+                if generation == self.select_gen && self.selected.as_ref() == Some(&id) {
+                    self.open_message(id);
                 }
             }
+            Msg::SearchChanged(q) => self.search_input = q,
+            Msg::SearchSubmit => self.submit_search(),
+            Msg::SearchClear => self.clear_search(),
+            Msg::ListScrolled(vp) => self.on_scroll(vp),
+            Msg::PollRefresh => self.refresh(false),
+            Msg::Refresh => {
+                mail_send(MailCmd::Retry);
+                self.refresh(true);
+            }
+
+            Msg::OpenUrl(url) => sola_core::open_url_logged(&url),
             Msg::BodySelect(sel) => {
-                self.body_selection = sel;
-                Task::none()
-            }
-            Msg::Send => {
-                if self.draft.to.trim().is_empty() {
-                    return self.show_toast("To address is required", false);
+                if let Some(l) = self.reader.letter_mut() {
+                    l.selection = sel;
                 }
-                mail_send(MailCmd::Send {
-                    from: self.draft.from.clone(),
-                    to: self.draft.to.clone(),
-                    cc: self.draft.cc.clone(),
-                    subject: self.draft.subject.clone(),
-                    body: self.draft.body.text(),
-                    in_reply_to: self.draft.in_reply_to.clone(),
-                    attachments: self.draft.attachments.clone(),
-                });
-                Task::none()
+            }
+            Msg::CopyBody => return self.copy_letter(),
+            Msg::RetryBody => {
+                if let Some(id) = self.selected.clone() {
+                    self.reader = Reader::Loading;
+                    mail_send(MailCmd::FetchBody(id));
+                }
+            }
+            Msg::OpenAttachment(i) => return self.open_attachment(i),
+            Msg::SaveAttachment(i) => self.begin_save_attachment(i),
+
+            Msg::MoveSelected(dest) => {
+                if let Some(id) = self.selected.clone().filter(|_| self.compose.is_none()) {
+                    return self.move_and_advance(id, dest);
+                }
+            }
+            Msg::Undo => return self.undo(),
+            Msg::ToggleSeen => self.toggle_flag(Flag::Seen),
+            Msg::ToggleFlag => self.toggle_flag(Flag::Flagged),
+            Msg::AskErase(folder) => self.confirm = Some(folder),
+            Msg::ConfirmErase => {
+                if let Some(folder) = self.confirm.take() {
+                    return self.erase(folder);
+                }
+            }
+            Msg::CancelConfirm => self.confirm = None,
+
+            Msg::Compose => self.start_compose(|app| compose::blank(app.default_from())),
+            Msg::Reply { all } => self.start_compose(|app| {
+                let body = app.reader.body().expect("guarded in update");
+                let from = app.reply_from(body);
+                compose::reply(body, from, all, &|a| app.is_self(a))
+            }),
+            Msg::Forward => self.start_compose(|app| {
+                let body = app.reader.body().expect("guarded in update");
+                compose::forward(body, app.reply_from(body))
+            }),
+            Msg::EditDraft => self.start_compose(|app| {
+                let body = app.reader.body().expect("guarded in update");
+                let from = app
+                    .identities()
+                    .into_iter()
+                    .find(|i| mail_addr_key(i) == mail_addr_key(&body.from))
+                    .unwrap_or_else(|| app.default_from());
+                compose::reopen(body, from)
+            }),
+            Msg::Draft(edit) => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.apply(edit);
+                }
+            }
+            Msg::Send => return self.send(),
+            Msg::SaveDraft => self.save_draft(),
+            Msg::CancelCompose => {
+                if let Some(c) = self.compose.as_mut() {
+                    if c.dirty() {
+                        c.confirm_discard = true;
+                    } else {
+                        self.close_compose();
+                    }
+                }
+            }
+            Msg::DiscardDraft => self.close_compose(),
+            Msg::KeepEditing => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.confirm_discard = false;
+                    c.then_open = None;
+                }
             }
             Msg::Attach => self.begin_attach(),
             Msg::RemoveAttach(i) => {
-                if i < self.draft.attachments.len() {
-                    self.draft.attachments.remove(i);
+                if let Some(c) = self.compose.as_mut()
+                    && i < c.draft.attachments.len() {
+                        c.draft.attachments.remove(i);
+                        c.touch();
+                    }
+            }
+            Msg::ClipboardPasted(Some(t)) => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.apply(Edit::Body(text_editor::Action::Edit(text_editor::Edit::Paste(
+                        Arc::new(t),
+                    ))));
                 }
-                Task::none()
             }
-            Msg::OpenAttachment(i) => self.open_attachment(i),
-            Msg::SaveAttachment(i) => self.begin_save_attachment(i),
-            Msg::Picker(m) => self.on_picker(m),
-            Msg::MoveSelected(dest) => {
-                let Some(id) = self.selected.clone() else {
-                    return Task::none();
-                };
-                self.move_and_advance(id, dest)
-            }
-            Msg::Undo => self.undo_last_move(),
-            Msg::EmptyFolder => {
-                let folder = self.selected_folder.clone();
-                self.begin_empty(&folder)
-            }
-            Msg::EmptyNamed(folder) => self.begin_empty(&folder),
-            Msg::Refresh => {
-                if self.connected && !self.loading {
-                    self.refresh_all();
-                }
-                Task::none()
-            }
-            Msg::OpenUrl(url) => {
-                sola_core::open_url_logged(&url);
-                Task::none()
-            }
-            Msg::DismissToast => {
-                self.clear_toast();
-                Task::none()
-            }
+            Msg::ClipboardPasted(None) => {}
+            Msg::Picker(m) => return self.on_picker(m),
+
+            Msg::DismissToast => self.clear_toast(),
             Msg::ToastExpired { generation } => {
                 if self.toast_gen == generation {
                     self.clear_toast();
                 }
-                Task::none()
-            }
-            Msg::KeyPressed(key, mods) => self.on_key(key, mods),
-            Msg::PollRefresh => {
-                if self.connected && !self.composing && !self.loading && !self.folder_loading {
-                    // Silent refresh — do not toast on transient failures.
-                    self.refresh_all();
-                }
-                Task::none()
             }
         }
+        Task::none()
     }
+
+    // ── Bus ───────────────────────────────────────────────────────────
 
     fn on_bus(&mut self, message: &Message) -> Task<Msg> {
         self.float.update(message);
         apply_theme_update(message, &mut self.theme);
         if is_self_quit(message, APP_ID) {
-            self.retract_mail_status();
-            mail_send(MailCmd::Shutdown);
-            return iced::exit();
+            return self.quit();
         }
-        if let Some(Topic::MenuAction(p)) = Topic::parse(message) {
-            if p.app_id == APP_ID {
-                return self.on_menu_action(&p.action_id);
-            }
-        }
-        if let Some(Topic::MailConfig(cfg)) = Topic::parse(message) {
-            self.mail_config = cfg.clone();
-            self.from_addresses = cfg.from_addresses();
-            let ids: Vec<String> = Account::imap_accounts(&cfg)
-                .iter()
-                .map(|a| a.id())
-                .collect();
-            if ids.is_empty() {
-                self.not_configured = true;
-                self.account_links.clear();
-            } else {
-                self.not_configured = false;
-                self.seed_account_links(&cfg);
-                if let Some(snap) = snapshot::load() {
-                    if !snapshot::matches_accounts(&snap, &ids) {
-                        self.messages.clear();
-                        self.total_messages = 0;
-                        self.folders = empty_mailboxes();
-                    }
-                }
-            }
-            mail_send(MailCmd::Reconfigure(cfg));
-        }
-        Task::none()
-    }
-
-    fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
-        match action {
-            "cut" => self.edit_cut(),
-            "copy" => self.edit_copy(),
-            "paste" => self.edit_paste(),
-            "select_all" => {
-                if self.composing {
-                    self.draft.body.perform(text_editor::Action::SelectAll);
-                } else if self.message_body.is_some() {
-                    self.prose_select_all = self.prose_select_all.saturating_add(1);
-                    let vis = sola_kit::components::prose::visible_text(&self.reading_blocks);
-                    self.body_selection = if vis.is_empty() { None } else { Some(vis) };
-                }
-                Task::none()
-            }
-            "quit" => {
-                self.retract_mail_status();
-                mail_send(MailCmd::Shutdown);
-                iced::exit()
-            }
-            "compose" => self.update(Msg::Compose),
-            "attach" => self.update(Msg::Attach),
-            "reply" => self.update(Msg::Reply { all: false }),
-            "reply_all" => self.update(Msg::Reply { all: true }),
-            "archive" => self.update(Msg::MoveSelected("Archive".into())),
-            "trash" => self.update(Msg::MoveSelected("Trash".into())),
-            "junk" => self.update(Msg::MoveSelected("Junk".into())),
-            "inbox" => self.update(Msg::MoveSelected("INBOX".into())),
-            "undo" => self.update(Msg::Undo),
-            "copy_message" => self.update(Msg::CopyBody),
-            "empty_junk" => self.update(Msg::EmptyNamed("Junk".into())),
-            "empty_trash" => self.update(Msg::EmptyNamed("Trash".into())),
-            "refresh" => self.update(Msg::Refresh),
-            "next" => {
-                self.select_next_or_first();
-                Task::none()
-            }
-            "prev" => {
-                self.select_prev_or_last();
+        match Topic::parse(message) {
+            Some(Topic::MenuAction(p)) if p.app_id == APP_ID => self.on_menu_action(&p.action_id),
+            Some(Topic::MailConfig(cfg)) => {
+                self.apply_config(cfg);
                 Task::none()
             }
             _ => Task::none(),
         }
     }
 
-    fn edit_copy(&self) -> Task<Msg> {
-        if self.composing {
-            if let Some(sel) = self.draft.body.selection() {
-                if !sel.is_empty() {
-                    return iced::clipboard::write(sel);
-                }
-            }
-            let t = self.draft.body.text();
-            if !t.is_empty() {
-                return iced::clipboard::write(t);
-            }
-            return Task::none();
+    fn apply_config(&mut self, cfg: MailConfig) {
+        let accounts = Account::imap_accounts(&cfg);
+        if accounts.is_empty() {
+            self.setup = Setup::Missing;
+            self.links.clear();
+        } else {
+            self.setup = Setup::Ready;
+            self.links = accounts
+                .iter()
+                .map(|a| {
+                    let id = a.id();
+                    let state = self
+                        .links
+                        .iter()
+                        .find(|l| l.id == id)
+                        .map(|l| l.state.clone())
+                        .unwrap_or(LinkState::Connecting);
+                    AccountLink {
+                        id,
+                        email: a.email.clone(),
+                        state,
+                    }
+                })
+                .collect();
+            // Rows of accounts that are gone (or from a snapshot of another
+            // account set) must not linger.
+            let ids: Vec<String> = accounts.iter().map(Account::id).collect();
+            self.list.rows.retain(|m| ids.contains(&m.id.account));
         }
-        if let Some(sel) = self.body_selection.as_deref() {
-            if !sel.is_empty() {
-                return iced::clipboard::write(sel.to_string());
-            }
-        }
-        // No selection → copy the open letter (flatten includes URLs).
-        let t = sola_kit::components::prose::flatten(&self.reading_blocks);
-        if !t.is_empty() {
-            return iced::clipboard::write(t);
-        }
-        Task::none()
+        self.config = cfg.clone();
+        mail_send(MailCmd::Reconfigure(cfg));
     }
 
-    fn edit_cut(&mut self) -> Task<Msg> {
-        if !self.composing {
-            return Task::none();
-        }
-        let Some(sel) = self.draft.body.selection() else {
-            return Task::none();
+    fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
+        let msg = match action {
+            "cut" => return self.edit_cut(),
+            "copy" => return self.edit_copy(),
+            "paste" => return self.edit_paste(),
+            "select_all" => {
+                self.select_all();
+                return Task::none();
+            }
+            "quit" => return self.quit(),
+            "refresh" => Msg::Refresh,
+            "compose" => Msg::Compose,
+            "save_draft" => Msg::SaveDraft,
+            "attach" => Msg::Attach,
+            "reply" => Msg::Reply { all: false },
+            "reply_all" => Msg::Reply { all: true },
+            "forward" => Msg::Forward,
+            "toggle_seen" => Msg::ToggleSeen,
+            "toggle_flag" => Msg::ToggleFlag,
+            "archive" => Msg::MoveSelected("Archive".into()),
+            "trash" => Msg::MoveSelected("Trash".into()),
+            "junk" => Msg::MoveSelected("Junk".into()),
+            "inbox" => Msg::MoveSelected("INBOX".into()),
+            "undo" => Msg::Undo,
+            "copy_message" => Msg::CopyBody,
+            "empty_junk" => Msg::AskErase("Junk".into()),
+            "empty_trash" => Msg::AskErase("Trash".into()),
+            "next" => return self.select_next(true),
+            "prev" => return self.select_prev(true),
+            _ => return Task::none(),
         };
-        if sel.is_empty() {
-            return Task::none();
-        }
-        self.draft
-            .body
-            .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
-        iced::clipboard::write(sel)
+        self.update(msg)
     }
 
-    fn edit_paste(&self) -> Task<Msg> {
-        if !self.composing {
-            return Task::none();
-        }
-        iced::clipboard::read().map(Msg::ClipboardPasted)
+    fn quit(&mut self) -> Task<Msg> {
+        self.retract_mail_status();
+        mail_send(MailCmd::Shutdown);
+        iced::exit()
     }
+
+    // ── Worker events ─────────────────────────────────────────────────
 
     fn on_worker(&mut self, ev: MailEvent) -> Task<Msg> {
         match ev {
-            MailEvent::Connected {
-                folders,
-                smart_counts,
-                from_addresses,
-                rules,
-            } => {
-                self.connected = true;
-                self.not_configured = false;
-                self.loading = false;
-                self.folders = folders;
-                self.smart_counts = smart_counts;
-                self.from_addresses = from_addresses;
-                self.rules = rules;
-                if self.messages.is_empty() {
-                    self.load_folder(self.selected_folder.clone());
-                } else {
-                    self.refresh_list_silent();
-                }
-                self.persist_snapshot();
-                self.publish_inbox_unread();
-            }
-            MailEvent::NotConfigured => {
-                self.connected = false;
-                self.not_configured = true;
-                self.loading = false;
-                self.folders.clear();
-                self.messages.clear();
-                self.publish_inbox_unread();
-            }
-            MailEvent::Folders {
-                folders,
-                smart_counts,
-            } => {
-                self.folders = folders;
-                self.smart_counts = smart_counts;
-                self.publish_inbox_unread();
-            }
-            MailEvent::Messages {
-                folder,
-                messages,
-                total,
-                offset,
-            } => {
-                if folder != self.selected_folder && !self.search_active {
-                    return Task::none();
-                }
-                let replace = self.folder_loading;
-                self.folder_loading = false;
-                self.is_loading_more = false;
-                let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
-                list_sync::prune_pending_gone(&mut self.pending_gone, &folder, &messages, offset);
-                self.total_messages = total.saturating_sub(hidden);
-                if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
-                    f.total = self.total_messages;
-                }
-                if replace {
-                    self.messages = messages
-                        .into_iter()
-                        .filter(|m| {
-                            !self
-                                .pending_gone
-                                .contains(&(folder.clone(), m.account.clone(), m.uid))
-                        })
-                        .collect();
-                } else {
-                    self.messages = list_sync::apply_message_page(
-                        &self.messages,
-                        messages,
-                        offset,
-                        total,
-                        &self.pending_gone,
-                        &folder,
-                    );
-                }
-                if !self.search_active {
-                    self.persist_snapshot();
-                }
-            }
-            MailEvent::SearchResults { messages, total } => {
-                self.folder_loading = false;
-                let folder = self.selected_folder.clone();
-                let hidden = list_sync::hidden_on_server(&messages, &self.pending_gone, &folder);
-                self.messages = messages
-                    .into_iter()
-                    .filter(|m| {
-                        !self
-                            .pending_gone
-                            .contains(&(folder.clone(), m.account.clone(), m.uid))
-                    })
-                    .collect();
-                self.search_total = total.saturating_sub(hidden);
-                self.total_messages = self.search_total;
-            }
-            MailEvent::Body(body) => {
-                if self.selected.as_ref() != Some(&body.id()) {
-                    return Task::none();
-                }
-                let blocks = body.reading_blocks();
-                let plain = sola_kit::components::prose::flatten(&blocks);
-                tracing::debug!(
-                    uid = body.uid,
-                    n_blocks = blocks.len(),
-                    text_len = plain.len(),
-                    has_html = body.html.is_some(),
-                    n_attachments = body.attachments.len(),
-                    "opened message body"
-                );
-                self.body_selection = None;
-                self.reading_blocks = blocks;
-                self.message_body = Some(body);
-            }
-            MailEvent::Sent => {
-                self.composing = false;
-                self.picker = None;
-                mail_send(MailCmd::ListFolders);
-                return self.show_toast("Message sent", false);
-            }
-            MailEvent::Moved {
-                account,
-                uid,
-                dest_uid,
-            } => {
-                return self.on_moved(&account, uid, dest_uid);
-            }
-            MailEvent::MoveFailed {
-                account,
-                uid,
-                message,
-            } => {
-                self.restore_removed(&account, uid);
-                if self.last_move.as_ref().is_some_and(|lm| {
-                    lm.account == account && (lm.uid == uid || lm.dest_uid == Some(uid))
-                }) {
-                    self.last_move = None;
-                }
-                return self.show_toast(format!("move: {message}"), false);
-            }
-            MailEvent::Emptied { folder } => {
-                self.folder_loading = false;
-                mail_send(MailCmd::ListFolders);
-                let toast = format!("{} erased", folder_label(&folder));
-                if self.selected_folder.eq_ignore_ascii_case(&folder) {
-                    self.load_folder(folder);
-                }
-                return self.show_toast(toast, false);
-            }
-            MailEvent::NewMail => {
-                self.refresh_all();
-            }
             MailEvent::AccountLink {
                 account,
                 email,
                 state,
-            } => {
-                self.upsert_link(account, email, state);
+            } => match self.links.iter_mut().find(|l| l.id == account) {
+                Some(link) => link.state = state,
+                None => self.links.push(AccountLink {
+                    id: account,
+                    email,
+                    state,
+                }),
+            },
+            MailEvent::Changed => self.refresh(true),
+            MailEvent::NewMail => self.refresh(true),
+            MailEvent::NotConfigured => {
+                self.setup = Setup::Missing;
+                self.links.clear();
+                self.folders = empty_mailboxes();
+                self.smart.clear();
+                self.list.rows.clear();
+                self.list.total = 0;
+                self.selected = None;
+                self.reader = Reader::Empty;
+                self.publish_inbox_unread();
             }
-            MailEvent::Error { context, message } => {
-                self.loading = false;
-                self.folder_loading = false;
-                self.is_loading_more = false;
-                if context == "empty_folder" {
-                    self.load_folder(self.selected_folder.clone());
-                }
-                if context == "connect" {
+            MailEvent::Folders { folders, smart } => {
+                self.folders = folders;
+                self.smart = smart;
+                if let FolderRef::Smart(name) = &self.list.folder
+                    && !self.smart.iter().any(|f| f.name == *name) {
+                        self.open_folder(FolderRef::inbox());
+                    }
+                self.publish_inbox_unread();
+            }
+            MailEvent::Messages {
+                epoch,
+                folder,
+                page,
+                rows,
+                total,
+                failed,
+            } => self.on_messages(epoch, folder, page, rows, total, failed),
+            MailEvent::SearchResults {
+                epoch,
+                rows,
+                capped,
+            } => {
+                if epoch != self.list.epoch {
                     return Task::none();
                 }
-                return self.show_toast(format!("{context}: {message}"), false);
+                if let Some(search) = self.list.search.as_mut() {
+                    search.capped = capped;
+                    let gone = self.moves.gone();
+                    self.list.rows = rows.into_iter().filter(|m| !gone.contains(&m.id)).collect();
+                    self.list.load = Load::Idle;
+                }
             }
-        }
-        Task::none()
-    }
-
-    fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
-        if self.picker.is_some() {
-            if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
+            MailEvent::Body(body) => {
+                if self.selected.as_ref() == Some(&body.id) {
+                    tracing::debug!(
+                        uid = body.id.uid,
+                        blocks = body.blocks.len(),
+                        attachments = body.attachments.len(),
+                        "opened message body"
+                    );
+                    self.reader = Reader::Open(Box::new(Letter {
+                        body: *body,
+                        selection: None,
+                        select_all: 0,
+                    }));
+                }
+            }
+            MailEvent::Moved { id, dest, dest_uid } => match self.moves.confirmed(&id, &dest, dest_uid) {
+                Confirmed::Nothing => {}
+                Confirmed::Reverse(id, dest) => mail_send(MailCmd::Move { id, dest }),
+                Confirmed::Restored { old, new } => self.rewrite_id(&old, new),
+                Confirmed::UndoImpossible => {
+                    return self.show_toast("Couldn’t undo: the moved copy wasn’t found", false);
+                }
+            },
+            MailEvent::MoveFailed { id, message } => {
+                if let Some((summary, dest)) = self.moves.failed(&id) {
+                    self.restore_row(summary, &dest);
+                }
+                return self.show_toast(format!("Couldn’t move the message: {message}"), false);
+            }
+            MailEvent::Emptied { folder, failed } => {
+                mail_send(MailCmd::ListFolders);
+                if self.list.folder.is(&folder) {
+                    self.open_folder(self.list.folder.clone());
+                }
+                let label = folder_label(&folder);
+                let text = if failed.is_empty() {
+                    format!("{label} erased")
+                } else {
+                    format!("{label} erased, except {}", failed.join("; "))
+                };
+                return self.show_toast(text, false);
+            }
+            MailEvent::Sent => {
+                self.compose = None;
                 self.picker = None;
+                mail_send(MailCmd::ListFolders);
+                return self.show_toast("Message sent", false);
             }
-            return Task::none();
-        }
-        if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
-            if self.composing {
-                self.composing = false;
-                return Task::none();
+            MailEvent::DraftSaved => {
+                let then = self.compose.take().and_then(|c| c.then_open);
+                self.picker = None;
+                if self.list.folder.is("Drafts") {
+                    self.refresh(true);
+                }
+                if let Some(id) = then {
+                    self.open_message(id);
+                }
+                return self.show_toast("Draft saved", false);
             }
-            if self.search_active || !self.search_query.is_empty() {
-                self.search_active = false;
-                self.search_query.clear();
-                self.search_total = 0;
-                self.load_folder(self.selected_folder.clone());
-                return Task::none();
-            }
-        }
-
-        if self.composing {
-            return Task::none();
-        }
-        if matches!(key, keyboard::Key::Named(NamedKey::ArrowUp)) {
-            self.select_prev_or_last();
-            return Task::none();
-        }
-        if matches!(key, keyboard::Key::Named(NamedKey::ArrowDown)) {
-            self.select_next_or_first();
-            return Task::none();
-        }
-        if mods.control() || mods.alt() || mods.logo() {
-            return Task::none();
-        }
-        if matches!(
-            key,
-            keyboard::Key::Named(
-                NamedKey::Tab
-                    | NamedKey::Enter
-                    | NamedKey::Escape
-                    | NamedKey::ArrowLeft
-                    | NamedKey::ArrowRight
-            )
-        ) {
-            return Task::none();
-        }
-        let Some(id) = self.selected.clone() else {
-            return Task::none();
-        };
-        let ch = match &key {
-            keyboard::Key::Character(c) => c.as_str(),
-            _ => return Task::none(),
-        };
-        match ch {
-            "x" => return self.move_and_advance(id, "Junk".into()),
-            "i" => return self.move_and_advance(id, "INBOX".into()),
-            "a" => return self.move_and_advance(id, "Archive".into()),
-            "d" => return self.move_and_advance(id, "Trash".into()),
-            "u" => return self.undo_last_move(),
-            "w" => self.select_prev(),
-            "s" => self.select_next(),
-            _ => {}
+            MailEvent::Failed { op, message } => return self.on_failed(op, message),
         }
         Task::none()
     }
 
-    fn real_folder(&self) -> String {
-        if self.selected_folder.starts_with("smart:") {
-            "INBOX".into()
-        } else {
-            self.selected_folder.clone()
-        }
-    }
-
-    fn load_more(&mut self) -> Task<Msg> {
-        if self.is_loading_more || self.search_active || self.folder_loading {
-            return Task::none();
-        }
-        if (self.messages.len() as u32) >= self.total_messages {
-            return Task::none();
-        }
-        self.is_loading_more = true;
-        mail_send(MailCmd::ListMessages {
-            folder: self.selected_folder.clone(),
-            offset: self.messages.len() as u32,
-            limit: PAGE,
-        });
-        Task::none()
-    }
-
-    fn begin_empty(&mut self, folder: &str) -> Task<Msg> {
-        self.select_gen = self.select_gen.saturating_add(1);
-        if self.selected_folder.eq_ignore_ascii_case(folder) {
-            self.folder_loading = true;
-            self.messages.clear();
-            self.pending_gone.clear();
-            self.pending_removed.clear();
-            self.selected = None;
-            self.message_body = None;
-            self.body_selection = None;
-            self.reading_blocks.clear();
-        }
-        mail_send(MailCmd::EmptyFolder {
-            folder: folder.to_string(),
-        });
-        self.show_toast(format!("Erasing {}…", folder_label(folder)), false)
-    }
-
-    fn is_emptyable_folder(&self) -> bool {
-        matches!(
-            self.selected_folder.as_str(),
-            "Trash" | "Junk" | "trash" | "junk"
-        ) || self.selected_folder.eq_ignore_ascii_case("Trash")
-            || self.selected_folder.eq_ignore_ascii_case("Junk")
-    }
-
-    fn load_folder(&mut self, name: String) {
-        self.folder_loading = true;
-        mail_send(MailCmd::ListMessages {
-            folder: name,
-            offset: 0,
-            limit: PAGE,
-        });
-    }
-
-    fn refresh_list_silent(&mut self) {
-        if self.search_active {
+    fn on_messages(
+        &mut self,
+        epoch: u64,
+        folder: FolderRef,
+        page: Page,
+        rows: Vec<MessageSummary>,
+        total: u32,
+        failed: Vec<String>,
+    ) {
+        if epoch != self.list.epoch || folder != self.list.folder || self.list.search.is_some() {
             return;
         }
-        let limit = (self.messages.len() as u32)
-            .saturating_add(self.pending_gone.len() as u32)
-            .max(PAGE);
-        mail_send(MailCmd::ListMessages {
-            folder: self.selected_folder.clone(),
-            offset: 0,
+        self.list.load = Load::Idle;
+        let mailbox = folder.mailbox().to_string();
+        match page {
+            Page::Replace | Page::Refresh => {
+                self.moves.prune(&mailbox, &rows);
+                let gone = self.moves.gone();
+                self.list.rows = if page == Page::Replace {
+                    rows.into_iter().filter(|m| !gone.contains(&m.id)).collect()
+                } else {
+                    list_sync::merge_refresh(&self.list.rows, rows, total, gone, &failed)
+                };
+            }
+            Page::More => {
+                self.list.exhausted = rows.is_empty();
+                list_sync::append_more(&mut self.list.rows, rows, self.moves.gone());
+            }
+        }
+        // The server still counts our not-yet-confirmed moves.
+        let pending = self
+            .moves
+            .gone()
+            .iter()
+            .filter(|id| id.folder.eq_ignore_ascii_case(&mailbox))
+            .count() as u32;
+        self.list.total = total.saturating_sub(pending);
+        if self.selected.as_ref().is_some_and(|id| self.list.index_of(id).is_none())
+            && self.compose.is_none()
+            && page != Page::More
+        {
+            // Moved / expunged elsewhere.
+            self.selected = None;
+            self.reader = Reader::Empty;
+        }
+        self.persist_snapshot();
+    }
+
+    fn on_failed(&mut self, op: Op, message: String) -> Task<Msg> {
+        match op {
+            Op::List => {
+                tracing::debug!("list: {message}");
+                self.list.load = Load::Idle;
+                Task::none()
+            }
+            Op::Search => {
+                self.list.load = Load::Idle;
+                self.show_toast(format!("Search failed: {message}"), false)
+            }
+            Op::Open(id) => {
+                if self.selected.as_ref() == Some(&id) {
+                    self.reader = Reader::Failed(message);
+                }
+                Task::none()
+            }
+            Op::Flag(_) => {
+                self.refresh(true);
+                self.show_toast(format!("Couldn’t update the message: {message}"), false)
+            }
+            Op::Erase => {
+                if self.list.erasable().is_some() {
+                    self.open_folder(self.list.folder.clone());
+                }
+                self.show_toast(format!("Couldn’t erase: {message}"), false)
+            }
+            Op::Send => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.busy = None;
+                }
+                self.show_toast(format!("Couldn’t send: {message}"), false)
+            }
+            Op::SaveDraft => {
+                if let Some(c) = self.compose.as_mut() {
+                    c.busy = None;
+                }
+                self.show_toast(format!("Couldn’t save the draft: {message}"), false)
+            }
+        }
+    }
+
+    // ── List ──────────────────────────────────────────────────────────
+
+    fn open_folder(&mut self, folder: FolderRef) {
+        self.list.folder = folder;
+        self.list.search = None;
+        self.search_input.clear();
+        self.list.rows.clear();
+        self.list.scroll_y = 0.0;
+        if self.compose.is_none() {
+            self.selected = None;
+            self.reader = Reader::Empty;
+        }
+        self.select_gen += 1;
+        self.request(Page::Replace);
+    }
+
+    /// Ask for a page of the current list.
+    fn request(&mut self, page: Page) {
+        let (limit, cursors) = match page {
+            Page::Replace => {
+                self.list.epoch += 1;
+                self.list.load = Load::Replacing;
+                self.list.exhausted = false;
+                (PAGE, Vec::new())
+            }
+            Page::Refresh => {
+                self.list.load = Load::Refreshing;
+                let loaded = self.list.rows.len() as u32;
+                (loaded.clamp(PAGE, REFRESH_MAX), Vec::new())
+            }
+            Page::More => {
+                self.list.load = Load::More;
+                (PAGE, list_sync::cursors(&self.list.rows))
+            }
+        };
+        mail_send(MailCmd::List {
+            epoch: self.list.epoch,
+            folder: self.list.folder.clone(),
+            page,
+            cursors,
             limit,
         });
     }
 
-    fn refresh_all(&mut self) {
-        if self.search_active {
+    /// Folder counts + the newest rows. `force` supersedes a page in
+    /// flight (new mail, accounts changed); the poll waits its turn.
+    fn refresh(&mut self, force: bool) {
+        if self.setup != Setup::Ready || !self.any_ready() {
             return;
         }
         mail_send(MailCmd::ListFolders);
-        self.refresh_list_silent();
+        if self.list.search.is_some() {
+            return;
+        }
+        if self.list.load != Load::Idle {
+            if !force {
+                return;
+            }
+            self.list.epoch += 1;
+        }
+        self.request(if self.list.rows.is_empty() {
+            Page::Replace
+        } else {
+            Page::Refresh
+        });
     }
 
-    fn select_message(&mut self, id: MailId) {
-        self.selected = Some(id.clone());
-        self.composing = false;
-        self.picker = None;
-        if !self.reader_shows(&id) {
-            self.clear_reader();
-        }
-        let folder = self.real_folder();
-        mail_send(MailCmd::FetchBody {
-            account: id.account.clone(),
-            folder: folder.clone(),
-            uid: id.uid,
-        });
-        if let Some(msg) = self
-            .messages
-            .iter_mut()
-            .find(|m| m.account == id.account && m.uid == id.uid)
+    fn on_scroll(&mut self, vp: Viewport) {
+        let y = vp.absolute_offset().y;
+        let scrolled_down = y > self.list.scroll_y + 1.0;
+        self.list.scroll_y = y;
+        let remain = vp.content_bounds().height - vp.bounds().height - y;
+        let list = &self.list;
+        if scrolled_down
+            && remain < 280.0
+            && list.load == Load::Idle
+            && list.search.is_none()
+            && !list.exhausted
+            && (list.rows.len() as u32) < list.total
         {
-            if !msg.seen {
-                msg.seen = true;
-                mail_send(MailCmd::MarkRead {
-                    account: id.account.clone(),
-                    folder: folder.clone(),
-                    uid: id.uid,
-                });
-                if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
-                    f.unread = f.unread.saturating_sub(1);
-                }
-                self.publish_inbox_unread();
-            }
+            self.request(Page::More);
         }
     }
 
-    fn move_and_advance(&mut self, id: MailId, dest: String) -> Task<Msg> {
-        let folder = self.real_folder();
-        let idx = self
-            .messages
-            .iter()
-            .position(|m| m.account == id.account && m.uid == id.uid);
-        let summary = idx.and_then(|i| self.messages.get(i).cloned());
-        self.last_move = Some(LastMove {
-            account: id.account.clone(),
-            uid: id.uid,
-            dest_uid: None,
-            from_folder: folder.clone(),
-            to_folder: dest.clone(),
-            list_id: self.selected_folder.clone(),
-            summary: summary.clone(),
-            undo_requested: false,
-            undo_imap_sent: false,
-        });
-        let toast = self.show_toast(format!("Moved to {dest}"), true);
-        self.pending_gone
-            .insert((self.selected_folder.clone(), id.account.clone(), id.uid));
-        if let Some(summary) = summary.clone() {
-            self.adjust_counts_for_move(&summary, &folder, &dest, true);
-            self.pending_removed.insert(
-                (id.account.clone(), id.uid),
-                RemovedMail {
-                    summary,
-                    from_folder: folder.clone(),
-                    to_folder: dest.clone(),
-                    selected_folder: self.selected_folder.clone(),
-                },
-            );
+    fn submit_search(&mut self) {
+        let query = self.search_input.trim().to_string();
+        if query.is_empty() {
+            return;
         }
-        self.total_messages = self.total_messages.saturating_sub(1);
-        mail_send(MailCmd::Move {
-            account: id.account.clone(),
-            folder,
-            uid: id.uid,
-            dest,
+        self.list.search = Some(SearchState {
+            query: query.clone(),
+            capped: false,
         });
-        self.messages
-            .retain(|m| !(m.account == id.account && m.uid == id.uid));
-        self.select_gen = self.select_gen.saturating_add(1);
-        if self.messages.is_empty() {
-            self.selected = None;
-            self.message_body = None;
-            self.body_selection = None;
-            self.reading_blocks.clear();
-            return toast;
-        }
-        let Some(i) = idx else {
-            return toast;
+        self.list.epoch += 1;
+        self.list.load = Load::Replacing;
+        self.list.rows.clear();
+        self.list.scroll_y = 0.0;
+        let also = match &self.list.folder {
+            FolderRef::Mailbox(name) if matches!(name.as_str(), "Junk" | "Trash") => Some(name.clone()),
+            _ => None,
         };
-        let next = if i > 0 { i - 1 } else { 0 };
-        let next_id = self.messages[next.min(self.messages.len() - 1)].id();
-        self.selected = Some(next_id.clone());
-        self.clear_reader();
-        let generation = self.select_gen;
-        Task::batch([
-            toast,
-            Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| {
-                Msg::SettleSelect {
-                    id: next_id,
-                    generation,
-                }
-            }),
-        ])
+        mail_send(MailCmd::Search {
+            epoch: self.list.epoch,
+            query,
+            also,
+        });
     }
 
-    fn undo_last_move(&mut self) -> Task<Msg> {
-        let Some(lm) = self.last_move.as_mut() else {
-            return Task::none();
-        };
-        if lm.undo_requested {
-            return Task::none();
+    fn clear_search(&mut self) {
+        self.search_input.clear();
+        if self.list.search.is_some() {
+            self.open_folder(self.list.folder.clone());
         }
-        lm.undo_requested = true;
-        let account = lm.account.clone();
-        let src_uid = lm.uid;
-        let dest_uid = lm.dest_uid;
-        let to_folder = lm.to_folder.clone();
-        let from_folder = lm.from_folder.clone();
-        let list_id = lm.list_id.clone();
-        let summary = lm.summary.clone();
-        if dest_uid.is_some() {
-            lm.undo_imap_sent = true;
-        }
-        self.pending_gone
-            .remove(&(list_id.clone(), account.clone(), src_uid));
-        let summary = self
-            .pending_removed
-            .remove(&(account.clone(), src_uid))
-            .map(|r| r.summary)
-            .or(summary);
-        if let Some(summary) = summary {
-            if self.selected_folder == list_id {
-                self.adjust_counts_for_move(&summary, &from_folder, &to_folder, false);
-                self.total_messages = self.total_messages.saturating_add(1);
-                list_sync::insert_summary_desc(&mut self.messages, summary);
+    }
+
+    // ── Selection ─────────────────────────────────────────────────────
+
+    /// A click on a row. A draft with edits asks first.
+    fn request_select(&mut self, id: MailId) {
+        if let Some(c) = self.compose.as_mut() {
+            if c.dirty() {
+                c.confirm_discard = true;
+                c.then_open = Some(id);
+                return;
             }
+            self.close_compose();
         }
-        if let Some(dest_uid) = list_sync::reverse_move_uid(src_uid, dest_uid) {
-            mail_send(MailCmd::Move {
-                account,
-                folder: to_folder,
-                uid: dest_uid,
-                dest: from_folder,
+        self.open_message(id);
+    }
+
+    fn open_message(&mut self, id: MailId) {
+        self.select_gen += 1;
+        self.selected = Some(id.clone());
+        if self.reader.body().is_none_or(|b| b.id != id) {
+            self.reader = Reader::Loading;
+        }
+        mail_send(MailCmd::FetchBody(id.clone()));
+        let unread = self.list.row_mut(&id).filter(|m| !m.seen).map(|m| m.seen = true);
+        if unread.is_some() {
+            mail_send(MailCmd::SetFlag {
+                id: id.clone(),
+                flag: Flag::Seen,
+                on: true,
             });
+            self.bump_unread(&id, -1);
         }
-        self.show_toast("Move undone", false)
     }
 
-    fn on_moved(&mut self, account: &str, uid: u32, dest_uid: Option<u32>) -> Task<Msg> {
-        self.pending_removed.remove(&(account.to_string(), uid));
-        let Some(lm) = self.last_move.as_ref() else {
-            return Task::none();
+    fn select_prev(&mut self, from_end: bool) -> Task<Msg> {
+        let target = match self.selected.as_ref().map(|id| self.list.index_of(id)) {
+            Some(Some(i)) if i > 0 => Some(self.list.rows[i - 1].id.clone()),
+            None if from_end => self.list.rows.last().map(|m| m.id.clone()),
+            _ => None,
         };
-        if lm.account != account {
-            return Task::none();
-        }
-        let src_uid = lm.uid;
-        let undo_requested = lm.undo_requested;
-        let undo_imap_sent = lm.undo_imap_sent;
-        let known_dest = lm.dest_uid;
-        let to_folder = lm.to_folder.clone();
-        let from_folder = lm.from_folder.clone();
-        let account = account.to_string();
-
-        if undo_requested && known_dest == Some(uid) {
-            if let Some(new_uid) = dest_uid {
-                self.rewrite_list_uid(&account, src_uid, new_uid);
-            }
-            self.last_move = None;
-            return Task::none();
-        }
-        if src_uid == uid && !undo_requested {
-            if let Some(lm) = self.last_move.as_mut() {
-                lm.dest_uid = dest_uid.or(lm.dest_uid);
-            }
-            return Task::none();
-        }
-        if src_uid == uid && undo_requested {
-            let d = dest_uid.or(known_dest);
-            if let Some(lm) = self.last_move.as_mut() {
-                lm.dest_uid = d;
-            }
-            if undo_imap_sent {
-                return Task::none();
-            }
-            match d {
-                Some(d) => {
-                    if let Some(lm) = self.last_move.as_mut() {
-                        lm.undo_imap_sent = true;
-                    }
-                    mail_send(MailCmd::Move {
-                        account,
-                        folder: to_folder,
-                        uid: d,
-                        dest: from_folder,
-                    });
-                }
-                None => {
-                    self.last_move = None;
-                    return self
-                        .show_toast("Could not undo: copy in destination not identified", false);
-                }
-            }
+        if let Some(id) = target {
+            self.open_message(id);
         }
         Task::none()
     }
 
-    fn reader_shows(&self, id: &MailId) -> bool {
-        self.message_body.as_ref().is_some_and(|b| b.id() == *id)
+    fn select_next(&mut self, from_start: bool) -> Task<Msg> {
+        let target = match self.selected.as_ref().map(|id| self.list.index_of(id)) {
+            Some(Some(i)) => self.list.rows.get(i + 1).map(|m| m.id.clone()),
+            None if from_start => self.list.rows.first().map(|m| m.id.clone()),
+            _ => None,
+        };
+        if let Some(id) = target {
+            self.open_message(id);
+        }
+        Task::none()
     }
 
-    fn clear_reader(&mut self) {
-        self.message_body = None;
-        self.body_selection = None;
-        self.reading_blocks.clear();
+    fn toggle_flag(&mut self, flag: Flag) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(m) = self.list.row_mut(&id) else {
+            return;
+        };
+        let on = match flag {
+            Flag::Seen => {
+                m.seen = !m.seen;
+                m.seen
+            }
+            Flag::Flagged => {
+                m.flagged = !m.flagged;
+                m.flagged
+            }
+        };
+        mail_send(MailCmd::SetFlag {
+            id: id.clone(),
+            flag,
+            on,
+        });
+        if flag == Flag::Seen {
+            self.bump_unread(&id, if on { -1 } else { 1 });
+        }
     }
 
-    fn rewrite_list_uid(&mut self, account: &str, old: u32, new: u32) {
-        if old == new {
+    // ── Moves ─────────────────────────────────────────────────────────
+
+    fn move_and_advance(&mut self, id: MailId, dest: String) -> Task<Msg> {
+        if id.folder.eq_ignore_ascii_case(&dest) {
+            return Task::none();
+        }
+        let idx = self.list.index_of(&id);
+        let summary = idx.map(|i| self.list.rows[i].clone());
+        self.moves.begin(id.clone(), dest.clone(), summary.clone());
+        if let Some(s) = &summary {
+            self.adjust_counts(s, &id.folder, &dest, true);
+            self.list.total = self.list.total.saturating_sub(1);
+            self.list.rows.retain(|m| m.id != id);
+        }
+        mail_send(MailCmd::Move {
+            id,
+            dest: dest.clone(),
+        });
+        let toast = self.show_toast(format!("Moved to {}", folder_label(&dest)), true);
+        self.select_gen += 1;
+        let Some(i) = idx.filter(|_| !self.list.rows.is_empty()) else {
+            self.selected = None;
+            self.reader = Reader::Empty;
+            return toast;
+        };
+        let next = self.list.rows[i.saturating_sub(1).min(self.list.rows.len() - 1)]
+            .id
+            .clone();
+        self.selected = Some(next.clone());
+        self.reader = Reader::Loading;
+        let generation = self.select_gen;
+        Task::batch([
+            toast,
+            Task::perform(tokio::time::sleep(SETTLE_SELECT), move |_| Msg::SettleSelect {
+                id: next,
+                generation,
+            }),
+        ])
+    }
+
+    fn undo(&mut self) -> Task<Msg> {
+        let Some(undo) = self.moves.undo() else {
+            return Task::none();
+        };
+        if let Some(summary) = undo.summary {
+            self.restore_row(summary, &undo.to);
+        }
+        if let Some((id, dest)) = undo.reverse {
+            mail_send(MailCmd::Move { id, dest });
+        }
+        self.show_toast("Move undone", false)
+    }
+
+    /// Put a row back after a failed move / undo (counts too).
+    fn restore_row(&mut self, summary: MessageSummary, moved_to: &str) {
+        let from = summary.id.folder.clone();
+        self.adjust_counts(&summary, &from, moved_to, false);
+        let shown = self.list.search.is_some() || self.list.folder.mailbox().eq_ignore_ascii_case(&from);
+        if shown {
+            self.list.total = self.list.total.saturating_add(1);
+            list_sync::insert(&mut self.list.rows, summary);
+        }
+    }
+
+    /// The undone message now lives under a new UID.
+    fn rewrite_id(&mut self, old: &MailId, new: MailId) {
+        if let Some(m) = self.list.row_mut(old) {
+            m.id = new.clone();
+        }
+        if self.selected.as_ref() == Some(old) {
+            self.selected = Some(new.clone());
+        }
+        if let Some(l) = self.reader.letter_mut()
+            && l.body.id == *old {
+                l.body.id = new;
+            }
+        self.list.rows.sort_by(MessageSummary::cmp_recency);
+    }
+
+    fn adjust_counts(&mut self, m: &MessageSummary, from: &str, dest: &str, leaving: bool) {
+        let unread = i32::from(!m.seen);
+        let sign = if leaving { -1 } else { 1 };
+        if let FolderRef::Smart(name) = &self.list.folder {
+            bump(&mut self.smart, name, sign, sign * unread);
+        } else {
+            bump(&mut self.folders, from, sign, sign * unread);
+        }
+        bump(&mut self.folders, dest, -sign, -sign * unread);
+        self.publish_inbox_unread();
+    }
+
+    fn bump_unread(&mut self, id: &MailId, delta: i32) {
+        match &self.list.folder {
+            FolderRef::Smart(name) => bump(&mut self.smart, name, 0, delta),
+            FolderRef::Mailbox(_) => bump(&mut self.folders, &id.folder, 0, delta),
+        }
+        self.publish_inbox_unread();
+    }
+
+    fn erase(&mut self, folder: String) -> Task<Msg> {
+        if self.list.folder.is(&folder) {
+            self.list.rows.clear();
+            self.list.load = Load::Replacing;
+            self.moves.clear();
+            self.selected = None;
+            self.reader = Reader::Empty;
+        }
+        let toast = self.show_toast(format!("Erasing {}…", folder_label(&folder)), false);
+        mail_send(MailCmd::Empty { folder });
+        toast
+    }
+
+    // ── Compose ───────────────────────────────────────────────────────
+
+    /// Open the compose pane with `make(self)`. Reply / forward / edit
+    /// need an open letter; an edited draft is never replaced silently.
+    fn start_compose(&mut self, make: impl FnOnce(&Self) -> compose::Draft) {
+        if let Some(c) = self.compose.as_mut()
+            && c.dirty() {
+                c.confirm_discard = true;
+                return;
+            }
+        let draft = make(self);
+        self.compose = Some(Box::new(Compose::new(draft)));
+    }
+
+    fn close_compose(&mut self) {
+        let then = self.compose.take().and_then(|c| c.then_open);
+        self.picker = None;
+        if let Some(id) = then {
+            self.open_message(id);
+        }
+    }
+
+    fn send(&mut self) -> Task<Msg> {
+        let Some(c) = self.compose.as_mut() else {
+            return Task::none();
+        };
+        if c.busy.is_some() {
+            return Task::none();
+        }
+        if c.draft.to.trim().is_empty() {
+            return self.show_toast("Add at least one recipient", false);
+        }
+        c.busy = Some(compose::Busy::Sending);
+        c.confirm_discard = false;
+        mail_send(MailCmd::Send(c.outgoing()));
+        Task::none()
+    }
+
+    fn save_draft(&mut self) {
+        let Some(c) = self.compose.as_mut() else {
+            return;
+        };
+        if c.busy.is_some() {
             return;
         }
-        if let Some(m) = self
-            .messages
-            .iter_mut()
-            .find(|m| m.account == account && m.uid == old)
-        {
-            m.uid = new;
-        }
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|s| s.account == account && s.uid == old)
-        {
-            self.selected = Some(MailId::new(account, new));
-        }
-        if let Some(body) = &mut self.message_body {
-            if body.account == account && body.uid == old {
-                body.uid = new;
-            }
-        }
-        self.messages.sort_by(MessageSummary::cmp_recency);
+        c.busy = Some(compose::Busy::Saving);
+        c.confirm_discard = false;
+        mail_send(MailCmd::SaveDraft(c.outgoing()));
     }
 
-    fn can_offer_undo(&self) -> bool {
-        self.last_move.as_ref().is_some_and(|lm| !lm.undo_requested)
+    fn begin_attach(&mut self) {
+        if self.compose.is_none() {
+            self.compose = Some(Box::new(Compose::new(compose::blank(self.default_from()))));
+        }
+        let picker = FilePicker::open()
+            .title("Attach file")
+            .start_dir(self.picker_start_dir());
+        self.picker = Some((PickerKind::Attach, picker));
     }
 
-    fn show_toast(&mut self, text: impl Into<String>, undo: bool) -> Task<Msg> {
-        self.toast = Some(text.into());
-        self.toast_undo = undo;
-        self.toast_gen = self.toast_gen.saturating_add(1);
-        let generation = self.toast_gen;
-        Task::perform(tokio::time::sleep(TOAST_TTL), move |_| Msg::ToastExpired {
-            generation,
-        })
-    }
-
-    fn clear_toast(&mut self) {
-        self.toast = None;
-        self.toast_undo = false;
-        self.toast_gen = self.toast_gen.saturating_add(1);
+    fn attach_path(&mut self, path: PathBuf) -> Task<Msg> {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => return self.show_toast(format!("Can’t attach: {e}"), false),
+        };
+        let Some(c) = self.compose.as_mut() else {
+            return Task::none();
+        };
+        let filename = attachments::sanitize_filename(
+            &path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "attachment".into()),
+        );
+        c.draft.attachments.push(MailAttachment {
+            mime: attachments::mime_from_filename(&filename),
+            filename,
+            size: bytes.len() as u64,
+            bytes: Arc::from(bytes),
+        });
+        c.touch();
+        Task::none()
     }
 
     fn identities(&self) -> Vec<String> {
-        if !self.from_addresses.is_empty() {
-            self.from_addresses.clone()
-        } else {
-            self.mail_config.from_addresses()
-        }
+        self.config.from_addresses()
     }
 
     fn default_from(&self) -> String {
         self.identities()
             .into_iter()
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.mail_config.primary_from_address())
+            .find(|s| !s.is_empty())
+            .unwrap_or_else(|| self.config.primary_from_address())
     }
 
-    fn reply_from(&self, body: &MessageBody) -> String {
+    fn reply_from(&self, body: &crate::protocol::MessageBody) -> String {
         pick_from_for_reply(&self.identities(), &body.to, &body.cc)
             .unwrap_or_else(|| self.default_from())
     }
 
-    fn is_self_addr(&self, raw: &str) -> bool {
-        let key = mail_addr_key(extract_address(raw));
-        if key.is_empty() {
-            return false;
-        }
-        self.identities().iter().any(|id| mail_addr_key(id) == key)
+    /// One of our own addresses (identities or IMAP accounts).
+    fn is_self(&self, addr: &str) -> bool {
+        let key = mail_addr_key(addr);
+        !key.is_empty()
+            && (self.identities().iter().any(|i| mail_addr_key(i) == key)
+                || self.links.iter().any(|l| mail_addr_key(&l.email) == key))
     }
+
+    // ── Attachments ───────────────────────────────────────────────────
 
     fn picker_start_dir(&self) -> PathBuf {
         self.last_picker_dir
@@ -1374,42 +1119,12 @@ impl App {
             .unwrap_or_else(attachments::downloads_dir)
     }
 
-    fn begin_attach(&mut self) -> Task<Msg> {
-        if !self.composing {
-            let from = self.default_from();
-            self.draft = empty_draft(&from);
-            self.composing = true;
-            self.from_open = false;
-        }
-        let picker = FilePicker::open()
-            .title("Attach file")
-            .start_dir(self.picker_start_dir());
-        self.picker = Some((PickerKind::Attach, picker));
-        Task::none()
-    }
-
-    fn begin_save_attachment(&mut self, index: usize) -> Task<Msg> {
-        let Some(att) = self
-            .message_body
-            .as_ref()
-            .and_then(|b| b.attachments.get(index))
-        else {
-            return Task::none();
-        };
-        let picker = FilePicker::save()
-            .title("Save attachment")
-            .start_dir(self.picker_start_dir())
-            .suggested_name(att.filename.clone());
-        self.picker = Some((PickerKind::Save { index }, picker));
-        Task::none()
+    fn attachment(&self, index: usize) -> Option<&MailAttachment> {
+        self.reader.body().and_then(|b| b.attachments.get(index))
     }
 
     fn open_attachment(&mut self, index: usize) -> Task<Msg> {
-        let Some(att) = self
-            .message_body
-            .as_ref()
-            .and_then(|b| b.attachments.get(index))
-        else {
+        let Some(att) = self.attachment(index) else {
             return Task::none();
         };
         match attachments::write_open_temp(&att.filename, &att.bytes) {
@@ -1419,6 +1134,17 @@ impl App {
             }
             Err(e) => self.show_toast(e, false),
         }
+    }
+
+    fn begin_save_attachment(&mut self, index: usize) {
+        let Some(att) = self.attachment(index) else {
+            return;
+        };
+        let picker = FilePicker::save()
+            .title("Save attachment")
+            .start_dir(self.picker_start_dir())
+            .suggested_name(att.filename.clone());
+        self.picker = Some((PickerKind::Save { index }, picker));
     }
 
     fn on_picker(&mut self, msg: PickerMsg) -> Task<Msg> {
@@ -1438,165 +1164,123 @@ impl App {
                 self.picker = None;
                 match kind {
                     PickerKind::Attach => self.attach_path(path),
-                    PickerKind::Save { index } => self.save_attachment_to(index, path),
+                    PickerKind::Save { index } => {
+                        let result = self
+                            .attachment(index)
+                            .map(|att| (att.filename.clone(), std::fs::write(&path, att.bytes.as_ref())));
+                        match result {
+                            Some((name, Ok(()))) => self.show_toast(format!("Saved {name}"), false),
+                            Some((_, Err(e))) => self.show_toast(format!("Can’t save: {e}"), false),
+                            None => self.show_toast("That letter is no longer open", false),
+                        }
+                    }
                 }
             }
             None => Task::none(),
         }
     }
 
-    fn attach_path(&mut self, path: PathBuf) -> Task<Msg> {
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let filename = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "attachment".into());
-                let filename = attachments::sanitize_filename(&filename);
-                let mime = attachments::mime_from_filename(&filename);
-                let size = bytes.len() as u64;
-                self.draft.attachments.push(MailAttachment {
-                    filename,
-                    mime,
-                    size,
-                    bytes: Arc::from(bytes),
-                });
+    // ── Edit menu ─────────────────────────────────────────────────────
+
+    fn copy_letter(&self) -> Task<Msg> {
+        match self.reader.body().map(|b| b.display_text()) {
+            Some(t) if !t.is_empty() => iced::clipboard::write(t),
+            _ => Task::none(),
+        }
+    }
+
+    fn edit_copy(&self) -> Task<Msg> {
+        if let Some(c) = &self.compose {
+            let t = c
+                .draft
+                .body
+                .selection()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| c.draft.body.text());
+            return if t.is_empty() {
                 Task::none()
-            }
-            Err(e) => self.show_toast(format!("Can't attach: {e}"), false),
+            } else {
+                iced::clipboard::write(t)
+            };
+        }
+        match self.reader.letter().and_then(|l| l.selection.clone()) {
+            Some(sel) if !sel.is_empty() => iced::clipboard::write(sel),
+            // No selection → copy the open letter (flatten includes URLs).
+            _ => self.copy_letter(),
         }
     }
 
-    fn save_attachment_to(&mut self, index: usize, path: PathBuf) -> Task<Msg> {
-        let Some(att) = self
-            .message_body
-            .as_ref()
-            .and_then(|b| b.attachments.get(index))
-        else {
-            return self.show_toast("Attachment is no longer open", false);
+    fn edit_cut(&mut self) -> Task<Msg> {
+        let Some(c) = self.compose.as_mut() else {
+            return Task::none();
         };
-        match std::fs::write(&path, att.bytes.as_ref()) {
-            Ok(()) => self.show_toast(format!("Saved {}", att.filename), false),
-            Err(e) => self.show_toast(format!("Can't save: {e}"), false),
-        }
-    }
-
-    fn restore_removed(&mut self, account: &str, uid: u32) {
-        self.pending_gone
-            .retain(|(_, acc, gone)| !(acc == account && *gone == uid));
-        let Some(removed) = self.pending_removed.remove(&(account.to_string(), uid)) else {
-            return;
+        let Some(sel) = c.draft.body.selection().filter(|s| !s.is_empty()) else {
+            return Task::none();
         };
-        if removed.selected_folder != self.selected_folder {
-            return;
+        c.apply(Edit::Body(text_editor::Action::Edit(text_editor::Edit::Delete)));
+        iced::clipboard::write(sel)
+    }
+
+    fn edit_paste(&self) -> Task<Msg> {
+        if self.compose.is_none() {
+            return Task::none();
         }
-        self.adjust_counts_for_move(
-            &removed.summary,
-            &removed.from_folder,
-            &removed.to_folder,
-            false,
-        );
-        self.total_messages = self.total_messages.saturating_add(1);
-        list_sync::insert_summary_desc(&mut self.messages, removed.summary);
-        if let Some(lm) = &self.last_move {
-            if lm.account == account && lm.uid == uid {
-                self.last_move = None;
-                self.toast_undo = false;
-            }
+        iced::clipboard::read().map(Msg::ClipboardPasted)
+    }
+
+    fn select_all(&mut self) {
+        if let Some(c) = self.compose.as_mut() {
+            c.apply(Edit::Body(text_editor::Action::SelectAll));
+        } else if let Some(l) = self.reader.letter_mut() {
+            l.select_all += 1;
+            let visible = sola_kit::components::prose::visible_text(&l.body.blocks);
+            l.selection = (!visible.is_empty()).then_some(visible);
         }
     }
 
-    fn adjust_counts_for_move(
-        &mut self,
-        summary: &MessageSummary,
-        from: &str,
-        dest: &str,
-        leaving: bool,
-    ) {
-        let unread = if summary.seen { 0 } else { 1 };
-        let (from_d, dest_d) = if leaving { (-1, 1) } else { (1, -1) };
-        bump_folder(&mut self.folders, from, from_d, from_d * unread as i32);
-        if !dest.is_empty() {
-            bump_folder(&mut self.folders, dest, dest_d, dest_d * unread as i32);
-        }
-        if let Some(name) = self.selected_folder.strip_prefix("smart:") {
-            bump_folder(&mut self.smart_counts, name, from_d, from_d * unread as i32);
-        }
-        self.publish_inbox_unread();
+    // ── Toast ─────────────────────────────────────────────────────────
+
+    fn show_toast(&mut self, text: impl Into<String>, undo: bool) -> Task<Msg> {
+        self.toast = Some(Toast {
+            text: text.into(),
+            undo,
+        });
+        self.toast_gen += 1;
+        let generation = self.toast_gen;
+        Task::perform(tokio::time::sleep(TOAST_TTL), move |_| Msg::ToastExpired {
+            generation,
+        })
     }
 
-    fn select_prev(&mut self) {
-        let Some(id) = self.selected.clone() else {
-            return;
-        };
-        let Some(idx) = self
-            .messages
-            .iter()
-            .position(|m| m.account == id.account && m.uid == id.uid)
-        else {
-            return;
-        };
-        if idx == 0 {
-            return;
-        }
-        self.select_gen = self.select_gen.saturating_add(1);
-        self.select_message(self.messages[idx - 1].id());
+    fn clear_toast(&mut self) {
+        self.toast = None;
+        self.toast_gen += 1;
     }
 
-    fn select_next(&mut self) {
-        let Some(id) = self.selected.clone() else {
-            return;
-        };
-        let Some(idx) = self
-            .messages
-            .iter()
-            .position(|m| m.account == id.account && m.uid == id.uid)
-        else {
-            return;
-        };
-        if idx + 1 >= self.messages.len() {
-            return;
-        }
-        self.select_gen = self.select_gen.saturating_add(1);
-        self.select_message(self.messages[idx + 1].id());
+    // ── Accounts / status ─────────────────────────────────────────────
+
+    fn any_ready(&self) -> bool {
+        self.links.iter().any(|l| l.state == LinkState::Ready)
     }
 
-    fn select_next_or_first(&mut self) {
-        if self.selected.is_none() {
-            if let Some(first) = self.messages.first() {
-                self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(first.id());
-            }
-            return;
-        }
-        self.select_next();
+    fn connected_accounts(&self) -> usize {
+        self.links.iter().filter(|l| l.state == LinkState::Ready).count()
     }
 
-    fn select_prev_or_last(&mut self) {
-        if self.selected.is_none() {
-            if let Some(last) = self.messages.last() {
-                self.select_gen = self.select_gen.saturating_add(1);
-                self.select_message(last.id());
-            }
-            return;
-        }
-        self.select_prev();
-    }
-
-    fn inbox_unread(&self) -> u32 {
-        self.folders
-            .iter()
-            .find(|f| f.name.eq_ignore_ascii_case("INBOX"))
-            .map(|f| f.unread)
-            .unwrap_or(0)
+    fn account_addresses(&self) -> Vec<String> {
+        self.links.iter().map(|l| l.email.clone()).collect()
     }
 
     fn publish_inbox_unread(&mut self) {
-        let n = self.inbox_unread();
-        if self.published_inbox_unread == Some(n) {
+        let n = self
+            .folders
+            .iter()
+            .find(|f| f.name == "INBOX")
+            .map_or(0, |f| f.unread);
+        if self.published_unread == Some(n) {
             return;
         }
-        self.published_inbox_unread = Some(n);
+        self.published_unread = Some(n);
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::MailStatus(sola_bus::topics::MailStatus {
                 inbox_unread: n,
@@ -1605,7 +1289,7 @@ impl App {
     }
 
     fn retract_mail_status(&mut self) {
-        self.published_inbox_unread = None;
+        self.published_unread = None;
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.retract(Topic::MailStatus(sola_bus::topics::MailStatus {
                 inbox_unread: 0,
@@ -1613,15 +1297,27 @@ impl App {
         }
     }
 
+    fn persist_snapshot(&self) {
+        if self.list.rows.is_empty() || self.list.search.is_some() || self.setup != Setup::Ready {
+            return;
+        }
+        snapshot::save(&Snapshot {
+            version: snapshot::VERSION,
+            folder: self.list.folder.clone(),
+            folders: self.folders.clone(),
+            rows: self.list.rows.clone(),
+            total: self.list.total,
+        });
+    }
+
     // ── View ──────────────────────────────────────────────────────────
 
     pub fn view(&self) -> Element<'_, Msg> {
-        let content: Element<'_, Msg> = if self.not_configured {
+        let content: Element<'_, Msg> = if self.setup == Setup::Missing {
             container(
                 column![
-                    kit_text::heading("Mail not configured"),
-                    kit_text::caption("Add your account in Settings → Mail, then reopen.")
-                        .style(kit_text::muted),
+                    kit_text::heading("Mail is not set up"),
+                    kit_text::caption("Add an account in Settings → Mail.").style(kit_text::muted),
                 ]
                 .spacing(SPACE_SM),
             )
@@ -1629,33 +1325,30 @@ impl App {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
-            .style(canvas_style)
+            .style(style::canvas)
             .into()
         } else {
+            let pane = match &self.compose {
+                Some(c) => c.view(&self.identities()),
+                None => self.view_reader(),
+            };
             row![
-                self.view_folders(),
-                v_hairline(),
-                self.view_message_list(),
-                v_hairline(),
-                column![
-                    self.view_reader_toolbar(),
-                    if self.composing {
-                        self.view_compose()
-                    } else {
-                        self.view_message()
-                    },
-                ]
-                .width(Length::Fill)
-                .height(Length::Fill),
+                self.view_sidebar(),
+                widgets::v_hairline(),
+                self.view_list(),
+                widgets::v_hairline(),
+                column![self.view_toolbar(), pane]
+                    .width(Length::Fill)
+                    .height(Length::Fill),
             ]
             .height(Length::Fill)
             .into()
         };
 
         let mut col = column![content].width(Length::Fill).height(Length::Fill);
-        if self.show_link_card() {
+        if self.setup == Setup::Ready && self.show_link_card() {
             col = col.push(
-                row![Space::new().width(Length::Fill), self.view_link_card(),].padding(Padding {
+                row![Space::new().width(Length::Fill), self.view_link_card()].padding(Padding {
                     top: 0.0,
                     right: SPACE_LG,
                     bottom: SPACE_MD,
@@ -1663,13 +1356,15 @@ impl App {
                 }),
             );
         }
-        if let Some(toast) = &self.toast {
+        if let Some(folder) = &self.confirm {
+            col = col.push(self.view_erase_confirm(folder));
+        } else if let Some(toast) = &self.toast {
             col = col.push(self.view_toast(toast));
         }
         let body: Element<'_, Msg> = container(col)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(canvas_style)
+            .style(style::canvas)
             .into();
 
         let framed = sola_kit::wrap_if_floating(
@@ -1680,1182 +1375,17 @@ impl App {
             Msg::TitleResize,
             body,
         );
-        if let Some((_, picker)) = self.picker.as_ref() {
-            iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into()
-        } else {
-            framed
+        match &self.picker {
+            Some((_, picker)) => iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into(),
+            None => framed,
         }
-    }
-
-    fn seed_account_links(&mut self, cfg: &MailConfig) {
-        self.account_links = Account::imap_accounts(cfg)
-            .into_iter()
-            .map(|a| AccountLink {
-                id: a.id(),
-                email: a.email.clone(),
-                state: LinkState::Connecting,
-            })
-            .collect();
-    }
-
-    fn upsert_link(&mut self, account: String, email: String, state: LinkState) {
-        if let Some(row) = self
-            .account_links
-            .iter_mut()
-            .find(|r| r.id == account || mail_addr_key(&r.email) == mail_addr_key(&email))
-        {
-            row.email = email;
-            row.state = state;
-        } else {
-            self.account_links.push(AccountLink {
-                id: account,
-                email,
-                state,
-            });
-        }
-    }
-
-    fn show_link_card(&self) -> bool {
-        !self.not_configured
-            && self
-                .account_links
-                .iter()
-                .any(|r| !matches!(r.state, LinkState::Ready))
-    }
-
-    fn persist_snapshot(&self) {
-        if self.messages.is_empty() || self.search_active {
-            return;
-        }
-        let accounts: Vec<String> = Account::imap_accounts(&self.mail_config)
-            .iter()
-            .map(|a| a.id())
-            .collect();
-        if accounts.is_empty() {
-            return;
-        }
-        snapshot::save(&Snapshot {
-            accounts,
-            folder: self.selected_folder.clone(),
-            folders: self.folders.clone(),
-            messages: self.messages.clone(),
-            total: self.total_messages,
-            from_addresses: self.from_addresses.clone(),
-        });
-    }
-
-    fn view_link_card(&self) -> Element<'_, Msg> {
-        let mut rows = column![].spacing(SPACE_SM);
-        for link in &self.account_links {
-            if matches!(link.state, LinkState::Ready) {
-                continue;
-            }
-            let (label, danger) = match &link.state {
-                LinkState::Connecting => ("Connecting", false),
-                LinkState::Failed(e) => (e.as_str(), true),
-                LinkState::Ready => continue,
-            };
-            let name = if link.email.is_empty() {
-                link.id.clone()
-            } else {
-                link.email.clone()
-            };
-            let mut state_txt = kit_text::caption(truncate_status(label)).style(kit_text::muted);
-            if danger {
-                state_txt = kit_text::caption(truncate_status(label)).style(kit_text::danger);
-            }
-            rows = rows.push(
-                row![
-                    status_dot(danger),
-                    column![kit_text::caption(name), state_txt]
-                        .spacing(SPACE_XS)
-                        .width(Length::Fill),
-                ]
-                .spacing(SPACE_MD)
-                .align_y(iced::Alignment::Center),
-            );
-        }
-
-        container(rows)
-            .padding(Padding::from([SPACE_MD, SPACE_LG]))
-            .width(Length::Fixed(268.0))
-            .style(link_card_style)
-            .into()
-    }
-
-    fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
-        let mut actions = row![].spacing(SPACE_SM);
-        if self.toast_undo && self.can_offer_undo() {
-            actions =
-                actions.push(kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo));
-        }
-        actions = actions
-            .push(kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast));
-
-        container(
-            row![
-                kit_text::body(toast.to_string()),
-                Space::new().width(Length::Fill),
-                actions,
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding(Padding::from([SPACE_MD, SPACE_LG]))
-        .width(Length::Fill)
-        .style(toast_style)
-        .into()
-    }
-
-    fn view_folders(&self) -> Element<'_, Msg> {
-        let mut sections = Vec::new();
-
-        let mut mailbox_items: Vec<SidebarItem<'_, Msg>> = Vec::new();
-        for f in &self.folders {
-            if !crate::protocol::boxes::is_canonical(&f.name) {
-                continue;
-            }
-            let mut item =
-                SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(f.name.clone()))
-                    .active(self.selected_folder == f.name);
-            if let Some(badge) = folder_count_badge(f.unread, f.total) {
-                item = item.secondary(badge);
-            }
-            mailbox_items.push(item);
-        }
-        sections.push(SidebarSection::new("Mailboxes", mailbox_items).fill());
-
-        if !self.smart_counts.is_empty() {
-            let mut smart_items = Vec::new();
-            for f in &self.smart_counts {
-                let id = format!("smart:{}", f.name);
-                let mut item = SidebarItem::new(f.name.clone(), Msg::SelectFolder(id.clone()))
-                    .active(self.selected_folder == id);
-                if let Some(badge) = folder_count_badge(f.unread, f.total) {
-                    item = item.secondary(badge);
-                }
-                smart_items.push(item);
-            }
-            sections.push(SidebarSection::new("Smart", smart_items));
-        }
-
-        container(sidebar(sections))
-            .width(Length::Fixed(SIDEBAR_W))
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn view_message_list(&self) -> Element<'_, Msg> {
-        let search = text_input("Search", &self.search_query)
-            .on_input(Msg::SearchChanged)
-            .on_submit(Msg::SearchSubmit)
-            .size(13)
-            .padding(Padding {
-                top: 5.0,
-                right: 10.0,
-                bottom: 5.0,
-                left: 10.0,
-            })
-            .width(Length::Fill);
-
-        let count = if self.search_active {
-            format_count(self.search_total)
-        } else if self.folder_loading {
-            "…".into()
-        } else {
-            format_count(self.total_messages)
-        };
-
-        let mut header = row![search, kit_text::caption(count).style(kit_text::muted),]
-            .spacing(SPACE_MD)
-            .align_y(iced::Alignment::Center);
-        if !self.search_query.is_empty() || self.search_active {
-            header = header.push(icon_tool(
-                "lucide/x",
-                "Clear search",
-                Some(Msg::SearchClear),
-            ));
-        }
-        if self.is_emptyable_folder() && !self.search_active {
-            header = header.push(icon_tool(
-                "lucide/trash-2",
-                "Erase folder",
-                Some(Msg::EmptyFolder),
-            ));
-        }
-        let header = container(header)
-            .width(Length::Fill)
-            .height(Length::Fixed(CHROME_H))
-            .padding(Padding {
-                top: 0.0,
-                right: SPACE_LG,
-                bottom: 0.0,
-                left: SPACE_LG,
-            })
-            .align_y(iced::Alignment::Center)
-            .style(toolbar_style);
-
-        let empty_caption = container(
-            kit_text::caption(if self.search_active {
-                "No matching messages"
-            } else {
-                "No messages"
-            })
-            .style(kit_text::muted),
-        )
-        .padding(Padding::from([SPACE_XL, SPACE_MD]))
-        .width(Length::Fill);
-
-        let list: Element<'_, Msg> = if self.messages.is_empty() && !self.folder_loading {
-            keyed_column([(0u32, empty_caption.into())])
-                .spacing(0)
-                .width(Length::Fill)
-                .into()
-        } else {
-            keyed_column(self.messages.iter().map(|m| {
-                (
-                    row_key(m),
-                    message_row(m, self.selected.as_ref() == Some(&m.id())),
-                )
-            }))
-            .spacing(0)
-            .width(Length::Fill)
-            .into()
-        };
-
-        container(
-            column![
-                header,
-                scrollable(default_cursor(list))
-                    .id(list_scroll_id())
-                    .height(Length::Fill)
-                    .width(Length::Fill)
-                    .on_scroll(Msg::ListScrolled),
-            ]
-            .height(Length::Fill),
-        )
-        .width(Length::Fixed(LIST_W))
-        .height(Length::Fill)
-        .style(list_pane_style)
-        .into()
-    }
-
-    fn view_reader_toolbar(&self) -> Element<'_, Msg> {
-        let has_sel = self.selected.is_some() && !self.composing;
-        let has_letter = has_sel
-            && self
-                .selected
-                .as_ref()
-                .is_some_and(|id| self.reader_shows(id));
-        let mut bar = row![
-            icon_tool("lucide/square-pen", "Compose", Some(Msg::Compose)),
-            icon_tool(
-                "lucide/paperclip",
-                "Attach",
-                self.composing.then_some(Msg::Attach),
-            ),
-            icon_tool(
-                "lucide/reply",
-                "Reply",
-                has_letter.then_some(Msg::Reply { all: false }),
-            ),
-            icon_tool(
-                "lucide/reply-all",
-                "Reply all",
-                has_letter.then_some(Msg::Reply { all: true }),
-            ),
-            icon_tool(
-                "lucide/archive",
-                "Archive",
-                has_sel.then_some(Msg::MoveSelected("Archive".into())),
-            ),
-            icon_tool(
-                "lucide/trash-2",
-                "Trash",
-                has_sel.then_some(Msg::MoveSelected("Trash".into())),
-            ),
-            icon_tool(
-                "lucide/ban",
-                "Junk",
-                has_sel.then_some(Msg::MoveSelected("Junk".into())),
-            ),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center);
-
-        bar = bar.push(Space::new().width(Length::Fill));
-        if has_letter {
-            bar = bar.push(icon_tool(
-                "lucide/copy",
-                "Copy message",
-                Some(Msg::CopyBody),
-            ));
-        }
-        if self.can_offer_undo() {
-            bar = bar.push(icon_tool("lucide/undo-2", "Undo move", Some(Msg::Undo)));
-        }
-
-        container(bar)
-            .width(Length::Fill)
-            .height(Length::Fixed(CHROME_H))
-            .padding(Padding {
-                top: 0.0,
-                right: SPACE_LG,
-                bottom: 0.0,
-                left: SPACE_LG,
-            })
-            .align_y(iced::Alignment::Center)
-            .style(toolbar_style)
-            .into()
-    }
-
-    fn view_message(&self) -> Element<'_, Msg> {
-        let body = self
-            .message_body
-            .as_ref()
-            .filter(|b| self.selected.as_ref().is_some_and(|id| b.id() == *id));
-        let Some(body) = body else {
-            // Selected but body not in yet: blank well, never the previous letter.
-            // Nothing selected: teach the empty pane.
-            let inner: Element<'_, Msg> = if self.selected.is_some() {
-                Space::new().width(Length::Fill).height(Length::Fill).into()
-            } else {
-                column![
-                    kit_text::body("No message selected").style(kit_text::muted),
-                    kit_text::caption("Pick one from the list, or press ↓").style(kit_text::muted),
-                ]
-                .spacing(SPACE_SM)
-                .align_x(iced::Alignment::Center)
-                .into()
-            };
-            return container(inner)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(read_pane_style)
-                .into();
-        };
-
-        let mut letter_col = column![letter_header(body)]
-            .spacing(20.0)
-            .width(Length::Fill);
-        if !body.attachments.is_empty() {
-            letter_col = letter_col.push(received_attachment_list(&body.attachments));
-        }
-        letter_col = letter_col.push(h_hairline()).push(prose_selectable(
-            self.reading_blocks.clone(),
-            &self.theme,
-            self.prose_select_all,
-            Msg::OpenUrl,
-            Msg::BodySelect,
-        ));
-
-        let letter = readable(
-            letter_col.padding(Padding {
-                top: 28.0,
-                right: 8.0,
-                bottom: 40.0,
-                left: 8.0,
-            }),
-            READ_MAX_W,
-        )
-        .width(Length::Fill);
-
-        container(scrollable(letter).height(Length::Fill).width(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(read_pane_style)
-            .into()
-    }
-
-    fn view_compose(&self) -> Element<'_, Msg> {
-        let editor = text_editor(&self.draft.body)
-            .placeholder("Write a message…")
-            .height(Length::Fill)
-            .padding(12)
-            .font(fonts::ui())
-            .size(COMPOSE_BODY_SIZE)
-            .style(compose_editor_style)
-            .on_action(Msg::ComposeBodyAction);
-
-        let from_row = compose_from_row(&self.draft.from, &self.identities(), self.from_open);
-        let headers = column![
-            from_row,
-            h_hairline(),
-            compose_header_row("To", "to@", &self.draft.to, Msg::ComposeTo),
-            h_hairline(),
-            compose_header_row("Cc", "cc@", &self.draft.cc, Msg::ComposeCc),
-            h_hairline(),
-            compose_header_row(
-                "Subject",
-                "Subject",
-                &self.draft.subject,
-                Msg::ComposeSubject,
-            ),
-        ];
-
-        let mut form = column![headers].spacing(SPACE_SM);
-        if !self.draft.attachments.is_empty() {
-            form = form
-                .push(h_hairline())
-                .push(draft_attachment_list(&self.draft.attachments));
-        }
-        let form = form
-            .push(h_hairline())
-            .push(
-                container(editor)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(compose_field_style),
-            )
-            .push(
-                row![
-                    kit_btn::labeled("Send", kit_btn::primary).on_press(Msg::Send),
-                    kit_btn::labeled_sm("Attach", kit_btn::ghost).on_press(Msg::Attach),
-                    kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::CancelCompose),
-                ]
-                .spacing(SPACE_SM),
-            );
-        let form = form
-            .padding(Padding::from([SPACE_LG, SPACE_LG]))
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        container(form)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(read_pane_style)
-            .into()
     }
 }
 
-// ── List row ──────────────────────────────────────────────────────────
-
-fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
-    let from = short_from(&m.from);
-    let subj = if m.subject.is_empty() {
-        "(no subject)".to_string()
-    } else {
-        m.subject.clone()
-    };
-    let date = short_date(&m.date);
-
-    // Mail.app: unread is weight, not a leading dot. Both lines clip
-    // to one row so the column stays scannable.
-    let from_text = text(from)
-        .font(if m.seen {
-            fonts::ui()
-        } else {
-            fonts::ui_medium()
-        })
-        .size(13)
-        .wrapping(Wrapping::None)
-        .width(Length::Fill);
-
-    let mut subj_text = text(subj)
-        .font(if m.seen {
-            fonts::ui()
-        } else {
-            fonts::ui_medium()
-        })
-        .size(13)
-        .wrapping(Wrapping::None)
-        .width(Length::Fill);
-    if m.seen {
-        subj_text = subj_text.style(kit_text::muted);
-    }
-
-    let mut top = row![container(from_text).width(Length::Fill).clip(true)]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
-    if m.has_attachment {
-        top = top.push(muted_icon("lucide/paperclip", 12));
-    }
-    let top = top.push(kit_text::caption(date).style(kit_text::muted));
-
-    let content = column![top, container(subj_text).width(Length::Fill).clip(true)]
-        .spacing(6.0)
-        .width(Length::Fill)
-        .padding(Padding {
-            top: 14.0,
-            right: 16.0,
-            bottom: 14.0,
-            left: 16.0,
-        });
-
-    button(content)
-        .on_press(Msg::SelectMessage(m.id()))
-        .padding(0)
-        .width(Length::Fill)
-        .style(kit_btn::list_item(selected))
-        .into()
-}
-
-// ── Display helpers ───────────────────────────────────────────────────
-
-fn row_key(m: &MessageSummary) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    m.account.hash(&mut h);
-    m.uid.hash(&mut h);
-    h.finish()
-}
-
-fn icon_tool(
-    name: &'static str,
-    tip: &'static str,
-    on_press: Option<Msg>,
-) -> Element<'static, Msg> {
-    toolbar_icon_tip(cached_icon(name), tip, on_press)
-}
-
-fn cached_icon(name: &'static str) -> iced::widget::svg::Handle {
-    static HANDLES: OnceLock<std::collections::HashMap<&'static str, iced::widget::svg::Handle>> =
-        OnceLock::new();
-    HANDLES
-        .get_or_init(|| {
-            [
-                "lucide/square-pen",
-                "lucide/paperclip",
-                "lucide/file",
-                "lucide/reply",
-                "lucide/reply-all",
-                "lucide/archive",
-                "lucide/trash-2",
-                "lucide/ban",
-                "lucide/copy",
-                "lucide/undo-2",
-                "lucide/x",
-            ]
-            .into_iter()
-            .map(|n| (n, icon_handle(n)))
-            .collect()
-        })
-        .get(name)
-        .cloned()
-        .unwrap_or_else(|| icon_handle(name))
-}
-
-fn bump_folder(folders: &mut [Folder], name: &str, d_total: i32, d_unread: i32) {
-    let Some(f) = folders
-        .iter_mut()
-        .find(|f| f.name.eq_ignore_ascii_case(name))
-    else {
+fn bump(folders: &mut [Folder], name: &str, d_total: i32, d_unread: i32) {
+    let Some(f) = folders.iter_mut().find(|f| f.name.eq_ignore_ascii_case(name)) else {
         return;
     };
-    f.total = if d_total < 0 {
-        f.total.saturating_sub(d_total.unsigned_abs())
-    } else {
-        f.total.saturating_add(d_total as u32)
-    };
-    f.unread = if d_unread < 0 {
-        f.unread.saturating_sub(d_unread.unsigned_abs())
-    } else {
-        f.unread.saturating_add(d_unread as u32)
-    };
-}
-
-fn format_count(n: u32) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, ch) in digits.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out.chars().rev().collect()
-}
-
-fn muted_icon(name: &'static str, size: u16) -> Element<'static, Msg> {
-    iced::widget::svg(cached_icon(name))
-        .width(Length::Fixed(size as f32))
-        .height(Length::Fixed(size as f32))
-        .style(|theme: &Theme, _status| iced::widget::svg::Style {
-            color: Some(theme.extended_palette().secondary.base.text),
-        })
-        .into()
-}
-
-fn received_attachment_list(atts: &[MailAttachment]) -> Element<'static, Msg> {
-    let rows: Vec<Element<'static, Msg>> = atts
-        .iter()
-        .enumerate()
-        .map(|(i, att)| {
-            row![
-                icon_svg(cached_icon("lucide/file"), 14),
-                kit_text::body(att.filename.clone()).width(Length::Fill),
-                kit_text::caption(attachments::human_size(att.size)).style(kit_text::muted),
-                kit_btn::labeled_sm("Open", kit_btn::secondary).on_press(Msg::OpenAttachment(i)),
-                kit_btn::labeled_sm("Save", kit_btn::ghost).on_press(Msg::SaveAttachment(i)),
-            ]
-            .spacing(SPACE_MD)
-            .align_y(iced::Alignment::Center)
-            .width(Length::Fill)
-            .into()
-        })
-        .collect();
-    attachment_well(column(rows).spacing(SPACE_SM).width(Length::Fill))
-}
-
-fn draft_attachment_list(atts: &[MailAttachment]) -> Element<'static, Msg> {
-    let rows: Vec<Element<'static, Msg>> = atts
-        .iter()
-        .enumerate()
-        .map(|(i, att)| {
-            row![
-                icon_svg(cached_icon("lucide/file"), 14),
-                kit_text::body(att.filename.clone()).width(Length::Fill),
-                kit_text::caption(attachments::human_size(att.size)).style(kit_text::muted),
-                kit_btn::labeled_sm("Remove", kit_btn::ghost).on_press(Msg::RemoveAttach(i)),
-            ]
-            .spacing(SPACE_MD)
-            .align_y(iced::Alignment::Center)
-            .width(Length::Fill)
-            .into()
-        })
-        .collect();
-    attachment_well(column(rows).spacing(SPACE_SM).width(Length::Fill))
-}
-
-fn attachment_well<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
-    container(content)
-        .padding(Padding::from([SPACE_MD, SPACE_LG]))
-        .width(Length::Fill)
-        .style(attachment_well_style)
-        .into()
-}
-
-fn letter_header(body: &MessageBody) -> Element<'static, Msg> {
-    let subj = if body.subject.is_empty() {
-        "(no subject)".to_string()
-    } else {
-        body.subject.clone()
-    };
-    let (name, addr) = split_address(&body.from);
-    let date = letter_date(&body.date);
-    let time = letter_time(&body.date);
-
-    let mut from_value = column![text(name).font(fonts::ui_medium()).size(14)]
-        .spacing(2)
-        .width(Length::Fill);
-    if let Some(addr) = addr {
-        from_value = from_value.push(kit_text::caption(addr).style(kit_text::muted));
-    }
-
-    let mut date_value = column![kit_text::caption(date).style(kit_text::muted)]
-        .spacing(2)
-        .width(Length::Fill);
-    if !time.is_empty() {
-        date_value = date_value.push(kit_text::caption(time).style(kit_text::muted));
-    }
-
-    let mut meta = column![
-        letter_meta_row("From", from_value.into()),
-        letter_meta_row("Date", date_value.into()),
-    ]
-    .spacing(SPACE_LG)
-    .width(Length::Fill);
-
-    let to = body.to.trim();
-    if !to.is_empty() {
-        meta = meta.push(letter_meta_row(
-            "To",
-            kit_text::caption(to.to_string())
-                .style(kit_text::muted)
-                .into(),
-        ));
-    }
-    let cc = body.cc.trim();
-    if !cc.is_empty() {
-        meta = meta.push(letter_meta_row(
-            "Cc",
-            kit_text::caption(cc.to_string())
-                .style(kit_text::muted)
-                .into(),
-        ));
-    }
-
-    column![
-        text(subj)
-            .font(fonts::ui_medium())
-            .size(22)
-            .width(Length::Fill),
-        meta,
-    ]
-    .spacing(SPACE_XL)
-    .width(Length::Fill)
-    .into()
-}
-
-fn letter_meta_row(label: &'static str, value: Element<'static, Msg>) -> Element<'static, Msg> {
-    row![
-        kit_text::caption(label)
-            .style(kit_text::muted)
-            .width(Length::Fixed(44.0)),
-        value,
-    ]
-    .spacing(SPACE_LG)
-    .align_y(iced::Alignment::Start)
-    .width(Length::Fill)
-    .into()
-}
-
-fn split_address(from: &str) -> (String, Option<String>) {
-    let t = from.trim();
-    if let Some(start) = t.find('<') {
-        let name = t[..start].trim().trim_matches('"');
-        let addr = t[start + 1..].trim().trim_end_matches('>').trim();
-        if !name.is_empty() {
-            return (name.to_string(), Some(addr.to_string()));
-        }
-        if !addr.is_empty() {
-            return (addr.to_string(), None);
-        }
-    }
-    (short_from(t), None)
-}
-
-fn short_from(from: &str) -> String {
-    let t = from.trim();
-    if let Some(start) = t.find('<') {
-        let name = t[..start].trim().trim_matches('"');
-        if !name.is_empty() {
-            return name.to_string();
-        }
-        if let Some(end) = t.rfind('>') {
-            return t[start + 1..end].trim().to_string();
-        }
-    }
-    if let Some((local, _)) = t.split_once('@') {
-        if !local.is_empty() {
-            return local.to_string();
-        }
-    }
-    t.to_string()
-}
-
-fn letter_date(date: &str) -> String {
-    crate::protocol::date::format_letter_date(date)
-}
-
-fn letter_time(date: &str) -> String {
-    crate::protocol::date::format_letter_time(date)
-}
-
-fn short_date(date: &str) -> String {
-    crate::protocol::date::format_short_date(date)
-}
-
-fn v_hairline() -> Element<'static, Msg> {
-    container(Space::new().width(1).height(Length::Fill))
-        .width(1)
-        .height(Length::Fill)
-        .style(hairline_style)
-        .into()
-}
-
-fn h_hairline() -> Element<'static, Msg> {
-    container(Space::new().width(Length::Fill).height(1))
-        .width(Length::Fill)
-        .height(1)
-        .style(hairline_style)
-        .into()
-}
-
-fn compose_from_row<'a>(value: &str, identities: &[String], open: bool) -> Element<'a, Msg> {
-    let control: Element<'a, Msg> = if identities.len() > 1 {
-        let opts = identities.iter().map(|addr| {
-            SelectOption::new(
-                addr.clone(),
-                mail_addr_key(addr) == mail_addr_key(value),
-                Msg::ComposeFrom(addr.clone()),
-            )
-            .mark(addr.clone())
-        });
-        let label = if value.trim().is_empty() {
-            identities[0].clone()
-        } else {
-            value.to_string()
-        };
-        select(label, opts, open, Msg::ToggleFromMenu, Msg::DismissFromMenu)
-    } else {
-        text_input("from@", value)
-            .font(fonts::ui())
-            .size(COMPOSE_HEADER_SIZE)
-            .padding(Padding {
-                top: 4.0,
-                right: SPACE_SM,
-                bottom: 4.0,
-                left: SPACE_SM,
-            })
-            .width(Length::Fill)
-            .style(compose_header_input_style)
-            .on_input(Msg::ComposeFrom)
-            .into()
-    };
-    row![
-        kit_text::caption("From")
-            .style(kit_text::muted)
-            .width(Length::Fixed(COMPOSE_LABEL_W)),
-        control,
-    ]
-    .spacing(SPACE_MD)
-    .align_y(iced::Alignment::Center)
-    .width(Length::Fill)
-    .into()
-}
-
-fn compose_header_row<'a>(
-    label: &'static str,
-    placeholder: &str,
-    value: &str,
-    on_input: fn(String) -> Msg,
-) -> Element<'a, Msg> {
-    row![
-        kit_text::caption(label)
-            .style(kit_text::muted)
-            .width(Length::Fixed(COMPOSE_LABEL_W)),
-        text_input(placeholder, value)
-            .font(fonts::ui())
-            .size(COMPOSE_HEADER_SIZE)
-            .padding(Padding {
-                top: 4.0,
-                right: SPACE_SM,
-                bottom: 4.0,
-                left: SPACE_SM,
-            })
-            .width(Length::Fill)
-            .style(compose_header_input_style)
-            .on_input(on_input),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(iced::Alignment::Center)
-    .width(Length::Fill)
-    .into()
-}
-
-// ── List cursor ───────────────────────────────────────────────────────
-
-/// Default arrow over the message list: no I-bar, no hand, no text copy.
-///
-/// `list_item` buttons would otherwise advertise `Pointer`, and iced's
-/// row/column take the max child interaction (`Text` from the letter
-/// outranks everything). Presses are captured so a drag here cannot
-/// start a letter selection.
-fn default_cursor<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
-    use iced::advanced::layout::{self, Layout};
-    use iced::advanced::overlay;
-    use iced::advanced::renderer;
-    use iced::advanced::widget::tree::{self, Tree};
-    use iced::advanced::widget::{Operation, Widget};
-    use iced::advanced::{Clipboard, Shell};
-    use iced::mouse;
-    use iced::{Event, Rectangle, Size, Vector};
-
-    struct DefaultCursor<'a> {
-        content: Element<'a, Msg>,
-    }
-
-    impl Widget<Msg, Theme, iced::Renderer> for DefaultCursor<'_> {
-        fn tag(&self) -> tree::Tag {
-            self.content.as_widget().tag()
-        }
-
-        fn state(&self) -> tree::State {
-            self.content.as_widget().state()
-        }
-
-        fn children(&self) -> Vec<Tree> {
-            self.content.as_widget().children()
-        }
-
-        fn diff(&self, tree: &mut Tree) {
-            self.content.as_widget().diff(tree);
-        }
-
-        fn size(&self) -> Size<Length> {
-            self.content.as_widget().size()
-        }
-
-        fn size_hint(&self) -> Size<Length> {
-            self.content.as_widget().size_hint()
-        }
-
-        fn layout(
-            &mut self,
-            tree: &mut Tree,
-            renderer: &iced::Renderer,
-            limits: &layout::Limits,
-        ) -> layout::Node {
-            self.content.as_widget_mut().layout(tree, renderer, limits)
-        }
-
-        fn draw(
-            &self,
-            tree: &Tree,
-            renderer: &mut iced::Renderer,
-            theme: &Theme,
-            style: &renderer::Style,
-            layout: Layout<'_>,
-            cursor: mouse::Cursor,
-            viewport: &Rectangle,
-        ) {
-            self.content
-                .as_widget()
-                .draw(tree, renderer, theme, style, layout, cursor, viewport);
-        }
-
-        fn operate(
-            &mut self,
-            tree: &mut Tree,
-            layout: Layout<'_>,
-            renderer: &iced::Renderer,
-            operation: &mut dyn Operation,
-        ) {
-            self.content
-                .as_widget_mut()
-                .operate(tree, layout, renderer, operation);
-        }
-
-        fn update(
-            &mut self,
-            tree: &mut Tree,
-            event: &Event,
-            layout: Layout<'_>,
-            cursor: mouse::Cursor,
-            renderer: &iced::Renderer,
-            clipboard: &mut dyn Clipboard,
-            shell: &mut Shell<'_, Msg>,
-            viewport: &Rectangle,
-        ) {
-            self.content.as_widget_mut().update(
-                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
-            );
-            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
-                && cursor.is_over(layout.bounds())
-            {
-                shell.capture_event();
-            }
-        }
-
-        fn mouse_interaction(
-            &self,
-            _tree: &Tree,
-            _layout: Layout<'_>,
-            _cursor: mouse::Cursor,
-            _viewport: &Rectangle,
-            _renderer: &iced::Renderer,
-        ) -> mouse::Interaction {
-            mouse::Interaction::None
-        }
-
-        fn overlay<'b>(
-            &'b mut self,
-            tree: &'b mut Tree,
-            layout: Layout<'b>,
-            renderer: &iced::Renderer,
-            viewport: &Rectangle,
-            translation: Vector,
-        ) -> Option<overlay::Element<'b, Msg, Theme, iced::Renderer>> {
-            self.content
-                .as_widget_mut()
-                .overlay(tree, layout, renderer, viewport, translation)
-        }
-    }
-
-    Element::new(DefaultCursor {
-        content: content.into(),
-    })
-}
-
-// ── Styles ────────────────────────────────────────────────────────────
-
-fn canvas_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.base.color)),
-        ..container::Style::default()
-    }
-}
-
-fn list_pane_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.base.color)),
-        ..container::Style::default()
-    }
-}
-
-fn read_pane_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    // Slight raise vs list canvas.
-    let fill = mix_white(p.background.base.color, 0.02);
-    container::Style {
-        background: Some(Background::Color(fill)),
-        ..container::Style::default()
-    }
-}
-
-fn toolbar_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.base.color)),
-        border: Border {
-            color: mix_white(p.background.base.color, HAIRLINE_A),
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-fn truncate_status(s: &str) -> String {
-    let t = s.trim();
-    const MAX: usize = 42;
-    if t.chars().count() <= MAX {
-        return t.to_string();
-    }
-    let mut out: String = t.chars().take(MAX.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
-
-fn status_dot<'a>(failed: bool) -> Element<'a, Msg> {
-    let inner = container(Space::new().width(6).height(6)).style(move |theme: &Theme| {
-        let p = theme.extended_palette();
-        let color = if failed {
-            p.danger.base.color
-        } else {
-            p.background.strongest.color
-        };
-        container::Style {
-            background: Some(Background::Color(color)),
-            border: Border {
-                color,
-                width: 0.0,
-                radius: 999.0.into(),
-            },
-            ..container::Style::default()
-        }
-    });
-    container(inner)
-        .width(8)
-        .height(8)
-        .center_x(8)
-        .center_y(8)
-        .into()
-}
-
-fn link_card_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    let fill = p.background.weaker.color;
-    container::Style {
-        background: Some(Background::Color(fill)),
-        border: Border {
-            color: mix_white(fill, HAIRLINE_A),
-            width: 1.0,
-            radius: RADIUS_MD.into(),
-        },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 12.0,
-        },
-        ..container::Style::default()
-    }
-}
-
-fn toast_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
-        border: Border {
-            color: mix_white(p.background.weaker.color, HAIRLINE_A),
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-fn hairline_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(mix_white(
-            p.background.base.color,
-            HAIRLINE_A,
-        ))),
-        ..container::Style::default()
-    }
-}
-
-fn attachment_well_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    let fill = mix_white(p.background.base.color, 0.04);
-    container::Style {
-        background: Some(Background::Color(fill)),
-        border: Border {
-            color: mix_white(fill, HAIRLINE_A),
-            width: 1.0,
-            radius: RADIUS_MD.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-fn compose_field_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
-        border: Border {
-            color: mix_white(p.background.weaker.color, HAIRLINE_A),
-            width: 1.0,
-            radius: RADIUS_MD.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-fn compose_header_input_style(
-    theme: &Theme,
-    _status: sola_kit::components::text_input::Status,
-) -> sola_kit::components::text_input::Style {
-    let p = theme.extended_palette();
-    sola_kit::components::text_input::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        icon: p.secondary.base.text,
-        placeholder: Color {
-            a: 0.75,
-            ..p.secondary.base.text
-        },
-        value: p.background.base.text,
-        selection: mix_white(p.background.weaker.color, 0.16),
-    }
-}
-
-fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
-    let p = theme.extended_palette();
-    let _ = status;
-    text_editor::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_MD.into(),
-        },
-        placeholder: Color {
-            a: 0.75,
-            ..p.secondary.base.color
-        },
-        value: p.background.base.text,
-        selection: mix_white(p.background.weaker.color, 0.16),
-    }
+    f.total = f.total.saturating_add_signed(d_total);
+    f.unread = f.unread.saturating_add_signed(d_unread);
 }

@@ -807,7 +807,7 @@ pub(crate) fn try_decode_legacy_mail<T: 'static>(bytes: &[u8]) -> Option<T> {
     boxed.downcast::<T>().ok().map(|b| *b)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailRule {
     pub name: String,
     pub action: String,
@@ -816,7 +816,7 @@ pub struct MailRule {
     pub conditions: Vec<MailRuleCondition>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailRuleCondition {
     pub field: String,
     #[serde(rename = "match")]

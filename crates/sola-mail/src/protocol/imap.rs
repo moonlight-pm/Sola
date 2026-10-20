@@ -1,105 +1,180 @@
-use std::collections::HashSet;
+//! One authenticated IMAP session. Every operation reconnects and retries
+//! once on a dead connection (or an imap-crate tag-mismatch panic).
 
-use imap::types::Fetch;
+use std::cell::Cell;
+use std::collections::HashSet;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::panic::AssertUnwindSafe;
+use std::sync::Once;
+use std::time::Duration;
+
+use imap::types::Flag;
+use sola_bus::topics::MailRule;
 use tracing::{debug, warn};
 
 use super::account::Account;
-use super::attachments::collect_attachments;
-use super::types::{Folder, MessageBody, MessageSummary};
-use sola_bus::topics::{MailRule, MailRuleCondition};
+use super::boxes::ListedMailbox;
+use super::dest_uid::{DEST_UID_SCAN, MailIdent, parse_copyuid_dest, quote_mailbox};
+use super::parse::{BODY_ITEMS, SUMMARY_ITEMS, parse_body, parse_summary};
+use super::rules::{imap_search, is_smart};
+use super::types::{Folder, MailId, MessageBody, MessageSummary};
 
-type ImapSession = imap::Session<rustls_connector::TlsStream<std::net::TcpStream>>;
+pub type TlsStream = rustls_connector::TlsStream<TcpStream>;
+type ImapSession = imap::Session<TlsStream>;
 
-/// Envelope + BODYSTRUCTURE (paperclip) + forwarded-for. No SEARCH.
-const SUMMARY_ITEMS: &str =
-    "(UID FLAGS ENVELOPE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])";
+/// Bounded so a hung server can't wedge a worker thread.
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Search results per mailbox.
+pub const SEARCH_CAP: usize = 200;
+/// Largest sequence window one page pass fetches.
+const MAX_WINDOW: u32 = 500;
+
+/// Open a TLS stream to the account's IMAP host with bounded connect and
+/// I/O timeouts.
+pub fn open_tls(account: &Account) -> anyhow::Result<TlsStream> {
+    let addr = format!("{}:{}", account.imap_host, account.imap_port);
+    let tcp = connect_tcp(&addr)?;
+    tcp.set_read_timeout(Some(IO_TIMEOUT))?;
+    tcp.set_write_timeout(Some(IO_TIMEOUT))?;
+    let connector = rustls_connector::RustlsConnector::new_with_native_certs()
+        .map_err(|e| anyhow::anyhow!("TLS setup failed: {e}"))?;
+    connector
+        .connect(&account.imap_host, tcp)
+        .map_err(|e| anyhow::anyhow!("TLS handshake with {} failed: {e}", account.imap_host))
+}
+
+fn connect_tcp(addr: &str) -> anyhow::Result<TcpStream> {
+    let addrs = addr
+        .to_socket_addrs()
+        .map_err(|e| anyhow::anyhow!("can't resolve {addr}: {e}"))?;
+    let mut last = None;
+    for sa in addrs {
+        match TcpStream::connect_timeout(&sa, CONNECT_TIMEOUT) {
+            Ok(s) => return Ok(s),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) => anyhow::anyhow!("can't reach {addr}: {e}"),
+        None => anyhow::anyhow!("can't resolve {addr}: no addresses"),
+    })
+}
+
+thread_local! {
+    static QUIET_PANIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Chain a panic hook that stays silent while an IMAP operation runs
+/// under `catch_unwind` (the panic becomes an error and is logged as
+/// one). Install once, after logging init, so every other panic still
+/// reaches the log hook. Swapping the global hook per call raced across
+/// session threads and could leave panics silenced for good.
+pub fn install_panic_filter() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET_PANIC.with(Cell::get) {
+                prev(info);
+            }
+        }));
+    });
+}
+
+/// Server extensions this session can lean on.
+#[derive(Debug, Clone, Copy, Default)]
+struct Caps {
+    uidplus: bool,
+}
+
+/// One page of a mailbox, newest first by UID.
+pub struct Rows {
+    pub rows: Vec<MessageSummary>,
+    pub total: u32,
+}
+
+/// Per-rule smart mailbox counts plus how much INBOX they hide.
+pub struct SmartCounts {
+    pub folders: Vec<Folder>,
+    pub inbox_total_deduction: u32,
+    pub inbox_unread_deduction: u32,
+}
 
 pub struct ImapClient {
     session: ImapSession,
-    config: Account,
-    selected_folder: Option<String>,
+    account: Account,
+    caps: Caps,
+    selected: Option<String>,
 }
 
 impl ImapClient {
-    /// Connect to the IMAP server over TLS and login.
-    pub fn connect(config: &Account) -> anyhow::Result<Self> {
-        let session = new_session(config)?;
-        debug!("IMAP connected to {}", config.imap_host);
-
+    /// Connect over TLS and log in.
+    pub fn connect(account: &Account) -> anyhow::Result<Self> {
+        let (session, caps) = new_session(account)?;
+        debug!(host = account.imap_host.as_str(), "IMAP connected");
         Ok(Self {
             session,
-            config: config.clone(),
-            selected_folder: None,
+            account: account.clone(),
+            caps,
+            selected: None,
         })
     }
 
-    /// Send an IMAP NOOP to keep the connection alive.
-    ///
-    /// Uses `with_reconnect` so a dead connection is transparently replaced.
     pub fn noop(&mut self) -> anyhow::Result<()> {
-        self.with_reconnect(|s| {
-            s.session.noop()?;
-            Ok(())
-        })
+        self.with_reconnect(|s| Ok(s.session.noop()?))
     }
 
     /// CREATE a mailbox (Gmail: a user label).
     pub fn create_mailbox(&mut self, name: &str) -> anyhow::Result<()> {
-        let name = name.to_string();
-        self.with_reconnect(move |s| {
-            s.session.create(&name)?;
-            Ok(())
-        })
+        self.with_reconnect(|s| Ok(s.session.create(name)?))
     }
 
-    /// LIST names + attributes (no STATUS). Used to map canonical boxes.
-    pub fn list_mailbox_names(
-        &mut self,
-    ) -> anyhow::Result<Vec<crate::protocol::boxes::ListedMailbox>> {
+    /// LIST names + attributes. Used to map canonical boxes.
+    pub fn list_mailbox_names(&mut self) -> anyhow::Result<Vec<ListedMailbox>> {
+        use imap::types::NameAttribute;
         self.with_reconnect(|s| {
             let mailboxes = s.session.list(None, Some("*"))?;
-            let mut out = Vec::new();
-            for mb in mailboxes.iter() {
-                let attrs = mb
-                    .attributes()
-                    .iter()
-                    .map(|a| match a {
-                        imap::types::NameAttribute::NoSelect => "\\Noselect".to_string(),
-                        imap::types::NameAttribute::NoInferiors => "\\Noinferiors".to_string(),
-                        imap::types::NameAttribute::Marked => "\\Marked".to_string(),
-                        imap::types::NameAttribute::Unmarked => "\\Unmarked".to_string(),
-                        imap::types::NameAttribute::Custom(c) => c.to_string(),
-                    })
-                    .collect();
-                out.push(crate::protocol::boxes::ListedMailbox {
+            Ok(mailboxes
+                .iter()
+                .map(|mb| ListedMailbox {
                     name: mb.name().to_string(),
-                    attrs,
-                });
-            }
-            Ok(out)
+                    attrs: mb
+                        .attributes()
+                        .iter()
+                        .map(|a| match a {
+                            NameAttribute::NoSelect => "\\Noselect".to_string(),
+                            NameAttribute::NoInferiors => "\\Noinferiors".to_string(),
+                            NameAttribute::Marked => "\\Marked".to_string(),
+                            NameAttribute::Unmarked => "\\Unmarked".to_string(),
+                            NameAttribute::Custom(c) => c.to_string(),
+                        })
+                        .collect(),
+                })
+                .collect())
         })
     }
 
-    /// Unread/total for one mailbox via STATUS (no SELECT).
-    pub fn folder_status(&mut self, name: &str) -> anyhow::Result<(u32, u32)> {
-        let name = name.to_string();
-        self.with_reconnect(move |s| {
-            s.session.status(&name, "(MESSAGES UNSEEN)")?;
-            let mut total = 0u32;
-            let mut unread = 0u32;
+    /// `(unread, total)` via STATUS (no SELECT).
+    pub fn status(&mut self, name: &str) -> anyhow::Result<(u32, u32)> {
+        use imap::types::{StatusAttribute, UnsolicitedResponse};
+        self.with_reconnect(|s| {
+            // The imap crate routes STATUS to the unsolicited channel.
+            s.session.status(name, "(MESSAGES UNSEEN)")?;
+            let (mut unread, mut total) = (0, 0);
             while let Ok(resp) = s.session.unsolicited_responses.try_recv() {
-                if let imap::types::UnsolicitedResponse::Status {
-                    mailbox: ref mb,
+                if let UnsolicitedResponse::Status {
+                    mailbox,
                     attributes,
                 } = resp
                 {
-                    if mb != &name {
+                    if mailbox != name {
                         continue;
                     }
                     for attr in attributes {
                         match attr {
-                            imap::types::StatusAttribute::Messages(n) => total = n,
-                            imap::types::StatusAttribute::Unseen(n) => unread = n,
+                            StatusAttribute::Messages(n) => total = n,
+                            StatusAttribute::Unseen(n) => unread = n,
                             _ => {}
                         }
                     }
@@ -109,462 +184,366 @@ impl ImapClient {
         })
     }
 
-    /// List all folders with unread/total counts via `STATUS` (no SELECT).
-    ///
-    /// Uses STATUS rather than SELECT+SEARCH per folder: some servers/crates
-    /// leave the session desynced after repeated SEARCH failures, and the
-    /// imap client panics on tag mismatch (killing the mail worker).
-    /// Message lists still exclude `\Deleted` via `UNDELETED` SEARCH.
-    pub fn list_folders(&mut self) -> anyhow::Result<Vec<Folder>> {
+    /// `limit` rows of `remote` older than UID `before` (newest when
+    /// `None`), skipping `exclude`. Walks sequence windows down from the
+    /// top — `SELECT` + `FETCH`, not `UID SEARCH`: this server's SEARCH
+    /// replies (`ESEARCH` / empty-mailbox forms) make the imap crate fail
+    /// to parse and then panic on the next tag.
+    pub fn page(
+        &mut self,
+        remote: &str,
+        canonical: &str,
+        before: Option<u32>,
+        limit: u32,
+        exclude: &HashSet<u32>,
+    ) -> anyhow::Result<Rows> {
+        let id = self.account.id();
         self.with_reconnect(|s| {
-            let mailboxes = s.session.list(None, Some("*"))?;
-            let mut folders = Vec::new();
+            let exists = s.select_folder(remote)?;
+            let total = exists.saturating_sub(exclude.len() as u32);
+            let mut end = match before {
+                None => exists,
+                Some(uid) => s.seq_before(uid, exists)?,
+            };
+            let mut rows: Vec<MessageSummary> = Vec::new();
+            let mut window = limit;
+            while end > 0 && rows.len() < limit as usize && limit > 0 {
+                let start = end.saturating_sub(window.saturating_sub(1)).max(1);
+                let fetches = s.session.fetch(format!("{start}:{end}"), SUMMARY_ITEMS)?;
+                rows.extend(
+                    fetches
+                        .iter()
+                        .filter(|f| f.uid.is_some_and(|u| !exclude.contains(&u)))
+                        .filter_map(|f| parse_summary(f, &id, canonical)),
+                );
+                end = start - 1;
+                window = (window * 2).min(MAX_WINDOW);
+            }
+            rows.sort_unstable_by_key(|m| std::cmp::Reverse(m.id.uid));
+            rows.truncate(limit as usize);
+            Ok(Rows { rows, total })
+        })
+    }
 
-            for mb in mailboxes.iter() {
-                let name = mb.name().to_string();
-                // Skip \Noselect mailboxes (can't STATUS).
-                if mb
-                    .attributes()
-                    .iter()
-                    .any(|a| matches!(a, imap::types::NameAttribute::NoSelect))
-                {
+    /// INBOX UIDs matched by any smart mailbox rule.
+    pub fn smart_uids(&mut self, rules: &[MailRule]) -> anyhow::Result<HashSet<u32>> {
+        self.with_reconnect(|s| {
+            s.ensure_selected("INBOX")?;
+            let mut union = HashSet::new();
+            for rule in rules.iter().filter(|r| is_smart(r)) {
+                let query = imap_search(&rule.conditions);
+                if query.is_empty() {
                     continue;
                 }
-                match s.session.status(&name, "(MESSAGES UNSEEN)") {
-                    Ok(_) => {
-                        // The imap crate routes STATUS responses to the
-                        // unsolicited channel, so drain it for the attributes.
-                        let mut total = 0u32;
-                        let mut unread = 0u32;
-                        while let Ok(resp) = s.session.unsolicited_responses.try_recv() {
-                            if let imap::types::UnsolicitedResponse::Status {
-                                mailbox: ref mb,
-                                attributes,
-                            } = resp
-                            {
-                                if mb != &name {
-                                    continue;
-                                }
-                                for attr in attributes {
-                                    match attr {
-                                        imap::types::StatusAttribute::Messages(n) => total = n,
-                                        imap::types::StatusAttribute::Unseen(n) => unread = n,
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                        folders.push(Folder {
-                            name,
-                            unread,
-                            total,
-                        });
-                    }
-                    Err(e) if is_imap_connection_error(&e) => {
-                        return Err(anyhow::Error::from(e));
-                    }
-                    Err(e) => {
-                        warn!("STATUS failed for {name}: {e}");
-                        folders.push(Folder {
-                            name,
-                            unread: 0,
-                            total: 0,
-                        });
-                    }
+                match s.session.uid_search(&query) {
+                    Ok(uids) => union.extend(uids),
+                    Err(e) => warn!(rule = rule.name.as_str(), "smart SEARCH failed: {e}"),
                 }
             }
-
-            super::types::sort_folders(&mut folders);
-            Ok(folders)
+            Ok(union)
         })
     }
 
-    /// Select a folder and fetch a page of message summaries (most recent first).
-    ///
-    /// Uses `SELECT` + sequence `FETCH`, not `UID SEARCH`. This server's
-    /// SEARCH replies (`ESEARCH` / empty-mailbox forms) make the rust imap
-    /// crate return `Unable to parse status response` and then panic on the
-    /// next command's tag (`a3` vs `a4`). `\Deleted` is dropped in
-    /// [`parse_summary`].
-    pub fn list_messages(
+    /// One smart mailbox (INBOX rows matching `rule`), older than `before`.
+    pub fn smart_page(
         &mut self,
-        folder: &str,
-        offset: u32,
+        rule: &MailRule,
+        before: Option<u32>,
         limit: u32,
-    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-        let folder = folder.to_string();
-        self.with_reconnect(move |s| {
-            let exists = s.select_folder(&folder)?;
-            fetch_page_by_seq(&mut s.session, exists, offset, limit)
-        })
-    }
-
-    /// List INBOX messages, excluding any UID matched by a smart_mailbox rule.
-    pub fn list_inbox_filtered(
-        &mut self,
-        rules: &[MailRule],
-        offset: u32,
-        limit: u32,
-    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-        let rules = rules.to_vec();
-        self.with_reconnect(move |s| {
-            let exists = s.select_folder("INBOX")?;
-            if exists == 0 {
-                return Ok((Vec::new(), 0));
-            }
-            let fetches = s.session.fetch(format!("1:{exists}"), "(UID FLAGS)")?;
-            let excluded = smart_mailbox_uids(&mut s.session, &rules);
-            let mut kept: Vec<u32> = fetches
-                .iter()
-                .filter(|f| {
-                    !f.flags()
-                        .iter()
-                        .any(|flag| matches!(flag, imap::types::Flag::Deleted))
-                })
-                .filter_map(|f| f.uid)
-                .filter(|uid| !excluded.contains(uid))
-                .collect();
-            kept.sort_unstable_by(|a, b| b.cmp(a));
-            let total = kept.len() as u32;
-            fetch_envelopes(&mut s.session, &kept, offset, limit, total)
-        })
-    }
-
-    /// List INBOX messages matching a single smart_mailbox rule (by name).
-    pub fn list_smart_mailbox(
-        &mut self,
-        rule_name: &str,
-        rules: &[MailRule],
-        offset: u32,
-        limit: u32,
-    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-        let Some(rule) = rules
-            .iter()
-            .find(|r| r.action == "smart_mailbox" && r.name == rule_name)
-            .cloned()
-        else {
-            return Ok((Vec::new(), 0));
-        };
-        let query = build_imap_search(&rule.conditions);
+    ) -> anyhow::Result<Rows> {
+        let query = imap_search(&rule.conditions);
         if query.is_empty() {
-            return Ok((Vec::new(), 0));
+            return Ok(Rows {
+                rows: Vec::new(),
+                total: 0,
+            });
         }
-        self.with_reconnect(move |s| {
+        self.with_reconnect(|s| {
             s.ensure_selected("INBOX")?;
             let mut uids: Vec<u32> = s.session.uid_search(&query)?.into_iter().collect();
             uids.sort_unstable_by(|a, b| b.cmp(a));
             let total = uids.len() as u32;
-            fetch_envelopes(&mut s.session, &uids, offset, limit, total)
+            let page: Vec<u32> = uids
+                .into_iter()
+                .filter(|u| before.is_none_or(|b| *u < b))
+                .take(limit as usize)
+                .collect();
+            let rows = s.fetch_uids(&page, "INBOX")?;
+            Ok(Rows { rows, total })
         })
     }
 
-    /// Search messages in a folder by subject, from, or body text.
-    /// Search across multiple folders (INBOX, Sent, Archive) matching
-    /// from, to, subject, and body content. Returns deduplicated results.
-    pub fn search_all_folders(
-        &mut self,
-        query: &str,
-    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-        let folders = ["INBOX", "Sent", "Archive"];
-        let mut all_messages: Vec<MessageSummary> = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-
-        for folder in &folders {
-            match self.search_messages(folder, query) {
-                Ok((messages, _)) => {
-                    for msg in messages {
-                        if seen_ids.insert(msg.uid) {
-                            all_messages.push(msg);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Search in {folder} failed: {e}");
-                }
-            }
+    /// Per-rule counts and the INBOX deduction they imply.
+    pub fn smart_counts(&mut self, rules: &[MailRule]) -> anyhow::Result<SmartCounts> {
+        let smart: Vec<&MailRule> = rules.iter().filter(|r| is_smart(r)).collect();
+        let mut out = SmartCounts {
+            folders: Vec::new(),
+            inbox_total_deduction: 0,
+            inbox_unread_deduction: 0,
+        };
+        if smart.is_empty() {
+            return Ok(out);
         }
-
-        // Sort by date descending, cap at 200
-        all_messages.sort_by(|a, b| b.date.cmp(&a.date));
-        let total = all_messages.len() as u32;
-        all_messages.truncate(200);
-        Ok((all_messages, total))
+        self.with_reconnect(|s| {
+            s.ensure_selected("INBOX")?;
+            let mut all: HashSet<u32> = HashSet::new();
+            let mut unseen_all: HashSet<u32> = HashSet::new();
+            out.folders.clear();
+            for rule in &smart {
+                let query = imap_search(&rule.conditions);
+                let (uids, unseen) = if query.is_empty() {
+                    (HashSet::new(), HashSet::new())
+                } else {
+                    let uids = s.session.uid_search(&query).unwrap_or_else(|e| {
+                        warn!(rule = rule.name.as_str(), "smart SEARCH failed: {e}");
+                        HashSet::new()
+                    });
+                    let unseen = s
+                        .session
+                        .uid_search(format!("UNSEEN {query}"))
+                        .unwrap_or_else(|e| {
+                            warn!(rule = rule.name.as_str(), "smart SEARCH UNSEEN failed: {e}");
+                            HashSet::new()
+                        });
+                    (uids, unseen)
+                };
+                out.folders.push(Folder {
+                    name: rule.name.clone(),
+                    total: uids.len() as u32,
+                    unread: unseen.len() as u32,
+                });
+                all.extend(uids);
+                unseen_all.extend(unseen);
+            }
+            out.inbox_total_deduction = all.len() as u32;
+            out.inbox_unread_deduction = unseen_all.len() as u32;
+            Ok(())
+        })?;
+        Ok(out)
     }
 
-    pub fn search_messages(
+    /// Subject / From / To / body text matches in one mailbox, newest
+    /// first, capped at [`SEARCH_CAP`].
+    pub fn search(
         &mut self,
-        folder: &str,
+        remote: &str,
+        canonical: &str,
         query: &str,
-    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-        let folder = folder.to_string();
-        let query = query.to_string();
-        self.with_reconnect(move |s| {
-            s.ensure_selected(&folder)?;
-
-            // Escape IMAP quoted-string special characters
-            let safe = query.replace('\\', "\\\\").replace('"', "\\\"");
-            // IMAP SEARCH: OR across subject, from, to, and body (TEXT),
-            // restricted to non-deleted messages.
-            // TEXT searches both headers and body content per RFC 3501
-            let imap_query = format!(
-                "UNDELETED OR OR OR (SUBJECT \"{safe}\") (FROM \"{safe}\") (TO \"{safe}\") (TEXT \"{safe}\")"
-            );
-            let uids = match s.session.uid_search(&imap_query) {
+    ) -> anyhow::Result<Vec<MessageSummary>> {
+        let safe = query.replace('\\', "\\\\").replace('"', "\\\"");
+        // TEXT covers headers and body (RFC 3501).
+        let criteria = format!(
+            "UNDELETED OR OR OR (SUBJECT \"{safe}\") (FROM \"{safe}\") (TO \"{safe}\") (TEXT \"{safe}\")"
+        );
+        self.with_reconnect(|s| {
+            s.ensure_selected(remote)?;
+            let uids = match s.session.uid_search(&criteria) {
                 Ok(uids) => uids,
                 Err(e) => {
-                    // Some IMAP servers send unparseable responses for
-                    // empty/unusual search results — treat as no matches.
-                    warn!("IMAP SEARCH failed (treating as empty): {e}");
-                    return Ok((Vec::new(), 0));
+                    // Some servers send unparseable replies for empty results.
+                    warn!(remote, "IMAP SEARCH failed (treating as empty): {e}");
+                    return Ok(Vec::new());
                 }
             };
-            let total = uids.len() as u32;
-
-            if uids.is_empty() {
-                return Ok((Vec::new(), 0));
-            }
-
-            // Sort descending (most recent first), cap at 200
-            let mut uid_vec: Vec<u32> = uids.into_iter().collect();
-            uid_vec.sort_unstable_by(|a, b| b.cmp(a));
-            uid_vec.truncate(200);
-
-            // Build UID fetch string: "uid1,uid2,uid3"
-            let uid_str = uid_vec
-                .iter()
-                .map(|u| u.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-
-            let fetches = s.session.uid_fetch(&uid_str, SUMMARY_ITEMS)?;
-
-            let mut messages: Vec<MessageSummary> =
-                fetches.iter().filter_map(parse_summary).collect();
-
-            // Re-sort by UID descending (fetch order isn't guaranteed)
-            messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
-
-            Ok((messages, total))
+            let mut uids: Vec<u32> = uids.into_iter().collect();
+            uids.sort_unstable_by(|a, b| b.cmp(a));
+            uids.truncate(SEARCH_CAP);
+            s.fetch_uids(&uids, canonical)
         })
     }
 
-    /// Fetch the full body of a message by UID.
-    pub fn fetch_body(&mut self, folder: &str, uid: u32) -> anyhow::Result<MessageBody> {
-        let folder = folder.to_string();
-        self.with_reconnect(move |s| {
-            s.ensure_selected(&folder)?;
-
-            let fetches = s
-                .session
-                .uid_fetch(uid.to_string(), "(UID FLAGS ENVELOPE BODY[])")?;
-
+    /// The full message for `id`, which lives in `remote`.
+    pub fn fetch_body(&mut self, remote: &str, id: &MailId) -> anyhow::Result<MessageBody> {
+        self.with_reconnect(|s| {
+            s.ensure_selected(remote)?;
+            let fetches = s.session.uid_fetch(id.uid.to_string(), BODY_ITEMS)?;
             let fetch = fetches
                 .iter()
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("Message UID {uid} not found"))?;
-
-            parse_body(fetch, uid)
+                .ok_or_else(|| anyhow::anyhow!("the message is no longer on the server"))?;
+            parse_body(fetch, id.clone())
         })
     }
 
-    /// Mark a message as read (\Seen flag).
-    pub fn mark_read(&mut self, folder: &str, uid: u32) -> anyhow::Result<()> {
-        let folder = folder.to_string();
-        self.with_reconnect(move |s| {
-            s.ensure_selected(&folder)?;
-            s.session.uid_store(uid.to_string(), "+FLAGS (\\Seen)")?;
+    /// Add or clear one system flag (`\Seen`, `\Flagged`).
+    pub fn set_flag(&mut self, remote: &str, uid: u32, flag: &str, on: bool) -> anyhow::Result<()> {
+        let op = if on { "+FLAGS" } else { "-FLAGS" };
+        self.with_reconnect(|s| {
+            s.ensure_selected(remote)?;
+            s.session.uid_store(uid.to_string(), format!("{op} ({flag})"))?;
             Ok(())
         })
     }
 
-    /// Move a message to another folder. Returns the UID in `dest`.
+    /// Move a message to another mailbox. Returns its UID in `dest`.
     ///
     /// IMAP UIDs are per-mailbox. Undo must use this destination UID, never
     /// the source UID against the dest folder (Trash often already has a
     /// different message with that number).
     ///
-    /// Prefers `UID MOVE` (COPYUID). Falls back to COPY + DELETE + EXPUNGE.
-    /// If COPYUID is missing (tagged OK is dropped by the imap crate), scans
-    /// recent dest envelopes for the Message-ID peeked before the move.
-    ///
-    /// Note: COPY+EXPUNGE is not atomic. If the connection dies mid-operation
-    /// (e.g. after COPY but before EXPUNGE), the retry may duplicate in dest.
-    /// This is preferable to losing mail.
+    /// Prefers `UID MOVE` (COPYUID). Falls back to COPY + `\Deleted` +
+    /// `UID EXPUNGE` (plain EXPUNGE only without UIDPLUS — it would purge
+    /// every `\Deleted` message in the folder). If COPYUID is missing,
+    /// scans recent dest envelopes for the Message-ID peeked before.
     pub fn move_message(
         &mut self,
-        folder: &str,
+        remote: &str,
         uid: u32,
         dest: &str,
     ) -> anyhow::Result<Option<u32>> {
-        let folder = folder.to_string();
-        let dest = dest.to_string();
-        self.with_reconnect(move |s| {
-            s.ensure_selected(&folder)?;
-            let ident = peek_identity(&mut s.session, uid)?;
-            let dest_q = quote_mailbox(&dest);
+        self.with_reconnect(|s| {
+            s.ensure_selected(remote)?;
+            let ident = s.peek_identity(uid)?;
+            let dest_q = quote_mailbox(dest);
             let response = match s
                 .session
-                .run_command_and_read_response(&format!("UID MOVE {uid} {dest_q}"))
+                .run_command_and_read_response(format!("UID MOVE {uid} {dest_q}"))
             {
                 Ok(r) => r,
-                Err(e) if matches!(e, imap::Error::Bad(_) | imap::Error::No(_)) => {
-                    debug!("UID MOVE unavailable ({e}); COPY+EXPUNGE");
+                Err(e @ (imap::Error::Bad(_) | imap::Error::No(_))) => {
+                    debug!("UID MOVE unavailable ({e}); COPY + expunge");
                     let r = s
                         .session
-                        .run_command_and_read_response(&format!("UID COPY {uid} {dest_q}"))?;
-                    s.session.uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
-                    s.session.expunge()?;
+                        .run_command_and_read_response(format!("UID COPY {uid} {dest_q}"))?;
+                    s.expunge_uid(uid)?;
                     r
                 }
                 Err(e) => return Err(e.into()),
             };
             let mut dest_uid = parse_copyuid_dest(&response);
             if dest_uid.is_none() {
-                dest_uid = find_copied_uid(s, &dest, &ident)?;
+                dest_uid = s.find_copied_uid(dest, &ident)?;
             }
             if dest_uid.is_none() {
-                warn!(
-                    uid,
-                    dest = dest.as_str(),
-                    "move succeeded but destination UID was not identified"
-                );
+                warn!(uid, dest, "move succeeded but destination UID was not identified");
             }
             Ok(dest_uid)
         })
     }
 
-    /// Permanently delete all messages in a folder (flag \Deleted + EXPUNGE).
-    ///
-    /// Refuses to empty protected folders (INBOX, Sent, Archive, Drafts).
-    pub fn empty_folder(&mut self, folder: &str) -> anyhow::Result<()> {
-        const PROTECTED: &[&str] = &["INBOX", "Sent", "Archive", "Drafts"];
-        if PROTECTED.iter().any(|f| f.eq_ignore_ascii_case(folder)) {
-            anyhow::bail!("Cannot empty protected folder: {folder}");
-        }
-        let folder = folder.to_string();
-        let result = self.with_reconnect({
-            let folder = folder.clone();
-            move |s| {
-                // Batch so a large Trash does not sit on one STORE/EXPUNGE
-                // past the socket timeout (that surfaces as EAGAIN / os error 11).
-                const BATCH: u32 = 200;
-                loop {
-                    let mailbox = s.session.select(&folder)?;
-                    if mailbox.exists == 0 {
-                        break;
-                    }
-                    let end = mailbox.exists.min(BATCH);
-                    s.session.store(format!("1:{end}"), "+FLAGS (\\Deleted)")?;
-                    s.session.expunge()?;
-                    while s.session.unsolicited_responses.try_recv().is_ok() {}
-                }
-                s.selected_folder = None;
+    /// Permanently remove one message (a replaced draft). Without UIDPLUS
+    /// the message stays flagged `\Deleted` (hidden from lists) rather
+    /// than expunging other clients' deletes.
+    pub fn delete_message(&mut self, remote: &str, uid: u32) -> anyhow::Result<()> {
+        self.with_reconnect(|s| {
+            s.ensure_selected(remote)?;
+            if s.caps.uidplus {
+                s.expunge_uid(uid)
+            } else {
+                s.session.uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
                 Ok(())
             }
+        })
+    }
+
+    /// Permanently delete everything in a folder (flag `\Deleted` + EXPUNGE).
+    /// Refuses the folders that must never be emptied.
+    pub fn empty_folder(&mut self, remote: &str) -> anyhow::Result<()> {
+        const PROTECTED: &[&str] = &["INBOX", "Sent", "Archive", "Drafts"];
+        if PROTECTED.iter().any(|f| f.eq_ignore_ascii_case(remote)) {
+            anyhow::bail!("refusing to empty {remote}");
+        }
+        let result = self.with_reconnect(|s| {
+            // Batch so a large Trash does not sit on one STORE/EXPUNGE
+            // past the socket timeout (that surfaces as EAGAIN / os error 11).
+            const BATCH: u32 = 200;
+            loop {
+                let mailbox = s.session.select(remote)?;
+                if mailbox.exists == 0 {
+                    break;
+                }
+                let end = mailbox.exists.min(BATCH);
+                s.session.store(format!("1:{end}"), "+FLAGS (\\Deleted)")?;
+                s.session.expunge()?;
+                while s.session.unsolicited_responses.try_recv().is_ok() {}
+            }
+            s.selected = None;
+            Ok(())
         });
         // Fresh session so the next list/select starts at tag a1.
-        if result.is_ok() {
-            if let Err(e) = self.reconnect() {
-                warn!("IMAP reconnect after empty {folder} failed: {e}");
+        if result.is_ok()
+            && let Err(e) = self.reconnect() {
+                warn!(remote, "IMAP reconnect after empty failed: {e}");
             }
-        }
         result
     }
 
-    /// Append a raw message to a folder with the \Seen flag.
-    pub fn append_to_sent(&mut self, folder: &str, message: &[u8]) -> anyhow::Result<()> {
-        let folder = folder.to_string();
-        let message = message.to_vec();
-        self.with_reconnect(move |s| {
-            s.session
-                .append_with_flags(&folder, &message, &[imap::types::Flag::Seen])?;
-            Ok(())
-        })
+    /// Append a raw message with `flags`.
+    pub fn append(&mut self, remote: &str, message: &[u8], flags: &[Flag<'_>]) -> anyhow::Result<()> {
+        self.with_reconnect(|s| Ok(s.session.append_with_flags(remote, message, flags)?))
     }
 
-    /// Count messages matching each smart mailbox rule using IMAP SEARCH.
-    ///
-    /// Returns per-rule counts plus the total unique INBOX messages/unseen
-    /// that match any smart mailbox rule (for adjusting INBOX display counts).
-    pub fn count_smart_mailboxes(
-        &mut self,
-        rules: &[MailRule],
-    ) -> anyhow::Result<SmartMailboxCounts> {
-        let smart_rules: Vec<&MailRule> = rules
-            .iter()
-            .filter(|r| r.action == "smart_mailbox")
-            .collect();
-
-        if smart_rules.is_empty() {
-            return Ok(SmartMailboxCounts {
-                folders: Vec::new(),
-                inbox_total_deduction: 0,
-                inbox_unread_deduction: 0,
-            });
+    fn fetch_uids(&mut self, uids: &[u32], canonical: &str) -> anyhow::Result<Vec<MessageSummary>> {
+        if uids.is_empty() {
+            return Ok(Vec::new());
         }
-
-        self.with_reconnect(|s| {
-            s.ensure_selected("INBOX")?;
-
-            let mut folders = Vec::new();
-            let mut all_uids: HashSet<u32> = HashSet::new();
-            let mut all_unseen_uids: HashSet<u32> = HashSet::new();
-
-            for rule in &smart_rules {
-                let query = build_imap_search(&rule.conditions);
-                if query.is_empty() {
-                    folders.push(Folder {
-                        name: rule.name.clone(),
-                        total: 0,
-                        unread: 0,
-                    });
-                    continue;
-                }
-
-                let uids = match s.session.uid_search(&query) {
-                    Ok(uids) => uids,
-                    Err(e) => {
-                        warn!("SEARCH failed for smart mailbox {}: {e}", rule.name);
-                        folders.push(Folder {
-                            name: rule.name.clone(),
-                            total: 0,
-                            unread: 0,
-                        });
-                        continue;
-                    }
-                };
-                let total = uids.len() as u32;
-                all_uids.extend(&uids);
-
-                let unseen_query = format!("UNSEEN {query}");
-                let unseen_uids = match s.session.uid_search(&unseen_query) {
-                    Ok(uids) => uids,
-                    Err(e) => {
-                        warn!("SEARCH UNSEEN failed for smart mailbox {}: {e}", rule.name);
-                        HashSet::new()
-                    }
-                };
-                let unread = unseen_uids.len() as u32;
-                all_unseen_uids.extend(&unseen_uids);
-
-                folders.push(Folder {
-                    name: rule.name.clone(),
-                    total,
-                    unread,
-                });
-            }
-
-            Ok(SmartMailboxCounts {
-                folders,
-                inbox_total_deduction: all_uids.len() as u32,
-                inbox_unread_deduction: all_unseen_uids.len() as u32,
-            })
-        })
+        let set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let id = self.account.id();
+        let fetches = self.session.uid_fetch(&set, SUMMARY_ITEMS)?;
+        let mut rows: Vec<MessageSummary> = fetches
+            .iter()
+            .filter_map(|f| parse_summary(f, &id, canonical))
+            .collect();
+        rows.sort_unstable_by_key(|m| std::cmp::Reverse(m.id.uid));
+        Ok(rows)
     }
 
-    /// Ensure the given folder is selected, re-selecting if needed.
+    /// Highest sequence number whose UID is below `uid` (the selected
+    /// mailbox). `UID FETCH n:*` returns the last message even when `n`
+    /// is above every UID, so filter on the UIDs that came back.
+    fn seq_before(&mut self, uid: u32, exists: u32) -> anyhow::Result<u32> {
+        let fetches = self.session.uid_fetch(format!("{uid}:*"), "(UID)")?;
+        let first = fetches
+            .iter()
+            .filter(|f| f.uid.is_some_and(|u| u >= uid))
+            .map(|f| f.message)
+            .min();
+        Ok(first.map_or(exists, |seq| seq.saturating_sub(1)))
+    }
+
+    fn expunge_uid(&mut self, uid: u32) -> anyhow::Result<()> {
+        self.session
+            .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")?;
+        if self.caps.uidplus {
+            self.session.uid_expunge(uid.to_string())?;
+        } else {
+            warn!(uid, "server lacks UIDPLUS; plain EXPUNGE");
+            self.session.expunge()?;
+        }
+        Ok(())
+    }
+
+    fn peek_identity(&mut self, uid: u32) -> anyhow::Result<MailIdent> {
+        let fetches = self.session.uid_fetch(uid.to_string(), "(UID ENVELOPE)")?;
+        let fetch = fetches
+            .iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("message UID {uid} not found"))?;
+        MailIdent::from_fetch(fetch).ok_or_else(|| anyhow::anyhow!("no envelope for UID {uid}"))
+    }
+
+    fn find_copied_uid(&mut self, dest: &str, ident: &MailIdent) -> anyhow::Result<Option<u32>> {
+        let exists = self.select_folder(dest)?;
+        if exists == 0 {
+            return Ok(None);
+        }
+        let start = exists.saturating_sub(DEST_UID_SCAN - 1).max(1);
+        let fetches = self
+            .session
+            .fetch(format!("{start}:{exists}"), "(UID ENVELOPE)")?;
+        Ok(fetches
+            .iter()
+            .filter(|f| MailIdent::from_fetch(f).is_some_and(|other| ident.matches(&other)))
+            .filter_map(|f| f.uid)
+            .max())
+    }
+
     fn ensure_selected(&mut self, folder: &str) -> anyhow::Result<()> {
-        if self.selected_folder.as_deref() != Some(folder) {
+        if self.selected.as_deref() != Some(folder) {
             self.select_folder(folder)?;
         }
         Ok(())
@@ -574,668 +553,86 @@ impl ImapClient {
     fn select_folder(&mut self, folder: &str) -> anyhow::Result<u32> {
         let mailbox = self.session.select(folder)?;
         while self.session.unsolicited_responses.try_recv().is_ok() {}
-        self.selected_folder = Some(folder.to_string());
+        self.selected = Some(folder.to_string());
         Ok(mailbox.exists)
     }
 
-    /// Reconnect to the IMAP server, replacing the dead session.
     fn reconnect(&mut self) -> anyhow::Result<()> {
-        debug!("IMAP reconnecting to {}", self.config.imap_host);
-        self.session = new_session(&self.config)?;
-        self.selected_folder = None;
-        debug!("IMAP reconnected");
+        debug!(host = self.account.imap_host.as_str(), "IMAP reconnecting");
+        let (session, caps) = new_session(&self.account)?;
+        self.session = session;
+        self.caps = caps;
+        self.selected = None;
         Ok(())
     }
 
-    /// Run an operation, reconnecting and retrying once on connection errors.
-    ///
-    /// Also catches panics (e.g. imap crate tag assertion failures) and treats
-    /// them as connection errors, since a panic leaves the session in a corrupt state.
-    fn with_reconnect<T, F>(&mut self, op: F) -> anyhow::Result<T>
-    where
-        F: Fn(&mut Self) -> anyhow::Result<T>,
-    {
-        match Self::run_or_catch_panic(&op, self) {
-            Ok(val) => Ok(val),
-            Err(e) if is_connection_error(&e) || e.to_string().contains("imap panic") => {
-                warn!("IMAP error, reconnecting once: {e}");
+    /// Run an operation, reconnecting and retrying once on connection
+    /// errors. Panics (imap crate tag assertions) count as connection
+    /// errors: they leave the session corrupt.
+    fn with_reconnect<T>(
+        &mut self,
+        mut op: impl FnMut(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        match run_caught(|| op(self)) {
+            Err(e) if is_connection_error(&e) => {
+                warn!(host = self.account.imap_host.as_str(), "IMAP error, reconnecting once: {e}");
                 self.reconnect()?;
-                // Retry under catch_unwind too — a bare `op(self)` would kill
-                // the worker thread if the imap crate panics again on tag mismatch.
-                Self::run_or_catch_panic(&op, self)
+                run_caught(|| op(self))
             }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Run an IMAP operation, catching panics and converting them to anyhow errors.
-    fn run_or_catch_panic<T, F>(op: &F, this: &mut Self) -> anyhow::Result<T>
-    where
-        F: Fn(&mut Self) -> anyhow::Result<T>,
-    {
-        // Suppress the default panic hook output — we handle it via reconnect
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| op(this)));
-        std::panic::set_hook(prev_hook);
-
-        match result {
-            Ok(result) => result,
-            Err(panic) => {
-                let msg = panic
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
-                    .unwrap_or_else(|| "session desynced (tag mismatch)".into());
-                Err(anyhow::anyhow!("imap panic: {msg}"))
-            }
+            other => other,
         }
     }
 }
 
-/// Create a new authenticated IMAP session with TCP timeouts.
-///
-/// Timeouts prevent indefinite blocking on the GTK main thread when the
-/// IMAP server becomes unresponsive. Without these, a hung TCP read would
-/// freeze the entire desktop (no mouse, no keyboard, no rendering).
-fn new_session(config: &Account) -> anyhow::Result<ImapSession> {
-    use std::net::TcpStream;
-    use std::time::Duration;
-
-    let addr = format!("{}:{}", config.imap_host, config.imap_port);
-    let tcp = TcpStream::connect(&addr)
-        .map_err(|e| anyhow::anyhow!("IMAP TCP connect to {addr} failed: {e}"))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(10)))?;
-    tcp.set_write_timeout(Some(Duration::from_secs(10)))?;
-
-    let connector = rustls_connector::RustlsConnector::new_with_native_certs()
-        .map_err(|e| anyhow::anyhow!("TLS connector init failed: {e}"))?;
-    let tls_stream = connector
-        .connect(&config.imap_host, tcp)
-        .map_err(|e| anyhow::anyhow!("IMAP TLS handshake failed: {e}"))?;
-
-    let client = imap::Client::new(tls_stream);
-    let session = client
-        .login(&config.username, &config.password)
-        .map_err(|e| anyhow::anyhow!("IMAP login failed: {}", e.0))?;
-
-    Ok(session)
+fn new_session(account: &Account) -> anyhow::Result<(ImapSession, Caps)> {
+    let tls = open_tls(account)?;
+    let mut session = imap::Client::new(tls)
+        .login(&account.username, &account.password)
+        .map_err(|(e, _)| anyhow::anyhow!("login failed: {e}"))?;
+    let caps = match session.capabilities() {
+        Ok(c) => Caps {
+            uidplus: c.has_str("UIDPLUS"),
+        },
+        Err(e) => {
+            warn!(host = account.imap_host.as_str(), "CAPABILITY failed: {e}");
+            Caps::default()
+        }
+    };
+    Ok((session, caps))
 }
 
-/// Check if an imap::Error indicates a dead connection.
-fn is_imap_connection_error(err: &imap::Error) -> bool {
-    matches!(err, imap::Error::ConnectionLost | imap::Error::Io(_))
+fn run_caught<T>(op: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    QUIET_PANIC.with(|q| q.set(true));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(op));
+    QUIET_PANIC.with(|q| q.set(false));
+    result.unwrap_or_else(|panic| {
+        let msg = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
+            .unwrap_or_else(|| "session desynced (tag mismatch)".into());
+        Err(anyhow::anyhow!("imap panic: {msg}"))
+    })
 }
 
-/// Check if an error looks like a connection failure (worth retrying).
+/// Worth one reconnect + retry.
 fn is_connection_error(err: &anyhow::Error) -> bool {
     if let Some(imap_err) = err.downcast_ref::<imap::Error>() {
-        return is_imap_connection_error(imap_err);
+        return matches!(imap_err, imap::Error::ConnectionLost | imap::Error::Io(_));
     }
-
-    // Fallback: check error message for connection-related strings
     let msg = err.to_string().to_lowercase();
-    msg.contains("broken pipe")
-        || msg.contains("connection reset")
-        || msg.contains("connection closed")
-        || msg.contains("unexpected eof")
-        || msg.contains("timed out")
-        || msg.contains("not connected")
-        || msg.contains("temporarily unavailable")
-        || msg.contains("os error 11")
-        || msg.contains("would block")
-}
-
-/// How many newest dest-folder messages to scan when COPYUID is missing.
-const DEST_UID_SCAN: u32 = 40;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MailIdent {
-    message_id: Option<String>,
-    from: String,
-    subject: String,
-    date: String,
-}
-
-impl MailIdent {
-    fn from_fetch(fetch: &Fetch) -> Option<Self> {
-        let env = fetch.envelope()?;
-        Some(Self {
-            message_id: normalize_message_id(
-                env.message_id
-                    .and_then(|b| std::str::from_utf8(b).ok())
-                    .unwrap_or(""),
-            ),
-            from: env
-                .from
-                .as_ref()
-                .and_then(|addrs| addrs.first())
-                .map(|a| {
-                    let name = a
-                        .name
-                        .as_ref()
-                        .and_then(|n| std::str::from_utf8(n).ok())
-                        .unwrap_or("");
-                    let mailbox = a
-                        .mailbox
-                        .as_ref()
-                        .and_then(|m| std::str::from_utf8(m).ok())
-                        .unwrap_or("");
-                    let host = a
-                        .host
-                        .as_ref()
-                        .and_then(|h| std::str::from_utf8(h).ok())
-                        .unwrap_or("");
-                    if name.is_empty() {
-                        format!("{mailbox}@{host}")
-                    } else {
-                        format!("{name} <{mailbox}@{host}>")
-                    }
-                })
-                .unwrap_or_default(),
-            subject: env
-                .subject
-                .and_then(|b| std::str::from_utf8(b).ok())
-                .unwrap_or("")
-                .to_string(),
-            date: env
-                .date
-                .and_then(|b| std::str::from_utf8(b).ok())
-                .unwrap_or("")
-                .to_string(),
-        })
-    }
-
-    fn matches(&self, other: &Self) -> bool {
-        match (&self.message_id, &other.message_id) {
-            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-            _ => {
-                if self.from.is_empty() && self.subject.is_empty() {
-                    false
-                } else {
-                    self.from == other.from
-                        && self.subject == other.subject
-                        && self.date == other.date
-                }
-            }
-        }
-    }
-}
-
-fn normalize_message_id(raw: &str) -> Option<String> {
-    let s = raw.trim().trim_matches(|c| c == '<' || c == '>');
-    let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}
-
-fn quote_mailbox(name: &str) -> String {
-    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn peek_identity(session: &mut ImapSession, uid: u32) -> anyhow::Result<MailIdent> {
-    let fetches = session.uid_fetch(uid.to_string(), "(UID ENVELOPE)")?;
-    let fetch = fetches
-        .iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Message UID {uid} not found"))?;
-    MailIdent::from_fetch(fetch).ok_or_else(|| anyhow::anyhow!("No envelope for UID {uid}"))
-}
-
-fn find_copied_uid(
-    client: &mut ImapClient,
-    dest: &str,
-    ident: &MailIdent,
-) -> anyhow::Result<Option<u32>> {
-    let exists = client.select_folder(dest)?;
-    if exists == 0 {
-        return Ok(None);
-    }
-    let start = exists
-        .saturating_sub(DEST_UID_SCAN.saturating_sub(1))
-        .max(1);
-    let fetches = client
-        .session
-        .fetch(format!("{start}:{exists}"), "(UID ENVELOPE)")?;
-    let mut best = None;
-    for fetch in fetches.iter() {
-        let Some(uid) = fetch.uid else { continue };
-        let Some(other) = MailIdent::from_fetch(fetch) else {
-            continue;
-        };
-        if ident.matches(&other) {
-            best = Some(best.map_or(uid, |b: u32| b.max(uid)));
-        }
-    }
-    Ok(best)
-}
-
-/// Dest UID from an IMAP COPYUID response code (RFC 4315).
-///
-/// The rust imap crate drops the tagged OK line, so this only sees COPYUID
-/// when the server sends it untagged (typical for UID MOVE).
-fn parse_copyuid_dest(response: &[u8]) -> Option<u32> {
-    let text = String::from_utf8_lossy(response);
-    for line in text.split(['\r', '\n']) {
-        if let Some(uid) = copyuid_dest_from_line(line) {
-            return Some(uid);
-        }
-    }
-    None
-}
-
-fn copyuid_dest_from_line(line: &str) -> Option<u32> {
-    let upper = line.to_ascii_uppercase();
-    let idx = upper.find("[COPYUID ")?;
-    let rest = line.get(idx + "[COPYUID ".len()..)?;
-    let end = rest.find(']')?;
-    let inner = rest[..end].trim();
-    let mut parts = inner.splitn(3, char::is_whitespace);
-    let _uidvalidity = parts.next()?;
-    let _src = parts.next()?;
-    let dest_set = parts.next()?.trim();
-    first_uid_in_set(dest_set)
-}
-
-fn first_uid_in_set(set: &str) -> Option<u32> {
-    let first = set.split(',').next()?.trim();
-    let start = first.split(':').next()?.trim();
-    start.parse().ok()
-}
-
-/// Parse a FETCH response into a MessageSummary.
-fn parse_summary(fetch: &Fetch) -> Option<MessageSummary> {
-    let uid = fetch.uid?;
-    let envelope = fetch.envelope()?;
-
-    macro_rules! first_addr {
-        ($field:expr) => {
-            $field
-                .as_ref()
-                .and_then(|addrs| addrs.first())
-                .map(|a| {
-                    let name = a
-                        .name
-                        .as_ref()
-                        .and_then(|n| std::str::from_utf8(n).ok())
-                        .unwrap_or("");
-                    let mailbox = a
-                        .mailbox
-                        .as_ref()
-                        .and_then(|m| std::str::from_utf8(m).ok())
-                        .unwrap_or("");
-                    let host = a
-                        .host
-                        .as_ref()
-                        .and_then(|h| std::str::from_utf8(h).ok())
-                        .unwrap_or("");
-                    if name.is_empty() {
-                        format!("{mailbox}@{host}")
-                    } else {
-                        format!("{name} <{mailbox}@{host}>")
-                    }
-                })
-                .unwrap_or_default()
-        };
-    }
-
-    let from = first_addr!(envelope.from);
-    let to = first_addr!(envelope.to);
-
-    let subject = envelope
-        .subject
-        .as_ref()
-        .and_then(|s| std::str::from_utf8(s).ok())
-        .unwrap_or("")
-        .to_string();
-
-    let date = envelope
-        .date
-        .as_ref()
-        .and_then(|d| std::str::from_utf8(d).ok())
-        .unwrap_or("")
-        .to_string();
-    let date_sort = super::date::date_sort_key(&date);
-
-    // Soft-deleted messages should not appear in the UI list.
-    if fetch
-        .flags()
-        .iter()
-        .any(|f| matches!(f, imap::types::Flag::Deleted))
-    {
-        return None;
-    }
-
-    let seen = fetch
-        .flags()
-        .iter()
-        .any(|f| matches!(f, imap::types::Flag::Seen));
-
-    let forwarded_for = fetch.header().and_then(|hdr| {
-        let text = std::str::from_utf8(hdr).ok()?;
-        let value = text
-            .lines()
-            .find(|l| l.to_ascii_lowercase().starts_with("x-forwarded-for:"))?;
-        let value = value[16..].trim();
-        // Header may contain multiple addresses (space or comma separated);
-        // the first is the original recipient whose mail was forwarded.
-        let first = value
-            .split([' ', ','])
-            .find(|s| !s.is_empty())
-            .unwrap_or(value);
-        Some(first.to_string())
-    });
-
-    Some(MessageSummary {
-        account: String::new(),
-        uid,
-        from,
-        to,
-        subject,
-        date,
-        date_sort,
-        seen,
-        forwarded_for,
-        has_attachment: fetch.bodystructure().is_some_and(structure_has_attachment),
-    })
-}
-
-fn structure_has_attachment(bs: &imap_proto::types::BodyStructure<'_>) -> bool {
-    use imap_proto::types::BodyStructure::*;
-    match bs {
-        Multipart { bodies, .. } => bodies.iter().any(structure_has_attachment),
-        Message { .. } => true,
-        Text { common, .. } => leaf_is_file(common, true),
-        Basic { common, .. } => leaf_is_file(common, false),
-    }
-}
-
-fn leaf_is_file(common: &imap_proto::types::BodyContentCommon<'_>, is_text: bool) -> bool {
-    if let Some(disp) = &common.disposition {
-        if disp.ty.eq_ignore_ascii_case("attachment") {
-            return true;
-        }
-        if disp.ty.eq_ignore_ascii_case("inline") {
-            return false;
-        }
-    }
-    if has_structure_filename(common) {
-        return true;
-    }
-    !is_text
-}
-
-fn has_structure_filename(common: &imap_proto::types::BodyContentCommon<'_>) -> bool {
-    filename_in(
-        common
-            .disposition
-            .as_ref()
-            .and_then(|d| d.params.as_deref()),
-    ) || filename_in(common.ty.params.as_deref())
-}
-
-fn filename_in(params: Option<&[(&str, &str)]>) -> bool {
-    params.is_some_and(|ps| {
-        ps.iter().any(|(k, v)| {
-            !v.is_empty() && (k.eq_ignore_ascii_case("filename") || k.eq_ignore_ascii_case("name"))
-        })
-    })
-}
-
-/// Parse a FETCH response with body into a MessageBody.
-fn parse_body(fetch: &Fetch, uid: u32) -> anyhow::Result<MessageBody> {
-    let body_bytes = fetch
-        .body()
-        .ok_or_else(|| anyhow::anyhow!("No body in fetch response"))?;
-
-    let parsed = mail_parser::MessageParser::default()
-        .parse(body_bytes)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse message body"))?;
-
-    let from = parsed
-        .from()
-        .and_then(|a| a.first())
-        .map(|a| {
-            a.name()
-                .map(|n| format!("{n} <{}>", a.address().unwrap_or_default()))
-                .unwrap_or_else(|| a.address().unwrap_or_default().to_string())
-        })
-        .unwrap_or_default();
-
-    let to = parsed
-        .to()
-        .map(|list| {
-            list.iter()
-                .map(|a| a.address().unwrap_or_default().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-
-    let cc = parsed
-        .cc()
-        .map(|list| {
-            list.iter()
-                .map(|a| a.address().unwrap_or_default().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-
-    let subject = parsed.subject().unwrap_or("").to_string();
-
-    let date = parsed.date().map(|d| d.to_rfc3339()).unwrap_or_default();
-
-    let html = parsed.body_html(0).map(|s| s.to_string());
-    let text = parsed
-        .body_text(0)
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-
-    let in_reply_to = parsed.in_reply_to().as_text().map(|s| s.to_string());
-    let message_id = parsed.message_id().map(|s| s.to_string());
-    let attachments = collect_attachments(&parsed);
-
-    Ok(MessageBody {
-        account: String::new(),
-        uid,
-        from,
-        to,
-        cc,
-        subject,
-        date,
-        html,
-        text,
-        in_reply_to,
-        message_id,
-        attachments,
-    })
-}
-
-/// Result of counting messages per smart mailbox rule via IMAP SEARCH.
-pub struct SmartMailboxCounts {
-    /// Per-smart-mailbox folder counts.
-    pub folders: Vec<Folder>,
-    /// Total unique INBOX messages matching any smart mailbox rule.
-    pub inbox_total_deduction: u32,
-    /// Total unique unseen INBOX messages matching any smart mailbox rule.
-    pub inbox_unread_deduction: u32,
-}
-
-/// Return the union of UIDs in INBOX matched by any smart_mailbox rule.
-/// Caller must have INBOX selected.
-fn smart_mailbox_uids(session: &mut ImapSession, rules: &[MailRule]) -> HashSet<u32> {
-    let mut union: HashSet<u32> = HashSet::new();
-    for rule in rules.iter().filter(|r| r.action == "smart_mailbox") {
-        let query = build_imap_search(&rule.conditions);
-        if query.is_empty() {
-            continue;
-        }
-        match session.uid_search(&query) {
-            Ok(uids) => union.extend(&uids),
-            Err(e) => warn!("SEARCH failed for smart mailbox {}: {e}", rule.name),
-        }
-    }
-    union
-}
-
-/// Page of envelopes via sequence numbers (highest seq = newest). No SEARCH.
-fn fetch_page_by_seq(
-    session: &mut ImapSession,
-    exists: u32,
-    offset: u32,
-    limit: u32,
-) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-    if exists == 0 || limit == 0 {
-        return Ok((Vec::new(), exists));
-    }
-    let end = exists.saturating_sub(offset);
-    if end == 0 {
-        return Ok((Vec::new(), exists));
-    }
-    let start = end.saturating_sub(limit.saturating_sub(1)).max(1);
-    let fetches = session.fetch(format!("{start}:{end}"), SUMMARY_ITEMS)?;
-    let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
-    messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
-    Ok((messages, exists))
-}
-
-/// Fetch envelope summaries for a paginated slice of a UID list (already sorted desc).
-fn fetch_envelopes(
-    session: &mut ImapSession,
-    uids_desc: &[u32],
-    offset: u32,
-    limit: u32,
-    total: u32,
-) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
-    if limit == 0 || uids_desc.is_empty() {
-        return Ok((Vec::new(), total));
-    }
-    let start = offset as usize;
-    if start >= uids_desc.len() {
-        return Ok((Vec::new(), total));
-    }
-    let end = (start + limit as usize).min(uids_desc.len());
-    let seq = uids_desc[start..end]
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let fetches = session.uid_fetch(&seq, SUMMARY_ITEMS)?;
-    let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
-    messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
-    Ok((messages, total))
-}
-
-/// Build an IMAP SEARCH query string from mail rule conditions.
-///
-/// Conditions are ANDed (IMAP SEARCH criteria listed together are implicitly ANDed).
-/// IMAP SEARCH only supports substring matching on header fields, so "domain" and
-/// "address" match types are approximated as substring searches. Counts may slightly
-/// overcount compared to the precise frontend filtering.
-///
-/// Soft-deleted messages are filtered out later via [`parse_summary`] / list paths;
-/// we intentionally do **not** prefix `UNDELETED` here — some servers mishandle
-/// combined criteria and desync the imap crate's command tags.
-fn build_imap_search(conditions: &[MailRuleCondition]) -> String {
-    conditions
-        .iter()
-        .filter_map(|c| {
-            let safe = c.value.replace('\\', "\\\\").replace('"', "\\\"");
-            match c.field.as_str() {
-                "from" => Some(format!("FROM \"{safe}\"")),
-                "subject" => Some(format!("SUBJECT \"{safe}\"")),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn copyuid_from_untagged_move() {
-        let raw = b"* OK [COPYUID 1511554416 142 4567] Moved UIDs.\r\n";
-        assert_eq!(parse_copyuid_dest(raw), Some(4567));
-    }
-
-    #[test]
-    fn copyuid_from_tagged_ok() {
-        let raw = b"a1 OK [COPYUID 38505 304 3956] Done\r\n";
-        assert_eq!(parse_copyuid_dest(raw), Some(3956));
-    }
-
-    #[test]
-    fn copyuid_dest_set_takes_first_uid() {
-        let raw = b"* OK [COPYUID 1511554416 142,399 41:42] Moved UIDs.\r\n";
-        assert_eq!(parse_copyuid_dest(raw), Some(41));
-    }
-
-    #[test]
-    fn copyuid_absent() {
-        assert_eq!(parse_copyuid_dest(b"a1 OK COPY completed\r\n"), None);
-        assert_eq!(parse_copyuid_dest(b""), None);
-    }
-
-    #[test]
-    fn quote_mailbox_escapes() {
-        assert_eq!(quote_mailbox("Trash"), "\"Trash\"");
-        assert_eq!(quote_mailbox(r#"a"b"#), r#""a\"b""#);
-    }
-
-    #[test]
-    fn ident_matches_message_id() {
-        let a = MailIdent {
-            message_id: Some("abc@x".into()),
-            from: "a@x".into(),
-            subject: "s".into(),
-            date: "d".into(),
-        };
-        let b = MailIdent {
-            message_id: Some("ABC@x".into()),
-            from: "other".into(),
-            subject: "nope".into(),
-            date: "nope".into(),
-        };
-        let c = MailIdent {
-            message_id: Some("other@x".into()),
-            from: "a@x".into(),
-            subject: "s".into(),
-            date: "d".into(),
-        };
-        assert!(a.matches(&b));
-        assert!(!a.matches(&c));
-    }
-
-    #[test]
-    fn ident_weak_match_without_message_id() {
-        let a = MailIdent {
-            message_id: None,
-            from: "a@x".into(),
-            subject: "Hello".into(),
-            date: "1 Jan".into(),
-        };
-        let b = a.clone();
-        let empty = MailIdent {
-            message_id: None,
-            from: String::new(),
-            subject: String::new(),
-            date: String::new(),
-        };
-        assert!(a.matches(&b));
-        assert!(!empty.matches(&a));
-        assert!(!a.matches(&empty));
-    }
-
-    #[test]
-    fn normalize_strips_angle_brackets() {
-        assert_eq!(normalize_message_id(" <id@host> "), Some("id@host".into()));
-        assert_eq!(normalize_message_id("   "), None);
-    }
+    [
+        "imap panic",
+        "broken pipe",
+        "connection reset",
+        "connection closed",
+        "unexpected eof",
+        "timed out",
+        "not connected",
+        "temporarily unavailable",
+        "os error 11",
+        "would block",
+    ]
+    .iter()
+    .any(|needle| msg.contains(needle))
 }

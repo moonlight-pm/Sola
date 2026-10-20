@@ -2,10 +2,10 @@
 
 **Date:** 2026-07-27  
 **Branch:** master (merged from sola-mail)  
-**Status:** implemented (partial) — dest-UID undo, 5s toast TTL, compose table at full pane width; letter Date is local day with local `HH:MM` under it; move rules apply on connect (newest 500) and IDLE; From/To `equals` matches display-name envelopes; attachments send + receive (kit FilePicker); extra SMTP accounts + inbox aliases + primary From; reply picks From from original To/Cc; **multi-IMAP:** canonical six boxes combined across `imap_enabled` accounts; Gmail labels hidden; Gmail CREATE Archive if unmapped; moves/undo stay on the source account; MOVE/empty/Sent-append on a second IMAP session; From allowlist (Wicket checklist); last-session list snapshot + per-account connect card; Google Workspace MX fills Gmail servers  
+**Status:** implemented (partial) — 2026-10-19 rework: coordinator worker + per-account read / write / IDLE sessions (3 IMAP logins, was 4 + keepalive); config edits reconnect only accounts whose IMAP login changed; failed accounts retry with backoff (and **Retry Now**); list rows carry account + mailbox + UID (search hits open / move in their own mailbox); headers RFC 2047-decoded via mail-parser; dates are unix seconds formatted locally; cursor paging (no re-fetch from the top); shortcuts ignore keys a text field used; Esc / row click ask before discarding an edited draft; Forward (with files); Reply-To + References + `<…>` In-Reply-To; Message-ID on sent mail; Gmail Sent not appended twice; Drafts save / reopen; mark read/unread + flag; erase confirm; `UID EXPUNGE` when UIDPLUS. Earlier: dest-UID undo, 5s toasts, move rules on connect + IDLE, attachments, send identities, multi-IMAP canonical boxes, Gmail Archive create, snapshot boot + connect card
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no forward-with-attachments; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only
+**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only; search is Enter-only over Inbox/Sent/Archive/Drafts (+ open Junk/Trash), 200 hits; Edit → Paste lands in the compose body only; quiet refresh covers the newest 150 rows (older remote deletes show on reopen)
 
 **Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
@@ -31,7 +31,7 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 
 - Showing provider-specific labels / `[Gmail]/All Mail` as extra sidebar rows
 - Rich HTML compose or full HTML render (CID images list as files)
-- Drag-drop onto compose; forward that keeps the original files
+- Drag-drop onto compose
 - Separate `sola-mail-d` service / multi-client daemon
 - In-app settings UI (settings already owns account + rules)
 - Offline local store / full cache (live IMAP like the reference app)
@@ -40,111 +40,95 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  sola-mail (single process)                                 │
-│                                                             │
-│  iced UI thread                    mail worker thread       │
-│  · MailApp state                   · typed MailCmd loop     │
-│  · folder / list / message /       · IMAP list/fetch + write│
-│    compose views                   · SMTP send              │
-│  · keyboard shortcuts              · IDLE + keepalive       │
-│  · bus: Theme, MailConfig,         · rules apply on IDLE    │
-│    MenuAction, OpenUrl             · wicket from-addresses  │
-│         │                                │                  │
-│         │  MailCmd (mpsc)                │                  │
-│         └───────────────────────────────►│                  │
-│         │  MailEvent (mpsc → iced)       │                  │
-│         ◄───────────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  sola-mail (single process)                                      │
+│                                                                  │
+│  iced UI thread            coordinator thread (sola-mail-worker) │
+│  · App state (list,        · MailConfig + shared rules           │
+│    reader, compose, moves) · account slots (connect / retry)     │
+│  · keyboard / menus        · fan-out jobs → merge replies        │
+│  · bus: Theme, MailConfig, · SMTP send on its own thread         │
+│    MenuAction, CloseApp,         │                               │
+│    Windows, WindowFloating       ├─► account A: read · write · IDLE│
+│         │  MailCmd               └─► account B: read · write · IDLE│
+│         └────────────────►  (Input channel; sessions reply here) │
+│         ◄──────────────── MailEvent (sessions emit UI events)    │
+└──────────────────────────────────────────────────────────────────┘
          │ bus (Unix socket)
          ▼
   sola-settings  ──► Topic::MailConfig (sticky)
-  sola-browser   ◄── Topic::OpenUrl
-  sola-shell     ◄── Topic::SetAppMenu / MenuAction
+  sola-shell     ◄── Topic::SetAppMenu / MenuAction, Topic::MailStatus
 ```
 
 ### Process model
 
-- **`startup(APP_ID)`** → **`BusSetup`** → **`iced::application`** (same chassis as settings / agent).
-- On boot, spawn a named OS thread (`sola-mail-worker`) that owns:
-  - blocking IMAP (`imap` + rustls connector),
-  - SMTP (`lettre`),
-  - IDLE watcher task / reconnect,
-  - optional wicket HTTP fetch (`ureq`).
-- UI never blocks on network. All protocol work is `MailCmd` → worker → `MailEvent`.
-- App exit: UI sends `MailCmd::Shutdown`; worker drops IDLE/keepalive and exits.
-
-Rationale: matches sola-agent’s proven pattern; keeps restartability as one unit; no new bus topic surface for v1.
+- **`startup(APP_ID)`** → panic filter → **`BusSetup`** → **`iced::application`**.
+- The **coordinator** owns the config and the account set. Each connected
+  account is an `AccountHandle` with three IMAP sessions on their own
+  threads: **read** (lists, counts, search, bodies, flags; keeps only the
+  newest body request in a burst; NOOP when idle), **write** (MOVE,
+  delete, erase, Sent / Drafts append, move rules), **IDLE** (INBOX).
+- List / count / search / erase are **jobs**: one request per account,
+  merged when every account answered (an account that drops out is
+  removed from the job). Bodies, flags and moves go straight to that
+  message's account.
+- `Reconfigure` diffs the account set: unchanged IMAP logins keep their
+  sessions; a rules-only edit just swaps the shared rules. Failed connects
+  retry at 15 s → 5 min; **Get New Mail** retries now.
+- UI never blocks on network. Exit: `MailCmd::Shutdown` stops every
+  session (IDLE shuts its socket so it stops at once).
 
 ### Module layout
 
 ```
-crates/sola-mail/
-  Cargo.toml
-  src/
-    main.rs              — startup, BusSetup, iced::application, menu
-    bridge.rs            — global cmd_tx / event_rx (or channels installed at boot)
-    protocol/
-      mod.rs
-      types.rs           — Folder, MessageSummary, MessageBody, rule types used by UI+worker
-      rules.rs           — matching (port apocrypha rules + former TS smart-mailbox fns)
-      imap.rs            — ImapClient (lift apocrypha)
-      idle.rs            — IDLE watcher (lift)
-      sender.rs          — SMTP (lift)
-      wicket.rs          — from-address fetcher (lift)
-      html_text.rs       — HTML → plain text helper
-      attachments.rs     — MIME collect, send types, save/open helpers
-    worker/
-      mod.rs             — thread entry, cmd loop
-      cmds.rs            — MailCmd / MailEvent enums + handlers
-    ui/
-      mod.rs             — MailApp state, update, view, subscription
-      folder_list.rs
-      message_list.rs
-      message_view.rs
-      compose.rs
-      toast.rs           — inline error / status (kit components)
+crates/sola-mail/src/
+  main.rs            — startup, panic filter, BusSetup (narrow topics), menus
+  bridge.rs          — UI ↔ worker channels
+  snapshot.rs        — last-session list (versioned)
+  protocol/
+    types.rs         — FolderRef, MailId (account+mailbox+uid), summaries, bodies
+    parse.rs         — FETCH → summary / body (mail-parser headers, reading blocks)
+    imap.rs          — ImapClient (reconnect-once, cursor paging, MOVE, erase)
+    dest_uid.rs      — COPYUID + Message-ID fallback for undo
+    idle.rs          — IDLE watcher (socket-shutdown stop)
+    sender.rs        — Outgoing build + SMTP (STARTTLS / 465)
+    rules.rs         — move / smart rule matching + IMAP SEARCH criteria
+    boxes.rs, account.rs, from.rs, date.rs, html_text.rs, attachments.rs
+  worker/
+    mod.rs           — coordinator, jobs, account slots
+    account.rs       — AccountHandle (connect, map boxes, spawn sessions)
+    read.rs, write.rs, send.rs, merge.rs, cmds.rs
+  ui/
+    mod.rs           — App, Msg, update, view
+    list.rs, list_sync.rs, reader.rs, compose.rs, moves.rs,
+    sidebar.rs, chrome.rs, keys.rs, format.rs, style.rs, widgets.rs
 ```
 
-Single crate, many small files. No `sola-mail-core` split (YAGNI).
-
-### Typed worker API (not JSON)
-
-Replace apocrypha’s string command bag with Rust enums. Shape (illustrative):
+### Typed worker API
 
 ```rust
 pub enum MailCmd {
-    Connect,                         // use latest MailConfig known to worker
-    Reconfigure(MailConfig),         // bus pushed new credentials/rules
-    ListFolders,
-    ListMessages { folder, offset, limit },
-    Search { folder, query },
-    FetchBody { folder, uid },
-    MarkRead { folder, uid },
-    Move { folder, uid, dest },
-    EmptyFolder { folder },
-    Send { from, to, cc, subject, body, in_reply_to, attachments },
-    ApplyRules,
-    Shutdown,
+    Reconfigure(MailConfig), Retry, ListFolders,
+    List { epoch, folder: FolderRef, page: Page, cursors, limit },
+    Search { epoch, query, also },
+    FetchBody(MailId), SetFlag { id, flag, on }, Move { id, dest },
+    Empty { folder }, Send(Outgoing), SaveDraft(Outgoing), Shutdown,
 }
 
 pub enum MailEvent {
-    Connected { folders, smart_counts, from_addresses, rules },
-    Folders { folders, smart_counts },
-    Messages { folder, messages, total, offset },
-    SearchResults { messages, total },
-    Body(MessageBody),
-    Sent,
-    Moved { folder, uid, dest },
-    Emptied { folder },
-    RulesApplied { moved },
-    NewMail,                         // IDLE nudge → UI refreshes
-    Error { context, message },
-    Disconnected { reason },
+    AccountLink { account, email, state }, Changed, NotConfigured,
+    Folders { folders, smart },
+    Messages { epoch, folder, page, rows, total, failed },
+    SearchResults { epoch, rows, capped },
+    Body(Box<MessageBody>), Moved { id, dest, dest_uid }, MoveFailed { id, message },
+    Emptied { folder, failed }, Sent, DraftSaved, NewMail,
+    Failed { op: Op, message },
 }
 ```
 
-Worker holds current `MailConfig` (seeded by `Reconfigure` / first `Connect`). UI holds display state only.
+`epoch` lets the UI drop pages for a list it already left. `Page::More`
+continues below each account's oldest UID on screen (sequence windows, no
+SEARCH). `failed` names accounts whose part failed so their rows stay.
 
 ## Config & bus
 
@@ -171,9 +155,9 @@ Password field is `Encrypted<String>` on the bus wire form; worker receives the 
 
 No new topics for v1.
 
-### Menu (v1)
+### Menus
 
-Parity with apocrypha: one app menu **Mail** with **Quit Mail** (`Meta+Q`). Message actions stay keyboard/UI buttons; menu expansion is a follow-up.
+Mail (Get New Mail, Quit), Edit, Mailbox (Erase Junk / Deleted Items — both confirm), Message (New, Save Draft ⌘S, Attach, Reply, Reply All, Forward ⌘⇧F, Mark Read/Unread ⌘⇧U, Flag ⌘⇧L, moves, Undo), View (next / previous).
 
 ## UI
 
@@ -251,7 +235,7 @@ Lift from `apocrypha/apps/mail/src/` with light cleanup:
 | `imap.rs` | `protocol/imap.rs` |
 | `idle.rs` | `protocol/idle.rs` |
 | `sender.rs` | `protocol/sender.rs` |
-| `wicket.rs` | `protocol/wicket.rs` |
+| `wicket.rs` | **dropped** (Settings owns the Wicket From checklist) |
 | `rules.rs` + TS matchers | `protocol/rules.rs` + `types.rs` |
 | `handler.rs` commands | `worker/cmds.rs` (typed) |
 | `config.rs` file load | **drop** — bus `MailConfig` only |
@@ -269,8 +253,6 @@ Approximate (pin in crate or workspace as existing practice dictates):
 - `rustls` + `rustls-connector`
 - `lettre` (SMTP, rustls)
 - `mail-parser`
-- `ureq` (wicket)
-- `base64`
 - `html2text` or equivalent for HTML→text
 - `tokio` only if idle/worker needs it; prefer matching apocrypha’s blocking + thread model unless idle already depends on tokio — keep lift mechanical where possible
 
@@ -278,8 +260,8 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 ### IDLE & refresh
 
-- On connect: apply `action == "move"` rules to the newest 500 INBOX envelopes, then start IDLE + keepalive.
-- On IDLE new mail: apply move rules to the newest page (`max(20, arrivals)`); emit `MailEvent::NewMail`.
+- On connect: the write session applies `action == "move"` rules to the newest 500 INBOX rows (UI refresh only if something moved); IDLE starts on its own connection. After an IDLE reconnect the sweep runs again.
+- On IDLE new mail: the write session applies move rules to the newest `max(20, arrivals)`, then `MailEvent::NewMail`. No move rules → `NewMail` straight away.
 - From/To `equals` (and `address`) match the envelope address inside `Name <addr>`, not only the raw header string.
 - UI on `NewMail` (and optional focus/time-based refresh): re-list folders + current folder messages; do not spam toasts on refresh failure.
 
@@ -289,8 +271,8 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 1. Bus delivers `MailConfig` (or app starts and waits for sticky replay).
 2. UI → `MailCmd::Connect` / `Reconfigure`.
-3. Worker connects IMAP, applies move rules to the newest 500 INBOX messages, lists folders, fetches wicket addresses (fallback `[email]`), starts IDLE, returns `Connected`.
-4. UI selects INBOX, requests first page of messages.
+3. Coordinator connects each new account on its own thread; each one up emits `AccountLink Ready` + `Changed`.
+4. UI refreshes folders and the shown list (snapshot rows merge; empty list replaces).
 
 ### Open message
 
@@ -311,9 +293,9 @@ Install rustls crypto provider once at process start (same as apocrypha).
 
 ## Error handling
 
-- Worker maps failures to `MailEvent::Error { context, message }` (e.g. `context: "connect" | "fetch" | "send" | ...`).
+- Worker maps failures to `MailEvent::Failed { op, message }` (`Op::Open(id)` shows in the reading pane with Try Again; list failures stay silent; send / draft failures re-enable compose).
 - UI: toast/banner for user-initiated ops (auto-dismiss after 5s); silent/log for background IDLE refresh failures.
-- Disconnect: clear connection-dependent state; show reconnect path (auto-retry on next `Reconfigure` / explicit reconnect when config present).
+- Connect failure: the account card shows the error; retries back off 15 s → 5 min; **Retry Now** / Get New Mail retries at once. A dropped session reconnects once per command.
 - Never lose errors only to TTY — `tracing` to sola log path via kit startup.
 
 ## Testing
@@ -338,6 +320,11 @@ Install rustls crypto provider once at process start (same as apocrypha).
 7. Smart mailbox → rule-matched only.
 8. Link in body → sola-browser via `OpenUrl`.
 9. Meta+Q → clean exit.
+11. Type `dad` in Search with a letter selected → nothing moves.
+12. Search hit from Sent / Archive → opens that letter; `d` trashes that one.
+13. Esc in a typed draft → Discard? bar (Keep Editing / Save Draft / Discard). Save Draft → Drafts; open it → Edit draft → send replaces it.
+14. Forward → files come along; Reply to a list with Reply-To → goes to the list.
+15. Mark unread / Flag from the toolbar; flag shows on the row.
 10. Empty / invalid config → clear “configure in Settings” state (no panic).
 
 ## Build / install / runtime

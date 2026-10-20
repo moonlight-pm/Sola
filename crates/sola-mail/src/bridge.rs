@@ -1,42 +1,44 @@
-//! Worker ↔ UI channels (agent-style process-wide bridge).
+//! Worker ↔ UI channels (process-wide, like the kit's bus bridge).
 
 use std::sync::{Mutex, OnceLock, mpsc};
 
 use iced::Subscription;
 use iced::futures::Stream;
 
-use crate::worker::{MailCmd, MailEvent};
+use crate::worker::{Input, MailCmd, MailEvent};
 
 static EVENT_TX: OnceLock<mpsc::Sender<MailEvent>> = OnceLock::new();
 static EVENT_RX: Mutex<Option<mpsc::Receiver<MailEvent>>> = Mutex::new(None);
 
-static CMD_TX: OnceLock<mpsc::Sender<MailCmd>> = OnceLock::new();
-static CMD_RX: Mutex<Option<mpsc::Receiver<MailCmd>>> = Mutex::new(None);
+static INPUT_TX: OnceLock<mpsc::Sender<Input>> = OnceLock::new();
+static INPUT_RX: Mutex<Option<mpsc::Receiver<Input>>> = Mutex::new(None);
 
 pub fn init_channels() {
     EVENT_TX.get_or_init(|| {
         let (tx, rx) = mpsc::channel();
-        *EVENT_RX.lock().unwrap() = Some(rx);
+        *EVENT_RX.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
         tx
     });
-    CMD_TX.get_or_init(|| {
+    INPUT_TX.get_or_init(|| {
         let (tx, rx) = mpsc::channel();
-        *CMD_RX.lock().unwrap() = Some(rx);
+        *INPUT_RX.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
         tx
     });
 }
 
+/// UI → worker.
 pub fn mail_send(cmd: MailCmd) {
-    match CMD_TX.get() {
+    match INPUT_TX.get() {
         Some(tx) => {
-            if let Err(e) = tx.send(cmd) {
-                tracing::warn!("mail command channel closed: {e}");
+            if tx.send(Input::Cmd(cmd)).is_err() {
+                tracing::warn!("mail worker is gone; command dropped");
             }
         }
         None => tracing::warn!("mail_send before init_channels"),
     }
 }
 
+/// Worker / sessions → UI.
 pub fn emit(ev: MailEvent) {
     match EVENT_TX.get() {
         Some(tx) => {
@@ -46,17 +48,19 @@ pub fn emit(ev: MailEvent) {
     }
 }
 
-pub fn take_cmd_rx() -> mpsc::Receiver<MailCmd> {
+/// The coordinator's end: a sender for session threads + the receiver.
+pub fn take_input() -> (mpsc::Sender<Input>, mpsc::Receiver<Input>) {
     init_channels();
-    match CMD_RX.lock().unwrap().take() {
-        Some(rx) => rx,
-        None => {
-            tracing::warn!("take_cmd_rx: receiver already taken; returning disconnected");
-            let (tx, rx) = mpsc::channel();
-            drop(tx);
-            rx
-        }
-    }
+    let tx = INPUT_TX.get().expect("initialized").clone();
+    let rx = INPUT_RX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .unwrap_or_else(|| {
+            tracing::warn!("mail worker input already taken; returning disconnected");
+            mpsc::channel().1
+        });
+    (tx, rx)
 }
 
 pub fn mail_subscription() -> Subscription<MailEvent> {
@@ -65,29 +69,22 @@ pub fn mail_subscription() -> Subscription<MailEvent> {
 
 fn event_stream() -> impl Stream<Item = MailEvent> {
     init_channels();
-    let rx_opt = EVENT_RX.lock().unwrap().take();
+    let rx = EVENT_RX.lock().unwrap_or_else(|e| e.into_inner()).take();
     let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<MailEvent>();
-    match rx_opt {
+    match rx {
         Some(std_rx) => {
-            std::thread::spawn(move || {
-                loop {
-                    if iced_tx.is_closed() {
-                        break;
-                    }
-                    match std_rx.recv() {
-                        Ok(ev) => {
-                            if iced_tx.unbounded_send(ev).is_err() {
-                                break;
-                            }
+            std::thread::Builder::new()
+                .name("sola-mail-events".into())
+                .spawn(move || {
+                    while let Ok(ev) = std_rx.recv() {
+                        if iced_tx.unbounded_send(ev).is_err() {
+                            break;
                         }
-                        Err(_) => break,
                     }
-                }
-            });
+                })
+                .expect("spawn mail event forwarder");
         }
-        None => {
-            tracing::warn!("mail event receiver already taken");
-        }
+        None => tracing::warn!("mail event receiver already taken"),
     }
     iced_rx
 }

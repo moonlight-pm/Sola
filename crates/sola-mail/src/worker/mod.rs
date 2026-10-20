@@ -1,43 +1,83 @@
-//! Mail worker thread: owns IMAP session, IDLE, and SMTP.
+//! Mail worker. A coordinator thread owns the config and the account
+//! set; each connected account runs a read session, a write session and
+//! an IDLE watcher ([`account::AccountHandle`]). UI commands fan out to
+//! the accounts and their replies merge back here, so one slow account
+//! never holds up another and a body fetch never waits on a list.
 
+mod account;
 mod cmds;
+mod merge;
+mod read;
+mod send;
 mod write;
 
-use cmds::compact_cmds;
-pub use cmds::{LinkState, MailCmd, MailEvent};
-use write::WriteCmd;
+pub use cmds::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
 
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use sola_bus::topics::MailConfig;
+use sola_bus::topics::{MailConfig, MailRule, mail_addr_key};
 use tracing::{debug, info, warn};
 
 use crate::bridge;
-use crate::protocol::boxes::{self, MailboxMap};
-use crate::protocol::types::MessageSummary;
-use crate::protocol::{
-    Account, Folder, IdleChange, ImapClient, account, rule_matches, sender, start_idle,
-};
+use crate::protocol::account::smtp_for;
+use crate::protocol::imap::{Rows, SEARCH_CAP};
+use crate::protocol::sender::{Outgoing, build_message};
+use crate::protocol::{Account, FolderRef, MessageSummary};
+use account::AccountHandle;
+use merge::AccountCounts;
+use read::ReadReq;
+use send::SendPlan;
+use write::WriteCmd;
 
-struct ImapSlot {
-    account: Account,
-    map: MailboxMap,
-    /// List / fetch / mark-read / STATUS. Never waits on MOVE.
-    client: Arc<Mutex<ImapClient>>,
-    write_tx: mpsc::Sender<WriteCmd>,
-    write: Option<std::thread::JoinHandle<()>>,
-    idle: Option<crate::protocol::IdleHandle>,
-    keepalive: Option<std::thread::JoinHandle<()>>,
-    keepalive_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+/// Rules shared with every session (rule edits do not reconnect).
+pub type Rules = Arc<RwLock<Vec<MailRule>>>;
+/// Idle sessions NOOP this often.
+pub const KEEPALIVE: Duration = Duration::from_secs(240);
+/// Canonical boxes a search covers (plus the open Junk / Trash).
+const SEARCH_BOXES: &[&str] = &["INBOX", "Sent", "Archive", "Drafts"];
+/// Seconds before reconnecting a failed account, by attempt.
+const BACKOFF: &[u64] = &[15, 30, 60, 120, 300];
+
+/// Everything the coordinator reacts to.
+pub enum Input {
+    Cmd(MailCmd),
+    Up {
+        id: String,
+        try_id: u64,
+        result: Result<Box<AccountHandle>, String>,
+    },
+    Retry {
+        id: String,
+        try_id: u64,
+    },
+    Part {
+        job: u64,
+        account: String,
+        part: Part,
+    },
 }
 
-struct WorkerState {
-    config: Option<MailConfig>,
-    slots: Vec<ImapSlot>,
-    /// Move rules shared with IDLE callbacks.
-    idle_move_rules: Arc<Mutex<Vec<sola_bus::topics::MailRule>>>,
+/// One account's reply to a fan-out job.
+pub enum Part {
+    Rows(Result<Rows, String>),
+    Counts(Result<AccountCounts, String>),
+    Search {
+        rows: Vec<MessageSummary>,
+        capped: bool,
+    },
+    Emptied(Result<(), String>),
+}
+
+impl Part {
+    fn error(&self) -> Option<&str> {
+        match self {
+            Part::Rows(Err(e)) | Part::Counts(Err(e)) | Part::Emptied(Err(e)) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 pub fn start() {
@@ -48,751 +88,592 @@ pub fn start() {
 }
 
 fn run() {
-    let cmd_rx = bridge::take_cmd_rx();
-    let mut state = WorkerState {
-        config: None,
-        slots: Vec::new(),
-        idle_move_rules: Arc::new(Mutex::new(Vec::new())),
-    };
-
-    let mut pending: Vec<MailCmd> = Vec::new();
-    loop {
-        if pending.is_empty() {
-            match cmd_rx.recv() {
-                Ok(first) => pending.push(first),
-                Err(_) => break,
-            }
-        }
-        while let Ok(more) = cmd_rx.try_recv() {
-            pending.push(more);
-        }
-        pending = compact_cmds(std::mem::take(&mut pending));
-        if pending.is_empty() {
-            continue;
-        }
-        let cmd = pending.remove(0);
-        match cmd {
-            MailCmd::Shutdown => {
-                teardown(&mut state);
-                break;
-            }
-            MailCmd::Reconfigure(cfg) => {
-                let n = Account::imap_accounts(&cfg).len();
-                state.config = Some(cfg);
-                if n > 0 {
-                    do_connect(&mut state);
-                } else {
-                    teardown(&mut state);
-                    bridge::emit(MailEvent::NotConfigured);
-                }
-            }
-            MailCmd::ListFolders => do_list_folders(&state),
-            MailCmd::ListMessages {
-                folder,
-                offset,
-                limit,
-            } => do_list_messages(&state, folder, offset, limit),
-            MailCmd::Search { query } => do_search(&state, query),
-            MailCmd::FetchBody {
-                account,
-                folder,
-                uid,
-            } => do_fetch_body(&state, account, folder, uid),
-            MailCmd::MarkRead {
-                account,
-                folder,
-                uid,
-            } => do_mark_read(&state, account, folder, uid),
-            MailCmd::Move {
-                account,
-                folder,
-                uid,
-                dest,
-            } => do_move(&state, account, folder, uid, dest),
-            MailCmd::EmptyFolder { folder } => do_empty(&state, folder),
-            MailCmd::Send {
-                from,
-                to,
-                cc,
-                subject,
-                body,
-                in_reply_to,
-                attachments,
-            } => do_send(
-                &state,
-                from,
-                to,
-                cc,
-                subject,
-                body,
-                in_reply_to,
-                attachments,
-            ),
+    let (tx, rx) = bridge::take_input();
+    let mut c = Coordinator::new(tx);
+    while let Ok(input) = rx.recv() {
+        if !c.handle(input) {
+            break;
         }
     }
     debug!("mail worker stopped");
 }
 
-fn teardown(state: &mut WorkerState) {
-    for slot in &mut state.slots {
-        if let Some(flag) = slot.keepalive_stop.take() {
-            flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if let Some(h) = slot.keepalive.take() {
-            let _ = h.join();
-        }
-        if let Some(idle) = slot.idle.take() {
-            idle.stop();
-        }
-        let _ = slot.write_tx.send(WriteCmd::Shutdown);
-        if let Some(h) = slot.write.take() {
-            let _ = h.join();
+enum Link {
+    Connecting,
+    Up(Box<AccountHandle>),
+    Failed,
+}
+
+struct Slot {
+    account: Account,
+    /// Bumped per connect attempt; a stale `Up` / `Retry` is dropped.
+    try_id: u64,
+    attempts: u32,
+    link: Link,
+}
+
+enum JobKind {
+    List {
+        epoch: u64,
+        folder: FolderRef,
+        page: Page,
+        limit: u32,
+    },
+    Counts,
+    Search {
+        epoch: u64,
+    },
+    Empty {
+        folder: String,
+    },
+}
+
+struct Job {
+    kind: JobKind,
+    waiting: HashSet<String>,
+    parts: Vec<(String, Part)>,
+}
+
+enum Req {
+    Read(ReadReq),
+    Write(WriteCmd),
+}
+
+struct Coordinator {
+    tx: Sender<Input>,
+    config: Option<MailConfig>,
+    rules: Rules,
+    slots: Vec<Slot>,
+    jobs: HashMap<u64, Job>,
+    next_job: u64,
+    next_try: u64,
+}
+
+impl Coordinator {
+    fn new(tx: Sender<Input>) -> Self {
+        Self {
+            tx,
+            config: None,
+            rules: Arc::new(RwLock::new(Vec::new())),
+            slots: Vec::new(),
+            jobs: HashMap::new(),
+            next_job: 1,
+            next_try: 1,
         }
     }
-    state.slots.clear();
-}
 
-fn slot_by_id<'a>(state: &'a WorkerState, account: &str) -> Result<&'a ImapSlot, String> {
-    let key = sola_bus::topics::mail_addr_key(account);
-    state
-        .slots
-        .iter()
-        .find(|s| s.account.id() == key || s.account.id() == account)
-        .ok_or_else(|| format!("No IMAP session for {account}"))
-}
-
-fn remote_box(slot: &ImapSlot, canonical: &str) -> String {
-    boxes::remote(&slot.map, canonical)
-        .unwrap_or(canonical)
-        .to_string()
-}
-
-fn do_connect(state: &mut WorkerState) {
-    teardown(state);
-
-    let Some(cfg) = state.config.clone() else {
-        bridge::emit(MailEvent::NotConfigured);
-        return;
-    };
-    let accounts = Account::imap_accounts(&cfg);
-    if accounts.is_empty() {
-        bridge::emit(MailEvent::NotConfigured);
-        return;
+    /// `false` once shut down.
+    fn handle(&mut self, input: Input) -> bool {
+        match input {
+            Input::Cmd(MailCmd::Shutdown) => {
+                self.shutdown();
+                return false;
+            }
+            Input::Cmd(cmd) => self.command(cmd),
+            Input::Up { id, try_id, result } => self.on_up(&id, try_id, result),
+            Input::Retry { id, try_id } => {
+                if let Some(i) = self.slot_index(&id)
+                    && self.slots[i].try_id == try_id && matches!(self.slots[i].link, Link::Failed) {
+                        self.connect(i);
+                    }
+            }
+            Input::Part { job, account, part } => self.on_part(job, account, part),
+        }
+        true
     }
 
-    let move_rules: Vec<_> = cfg
-        .rules
-        .iter()
-        .filter(|r| r.action == "move")
-        .cloned()
-        .collect();
-    *state
-        .idle_move_rules
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = move_rules.clone();
+    fn command(&mut self, cmd: MailCmd) {
+        match cmd {
+            MailCmd::Reconfigure(cfg) => self.reconfigure(cfg),
+            MailCmd::Retry => {
+                for i in 0..self.slots.len() {
+                    if matches!(self.slots[i].link, Link::Failed) {
+                        self.connect(i);
+                    }
+                }
+            }
+            MailCmd::ListFolders => {
+                self.start_job(JobKind::Counts, |job, _| Some(Req::Read(ReadReq::Counts { job })));
+            }
+            MailCmd::List {
+                epoch,
+                folder,
+                page,
+                cursors,
+                limit,
+            } => {
+                let kind = JobKind::List {
+                    epoch,
+                    folder: folder.clone(),
+                    page,
+                    limit,
+                };
+                let started = self.start_job(kind, |job, h| {
+                    let id = h.id();
+                    let before = cursors.iter().find(|(a, _)| *a == id).map(|(_, uid)| *uid);
+                    Some(Req::Read(ReadReq::List {
+                        job,
+                        folder: folder.clone(),
+                        before,
+                        limit,
+                    }))
+                });
+                if !started {
+                    fail(Op::List, "no account is connected yet");
+                }
+            }
+            MailCmd::Search { epoch, query, also } => {
+                let mut folders: Vec<String> = SEARCH_BOXES.iter().map(|s| s.to_string()).collect();
+                if let Some(extra) = also.filter(|f| !folders.contains(f)) {
+                    folders.push(extra);
+                }
+                let started = self.start_job(JobKind::Search { epoch }, |job, _| {
+                    Some(Req::Read(ReadReq::Search {
+                        job,
+                        query: query.clone(),
+                        folders: folders.clone(),
+                    }))
+                });
+                if !started {
+                    fail(Op::Search, "no account is connected yet");
+                }
+            }
+            MailCmd::FetchBody(id) => {
+                let sent = self
+                    .handle_for(&id.account)
+                    .is_some_and(|h| h.read(ReadReq::Body(id.clone())));
+                if !sent {
+                    fail(Op::Open(id), "that account is not connected");
+                }
+            }
+            MailCmd::SetFlag { id, flag, on } => {
+                let sent = self.handle_for(&id.account).is_some_and(|h| {
+                    h.read(ReadReq::Flag {
+                        id: id.clone(),
+                        flag,
+                        on,
+                    })
+                });
+                if !sent {
+                    fail(Op::Flag(id), "that account is not connected");
+                }
+            }
+            MailCmd::Move { id, dest } => {
+                let sent = self.handle_for(&id.account).is_some_and(|h| {
+                    h.write(WriteCmd::Move {
+                        id: id.clone(),
+                        dest: dest.clone(),
+                    })
+                });
+                if !sent {
+                    bridge::emit(MailEvent::MoveFailed {
+                        id,
+                        message: "that account is not connected".into(),
+                    });
+                }
+            }
+            MailCmd::Empty { folder } => {
+                let kind = JobKind::Empty {
+                    folder: folder.clone(),
+                };
+                let started = self.start_job(kind, |job, h| {
+                    h.has(&folder).then(|| {
+                        Req::Write(WriteCmd::Empty {
+                            job,
+                            folder: folder.clone(),
+                        })
+                    })
+                });
+                if !started {
+                    fail(Op::Erase, &format!("no connected account has a {folder} mailbox"));
+                }
+            }
+            MailCmd::Send(msg) => self.send(msg),
+            MailCmd::SaveDraft(msg) => self.save_draft(msg),
+            MailCmd::Shutdown => {}
+        }
+    }
 
-    let n = accounts.len();
-    let (tx, rx) = std::sync::mpsc::channel();
-    for account in accounts {
-        let email = account.email.clone();
+    // ── Accounts ──────────────────────────────────────────────────────
+
+    fn reconfigure(&mut self, cfg: MailConfig) {
+        let rules_changed = self.config.as_ref().is_none_or(|old| old.rules != cfg.rules);
+        *self.rules.write().unwrap_or_else(|e| e.into_inner()) = cfg.rules.clone();
+        let desired = Account::imap_accounts(&cfg);
+
+        let mut dropped = false;
+        let mut i = 0;
+        while i < self.slots.len() {
+            let current = &self.slots[i].account;
+            let keep = desired
+                .iter()
+                .any(|a| a.id() == current.id() && a.conn_key() == current.conn_key());
+            if keep {
+                i += 1;
+            } else {
+                let slot = self.slots.remove(i);
+                self.drop_slot(slot);
+                dropped = true;
+            }
+        }
+        for account in desired {
+            match self.slot_index(&account.id()) {
+                Some(i) => self.slots[i].account = account,
+                None => {
+                    self.slots.push(Slot {
+                        account,
+                        try_id: 0,
+                        attempts: 0,
+                        link: Link::Connecting,
+                    });
+                    self.connect(self.slots.len() - 1);
+                }
+            }
+        }
+        self.config = Some(cfg);
+
+        if self.slots.is_empty() {
+            bridge::emit(MailEvent::NotConfigured);
+        } else if (dropped || rules_changed) && self.up().next().is_some() {
+            bridge::emit(MailEvent::Changed);
+        }
+    }
+
+    fn connect(&mut self, i: usize) {
+        let try_id = self.next_try;
+        self.next_try += 1;
+        let slot = &mut self.slots[i];
+        slot.try_id = try_id;
+        slot.link = Link::Connecting;
+        let account = slot.account.clone();
         let id = account.id();
         bridge::emit(MailEvent::AccountLink {
             account: id.clone(),
-            email: email.clone(),
+            email: account.email.clone(),
             state: LinkState::Connecting,
         });
-        let rules = move_rules.clone();
-        let idle_rules = Arc::clone(&state.idle_move_rules);
-        let tx = tx.clone();
-        let _ = std::thread::Builder::new()
+        let (rules, tx) = (Arc::clone(&self.rules), self.tx.clone());
+        let started = std::thread::Builder::new()
             .name(format!("sola-mail-c-{id}"))
             .spawn(move || {
-                let result = connect_slot(account, &rules, &idle_rules);
-                let _ = tx.send((id, email, result));
+                let result = AccountHandle::connect(account, rules, tx.clone()).map(Box::new);
+                let _ = tx.send(Input::Up { id, try_id, result });
             });
+        if let Err(e) = started {
+            warn!("spawn connect thread: {e}");
+        }
     }
-    drop(tx);
 
-    let mut slots = Vec::with_capacity(n);
-    while let Ok((id, email, result)) = rx.recv() {
+    fn on_up(&mut self, id: &str, try_id: u64, result: Result<Box<AccountHandle>, String>) {
+        let Some(i) = self.slot_index(id).filter(|i| self.slots[*i].try_id == try_id) else {
+            // Superseded (config changed or a newer attempt): discard.
+            if let Ok(handle) = result {
+                reap(*handle);
+            }
+            return;
+        };
+        let email = self.slots[i].account.email.clone();
         match result {
-            Ok(slot) => {
-                info!(account = id.as_str(), "IMAP ready");
+            Ok(handle) => {
+                info!(account = id, "IMAP ready");
+                let slot = &mut self.slots[i];
+                slot.link = Link::Up(handle);
+                slot.attempts = 0;
                 bridge::emit(MailEvent::AccountLink {
-                    account: id,
+                    account: id.to_string(),
                     email,
                     state: LinkState::Ready,
                 });
-                slots.push(slot);
+                bridge::emit(MailEvent::Changed);
             }
             Err(e) => {
-                warn!(account = id.as_str(), "IMAP connect failed: {e}");
+                warn!(account = id, "IMAP connect failed: {e}");
+                let slot = &mut self.slots[i];
+                slot.link = Link::Failed;
+                let wait = BACKOFF[(slot.attempts as usize).min(BACKOFF.len() - 1)];
+                slot.attempts += 1;
                 bridge::emit(MailEvent::AccountLink {
-                    account: id,
+                    account: id.to_string(),
                     email,
                     state: LinkState::Failed(e),
                 });
+                let (tx, id) = (self.tx.clone(), id.to_string());
+                let _ = std::thread::Builder::new()
+                    .name("sola-mail-retry".into())
+                    .spawn(move || {
+                        std::thread::sleep(Duration::from_secs(wait));
+                        let _ = tx.send(Input::Retry { id, try_id });
+                    });
             }
         }
     }
 
-    if slots.is_empty() {
-        return;
-    }
-
-    let folders = merge_canonical_folders(&slots);
-    let smart = merge_smart_counts(&slots, &cfg.rules);
-    let mut folders = folders;
-    if let Some(inbox) = folders.iter_mut().find(|f| f.name == "INBOX") {
-        inbox.total = inbox.total.saturating_sub(smart.inbox_total_deduction);
-        inbox.unread = inbox.unread.saturating_sub(smart.inbox_unread_deduction);
-    }
-
-    let from_addresses = cfg.from_addresses();
-
-    let rules = cfg.rules.clone();
-    state.slots = slots;
-    bridge::emit(MailEvent::Connected {
-        folders,
-        smart_counts: smart.folders,
-        from_addresses,
-        rules,
-    });
-}
-
-fn connect_slot(
-    account: Account,
-    move_rules: &[sola_bus::topics::MailRule],
-    idle_move_rules: &Arc<Mutex<Vec<sola_bus::topics::MailRule>>>,
-) -> Result<ImapSlot, String> {
-    let mut client = ImapClient::connect(&account).map_err(|e| e.to_string())?;
-    let mut listed = client.list_mailbox_names().map_err(|e| e.to_string())?;
-    let mut map = boxes::map_mailboxes(&listed);
-    if boxes::should_create_archive(&map, &account.imap_host, &listed) {
-        match client.create_mailbox("Archive") {
-            Ok(()) => {
-                info!(account = account.id().as_str(), "created Archive mailbox");
-                if let Ok(again) = client.list_mailbox_names() {
-                    listed = again;
-                    map = boxes::map_mailboxes(&listed);
+    fn drop_slot(&mut self, slot: Slot) {
+        let id = slot.account.id();
+        if let Link::Up(handle) = slot.link {
+            reap(*handle);
+        }
+        let waiting: Vec<u64> = self
+            .jobs
+            .iter()
+            .filter(|(_, j)| j.waiting.contains(&id))
+            .map(|(k, _)| *k)
+            .collect();
+        for job in waiting {
+            if let Some(j) = self.jobs.get_mut(&job) {
+                j.waiting.remove(&id);
+                if j.waiting.is_empty() {
+                    let j = self.jobs.remove(&job).expect("present");
+                    finish(j);
                 }
             }
-            Err(e) => warn!(
-                account = account.id().as_str(),
-                "CREATE Archive failed: {e}"
-            ),
         }
     }
-    info!(
-        account = account.id().as_str(),
-        boxes = map.len(),
-        "IMAP mailbox map"
-    );
 
-    let inbox_remote = boxes::remote(&map, "INBOX").unwrap_or("INBOX").to_string();
-    let dest_map = map.clone();
-    let moved = apply_move_rules(
-        &mut client,
-        &inbox_remote,
-        &dest_map,
-        move_rules,
-        APPLY_ON_CONNECT,
-    );
-    if moved > 0 {
-        info!(
-            moved,
-            account = account.id().as_str(),
-            "move rules applied on connect"
+    fn shutdown(&mut self) {
+        let joins: Vec<_> = self
+            .slots
+            .drain(..)
+            .filter_map(|s| match s.link {
+                Link::Up(h) => Some(std::thread::spawn(move || h.shutdown())),
+                _ => None,
+            })
+            .collect();
+        for j in joins {
+            let _ = j.join();
+        }
+    }
+
+    fn slot_index(&self, id: &str) -> Option<usize> {
+        self.slots.iter().position(|s| s.account.id() == id)
+    }
+
+    fn up(&self) -> impl Iterator<Item = &AccountHandle> {
+        self.slots.iter().filter_map(|s| match &s.link {
+            Link::Up(h) => Some(h.as_ref()),
+            _ => None,
+        })
+    }
+
+    fn handle_for(&self, account: &str) -> Option<&AccountHandle> {
+        let key = mail_addr_key(account);
+        self.up().find(|h| {
+            let id = h.id();
+            id == key || id == account
+        })
+    }
+
+    // ── Jobs ──────────────────────────────────────────────────────────
+
+    /// Send one request per connected account (`make` may skip one).
+    /// `false` when no account took part.
+    fn start_job(
+        &mut self,
+        kind: JobKind,
+        mut make: impl FnMut(u64, &AccountHandle) -> Option<Req>,
+    ) -> bool {
+        let job = self.next_job;
+        self.next_job += 1;
+        let mut waiting = HashSet::new();
+        for h in self.up() {
+            let sent = match make(job, h) {
+                Some(Req::Read(r)) => h.read(r),
+                Some(Req::Write(w)) => h.write(w),
+                None => false,
+            };
+            if sent {
+                waiting.insert(h.id());
+            }
+        }
+        if waiting.is_empty() {
+            return false;
+        }
+        self.jobs.insert(
+            job,
+            Job {
+                kind,
+                waiting,
+                parts: Vec::new(),
+            },
+        );
+        true
+    }
+
+    fn on_part(&mut self, job: u64, account: String, part: Part) {
+        let Some(j) = self.jobs.get_mut(&job) else {
+            return;
+        };
+        if !j.waiting.remove(&account) {
+            return;
+        }
+        if let Some(e) = part.error() {
+            warn!(account = account.as_str(), "{e}");
+        }
+        j.parts.push((account, part));
+        if j.waiting.is_empty() {
+            let j = self.jobs.remove(&job).expect("present");
+            finish(j);
+        }
+    }
+
+    // ── Outgoing ──────────────────────────────────────────────────────
+
+    fn send(&self, msg: Outgoing) {
+        let Some(cfg) = &self.config else {
+            return fail(Op::Send, "mail is not set up");
+        };
+        let smtp = smtp_for(cfg, &msg.from);
+        if !smtp.can_send() {
+            return fail(
+                Op::Send,
+                &format!("no outgoing (SMTP) server is set up for {}", msg.from.trim()),
+            );
+        }
+        let smtp_id = smtp.id();
+        let sent = self
+            .handle_for(&smtp_id)
+            .or_else(|| self.up().next())
+            .filter(|h| h.has("Sent") && !(smtp.smtp_saves_sent() && h.id() == smtp_id))
+            .map(AccountHandle::writer);
+        let replaced = msg
+            .replaces
+            .as_ref()
+            .and_then(|id| Some((self.handle_for(&id.account)?.writer(), id.clone())));
+        send::spawn(
+            SendPlan {
+                smtp,
+                sent,
+                replaced,
+            },
+            msg,
         );
     }
 
-    let client_arc = Arc::new(Mutex::new(client));
-    let write_client = match ImapClient::connect(&account) {
-        Ok(c) => Some(c),
-        Err(e) => {
-            warn!(
-                account = account.id().as_str(),
-                "write IMAP session failed ({e}); moves share the list connection"
-            );
-            None
-        }
-    };
-    let shared_for_write = if write_client.is_none() {
-        Some(Arc::clone(&client_arc))
-    } else {
-        None
-    };
-    let (write_tx, write) =
-        write::spawn(account.clone(), map.clone(), write_client, shared_for_write);
-    let shared_rules = Arc::clone(idle_move_rules);
-    let idle_map = map.clone();
-    let idle_account = account.clone();
-    let idle = start_idle(account.clone(), move |change, idle_client| match change {
-        IdleChange::Arrived { new_count } => {
-            let rules = shared_rules.lock().unwrap_or_else(|e| e.into_inner());
-            if !rules.is_empty() {
-                let inbox = boxes::remote(&idle_map, "INBOX").unwrap_or("INBOX");
-                let _ = apply_move_rules(idle_client, inbox, &idle_map, &rules, new_count.max(20));
-            }
-            let _ = idle_account.id();
-            bridge::emit(MailEvent::NewMail);
-        }
-        IdleChange::Removed { gone } => {
-            tracing::debug!(gone, "IDLE: remote deletes/expunge — refreshing UI");
-            bridge::emit(MailEvent::NewMail);
-        }
-        IdleChange::Touched => {}
-    });
-
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let stop_flag = Arc::clone(&stop);
-    let ka_client = Arc::clone(&client_arc);
-    let keepalive = std::thread::Builder::new()
-        .name(format!("sola-mail-ka-{}", account.id()))
-        .spawn(move || {
-            while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                for _ in 0..2400 {
-                    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                let mut c = ka_client.lock().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = c.noop() {
-                    warn!("Keepalive NOOP failed: {e}");
-                }
-            }
-        })
-        .ok();
-
-    Ok(ImapSlot {
-        account,
-        map,
-        client: client_arc,
-        write_tx,
-        write: Some(write),
-        idle: Some(idle),
-        keepalive,
-        keepalive_stop: Some(stop),
-    })
-}
-
-fn merge_canonical_folders(slots: &[ImapSlot]) -> Vec<Folder> {
-    let mut folders: Vec<Folder> = boxes::CANONICAL
-        .iter()
-        .map(|name| Folder {
-            name: (*name).to_string(),
-            unread: 0,
-            total: 0,
-        })
-        .collect();
-    for slot in slots {
-        let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-        for f in &mut folders {
-            let Some(remote) = boxes::remote(&slot.map, &f.name) else {
-                continue;
-            };
-            match c.folder_status(remote) {
-                Ok((unread, total)) => {
-                    f.unread = f.unread.saturating_add(unread);
-                    f.total = f.total.saturating_add(total);
-                }
-                Err(e) => warn!(
-                    account = slot.account.id().as_str(),
-                    remote, "STATUS failed: {e}"
-                ),
-            }
-        }
-    }
-    folders
-}
-
-struct SmartMerge {
-    folders: Vec<Folder>,
-    inbox_total_deduction: u32,
-    inbox_unread_deduction: u32,
-}
-
-fn merge_smart_counts(slots: &[ImapSlot], rules: &[sola_bus::topics::MailRule]) -> SmartMerge {
-    let mut acc = SmartMerge {
-        folders: Vec::new(),
-        inbox_total_deduction: 0,
-        inbox_unread_deduction: 0,
-    };
-    for slot in slots {
-        let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-        match c.count_smart_mailboxes(rules) {
-            Ok(s) => {
-                acc.inbox_total_deduction = acc
-                    .inbox_total_deduction
-                    .saturating_add(s.inbox_total_deduction);
-                acc.inbox_unread_deduction = acc
-                    .inbox_unread_deduction
-                    .saturating_add(s.inbox_unread_deduction);
-                for f in s.folders {
-                    if let Some(e) = acc.folders.iter_mut().find(|x| x.name == f.name) {
-                        e.unread = e.unread.saturating_add(f.unread);
-                        e.total = e.total.saturating_add(f.total);
-                    } else {
-                        acc.folders.push(f);
-                    }
-                }
-            }
-            Err(e) => warn!(
-                account = slot.account.id().as_str(),
-                "smart counts failed: {e}"
-            ),
-        }
-    }
-    acc
-}
-
-fn do_list_folders(state: &WorkerState) {
-    if state.slots.is_empty() {
-        return;
-    }
-    let rules = state
-        .config
-        .as_ref()
-        .map(|c| c.rules.clone())
-        .unwrap_or_default();
-    let mut folders = merge_canonical_folders(&state.slots);
-    let smart = merge_smart_counts(&state.slots, &rules);
-    if let Some(inbox) = folders.iter_mut().find(|f| f.name == "INBOX") {
-        inbox.total = inbox.total.saturating_sub(smart.inbox_total_deduction);
-        inbox.unread = inbox.unread.saturating_sub(smart.inbox_unread_deduction);
-    }
-    bridge::emit(MailEvent::Folders {
-        folders,
-        smart_counts: smart.folders,
-    });
-}
-
-fn do_list_messages(state: &WorkerState, folder: String, offset: u32, limit: u32) {
-    if state.slots.is_empty() {
-        return;
-    }
-    let rules = state
-        .config
-        .as_ref()
-        .map(|c| c.rules.clone())
-        .unwrap_or_default();
-    let fetch = offset.saturating_add(limit);
-    let mut all = Vec::new();
-    let mut total = 0u32;
-    for slot in &state.slots {
-        let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-        let result = if let Some(name) = folder.strip_prefix("smart:") {
-            c.list_smart_mailbox(name, &rules, 0, fetch)
-        } else {
-            let remote = remote_box(slot, &folder);
-            if folder == "INBOX" {
-                // Smart-mailbox filtering is INBOX-only and per-account.
-                c.list_inbox_filtered(&rules, 0, fetch)
-                    .or_else(|_| c.list_messages(&remote, 0, fetch))
-            } else {
-                c.list_messages(&remote, 0, fetch)
-            }
+    fn save_draft(&self, msg: Outgoing) {
+        let raw = match build_message(&msg, true) {
+            Ok(m) => m.formatted(),
+            Err(e) => return fail(Op::SaveDraft, &e.to_string()),
         };
-        match result {
-            Ok((mut messages, n)) => {
-                total = total.saturating_add(n);
-                let id = slot.account.id();
-                for m in &mut messages {
-                    m.stamp_account(&id);
-                }
-                all.extend(messages);
+        let target = self
+            .up()
+            .find(|h| h.account.owns_from(&msg.from))
+            .or_else(|| self.up().next())
+            .filter(|h| h.has("Drafts"));
+        let Some(target) = target else {
+            return fail(Op::SaveDraft, "no connected account has a Drafts mailbox");
+        };
+        // The old copy goes only once the new one landed. A draft moving
+        // to another account's Drafts deletes the old copy right away.
+        let (same, other): (Option<_>, Option<_>) = match msg.replaces.clone() {
+            Some(id) if id.account == target.id() => (Some(id), None),
+            Some(id) => (None, Some(id)),
+            None => (None, None),
+        };
+        target.write(WriteCmd::Append {
+            folder: "Drafts".into(),
+            raw,
+            draft: true,
+            replaces: same,
+        });
+        if let Some(id) = other
+            && let Some(h) = self.handle_for(&id.account) {
+                h.write(WriteCmd::Delete(id));
             }
-            Err(e) => warn!(
-                account = slot.account.id().as_str(),
-                folder = folder.as_str(),
-                "list failed: {e}"
-            ),
-        }
     }
-    all.sort_by(MessageSummary::cmp_recency);
-    let skip = offset as usize;
-    let take = limit as usize;
-    let messages = all.into_iter().skip(skip).take(take).collect();
-    bridge::emit(MailEvent::Messages {
-        folder,
-        messages,
-        total,
-        offset,
-    });
 }
 
-fn do_search(state: &WorkerState, query: String) {
-    if query.trim().is_empty() {
-        bridge::emit(MailEvent::Error {
-            context: "search".into(),
-            message: "empty query".into(),
-        });
-        return;
-    }
-    let mut all = Vec::new();
-    for slot in &state.slots {
-        let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-        let folders = ["INBOX", "Sent", "Archive"];
-        let id = slot.account.id();
-        for canon in folders {
-            let remote = remote_box(slot, canon);
-            match c.search_messages(&remote, &query) {
-                Ok((mut messages, _)) => {
-                    for m in &mut messages {
-                        m.stamp_account(&id);
+fn finish(job: Job) {
+    match job.kind {
+        JobKind::List {
+            epoch,
+            folder,
+            page,
+            limit,
+        } => {
+            let mut failed = Vec::new();
+            let mut ok = Vec::new();
+            let mut last_err = String::new();
+            for (account, part) in job.parts {
+                match part {
+                    Part::Rows(Ok(rows)) => ok.push(rows),
+                    Part::Rows(Err(e)) => {
+                        failed.push(account);
+                        last_err = e;
                     }
-                    all.extend(messages);
+                    _ => {}
                 }
-                Err(e) => warn!(
-                    account = id.as_str(),
-                    remote = remote.as_str(),
-                    "search failed: {e}"
-                ),
             }
+            if ok.is_empty() {
+                return fail(Op::List, &last_err);
+            }
+            let (rows, total) = merge::pages(ok, limit);
+            bridge::emit(MailEvent::Messages {
+                epoch,
+                folder,
+                page,
+                rows,
+                total,
+                failed,
+            });
+        }
+        JobKind::Counts => {
+            let parts: Vec<AccountCounts> = job
+                .parts
+                .into_iter()
+                .filter_map(|(_, p)| match p {
+                    Part::Counts(Ok(c)) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            if parts.is_empty() {
+                return;
+            }
+            let (folders, smart) = merge::counts(parts);
+            bridge::emit(MailEvent::Folders { folders, smart });
+        }
+        JobKind::Search { epoch } => {
+            let mut rows = Vec::new();
+            let mut capped = false;
+            for (_, part) in job.parts {
+                if let Part::Search { rows: r, capped: c } = part {
+                    rows.extend(r);
+                    capped |= c;
+                }
+            }
+            rows.sort_by(MessageSummary::cmp_recency);
+            capped |= rows.len() > SEARCH_CAP;
+            rows.truncate(SEARCH_CAP);
+            bridge::emit(MailEvent::SearchResults {
+                epoch,
+                rows,
+                capped,
+            });
+        }
+        JobKind::Empty { folder } => {
+            let failed = job
+                .parts
+                .into_iter()
+                .filter_map(|(account, p)| match p {
+                    Part::Emptied(Err(e)) => Some(format!("{account}: {e}")),
+                    _ => None,
+                })
+                .collect();
+            bridge::emit(MailEvent::Emptied { folder, failed });
         }
     }
-    all.sort_by(MessageSummary::cmp_recency);
-    all.truncate(200);
-    let total = all.len() as u32;
-    bridge::emit(MailEvent::SearchResults {
-        messages: all,
-        total,
+}
+
+fn fail(op: Op, message: &str) {
+    bridge::emit(MailEvent::Failed {
+        op,
+        message: message.to_string(),
     });
 }
 
-fn do_fetch_body(state: &WorkerState, account: String, folder: String, uid: u32) {
-    let slot = match slot_by_id(state, &account) {
-        Ok(s) => s,
-        Err(e) => {
-            bridge::emit(MailEvent::Error {
-                context: "fetch_body".into(),
-                message: e,
-            });
-            return;
-        }
-    };
-    let remote = remote_box(slot, &folder);
-    let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-    match c.fetch_body(&remote, uid) {
-        Ok(mut body) => {
-            body.account = slot.account.id();
-            bridge::emit(MailEvent::Body(body));
-        }
-        Err(e) => bridge::emit(MailEvent::Error {
-            context: "fetch_body".into(),
-            message: e.to_string(),
-        }),
-    }
+/// Stop an account's threads off the coordinator (a session may be
+/// mid-command for a few seconds).
+fn reap(handle: AccountHandle) {
+    let _ = std::thread::Builder::new()
+        .name("sola-mail-reap".into())
+        .spawn(move || handle.shutdown());
 }
-
-fn do_mark_read(state: &WorkerState, account: String, folder: String, uid: u32) {
-    let slot = match slot_by_id(state, &account) {
-        Ok(s) => s,
-        Err(e) => {
-            bridge::emit(MailEvent::Error {
-                context: "mark_read".into(),
-                message: e,
-            });
-            return;
-        }
-    };
-    let remote = remote_box(slot, &folder);
-    let mut c = slot.client.lock().unwrap_or_else(|e| e.into_inner());
-    if let Err(e) = c.mark_read(&remote, uid) {
-        bridge::emit(MailEvent::Error {
-            context: "mark_read".into(),
-            message: e.to_string(),
-        });
-    }
-}
-
-fn do_move(state: &WorkerState, account: String, folder: String, uid: u32, dest: String) {
-    let slot = match slot_by_id(state, &account) {
-        Ok(s) => s,
-        Err(e) => {
-            bridge::emit(MailEvent::Error {
-                context: "move".into(),
-                message: e,
-            });
-            return;
-        }
-    };
-    if slot
-        .write_tx
-        .send(WriteCmd::Move { folder, uid, dest })
-        .is_err()
-    {
-        bridge::emit(MailEvent::MoveFailed {
-            account,
-            uid,
-            message: "Write worker gone".into(),
-        });
-    }
-}
-
-fn do_empty(state: &WorkerState, folder: String) {
-    let mut any = false;
-    for slot in &state.slots {
-        if boxes::remote(&slot.map, &folder).is_none() {
-            continue;
-        }
-        if slot
-            .write_tx
-            .send(WriteCmd::Empty {
-                folder: folder.clone(),
-            })
-            .is_ok()
-        {
-            any = true;
-        }
-    }
-    if !any {
-        bridge::emit(MailEvent::Error {
-            context: "empty_folder".into(),
-            message: "No IMAP session for that folder".into(),
-        });
-    }
-}
-
-fn do_send(
-    state: &WorkerState,
-    from: String,
-    to: String,
-    cc: String,
-    subject: String,
-    body: String,
-    in_reply_to: Option<String>,
-    attachments: Vec<crate::protocol::MailAttachment>,
-) {
-    let Some(cfg) = state.config.clone() else {
-        bridge::emit(MailEvent::Error {
-            context: "send".into(),
-            message: "Not connected".into(),
-        });
-        return;
-    };
-    let account = account::smtp_for(&cfg, &from);
-    if !account.can_send() {
-        bridge::emit(MailEvent::Error {
-            context: "send".into(),
-            message: format!("No SMTP account for {from}"),
-        });
-        return;
-    }
-    let sent_slot = slot_by_id(state, &account.id())
-        .ok()
-        .or_else(|| state.slots.first());
-    let Some(slot) = sent_slot else {
-        bridge::emit(MailEvent::Error {
-            context: "send".into(),
-            message: "Not connected".into(),
-        });
-        return;
-    };
-    let sent_remote = remote_box(slot, "Sent");
-    let write_tx = slot.write_tx.clone();
-    let cc_opt = if cc.trim().is_empty() {
-        None
-    } else {
-        Some(cc.as_str())
-    };
-    match sender::send_mail(
-        &account,
-        &from,
-        &to,
-        cc_opt,
-        &subject,
-        &body,
-        in_reply_to.as_deref(),
-        &attachments,
-    ) {
-        Ok(raw) => {
-            if write_tx
-                .send(WriteCmd::Append {
-                    remote: sent_remote,
-                    raw,
-                })
-                .is_err()
-            {
-                warn!("Failed to queue Sent append");
-            }
-            bridge::emit(MailEvent::Sent);
-        }
-        Err(e) => bridge::emit(MailEvent::Error {
-            context: "send".into(),
-            message: e.to_string(),
-        }),
-    }
-}
-
-/// Newest INBOX envelopes to scan when applying move rules on connect.
-/// Apocrypha used 500; older matches wait for a later IDLE sweep of the
-/// newest page.
-const APPLY_ON_CONNECT: u32 = 500;
-
-/// Apply `action == "move"` rules to a page of newest INBOX messages.
-/// Returns how many messages were moved.
-fn apply_move_rules(
-    client: &mut ImapClient,
-    inbox_remote: &str,
-    map: &MailboxMap,
-    rules: &[sola_bus::topics::MailRule],
-    page: u32,
-) -> u32 {
-    let move_rules: Vec<_> = rules
-        .iter()
-        .filter(|r| r.action == "move" && r.dest.as_deref().is_some_and(|d| !d.trim().is_empty()))
-        .cloned()
-        .collect();
-    if move_rules.is_empty() || page == 0 {
-        return 0;
-    }
-    let messages = match client.list_messages(inbox_remote, 0, page) {
-        Ok((msgs, _)) => msgs,
-        Err(e) => {
-            warn!("move rules: failed to list {inbox_remote}: {e}");
-            return 0;
-        }
-    };
-    let mut moved = 0u32;
-    for msg in &messages {
-        for rule in &move_rules {
-            let Some(dest) = rule
-                .dest
-                .as_deref()
-                .map(str::trim)
-                .filter(|d| !d.is_empty())
-            else {
-                continue;
-            };
-            if !rule_matches(rule, &msg.from, &msg.subject, &msg.to) {
-                continue;
-            }
-            let dest_remote = boxes::remote(map, dest).unwrap_or(dest);
-            match client.move_message(inbox_remote, msg.uid, dest_remote) {
-                Ok(_) => {
-                    info!(
-                        uid = msg.uid,
-                        dest = dest_remote,
-                        rule = rule.name.as_str(),
-                        "move rule applied"
-                    );
-                    moved += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        "move rule {}: uid {} to {dest_remote}: {e}",
-                        rule.name, msg.uid
-                    );
-                }
-            }
-            break;
-        }
-    }
-    moved
-}
-
-// Silence unused import warning if MailConfig only used via re-export paths.
-#[allow(dead_code)]
-fn _cfg_ty(_: MailConfig) {}
