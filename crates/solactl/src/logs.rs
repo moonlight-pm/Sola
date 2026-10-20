@@ -1,4 +1,5 @@
-//! `solactl logs` — tail an app's log file at /opt/sola/log/<app>.log.
+//! `solactl logs` — tail an app's log file, `<app>.log` in Sola's log dir
+//! (`sola_core::paths::log_dir`; `/opt/sola/log` on NixOS).
 //!
 //! Without `--follow`, prints the existing file content and exits.
 //! With `--follow`, continues to print new lines until interrupted.
@@ -7,11 +8,11 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::thread::sleep;
 use std::time::Duration;
 
-const LOG_DIR: &str = "/opt/sola/log";
-
 pub fn run(app: Option<&str>, follow: bool) -> i32 {
     let app = app.unwrap_or("sola");
-    let path = format!("{LOG_DIR}/{app}.log");
+    let path = sola_core::paths::log_path(&format!("{app}.log"))
+        .to_string_lossy()
+        .into_owned();
 
     let mut file = match std::fs::File::open(&path) {
         Ok(f) => f,

@@ -9096,6 +9096,9 @@ dependencies = [
 [[package]]
 name = "sola-assets"
 version = "0.1.0"
+dependencies = [
+ "sola-core",
+]
 
 [[package]]
 name = "sola-bots"

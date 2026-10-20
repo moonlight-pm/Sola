@@ -174,7 +174,7 @@ pub fn session_methods() -> Vec<MethodSpec> {
                     Some('c'),
                     ArgType::String,
                     false,
-                    "override command; default /opt/sola/bin/<app_id>",
+                    "override command; default <app_id> in Sola's bin dir",
                 ),
             ],
             timeout_ms: None,

@@ -55,7 +55,7 @@ fn main() -> iced::Result {
         Ok(()) if app::clean_shutdown() => Ok(()),
         Ok(()) => {
             // Restart Shell, or the compositor went away. Exit 1 so
-            // the process manager brings the menubar back. Quit Sola
+            // `restart=on-failure` brings the menubar back. Quit Sola
             // sets clean_shutdown and stays down.
             tracing::error!("sola-shell event loop ended");
             std::process::exit(1);

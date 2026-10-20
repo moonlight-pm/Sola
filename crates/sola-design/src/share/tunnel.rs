@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const LOG: &str = "/opt/sola/log/design-tunnel.log";
+const LOG: &str = "design-tunnel.log";
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 
 pub struct Tunnel {
@@ -32,7 +32,8 @@ impl Tunnel {
         let child: Arc<Mutex<Option<Child>>> = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
         let first = spawn(&bin, token)?;
-        tracing::info!(pid = first.id(), bin = %bin.display(), log = LOG, "share tunnel connector up");
+        let log = sola_core::paths::log_path(LOG);
+        tracing::info!(pid = first.id(), bin = %bin.display(), log = %log.display(), "share tunnel connector up");
         *child.lock().unwrap() = Some(first);
         let (watch_child, watch_stop, token) = (child.clone(), stop.clone(), token.to_string());
         std::thread::Builder::new()
@@ -81,7 +82,10 @@ fn stop_previous() {
 }
 
 fn spawn(bin: &PathBuf, token: &str) -> io::Result<Child> {
-    let log = OpenOptions::new().create(true).append(true).open(LOG)?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(sola_core::paths::log_path(LOG))?;
     let err = log.try_clone()?;
     let mut cmd = Command::new(bin);
     cmd.args(["tunnel", "--no-autoupdate", "run"])

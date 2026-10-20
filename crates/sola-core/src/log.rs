@@ -1,12 +1,13 @@
 //! Shared tracing setup for every Sola binary.
 //!
 //! All logs — process manager, bus, session, river, app — land in
-//! `/opt/sola/log/sola.log` plus stderr. Each binary just calls
-//! `sola_core::log::init("<name>")` at startup.
+//! `sola.log` under [`crate::paths::log_dir`] (`/opt/sola/log` on NixOS)
+//! plus stderr. Each binary just calls `sola_core::log::init("<name>")`
+//! at startup.
 //!
 //! ## Format
 //!
-//! stderr (colored, local time):
+//! stderr (local time; colored when stderr is a terminal):
 //! ```text
 //! 21:46:29  INFO [sola]      sola::core     watching for binary changes path=/opt/sola/bin
 //! 21:46:30  INFO [bus]       sola::bus      bus listening path=/run/user/1000/sola-bus
@@ -19,8 +20,7 @@
 
 use std::fmt::Write;
 use std::fs::OpenOptions;
-use std::io;
-use std::path::Path;
+use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
@@ -30,9 +30,6 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-
-/// Directory on disk where all Sola logs are written.
-pub const LOG_DIR: &str = "/opt/sola/log";
 
 /// Single log file shared by every Sola binary.
 pub const LOG_FILE: &str = "sola.log";
@@ -56,8 +53,8 @@ static INITED: AtomicBool = AtomicBool::new(false);
 /// Initialize tracing for a Sola binary.
 ///
 /// * Stores the process name (stripped of `sola-` prefix) for log output.
-/// * Creates `/opt/sola/log` if missing.
-/// * Writes to `/opt/sola/log/sola.log` (append, no rotation) and stderr.
+/// * Creates the log dir ([`crate::paths::log_dir`]) if missing.
+/// * Writes to `<log dir>/sola.log` (append, no rotation) and stderr.
 /// * Falls back to stderr-only if the log file can't be opened (e.g. in
 ///   tests or local dev where /opt/sola/log may not be writable).
 /// * Default `RUST_LOG` filter: binary's own crate + shared sola libs at info.
@@ -82,8 +79,12 @@ pub fn init(name: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
 
+    // Colour only on a terminal: a supervisor that writes stderr to a
+    // file (Oath's PID 1, the session's app capture) gets plain text.
+    let ansi = io::stderr().is_terminal();
     let stderr_layer = tracing_subscriber::fmt::layer()
-        .event_format(SolaFormat { ansi: true })
+        .with_ansi(ansi)
+        .event_format(SolaFormat { ansi })
         .with_writer(io::stderr);
     let file_layer = open_file_layer();
 
@@ -108,7 +109,7 @@ pub fn init(name: &str) {
 ///
 /// Errors are silently ignored — rotation is best-effort.
 pub fn rotate() {
-    let dir = Path::new(LOG_DIR);
+    let dir = crate::paths::log_dir();
     let current = dir.join(LOG_FILE);
 
     let size = match std::fs::metadata(&current) {
@@ -148,11 +149,12 @@ fn open_file_layer<S>() -> Option<
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    let _ = std::fs::create_dir_all(LOG_DIR);
+    let dir = crate::paths::log_dir();
+    let _ = std::fs::create_dir_all(dir);
     // Probe writability before handing the path to tracing-appender —
     // `rolling::never` panics on permission errors, which is fatal for
-    // tests and local dev where /opt/sola/log may not be writable.
-    let probe = Path::new(LOG_DIR).join(LOG_FILE);
+    // tests and local dev where the log dir may not be writable.
+    let probe = dir.join(LOG_FILE);
     if OpenOptions::new()
         .create(true)
         .append(true)
@@ -161,7 +163,7 @@ where
     {
         return None;
     }
-    let appender = tracing_appender::rolling::never(LOG_DIR, LOG_FILE);
+    let appender = tracing_appender::rolling::never(dir, LOG_FILE);
     Some(
         tracing_subscriber::fmt::layer()
             .event_format(SolaFormat { ansi: false })

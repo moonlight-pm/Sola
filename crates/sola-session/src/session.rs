@@ -14,7 +14,7 @@ use sola_bus::topics::{
 /// relaunch. Also gives the compositor a moment to come up at cold boot.
 const RESTORE_SETTLE: Duration = Duration::from_millis(750);
 
-use sola_core::env;
+use sola_core::{env, paths};
 
 /// Hard ceiling for the per-shutdown poll loop: 5s `TimeoutStopSec` set
 /// on each scope plus 1s slack.
@@ -216,7 +216,7 @@ impl Session {
             c
         };
 
-        if let Some(name) = env::wayland_socket() {
+        if let Some(name) = env::child_wayland_display() {
             cmd.env("WAYLAND_DISPLAY", name);
             // TTY launch leaves XDG_SESSION_TYPE=tty on the tree.
             // Chromium/Electron camera + xdg-desktop-portal treat that
@@ -474,14 +474,14 @@ fn sanitize_unit_segment(s: &str) -> String {
 /// bounding here never races away an imminent failure's log.
 const APP_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Open the durable per-app capture log at `/opt/sola/log/app-<id>.log`
-/// (create + append), truncating first if it has grown past
+/// Open the durable per-app capture log at `<log dir>/app-<id>.log`
+/// ([`paths::log_dir`]; create + append), truncating first if it has grown past
 /// [`APP_LOG_MAX_BYTES`]. Returns `None` — leaving the caller on inherited
 /// stdio — if the directory or file can't be opened.
 fn app_log_file(app_id: &str) -> Option<std::fs::File> {
-    let dir = std::path::Path::new("/opt/sola/log");
+    let dir = paths::log_dir();
     if let Err(e) = std::fs::create_dir_all(dir) {
-        warn!(%app_id, %e, "app capture: could not create /opt/sola/log");
+        warn!(%app_id, %e, dir = %dir.display(), "app capture: could not create log dir");
         return None;
     }
     let path = dir.join(format!("app-{}.log", sanitize_unit_segment(app_id)));
@@ -657,7 +657,7 @@ impl Session {
 }
 
 fn default_command(app_id: &str) -> String {
-    let path = env::bin_path(app_id);
+    let path = paths::bin_path(app_id);
     if path.exists() {
         path.display().to_string()
     } else {

@@ -26,8 +26,8 @@ use crate::zoning::ZoningState;
 pub mod bus;
 
 /// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
-/// and **Restart Shell** leave this false so the process manager
-/// restarts us.
+/// and **Restart Shell** leave this false so the supervisor restarts us
+/// (`restart=on-failure` on Oath; NixOS process manager always respawns).
 static CLEAN_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn mark_clean_shutdown() {
@@ -2206,8 +2206,13 @@ impl Shell {
                 }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
+                        // Broadcast so sola-river (and later session) exit,
+                        // then exit 0 ourselves: under a supervisor that
+                        // restarts on failure (Oath's PID 1) a clean quit
+                        // stays down.
                         mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
+                        return iced::exit();
                     } else if action_id == "_close" {
                         if let Some(ref focused) = self.focused_app_id.clone() {
                             let _ = bus.emit(Topic::CloseApp(focused.clone()));

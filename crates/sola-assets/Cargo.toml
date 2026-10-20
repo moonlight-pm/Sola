@@ -10,3 +10,5 @@ edition.workspace = true
 # historical `sola-assets://` WebKit URI-scheme glue lived in the
 # apocrypha `sola-app` host — do not reintroduce webkit/gtk deps here
 # (they would shadow the WPE browser's `webkit_web_view_new`).
+# sola-core only for `paths::share_dir` (where the share tree lives).
+sola-core = { path = "../sola-core" }

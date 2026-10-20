@@ -259,6 +259,8 @@ pub const INSTALLED_FAMILIES: &[&str] = &[
     "Inter",
     "Iosevka Term Slab",
     "JetBrains Mono",
+    "Noto Sans",
+    "Noto Sans Mono",
 ];
 
 /// Preferred UI family when installed (macOS chrome feel).
@@ -269,22 +271,31 @@ pub const FALLBACK_UI_FAMILY: &str = "Inter";
 pub const DEFAULT_MONO_FAMILY: &str = "Iosevka Term Slab";
 /// Fallback mono family.
 pub const FALLBACK_MONO_FAMILY: &str = "JetBrains Mono";
+/// Last UI and mono families: Noto, for systems that ship neither SF Pro
+/// nor Inter (or JetBrains Mono).
+pub const NOTO_UI_FAMILY: &str = "Noto Sans";
+pub const NOTO_MONO_FAMILY: &str = "Noto Sans Mono";
 
-/// Resolve UI family: SF Pro Text if available, else Inter.
+/// Resolve UI family: SF Pro Text if available, else Inter, else Noto Sans.
 pub fn preferred_ui_family() -> &'static str {
     if family_available(DEFAULT_UI_FAMILY) {
         DEFAULT_UI_FAMILY
-    } else {
+    } else if family_available(FALLBACK_UI_FAMILY) || !family_available(NOTO_UI_FAMILY) {
         FALLBACK_UI_FAMILY
+    } else {
+        NOTO_UI_FAMILY
     }
 }
 
-/// Resolve mono family: Iosevka Term Slab if available, else JetBrains Mono.
+/// Resolve mono family: Iosevka Term Slab if available, else JetBrains Mono,
+/// else Noto Sans Mono.
 pub fn preferred_mono_family() -> &'static str {
     if family_available(DEFAULT_MONO_FAMILY) {
         DEFAULT_MONO_FAMILY
     } else if family_available(FALLBACK_MONO_FAMILY) {
         FALLBACK_MONO_FAMILY
+    } else if family_available(NOTO_MONO_FAMILY) {
+        NOTO_MONO_FAMILY
     } else {
         DEFAULT_MONO_FAMILY
     }

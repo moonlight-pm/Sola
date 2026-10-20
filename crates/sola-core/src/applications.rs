@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 /// launcher/session path stays “spawn this command”.
 ///
 /// Dual-mode: `/bin/sola-wrapper` on Oath, `/opt/sola/bin/sola-wrapper`
-/// on NixOS (`env::bin_path`).
+/// on NixOS (`paths::bin_path`).
 pub fn wrapper_bin() -> PathBuf {
-    crate::env::bin_path("sola-wrapper")
+    crate::paths::bin_path("sola-wrapper")
 }
 
 /// How the shell launches this catalog entry.
@@ -538,7 +538,8 @@ mod tests {
         let back: Application = serde_json::from_str(&json).unwrap();
         assert_eq!(back.kind, AppKind::Wrapper);
         assert_eq!(back.url.as_deref(), Some("https://app.slack.com"));
-        assert_eq!(back.command, "/opt/sola/bin/sola-wrapper slack");
+        assert_eq!(back.command, a.command);
+        assert!(back.command.ends_with("/sola-wrapper slack"));
         assert!(json.contains("\"kind\":\"wrapper\""));
     }
 

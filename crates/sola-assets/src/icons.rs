@@ -1,6 +1,6 @@
 //! Icon-pack path helpers.
 //!
-//! Pack icons live at `/opt/sola/share/icons/<pack>/<name>.{svg,png,…}`.
+//! Pack icons live at `<share>/icons/<pack>/<name>.{svg,png,…}` (`/opt/sola/share` on NixOS).
 //! User config also accepts an absolute (or `~/…`) filesystem path for
 //! full-color app icons extracted from AppImages, `.desktop` files, etc.
 //!
@@ -41,7 +41,7 @@ pub fn split_ref(s: &str) -> Option<(&str, &str)> {
 
 /// Read the raw SVG bytes for `"<pack>/<name>"` (e.g. `"lucide/menu"`).
 ///
-/// Returns `None` when the icon does not exist under `ASSETS_DIR`, or
+/// Returns `None` when the icon does not exist under the share tree, or
 /// when `icon_ref` is a filesystem path rather than a pack ref.
 /// The bytes are read fresh from disk on each call; callers that render
 /// frequently should cache the result (e.g. as an `iced::widget::svg::Handle`).
@@ -56,7 +56,7 @@ pub fn read_svg(icon_ref: &str) -> Option<Vec<u8>> {
 /// Accepts:
 /// - absolute path: `/home/…/orca-ide.png`
 /// - home-relative: `~/…/orca-ide.png`
-/// - pack name with a raster under `/opt/sola/share/icons/<pack>/<name>.png`
+/// - pack name with a raster under `<share>/icons/<pack>/<name>.png`
 ///   (and other [`RASTER_EXTS`]) when no `.svg` is required by the caller
 ///
 /// Returns `None` for missing files or non-raster pack-only refs.

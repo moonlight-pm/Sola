@@ -371,7 +371,8 @@ fn run_evdev(
         "while remote: relative motion + EVIOCGRAB; leave toward primary releases"
     );
     info!(
-        "lag metrics enabled — grep kvm_metrics / LAG in /opt/sola/log/sola.log"
+        log = %sola_core::paths::log_path("sola.log").display(),
+        "lag metrics enabled — grep kvm_metrics / LAG in the log"
     );
 
     let mut pacer = MotionPacer::new(MOTION_MIN_INTERVAL);

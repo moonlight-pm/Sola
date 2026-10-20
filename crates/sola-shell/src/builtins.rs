@@ -8,10 +8,10 @@
 //! list only rebuilds the shell, not every crate in the workspace.
 
 use sola_bus::topics::Application;
-use sola_core::env;
+use sola_core::paths;
 
 fn kit_command(name: &str) -> String {
-    env::bin_path(name).display().to_string()
+    paths::bin_path(name).display().to_string()
 }
 
 pub fn builtin_apps() -> Vec<Application> {
@@ -89,7 +89,7 @@ pub fn builtin_apps() -> Vec<Application> {
         Application {
             app_id: "sola-calendar".into(),
             label: "Calendar".into(),
-            command: "/opt/sola/bin/sola-calendar".into(),
+            command: kit_command("sola-calendar"),
             icon: "lucide/calendar".into(),
             ..Default::default()
         },

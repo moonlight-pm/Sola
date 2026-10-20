@@ -16,11 +16,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Env override for the sola-paint binary (defaults to
-/// `/opt/sola/bin/sola-paint`).
+/// Env override for the sola-paint binary (defaults to `sola-paint` in
+/// [`crate::paths::bin_dir`]).
 pub const SOLA_PAINT_ENV: &str = "SOLA_PAINT";
-
-const DEFAULT_SOLA_PAINT: &str = "/opt/sola/bin/sola-paint";
 
 /// Extensions sola-paint treats as raster images.
 pub const IMAGE_EXTENSIONS: &[&str] = &[
@@ -52,8 +50,9 @@ pub fn open(path: &str) -> Result<(), String> {
     }
     let bin = sola_paint_bin().ok_or_else(|| {
         format!(
-            "sola-paint not found at {DEFAULT_SOLA_PAINT} \
-             (install it, or set {SOLA_PAINT_ENV} to the binary path)"
+            "sola-paint not found at {} \
+             (install it, or set {SOLA_PAINT_ENV} to the binary path)",
+            default_sola_paint().display()
         )
     })?;
     Command::new(&bin)
@@ -86,8 +85,12 @@ pub fn sola_paint_bin() -> Option<PathBuf> {
             "{SOLA_PAINT_ENV} set but file missing; falling back to default"
         );
     }
-    let path = PathBuf::from(DEFAULT_SOLA_PAINT);
+    let path = default_sola_paint();
     path.is_file().then_some(path)
+}
+
+fn default_sola_paint() -> PathBuf {
+    crate::paths::bin_path("sola-paint")
 }
 
 fn strip_file_url(target: &str) -> &str {
