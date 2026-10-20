@@ -8,14 +8,14 @@
 //! list only rebuilds the shell, not every crate in the workspace.
 
 use sola_bus::topics::Application;
-use sola_core::paths;
+use sola_core::{env, paths};
 
 fn kit_command(name: &str) -> String {
     paths::bin_path(name).display().to_string()
 }
 
 pub fn builtin_apps() -> Vec<Application> {
-    vec![
+    let mut apps = vec![
         Application {
             app_id: "sola-settings".into(),
             label: "Settings".into(),
@@ -130,5 +130,20 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/disc".into(),
             ..Default::default()
         },
-    ]
+    ];
+    // The catalog app manages the machine itself, so only where there
+    // is an Oath catalog to manage.
+    if env::on_oath() {
+        apps.insert(
+            0,
+            Application {
+                app_id: "sola-oath".into(),
+                label: "Oath".into(),
+                command: kit_command("sola-oath"),
+                icon: "lucide/box".into(),
+                ..Default::default()
+            },
+        );
+    }
+    apps
 }

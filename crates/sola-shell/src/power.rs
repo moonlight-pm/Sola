@@ -1,11 +1,14 @@
 //! Machine power from the flower menu (reboot / poweroff).
 //!
-//! Asks logind via `loginctl` / `systemctl`. Sola has no polkit agent, so
-//! the call is non-interactive (`sudo -n` as a last try). A local seat
-//! session is usually already allowed; the NixOS module also grants wheel
-//! reboot/power-off so a missing agent cannot hang the shell.
+//! NixOS: logind via `loginctl` / `systemctl`. Sola has no polkit agent, so
+//! the call is non-interactive (`sudo -n` as a last try).
+//!
+//! Oath (`/oath/INDEX.md`): catalog `host:local` power through `sudo oath`.
+//! The menu click is the owner's confirm (`oath apply --confirm`).
 
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+
+use sola_core::env::on_oath;
 
 /// Flower-menu action id: reboot the machine (not Restart Shell).
 pub const ACTION_RESTART_COMPUTER: &str = "restart-computer";
@@ -26,6 +29,14 @@ impl Kind {
         }
     }
 
+    /// Catalog `host:local.power` value (`halt`, not logind `poweroff`).
+    fn oath_power(self) -> &'static str {
+        match self {
+            Self::Reboot => "reboot",
+            Self::PowerOff => "halt",
+        }
+    }
+
     pub fn fail_toast(self) -> &'static str {
         match self {
             Self::Reboot => "Could not restart the computer",
@@ -35,12 +46,42 @@ impl Kind {
 }
 
 /// Request reboot or poweroff. Returns `Err` with a toast string if every
-/// attempt failed. Does not emit `Topic::Shutdown` — systemd will SIGTERM
-/// sola as part of the reboot, which is the same graceful path as Quit Sola.
+/// attempt failed. Does not emit `Topic::Shutdown` — the supervisor SIGTERMs
+/// sola as the machine goes down, same graceful path as Quit Sola.
 pub fn request(kind: Kind) -> Result<(), &'static str> {
     let verb = kind.verb();
     tracing::info!(verb, "machine power requested via menu");
-    for mut cmd in commands(verb) {
+    if on_oath() {
+        return request_oath(kind);
+    }
+    request_logind(kind)
+}
+
+fn request_oath(kind: Kind) -> Result<(), &'static str> {
+    let set = run(Command::new("/bin/sudo").args(oath_set_args(kind)));
+    if !matches!(set, Ok(st) if st.success()) {
+        tracing::warn!(
+            ?set,
+            power = kind.oath_power(),
+            "oath set host power failed"
+        );
+        return Err(kind.fail_toast());
+    }
+    let apply = run(Command::new("/bin/sudo").args(oath_apply_args()));
+    if !matches!(apply, Ok(st) if st.success()) {
+        tracing::warn!(
+            ?apply,
+            power = kind.oath_power(),
+            "oath apply host power failed"
+        );
+        return Err(kind.fail_toast());
+    }
+    Ok(())
+}
+
+fn request_logind(kind: Kind) -> Result<(), &'static str> {
+    let verb = kind.verb();
+    for mut cmd in logind_commands(verb) {
         let bin = cmd.get_program().to_string_lossy().into_owned();
         match cmd.status() {
             Ok(status) if status.success() => return Ok(()),
@@ -53,7 +94,23 @@ pub fn request(kind: Kind) -> Result<(), &'static str> {
     Err(kind.fail_toast())
 }
 
-fn commands(verb: &str) -> Vec<Command> {
+fn run(cmd: &mut Command) -> std::io::Result<ExitStatus> {
+    let bin = cmd.get_program().to_string_lossy().into_owned();
+    match cmd.status() {
+        Ok(status) => {
+            if !status.success() {
+                tracing::warn!(bin, %status, "power command failed");
+            }
+            Ok(status)
+        }
+        Err(e) => {
+            tracing::warn!(bin, %e, "power command exec failed");
+            Err(e)
+        }
+    }
+}
+
+fn logind_commands(verb: &str) -> Vec<Command> {
     let bins = [
         "loginctl",
         "/run/current-system/sw/bin/loginctl",
@@ -74,6 +131,17 @@ fn commands(verb: &str) -> Vec<Command> {
     out
 }
 
+fn oath_set_args(kind: Kind) -> Vec<&'static str> {
+    match kind {
+        Kind::Reboot => vec!["/bin/oath", "set", "host:local", "power=reboot"],
+        Kind::PowerOff => vec!["/bin/oath", "set", "host:local", "power=halt"],
+    }
+}
+
+fn oath_apply_args() -> &'static [&'static str] {
+    &["/bin/oath", "apply", "--confirm", "host:local"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,11 +150,13 @@ mod tests {
     fn verbs_match_logind() {
         assert_eq!(Kind::Reboot.verb(), "reboot");
         assert_eq!(Kind::PowerOff.verb(), "poweroff");
+        assert_eq!(Kind::Reboot.oath_power(), "reboot");
+        assert_eq!(Kind::PowerOff.oath_power(), "halt");
     }
 
     #[test]
     fn command_list_tries_loginctl_then_systemctl() {
-        let cmds = commands("reboot");
+        let cmds = logind_commands("reboot");
         let bins: Vec<String> = cmds
             .iter()
             .map(|c| c.get_program().to_string_lossy().into_owned())
@@ -108,5 +178,21 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert_eq!(sudo_args, ["-n", "systemctl", "reboot"]);
+    }
+
+    #[test]
+    fn oath_set_uses_catalog_power() {
+        assert_eq!(
+            oath_set_args(Kind::Reboot),
+            ["/bin/oath", "set", "host:local", "power=reboot"]
+        );
+        assert_eq!(
+            oath_set_args(Kind::PowerOff),
+            ["/bin/oath", "set", "host:local", "power=halt"]
+        );
+        assert_eq!(
+            oath_apply_args(),
+            &["/bin/oath", "apply", "--confirm", "host:local"]
+        );
     }
 }

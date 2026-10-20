@@ -97,6 +97,7 @@ crates/
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager
   sola-settings/       # Settings panel (incl. mail config)
+  sola-oath/           # Oath catalog app (`oath --json`); launcher entry only on Oath
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
   sola-workspaces/     # Project / workspace rail + agent-aware PTYs
