@@ -49,6 +49,8 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
     let mut blocks = Vec::new();
     let mut para: Vec<ProseRun> = Vec::new();
     let mut quote: Vec<ProseRun> = Vec::new();
+    // The last line was a heading (a next `#` line continues it).
+    let mut prev_heading_open = false;
 
     let flush_para = |blocks: &mut Vec<ProseBlock>, runs: &mut Vec<ProseRun>| {
         let cleaned = humanize_runs(std::mem::take(runs));
@@ -92,8 +94,34 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
         if trimmed.is_empty() {
             flush_para(&mut blocks, &mut para);
             flush_quote(&mut blocks, &mut quote);
+            prev_heading_open = false;
             continue;
         }
+
+        // html2text's rich decorator writes `<hN>` as `#…# text`.
+        if let Some(level) = heading_level(trimmed) {
+            flush_para(&mut blocks, &mut para);
+            flush_quote(&mut blocks, &mut quote);
+            strip_leading_hashes(&mut runs, level);
+            let runs = humanize_runs(runs);
+            if !runs_have_words(&runs) {
+                continue;
+            }
+            // A wrapped heading repeats the prefix on each line: one block.
+            match blocks.last_mut() {
+                Some(ProseBlock::Heading {
+                    level: l,
+                    runs: prev,
+                }) if *l == level && prev_heading_open => {
+                    prev.push(ProseRun::text(" "));
+                    prev.extend(runs);
+                }
+                _ => blocks.push(ProseBlock::Heading { level, runs }),
+            }
+            prev_heading_open = true;
+            continue;
+        }
+        prev_heading_open = false;
 
         if trimmed.starts_with('>') {
             flush_para(&mut blocks, &mut para);
@@ -253,6 +281,21 @@ fn is_tracking_host(host: &str) -> bool {
 fn runs_have_words(runs: &[ProseRun]) -> bool {
     runs.iter()
         .any(|r| r.text.chars().any(|c| !c.is_whitespace()))
+}
+
+/// `### Title` → `Some(3)` (1–6 hashes, then a space).
+fn heading_level(line: &str) -> Option<u8> {
+    let hashes = line.bytes().take_while(|b| *b == b'#').count();
+    ((1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' '))
+        .then_some(hashes as u8)
+}
+
+fn strip_leading_hashes(runs: &mut [ProseRun], level: u8) {
+    if let Some(first) = runs.first_mut() {
+        let t = first.text.trim_start();
+        let rest = t.get(level as usize..).unwrap_or("");
+        first.text = rest.strip_prefix(' ').unwrap_or(rest).to_string();
+    }
 }
 
 fn strip_leading_quote(runs: &mut [ProseRun]) {
@@ -435,5 +478,27 @@ mod tests {
         let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
         let blocks = reading_blocks(Some(&html), &text);
         assert!(link_urls(&blocks).contains(&url), "{blocks:?}");
+    }
+
+    #[test]
+    fn html_headings_become_heading_blocks() {
+        let blocks = to_blocks("<h3>Horse Drawn Wagon Rides</h3><p>Noon to 3 pm.</p>");
+        match blocks.first() {
+            Some(ProseBlock::Heading { level, runs }) => {
+                assert_eq!(*level, 3);
+                let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+                assert_eq!(text, "Horse Drawn Wagon Rides");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!flatten(&blocks).contains('#'), "{blocks:?}");
+    }
+
+    #[test]
+    fn heading_level_needs_hashes_then_space() {
+        assert_eq!(heading_level("## Hi"), Some(2));
+        assert_eq!(heading_level("#hashtag"), None);
+        assert_eq!(heading_level("####### seven"), None);
+        assert_eq!(heading_level("plain"), None);
     }
 }
