@@ -28,7 +28,8 @@ use stage::Staged;
 pub enum Action {
     Stage,
     Apply,
-    Publish,
+    /// `true`: build the plans here, upload nothing.
+    Publish { local: bool },
 }
 
 pub fn run(action: Action, release: bool) {
@@ -36,8 +37,8 @@ pub fn run(action: Action, release: bool) {
         eprintln!("cargo make oath: not an Oath machine (no /oath/INDEX.md)");
         exit(1);
     }
-    if let Action::Publish = action {
-        if let Err(e) = publish::publish() {
+    if let Action::Publish { local } = action {
+        if let Err(e) = publish::publish(local) {
             eprintln!("cargo make oath publish: {e}");
             exit(1);
         }

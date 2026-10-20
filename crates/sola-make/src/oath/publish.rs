@@ -6,13 +6,15 @@
 //! 1. `pkg:sola-src`: the committed tree (`git archive HEAD`, so a clean
 //!    tree only) at `src/sola`, the icon and cursor packs at `src/share`.
 //! 2. `pkg:sola-crates`: `cargo vendor` of the lock.
-//! 3. A plan per package, built against this machine's live packs (the
-//!    base set and each build pack's run-time needs) and the two above.
+//! 3. `plan:sola-build` compiles every package's programs once, against
+//!    this machine's live packs (the base set and the build packs, with
+//!    their run-time needs) and the two above.
+//! 4. A plan per package copies its programs out of `pkg:sola-build`.
 //!    `pkg:sola-browser` and `pkg:sola-design` need the `pkg:sola` just
 //!    built.
-//! 4. Upload `pkg/<name>/<hash>.tar` and `plan/<name>/<hash>.plan` for
-//!    the sources and products (skipping what the origin has), then print
-//!    the desk profile entries that pin the products.
+//! 5. Upload `pkg/<name>/<hash>.tar` and `plan/<name>/<hash>.plan` for
+//!    the sources, the build and the products (skipping what the origin
+//!    has), then print the desk profile entries that pin the products.
 //!
 //! The machine's own pins do not change: `oath build` leaves an existing
 //! `pkg:<name>` as it is.
@@ -25,13 +27,14 @@ use std::process::Command;
 use super::catalog;
 use super::origin::{self, Origin};
 use super::packages::{BASE, PACKAGES, Package};
-use super::plan::{self, Inputs};
+use super::plan::{self, BUILD, Plan};
 use super::vendor;
 
 const WORK: &str = "target/oath/publish";
 
-pub fn publish() -> Result<(), String> {
-    let origin = Origin::from_env()?;
+/// `local`: build the plans here and upload nothing.
+pub fn publish(local: bool) -> Result<(), String> {
+    let origin = if local { None } else { Some(Origin::from_env()?) };
     let (rev, dirty) = git_rev()?;
     if dirty {
         return Err("commit first: a published source is the committed tree".into());
@@ -51,43 +54,54 @@ pub fn publish() -> Result<(), String> {
     let crates_hash = catalog::store("pkg:sola-crates", &crates_dir)?;
     println!("[publish] pkg:sola-crates {crates_hash}");
 
-    let mut products: BTreeMap<&str, String> = BTreeMap::new();
     let mut plans: Vec<(&str, String)> = Vec::new();
+
+    let mut build_packs: Vec<&str> = BASE.to_vec();
+    build_packs.extend(PACKAGES.iter().flat_map(|p| p.build.iter().copied()));
+    let mut build_needs = closure(build_packs.iter())?;
+    build_needs.push(("pkg:sola-src".into(), src_hash.clone()));
+    build_needs.push(("pkg:sola-crates".into(), crates_hash.clone()));
+    let bins: Vec<&str> = PACKAGES.iter().flat_map(|p| p.bins.iter().copied()).collect();
+    let build = Plan {
+        name: BUILD.into(),
+        build_needs,
+        run_needs: Vec::new(),
+        script: plan::build_script(&bins, &src_hash, &crates_hash, &version),
+    };
+    let (plan_hash, build_hash) = file_and_build(work, &build)?;
+    plans.push((BUILD, plan_hash));
+
+    let mut products: BTreeMap<&str, String> = BTreeMap::new();
     let mut run_needs_of: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     for pkg in PACKAGES {
-        let mut build_needs = closure(BASE.iter().chain(pkg.build))?;
-        build_needs.push(("pkg:sola-src".into(), src_hash.clone()));
-        build_needs.push(("pkg:sola-crates".into(), crates_hash.clone()));
+        let mut build_needs = closure(BASE.iter())?;
+        build_needs.push((format!("pkg:{BUILD}"), build_hash.clone()));
+        if pkg.share {
+            build_needs.push(("pkg:sola-src".into(), src_hash.clone()));
+        }
         let run_needs = run_needs(pkg, &products)?;
-        let text = plan::text(&Inputs {
-            pkg,
+        let plan = Plan {
+            name: pkg.name.into(),
             build_needs,
             run_needs: run_needs.clone(),
-            src_hash: &src_hash,
-            crates_hash: &crates_hash,
-            version: &version,
-        });
-        let file = work.join(format!("{}.plan", pkg.name));
-        fs::write(&file, text).map_err(|e| format!("{}: {e}", file.display()))?;
-        catalog::fmt(&file)?;
-        let plan_hash = catalog::set_plan(pkg.name, &file)?;
-        println!("[publish] plan:{} {plan_hash}; building (oath logs plan:{})", pkg.name, pkg.name);
-        let product = catalog::build(pkg.name)?;
-        println!("[publish] pkg:{} {product}", pkg.name);
+            script: plan::package_script(pkg, &build_hash, &src_hash, &version),
+        };
+        let (plan_hash, product) = file_and_build(work, &plan)?;
         products.insert(pkg.name, product);
         plans.push((pkg.name, plan_hash));
         run_needs_of.insert(pkg.name, run_needs);
     }
 
-    let mut packs = vec![("sola-src", src_hash), ("sola-crates", crates_hash)];
+    let mut packs = vec![
+        ("sola-src", src_hash),
+        ("sola-crates", crates_hash),
+        (BUILD, build_hash),
+    ];
     packs.extend(products.iter().map(|(n, h)| (*n, h.clone())));
-    for (name, hash) in &packs {
-        upload_pack(&origin, work, name, hash)?;
-    }
-    for (name, hash) in &plans {
-        let key = format!("plan/{name}/{hash}.plan");
-        let file = PathBuf::from(format!("/oath/store/plan/{name}/{hash}/plan.plan"));
-        upload(&origin, &key, &file)?;
+    if let Some(origin) = &origin {
+        upload_all(origin, work, &packs, &plans)?;
+    } else {
+        println!("[publish] --local: nothing uploaded");
     }
 
     println!("\n[publish] desk profile entries (Oath's crates/oath-core/seed/desk.json):");
@@ -103,6 +117,39 @@ pub fn publish() -> Result<(), String> {
         println!("\"{}\": {entry},", pkg.id());
     }
     Ok(())
+}
+
+/// Packs (`pkg/<name>/<hash>.tar`) and plans (`plan/<name>/<hash>.plan`).
+fn upload_all(
+    origin: &Origin,
+    work: &Path,
+    packs: &[(&str, String)],
+    plans: &[(&str, String)],
+) -> Result<(), String> {
+    for (name, hash) in packs {
+        upload_pack(origin, work, name, hash)?;
+    }
+    for (name, hash) in plans {
+        let key = format!("plan/{name}/{hash}.plan");
+        let file = PathBuf::from(format!("/oath/store/plan/{name}/{hash}/plan.plan"));
+        upload(origin, &key, &file)?;
+    }
+    Ok(())
+}
+
+/// Write, `oath fmt`, file and build `plan`; returns `(plan hash, product)`.
+fn file_and_build(work: &Path, plan: &Plan) -> Result<(String, String), String> {
+    let file = work.join(format!("{}.plan", plan.name));
+    fs::write(&file, plan::text(plan)).map_err(|e| format!("{}: {e}", file.display()))?;
+    catalog::fmt(&file)?;
+    let plan_hash = catalog::set_plan(&plan.name, &file)?;
+    println!(
+        "[publish] plan:{} {plan_hash}; building (oath logs plan:{})",
+        plan.name, plan.name
+    );
+    let product = catalog::build(&plan.name)?;
+    println!("[publish] pkg:{} {product}", plan.name);
+    Ok((plan_hash, product))
 }
 
 /// `src/sola` (the committed tree) and `src/share` (icons, cursors).

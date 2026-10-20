@@ -8,8 +8,8 @@ pub struct Package {
     pub name: &'static str,
     /// Binaries in `bin/`. Each is also the crate that builds it.
     pub bins: &'static [&'static str],
-    /// Packs the plan builds with, beyond Oath's base set (their run-time
-    /// needs come along).
+    /// Packs its programs build with, beyond the base set (their run-time
+    /// needs come along); `plan:sola-build` takes every package's.
     pub build: &'static [&'static str],
     /// Packages this one loads or runs at run time, pinned at apply to
     /// the hash this machine has live (or the one just stored, for

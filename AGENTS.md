@@ -175,6 +175,8 @@ docs/
   (plan builds in `oath build`'s sandbox, then upload to
   `store.oath.moonlight.pm` with `~/.config/oath/origin.env`) is
   outward-facing: only with express permission, from a committed tree.
+  `--local` builds the plans here and uploads nothing (no permission
+  needed).
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
@@ -216,6 +218,7 @@ cargo make install <app> --watch                  # Watch + reinstall (release)
 cargo make oath stage [--debug]                   # Oath: build + assemble package trees
 cargo make oath apply [--debug]                   # Oath: stage + oath store/set/apply (permission)
 cargo make oath publish                           # Oath: plan builds + upload to the origin (permission)
+cargo make oath publish --local                   # Oath: the plan builds only, nothing uploaded
 ```
 
 Alias configured in `.cargo/config.toml`:
