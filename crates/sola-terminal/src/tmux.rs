@@ -83,7 +83,10 @@ pub fn reload_config() {
 //
 // update-environment pulls the client-side values into the session on
 // create/attach; set-environment -g seeds the global env for new panes even
-// when a session already exists.
+// when a session already exists. WAYLAND_DISPLAY and XDG_SESSION_TYPE come
+// from the client too: a server started outside the desktop session (a
+// service, at boot) has neither, and the river socket's name is only known
+// once the session is up.
 //
 // smcup/rmcup are forwarded. tmux sends smcup when a client attaches, so
 // the outer grid is on the alternate screen for the whole session. That
@@ -110,7 +113,7 @@ set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
 set -g set-titles off
 set -g allow-passthrough on
-set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM'
+set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM WAYLAND_DISPLAY XDG_SESSION_TYPE'
 set-environment -g TERM_PROGRAM alacritty
 set-environment -g COLORTERM truecolor
 ";
