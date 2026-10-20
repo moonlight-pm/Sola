@@ -2,103 +2,141 @@
 
 use sola_bus::topics::MailConfig;
 
-use crate::protocol::{Folder, MailAttachment, MessageBody, MessageSummary};
+use crate::protocol::sender::Outgoing;
+use crate::protocol::{Folder, FolderRef, MailId, MessageBody, MessageSummary};
+
+/// How a list page relates to what the UI already shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    /// A new list (folder switch): replace the rows.
+    Replace,
+    /// Quiet re-fetch of the newest rows: merge.
+    Refresh,
+    /// The next rows below the loaded ones: append.
+    More,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flag {
+    Seen,
+    Flagged,
+}
+
+impl Flag {
+    pub fn imap(self) -> &'static str {
+        match self {
+            Self::Seen => "\\Seen",
+            Self::Flagged => "\\Flagged",
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum MailCmd {
-    /// Push latest bus config; reconnects if already connected or credentials changed.
+    /// Latest bus config. Reconnects only accounts whose IMAP login
+    /// changed; a rules-only edit keeps every session.
     Reconfigure(MailConfig),
+    /// Get New Mail: reconnect failed accounts now.
+    Retry,
     ListFolders,
-    ListMessages {
-        folder: String,
-        offset: u32,
+    List {
+        /// Echoed back so the UI can drop pages for a list it left.
+        epoch: u64,
+        folder: FolderRef,
+        page: Page,
+        /// [`Page::More`]: per account, the oldest UID already shown.
+        cursors: Vec<(String, u32)>,
         limit: u32,
     },
     Search {
+        epoch: u64,
         query: String,
+        /// Extra canonical mailbox to search (the open Junk / Trash).
+        also: Option<String>,
     },
-    FetchBody {
-        account: String,
-        folder: String,
-        uid: u32,
-    },
-    MarkRead {
-        account: String,
-        folder: String,
-        uid: u32,
+    FetchBody(MailId),
+    SetFlag {
+        id: MailId,
+        flag: Flag,
+        on: bool,
     },
     Move {
-        account: String,
-        folder: String,
-        uid: u32,
+        id: MailId,
         dest: String,
     },
-    EmptyFolder {
+    Empty {
         folder: String,
     },
-    Send {
-        from: String,
-        to: String,
-        cc: String,
-        subject: String,
-        body: String,
-        in_reply_to: Option<String>,
-        attachments: Vec<MailAttachment>,
-    },
+    Send(Outgoing),
+    SaveDraft(Outgoing),
     Shutdown,
+}
+
+/// What failed, for the UI's wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Op {
+    List,
+    Search,
+    Open(MailId),
+    Flag(MailId),
+    Erase,
+    Send,
+    SaveDraft,
 }
 
 #[derive(Debug, Clone)]
 pub enum MailEvent {
-    Connected {
-        folders: Vec<Folder>,
-        smart_counts: Vec<Folder>,
-        from_addresses: Vec<String>,
-        rules: Vec<sola_bus::topics::MailRule>,
-    },
-    Folders {
-        folders: Vec<Folder>,
-        smart_counts: Vec<Folder>,
-    },
-    Messages {
-        folder: String,
-        messages: Vec<MessageSummary>,
-        total: u32,
-        offset: u32,
-    },
-    SearchResults {
-        messages: Vec<MessageSummary>,
-        total: u32,
-    },
-    Body(MessageBody),
-    Sent,
-    Moved {
-        account: String,
-        uid: u32,
-        /// UID in the destination mailbox (IMAP UIDs are per-folder).
-        dest_uid: Option<u32>,
-    },
-    MoveFailed {
-        account: String,
-        uid: u32,
-        message: String,
-    },
-    Emptied {
-        folder: String,
-    },
-    /// IDLE saw remaining new mail after move-rules.
-    NewMail,
-    Error {
-        context: String,
-        message: String,
-    },
-    /// Config present but incomplete — UI shows settings prompt.
-    NotConfigured,
-    /// One IMAP account's connect progress. UI chrome stays up.
+    /// One IMAP account's connection state.
     AccountLink {
         account: String,
         email: String,
         state: LinkState,
+    },
+    /// Connected accounts or rules changed: refresh folders and list.
+    Changed,
+    /// No IMAP account is configured.
+    NotConfigured,
+    Folders {
+        folders: Vec<Folder>,
+        smart: Vec<Folder>,
+    },
+    Messages {
+        epoch: u64,
+        folder: FolderRef,
+        page: Page,
+        rows: Vec<MessageSummary>,
+        total: u32,
+        /// Accounts whose part failed: keep their rows as they are.
+        failed: Vec<String>,
+    },
+    SearchResults {
+        epoch: u64,
+        rows: Vec<MessageSummary>,
+        capped: bool,
+    },
+    Body(Box<MessageBody>),
+    Moved {
+        id: MailId,
+        dest: String,
+        /// UID in `dest` (IMAP UIDs are per-mailbox).
+        dest_uid: Option<u32>,
+    },
+    MoveFailed {
+        id: MailId,
+        message: String,
+    },
+    Emptied {
+        folder: String,
+        /// `account: error` for accounts that could not erase.
+        failed: Vec<String>,
+    },
+    Sent,
+    DraftSaved,
+    /// INBOX changed on the server (IDLE, after move rules).
+    NewMail,
+    Failed {
+        op: Op,
+        message: String,
     },
 }
 
@@ -107,221 +145,4 @@ pub enum LinkState {
     Connecting,
     Ready,
     Failed(String),
-}
-
-/// Collapse a burst of UI commands so rapid deletes are not stuck
-/// behind body fetches / duplicate folder refreshes.
-pub(crate) fn compact_cmds(cmds: Vec<MailCmd>) -> Vec<MailCmd> {
-    if cmds.is_empty() {
-        return cmds;
-    }
-    if let Some(i) = cmds.iter().position(|c| matches!(c, MailCmd::Shutdown)) {
-        let mut kept: Vec<MailCmd> = cmds.into_iter().take(i).collect();
-        kept = prioritize_cmds(compact_cmds_inner(kept));
-        kept.push(MailCmd::Shutdown);
-        return kept;
-    }
-    prioritize_cmds(compact_cmds_inner(cmds))
-}
-
-/// Fetch / mark / list before MOVE so the selected letter is not stuck
-/// behind a trash backlog on the same worker turn.
-fn prioritize_cmds(mut cmds: Vec<MailCmd>) -> Vec<MailCmd> {
-    cmds.sort_by_key(cmd_priority);
-    cmds
-}
-
-fn cmd_priority(cmd: &MailCmd) -> u8 {
-    match cmd {
-        MailCmd::Reconfigure(_) => 0,
-        MailCmd::FetchBody { .. } | MailCmd::MarkRead { .. } => 1,
-        MailCmd::ListMessages { .. } | MailCmd::ListFolders | MailCmd::Search { .. } => 2,
-        MailCmd::Send { .. } => 3,
-        MailCmd::Move { .. } | MailCmd::EmptyFolder { .. } => 4,
-        MailCmd::Shutdown => 5,
-    }
-}
-
-fn compact_cmds_inner(cmds: Vec<MailCmd>) -> Vec<MailCmd> {
-    use std::collections::HashSet;
-
-    let moved: HashSet<(String, u32)> = cmds
-        .iter()
-        .filter_map(|c| match c {
-            MailCmd::Move { account, uid, .. } => Some((account.clone(), *uid)),
-            _ => None,
-        })
-        .collect();
-
-    let last_fetch = cmds.iter().enumerate().rev().find_map(|(i, c)| match c {
-        MailCmd::FetchBody { account, uid, .. } if !moved.contains(&(account.clone(), *uid)) => {
-            Some(i)
-        }
-        _ => None,
-    });
-
-    let mut saw_list_folders = false;
-    let mut saw_reconfigure = false;
-    let mut saw_search = false;
-    let mut saw_list_zero: HashSet<String> = HashSet::new();
-    let mut saw_list_page: HashSet<(String, u32)> = HashSet::new();
-
-    let mut out = Vec::with_capacity(cmds.len());
-    for (i, cmd) in cmds.into_iter().enumerate().rev() {
-        match &cmd {
-            MailCmd::FetchBody { account, uid, .. } => {
-                if moved.contains(&(account.clone(), *uid)) || last_fetch != Some(i) {
-                    continue;
-                }
-            }
-            MailCmd::MarkRead { account, uid, .. } => {
-                if moved.contains(&(account.clone(), *uid)) {
-                    continue;
-                }
-            }
-            MailCmd::ListFolders => {
-                if saw_list_folders {
-                    continue;
-                }
-                saw_list_folders = true;
-            }
-            MailCmd::Reconfigure(_) => {
-                if saw_reconfigure {
-                    continue;
-                }
-                saw_reconfigure = true;
-            }
-            MailCmd::Search { .. } => {
-                if saw_search {
-                    continue;
-                }
-                saw_search = true;
-            }
-            MailCmd::ListMessages { folder, offset, .. } => {
-                if *offset == 0 {
-                    if !saw_list_zero.insert(folder.clone()) {
-                        continue;
-                    }
-                } else if !saw_list_page.insert((folder.clone(), *offset)) {
-                    continue;
-                }
-            }
-            MailCmd::Shutdown => continue,
-            _ => {}
-        }
-        out.push(cmd);
-    }
-    out.reverse();
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn move_cmd(uid: u32) -> MailCmd {
-        MailCmd::Move {
-            account: "a@x".into(),
-            folder: "INBOX".into(),
-            uid,
-            dest: "Trash".into(),
-        }
-    }
-
-    fn fetch(uid: u32) -> MailCmd {
-        MailCmd::FetchBody {
-            account: "a@x".into(),
-            folder: "INBOX".into(),
-            uid,
-        }
-    }
-
-    fn mark(uid: u32) -> MailCmd {
-        MailCmd::MarkRead {
-            account: "a@x".into(),
-            folder: "INBOX".into(),
-            uid,
-        }
-    }
-
-    fn list(offset: u32, limit: u32) -> MailCmd {
-        MailCmd::ListMessages {
-            folder: "INBOX".into(),
-            offset,
-            limit,
-        }
-    }
-
-    fn uids_of(cmds: &[MailCmd]) -> Vec<(u32, &'static str)> {
-        cmds.iter()
-            .filter_map(|c| match c {
-                MailCmd::Move { uid, .. } => Some((*uid, "move")),
-                MailCmd::FetchBody { uid, .. } => Some((*uid, "fetch")),
-                MailCmd::MarkRead { uid, .. } => Some((*uid, "mark")),
-                MailCmd::ListFolders => Some((0, "folders")),
-                MailCmd::ListMessages { offset, .. } => Some((*offset, "list")),
-                MailCmd::Shutdown => Some((0, "shutdown")),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn drops_fetch_and_mark_for_moved_uids() {
-        let out = compact_cmds(vec![
-            move_cmd(10),
-            fetch(11),
-            mark(11),
-            move_cmd(11),
-            fetch(12),
-            mark(12),
-        ]);
-        assert_eq!(
-            uids_of(&out),
-            vec![(12, "fetch"), (12, "mark"), (10, "move"), (11, "move")]
-        );
-    }
-
-    #[test]
-    fn fetch_jumps_ahead_of_moves() {
-        let out = compact_cmds(vec![move_cmd(1), move_cmd(2), fetch(9), mark(9)]);
-        assert_eq!(
-            uids_of(&out),
-            vec![(9, "fetch"), (9, "mark"), (1, "move"), (2, "move")]
-        );
-    }
-
-    #[test]
-    fn keeps_only_last_fetch_body() {
-        let out = compact_cmds(vec![fetch(1), fetch(2), fetch(3), mark(1), mark(3)]);
-        assert_eq!(uids_of(&out), vec![(3, "fetch"), (1, "mark"), (3, "mark")]);
-    }
-
-    #[test]
-    fn coalesces_folder_list_and_first_page() {
-        let out = compact_cmds(vec![
-            MailCmd::ListFolders,
-            list(0, 50),
-            MailCmd::ListFolders,
-            list(0, 150),
-            list(150, 50),
-        ]);
-        assert_eq!(
-            uids_of(&out),
-            vec![(0, "folders"), (0, "list"), (150, "list")]
-        );
-        match &out[1] {
-            MailCmd::ListMessages { limit, .. } => assert_eq!(*limit, 150),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn shutdown_stays_last_after_pending_moves() {
-        let out = compact_cmds(vec![move_cmd(1), fetch(2), MailCmd::Shutdown, fetch(3)]);
-        assert_eq!(
-            uids_of(&out),
-            vec![(2, "fetch"), (1, "move"), (0, "shutdown")]
-        );
-    }
 }

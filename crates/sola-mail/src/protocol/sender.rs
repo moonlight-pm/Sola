@@ -1,102 +1,173 @@
-//! SMTP send via lettre.
+//! Outgoing mail: RFC 5322 build (lettre) + SMTP submit.
 
-use lettre::message::Mailbox;
-use lettre::message::header::ContentType;
-use lettre::message::{Attachment, MultiPart, SinglePart};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+use lettre::address::Envelope;
+use lettre::message::header::{self, ContentType, HeaderName, HeaderValue};
+use lettre::message::{Attachment, Mailbox, Mailboxes, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use tracing::debug;
 
 use super::account::Account;
-use super::types::MailAttachment;
+use super::types::{MailAttachment, MailId};
 
-/// Send an email via SMTP STARTTLS. Returns raw RFC822 for IMAP append.
-pub fn send_mail(
-    account: &Account,
-    from: &str,
-    to: &str,
-    cc: Option<&str>,
-    subject: &str,
-    body: &str,
-    in_reply_to: Option<&str>,
-    attachments: &[MailAttachment],
-) -> anyhow::Result<Vec<u8>> {
-    let email = build_message(from, to, cc, subject, body, in_reply_to, attachments)?;
+const SMTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Implicit-TLS submission port (everything else negotiates STARTTLS).
+const SMTPS_PORT: u16 = 465;
 
-    let creds = Credentials::new(account.username.clone(), account.password.clone());
+/// A message the user wrote: sent, or saved to Drafts.
+#[derive(Debug, Clone, Default)]
+pub struct Outgoing {
+    pub from: String,
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    pub body: String,
+    /// Message-ID being replied to (with or without angle brackets).
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub attachments: Vec<MailAttachment>,
+    /// Draft this message supersedes (deleted after a successful send/save).
+    pub replaces: Option<MailId>,
+}
 
-    let mailer = SmtpTransport::starttls_relay(&account.smtp_host)
-        .map_err(|e| anyhow::anyhow!("SMTP relay setup failed: {e}"))?
+/// Submit over SMTP. Returns the raw RFC 5322 bytes for the Sent copy.
+pub fn send_mail(account: &Account, msg: &Outgoing) -> anyhow::Result<Vec<u8>> {
+    let email = build_message(msg, false)?;
+    let relay = if account.smtp_port == SMTPS_PORT {
+        SmtpTransport::relay(&account.smtp_host)
+    } else {
+        SmtpTransport::starttls_relay(&account.smtp_host)
+    }
+    .map_err(|e| anyhow::anyhow!("can't set up SMTP to {}: {e}", account.smtp_host))?;
+    let mailer = relay
         .port(account.smtp_port)
-        .credentials(creds)
+        .credentials(Credentials::new(
+            account.username.clone(),
+            account.password.clone(),
+        ))
+        .timeout(Some(SMTP_TIMEOUT))
         .build();
-
     mailer
         .send(&email)
-        .map_err(|e| anyhow::anyhow!("SMTP send failed: {e}"))?;
-
-    debug!("Email sent to {to}");
+        .map_err(|e| anyhow::anyhow!(describe_failure(e.is_permanent(), &e.to_string(), msg)))?;
+    debug!(to = msg.to.as_str(), "mail sent");
     Ok(email.formatted())
 }
 
-/// Build the RFC822 message (no network). Used by send and tests.
-pub(crate) fn build_message(
-    from: &str,
-    to: &str,
-    cc: Option<&str>,
-    subject: &str,
-    body: &str,
-    in_reply_to: Option<&str>,
-    attachments: &[MailAttachment],
-) -> anyhow::Result<Message> {
-    let from: Mailbox = from
+/// Build the message (no network). Drafts keep whatever the user typed in
+/// To/Cc even when it does not parse yet, and need no recipient.
+pub fn build_message(msg: &Outgoing, draft: bool) -> anyhow::Result<Message> {
+    let from: Mailbox = msg
+        .from
+        .trim()
         .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid from address: {e}"))?;
+        .map_err(|_| anyhow::anyhow!("“{}” is not a valid From address", msg.from.trim()))?;
+    let mut builder = Message::builder()
+        .from(from.clone())
+        .subject(msg.subject.clone())
+        .message_id(Some(new_message_id(&from)));
 
-    let mut builder = Message::builder().from(from).subject(subject);
-
-    for addr in to.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        let mailbox: Mailbox = addr
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid to address '{addr}': {e}"))?;
-        builder = builder.to(mailbox);
-    }
-
-    if let Some(cc_str) = cc {
-        for addr in cc_str
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            let mailbox: Mailbox = addr
-                .parse()
-                .map_err(|e| anyhow::anyhow!("Invalid cc address '{addr}': {e}"))?;
-            builder = builder.cc(mailbox);
+    for (name, raw, required) in [
+        (HeaderName::new_from_ascii_str("To"), msg.to.trim(), !draft),
+        (HeaderName::new_from_ascii_str("Cc"), msg.cc.trim(), false),
+    ] {
+        if raw.is_empty() {
+            if required {
+                anyhow::bail!("add at least one recipient");
+            }
+            continue;
+        }
+        match raw.parse::<Mailboxes>() {
+            Ok(list) if &*name == "To" => builder = builder.mailbox(header::To::from(list)),
+            Ok(list) => builder = builder.mailbox(header::Cc::from(list)),
+            Err(_) if draft => {
+                builder = builder.raw_header(HeaderValue::new(name, raw.to_string()))
+            }
+            Err(_) => anyhow::bail!("can't read the {} addresses “{raw}”", &*name),
         }
     }
-
-    if let Some(msg_id) = in_reply_to {
-        builder = builder.in_reply_to(msg_id.to_string());
+    if draft {
+        builder = builder.envelope(
+            Envelope::new(Some(from.email.clone()), vec![from.email.clone()])
+                .map_err(|e| anyhow::anyhow!("draft envelope: {e}"))?,
+        );
     }
 
-    if attachments.is_empty() {
-        return builder
+    if let Some(parent) = msg
+        .in_reply_to
+        .as_deref()
+        .map(angle)
+        .filter(|s| s.len() > 2)
+    {
+        let mut refs: Vec<String> = msg.references.iter().map(|r| angle(r)).collect();
+        if !refs.contains(&parent) {
+            refs.push(parent.clone());
+        }
+        builder = builder.in_reply_to(parent).references(refs.join(" "));
+    }
+
+    let built = if msg.attachments.is_empty() {
+        builder
             .header(ContentType::TEXT_PLAIN)
-            .body(body.to_string())
-            .map_err(|e| anyhow::anyhow!("Failed to build email: {e}"));
-    }
+            .body(msg.body.clone())
+    } else {
+        let mut mp = MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone()));
+        for att in &msg.attachments {
+            let ct = att
+                .mime
+                .parse::<ContentType>()
+                .unwrap_or_else(|_| ContentType::parse("application/octet-stream").expect("octet"));
+            mp = mp.singlepart(Attachment::new(att.filename.clone()).body(att.bytes.to_vec(), ct));
+        }
+        builder.multipart(mp)
+    };
+    built.map_err(|e| anyhow::anyhow!("can't build the message: {e}"))
+}
 
-    let mut mp = MultiPart::mixed().singlepart(SinglePart::plain(body.to_string()));
-    for att in attachments {
-        let ct = att
-            .mime
-            .parse::<ContentType>()
-            .unwrap_or_else(|_| ContentType::parse("application/octet-stream").expect("octet"));
-        mp = mp.singlepart(Attachment::new(att.filename.clone()).body(att.bytes.to_vec(), ct));
+/// Say who was refused when the server rejects a recipient (`550 5.1.x`)
+/// — lettre's text alone ("permanent error (550): 5.1.2 Mailbox does not
+/// exist.") reads like a problem with the sender.
+fn describe_failure(permanent: bool, text: &str, msg: &Outgoing) -> String {
+    let detail = text.split_once("): ").map_or(text, |(_, d)| d).trim();
+    let lower = detail.to_lowercase();
+    let bad_recipient = permanent
+        && (detail.starts_with("5.1.")
+            || lower.contains("mailbox does not exist")
+            || lower.contains("no such user")
+            || lower.contains("user unknown"));
+    if !bad_recipient {
+        return text.to_string();
     }
-    builder
-        .multipart(mp)
-        .map_err(|e| anyhow::anyhow!("Failed to build email: {e}"))
+    let mut all = super::recipients::split(&msg.to);
+    all.extend(super::recipients::split(&msg.cc));
+    match all.as_slice() {
+        [one] => format!("{one} was refused by the mail server — {detail}"),
+        _ => format!("the mail server refused one of the recipients — {detail}"),
+    }
+}
+
+/// `<id>` — In-Reply-To / References need the angle brackets.
+fn angle(id: &str) -> String {
+    let t = id.trim().trim_start_matches('<').trim_end_matches('>');
+    format!("<{t}>")
+}
+
+/// `<time.pid.n@from-domain>`: unique enough, and no local hostname leak.
+fn new_message_id(from: &Mailbox) -> String {
+    static N: AtomicU32 = AtomicU32::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "<{nanos:x}.{:x}.{n}@{}>",
+        std::process::id(),
+        from.email.domain()
+    )
 }
 
 #[cfg(test)]
@@ -106,25 +177,30 @@ mod tests {
     use mail_parser::MessageParser;
     use std::sync::Arc;
 
+    fn outgoing(to: &str) -> Outgoing {
+        Outgoing {
+            from: "me@example.com".into(),
+            to: to.into(),
+            subject: "hi".into(),
+            body: "hello".into(),
+            ..Outgoing::default()
+        }
+    }
+
+    fn roundtrip(msg: &Outgoing, draft: bool) -> Vec<u8> {
+        build_message(msg, draft).expect("build").formatted()
+    }
+
     #[test]
     fn multipart_roundtrip_keeps_pdf() {
-        let att = MailAttachment {
+        let mut msg = outgoing("you@example.com");
+        msg.attachments.push(MailAttachment {
             filename: "invoice.pdf".into(),
             mime: "application/pdf".into(),
             size: 4,
             bytes: Arc::from([1u8, 2, 3, 4]),
-        };
-        let msg = build_message(
-            "me@example.com",
-            "you@example.com",
-            None,
-            "invoice",
-            "please find attached",
-            None,
-            &[att],
-        )
-        .expect("build");
-        let raw = msg.formatted();
+        });
+        let raw = roundtrip(&msg, false);
         let parsed = MessageParser::default().parse(&raw).expect("parse");
         let atts = collect_attachments(&parsed);
         assert_eq!(atts.len(), 1);
@@ -133,20 +209,59 @@ mod tests {
     }
 
     #[test]
-    fn plain_send_has_no_attachments() {
-        let msg = build_message(
-            "me@example.com",
-            "you@example.com",
-            None,
-            "hi",
-            "hello",
-            None,
-            &[],
-        )
-        .expect("build");
-        let raw = msg.formatted();
+    fn plain_send_has_message_id_and_no_attachments() {
+        let raw = roundtrip(&outgoing("you@example.com"), false);
         let parsed = MessageParser::default().parse(&raw).expect("parse");
         assert!(collect_attachments(&parsed).is_empty());
         assert!(parsed.body_text(0).is_some());
+        assert!(
+            parsed
+                .message_id()
+                .is_some_and(|id| id.ends_with("@example.com"))
+        );
+    }
+
+    #[test]
+    fn quoted_comma_names_parse_as_one_recipient() {
+        let raw = roundtrip(
+            &outgoing(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            false,
+        );
+        let parsed = MessageParser::default().parse(&raw).expect("parse");
+        assert_eq!(parsed.to().map(|a| a.iter().count()), Some(2));
+    }
+
+    #[test]
+    fn reply_threads_with_brackets() {
+        let mut msg = outgoing("you@example.com");
+        msg.in_reply_to = Some("parent@x".into());
+        msg.references = vec!["<root@x>".into()];
+        let raw = String::from_utf8(roundtrip(&msg, false)).expect("utf8");
+        assert!(raw.contains("In-Reply-To: <parent@x>"), "{raw}");
+        assert!(raw.contains("References: <root@x> <parent@x>"), "{raw}");
+    }
+
+    #[test]
+    fn send_needs_a_recipient_but_a_draft_does_not() {
+        assert!(build_message(&outgoing(""), false).is_err());
+        assert!(build_message(&outgoing(""), true).is_ok());
+        let raw = String::from_utf8(roundtrip(&outgoing("half typed@"), true)).expect("utf8");
+        assert!(raw.contains("To: half typed@"), "{raw}");
+        assert!(build_message(&outgoing("half typed@"), false).is_err());
+    }
+
+    #[test]
+    fn refused_recipient_is_named() {
+        let text = "permanent error (550): 5.1.2 Mailbox does not exist.";
+        assert_eq!(
+            describe_failure(true, text, &outgoing("terry@hotsprings.mt")),
+            "terry@hotsprings.mt was refused by the mail server — 5.1.2 Mailbox does not exist."
+        );
+        assert!(
+            describe_failure(true, text, &outgoing("a@x.com, b@y.com"))
+                .starts_with("the mail server refused one")
+        );
+        let auth = "permanent error (535): 5.7.8 Authentication failed";
+        assert_eq!(describe_failure(true, auth, &outgoing("a@x.com")), auth);
     }
 }

@@ -99,6 +99,8 @@ impl<'a, Message> ProseView<'a, Message> {
 struct LineState<P: text::Paragraph> {
     paragraph: P,
     spans: Vec<Span<'static, String, P::Font>>,
+    /// Width the paragraph was shaped at.
+    width: f32,
     start: usize,
     text: String,
     quote: bool,
@@ -182,7 +184,10 @@ where
 
         let mut y = 0.0;
         let mut children = Vec::with_capacity(plan.len());
-        state.lines.clear();
+        // Re-shape only lines whose spans or width changed. Apps rebuild
+        // their view on every message; shaping a long letter each time
+        // was the reading pane's main cost.
+        let mut prev = std::mem::take(&mut state.lines).into_iter();
         for (i, line) in plan.iter().enumerate() {
             let x = if line.quote { 1.0 + SPACE_MD } else { 0.0 };
             let line_w = (width - x).max(0.0);
@@ -194,7 +199,12 @@ where
                 self.link,
                 self.sel_bg,
             );
-            let para = layout_paragraph(renderer, line_w, line, &spans);
+            let para = match prev.next().filter(|p| {
+                p.width == line_w && p.text == line.text && same_spans(&p.spans, &spans)
+            }) {
+                Some(p) => p.paragraph,
+                None => layout_paragraph(renderer, line_w, line, &spans),
+            };
             let mut size = para.min_bounds();
             let min_h = line_size(line) * 1.35;
             if size.height < min_h * 0.6 {
@@ -203,6 +213,7 @@ where
             state.lines.push(LineState {
                 paragraph: para,
                 spans,
+                width: line_w,
                 start: line.start,
                 text: line.text.clone(),
                 quote: line.quote,
@@ -604,6 +615,18 @@ fn layout_paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         shaping: text::Shaping::Advanced,
         wrapping: Wrapping::Word,
     })
+}
+
+/// Span equality for paragraph reuse. iced's `Span: PartialEq` ignores
+/// highlight (our selection), links and underline.
+fn same_spans(
+    a: &[Span<'static, String, iced::Font>],
+    b: &[Span<'static, String, iced::Font>],
+) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x == y && x.highlight == y.highlight && x.link == y.link && x.underline == y.underline
+        })
 }
 
 fn spans_for_line(

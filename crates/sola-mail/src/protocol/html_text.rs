@@ -1,12 +1,24 @@
 //! HTML message bodies → readable letter blocks (no HTML engine in the UI).
 
 use html2text::render::{RichAnnotation, TaggedLine};
-use sola_kit::components::prose::{ProseBlock, ProseRun, flatten, parse_plain};
+use sola_kit::components::prose::{ProseBlock, ProseRun, parse_plain};
 
-/// Convert HTML mail into plain text suitable for copy / reply quoting.
-#[allow(dead_code)] // used by tests; reading pane goes through `to_blocks`.
-pub fn to_plain(html: &str) -> String {
-    flatten(&to_blocks(html))
+/// Letter blocks for the reading pane. Prefer HTML whenever it is
+/// present — that is the part mail apps actually render.
+pub fn reading_blocks(html: Option<&str>, text: &str) -> Vec<ProseBlock> {
+    if let Some(html) = html.filter(|h| !h.trim().is_empty()) {
+        // mail-parser lists text/plain parts in `html_body` too and
+        // `body_html` then synthesizes `<br/>` HTML. Prefer the real
+        // plaintext so bare URLs (Wicket magic links) stay links.
+        if !is_synthesized_plain_html(html) || text.trim().is_empty() {
+            return to_blocks(html);
+        }
+    }
+    if text.trim().is_empty() {
+        Vec::new()
+    } else {
+        parse_plain(text)
+    }
 }
 
 /// Convert HTML into kit prose blocks.
@@ -37,6 +49,8 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
     let mut blocks = Vec::new();
     let mut para: Vec<ProseRun> = Vec::new();
     let mut quote: Vec<ProseRun> = Vec::new();
+    // The last line was a heading (a next `#` line continues it).
+    let mut prev_heading_open = false;
 
     let flush_para = |blocks: &mut Vec<ProseBlock>, runs: &mut Vec<ProseRun>| {
         let cleaned = humanize_runs(std::mem::take(runs));
@@ -63,11 +77,11 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
                 RichAnnotation::Link(u) if is_http_url(u) => Some(u.clone()),
                 _ => None,
             });
-            if let Some(last) = runs.last_mut() {
-                if last.url == url {
-                    last.text.push_str(&ts.s);
-                    continue;
-                }
+            if let Some(last) = runs.last_mut()
+                && last.url == url
+            {
+                last.text.push_str(&ts.s);
+                continue;
             }
             runs.push(ProseRun {
                 text: ts.s.clone(),
@@ -80,8 +94,34 @@ fn rich_to_blocks(lines: Vec<TaggedLine<Vec<RichAnnotation>>>) -> Vec<ProseBlock
         if trimmed.is_empty() {
             flush_para(&mut blocks, &mut para);
             flush_quote(&mut blocks, &mut quote);
+            prev_heading_open = false;
             continue;
         }
+
+        // html2text's rich decorator writes `<hN>` as `#…# text`.
+        if let Some(level) = heading_level(trimmed) {
+            flush_para(&mut blocks, &mut para);
+            flush_quote(&mut blocks, &mut quote);
+            strip_leading_hashes(&mut runs, level);
+            let runs = humanize_runs(runs);
+            if !runs_have_words(&runs) {
+                continue;
+            }
+            // A wrapped heading repeats the prefix on each line: one block.
+            match blocks.last_mut() {
+                Some(ProseBlock::Heading {
+                    level: l,
+                    runs: prev,
+                }) if *l == level && prev_heading_open => {
+                    prev.push(ProseRun::text(" "));
+                    prev.extend(runs);
+                }
+                _ => blocks.push(ProseBlock::Heading { level, runs }),
+            }
+            prev_heading_open = true;
+            continue;
+        }
+        prev_heading_open = false;
 
         if trimmed.starts_with('>') {
             flush_para(&mut blocks, &mut para);
@@ -243,6 +283,21 @@ fn runs_have_words(runs: &[ProseRun]) -> bool {
         .any(|r| r.text.chars().any(|c| !c.is_whitespace()))
 }
 
+/// `### Title` → `Some(3)` (1–6 hashes, then a space).
+fn heading_level(line: &str) -> Option<u8> {
+    let hashes = line.bytes().take_while(|b| *b == b'#').count();
+    ((1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' '))
+        .then_some(hashes as u8)
+}
+
+fn strip_leading_hashes(runs: &mut [ProseRun], level: u8) {
+    if let Some(first) = runs.first_mut() {
+        let t = first.text.trim_start();
+        let rest = t.get(level as usize..).unwrap_or("");
+        first.text = rest.strip_prefix(' ').unwrap_or(rest).to_string();
+    }
+}
+
 fn strip_leading_quote(runs: &mut [ProseRun]) {
     if let Some(first) = runs.first_mut() {
         let t = first.text.trim_start();
@@ -286,36 +341,14 @@ pub fn is_synthesized_plain_html(html: &str) -> bool {
     !inner.replace("<br/>", "").contains('<')
 }
 
-/// True when the multipart/plain part is a generator stub and the HTML
-/// is the real letter.
-#[allow(dead_code)] // reading pane always prefers HTML; kept for tests / callers.
-pub fn plain_looks_like_stub(plain: &str, html: &str) -> bool {
-    let plain = plain.trim();
-    if plain.is_empty() {
-        return !html.trim().is_empty();
-    }
-    let lower = plain.to_ascii_lowercase();
-    if lower.contains("this is an html")
-        || (lower.contains("html")
-            && (lower.contains("view") || lower.contains("browser") || lower.contains("requires")))
-    {
-        return true;
-    }
-    // URL-dense plaintext is the ESP dump; HTML has the real letter.
-    let url_hits = lower.matches("http://").count() + lower.matches("https://").count();
-    if url_hits >= 3 && html.len() > 40 {
-        return true;
-    }
-    html.len() > plain.len().saturating_mul(3) && plain.len() < 400
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sola_kit::components::prose::flatten;
 
     #[test]
     fn strips_simple_markup() {
-        let plain = to_plain("<p>Hello <b>world</b></p>");
+        let plain = flatten(&to_blocks("<p>Hello <b>world</b></p>"));
         assert!(plain.to_lowercase().contains("hello"));
         assert!(plain.to_lowercase().contains("world"));
         assert!(!plain.contains("<b>"));
@@ -437,18 +470,35 @@ mod tests {
     }
 
     #[test]
-    fn stub_plain_prefers_html() {
-        assert!(plain_looks_like_stub(
-            "This is an HTML email. View it in a browser.",
-            &"<p>".repeat(80)
-        ));
-        assert!(plain_looks_like_stub(
-            "see https://a.com/x https://b.com/y https://c.com/z and more tracking",
-            "<p>A real letter with a <a href=\"https://example.com\">button</a></p>"
-        ));
-        assert!(!plain_looks_like_stub(
-            "A real plaintext letter with enough body that we should keep it.",
-            "<p>also html</p>"
-        ));
+    fn synthesized_html_plain_keeps_magic_link() {
+        let token = "A".repeat(43);
+        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
+        let text =
+            format!("Use this link to sign in to Wicket:\n\n  {url}\n\nIt expires shortly.\n");
+        let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
+        let blocks = reading_blocks(Some(&html), &text);
+        assert!(link_urls(&blocks).contains(&url), "{blocks:?}");
+    }
+
+    #[test]
+    fn html_headings_become_heading_blocks() {
+        let blocks = to_blocks("<h3>Horse Drawn Wagon Rides</h3><p>Noon to 3 pm.</p>");
+        match blocks.first() {
+            Some(ProseBlock::Heading { level, runs }) => {
+                assert_eq!(*level, 3);
+                let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+                assert_eq!(text, "Horse Drawn Wagon Rides");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!flatten(&blocks).contains('#'), "{blocks:?}");
+    }
+
+    #[test]
+    fn heading_level_needs_hashes_then_space() {
+        assert_eq!(heading_level("## Hi"), Some(2));
+        assert_eq!(heading_level("#hashtag"), None);
+        assert_eq!(heading_level("####### seven"), None);
+        assert_eq!(heading_level("plain"), None);
     }
 }

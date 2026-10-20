@@ -7,50 +7,109 @@ Accounts with **IMAP** checked are connected. The sidebar is always the
 six boxes — Inbox, Sent, Drafts, Archive, Junk, Trash — **combined**
 across those accounts, newest first by date. Gmail’s extra labels stay
 hidden. If Gmail has no Archive label, Sola creates one on connect.
-Move to Trash (and undo) uses **that message’s** account mailbox
-(`[Gmail]/Trash` on Gmail, `Trash` on Wicket) and does not block opening
+Moves (and undo) use **that message’s** account mailbox
+(`[Gmail]/Trash` on Gmail, `Trash` on Wicket) and never hold up opening
 the next letter. Extra accounts may be SMTP-only (IMAP unchecked) when
 mail is only forwarded in.
+
 Typing the email fills IMAP and SMTP for known providers (Gmail,
 Google Workspace / Gmail Apps via MX, Outlook, Fastmail, Yahoo,
 iCloud, Proton). IMAP and SMTP each have an enable checkbox — uncheck
-IMAP for send-only. Gmail and Workspace need an **app password**. **Send from** on the inbox is the addresses configured on that server
-(Wicket `/api/auth/me`) — check the ones Mail should offer. Extra SMTP
-accounts still take typed aliases. Catch-alls (`*@moonlight.pm`) are
-omitted. The picker is A–Z. **Default From** is the address new messages
-use. Reply picks the identity that appears in the original To/Cc, or
-Default From.
+IMAP for send-only. Gmail and Workspace need an **app password**. SMTP
+port 465 uses implicit TLS; other ports use STARTTLS. **Send from** on
+the inbox is the addresses configured on that server (Wicket
+`/api/auth/me`) — check the ones Mail should offer. Extra SMTP accounts
+still take typed aliases. Catch-alls (`*@moonlight.pm`) are omitted. The
+picker is A–Z. **Default From** is the address new messages use. Reply
+picks the identity that appears in the original To/Cc, or Default From.
+
+Editing rules in Settings keeps every connection open; only an account
+whose IMAP login changed reconnects.
 
 ## Use
 
-Three columns: mailboxes, message list, letter (or compose). Unread rows
-are **bold**. The letter Date is the local calendar day with the local
-clock (`16:00`) under it. The toolbar stays on; message actions mute
-until a row is selected.
+Three columns: mailboxes, message list, letter (or compose).
 
-- **Compose** — toolbar pen, or Message → New Message (⌘N).
-- **Attach** — while composing: toolbar paperclip, **Attach** next to
-  Send, or Message → Attach Files… (⌘⇧A). Kit file picker. Files go out
-  as `multipart/mixed`.
-- **Received files** — paperclip on the list row. In the letter: **Open**
-  (images in Paint, everything else in the browser) or **Save** (picker,
-  starts in Downloads).
-- **x / i / a / d** — Junk / Inbox / Archive / Trash and advance.
-  **u** undoes the last move.
-- On open, the last inbox list shows immediately. A card at the bottom
-  right lists accounts still connecting (or that failed).
-- Switching to the Mail window checks the server immediately (the open
-  folder and the mailbox counts). New mail still arrives on its own
-  while Mail is in the background. A search stays until you clear it.
-- While Mail is fetching that folder, a small ring sits beside the
-  message count. Hover it: **Checking mail**. It leaves when the list
-  comes back. Moves and undo still use the toast.
+- **List** — unread rows are **bold**; a flag marks flagged mail; a
+  paperclip marks files. Sent and Drafts show who the message went to.
+  The date is the time today, `Yesterday`, the weekday this week, then
+  `4 Sep` / `4 Sep 2024`. With more than one account, each row names the
+  inbox it came to (`gmail`); mail forwarded in shows `↳` and the
+  original recipient.
+- **Letter** — the Date is the local calendar day with the local clock
+  (`16:00`) under it. Links open in sola-browser. **Open** / **Save** on
+  attached files (images in Paint, everything else in the browser).
+- **Toolbar** — New message, Attach, Reply, Reply all, Forward, then
+  Archive / Trash / Junk (and **Move to Inbox** in Junk, Trash and
+  Archive), then Mark as read/unread, Flag, Copy, Undo. In Drafts,
+  **Edit draft** replaces the reply buttons.
+- **Search** — type and press Enter. Searches Inbox, Sent, Archive and
+  Drafts on every account (plus Junk or Trash when that box is open),
+  up to 200 hits. Esc (twice if the field has focus) clears it.
 
-Links in the letter open in sola-browser.
+### Keys
+
+**x / i / a / d** — Junk / Inbox / Archive / Trash and advance.
+**u** undoes the last move. **w / s** or **↑ / ↓** — previous / next.
+These keys do nothing while you are typing in a field.
+
+Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
+⌘⇧F forward, ⌘⇧U mark read/unread, ⌘⇧L flag, ⌘⇧N get new mail.
+
+### Compose
+
+- **Reply** goes to the sender’s Reply-To when there is one (mailing
+  lists), else the sender. **Reply all** adds the original To and keeps
+  the original Cc, minus your own addresses.
+- **Forward** brings the original’s files along (remove any you don’t
+  want).
+- **Attach** — toolbar paperclip, **Attach** next to Send, or ⌘⇧A. Kit
+  file picker. Files go out as `multipart/mixed`.
+- **Send** shows *Sending…* until the server takes it; a failure keeps
+  the draft open. If the server refuses a recipient, the message names
+  the address and the server's reason — `5.1.2 Mailbox does not exist`
+  means there is no mailbox for that address there. Failures are also
+  written to `/opt/sola/log/app-sola-mail.log`.
+- **Save Draft** files it in Drafts and closes compose. Open it from
+  Drafts and press **Edit draft** to continue; sending (or saving again)
+  replaces the saved copy.
+- **Fields** — **Tab** / **Shift+Tab** move To → Cc → Subject → body
+  (Tab inside the body types a tab). Enter in To / Cc takes the top
+  suggestion, else moves on. A new message or forward starts in To; a
+  reply starts in the body.
+- **Suggestions** — typing two or more letters in To / Cc lists people
+  you have mail from or to (name or address match; no-reply senders
+  left out). Click one, or press Enter for the top one.
+- **Send** checks each address first and marks the one it can’t read
+  under its field.
+- **Esc**, **Cancel**, or clicking another message with an edited draft
+  shows a **Discard this draft?** card over the compose pane: Keep
+  Editing, Save Draft, or Discard. Esc first closes suggestions or the
+  From menu.
+- The toolbar stays live while composing: Archive / Trash / Junk act on
+  the selected message (the draft stays open); Reply / Forward replace an
+  untouched draft or ask about an edited one.
+
+### Erasing
+
+Trash and Junk have an erase button in the list header (and Mailbox →
+Erase…). Both ask before permanently deleting everything in that box on
+every account.
+
+### Connecting
+
+Mail opens on the last list immediately. A card at the bottom right
+lists accounts still connecting or that failed; failed accounts retry on
+their own (15 s, growing to 5 minutes) or now with **Retry Now** /
+Get New Mail.
+
+Switching to the Mail window checks the server right away (the open
+list and the mailbox counts); new mail also arrives on its own in the
+background. While a check is out, a small ring sits beside the message
+count — hover it: **Checking mail**.
 
 ## Not in this pass
 
 HTML engine (the letter is converted prose; CID images are files, not
-inline pictures), drag-drop onto compose, forward-with-attachments,
-full offline store. Mail opens on the last inbox snapshot while
-accounts connect (status at the bottom right). IDLE watches Inbox only.
+inline pictures), drag-drop onto compose, full offline store. IDLE
+watches Inbox only. Edit → Paste goes into the compose body only.

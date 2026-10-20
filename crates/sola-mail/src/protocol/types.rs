@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sola_kit::components::prose::ProseBlock;
 
 /// A file on a message (received or outgoing). Bytes are `Arc` so the
 /// worker → UI hop does not copy the payload.
@@ -21,32 +22,56 @@ pub struct Folder {
     pub total: u32,
 }
 
-/// Identity of a message on a specific IMAP account. UIDs are per
-/// mailbox *and* per account — never key UI state on `uid` alone.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// A list the sidebar can show: one canonical mailbox (combined across
+/// accounts) or a smart mailbox (an INBOX rule view).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FolderRef {
+    Mailbox(String),
+    Smart(String),
+}
+
+impl FolderRef {
+    pub fn inbox() -> Self {
+        Self::Mailbox("INBOX".into())
+    }
+
+    /// The canonical mailbox the rows live in (smart views are INBOX).
+    pub fn mailbox(&self) -> &str {
+        match self {
+            Self::Mailbox(name) => name,
+            Self::Smart(_) => "INBOX",
+        }
+    }
+
+    /// True for the canonical mailbox `name` (not a smart view).
+    pub fn is(&self, name: &str) -> bool {
+        matches!(self, Self::Mailbox(n) if n.eq_ignore_ascii_case(name))
+    }
+}
+
+/// Identity of a message: account + canonical mailbox + UID. IMAP UIDs
+/// are per mailbox *and* per account — never key UI state on `uid` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MailId {
     pub account: String,
+    pub folder: String,
     pub uid: u32,
 }
 
 impl MailId {
-    pub fn new(account: impl Into<String>, uid: u32) -> Self {
+    pub fn new(account: impl Into<String>, folder: impl Into<String>, uid: u32) -> Self {
         Self {
             account: account.into(),
+            folder: folder.into(),
             uid,
         }
     }
-}
 
-/// Canonical system mailbox order (matches apocrypha folder-list).
-const FOLDER_ORDER: &[(&str, u32)] = &[
-    ("INBOX", 0),
-    ("Sent", 1),
-    ("Drafts", 2),
-    ("Archive", 3),
-    ("Junk", 4),
-    ("Trash", 5),
-];
+    /// Same account, another mailbox / UID (the copy a MOVE left behind).
+    pub fn moved(&self, folder: impl Into<String>, uid: u32) -> Self {
+        Self::new(self.account.clone(), folder, uid)
+    }
+}
 
 /// Display label for a mailbox name (`INBOX` → `Inbox`).
 pub fn folder_label(name: &str) -> String {
@@ -57,34 +82,61 @@ pub fn folder_label(name: &str) -> String {
     }
 }
 
-fn folder_rank(name: &str) -> u32 {
-    for (n, rank) in FOLDER_ORDER {
-        if name.eq_ignore_ascii_case(n) {
-            return *rank;
-        }
-    }
-    99
-}
-
-/// Sort folders: Inbox, Sent, Drafts, Archive, Junk, Trash, then others A–Z.
-pub fn sort_folders(folders: &mut [Folder]) {
-    folders.sort_by(|a, b| {
-        let ra = folder_rank(&a.name);
-        let rb = folder_rank(&b.name);
-        ra.cmp(&rb).then_with(|| {
-            a.name
-                .to_ascii_lowercase()
-                .cmp(&b.name.to_ascii_lowercase())
-        })
-    });
-}
-
 /// Sidebar badge: unread only. Hidden when the folder is fully read.
-pub fn folder_count_badge(unread: u32, _total: u32) -> Option<String> {
-    if unread == 0 {
-        None
-    } else {
-        Some(unread.to_string())
+pub fn unread_badge(unread: u32) -> Option<String> {
+    (unread > 0).then(|| unread.to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageSummary {
+    pub id: MailId,
+    /// `Name <addr>` or a bare address, RFC 2047 decoded.
+    pub from: String,
+    pub to: Vec<String>,
+    pub subject: String,
+    /// Unix seconds (Date header, else INTERNALDATE). `0` when unknown.
+    pub date: i64,
+    pub seen: bool,
+    pub flagged: bool,
+    /// Original recipient when mail was forwarded in (`X-Forwarded-For`).
+    pub forwarded_for: Option<String>,
+    pub has_attachment: bool,
+}
+
+impl MessageSummary {
+    /// Newest first, then UID, then account (stable across combined IMAP).
+    pub fn cmp_recency(a: &Self, b: &Self) -> std::cmp::Ordering {
+        b.date
+            .cmp(&a.date)
+            .then_with(|| b.id.uid.cmp(&a.id.uid))
+            .then_with(|| b.id.account.cmp(&a.id.account))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageBody {
+    pub id: MailId,
+    pub from: String,
+    pub reply_to: Vec<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub subject: String,
+    /// Unix seconds; `0` when the Date header is missing.
+    pub date: i64,
+    /// The text/plain part (drafts reopen from it).
+    pub text: String,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub attachments: Vec<MailAttachment>,
+    /// Letter blocks for the reading pane, converted on the worker.
+    pub blocks: Vec<ProseBlock>,
+}
+
+impl MessageBody {
+    /// Copy / reply / forward text.
+    pub fn display_text(&self) -> String {
+        sola_kit::components::prose::flatten(&self.blocks)
     }
 }
 
@@ -100,183 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn sorts_system_folders_first() {
-        let mut folders = vec![
-            Folder {
-                name: "Zebra".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "Trash".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "INBOX".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "Archive".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "Sent".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "Junk".into(),
-                unread: 0,
-                total: 0,
-            },
-            Folder {
-                name: "Drafts".into(),
-                unread: 0,
-                total: 0,
-            },
-        ];
-        sort_folders(&mut folders);
-        let names: Vec<_> = folders.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(
-            names,
-            vec![
-                "INBOX", "Sent", "Drafts", "Archive", "Junk", "Trash", "Zebra"
-            ]
-        );
+    fn unread_badge_hides_zero() {
+        assert_eq!(unread_badge(0), None);
+        assert_eq!(unread_badge(5), Some("5".into()));
     }
 
     #[test]
-    fn count_badge_formats() {
-        assert_eq!(folder_count_badge(0, 0), None);
-        assert_eq!(folder_count_badge(0, 12), None);
-        assert_eq!(folder_count_badge(5, 12), Some("5".into()));
-    }
-
-    #[test]
-    fn synthesized_html_plain_keeps_magic_link() {
-        let token = "A".repeat(43);
-        let url = format!("https://auth.naturalethic.com/login/magic/verify?token={token}");
-        let text =
-            format!("Use this link to sign in to Wicket:\n\n  {url}\n\nIt expires shortly.\n");
-        let html = format!("<html><body>{}</body></html>", text.replace('\n', "<br/>"));
-        let body = MessageBody {
-            account: "you@example.com".into(),
-            uid: 1,
-            from: "Wicket <noreply@example.com>".into(),
-            to: "you@example.com".into(),
-            cc: String::new(),
-            subject: "Sign in to Wicket".into(),
-            date: String::new(),
-            html: Some(html),
-            text,
-            in_reply_to: None,
-            message_id: None,
-            attachments: Vec::new(),
-        };
-        let blocks = body.reading_blocks();
-        let has = blocks.iter().any(|b| match b {
-            sola_kit::components::prose::ProseBlock::Paragraph(runs)
-            | sola_kit::components::prose::ProseBlock::Quote(runs) => {
-                runs.iter().any(|r| r.url.as_deref() == Some(url.as_str()))
-            }
-            _ => false,
-        });
-        assert!(has, "{blocks:?}");
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageSummary {
-    #[serde(default)]
-    pub account: String,
-    pub uid: u32,
-    pub from: String,
-    pub to: String,
-    pub subject: String,
-    pub date: String,
-    /// Unix seconds from `date` (RFC 2822 or IMAP INTERNALDATE). Combined
-    /// lists sort on this, not the display string.
-    #[serde(default)]
-    pub date_sort: i64,
-    pub seen: bool,
-    pub forwarded_for: Option<String>,
-    pub has_attachment: bool,
-}
-
-impl MessageSummary {
-    pub fn id(&self) -> MailId {
-        MailId::new(&self.account, self.uid)
-    }
-
-    pub fn stamp_account(&mut self, account: &str) {
-        self.account = account.to_string();
-    }
-
-    /// Newest first, then UID, then account (stable across combined IMAP).
-    pub fn cmp_recency(a: &Self, b: &Self) -> std::cmp::Ordering {
-        b.date_sort
-            .cmp(&a.date_sort)
-            .then_with(|| b.uid.cmp(&a.uid))
-            .then_with(|| b.account.cmp(&a.account))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageBody {
-    #[serde(default)]
-    pub account: String,
-    pub uid: u32,
-    pub from: String,
-    pub to: String,
-    pub cc: String,
-    pub subject: String,
-    pub date: String,
-    pub html: Option<String>,
-    pub text: String,
-    pub in_reply_to: Option<String>,
-    pub message_id: Option<String>,
-    #[serde(skip)]
-    pub attachments: Vec<MailAttachment>,
-}
-
-impl MessageBody {
-    pub fn id(&self) -> MailId {
-        MailId::new(&self.account, self.uid)
-    }
-}
-
-impl MessageBody {
-    /// Copy / reply text. Prefers a real plaintext part; uses HTML when
-    /// the plain part is a generator stub (the usual HTML-mail case).
-    pub fn display_text(&self) -> String {
-        sola_kit::components::prose::flatten(&self.reading_blocks())
-    }
-
-    /// Letter blocks for the reading pane. Prefer HTML whenever it is
-    /// present — that is the part mail apps actually render.
-    pub fn reading_blocks(&self) -> Vec<sola_kit::components::prose::ProseBlock> {
-        use crate::protocol::html_text::to_blocks;
-        use sola_kit::components::prose::parse_plain;
-
-        if let Some(html) = &self.html {
-            if !html.trim().is_empty() {
-                // mail-parser lists text/plain parts in `html_body` too and
-                // `body_html` then synthesizes `<br/>` HTML. Prefer the real
-                // plaintext so bare URLs (Wicket magic links) stay links.
-                if crate::protocol::html_text::is_synthesized_plain_html(html) {
-                    if !self.text.trim().is_empty() {
-                        return parse_plain(&self.text);
-                    }
-                }
-                return to_blocks(html);
-            }
-        }
-        if !self.text.trim().is_empty() {
-            return parse_plain(&self.text);
-        }
-        Vec::new()
+    fn smart_rows_live_in_inbox() {
+        assert_eq!(FolderRef::Smart("Receipts".into()).mailbox(), "INBOX");
+        assert!(FolderRef::Mailbox("Trash".into()).is("trash"));
+        assert!(!FolderRef::Smart("Trash".into()).is("Trash"));
     }
 }

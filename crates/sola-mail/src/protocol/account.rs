@@ -3,9 +3,9 @@
 //! Protocol code (IMAP/SMTP/IDLE) needs a plain password string and does
 //! not depend on bus encryption. Construct once at the worker boundary.
 
-use sola_bus::topics::{MailAccount, MailConfig, MailRule, mail_addr_key};
+use sola_bus::topics::{MailAccount, MailConfig, mail_addr_key};
 
-/// Credentials + rules used by the protocol layer.
+/// Credentials used by the protocol layer.
 #[derive(Debug, Clone)]
 pub struct Account {
     pub email: String,
@@ -18,7 +18,16 @@ pub struct Account {
     pub aliases: Vec<String>,
     pub imap_enabled: bool,
     pub smtp_enabled: bool,
-    pub rules: Vec<MailRule>,
+}
+
+/// Everything an open IMAP session depends on. Two accounts with equal
+/// keys can keep their sessions across a config change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnKey {
+    imap_host: String,
+    imap_port: u16,
+    username: String,
+    password: String,
 }
 
 impl Account {
@@ -34,11 +43,10 @@ impl Account {
             aliases: cfg.aliases.clone(),
             imap_enabled: cfg.imap_enabled,
             smtp_enabled: cfg.smtp_enabled,
-            rules: cfg.rules.clone(),
         }
     }
 
-    pub fn from_extra(acc: &MailAccount, rules: &[MailRule]) -> Self {
+    pub fn from_extra(acc: &MailAccount) -> Self {
         Self {
             email: acc.email.clone(),
             imap_host: acc.imap_host.clone(),
@@ -50,16 +58,24 @@ impl Account {
             aliases: acc.aliases.clone(),
             imap_enabled: acc.imap_enabled,
             smtp_enabled: acc.smtp_enabled,
-            rules: rules.to_vec(),
         }
     }
 
     pub fn id(&self) -> String {
-        let key = sola_bus::topics::mail_addr_key(&self.email);
+        let key = mail_addr_key(&self.email);
         if !key.is_empty() {
             key
         } else {
             self.username.to_ascii_lowercase()
+        }
+    }
+
+    pub fn conn_key(&self) -> ConnKey {
+        ConnKey {
+            imap_host: self.imap_host.clone(),
+            imap_port: self.imap_port,
+            username: self.username.clone(),
+            password: self.password.clone(),
         }
     }
 
@@ -71,7 +87,7 @@ impl Account {
             out.push(inbox);
         }
         for extra in &cfg.accounts {
-            let a = Self::from_extra(extra, &cfg.rules);
+            let a = Self::from_extra(extra);
             if a.is_configured() && !out.iter().any(|o| o.id() == a.id()) {
                 out.push(a);
             }
@@ -82,12 +98,8 @@ impl Account {
     /// Inbox + extra SMTP identities. Extra accounts are first so a
     /// Gmail From uses Gmail SMTP even if the address is also listed
     /// as an inbox alias.
-    pub fn senders_from_config(cfg: &MailConfig) -> Vec<Self> {
-        let mut v: Vec<Self> = cfg
-            .accounts
-            .iter()
-            .map(|a| Self::from_extra(a, &cfg.rules))
-            .collect();
+    fn senders_from_config(cfg: &MailConfig) -> Vec<Self> {
+        let mut v: Vec<Self> = cfg.accounts.iter().map(Self::from_extra).collect();
         v.push(Self::from_config(cfg));
         v
     }
@@ -113,6 +125,21 @@ impl Account {
         }
         mail_addr_key(&self.email) == key || self.aliases.iter().any(|a| mail_addr_key(a) == key)
     }
+
+    /// Gmail's SMTP files every message in `[Gmail]/Sent Mail` itself;
+    /// appending our own copy would show it twice.
+    pub fn smtp_saves_sent(&self) -> bool {
+        let h = self.smtp_host.to_ascii_lowercase();
+        h.ends_with("gmail.com") || h.ends_with("googlemail.com")
+    }
+}
+
+/// SMTP account for this From: extra accounts first, then inbox.
+pub fn smtp_for(cfg: &MailConfig, from: &str) -> Account {
+    Account::senders_from_config(cfg)
+        .into_iter()
+        .find(|a| a.owns_from(from) && a.can_send())
+        .unwrap_or_else(|| Account::from_config(cfg))
 }
 
 #[cfg(test)]
@@ -142,17 +169,22 @@ mod tests {
         let gmail = smtp_for(&cfg, "Me <me@gmail.com>");
         assert_eq!(gmail.smtp_host, "smtp.gmail.com");
         assert_eq!(gmail.password, "app-pass");
+        assert!(gmail.smtp_saves_sent());
         let alias = smtp_for(&cfg, "hello@wicket.example");
         assert_eq!(alias.smtp_host, "mail.wicket.example");
+        assert!(!alias.smtp_saves_sent());
         let unknown = smtp_for(&cfg, "stranger@example.com");
         assert_eq!(unknown.smtp_host, "mail.wicket.example");
     }
-}
 
-/// SMTP account for this From: extra accounts first, then inbox.
-pub fn smtp_for(cfg: &MailConfig, from: &str) -> Account {
-    Account::senders_from_config(cfg)
-        .into_iter()
-        .find(|a| a.owns_from(from) && a.can_send())
-        .unwrap_or_else(|| Account::from_config(cfg))
+    #[test]
+    fn conn_key_ignores_smtp_and_aliases() {
+        let mut a = Account::from_config(&MailConfig::default());
+        let key = a.conn_key();
+        a.aliases.push("x@y.z".into());
+        a.smtp_host = "smtp.example".into();
+        assert_eq!(a.conn_key(), key);
+        a.password = "changed".into();
+        assert_ne!(a.conn_key(), key);
+    }
 }
