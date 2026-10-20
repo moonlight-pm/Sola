@@ -122,6 +122,9 @@ enum OathAction {
         #[arg(long)]
         debug: bool,
     },
+    /// Build each from a plan in `oath build`'s sandbox and upload packs,
+    /// plans and sources to Oath's origin (needs the owner's go-ahead).
+    Publish,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -286,6 +289,7 @@ fn main() {
         Commands::Oath { action } => match action {
             OathAction::Stage { debug } => oath::run(oath::Action::Stage, !debug),
             OathAction::Apply { debug } => oath::run(oath::Action::Apply, !debug),
+            OathAction::Publish => oath::run(oath::Action::Publish, true),
         },
     }
 }

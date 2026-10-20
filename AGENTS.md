@@ -171,7 +171,10 @@ docs/
   `oath apply`s them, and PID 1 restarts the `svc:sola-*` that run from
   them. Same rule: only with express permission for that apply.
   `cargo make oath stage` (build + assemble under `target/oath/`, no
-  catalog change) is fine without asking.
+  catalog change) is fine without asking. `cargo make oath publish`
+  (plan builds in `oath build`'s sandbox, then upload to
+  `store.oath.moonlight.pm` with `~/.config/oath/origin.env`) is
+  outward-facing: only with express permission, from a committed tree.
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
@@ -212,6 +215,7 @@ cargo make install <app> --debug                  # Debug install
 cargo make install <app> --watch                  # Watch + reinstall (release)
 cargo make oath stage [--debug]                   # Oath: build + assemble package trees
 cargo make oath apply [--debug]                   # Oath: stage + oath store/set/apply (permission)
+cargo make oath publish                           # Oath: plan builds + upload to the origin (permission)
 ```
 
 Alias configured in `.cargo/config.toml`:

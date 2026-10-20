@@ -8,10 +8,17 @@
 //!   this machine has live) and `sudo oath apply`s them together. PID 1
 //!   restarts the services that run from a package that moved. Like
 //!   `cargo make install`, apply only with the owner's go-ahead.
+//! - `publish` builds each package from a plan in `oath build`'s sandbox
+//!   and uploads packs, plans and sources to Oath's origin
+//!   ([`publish`]). Outward-facing: only with the owner's go-ahead.
 
 mod catalog;
+mod origin;
 mod packages;
+mod plan;
+mod publish;
 mod stage;
+mod vendor;
 
 use std::process::exit;
 
@@ -21,12 +28,20 @@ use stage::Staged;
 pub enum Action {
     Stage,
     Apply,
+    Publish,
 }
 
 pub fn run(action: Action, release: bool) {
     if !catalog::on_oath() {
         eprintln!("cargo make oath: not an Oath machine (no /oath/INDEX.md)");
         exit(1);
+    }
+    if let Action::Publish = action {
+        if let Err(e) = publish::publish() {
+            eprintln!("cargo make oath publish: {e}");
+            exit(1);
+        }
+        return;
     }
     let staged = stage::stage(release);
     if let Action::Apply = action

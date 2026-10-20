@@ -8,6 +8,9 @@ pub struct Package {
     pub name: &'static str,
     /// Binaries in `bin/`. Each is also the crate that builds it.
     pub bins: &'static [&'static str],
+    /// Packs the plan builds with, beyond Oath's base set (their run-time
+    /// needs come along).
+    pub build: &'static [&'static str],
     /// Packages this one loads or runs at run time, pinned at apply to
     /// the hash this machine has live (or the one just stored, for
     /// another package in this list).
@@ -25,6 +28,13 @@ impl Package {
     }
 }
 
+/// Oath's base build packs: the toolchain and the GNU tools every plan
+/// builds with (oath-make's `BASE`).
+pub const BASE: &[&str] = &[
+    "gcc", "glibc", "bash", "coreutils", "sed", "grep", "gawk", "findutils", "diffutils",
+    "patch", "tar", "gzip", "xz", "bzip2", "make",
+];
+
 /// In apply order: a package comes after the ones it needs.
 pub const PACKAGES: &[Package] = &[
     Package {
@@ -41,6 +51,7 @@ pub const PACKAGES: &[Package] = &[
             "sola-oath",
             "sola-kvm",
         ],
+        build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
             "gcc",
             "wayland",
@@ -61,6 +72,7 @@ pub const PACKAGES: &[Package] = &[
     Package {
         name: "sola-browser",
         bins: &["sola-browser"],
+        build: &["rust", "pkgconf", "cef"],
         needs: &["sola", "cef", "libpulse"],
         share: false,
         cef: true,
@@ -68,6 +80,7 @@ pub const PACKAGES: &[Package] = &[
     Package {
         name: "sola-design",
         bins: &["sola-design"],
+        build: &["rust", "pkgconf", "cef"],
         needs: &["sola", "cef", "libpulse"],
         share: false,
         cef: true,

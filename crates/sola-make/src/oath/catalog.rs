@@ -22,6 +22,47 @@ pub fn live_hash(id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{id} has no live hash (is it present?)"))
 }
 
+/// The packs `pkg:<name>` needs at run time, as linked here: `(id, hash)`.
+pub fn live_needs(id: &str) -> Result<Vec<(String, String)>, String> {
+    let out = run(Command::new("oath").args(["--json", "get", id]))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("oath get {id}: {e}"))?;
+    let needs = v["actual"]["needs"].as_array().cloned().unwrap_or_default();
+    Ok(needs
+        .iter()
+        .filter_map(|n| Some((n["id"].as_str()?.to_string(), n["hash"].as_str()?.to_string())))
+        .collect())
+}
+
+/// `oath fmt -w`: the plan file in its only legal form.
+pub fn fmt(plan: &Path) -> Result<(), String> {
+    run(Command::new("oath").args(["fmt", "-w"]).arg(plan)).map(drop)
+}
+
+/// File and pin `plan:<name>` from `plan`; returns the plan's hash.
+pub fn set_plan(name: &str, plan: &Path) -> Result<String, String> {
+    let out = run(Command::new("sudo")
+        .args(["oath", "--json", "set", &format!("plan:{name}"), "--from-file"])
+        .arg(plan))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("oath set plan:{name}: {e}"))?;
+    v["hash"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("oath set plan:{name}: no hash in output"))
+}
+
+/// `oath build plan:<name>` in its sandbox; returns the product's hash.
+pub fn build(name: &str) -> Result<String, String> {
+    let out = run(Command::new("sudo").args(["oath", "--json", "build", &format!("plan:{name}")]))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("oath build plan:{name}: {e}"))?;
+    v["product"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("oath build plan:{name}: no product in output"))
+}
+
 /// Put `dir` into the store as a realization of `id`; returns its hash.
 pub fn store(id: &str, dir: &Path) -> Result<String, String> {
     let out = run(Command::new("sudo")
