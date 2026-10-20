@@ -276,12 +276,15 @@ const SESSION_TOPICS: &[TopicKind] = &[
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let live_tmux_at_startup: Option<HashSet<String>> =
-            tmux::list_sessions().map(|v| v.into_iter().collect());
-        match &live_tmux_at_startup {
+        let listed = tmux::list_sessions();
+        match &listed {
+            Some(s) if s.is_empty() => tracing::info!(
+                "no live sola-* tmux sessions at boot (tmux was lost); rebuilding saved tabs"
+            ),
             Some(s) => tracing::info!(count = s.len(), "live sola-* tmux sessions at boot"),
             None => tracing::warn!("tmux list-sessions failed at boot; admitting all stickies"),
         }
+        let live_tmux_at_startup = state::boot_snapshot(listed);
         let app = Self {
             tabs: state::Tabs::default(),
             active: None,

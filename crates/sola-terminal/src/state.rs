@@ -491,6 +491,16 @@ pub fn from_layout(layout: &PaneLayout, metas: &mut Vec<PaneMeta>) -> PaneNode {
     }
 }
 
+/// The boot snapshot `reconcile_layout` prunes against. No live `sola-*`
+/// session at all means the tmux server itself was lost (a reboot, or
+/// its service restarted): every saved tab is then rebuilt with its
+/// layout, each pane a new session in its saved cwd (`None` admits
+/// everything, and attaching creates a missing session). With some
+/// live, a dead leaf is a pane whose shell exited, and it is pruned.
+pub fn boot_snapshot(listed: Option<Vec<String>>) -> Option<HashSet<String>> {
+    listed.filter(|v| !v.is_empty()).map(|v| v.into_iter().collect())
+}
+
 /// Prune leaves whose tmux session isn't in `live` (when the boot
 /// snapshot is known). Returns the surviving layout, or `None` when
 /// every leaf is dead (the whole tab is retracted).
@@ -769,6 +779,21 @@ mod tests {
         assert!(reconcile_layout(layout.clone(), &Some(empty)).is_none());
         // Unknown snapshot → admit everything unchanged.
         assert_eq!(reconcile_layout(layout.clone(), &None), Some(layout));
+    }
+
+    #[test]
+    fn a_lost_tmux_server_rebuilds_every_saved_tab() {
+        let layout = PaneLayout::Leaf {
+            tmux_session: "sola-a".into(),
+            cwd: Some("/home/Projects".into()),
+        };
+        // After a reboot no sola-* session is live: the tab comes back.
+        let snap = boot_snapshot(Some(Vec::new()));
+        assert!(snap.is_none());
+        assert_eq!(reconcile_layout(layout.clone(), &snap), Some(layout.clone()));
+        // With others live, a dead pane is one whose shell exited.
+        let snap = boot_snapshot(Some(vec!["sola-b".into()]));
+        assert!(reconcile_layout(layout, &snap).is_none());
     }
 
     #[test]
