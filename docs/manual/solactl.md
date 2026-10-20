@@ -307,9 +307,10 @@ not use Workspaces unless you ask for that rail.
 
 ### Phone API
 
-The daemon also serves HTTP on `0.0.0.0:27419`. Its public name is
-`https://bot.sola.computer`, with TLS at a proxy. Open **27419/tcp** on the
-Sola machine to that proxy.
+The daemon also serves HTTP on `0.0.0.0:27419`, in every session (see
+[Process manager](process-manager.md#managed-components)). For a phone,
+put a TLS proxy in front of it and open **27419/tcp** on the Sola machine
+to that proxy only.
 
 ```text
 GET  /health
