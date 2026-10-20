@@ -166,6 +166,12 @@ docs/
 - **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.
 - Use `cargo make build` (or `cargo build`) to verify a change compiles. Stop there. Do not install just because a plan or task description says "install and smoke" — that step is for the user to run.
 - Install is local: binaries go to `/opt/sola/bin/`.
+- **On Oath** (`/oath/INDEX.md` exists), `cargo make oath apply` is the
+  install: it stores Sola's package trees with `oath store`, pins them and
+  `oath apply`s them, and PID 1 restarts the `svc:sola-*` that run from
+  them. Same rule: only with express permission for that apply.
+  `cargo make oath stage` (build + assemble under `target/oath/`, no
+  catalog change) is fine without asking.
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
@@ -204,6 +210,8 @@ cargo make install                                # Release build + install all 
 cargo make install <app>…                         # Release-build + install one or more apps
 cargo make install <app> --debug                  # Debug install
 cargo make install <app> --watch                  # Watch + reinstall (release)
+cargo make oath stage [--debug]                   # Oath: build + assemble package trees
+cargo make oath apply [--debug]                   # Oath: stage + oath store/set/apply (permission)
 ```
 
 Alias configured in `.cargo/config.toml`:

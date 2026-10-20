@@ -7,7 +7,12 @@ use std::path::PathBuf;
 
 const CEF_VERSION: &str = include_str!("../../cef-version").trim_ascii_end();
 
+/// `SOLA_CEF_DIR` (a packaged CEF, e.g. Oath's `pkg:cef`), else the
+/// `cargo make install-cef` cache. Its `Release/` is baked into RUNPATH.
 fn cef_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SOLA_CEF_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
     let cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -42,4 +47,6 @@ fn main() {
     );
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../cef-version");
+    println!("cargo:rerun-if-env-changed=SOLA_CEF_DIR");
+    println!("cargo:rerun-if-env-changed=XDG_CACHE_HOME");
 }
