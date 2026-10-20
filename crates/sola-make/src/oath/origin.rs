@@ -52,8 +52,24 @@ impl Origin {
         })
     }
 
-    /// Upload `file` as `key`. Keys named by a hash never change.
+    /// Upload `file` as `key`, three tries (R2 has reset a connection
+    /// mid-upload once). Keys named by a hash never change.
     pub fn put(&self, key: &str, file: &Path) -> Result<(), String> {
+        let mut last = String::new();
+        for wait in [0, 2, 10] {
+            std::thread::sleep(std::time::Duration::from_secs(wait));
+            match self.put_once(key, file) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("[publish] {e}; retrying");
+                    last = e;
+                }
+            }
+        }
+        Err(last)
+    }
+
+    fn put_once(&self, key: &str, file: &Path) -> Result<(), String> {
         let url = format!("{}/{key}", self.s3);
         let ctype = if key.ends_with(".tar") {
             "Content-Type: application/x-tar"
