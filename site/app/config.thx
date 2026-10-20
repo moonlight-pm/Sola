@@ -1,0 +1,66 @@
+## Process env for the sola.moonlight.pm site container.
+##
+## Listen (first set wins):
+##   PORT                Wicket-assigned (preferred)
+##   WICKET_PORT_HTTP    Wicket named port `http`
+##   THOXA_PORT          local / image default (8089 locally; image 8080)
+##
+##   THOXA_STATIC        asset root (default site/web)
+##   THOXA_MANUAL        manual chapters (default docs/manual)
+
+import env, { getenvOr } from "std/env"
+import { Has, Not, May } from "std/fallible"
+import { parseUInt } from "std/string"
+
+export fn listenPort() -> Int64 {
+    match portFromEnv("PORT") {
+        Has(n) => n
+        Not {
+            match portFromEnv("WICKET_PORT_HTTP") {
+                Has(n) => n
+                Not {
+                    match portFromEnv("THOXA_PORT") {
+                        Has(n) => n
+                        Not => 8089
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn portFromEnv(name!: String) -> May<Int64> {
+    match parseUInt(env.getenv(name)) {
+        Not => Not()
+        Has(n) {
+            if n > 0 {
+                if n < 65536 {
+                    Has(n)
+                } else {
+                    Not()
+                }
+            } else {
+                Not()
+            }
+        }
+    }
+}
+
+export fn staticRoot() -> String {
+    directory("THOXA_STATIC", "site/web")
+}
+
+export fn manualRoot() -> String {
+    directory("THOXA_MANUAL", "docs/manual")
+}
+
+## A directory from the environment; unset or empty means `fallback`, which
+## is relative to the repo root (where `thoxa run site` starts).
+fn directory(name!: String, fallback!: String) -> String {
+    let root = getenvOr(name, fallback)
+    if root.isEmpty() {
+        fallback
+    } else {
+        root
+    }
+}

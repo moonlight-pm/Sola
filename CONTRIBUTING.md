@@ -21,7 +21,8 @@ There is no GNU Makefile. `cargo make` is a Cargo alias for `sola-make`
 - **NixOS** x86_64 (`nixos-unstable` or `nixos-25.05`+).
 - **Working GPU stack** — Mesa (Intel/AMD) or NVIDIA proprietary.
 - **sudo** — first install creates `/opt/sola/` as root if needed.
-- **Repo access** — SSH key on GitHub, collaborator on `moonlight-pm/Sola`.
+- **Source** — the repo is public:
+  `git clone https://github.com/moonlight-pm/Sola`.
 - **Rust** — `rustc` **1.85+** / `cargo` (workspace edition 2024). rustup
   stable is fine. Skip the rustup snippet below if `rustc --version` already
   qualifies.
@@ -46,7 +47,7 @@ tarball:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    sola.url = "git+ssh://git@github.com/moonlight-pm/Sola";
+    sola.url = "git+https://github.com/moonlight-pm/Sola";
   };
 
   outputs = { self, nixpkgs, sola, ... }: {
@@ -145,7 +146,7 @@ sudo mkdir -p /opt/sola/bin /opt/sola/share /opt/sola/log
 ## 2. First-time build
 
 ```sh
-git clone git@github.com:moonlight-pm/Sola
+git clone https://github.com/moonlight-pm/Sola
 cd Sola
 cargo make install-cef    # required: ~/.cache/sola/cef-<version>/  (~1.5GB, once)
 cargo make install        # builds the workspace, copies to /opt/sola/bin

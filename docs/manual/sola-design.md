@@ -1,8 +1,8 @@
-# sola-design
+# Design
 
-A design canvas where the design is plain HTML/CSS in your project. There
-are no drawing tools: an agent edits the files and Design shows them live.
-You look, pan, zoom, point, and try things.
+Design is a canvas where the design is plain HTML and CSS in your project.
+There are no drawing tools: an agent edits the files and Design shows them
+live. You look, pan, zoom, point, and try things.
 
 ## Files
 
@@ -101,8 +101,9 @@ every `design/<name>/` with a `canvas.toml` — and picks up new ones within
 a couple of seconds. `+` on a project makes an empty canvas
 (**New Canvas…**, ⌘⇧N). Drag a canvas to reorder it within its project;
 drag a project's header to move the whole project. The order is kept.
-**Drop Project** forgets the open canvas's project (`solactl design
-project.remove --path <folder>` forgets any); files are untouched.
+**Drop Project** forgets the open canvas's project, and
+`solactl design project.remove --path <folder>` forgets any project. The
+files are untouched.
 
 ## Look
 
@@ -189,8 +190,9 @@ background and reopen on the next call.
 Boards nobody is looking at slow down to 1 frame a second: a canvas you are
 not on, and boards panned out of view. They keep painting, so a board you
 come back to shows its page at once. While another window has focus, the
-boards in view run animations at 1 frame a second too. A board that is loading or that an agent is reading always
-runs at full speed, so reloads show at once.
+boards in view run animations at 1 frame a second too. A board that is
+loading or that an agent is reading always runs at full speed, so reloads
+show at once.
 
 Design keeps its boards within what the machine has free. Every board is a
 real browser page and costs memory (about half a gigabyte for a tall page at
@@ -215,29 +217,33 @@ and an artboard reloading after its files changed.
 
 ## Share
 
-Every canvas has a live link, `https://design.moonlight.pm/<token>/`, where
-the token is 26 random characters. The link button on the bottom bar (or
-**Share → Copy Link**, ⌘⇧L) copies the link of the canvas on screen; the
-refresh button beside it (or **Share → New Link**) makes a new one, copies
-it, and the old link stops working. Agents get it with `solactl design share`.
+Every canvas has a live link, `<public_url>/<token>/` (for example
+`https://design.moonlight.pm/<token>/`), where the token is 26 random
+characters. The link button on the bottom bar (or **Share → Copy Link**,
+⌘⇧L) copies the link of the canvas on screen; the refresh button beside it
+(or **Share → New Link**) makes a new one, copies it, and the old link stops
+working. Agents get it with `solactl design share`.
 
 The link shows the canvas as it is right now, laid out and handled as in
-Design — the same artboard heights Design measured, each board's title
-above it, its sections, notes, arrows, and flows (Notes and Flows buttons on
-its bar, the same keys), no scrollbars: the pages are live, right-drag pans, the wheel zooms, **Fit** (0)
-frames everything (no element picking). On a phone the pages are for
-looking only: one finger pans anywhere, a pinch zooms, and there is no hint. When a file changes, viewers' pages reload within a couple
-of seconds. A link only reaches its own canvas: its folder, shared files in
-`design/`, its `root` folder, and the project files its artboards load —
-nothing else in the project, and no dotfiles. Links work while Design is
-running. There is no password or expiry: anyone with a link sees the canvas,
-and **New Link** is how you cut one off.
+Design: the same artboard heights Design measured, each board's title above
+it, and its sections, notes, arrows, and flows (Notes and Flows buttons on
+its bar, with the same keys). There are no scrollbars. The pages are live,
+right-drag pans, the wheel zooms, and **Fit** (0) frames everything; there
+is no element picking. On a phone the pages are for looking only: one
+finger pans anywhere, a pinch zooms, and there is no on-screen hint.
+
+When a file changes, viewers' pages reload within a couple of seconds. A
+link only reaches its own canvas: its folder, shared files in `design/`,
+its `root` folder, and the project files its artboards load. Nothing else
+in the project is served, and no dotfiles. Links work while Design is
+running. There is no password or expiry: anyone with a link sees the
+canvas, and **New Link** is how you cut one off.
 
 Design serves the links itself on `127.0.0.1:47820` and runs a Cloudflare
-Tunnel connector (`cloudflared`) that forwards `design.moonlight.pm` there.
+Tunnel connector (`cloudflared`) that forwards the `public_url` host there.
 Settings are in `~/.config/sola/design/share.toml` (`public_url`, `listen`,
-`tunnel_token`, `cloudflared`; owner-only — the token is a secret); tokens
-are in `share.json` beside it. Without a `tunnel_token` the links are local
-(`http://127.0.0.1:47820/…`). The connector logs to
-`/opt/sola/log/design-tunnel.log`.
+`tunnel_token`, `cloudflared`). The file is owner-only, because the token
+is a secret; tokens are in `share.json` beside it. Without a `public_url`
+and a `tunnel_token`, the links are local (`http://127.0.0.1:47820/…`).
+The connector logs to `/opt/sola/log/design-tunnel.log`.
 

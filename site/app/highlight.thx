@@ -1,0 +1,61 @@
+## Code blocks in the manual → spans.
+##
+## Shell, Nix, and TOML blocks colour comments: a `#` at the start of a word
+## runs to the end of the line. Anything else is plain text.
+
+let newline = 10
+let tab = 9
+let space = 32
+let hash = 35
+
+## Highlight `text` written in `language`.
+export fn code(language!: String, text!: String) -> Array<Node> {
+    if language == "bash" or language == "sh" or language == "nix" or language == "toml" {
+        shell(Bytes.fromString(text))
+    } else {
+        mut nodes: Array<Node> = []
+        nodes.append(Text(text))
+        nodes
+    }
+}
+
+fn shell(source!: Bytes) -> Array<Node> {
+    mut nodes: Array<Node> = []
+    mut run = 0
+    mut index = 0
+    while index < source.count {
+        let byte = source.get(index)
+        let wordStart = index == 0 or isBlank(source.get(index - 1))
+        if byte == hash and wordStart {
+            nodes.append(Text(slice(source, run, index)))
+            let stop = lineEnd(source, index)
+            nodes.append(<span class="tk-cm">{slice(source, index, stop)}</span>)
+            index = stop
+            run = index
+        } else {
+            index = index + 1
+        }
+    }
+    nodes.append(Text(slice(source, run, source.count)))
+    nodes
+}
+
+fn lineEnd(source!: Bytes, at!: Int64) -> Int64 {
+    mut index = at
+    while index < source.count and source.get(index) != newline {
+        index = index + 1
+    }
+    index
+}
+
+fn slice(source!: Bytes, at!: Int64, stop!: Int64) -> String {
+    if stop > at {
+        source.slice(at, stop).toString()
+    } else {
+        ""
+    }
+}
+
+fn isBlank(byte!: Int64) -> Bool {
+    byte == space or byte == tab or byte == newline
+}

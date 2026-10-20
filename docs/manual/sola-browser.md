@@ -1,89 +1,55 @@
-# sola-browser
+# Browser
 
-**Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
-fill / **Create login** / passkey **get** (Google and Gemini Exchange 2FA)
-and **create**.
-Tab rows show the site **favicon**. Downloads auto-save to `~/Downloads`. Page ⌘C / ⌘V and triple-click select
-work on form fields and body text. ⌘-click a link to open it in a
-background tab. A page `window.open` (database console, SSH terminal)
-opens as a new tab, not a popup window. Right-click the page for a small kit menu. Hold back or
-forward to jump in that tab’s session history. Site **notifications**
-leave the page and show as Sola desk cards (permission prompt first).
-`alert()`, `confirm()`, and `prompt()` are a kit dialog over the page
-(OK / Cancel; prompt has a field). Leave-page confirms use Leave / Stay.
-Escape cancels (OK on `alert`). A second dialog waits until the first is
-answered.
-**Developer Tools** (Browser menu, or the page menu) docks Chromium’s
-inspector under the page in the same tab. Choose the action again to
-close it. Right-click → Inspect Element opens it on that node.
-The location bar is **plain text** on the chrome until you click it (or
-`⌘L`); then it is an edit field. While idle, `https://` and the query
-string are omitted (the path stays). Typing searches **visit history**
-(top five matches as a list under the chrome — the field is not
-autocompleted and **keeps focus**). The first row is not selected for
-you. ↓ / `Ctrl+N` and ↑ / `Ctrl+P`, or a click, highlight a row. Enter
-loads that highlighted row, or the URL you typed in this tab, or Kagi’s
-first result for a search.
-**Shift+Enter** always loads the Kagi results page. Further typing
-refines the list. A new blank tab that names a site already open
-switches to that tab and closes the blank. The exact URL of another
-open tab is focused instead of loaded again.
-`⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
-`⌘R` reloads; `⌘⇧R` (Browser → **Hard Reload**) bypasses HTTP cache for
-this navigation. Shift-click the reload button does the same. It does
-not empty the profile disk cache.
-Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
-including Steam store trailers, plays on the codecs-enabled CEF used on
-this desk (`scripts/cef-codecs/`); the public `install-cef` tarball does
-not include those codecs.
+Browser is Sola's web browser. It is one binary, `sola-browser`: Sola's
+own chrome, built with iced (tabs, location bar, session, profiles, and a
+Bitwarden vault when built with the `bitwarden` feature), around a
+Chromium (CEF) engine that renders off-screen on the CPU.
 
-## What it is
+## Launch
 
-Sola’s product web browser: **iced chrome** (tabs, omnibox, session, profiles,
-Bitwarden vault when built with `bitwarden`) plus a **CEF** CPU OSR engine in
-one binary, `sola-browser`.
+Open **Browser** from the shell launcher, or run
+`/opt/sola/bin/sola-browser`.
 
-Launch from the shell launcher (**Browser**), or
-`/opt/sola/bin/sola-browser`. The same window is also a call-plane owner:
-`solactl browser` lists tabs, opens/moves them, and snapshots/clicks the
-page (YAML + refs). See [solactl](solactl.md). Chrome or sola-call down
-fails; it does not launch a window.
+The same window is also a call-plane owner: `solactl browser` lists tabs,
+opens and moves them, and snapshots and clicks the page (YAML with refs).
+See [solactl](solactl.md). If the browser chrome or `sola-call` is not
+running, `solactl browser` fails; it does not launch a window.
 
 ## Default URL handler
 
-Sola routes web opens to **sola-browser**. There is no Helium (or other
-browser) fallback.
+Sola routes web opens to Browser. There is no Helium (or other browser)
+fallback.
 
 | Path | Behavior |
 |------|----------|
-| Terminal / mail / arcade link click | `sola_core::open_url` → `chrome.sock` if chrome is up, else spawn |
-| `solactl open <url>` | same |
-| Bus `Topic::OpenUrl` | live chrome opens a tab; shell only spawns if chrome is down |
+| Link click in Terminal, Mail, or Arcade | `sola_core::open_url`: hands the URL to `chrome.sock` if the browser is running, else starts it |
+| `solactl open <url>` | Same |
+| Bus `Topic::OpenUrl` | A running browser opens a tab; the shell starts the browser only if it is not running |
 | Terminal `open` / `xdg-open` | `xdg-open`; MIME via `sola-browser.desktop`; a second process hands off and exits |
 
-`sola-browser.desktop` `Exec` is `/opt/sola/bin/sola-browser %u` (same
-chrome.sock handoff as `solactl open`). It claims `x-scheme-handler/http`,
-`https`, `about`, and `unknown`, plus `text/html`, `application/xhtml+xml`,
-and `application/pdf`, so GIO / `xdg-open` (terminal `open`) do not pick
-Chrome or another handler for those types. An HTML or PDF file path
-(absolute or relative to the calling process) is opened as `file://` —
-not `https://apocrypha/…`.
+`sola-browser.desktop` `Exec` is `/opt/sola/bin/sola-browser %u` (the
+same `chrome.sock` handoff as `solactl open`). It claims
+`x-scheme-handler/http`, `https`, `about`, and `unknown`, plus
+`text/html`, `application/xhtml+xml`, and `application/pdf`, so GIO and
+`xdg-open` (terminal `open`) do not pick Chrome or another handler for
+those types. An HTML or PDF file path (absolute or relative to the
+calling process) is opened as `file://`, not as `https://apocrypha/…`.
 
-If a Browser window is already open, an outside open **raises it**
-to the top (same as a click) and focuses the new tab. A second
-`sola-browser` process still hands off and exits.
+If a Browser window is already open, an outside open **raises it** to the
+top (the same as a click) and focuses the new tab.
 
-Only **one** iced chrome runs. A second `sola-browser` (or `solactl open`)
-hands the URL to `~/.local/share/sola/browser/chrome.sock` and exits.
+Only **one** browser chrome runs. A second `sola-browser` (or
+`solactl open`) hands the URL to
+`~/.local/share/sola/browser/chrome.sock` and exits.
 
-Install copies the desktop file to `~/.local/share/applications/` and
-re-registers MIME defaults from every `sola-*.desktop` `MimeType=` line.
-Override the binary with `SOLA_BROWSER`. There is **no** alternate browser
-fallback — if the binary is missing, open fails.
+Installing Sola copies the desktop file to `~/.local/share/applications/`
+and re-registers MIME defaults from every `sola-*.desktop` `MimeType=`
+line. Override the binary with `SOLA_BROWSER`. If the binary is missing,
+the open fails.
 
 ## Profiles
 
-A **profile** is a separate web identity + tab workspace (D8).
+A **profile** is a separate web identity and tab workspace.
 
 | Piece | Location |
 |-------|----------|
@@ -92,281 +58,347 @@ A **profile** is a separate web identity + tab workspace (D8).
 | CEF cookies / storage | `~/.local/share/sola/browser/profiles/<uuid>/cef/` |
 | Discardable cache | `~/.cache/sola/browser/profiles/<uuid>/` |
 | Vault prefs (shared) | `~/.config/sola/browser/vault.json` |
-| Vault session (shared) | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + keys; **Log out** deletes) |
+| Vault session (shared) | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens and keys; **Log out** deletes it) |
 | Downloads index (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
-| Visit history (omnibox) | `~/.local/share/sola/browser/shared/history.json` |
+| Visit history (location bar) | `~/.local/share/sola/browser/shared/history.json` |
 | Notification permission | `~/.local/share/sola/browser/profiles/<uuid>/notifications.json` |
 | Microphone / camera | `~/.local/share/sola/browser/profiles/<uuid>/media.json` |
-| HTTP Basic / Digest auth | `~/.local/share/sola/browser/profiles/<uuid>/http-auth.json` (age-encrypted; kit Sign in prompt) |
+| HTTP Basic / Digest auth | `~/.local/share/sola/browser/profiles/<uuid>/http-auth.json` (age-encrypted; kit **Sign in** prompt) |
 
-Site logins (cookies) live under that profile CEF dir. The engine uses
-Chromium’s **basic** password store so cookie encryption works without a
-desktop keyring (Sola runs from a TTY). Updating the browser binary asks
-each helper to **Quit** (flush cookies) before it is replaced — a hard
-kill used to drop GitHub/Google sessions. After updating, sign in once
-more if an older session still does not restore (cookies written under a
-failed keyring backend cannot be re-read). Closed tabs stay closed across
-a restart; ⌘⇧T reopens them.
+Site logins (cookies) live under that profile's CEF directory. The engine
+uses Chromium's **basic** password store, so cookie encryption works
+without a desktop keyring (Sola runs from a TTY). Updating the browser
+binary asks each helper to **Quit** (which flushes cookies) before it is
+replaced, so GitHub and Google sessions are not dropped by a hard kill.
+After updating, sign in once more if an older session still does not
+restore (cookies written under a failed keyring backend cannot be read
+again). Closed tabs stay closed across a restart; `⌘⇧T` reopens them.
 
 ### Menubar → Profiles
 
-1. **Profile list** — click a name to switch. The active profile shows a
-   checkmark (requires shell that draws `MenuItem.checked`).
-2. **New Profile…** — name dialog; creates dirs and switches to it in the
-   same window.
-3. **Rename Profile…** — renames the active profile.
-4. **Delete Profile…** — confirms deletion of the **active** profile (blocked
-   if it is the only one). Data dirs are removed; the window reloads the
-   next profile’s tabs.
+1. **Profile list**: click a name to switch. The active profile shows a
+   checkmark.
+2. **New Profile…**: a name dialog; creates the directories and switches
+   to the new profile in the same window.
+3. **Rename Profile…**: renames the active profile.
+4. **Delete Profile…**: confirms deletion of the **active** profile
+   (blocked if it is the only one). Its data directories are removed, and
+   the window loads the next profile's tabs.
 
-Switching profiles is **instant** in the **same window**. The shell
-still shows one **Browser** app. Each profile keeps its own CEF cookie
-store in a headless engine process (no extra switcher entries). The
-tab strip and location bar update immediately; the page area blanks
-until the new profile’s tab paints (it does not keep showing the
-previous identity). A tab you have already opened this session
-appears instantly; one that has not painted yet goes blank until it
-does. Switching back restores the parked helper’s live tabs — they
-do not reload. Closing the window quits the browser and
-those helpers. Tabs restore from `session.json`.
+### Switching profiles
 
-The **profile name** lives in the left of the full-width top bar
-(aligned with the tab column). Each profile has a small enamel mark;
-the menu hangs under the name as a darker card. Click to switch.
-Manage (new / rename / delete) stays under **Menubar → Profiles**.
+Switching profiles is **instant** in the **same window**. The shell still
+shows one **Browser** app. Each profile keeps its own CEF cookie store in
+a headless engine process (no extra switcher entries). The tab strip and
+location bar update immediately; the page area blanks until the new
+profile's tab paints (it does not keep showing the previous identity). A
+tab you have already opened this session appears instantly; one that has
+not painted yet stays blank until it does. Switching back restores the
+parked helper's live tabs; they do not reload. Closing the window quits
+the browser and those helpers. Tabs restore from `session.json`.
+
+The **profile name** sits at the left of the full-width top bar (aligned
+with the tab column). Each profile has a small enamel mark; the menu hangs
+under the name as a darker card. Click to switch. New, rename, and delete
+stay under **Menubar → Profiles**.
 
 **Cold start** with an empty session opens a single **blank** tab.
 
 ## Tabs
 
-The left strip is the tab list (`⌘T` for a new blank). Each row has a
+The left strip is the tab list (`⌘T` for a new blank tab). Each row has a
 **16px site icon** (the page favicon; a quiet globe until it arrives;
-empty on a blank tab). **Drag a row** to
-reorder; a click (no drag) still selects. Titles fill the column and
-ellipsize at the edge (they grow if you widen the strip). Close removes
-the row immediately — no flash back. Closing the tab you are looking at
-selects the neighbor to the right (or the left if it was last). The last
-tab is replaced by a blank rather than closing the window. `⌘⇧T` (Browser
-→ **Reopen Closed Tab**) restores the most recently closed tab; hit it
-again for the one before that. The stack is per profile, up to 25, and
-is saved in `session.json`. Order of open tabs is saved there too.
+empty on a blank tab). **Drag a row** to reorder; a click (no drag) still
+selects. Titles fill the column and ellipsize at the edge (they grow if
+you widen the strip). Close removes the row immediately, with no flash
+back. Closing the tab you are looking at selects the neighbor to the
+right (or the left if it was last). The last tab is replaced by a blank
+rather than closing the window.
 
-**Groups** are named folders in the strip (they sit among loose tabs). Each group is a
-quiet pocket with a hairline rim; members sit flush under the header.
-A hair of air between pockets stays put while you drag. Hovering members
-or the floor of a pocket grows that well by one row. Dropping on a
-group **title** is ignored (the tab returns). Dragging the **header**
-moves the whole pocket. Taking a tab out shrinks the well. Loose tabs
-stay in one run underneath. `⌘⌥G` (Browser → **New Group**) wraps the
-**selected loose tab** in a new group, focuses the name, and selects
-`Group` (then `Group 2`, …) so the next keystroke replaces it. Enter
-keeps it; Esc reverts. The chord does nothing when the current tab is
-already in a group. Hover a group header for a **pencil** to rename
-later. Rename also shows a **color chip** (ink ring on the pocket fill)
-and a **check** to save (Enter still works if the name is focused).
-Click the chip to open or close the color picker (it sits beside the
-check). The color is saved with the session. Titles on light fills are
-black and a step heavier so they match loose-tab type. Esc reverts the
-name. The strip has no right-click menu. Click the header to collapse
-— the page stays if you were on a tab inside. Drag a loose tab into a
-group to join it; drag a member into the loose run to leave. `⌘T` and links from other apps
-(`xdg-open`, `solactl open`) always make a **loose** tab at the **bottom**
-of the strip. ⌘-click inserts a background tab under the current one.
-A page `window.open` (database consoles, SSH terminals, and similar) or
-a `target=_blank` link opens a **new tab** under the current one and
-switches to it — there is no separate popup window.
-The current tab is a quiet lift of the column or pocket, with a 1px
-lip. Empty groups disappear. There are no nested groups or spaces yet.
+`⌘⇧T` (Browser → **Reopen Closed Tab**) restores the most recently closed
+tab; press it again for the one before that. The stack is per profile, up
+to 25, and is saved in `session.json`. The order of open tabs is saved
+there too.
 
-## Omnibox
+`⌘T` and links from other apps (`xdg-open`, `solactl open`) always make a
+**loose** tab at the **bottom** of the strip. `⌘`-click inserts a
+background tab under the current one. A page `window.open` (database
+consoles, SSH terminals, and similar) or a `target=_blank` link opens a
+**new tab** under the current one and switches to it; there is no
+separate popup window.
+
+The current tab is a quiet lift of the column or pocket, with a 1px lip.
+
+### Groups
+
+**Groups** are named folders in the strip; they sit among loose tabs.
+Each group is a quiet pocket with a hairline rim; members sit flush under
+the header. A hair of air between pockets stays put while you drag.
+Hovering members or the floor of a pocket grows that well by one row.
+Dropping on a group **title** is ignored (the tab returns). Dragging the
+**header** moves the whole pocket. Taking a tab out shrinks the well.
+Loose tabs stay in one run underneath.
+
+`⌘⌥G` (Browser → **New Group**) wraps the **selected loose tab** in a new
+group, focuses the name, and selects `Group` (then `Group 2`, …) so the
+next keystroke replaces it. Enter keeps it; Esc reverts. The chord does
+nothing when the current tab is already in a group.
+
+Hover a group header for a **pencil** to rename it later. Rename also
+shows a **color chip** (an ink ring on the pocket fill) and a **check** to
+save (Enter still works if the name is focused). Click the chip to open or
+close the color picker (it sits beside the check). The color is saved with
+the session. Titles on light fills are black and a step heavier so they
+match loose-tab type. Esc reverts the name.
+
+Click the header to collapse a group; the page stays if you were on a tab
+inside. Drag a loose tab into a group to join it; drag a member into the
+loose run to leave. Empty groups disappear.
+
+The strip has no right-click menu. There are no nested groups or spaces.
+
+## Location bar
+
+The location bar (omnibox) is **plain text** on the chrome until you click
+it (or press `⌘L`); then it is an edit field. While idle, `https://` and
+the query string are omitted (the path stays).
 
 Type a URL or a search and press Enter. Search text goes to Kagi.
-Scheme-less hosts get `https://`; **localhost and loopback**
-(`127.0.0.1`, `[::1]`, `*.localhost`) get `http://`. An explicit
-scheme is left as typed.
+Scheme-less hosts get `https://`; **localhost and loopback** (`127.0.0.1`,
+`[::1]`, `*.localhost`) get `http://`. An explicit scheme is left as
+typed.
 
-- The field **unfocuses on submit** so the caret is gone while the page
-  loads. The text swaps from what you typed to the resolved URL, then
-  to the page’s canonical URL — it does not flash empty in between.
+Typing searches **visit history**: the top five matches appear as a list
+under the chrome. The field is not autocompleted and **keeps focus**. The
+first row is not selected for you. ↓ / `Ctrl+N` and ↑ / `Ctrl+P`, or a
+click, highlight a row. Further typing refines the list.
+
+- **Enter** loads the highlighted row, or the URL you typed in this tab,
+  or Kagi's first result for a search.
+- **Shift+Enter** always loads the Kagi results page.
+
+A new blank tab that names a site already open switches to that tab and
+closes the blank. The exact URL of another open tab is focused instead of
+loaded again.
+
+- The field **unfocuses on submit**, so the caret is gone while the page
+  loads. The text changes from what you typed to the resolved URL, then
+  to the page's canonical URL; it does not flash empty in between.
 - While a real page is loading, a **thin accent line** grows along the
-  bottom of the field. Reload becomes **Stop**; back / forward follow
+  bottom of the field. Reload becomes **Stop**; back and forward follow
   the engine. Escape also stops the load. `⌘⇧R` still hard-reloads
-  (ignores cache even if a load is in flight).
-- A **copy** button sits just left of the field. It puts the current
-  page URL on the clipboard (not a draft you are still typing). Empty
-  and `about:blank` tabs disable it. The glyph flashes a check for a
-  moment after a successful copy.
+  (ignores the cache even if a load is in flight).
+- A **copy** button sits just left of the field. It puts the current page
+  URL on the clipboard (not a draft you are still typing). Empty and
+  `about:blank` tabs disable it. The glyph flashes a check for a moment
+  after a successful copy.
+
+## Find and reload
+
+`⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
+
+`⌘R` reloads. `⌘⇧R` (Browser → **Hard Reload**) bypasses the HTTP cache
+for this navigation. Shift-click on the reload button does the same. It
+does not empty the profile disk cache.
+
+## Media
+
+Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
+including Steam store trailers, plays on a CEF built with those codecs
+(`scripts/cef-codecs/`). The public `install-cef` tarball does not
+include those codecs.
+
+## JavaScript dialogs
+
+`alert()`, `confirm()`, and `prompt()` show as a kit dialog over the page
+(OK / Cancel; `prompt` has a field). Leave-page confirms use Leave / Stay.
+Escape cancels (OK on `alert`). A second dialog waits until the first is
+answered.
 
 ## Developer Tools
 
-The inspector docks **under the page** in the same tab (not a new tab
-or a separate window). Drag the hairline to resize. Open the action
-again to close it. Switching tabs hides the panel until you return to
-the inspected tab.
+Developer Tools docks Chromium's inspector **under the page** in the same
+tab (not a new tab or a separate window). Drag the hairline to resize.
+Choose the action again to close it. Switching tabs hides the panel until
+you return to the inspected tab.
 
 Right-click the page:
 
-- **Open Developer Tools** — console, docked
-- **Inspect Element** — elements, with the node under the pointer selected
+- **Open Developer Tools**: console, docked.
+- **Inspect Element**: elements, with the node under the pointer selected.
 
-**Menubar → Browser → Developer Tools** (⌘⌥I) is the console path.
-There is no F12 binding (media-key keyboards).
+**Menubar → Browser → Developer Tools** (`⌘⌥I`) opens the console. There
+is no F12 binding (media-key keyboards).
 
 ## Downloads
 
-Toolbar **download** icon (right of vault) is always there.
+The toolbar **download** icon (right of the vault) is always there.
 
-- A download **auto-saves** to `~/Downloads`. If `report.pdf` already exists,
-  or a leftover `report.pdf.crdownload` is still there, the next file is
-  `report (1).pdf`. There is no Save dialog. A failed row names the reason
-  (no space, timed out, incomplete).
-- While a file is coming in, the icon goes accent and a thin progress line
-  grows on the button. The panel does not open by itself.
+- A download **auto-saves** to `~/Downloads`. If `report.pdf` already
+  exists, or a leftover `report.pdf.crdownload` is still there, the next
+  file is `report (1).pdf`. There is no Save dialog. A failed row names
+  the reason (no space, timed out, incomplete).
+- While a file is coming in, the icon turns accent and a thin progress
+  line grows on the button. The panel does not open by itself.
 - Click the icon for the list (flat rows). Long hash names shorten in the
-  middle. In-progress rows show percent and **Cancel**. Finished rows
-  open the file with the default app (`xdg-open`). **×** removes the
-  row from the list only — the file stays on disk.
-- After a download finishes, the icon stays accent until you open the panel.
+  middle. In-progress rows show percent and **Cancel**. Finished rows open
+  the file with the default app (`xdg-open`). **×** removes the row from
+  the list only; the file stays on disk.
+- After a download finishes, the icon stays accent until you open the
+  panel.
 - Completed and failed items survive quit. In-progress ones do not (the
   helper dies with the window).
 
-No “show in folder” (Sola has no file manager yet). No delete-from-disk.
+There is no "show in folder" (Sola has no file manager yet) and no delete
+from disk.
 
 ## Notifications
 
 A page that calls `Notification.requestPermission()` gets a chrome dialog
 (**Allow** / **Block**). The choice is stored per profile in
 `notifications.json`. After **Allow**, `new Notification(title, { body })`
-shows a Sola desk card at the **screen** top-right under the menubar
-(same as Workspaces done) — not a banner over the page. Click the card
-to raise Browser and that tab. Missed cards collect behind the menubar
-bell.
+shows a Sola desk card at the **screen** top-right under the menubar (the
+same place as Workspaces' done cards), not a banner over the page. Click
+the card to raise Browser and that tab. Missed cards collect behind the
+menubar bell.
 
-Sites you have not allowed cannot notify. There is no sound and no
-action buttons yet.
+Sites you have not allowed cannot notify. There is no sound and there are
+no action buttons yet.
 
-## Microphone / camera
+## Microphone and camera
 
 A page that calls `getUserMedia` (WebRTC, huddles, camera) gets the same
 Allow / Block overlay as notifications. Grants live in
-`profiles/<uuid>/media.json` and in Chromium camera/microphone site
+`profiles/<uuid>/media.json` and in Chromium's camera and microphone site
 settings for that origin. Chromium has no permission bubble in this
-OSR path — without Allow, the request is denied. Screen share is the
-same dialog when the page asks for desktop capture.
+off-screen path; without Allow, the request is denied. Screen share uses
+the same dialog when the page asks for desktop capture.
 
 ## HTTP sign-in (Basic / Digest)
 
 A site that asks for HTTP Basic or Digest auth gets a kit **Sign in**
-dialog (username + password), not Chromium’s native prompt. **Sign in**
-saves the credentials for that host / realm in this profile
-(`http-auth.json`, age-encrypted). The next visit — including after a
-browser restart — uses them and does not ask again. If the server
-rejects them, the dialog comes back (username prefilled). **Cancel**
-aborts the load.
+dialog (username and password), not Chromium's native prompt. **Sign in**
+saves the credentials for that host and realm in this profile
+(`http-auth.json`, age-encrypted). The next visit, including after a
+browser restart, uses them and does not ask again. If the server rejects
+them, the dialog comes back with the username prefilled. **Cancel** aborts
+the load.
 
 ## Bitwarden vault
 
-Toolbar **vault** is one control (not separate login / authenticator /
-card buttons). Locked it is a lock; unlocked a key. It becomes a
+The vault is present when Browser is built with the `bitwarden` feature.
+The toolbar **vault** is one control (not separate login, authenticator,
+and card buttons). Locked, it is a lock; unlocked, a key. It becomes a
 shield when this page has a TOTP login, and a fingerprint during a
-passkey ceremony. The open panel’s icon is the accent wash.
+passkey ceremony. The open panel's icon is the accent wash.
 
-- **Unlock** with Bitwarden email + master password (and 2FA when required).
-  The same panel then shows the vault (unless a passkey ceremony is
-  already waiting). After a successful unlock the session stays live
-  across browser restarts (no password again until you **Log out**).
-  **Log out** on the unlocked card wipes tokens, keys, and the session
-  file. Remembered email stays so the next unlock is prefilled.
+- **Unlock** with your Bitwarden email and master password (and 2FA when
+  required). The same panel then shows the vault (unless a passkey
+  ceremony is already waiting). After a successful unlock the session
+  stays live across browser restarts (no password again until you
+  **Log out**). **Log out** on the unlocked card wipes tokens, keys, and
+  the session file. The remembered email stays, so the next unlock is
+  prefilled.
 - **Browse** searches every item you can decrypt (personal plus every
-  organization after unlock/sync): logins, cards, identities, notes,
+  organization after unlock and sync): logins, cards, identities, notes,
   SSH keys, and the rest. Type chips filter. Autofill suggestions are
   URI-matching **logins** for the current page; **Fill** on that row
-  injects username / password and closes. Click a row to open the
-  **record**.
-- **Record** shows the whole item: usernames, passwords (reveal + copy),
-  websites, card number / CVC, identity fields, private notes, custom
-  fields, SSH keys, live authenticator code with countdown. **Fill**
-  on a login, card, or identity injects the page. Authenticator **Fill**
-  copies the code and tries to fill an OTP field. Copy does not close
-  the panel.
+  injects the username and password and closes the panel. Click a row to
+  open the **record**.
+- **Record** shows the whole item: usernames, passwords (reveal and copy),
+  websites, card number and CVC, identity fields, private notes, custom
+  fields, SSH keys, and a live authenticator code with countdown. **Fill**
+  on a login, card, or identity fills the page. Authenticator **Fill**
+  copies the code and tries to fill an OTP field. Copy does not close the
+  panel.
 - **Create login** is the **+** on the unlocked card. Username is the last
   one you used, selected so typing replaces it. Password is a fresh
   16-character generated value (visible; **Regenerate** if you want
-  another). URL is the page’s apex domain (`google.com`, no `https://`).
-  **Create** or Enter writes the item to your **personal** Bitwarden
-  vault **first**, then fills every username and password field on the
-  page (including confirm). If the page has no fields yet, the item is
-  still saved.
-- **Edit** is on the item record (next to **Fill**). Name, login / card /
-  identity / note / SSH / bank / license / passport fields, websites,
-  notes, and custom fields are writable. **Save** writes the cipher;
-  Cancel returns to the record. Passkeys stay attached (not edited here).
-  Org items you cannot write hide **Edit**. License and passport dates
-  are `YYYY-MM-DD`. There is no delete in this panel.
-- **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
-  the vault panel opens (unlock first if needed) with a **list of matching
-  passkeys** — pick one to complete sign-in. The intercept is installed at
-  **document-start** in **every frame** (Google sign-in, Gemini Exchange 2FA,
-  etc.) so the page cannot keep Chromium’s native `get`. OSR cannot show
-  Chromium’s passkey sheet; the hook advertises a platform authenticator
-  and opens Bitwarden instead. Duplicate or retry `get()` calls for the
-  same site stay one picker — they do not fail the page before you pick.
+  another). URL is the page's apex domain (`google.com`, no `https://`).
+  **Create** or Enter writes the item to your **personal** Bitwarden vault
+  **first**, then fills every username and password field on the page
+  (including confirm). If the page has no fields yet, the item is still
+  saved.
+- **Edit** is on the item record (next to **Fill**). Name, login, card,
+  identity, note, SSH, bank, license, and passport fields, websites,
+  notes, and custom fields are writable. **Save** writes the item; Cancel
+  returns to the record. Passkeys stay attached (they are not edited
+  here). Organization items you cannot write hide **Edit**. License and
+  passport dates are `YYYY-MM-DD`. There is no delete in this panel.
+- **Passkeys (get):** when a site calls WebAuthn
+  `navigator.credentials.get`, the vault panel opens (unlock first if
+  needed) with a **list of matching passkeys**; pick one to complete
+  sign-in. The intercept is installed at **document-start** in **every
+  frame** (Google sign-in, Gemini Exchange 2FA, and so on), so the page
+  cannot keep Chromium's native `get`. Off-screen rendering cannot show
+  Chromium's passkey sheet; the hook advertises a platform authenticator
+  and opens Bitwarden instead. Duplicate or retried `get()` calls for the
+  same site stay one picker; they do not fail the page before you pick.
 - **Passkeys (create):** when a site calls `navigator.credentials.create`,
   the vault panel opens (unlock first if needed) with **Save a passkey**.
-  Confirm creates a new Bitwarden login for the site (name is the apex
-  domain, username from the request). Matching logins for the page are
-  listed so you can attach the passkey to one of those instead. Chromium’s
-  own passkey window is not used.
+  Confirm creates a new Bitwarden login for the site (the name is the
+  apex domain, the username comes from the request). Matching logins for
+  the page are listed so you can attach the passkey to one of those
+  instead. Chromium's own passkey window is not used.
 
 ### Unlock speed
 
-Bitwarden’s master-password KDF is expensive (~600k PBKDF2). `cargo make install browser` is **release** (needed for Bitwarden KDF).
-Debug (`--debug`) also compiles crypto crates at opt-level 3, still slower
-than full release.
+Bitwarden's master-password KDF is expensive (about 600,000 PBKDF2
+iterations). Bitwarden unlock needs a release build;
+`cargo make install browser` builds release. A debug build (`--debug`)
+compiles the crypto crates at opt-level 3, but is still slower than a
+full release build.
 
-Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
-(shared across profiles). The unlocked session is
-`~/.local/share/sola/browser/vault-session.json` (age-encrypted with
-`~/.config/sola/key`; mode 0600). **Log out** deletes it.
+### Vault files
+
+Vault prefs (the remembered email) live at
+`~/.config/sola/browser/vault.json` (shared across profiles). The
+unlocked session is `~/.local/share/sola/browser/vault-session.json`
+(age-encrypted with `~/.config/sola/key`; mode 0600). **Log out** deletes
+it.
 
 ## Copy, paste, and click
 
-⌘C / ⌘V on the page go through chrome (River steals the chords). Copy
-extracts the selection in the engine helper and writes the system
+`⌘C` / `⌘V` and triple-click selection work on form fields and body text.
+`⌘C` / `⌘V` on the page go through the chrome (River takes those chords).
+Copy extracts the selection in the engine helper and writes the system
 clipboard; paste reads the compositor clipboard and inserts **once** into
 the focused field. An image offer (`image/png` and siblings) is a `File`
-paste event (so Slack and similar composers accept a screenshot). Text
-is a `paste` event with `text/plain` (newlines kept in contenteditable
-lyrics); if the page does not handle it, a textarea gets the value and
-a contenteditable gets a line break between lines. `solactl browser fill`
+paste event, so Slack and similar composers accept a screenshot. Text is
+a `paste` event with `text/plain` (newlines are kept in contenteditable
+fields); if the page does not handle it, a textarea gets the value and a
+contenteditable gets a line break between lines. `solactl browser fill`
 and `type` use that same paste into the snapshot ref (including a
-ProseMirror editor nested under the AX node). `key --chord` inserts once. Chromium’s own clipboard never reaches Wayland.
+ProseMirror editor nested under the accessibility node). `key --chord`
+inserts once. Chromium's own clipboard never reaches Wayland.
+
 In-page **Copy** buttons (`navigator.clipboard.writeText` and
 `document.execCommand('copy')`) are hooked the same way. Newlines in the
-copied text are kept. Triple-click selects a line / field the way
-Chromium expects. The omnibox and vault fields stay text-only.
+copied text are kept. Triple-click selects a line or field the way
+Chromium expects. The location bar and vault fields stay text-only.
 
-⌘-click (or Ctrl-click) a link opens it in a **background tab**
-just below the current tab (same group, if the current tab is in one). A
-right-click on the page opens a kit menu (open/copy link, cut/copy/paste
-when editing, back / forward / reload) instead of Chromium’s empty OSR
-popup. Click back or forward to go one step; **hold** the button for a
-menu of that tab’s session history. That list is saved with the
-session, so it survives a browser restart.
+`⌘`-click (or Ctrl-click) a link to open it in a **background tab** just
+below the current tab (in the same group, if the current tab is in one).
+A right-click on the page opens a small kit menu (open and copy link;
+cut, copy, and paste when editing; back, forward, and reload) instead of
+Chromium's empty off-screen popup. Click back or forward to go one step;
+**hold** the button for a menu of that tab's session history. That list
+is saved with the session, so it survives a browser restart.
 
-Clicking the page focuses the engine (caret / IME). Shift+wheel scrolls
-sideways. The number pad types digits in page fields and the omnibox
-(NumLock is on by default; turn it off for Home / End / arrows).
-Composition (dead keys, CJK) is forwarded to Chromium when the
-page owns keys; the candidate window sits on the last caret box.
+Clicking the page focuses the engine (caret and IME). Shift+wheel scrolls
+sideways. The number pad types digits in page fields and the location bar
+(NumLock is on by default; turn it off for Home, End, and the arrows).
+Composition (dead keys, CJK) is forwarded to Chromium when the page owns
+keys; the candidate window sits on the last caret box.
 
-`<select>` dropdowns paint as an overlay on the page (Chromium’s OSR
-popup buffer).
+`<select>` dropdowns paint as an overlay on the page (Chromium's
+off-screen popup buffer).
 
-## Not in this manual yet
+## Not covered here
 
-- Full keyboard chrome reference  
-- Save-as / custom download folder  
+This chapter does not yet include a full keyboard reference for the
+chrome. There is no Save As and no custom download folder.
 
-See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
-and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).
+See the capability row **browser** in
+[`docs/capabilities.md`](../capabilities.md) and the profiles design
+[`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).

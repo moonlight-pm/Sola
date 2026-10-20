@@ -21,10 +21,9 @@ the CONTRIBUTING path.
 - x86_64. (No ARM build yet.)
 - A working GPU stack — Mesa-only (Intel/AMD) or NVIDIA proprietary.
   See "GPU notes" below.
-- SSH access to the private repo: your SSH key registered with GitHub
-  (`ssh -T git@github.com` should print "Hi <username>!"), and your
-  GitHub user added as a collaborator on `moonlight-pm/Sola`. Nix's
-  `git+ssh://` flake fetch uses the same SSH auth as `git clone`.
+- Network access to GitHub. The repo
+  ([`moonlight-pm/Sola`](https://github.com/moonlight-pm/Sola)) is public;
+  the flake input fetches it over HTTPS with no GitHub account or key.
 
 ## Setup
 
@@ -36,7 +35,7 @@ If your system uses a flake (`/etc/nixos/flake.nix`):
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    sola.url = "git+ssh://git@github.com/moonlight-pm/Sola";
+    sola.url = "git+https://github.com/moonlight-pm/Sola";
   };
 
   outputs = { self, nixpkgs, sola, ... }: {
@@ -176,7 +175,7 @@ Releases are tagged `vX.Y.Z` on the Sola repo. To pin to a specific
 release (instead of tracking `master`):
 
 ```nix
-sola.url = "git+ssh://git@github.com/moonlight-pm/Sola?ref=v0.1.0";
+sola.url = "git+https://github.com/moonlight-pm/Sola?ref=v0.1.0";
 ```
 
 Update by bumping the `ref=` value and re-running the two commands

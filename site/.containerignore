@@ -1,0 +1,8 @@
+# Build context is the Sola repo root; the image needs site/ and docs/manual/.
+# Thoxa comes from the second context (--build-context thoxa=../Thoxa).
+*
+!site/
+!site/**
+!docs/
+!docs/manual/
+!docs/manual/**

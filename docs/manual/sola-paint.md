@@ -1,30 +1,41 @@
-# sola-paint
+# Paint
 
-Default image viewer and editor. First pass — install to use.
+Paint (`sola-paint`) is Sola's default image viewer and editor.
 
 ## Open
 
 - Launcher → **Paint**
-- `xdg-open photo.png` / file manager (MIME via `sola-paint.desktop`)
+- `xdg-open photo.png` or the file manager (MIME via `sola-paint.desktop`)
 - `solactl open /path/to/photo.png`
 - `sola-paint /path/to/photo.png`
-A second `open` (MIME, `solactl open`, `sola-paint path`) hands off to the
-running window and opens another tab. Super+Shift+3/4/5 screenshots still
-open **Preview**, not Paint.
+
+A second open (MIME, `solactl open`, or `sola-paint path`) hands off to
+the running window and opens another tab.
+
+Super+Shift+3/4/5 screenshots copy to the clipboard; they do not open
+Paint.
 
 ## Edit
 
-Left tabs are open images. Hover a tab for ×. Tabs (file paths) come back after quit; missing files are dropped. Unsaved edits are not saved across restart.
+Open images are tabs on the left. Hover a tab for ×. Tabs (file paths)
+come back after quit; missing files are dropped. Unsaved edits are not
+kept across a restart.
 
-Toolbar: Open, Crop, rotate, flip, Undo, Save. Hover an icon for the name and shortcut. **Crop** (⌘⇧K) — drag on the picture, **Apply crop** or Enter; Esc cancels. (⌘K is the shell shortcuts overlay.)
+The toolbar has Open, Crop, rotate, flip, Undo, and Save. Hover an icon for
+its name and shortcut.
 
-Scroll to zoom toward the pointer; drag to pan when zoomed in. ⌘+ / ⌘− / ⌘0
-(fit). Header shows the zoom next to the pixel size.
+**Crop** (⌘⇧K): drag on the picture, then **Apply crop** or Enter; Esc
+cancels. (⌘K is the Shell's shortcuts overlay.)
 
-Open / Save as use the kit file picker (Places + breadcrumb trail). The name field is the leaf, not the whole path.
+Scroll to zoom toward the pointer; drag to pan when zoomed in. ⌘+ and ⌘−
+zoom, and ⌘0 fits. The header shows the zoom next to the pixel size.
+
+Open and Save As use the kit file picker (Places and a breadcrumb trail).
+The name field is the file name, not the whole path.
 
 Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
-## Not in this pass
+## Limits
 
-Clipboard image (Preview **Copy** is the screenshot path), color adjust, filters, layers.
+Paint has no clipboard image support (Preview has **Copy**), no color
+adjustment, no filters, and no layers.

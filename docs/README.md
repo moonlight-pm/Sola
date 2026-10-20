@@ -43,7 +43,7 @@ ask the human.
 | [`specs/`](specs/) | Target freezes (dated) | **Target** |
 | [`plans/`](plans/) | Implementation checklists (active + historical) | Build |
 | [`ideas/`](ideas/) | Parked thoughts | Idea |
-| [`manual/`](manual/) | Operator truth (fonts, kvm, **shell**, **arcade**, **browser**, **paint**, **preview**, **monitor**, **wrapper**, **scope**, **spotify**, **mail**, **calendar**, **solactl**, dist notes; ISO guide when dogfoodable) | **Product** (shipped only) |
+| [`manual/`](manual/) | Operator truth, published at sola.moonlight.pm/manual — chapter order and Markdown rules in [`manual/README.md`](manual/README.md) (introduction, fonts, **shell**, **browser**, **mail**, **calendar**, **spotify**, **arcade**, **paint**, **preview**, **wrapper**, **design**, **monitor**, **scope**, **kvm**, **solactl**; developer notes: design language, cursor theme, layer shell) | **Product** (shipped only) |
 | [`specs/2026-08-05-distribution-image-design.md`](specs/2026-08-05-distribution-image-design.md) | Dist installer freeze | **Target** |
 | [`vault/`](vault/) | Early Obsidian notes — reference only | History |
 | [`notes/`](notes/) | One-off investigations — not living handoff | History |

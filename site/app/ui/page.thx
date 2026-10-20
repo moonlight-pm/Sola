@@ -1,0 +1,63 @@
+## HTML shell for sola.moonlight.pm.
+
+import http, { Request } from "std/http"
+
+export let repository = "https://github.com/moonlight-pm/Sola"
+
+## `current` names the page the navigation marks (`home`, `manual`).
+export type Page(title: String, request: Request, current: String = "")
+
+conform Page to Component {
+    fn view(children: Array<Node>) -> Node {
+        <html lang="en">
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>{title}</title>
+                <meta
+                    name="description"
+                    content="Sola is a desktop environment for Linux on Wayland, written in Rust: a session, a shell, and its own applications on one toolkit. Pre-release; NixOS, x86-64."
+                />
+                <meta name="color-scheme" content="dark" />
+                <link rel="icon" href="/flower.svg" type="image/svg+xml" />
+                <link rel="preconnect" href="https://fonts.googleapis.com" />
+                <link rel="preconnect" href="https://fonts.gstatic.com" />
+                <link
+                    rel="stylesheet"
+                    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+                />
+                <link rel="stylesheet" href="/style.css" />
+            </head>
+            <body>
+                <a class="skip" href="#main">Skip to content</a>
+                <header class="bar">
+                    <nav aria-label="Site">
+                        <a class="brand" href="/">
+                            <span class="mark" aria-hidden="true"></span>
+                            <span>Sola</span>
+                        </a>
+                        <a class={marked(current, "manual")} href="/manual">Manual</a>
+                        <a href={repository}>Source</a>
+                    </nav>
+                </header>
+                {children}
+                <footer class="site">
+                    <span class="mark" aria-hidden="true"></span>
+                    <p>
+                        Sola is pre-release. Source:
+                        <a href={repository}>github.com/moonlight-pm/Sola</a>. This site is a
+                        Thoxa program in <a href={"{repository}/tree/master/site"}>site/</a>.
+                    </p>
+                </footer>
+            </body>
+        </html>
+    }
+}
+
+fn marked(current!: String, name!: String) -> String {
+    if current == name {
+        "current"
+    } else {
+        ""
+    }
+}

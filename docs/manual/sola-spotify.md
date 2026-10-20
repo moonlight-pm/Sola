@@ -1,19 +1,23 @@
-# sola-spotify
+# Spotify
 
-Kit-native Spotify client. Browse the library, search, control Spotify Connect devices, and (with Premium) play on this computer through librespot.
+Spotify is Sola's native Spotify client. Browse the library, search,
+control Spotify Connect devices, and (with Premium) play on this computer
+through librespot.
 
-**Partial.** **Installed** `spotify` (release, 2026-09-04). Playback logic is adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). Independent of Spotify AB. Launcher row is **Spotify** (`lucide/disc`).
+Its launcher row is **Spotify** (`lucide/disc`). Playback logic is
+adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). The
+app is independent of Spotify AB.
 
 ## Requirements
 
-- Spotify account. **Playing on this computer needs Premium.** Free accounts can sign in, browse, search, and control another device.
+- A Spotify account. **Playing on this computer needs Premium.** Free accounts can sign in, browse, search, and control another device.
 - `alsa-lib` and `libpulseaudio` at compile time (`pkg-config` `alsa` + `libpulse`). The NixOS module ships both. PipeWire’s Pulse compatibility is enough at runtime.
-- After a NixOS rebuild, `cargo make install spotify`. A fresh shell install is needed once for the launcher row.
+- When building from source, run `cargo make install spotify` after the NixOS rebuild that provides those libraries.
 
 ## Sign in
 
 1. Open **Spotify** from the launcher (Meta+Space).
-2. **Sign in with Spotify** opens sola-browser on Spotify’s consent page (Authorization Code + PKCE). Sola never sees the password.
+2. **Sign in with Spotify** opens Browser on Spotify’s consent page (Authorization Code + PKCE). Sola never sees the password.
 3. Tokens land in `~/.local/state/sola/spotify/` (`0600`). Sign in once per machine; later launches open straight into the app, even while Spotify is rate limiting the shared app.
 
 Playing **here** is a second, one-time approval (**Playback → Set up playback here**, or Settings). Spotify treats streaming separately from the Web API. librespot then caches a reusable credential.
@@ -24,9 +28,10 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   Artists, Queue, then your playlists. Made for you is one destination
   (all Spotify mixes). Home shows a short shelf; **See all** opens the
   catalog. Generated tiles are labelled Made for you.
-- Click a row or **Play** on a playlist/album to start it. With no other
-  speaker on, that **sets up this computer** (a second browser approval,
-  once per machine) and plays here. Premium required for local audio.
+- Click a row or **Play** on a playlist or album to start it. With no
+  other speaker on, that **sets up this computer** (a second browser
+  approval, once per machine) and plays here. Local audio requires
+  Premium.
 - Artist and album names on a track (list, queue, player bar) open
   those pages. Each credited artist is its own link; hover underlines.
   Click the player-bar cover to open the album. Local files have no
@@ -35,23 +40,25 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   Artist pages have **Follow**. Save puts the album on the Albums tab;
   Follow puts the artist on the Artists tab. **Saved** / **Following**
   toggles them off.
-- A **cyan circled +** means the track is in Liked Songs (same library as
-  the official app). Click it to like or unlike. **−** hides a
-  row from autoplay: struck title, dim cover, muted meta — does not
-  delete from the playlist. Click − again to restore. **−** on the
-  playing song skips to the next track (once).
+- A **cyan circled +** means the track is in Liked Songs (the same
+  library as the official app). Click it to like or unlike. **−** hides
+  a row from autoplay: struck title, dim cover, muted meta. It does not
+  delete the track from the playlist. Click − again to restore. **−** on
+  the playing song skips to the next track (once).
 - **list-plus** (row or player bar) adds the song to a playlist you
-  own or collaborate on. Last destination is first; type to filter;
+  own or collaborate on. The last destination is first; type to filter;
   Enter adds to the first match. **New playlist** creates a private
   list named “New playlist” and adds the song. A short **Added to …**
   notice confirms. Escape or a click outside closes the picker.
-- Reopen restores the last playlist, the last track (graphite lift =
-  selected; cyan play mark + accent title = playing), and page
-  **Back / Forward** (up to 20 back steps, including Search queries).
+- Reopening restores the last playlist, the last track (a graphite lift
+  marks the selected row; a cyan play mark and accent title mark the
+  playing one), and page **Back / Forward** (up to 20 back steps,
+  including Search queries).
 - Playlist pages show added dates on the header and on each row. Long
   lists and the Albums tab end in **Load more** (shows **Loading…**
   until the next rows arrive).
-- **Albums** and **Artists** are wrapping catalogs (same as Made for you).
+- **Albums** and **Artists** are wrapping catalogs (the same as Made for
+  you).
 - A page you opened in the last few minutes shows again at once without
   asking Spotify (Home, library tabs, and Made for you for 10 minutes;
   playlists, Liked Songs, and a search for 5; an artist for an hour; an
@@ -59,17 +66,18 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   shortcut) to load it fresh.
 - Bottom bar: now playing on the left (title, then artist · album),
   transport in the center. Idle is “Nothing playing” / “Pick a song”;
-  setup copy only if this computer is not connected yet. Play/pause,
-  skip, seek, shuffle, repeat, like, add to playlist, volume, device
-  picker. **This computer** is always the first device. Other Spotify
-  Connect speakers sit under **Other devices**; the list loads when the
-  picker opens. Seek and volume apply when you let go of the slider.
+  setup text appears only if this computer is not connected yet.
+  Play/pause, skip, seek, shuffle, repeat, like, add to playlist, volume,
+  and the device picker. **This computer** is always the first device.
+  Other Spotify Connect speakers sit under **Other devices**; the list
+  loads when the picker opens. Seek and volume apply when you let go of
+  the slider.
 - When another device (a phone, a speaker) is playing, the bar follows
   it, and its controls drive that device: play/pause, skip, seek,
   volume, shuffle, and repeat do not pull playback back to this
   computer. Clicking a song still plays it here.
 - **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
-- **Back / Forward** chevrons sit at the top of the main view (library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. Disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
+- **Back / Forward** chevrons sit at the top of the main view (the library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. They are disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
 
 Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`. Play, pause, next, and previous apply as soon as the key is pressed.
 
@@ -86,7 +94,7 @@ Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app r
 - No playlist reorder or delete. Add and **New playlist** live on the
   list-plus picker.
 - No podcasts UI, lyrics, Winamp skin, MilkDrop, or equalizer (Fastpotify has those).
-- No tray / close-to-background; quit from the menu or ⌘Q.
-- No personal Spotify developer app (shared public Web API client id, same family as ncspot / spotify-player). Spotify divides that app's rate limit among everyone using it, so the app spends it sparingly. With local playback set up, playlists, your playlist list, album pages, and an artist's popular songs come through the playback connection instead, which has no such limit. Search, Home's recent and top lists, Liked Songs, the Albums / Artists tabs, the queue, and another device's playback still use the shared app; a 429 there keeps the session signed in and those wait out the cooldown.
+- No tray or close-to-background; quit from the menu or with ⌘Q.
+- No personal Spotify developer app (a shared public Web API client id, the same family as ncspot / spotify-player). Spotify divides that app's rate limit among everyone using it, so the app spends it sparingly. With local playback set up, playlists, your playlist list, album pages, and an artist's popular songs come through the playback connection instead, which has no such limit. Search, Home's recent and top lists, Liked Songs, the Albums / Artists tabs, the queue, and another device's playback still use the shared app; a 429 there keeps the session signed in, and those wait out the cooldown.
 - Album **Follow** is the primary artist only. Local files have no catalog page.
 - Local output uses librespot’s PulseAudio backend first, then rodio/ALSA. If another speaker took over, or the local session dropped, clicking a song makes this computer the active device again and starts the track.

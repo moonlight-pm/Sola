@@ -1,9 +1,12 @@
 # solactl
 
-Operator CLI. Talks to **sola-call** for compositor/session verbs, and to
-the **bus** only for `emit`.
+`solactl` is the operator command line. It talks to the call host,
+`sola-call`, for compositor, session, and app methods, and to the bus only
+for `emit`.
 
-## Call plane (needs `sola-call` + the owner process)
+## Call plane
+
+These commands need `sola-call` and the process that owns the method.
 
 ```text
 solactl compositor screenshot [-o PATH] [--app APP] [--window TITLE] [--format png|rgba]
@@ -18,24 +21,26 @@ If `sola-call` or the owner is down, the command fails. It does **not**
 launch a window.
 
 `compositor screenshot --app` copies that window’s own buffer
-(`ext-image-copy-capture`). The window does not need to be on top and
-is not raised. `--format rgba` writes packed RGBA8 (no PNG) for the
-shell freeze picker. Default PNG uses Fast compression. Shell hotkeys
-copy to the clipboard instead of writing this file.
+(`ext-image-copy-capture`). The window does not need to be on top and is
+not raised. `--format rgba` writes packed RGBA8 (no PNG) for the Shell's
+freeze picker. The default PNG uses fast compression. The Shell's
+screenshot chords copy to the clipboard instead of writing this file (see
+[Shell § Screenshots](sola-shell.md#screenshots)).
 
 `workspaces`, `browser`, `bots`, and `design` are first-class subcommands
-(`solactl` / `solactl --help`). Other running apps that have advertised
-methods: `solactl <app-id>` lists them; `solactl <app-id> <method> …`
-invokes.
+(see `solactl` or `solactl --help`). Any other running app that advertises
+methods works the same way: `solactl <app-id>` lists its methods, and
+`solactl <app-id> <method> …` invokes one.
 
 Path arguments (`--path`, `--file`, `--out`, `--prompt-file`, …) are
-resolved by `solactl` before the call: `~` expands and a relative path is
+resolved by `solactl` before the call: `~` expands, and a relative path is
 taken from **your** current directory, not the owner app's.
 
 ## Bots (`solactl bots`)
 
-Needs **sola-botsd** (owner `bots`). Fails if the daemon or `sola-call`
-is down — it does not launch a window.
+A bot is a named informational agent session with its own home directory.
+`solactl bots` needs the bots daemon, `sola-botsd` (owner `bots`). It
+fails if the daemon or `sola-call` is down; it does not launch a window.
 
 ```text
 solactl bots                         # list methods
@@ -47,9 +52,24 @@ solactl bots rm --bot suno
 solactl bots cancel --bot suno
 ```
 
-Phone API: daemon binds HTTP `0.0.0.0:27419`. Public name is
-`https://bot.sola.computer` (TLS at the proxy). Open **27419/tcp** to the
-desk for that proxy:
+### Homes and the write fence
+
+Each bot's home is `~/Bots/<slug>/`. `new` seeds the home and starts a
+first turn, an introduction (the orientation prompt is not shown as a user
+message). `rm` deletes the catalog row, the home directory, and the Grok
+session.
+
+The write fence is enforced by the prompt only. By default a bot writes
+only inside its home. To open the fence for one task, say “drop the write
+fence” or “work on the whole computer”, or name a path outside the home.
+Seat steal is refused even then. A bot is not a coding agent, and it does
+not use Workspaces unless you ask for that rail.
+
+### Phone API
+
+The daemon also serves HTTP on `0.0.0.0:27419`. Its public name is
+`https://bot.sola.computer`, with TLS at a proxy. Open **27419/tcp** on the
+Sola machine to that proxy.
 
 ```text
 GET  /health
@@ -64,25 +84,19 @@ POST /bots/{id}/cancel
 Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
 ```
 
-`GET /events` is `text/event-stream` (chunked). Keepalive comments every 15s.
-The iced **Bots** window uses the same HTTP/SSE on `127.0.0.1:27419`
-(list/send/create/delete + live events). `solactl bots` still uses
-sola-call. The TLS proxy must not buffer the body (`proxy_buffering off`,
-honor `X-Accel-Buffering: no`) and should use HTTP/1.1+ to the daemon with
-a long `proxy_read_timeout`.
+`GET /events` is `text/event-stream` (chunked), with keepalive comments
+every 15 s. The **Bots** window uses the same HTTP and SSE surface on
+`127.0.0.1:27419` (list, send, create, delete, and live events).
+`solactl bots` uses `sola-call`, not HTTP.
 
-Homes are `~/Bots/<slug>/`. `new` seeds the home and starts a first turn
-(introduction; the orientation prompt is not shown as a user message).
-`rm` deletes the catalog row, the home directory, and the Grok session.
-Write fence is prompt-only: **default that home**; say “drop the write
-fence” / “work on the whole computer” / name a path outside the home to
-open it for that task. Seat steal is still refused. Not a coding agent;
-not Workspaces unless you ask for that rail.
+The TLS proxy must not buffer the response body (`proxy_buffering off`,
+and honor `X-Accel-Buffering: no`). It should speak HTTP/1.1 or later to
+the daemon, with a long `proxy_read_timeout`.
 
 ## Workspaces (`solactl workspaces`)
 
-Needs **Workspaces** running (owner `workspaces`). Fails if the app or `sola-call`
-is down — it does not launch a window.
+Needs **Workspaces** running (owner `workspaces`). Fails if the app or
+`sola-call` is down; it does not launch a window.
 
 ```text
 solactl workspaces                         # list methods
@@ -111,106 +125,114 @@ solactl workspaces pane.wait [--pane ticket-123] [--status done] [--timeout 300]
 solactl workspaces whoami                  # from a Workspaces pane; or --pane / --path
 ```
 
-`--name` is the `.worktrees/<name>` folder (and the rail **default**).
-`--branch` defaults to that name; `--base-branch` defaults to HEAD.
-`--title` is the rail label. Empty `--title` (or a title equal to
-`--name`) falls back to the folder slug — the slug is not prefixed onto
-a custom title. Spawn is background: the new row appears, the rail/grid
-stay on the caller. `--select` jumps (same as the UI + / ⌘T).
-`workspace.exec` does not select.
+Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags.
+Spawn, add, and wait use a longer call deadline than the default 8 s.
+
+### Spawn
+
+`--name` is the `.worktrees/<name>` folder and the default rail label.
+`--branch` defaults to that name; `--base-branch` defaults to `HEAD`.
+`--title` is the rail label. An empty `--title`, or a title equal to
+`--name`, falls back to the folder slug; the slug is not prefixed onto a
+custom title.
+
+Spawn runs in the background: the new row appears, and the rail and grid
+stay on the caller. `--select` jumps to the new workspace (the same as
+**+** or ⌘T in the UI). `workspace.exec` does not select. When you spawn
+from a Workspaces pane, the parent defaults to `$SOLA_PANE_ID`.
+
+`--agent` is `grok`, `codex`, or `claude`. Other names are an error
+(OpenCode is presence-only). `--prompt` without `--agent` implies Grok.
+`--prompt` and `--prompt-file` are exclusive. The first Codex session may
+need `/hooks` in its TUI to trust the Sola status hook. Claude hooks are
+merged into `~/.claude/settings.json` and apply to the next Claude
+session.
+
+### Root tabs
+
 `--root` opens the tab in the project root checkout instead of a new
-worktree (the **No worktree** box on the New workspace card): `kind` is
-`root`, `path` is the project root, and work lands on whatever branch the
-root has checked out (usually master). `--branch` / `--base-branch` are
-refused with `--root`, and the startup script does not run. A root tab
-closes with plain `workspace.rm` (`--worktree` is refused);
-`workspace.set` takes `--title` and `--before` (`--name` / `--branch` need
-a worktree). Hover × and the pencil work as on a worktree tab.
-`workspace.set --name` `git worktree move`s to `.worktrees/<name>` (id
-stays so tmux sessions keep working; live or dirty checkouts are
-forced). The project root cannot be renamed.
-`--branch` is `git branch -m` in that checkout and does not move the
-folder. Promote an ad hoc tab with both: `--name sc-1234 --branch
-joshua/sc-1234/fix --title '…'`. Target by id, slug, path, or rail
-label. `--before` reorders that workspace in its project (`end` = last).
-The rail also does this with drag-drop; hover pencil / double-click on a
-worktree tab is `--title` (the label, not the folder). `project.reorder`
-moves a project group (`--before` another project, or omit / `end` for last).
+worktree (the **No worktree** box on the New workspace card). Its `kind`
+is `root`, its `path` is the project root, and work lands on whatever
+branch the root has checked out (usually master). `--branch` and
+`--base-branch` are refused with `--root`, and the startup script does not
+run.
 
-Lists include `path`, `kind` (`main` = the project's own tab,
-`worktree`, `root` = extra tab in the project root, `folder` = non-git
-project), and `parent`. `project.startup` is the
-per-project script that runs in a new worktree after spawn (also
-**Project → Startup Script…**). Env: `$PROJECT` (folder on disk),
-`$WORKTREE` (this tab, `.worktrees/<name>`), `$NAME` (tab name).
-`pane.list` and `whoami` include `session_id` when that pane’s Grok
-or Claude owner session is known (used to `grok -r` or `claude --resume`
-after a reboot loses tmux).
-A workspace name prefers the
-Grok leaf when sending, reading, waiting, or exec-ing (Codex leaf when
-`--agent codex`, Claude leaf when `--agent claude`). `pane.send`, `pane.read`, and
-`workspace.exec --prompt` address that workspace’s tmux session exactly
-(`=session:` current pane) so a split leaf `…-p` is not confused with
-the parent. `pane.send` and
-`workspace.exec --prompt` **paste** into the live agent (tmux
-bracketed-paste, then Enter) so a multiline brief does not submit on
-the first newline and a long prompt is not truncated. A failed paste
-returns the tmux error (not a bare `send failed`). `--prompt` without
-`--agent` implies Grok. `--prompt` and `--prompt-file` are exclusive. Spawn
-parent defaults to `$SOLA_PANE_ID` when you run from a Workspaces pane.
-`--agent` is `grok`, `codex`, or `claude`. Other names error (OpenCode
-stays presence-only). First Codex session may need `/hooks` in
-the TUI to trust the Sola status hook. Claude hooks are merged into
-`~/.claude/settings.json` and apply to the next Claude session. `pane.wait` holds until status
-matches (`--fresh` waits for a transition). Drop unregisters; it does not
-`git worktree remove` unless
-you pass `--worktree` (add `--force` to toss a dirty checkout).
-`workspace.rm` replies, then drops the tab on the next tick, so a
-call from inside that pane can finish instead of hanging. `tmux
-kill-session` and `git worktree remove` run off the iced thread after
-that (the rest of Workspaces stays live). Do **not**
-`git worktree remove` first from inside that pane — the cwd vanishes and
-the next tool cannot run. Use `--worktree` instead. If the checkout is
-already gone, Workspaces reaps the tab (no leftover working spinner).
+A root tab closes with plain `workspace.rm` (`--worktree` is refused).
+`workspace.set` takes `--title` and `--before` on a root tab; `--name` and
+`--branch` need a worktree. Hover × and the pencil work as on a worktree
+tab.
 
-Bool flags (`--enter`, `--fresh`, `--select`) can sit before other flags. Spawn /
-add / wait use a longer call deadline than the default 8s.
+### Rename and reorder
+
+`workspace.set --name` runs `git worktree move` to `.worktrees/<name>`.
+The id stays, so tmux sessions keep working; live or dirty checkouts are
+moved with force. The project root cannot be renamed. `--branch` runs
+`git branch -m` in that checkout and does not move the folder. To promote
+an ad hoc tab, pass both:
+`--name sc-1234 --branch joshua/sc-1234/fix --title '…'`.
+
+Target a workspace by id, slug, path, or rail label. `--before` reorders
+that workspace within its project (`end` = last); the rail does the same
+with drag and drop. On a worktree tab, the hover pencil or a double-click
+sets `--title` (the label, not the folder). `project.reorder` moves a
+project group: `--before` another project, or omit it (or pass `end`) for
+last.
+
+### Lists, startup scripts, and sessions
+
+Lists include `path`, `kind`, and `parent`. `kind` is one of:
+
+- `main` — the project's own tab
+- `worktree`
+- `root` — an extra tab in the project root
+- `folder` — a non-git project
+
+`project.startup` is the per-project script that runs in a new worktree
+after spawn (also **Project → Startup Script…**). It sees `$PROJECT` (the
+project folder on disk), `$WORKTREE` (this tab, `.worktrees/<name>`), and
+`$NAME` (the tab name).
+
+`pane.list` and `whoami` include `session_id` when that pane’s Grok or
+Claude owner session is known. Use it with `grok -r` or `claude --resume`
+after a reboot loses tmux.
+
+### Panes
+
+A workspace name prefers the Grok leaf when sending, reading, waiting, or
+exec-ing (the Codex leaf with `--agent codex`, the Claude leaf with
+`--agent claude`). `pane.send`, `pane.read`, and `workspace.exec --prompt`
+address that workspace’s tmux session exactly (`=session:` current pane),
+so a split leaf `…-p` is not confused with its parent.
+
+`pane.send` and `workspace.exec --prompt` **paste** into the live agent
+(tmux bracketed paste, then Enter), so a multiline brief does not submit
+on the first newline and a long prompt is not truncated. A failed paste
+returns the tmux error, not a bare `send failed`.
+
+`pane.wait` holds until the status matches; `--fresh` waits for a
+transition.
+
+### Remove
+
+`workspace.rm` unregisters the tab. It does not run `git worktree remove`
+unless you pass `--worktree`; add `--force` to discard a dirty checkout.
+
+`workspace.rm` replies first, then drops the tab on the next tick, so a
+call from inside that pane can finish instead of hanging.
+`tmux kill-session` and `git worktree remove` then run off the UI thread,
+and the rest of Workspaces stays live.
+
+Do **not** run `git worktree remove` yourself from inside that pane: the
+working directory vanishes and the next tool cannot run. Use `--worktree`
+instead. If the checkout is already gone, Workspaces reaps the tab, with no
+working spinner left behind.
 
 ## Browser (`solactl browser`)
 
-Needs **sola-browser** running (owner `browser`). Fails if chrome or
-`sola-call` is down — it does not launch a window. Same tab strip as
-the human; an **Agent** group is an ordinary group a skill may create.
-
-`tab.open` appends and does **not** focus unless `--select`. Page verbs
-use a pruned accessibility YAML snapshot and opaque refs (`e12`). The
-snapshot starts with an `actions:` list (role, name, ref) — click those.
-`click --text "Pay now"` uses the last snapshot and fails with the
-candidate refs when more than one control matches. Stale refs fail
-(node gone); snapshot again. `click` / `hover` also take CSS-pixel `--x`
-`--y` in **that tab’s** viewport (no ref; still CEF `Input.dispatch*`,
-not the compositor seat). `fill` / `type` write a contenteditable /
-ProseMirror editor with one `paste` of the whole string (newlines kept);
-they do not assign `textContent`. `fill --file PATH` reads the string from
-disk. The reply includes `value` and `matched: true`, or an error if the
-field did not keep the text. `get` reads the current value/href of a ref
-or `--control` name (DOM aria-label if the AX tree misses it). `links`
-lists `<a href>` and audio/video `duration` from the DOM. `wait --control
-Create` succeeds only when that named control exists in a snapshot (not
-when CEF fires load). `key --chord` (e.g. `Return`, `Control+Enter`)
-inserts once (one `char` event; not keyDown-with-text plus char).
-`scroll --dx --dy` go to the same tab. If `tabs` / `tab.open` time out
-while the sola-browser window is still up, the call plane is wedged:
-close the window (X or Flower) and launch it again — do not kill the
-process from a bot. Screenshot is a fallback when
-the tree is empty (canvas / maps) and captures **that tab’s** document
-even when backgrounded. Vault fill / confirm gates are not on this plane
-(**D3**).
-
-With `SOLA_BOT=1` (named informational bots): `--select` and `tab.focus`
-are refused; page verbs require `--tab` (never default to the focused
-tab); `solactl compositor input` / `screenshot` / `sample` are refused.
-The web path is `solactl browser` only.
+Needs the **Browser** (`sola-browser`) running (owner `browser`). Fails if
+the Browser or `sola-call` is down; it does not launch a window. The tab strip is the same
+one the human uses; an **Agent** group is an ordinary group that a skill
+may create.
 
 ```text
 solactl browser                         # list methods
@@ -245,55 +267,83 @@ solactl browser back|forward|reload|stop [--tab 3]
 solactl browser find.page --text needle
 ```
 
-`--tab` is an id, or a unique URL/title substring. `--group` is an id or
-name. `find` searches the last snapshot, not the page. `find.page` is ⌘F.
-`wait` / `wait --load` returns when `document.readyState` is `complete` on
-a committed URL (not the tab-strip spinner). `wait --text` snapshots until
-that string appears. `wait --control Create` snapshots until that named
-control is in the actions list (or times out naming the missing control).
+`--tab` is an id, or a unique URL or title substring. `--group` is an id or
+a name. `tab.open` appends a tab and does **not** focus it unless you pass
+`--select`.
+
+### Background tabs
 
 Snapshot, click, fill, type, and `browser screenshot` target **that tab’s
-CEF document** — they work when the tab is in the background and do not
-raise it. `tab.open` does not focus. Bots (`SOLA_BOT=1`) **must** pass
-`--tab`, and are refused `tab.focus`, `tab.open --select`, and compositor
-screenshot/input.
+CEF document**. They work when the tab is in the background and do not
+raise it.
+
+### Snapshots and refs
+
+Page verbs use a pruned accessibility snapshot in YAML, with opaque refs
+(`e12`). The snapshot starts with an `actions:` list (role, name, ref);
+click those. `click --text "Pay now"` uses the last snapshot and fails
+with the candidate refs when more than one control matches. A stale ref
+fails (the node is gone); take a new snapshot.
+
+`find` searches the last snapshot, not the page. `find.page` is ⌘F.
+
+### Input
+
+`click` and `hover` also take CSS-pixel `--x` `--y` in **that tab’s**
+viewport. That needs no ref, and it is still CEF `Input.dispatch*`, not the
+compositor seat.
+
+`fill` and `type` write a contenteditable or ProseMirror editor with one
+`paste` of the whole string (newlines kept); they do not assign
+`textContent`. `fill --file PATH` reads the string from disk. The reply
+includes `value` and `matched: true`, or an error if the field did not
+keep the text.
+
+`key --chord` (for example `Return`, `Control+Enter`) inserts once: one
+`char` event, not keyDown-with-text plus char. `scroll --dx --dy` go to the
+same tab.
+
+### Reading the page
+
+`get` reads the current value or href of a ref or a `--control` name (from
+the DOM aria-label if the accessibility tree misses it). `links` lists
+`<a href>` targets and audio/video `duration` from the DOM.
+
+Screenshot is a fallback when the tree is empty (canvas, maps). It
+captures **that tab’s** document even when the tab is in the background.
+
+### Waiting
+
+`wait` and `wait --load` return when `document.readyState` is `complete`
+on a committed URL (not when the tab-strip spinner stops). `wait --text`
+snapshots until that string appears. `wait --control Create` snapshots
+until that named control is in the actions list, or times out naming the
+missing control; it does not succeed just because CEF fired load.
+
+### Bots
+
+With `SOLA_BOT=1` (named informational bots):
+
+- `--select` and `tab.focus` are refused.
+- Page verbs require `--tab`; they never default to the focused tab.
+- `solactl compositor input`, `screenshot`, and `sample` are refused.
+
+The web path for a bot is `solactl browser` only.
+
+### Troubleshooting
+
+If `tabs` or `tab.open` time out while the Browser window is still up, the
+call plane is wedged. Close the window (× or the flower menu) and launch it
+again. Do not kill the process from a bot.
+
+Vault fill and confirm gates are not on this plane. Which methods need a
+human confirm is an open question
+([D3](../open-questions.md#d3--which-call-plane-methods-need-a-human-confirm-p1)).
 
 ## Design (`solactl design`)
 
-Needs **sola-design** running (owner `design`). Fails if it or `sola-call`
-is down — it does not launch a window. Page verbs take `--canvas` (default:
-the canvas on the human's screen; over MCP, the one you last opened or
-made); `open` and `canvas.new` make a canvas live off the human's screen
-(`--raise` shows it to them).
-
-A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
-lists the artboards and each artboard is an HTML page beside it. Edit those
-files with ordinary tools. Design watches them (and any outside file a page
-loaded — `status` lists those as `linked`) and reloads. After an edit, `wait`
-or `reload` before `screenshot` / `inspect`: both make the boards show the
-files on disk (`wait` reloads when files are newer than the boards) and
-return once pages have loaded, web fonts are in, and `auto` heights are
-measured.
-
-`canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
-`--path`, default your current directory), registers the project if
-needed, and opens the canvas — it appears under the project in the rail.
-An existing canvas of that name is opened instead (`created: false`).
-`open` takes the canvas dir, its `canvas.toml`, or any file inside it, and
-registers the project if Design does not know it yet. It does not raise the
-window unless `--raise`. `--artboard` defaults to the artboard holding the
-human's selection, else the only artboard. `inspect` without `--selector`
-inspects the selected element. `selection` is what the human Super+clicked
-(`null` when nothing).
-
-Annotations are files too: `[[section]]`, `[[note]]`, `[[link]]`, and
-`[[flow]]` in `canvas.toml`, and `data-design-to="<artboard id>"` exits in
-the pages (see [sola-design § Files](sola-design.md#files)). Design draws
-them over the canvas, so they are not in screenshots; `status` lists them
-under `annotations`, each artboard's `exits` (with an `error` when one leads
-nowhere) and `board_links` (artboards its plain links lead to), and a note's
-`placed` / `error` once its artboard has settled. `view --section` frames a
-section.
+Needs **Design** (`sola-design`) running (owner `design`). Fails if Design
+or `sola-call` is down; it does not launch a window.
 
 ```text
 solactl design                               # list methods
@@ -321,47 +371,106 @@ solactl design inspect [--artboard phone] [--selector 'main .card']
 solactl design inspect --artboard light --selector section --all   # every match's box
 ```
 
-`open` and `canvas.new` make a canvas live **off the human's screen** (it
-shows in their rail); `--raise` puts it on their screen. Every page call
-(`status`, `share`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect`)
-takes `--canvas` (its folder, `canvas.toml`, or a file in it — opened in the
-background if need be); without it the call goes to the canvas on the human's
-screen. Over MCP, a page call without `canvas` goes to the canvas that agent
-last opened or made, so agents working at the same time stay on their own.
+### Canvases are files
 
-Design holds its boards within the machine's free memory (it keeps 15% free
-for everything else). When memory runs short it **discards** idle boards —
-their page closes, their picture stays — and reopens them on the next call
-that needs one (`screenshot` / `pdf` / `inspect` wait for the reload;
-`wait` / `reload` reopen the boards they cover). `status` marks them
-`discarded` and reports `memory` (`free_mib`, `total_mib`, `keep_free_mib`,
-`boards_mib` — Design's estimate for its open boards — and board counts).
-When the boards in use leave no room, `open`, a call on a canvas that is not
-open, or a call that reopens boards **fails with the reason**: the numbers,
-each open canvas (boards, memory, why it is kept), and the way out. Close a
-canvas you are done with: `canvas.close --canvas <dir>` (required; the
-canvas on the human's screen stays open). The next call on it opens it
-again.
+A canvas is files, not app state: `<project>/design/<canvas>/canvas.toml`
+lists the artboards, and each artboard is an HTML page beside it. Edit
+those files with ordinary tools. Design watches them (and any outside file
+a page loaded; `status` lists those as `linked`) and reloads.
+
+After an edit, run `wait` or `reload` before `screenshot` or `inspect`.
+Both make the boards show the files on disk (`wait` reloads when the files
+are newer than the boards) and return once pages have loaded, web fonts are
+in, and `auto` heights are measured.
+
+### Opening a canvas
+
+`canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
+`--path`, default your current directory), registers the project if
+needed, and opens the canvas. It appears under the project in the rail. An
+existing canvas of that name is opened instead (`created: false`).
+
+`open` takes the canvas directory, its `canvas.toml`, or any file inside
+it, and registers the project if Design does not know it yet.
+
+`open` and `canvas.new` make a canvas live **off the human's screen**; it
+shows in their rail. `--raise` puts it on their screen.
+
+### Targeting a canvas and an artboard
+
+Every page call (`status`, `share`, `view`, `wait`, `reload`, `screenshot`,
+`pdf`, `inspect`) takes `--canvas`: the canvas folder, its `canvas.toml`, or
+a file in it, opened in the background if need be. Without it, the call
+goes to the canvas on the human's screen. Over MCP, a page call without
+`canvas` goes to the canvas that agent last opened or made, so agents
+working at the same time stay on their own.
+
+`--artboard` defaults to the artboard holding the human's selection, else
+the only artboard. `inspect` without `--selector` inspects the selected
+element. `selection` is what the human Super+clicked (`null` when nothing).
+
+### Annotations
+
+Annotations are files too: `[[section]]`, `[[note]]`, `[[link]]`, and
+`[[flow]]` in `canvas.toml`, and `data-design-to="<artboard id>"` exits in
+the pages (see [Design § Files](sola-design.md#files)). Design draws
+them over the canvas, so they are not in screenshots.
+
+`status` lists them under `annotations`; each artboard's `exits` (with an
+`error` when one leads nowhere) and `board_links` (artboards its plain
+links lead to); and a note's `placed` or `error` once its artboard has
+settled. `view --section` frames a section.
+
+### Memory
+
+Design holds its boards within the machine's free memory; it keeps 15%
+free for everything else. When memory runs short, it **discards** idle
+boards: their page closes, their picture stays. It reopens them on the next
+call that needs one (`screenshot`, `pdf`, and `inspect` wait for the
+reload; `wait` and `reload` reopen the boards they cover).
+
+`status` marks those boards `discarded` and reports `memory`: `free_mib`,
+`total_mib`, `keep_free_mib`, `boards_mib` (Design's estimate for its open
+boards), and board counts.
+
+When the boards in use leave no room, `open`, a call on a canvas that is
+not open, or a call that reopens boards **fails with the reason**: the
+numbers, each open canvas (boards, memory, why it is kept), and the way
+out. Close a canvas you are done with: `canvas.close --canvas <dir>`
+(`--canvas` is required; the canvas on the human's screen stays open). The
+next call on it opens it again.
+
+### Screenshots, PDFs, and inspect
 
 `screenshot` captures the whole page (CDP, at the artboard's raster scale,
-normally 2×) and replies with `path` — the same however the human is zoomed
-or panned; `pdf` writes a one-page PDF of
-the artboard as it looks on screen (screen media, backgrounds, no margins).
-Default paths are under `$XDG_RUNTIME_DIR/sola/design/shots/`. `wait` and
-`reload` also wait for a `height = "auto"` artboard to be measured. `inspect` replies with the viewport
-(the artboard size), the document size, `cut_off_below` (content taller than
-the artboard), the element's box and computed styles, and up to 25
-`issues` (`overflows-viewport`, `clipped-x`, `clipped-y`). `--all` instead
-lists every match (up to 300) as `{selector, tag, rect, text}`. In
-`status`, each artboard has `src` (what `canvas.toml` asks for), `url` (what
-its tab shows), `error` (missing `src`, HTTP ≥ 400), and `detail` (the part
-re-rendered at screen scale while the human is zoomed in, else null).
-`screenshot` reports the `scale` it used: each artboard renders at 2×, else
-1×, else under 1× for a page over 8192 px. `view` moves the human's camera
-only until they move it themselves on that canvas; after that it replies
-`moved: false` and leaves it. Boards are served over http from the project
-root (`/` = project folder; a canvas `root` is looked in first), not
-`file://`. There is no raw `eval` on this plane.
+normally 2×) and replies with `path`. The result is the same however the
+human is zoomed or panned. `screenshot` reports the `scale` it used: each
+artboard renders at 2×, else 1×, else under 1× for a page over 8192 px.
+
+`pdf` writes a one-page PDF of the artboard as it looks on screen (screen
+media, backgrounds, no margins). Default paths are under
+`$XDG_RUNTIME_DIR/sola/design/shots/`.
+
+`wait` and `reload` also wait for a `height = "auto"` artboard to be
+measured.
+
+`inspect` replies with the viewport (the artboard size), the document size,
+`cut_off_below` (content taller than the artboard), the element's box and
+computed styles, and up to 25 `issues` (`overflows-viewport`, `clipped-x`,
+`clipped-y`). `--all` instead lists every match (up to 300) as
+`{selector, tag, rect, text}`.
+
+In `status`, each artboard has `src` (what `canvas.toml` asks for), `url`
+(what its tab shows), `error` (missing `src`, HTTP ≥ 400), and `detail`
+(the part re-rendered at screen scale while the human is zoomed in, else
+null).
+
+`view` moves the human's camera only until they move it themselves on that
+canvas; after that it replies `moved: false` and leaves it.
+
+Boards are served over http from the project root (`/` = the project
+folder; a canvas `root` is looked in first), not `file://`. There is no raw
+`eval` on this plane.
 
 ## MCP (`solactl mcp`)
 
@@ -369,12 +478,12 @@ An MCP server on stdio that exposes the call plane to agents that speak
 MCP. Every method a running app advertises is a tool named
 `<owner>_<method>` (dots become `_`): `design_screenshot`,
 `browser_tab_open`, `workspaces_pane_send`, … The list follows the apps
-that are up — start Design and its tools appear (the server sends
+that are up: start Design and its tools appear (the server sends
 `tools/list_changed`). Each tool takes the same arguments as the
 `solactl <owner> <method>` flags; path arguments may be relative to the
-agent's working directory. A reply with a `path` to a PNG / JPEG
-(screenshots) also returns the image inline (up to ~3.7 MB; larger ones
-return the path only).
+agent's working directory. A reply with a `path` to a PNG or JPEG
+(screenshots) also returns the image inline, up to about 3.7 MB; larger
+ones return the path only.
 
 ```text
 solactl mcp                      # every live owner
@@ -383,10 +492,14 @@ claude mcp add sola -- /opt/sola/bin/solactl mcp
 ```
 
 It is an adapter over the same methods, not a second protocol: what a tool
-may do is what `solactl` may do (confirm policy is still **D3**).
+may do is what `solactl` may do. Which methods need a human confirm is
+still open
+([D3](../open-questions.md#d3--which-call-plane-methods-need-a-human-confirm-p1)).
 `SOLA_BOT=1` rules apply the same way.
 
-## Not calls
+## Other commands
+
+These do not go through `sola-call`.
 
 ```text
 solactl emit <Topic> '<json>'   # bus poke
@@ -398,9 +511,9 @@ solactl media <action>          # MPRIS / wpctl (shell key handler)
 `solactl open` calls `sola_core::open_url` (or `open_image` for a raster
 path). It does not go through MIME. In a Sola terminal, `open` is an alias
 for `xdg-open`; that path uses `sola-browser.desktop` (http(s), HTML,
-XHTML, PDF, `about:`, unknown schemes). Both land in sola-browser. A local
-HTML or PDF path is resolved to an absolute `file://` URL before handoff.
-There is no Helium fallback.
+XHTML, PDF, `about:`, unknown schemes). For those, both paths land in the
+Browser. A local HTML or PDF path is resolved to an absolute
+`file://` URL before handoff. There is no fallback to another browser.
 
-`eval` is gone (WebView stack retired). Screenshot and synthetic input
-are calls, not bus topics.
+Screenshot and synthetic input are calls, not bus topics. There is no
+`eval` command.

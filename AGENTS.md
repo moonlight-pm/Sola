@@ -112,6 +112,7 @@ crates/
   sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
 nix/                   # NixOS module (Shape 1) + image/ISO profiles
+site/                  # sola.moonlight.pm project page (Thoxa program, Wicket workload)
 apocrypha/             # Reference-only: legacy WebView stack (not built)
 CURRENT.md             # Living session focus (only handoff)
 INSTALL.md             # Shape 1 colleague install (NixOS module + tarball)

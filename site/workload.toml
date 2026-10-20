@@ -1,0 +1,22 @@
+# sola.moonlight.pm: the project page (site/).
+# Apply: wicketctl workload apply aulos --file site/workload.toml --confirm
+#
+# The id is the workload Thoxa's workloads/sola created; the site moved here
+# and keeps it. sola.computer, its first address, is parked: no route and no
+# apex A record.
+
+schema = "wicket.workload/v0"
+
+[workload]
+id = "wl-f2835fc5634e"
+name = "sola"
+
+[[containers]]
+name = "web"
+image = "registry.wicket.cloud/sola-landing:latest"
+ports = [{ name = "http" }]
+
+[[routes]]
+host = "sola.moonlight.pm"
+container = "web"
+port = "http"
