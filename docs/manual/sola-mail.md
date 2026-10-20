@@ -66,7 +66,10 @@ Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
 - **Attach** — toolbar paperclip, **Attach** next to Send, or ⌘⇧A. Kit
   file picker. Files go out as `multipart/mixed`.
 - **Send** shows *Sending…* until the server takes it; a failure keeps
-  the draft open.
+  the draft open. If the server refuses a recipient, the message names
+  the address and the server's reason — `5.1.2 Mailbox does not exist`
+  means there is no mailbox for that address there. Failures are also
+  written to `/opt/sola/log/app-sola-mail.log`.
 - **Save Draft** files it in Drafts and closes compose. Open it from
   Drafts and press **Edit draft** to continue; sending (or saving again)
   replaces the saved copy.
