@@ -681,6 +681,13 @@ fn finish(job: Job) {
 }
 
 fn fail(op: Op, message: &str) {
+    // A list before any account is up is routine; everything else is a
+    // failure someone will ask about later.
+    if op == Op::List {
+        debug!(?op, "{message}");
+    } else {
+        warn!(?op, "{message}");
+    }
     bridge::emit(MailEvent::Failed {
         op,
         message: message.to_string(),

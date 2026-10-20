@@ -154,10 +154,18 @@ impl Reader {
                 };
                 match result {
                     Ok(body) => bridge::emit(MailEvent::Body(Box::new(body))),
-                    Err(e) => bridge::emit(MailEvent::Failed {
-                        op: Op::Open(id),
-                        message: e.to_string(),
-                    }),
+                    Err(e) => {
+                        warn!(
+                            account = self.account.as_str(),
+                            folder = id.folder.as_str(),
+                            uid = id.uid,
+                            "open failed: {e}"
+                        );
+                        bridge::emit(MailEvent::Failed {
+                            op: Op::Open(id),
+                            message: e.to_string(),
+                        });
+                    }
                 }
             }
             ReadReq::Flag { id, flag, on } => {
@@ -166,6 +174,11 @@ impl Reader {
                     None => Err(anyhow::anyhow!("this account has no {} mailbox", id.folder)),
                 };
                 if let Err(e) = result {
+                    warn!(
+                        account = self.account.as_str(),
+                        uid = id.uid,
+                        "flag {flag:?} failed: {e}"
+                    );
                     bridge::emit(MailEvent::Failed {
                         op: Op::Flag(id),
                         message: e.to_string(),

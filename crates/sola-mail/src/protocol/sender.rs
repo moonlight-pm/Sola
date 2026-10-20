@@ -50,7 +50,9 @@ pub fn send_mail(account: &Account, msg: &Outgoing) -> anyhow::Result<Vec<u8>> {
         ))
         .timeout(Some(SMTP_TIMEOUT))
         .build();
-    mailer.send(&email).map_err(|e| anyhow::anyhow!("{e}"))?;
+    mailer
+        .send(&email)
+        .map_err(|e| anyhow::anyhow!(describe_failure(e.is_permanent(), &e.to_string(), msg)))?;
     debug!(to = msg.to.as_str(), "mail sent");
     Ok(email.formatted())
 }
@@ -123,6 +125,28 @@ pub fn build_message(msg: &Outgoing, draft: bool) -> anyhow::Result<Message> {
         builder.multipart(mp)
     };
     built.map_err(|e| anyhow::anyhow!("can't build the message: {e}"))
+}
+
+/// Say who was refused when the server rejects a recipient (`550 5.1.x`)
+/// — lettre's text alone ("permanent error (550): 5.1.2 Mailbox does not
+/// exist.") reads like a problem with the sender.
+fn describe_failure(permanent: bool, text: &str, msg: &Outgoing) -> String {
+    let detail = text.split_once("): ").map_or(text, |(_, d)| d).trim();
+    let lower = detail.to_lowercase();
+    let bad_recipient = permanent
+        && (detail.starts_with("5.1.")
+            || lower.contains("mailbox does not exist")
+            || lower.contains("no such user")
+            || lower.contains("user unknown"));
+    if !bad_recipient {
+        return text.to_string();
+    }
+    let mut all = super::recipients::split(&msg.to);
+    all.extend(super::recipients::split(&msg.cc));
+    match all.as_slice() {
+        [one] => format!("{one} was refused by the mail server — {detail}"),
+        _ => format!("the mail server refused one of the recipients — {detail}"),
+    }
 }
 
 /// `<id>` — In-Reply-To / References need the angle brackets.
@@ -224,5 +248,20 @@ mod tests {
         let raw = String::from_utf8(roundtrip(&outgoing("half typed@"), true)).expect("utf8");
         assert!(raw.contains("To: half typed@"), "{raw}");
         assert!(build_message(&outgoing("half typed@"), false).is_err());
+    }
+
+    #[test]
+    fn refused_recipient_is_named() {
+        let text = "permanent error (550): 5.1.2 Mailbox does not exist.";
+        assert_eq!(
+            describe_failure(true, text, &outgoing("terry@hotsprings.mt")),
+            "terry@hotsprings.mt was refused by the mail server — 5.1.2 Mailbox does not exist."
+        );
+        assert!(
+            describe_failure(true, text, &outgoing("a@x.com, b@y.com"))
+                .starts_with("the mail server refused one")
+        );
+        let auth = "permanent error (535): 5.7.8 Authentication failed";
+        assert_eq!(describe_failure(true, auth, &outgoing("a@x.com")), auth);
     }
 }

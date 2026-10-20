@@ -36,10 +36,17 @@ pub fn spawn(plan: SendPlan, msg: Outgoing) {
                 }
                 bridge::emit(MailEvent::Sent);
             }
-            Err(e) => bridge::emit(MailEvent::Failed {
-                op: Op::Send,
-                message: e.to_string(),
-            }),
+            Err(e) => {
+                tracing::warn!(
+                    from = msg.from.as_str(),
+                    smtp = plan.smtp.smtp_host.as_str(),
+                    "send failed: {e}"
+                );
+                bridge::emit(MailEvent::Failed {
+                    op: Op::Send,
+                    message: e.to_string(),
+                });
+            }
         });
     if let Err(e) = started {
         bridge::emit(MailEvent::Failed {

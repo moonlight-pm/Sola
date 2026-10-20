@@ -160,10 +160,16 @@ impl Writer {
                 match (result, draft) {
                     (Ok(()), true) => bridge::emit(MailEvent::DraftSaved),
                     (Ok(()), false) => {}
-                    (Err(e), true) => bridge::emit(MailEvent::Failed {
-                        op: Op::SaveDraft,
-                        message: e.to_string(),
-                    }),
+                    (Err(e), true) => {
+                        warn!(
+                            account = self.id.as_str(),
+                            folder, "saving the draft failed: {e}"
+                        );
+                        bridge::emit(MailEvent::Failed {
+                            op: Op::SaveDraft,
+                            message: e.to_string(),
+                        });
+                    }
                     (Err(e), false) => {
                         warn!(
                             account = self.id.as_str(),
