@@ -82,7 +82,10 @@ new `tabbar/` and `stacks.rs`), `crates/sola-bus/src/topics.rs`,
 - [x] Applied twice with Joshua's OK (2026-10-21; `pkg:sola` a3236c19 from
       `b91a8ca8`): bar draws, hidden tabs idle, a full restart restores order
       and the shown tab.
-- [ ] Hands-on smoke on canto: open two
+- [x] Smoke by injection (2026-10-21): row click, Super+\` both ways,
+      KP_6 / KP_* / KP_4 moves, Fullscreen and Cinema toggles. Open: a row
+      drag, a dialog, the keys through River.
+- [ ] Remaining hands-on smoke on canto: open two
       Terminals and a Browser, stack them, switch from the bar and with
       Super+\`, move between zones, restart the shell and the apps (layout
       returns), check CPU with the browser hidden behind a tab.
