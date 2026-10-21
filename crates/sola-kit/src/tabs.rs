@@ -48,17 +48,7 @@ impl TabWindows {
     ) -> (window::Id, Task<window::Id>) {
         self.opened += 1;
         let key = self.key(id);
-        let tab = Tab {
-            key: key.clone(),
-            app_id: self.app_id.to_string(),
-            pid: std::process::id(),
-            seq: self.opened,
-        };
-        if let Ok(mut bus) = crate::app::bus().lock() {
-            if let Err(e) = bus.emit(Topic::Tab(tab)) {
-                tracing::warn!(%key, "announce tab failed: {e:?}");
-            }
-        }
+        self.announce(&key, self.opened, None);
         let (wid, task) = window::open(settings);
         self.windows.insert(
             wid,
@@ -71,28 +61,51 @@ impl TabWindows {
         (wid, task)
     }
 
+    fn tab(&self, key: &str, seq: u32, window_id: Option<u32>) -> Tab {
+        Tab {
+            key: key.to_string(),
+            app_id: self.app_id.to_string(),
+            pid: std::process::id(),
+            seq,
+            window_id,
+        }
+    }
+
+    fn announce(&self, key: &str, seq: u32, window_id: Option<u32>) {
+        if let Ok(mut bus) = crate::app::bus().lock() {
+            if let Err(e) = bus.emit(Topic::Tab(self.tab(key, seq, window_id))) {
+                tracing::warn!(%key, "announce tab failed: {e:?}");
+            }
+        }
+    }
+
     /// The tab's window is gone (or going): retract its announcement.
     pub fn close(&mut self, window: window::Id) {
         let Some(entry) = self.windows.remove(&window) else {
             return;
         };
         if let Ok(mut bus) = crate::app::bus().lock() {
-            let _ = bus.retract(Topic::Tab(Tab {
-                key: entry.key,
-                app_id: self.app_id.to_string(),
-                pid: std::process::id(),
-                seq: entry.seq,
-            }));
+            let _ = bus.retract(Topic::Tab(self.tab(&entry.key, entry.seq, None)));
         }
     }
 
-    /// Fold one bus message (`TabWindow` pairs and their retractions).
+    /// Fold one bus message (`TabWindow` pairs and their retractions). A
+    /// new pair is announced back with the window's id.
     pub fn update(&mut self, msg: &Message) {
         let Some(Topic::TabWindow(TabWindow { key, window_id })) = Topic::parse(msg) else {
             return;
         };
-        if let Some(entry) = self.windows.values_mut().find(|e| e.key == key) {
-            entry.river = msg.sticky.then_some(window_id);
+        let river = msg.sticky.then_some(window_id);
+        let Some(entry) = self.windows.values_mut().find(|e| e.key == key) else {
+            return;
+        };
+        if entry.river == river {
+            return;
+        }
+        entry.river = river;
+        let seq = entry.seq;
+        if river.is_some() {
+            self.announce(&key, seq, river);
         }
     }
 

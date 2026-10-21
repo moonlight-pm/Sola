@@ -7,6 +7,10 @@
 //! unpaired tabs (by `seq`) and its unpaired windows (by id) pair up in
 //! order. A pair holds while both live; only what is unpaired is paired
 //! again, so one late arrival cannot shift the others.
+//!
+//! Once paired, the app announces the tab again with its window's id, so a
+//! restarted shell (every window already up, tabs replaying one at a time)
+//! pairs those directly. Only tabs without a live id pair by order.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -16,6 +20,8 @@ pub struct Announced {
     pub app_id: String,
     pub pid: u32,
     pub seq: u32,
+    /// The window id the app says the tab is (from an earlier pairing).
+    pub window_id: Option<u32>,
 }
 
 /// A window that could be a tab: `(window_id, app_id, pid)`.
@@ -58,13 +64,42 @@ impl Pairing {
         self.paired.get(&window_id).map(String::as_str)
     }
 
-    /// Pair each process's unpaired tabs with its unpaired windows, in
+    /// Pair tabs with windows: first those whose app named the window,
+    /// then each process's remaining tabs with its unpaired windows, in
     /// order. Returns the new pairs `(window_id, key)`.
     pub fn pair(&mut self, windows: &[Candidate<'_>]) -> Vec<(u32, String)> {
+        let mut new = Vec::new();
+        // Named: the window is up, the process and app match, and it is free.
+        let named: Vec<(u32, String)> = self
+            .tabs
+            .values()
+            .filter(|t| !self.paired.values().any(|k| *k == t.key))
+            .filter_map(|t| {
+                let w = t.window_id?;
+                let live = windows
+                    .iter()
+                    .any(|&(id, app, pid)| id == w && app == t.app_id && pid == t.pid);
+                (live && !self.paired.contains_key(&w)).then(|| (w, t.key.clone()))
+            })
+            .collect();
+        for (w, k) in named {
+            if !self.paired.contains_key(&w) {
+                self.paired.insert(w, k.clone());
+                new.push((w, k));
+            }
+        }
+
+        // By order: tabs with no id, or one that is gone (sola-river
+        // restarted and renumbered).
         let taken: HashSet<&str> = self.paired.values().map(String::as_str).collect();
         let mut by_pid: BTreeMap<u32, (Vec<&Announced>, Vec<u32>)> = BTreeMap::new();
         for t in self.tabs.values().filter(|t| !taken.contains(t.key.as_str())) {
-            by_pid.entry(t.pid).or_default().0.push(t);
+            let named_live = t
+                .window_id
+                .is_some_and(|w| windows.iter().any(|&(id, _, _)| id == w));
+            if !named_live {
+                by_pid.entry(t.pid).or_default().0.push(t);
+            }
         }
         for &(wid, app_id, pid) in windows {
             if self.paired.contains_key(&wid) {
@@ -76,17 +111,18 @@ impl Pairing {
                 }
             }
         }
-        let mut new = Vec::new();
+        let mut ordered = Vec::new();
         for (_, (mut tabs, mut wins)) in by_pid {
             tabs.sort_by_key(|t| t.seq);
             wins.sort_unstable();
             for (t, w) in tabs.into_iter().zip(wins) {
-                new.push((w, t.key.clone()));
+                ordered.push((w, t.key.clone()));
             }
         }
-        for (w, k) in &new {
+        for (w, k) in &ordered {
             self.paired.insert(*w, k.clone());
         }
+        new.extend(ordered);
         new
     }
 }
@@ -101,7 +137,34 @@ mod tests {
             app_id: "sola-terminal".into(),
             pid,
             seq,
+            window_id: None,
         }
+    }
+
+    fn named(key: &str, pid: u32, seq: u32, window_id: u32) -> Announced {
+        Announced {
+            window_id: Some(window_id),
+            ..tab(key, pid, seq)
+        }
+    }
+
+    #[test]
+    fn a_restarted_shell_pairs_named_tabs_whatever_order_they_replay() {
+        let mut p = Pairing::default();
+        let wins = [(9, "sola-terminal", 7), (14, "sola-terminal", 7)];
+        // The newer tab replays first; by order it would take window 9.
+        p.announce(named("t/new", 7, 3, 14));
+        assert_eq!(p.pair(&wins), vec![(14, "t/new".into())]);
+        p.announce(named("t/old", 7, 1, 9));
+        assert_eq!(p.pair(&wins), vec![(9, "t/old".into())]);
+    }
+
+    #[test]
+    fn a_gone_window_id_falls_back_to_order() {
+        let mut p = Pairing::default();
+        // sola-river restarted: the named window 40 is no more.
+        p.announce(named("t/a", 7, 1, 40));
+        assert_eq!(p.pair(&[(3, "sola-terminal", 7)]), vec![(3, "t/a".into())]);
     }
 
     #[test]

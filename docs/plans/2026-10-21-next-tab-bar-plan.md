@@ -134,7 +134,19 @@ the same.
 - [x] Terminal is one process: a second launch asks the running one for a
       new tab (`MenuAction new_tab`) — a second process would reopen every
       saved tab as windows.
-- [ ] **Ask before** apply; smoke: ⌘T, close, splits in a
+- [x] Applied 2026-10-21 (`pkg:sola` 984819fd from `5c2a0d38`). Smoked by
+      injection: the Terminal tab kept its Right place as a tab key; ⌘T
+      opened a tab window in Right (focused, same folder); a split and a
+      pane close in it; Super+\` between the Terminal tabs; closing the
+      last pane closed the window (Right fell to the other tab); a launcher
+      launch while running handed off (\"terminal already running\") and
+      the running process opened a tab. **Restart Shell swapped two
+      Terminal tabs' pairings:** every window was up and the tabs replayed
+      one at a time, so pairing by order ran before it had them all. Fixed:
+      the app re-announces each tab with its window id once paired, and
+      named tabs pair first (`Tab.window_id`).
+- [ ] **Ask before** apply of the pairing fix; then Restart Shell again, and
+      the remaining smoke: ⌘T, close, splits in a
       tab window, restart restores each terminal tab to its zone and place.
 
 ## Phase 3+ — outline

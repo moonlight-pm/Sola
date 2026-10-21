@@ -182,7 +182,11 @@ novus runs River, so how novus gets it is settled before `next` merges.
 opens a window an app announces `Topic::Tab { key, app_id, pid, seq }`;
 the shell pairs each process's tabs (by `seq`) with its new windows (by
 sola-river id, which follows creation order) and publishes
-`Topic::TabWindow { key, window_id }`. `TabLayout` then keys tabs by `key`.
+`Topic::TabWindow { key, window_id }`. The app then announces the tab
+again with that `window_id`, so a restarted shell — every window already
+up, tabs replaying one at a time — pairs it directly; only tabs without a
+live id pair by order (a sola-river restart renumbers windows, so a gone
+id falls back to order). `TabLayout` then keys tabs by `key`.
 No compositor change. A unique first title was rejected (it shows in the
 bar), and a client-set tag needs a protocol River lacks (rivulet could add
 one later if pairing proves fragile).

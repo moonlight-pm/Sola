@@ -174,6 +174,10 @@ pub struct Tab {
     pub pid: u32,
     /// How many windows this process had opened, this one included (from 1).
     pub seq: u32,
+    /// The window's sola-river id, once the shell has said ([`TabWindow`]).
+    /// The app announces the tab again with it, so a restarted shell pairs
+    /// the tab directly instead of by order.
+    pub window_id: Option<u32>,
 }
 
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by

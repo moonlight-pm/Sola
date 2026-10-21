@@ -511,6 +511,7 @@ impl Shell {
             app_id: tab.app_id,
             pid: tab.pid,
             seq: tab.seq,
+            window_id: tab.window_id,
         });
         if self.pair_tabs(std::time::Instant::now()) {
             self.sync_floats();
