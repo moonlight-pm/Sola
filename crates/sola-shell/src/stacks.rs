@@ -213,8 +213,8 @@ impl Stacks {
     // ---------------------------------------------------------------------
 
     /// Place a new window. In order: the place its key just left, its
-    /// key's saved place, Floating for `floats`, else the end of the last
-    /// focused tiled zone (shown). `returning` windows (the ones present
+    /// key's saved place (for a tab with neither, its app's), Floating for
+    /// `floats`, else the end of the last focused tiled zone (shown). `returning` windows (the ones present
     /// when the shell starts) take a remembered place if there is one and
     /// otherwise join without being shown over the zone's tab.
     pub fn place(
@@ -232,12 +232,15 @@ impl Stacks {
             app_id: app_id.to_string(),
             key: key.to_string(),
         };
-        if let Some(slot) = self.claim_ghost(key, now) {
-            return self.insert_slot(tab, slot.zone, slot.at, slot.shown, None);
-        }
-        if let Some(slot) = self.claim_restore(key, now) {
-            let at = slot.at;
-            return self.insert_slot(tab, slot.zone, at, slot.shown, Some(at));
+        let keys: &[&str] = if key == app_id { &[key] } else { &[key, app_id] };
+        for k in keys {
+            if let Some(slot) = self.claim_ghost(k, now) {
+                return self.insert_slot(tab, slot.zone, slot.at, slot.shown, None);
+            }
+            if let Some(slot) = self.claim_restore(k, now) {
+                let at = slot.at;
+                return self.insert_slot(tab, slot.zone, at, slot.shown, Some(at));
+            }
         }
         let zone = if floats { Zone::Float } else { self.last_tiled };
         let col = self.column_mut(zone);
@@ -746,6 +749,25 @@ mod tests {
         // No place waiting: only the key changes.
         assert!(s.set_key(4, "sola-terminal/c", t).is_none());
         assert_eq!(s.zone_of(4), Some(Zone::Right));
+    }
+
+    #[test]
+    fn a_tab_without_a_place_takes_its_apps() {
+        let t = Instant::now();
+        let mut s = Stacks::new();
+        s.load(
+            &TabLayout {
+                zones: vec![TabLayoutZone {
+                    zone: Zone::Right,
+                    apps: vec!["sola-terminal".into()],
+                    shown: Some(0),
+                }],
+            },
+            t,
+        );
+        let p = s.place(4, "sola-terminal", "sola-terminal/a", false, false, t);
+        assert_eq!(p.zone, Zone::Right);
+        assert_eq!(s.tabs(Zone::Right)[0].key, "sola-terminal/a");
     }
 
     #[test]
