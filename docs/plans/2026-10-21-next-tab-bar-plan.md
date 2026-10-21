@@ -145,8 +145,10 @@ the same.
       one at a time, so pairing by order ran before it had them all. Fixed:
       the app re-announces each tab with its window id once paired, and
       named tabs pair first (`Tab.window_id`).
-- [ ] **Ask before** apply of the pairing fix; then Restart Shell again, and
-      the remaining smoke: ⌘T, close, splits in a
+- [x] Pairing fix applied 2026-10-21 (`pkg:sola` 5eb94ecb from `46fa76a7`):
+      a fresh start paired both Terminal tabs in restore order; Restart
+      Shell kept both pairings, the Right order, and the shown tab.
+- [ ] Remaining: a dialog riding its parent; ⌘T, close, splits in a
       tab window, restart restores each terminal tab to its zone and place.
 
 ## Phase 3+ — outline
