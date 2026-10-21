@@ -362,6 +362,10 @@ impl Shell {
             }
         }
 
+        // A restored window can take its zone's shown place from under
+        // the focused tab.
+        self.keep_focus_on_screen();
+
         // Drop hover if that window closed; then re-apply FFM over any
         // programmatic focus steal above.
         if let Some(wid) = self.pointer_window_id {
@@ -471,9 +475,32 @@ impl Shell {
                 self.zoning.unfloat(wid);
             }
         }
+        self.keep_focus_on_screen();
         self.sync_window_floating();
         self.emit_all_frames();
         self.emit_composition();
+    }
+
+    /// Keyboard focus stays on something on screen: a focused tab that is
+    /// now behind another hands focus to its zone's shown tab.
+    fn keep_focus_on_screen(&mut self) {
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
+        let tab = self.tabs.parent_of(wid).unwrap_or(wid);
+        let Some(zone) = self.tabs.zone_of(tab).filter(|z| *z != Zone::Float) else {
+            return;
+        };
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let Some(shown) = self.tabs.visible_shown(zone, &hidden) else {
+            return;
+        };
+        if shown == tab {
+            return;
+        }
+        if let Some(app_id) = self.app_id_for_window(shown) {
+            self.focus_window(shown, &app_id);
+        }
     }
 
     /// True when both lists describe the same set of surfaces (window_id +

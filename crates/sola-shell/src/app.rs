@@ -450,7 +450,8 @@ impl Shell {
         }
 
         // Save the tab bar's layout only after the saved one replays — or
-        // right away when there is none.
+        // right away when there is none (then any later delivery is our
+        // own echo, not a layout to load).
         let tab_layout_ready = !sola_bus::topics::Topic::TabLayout(TabLayout::default())
             .path_for()
             .exists();
@@ -471,7 +472,7 @@ impl Shell {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             tabbar: crate::tabbar::TabBarState::default(),
-            tab_layout_loaded: false,
+            tab_layout_loaded: tab_layout_ready,
             tab_layout_ready,
             last_tab_layout: None,
             pending_parents: HashMap::new(),
