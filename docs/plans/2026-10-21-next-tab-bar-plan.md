@@ -83,8 +83,9 @@ new `tabbar/` and `stacks.rs`), `crates/sola-bus/src/topics.rs`,
       `b91a8ca8`): bar draws, hidden tabs idle, a full restart restores order
       and the shown tab.
 - [x] Smoke by injection (2026-10-21): row click, Super+\` both ways,
-      KP_6 / KP_* / KP_4 moves, Fullscreen and Cinema toggles. Open: a row
-      drag, a dialog, the keys through River.
+      KP_6 / KP_* / KP_4 moves, Fullscreen and Cinema toggles; after
+      `82c43f6a` (solactl press / release / drag, \` and keypad names) a
+      row drag and the keys through rivulet. Open: a dialog.
 - [ ] Remaining hands-on smoke on canto: open two
       Terminals and a Browser, stack them, switch from the bar and with
       Super+\`, move between zones, restart the shell and the apps (layout
