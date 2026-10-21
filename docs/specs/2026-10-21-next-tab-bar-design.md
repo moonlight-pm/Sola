@@ -1,7 +1,7 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Draft — for Joshua's review.** Freezes on his OK; the same change adds the row to `CURRENT.md` **Locked models** (a windowing-model change).  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slice 1 in progress on `next`.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
@@ -147,11 +147,24 @@ No gaps and no titlebars on tiles yet (N8).
 - New `TopicKind` variants are appended at the end; new fields on existing
   payloads are `#[serde(default)]`.
 
-## sola-river
+## sola-river and the compositor
 
 Slice 1 adds one thing: River's `parent` event, forwarded as
 `Window.parent: Option<u32>`. Show and hide already work through the
 composition.
+
+**On canto the compositor is rivulet**, Oath's C port of River 0.4.5
+(`~/Projects/Oath/apps/rivulet`, `pkg:rivulet`, `svc:rivulet`). It serves
+River's protocols at the same versions, so sola-river drives it unchanged.
+Any River feature Sola starts using must work in rivulet; check before
+relying on it, and ask the Oath tab for what is missing. Checked
+2026-10-21: rivulet sends `parent` (`src/window.c`), `identifier`
+(`river_window_manager_v1` version 4), and implements `use_ssd` and
+`get_decoration_above` (titlebars for foreign apps, later).
+
+Oath owns rivulet, so Sola can also get compositor features River does not
+have, added there through the Oath tab. Such a feature is rivulet-only:
+novus runs River, so how novus gets it is settled before `next` merges.
 
 ## Later slices
 
@@ -177,10 +190,17 @@ compositor-generated `identifier`, not a client one). Settled in the slice
 App changes; titlebars; gaps; islands; the dark grey base; more than one
 desk; the zone header `+`; agent marks; a configurable zone layout.
 
+## Merge
+
+`next` merges into master only when Next is done and tested on canto:
+this tab bar, the window-per-tab apps, and the rest of Next that is not in
+this spec yet (menus in window titlebars, the gaps, the islands top row).
+Before that merge the zone layout becomes configurable (novus's 5120
+output wants three columns), and any rivulet-only feature has an answer
+for River.
+
 ## Risks
 
-- **Merging `next` into master brings this model to novus.** Its 5120
-  output wants three columns, so the layout has to be configurable first.
 - **Hidden windows still render.** River stops frame callbacks for a hidden
   window, so iced idles, but an engine behind it may not (CEF paints on its
   own clock). Watch CPU with a browser or Design window behind another tab

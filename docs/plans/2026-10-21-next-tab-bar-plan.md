@@ -3,7 +3,7 @@
 **Date:** 2026-10-21  
 **Branch:** `next` (canto, root checkout)  
 **Design:** [`../specs/2026-10-21-next-tab-bar-design.md`](../specs/2026-10-21-next-tab-bar-design.md)  
-**Status:** Phase 0 — spec drafted, awaiting Joshua's review. No code.
+**Status:** spec frozen 2026-10-21; Phase 1 (slice 1) in progress.
 
 ---
 
@@ -16,8 +16,10 @@
       N8 the bar first, under today's menubar.
 - [x] Spec draft + this plan; `CURRENT.md` Now; capabilities row
       `shell-desks` → spec'd.
-- [ ] Joshua's review of the spec → **Frozen**, and the **Locked models**
-      row in `CURRENT.md`.
+- [x] Joshua's review of the spec → **Frozen**, and the **Locked models**
+      row in `CURRENT.md` (2026-10-21).
+- [x] rivulet (canto's compositor) sends `parent`; nothing to ask Oath for
+      slice 1.
 
 ---
 
