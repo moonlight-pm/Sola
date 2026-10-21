@@ -96,9 +96,43 @@ new `tabbar/` and `stacks.rs`), `crates/sola-bus/src/topics.rs`,
 
 ---
 
-## Phase 2+ — outline
+## Phase 2 — A window per tab; Terminal first (slice 2)
 
-Planned in detail when Phase 1 lands (see the spec's **Later slices**):
-2 kit multi-window + `Tabs` + Terminal; 3 Workspaces sessions as tabs;
-4 browser pages as tabs; 5 desks of windows (board 04); then titlebars,
-gaps, islands.
+**Which tab a window is (the slice 2 question).** River gives the window
+manager no client-set id, so pairing is by process: before it opens a
+window, an app announces `Topic::Tab { key, app_id, pid, seq }` (sticky,
+keyed by `key`; `seq` counts the windows this process has opened, from 1).
+sola-river mints window ids in creation order, so the shell pairs each
+pid's unpaired tabs (by `seq`) with that pid's unpaired windows (by id),
+in order, keeps pairs while both live, and publishes
+`Topic::TabWindow { key, window_id }` (sticky, keyed by `key`) so the app
+knows its windows' ids. No compositor change; rivulet and River behave
+the same.
+
+**Files:** `crates/sola-bus/src/topics.rs`, `crates/sola-shell/src/`
+(`stacks.rs`, new `pairing.rs`, `app/bus.rs`), `crates/sola-kit/src/`
+(new `tabs.rs`, `float.rs`), `crates/sola-terminal/src/` (`main.rs`,
+`menu.rs`, `sidebar.rs` goes).
+
+- [ ] Bus: `Tab` and `TabWindow`, appended; `TabLayout` entries are keys
+      (a tab key, or the app id for a window with no tab).
+- [ ] Shell: `pairing.rs` (pure, tested): pair by pid + order, stable while
+      both live. Stacks keyed by tab key: a window paired late takes its
+      key's waiting place (restore or restart). Retract `TabWindow` when
+      its window closes.
+- [ ] Kit `tabs.rs`: open a window as a tab (announce, then
+      `window::open`), close it (retract), map iced window ↔ sola-river id
+      from `TabWindow`; `FloatState` answers per window.
+- [ ] Terminal on `iced::daemon`: a window per tab, sized and focused per
+      window; keys and menu actions go to the focused window; the tab strip
+      and its menu list go; ⌘T opens a tab window (the shell puts it in the
+      focused zone); closing a window closes its tab; the last window
+      closing quits; restore opens a window per saved `TerminalSession`;
+      tab key `sola-terminal/<tab id>`.
+- [ ] Build, tests; **ask before** apply; smoke: ⌘T, close, splits in a
+      tab window, restart restores each terminal tab to its zone and place.
+
+## Phase 3+ — outline
+
+3 Workspaces sessions as tabs; 4 browser pages as tabs; 5 desks of
+windows (board 04); then titlebars, gaps, islands.

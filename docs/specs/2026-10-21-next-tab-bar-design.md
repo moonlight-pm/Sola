@@ -178,14 +178,14 @@ novus runs River, so how novus gets it is settled before `next` merges.
 | 5 | Desks of windows in the OS sense (board 04): the bar heads with the one showing; switching swaps it. | N5 |
 | — | Titlebars with menus (01), gaps (02), islands (03), dark grey base. | N8 |
 
-**Open technical question for slice 2.** An app does not know which
-sola-river window id each of its toplevels has. Today a floating app finds
-its one window by matching its app id and title in `Topic::Windows`, which
-fails with many windows whose titles change. Candidates: a unique first
-title until the shell links it; the process id plus the order windows were
-created; a client-set tag (River's window-management protocol has a
-compositor-generated `identifier`, not a client one). Settled in the slice
-2 plan.
+**Which tab a window is (settled 2026-10-21 for slice 2).** Before it
+opens a window an app announces `Topic::Tab { key, app_id, pid, seq }`;
+the shell pairs each process's tabs (by `seq`) with its new windows (by
+sola-river id, which follows creation order) and publishes
+`Topic::TabWindow { key, window_id }`. `TabLayout` then keys tabs by `key`.
+No compositor change. A unique first title was rejected (it shows in the
+bar), and a client-set tag needs a protocol River lacks (rivulet could add
+one later if pairing proves fragile).
 
 ## Not in slice 1
 
