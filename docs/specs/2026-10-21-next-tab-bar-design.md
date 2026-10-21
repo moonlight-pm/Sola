@@ -43,6 +43,8 @@ Projects** (`sola-workspaces` → `sola-projects`, as board 04 draws) so
 "workspace" means the OS concept; the rename lands before any workspace
 code and updates the **Workspaces names** lock in the same change.
 **Order:** the browser (slice 4) comes before Projects sessions (slice 3).
+**Profiles (Joshua, 2026-10-21):** each desktop workspace has its own
+browser profile (slice 5); until then page windows use the active profile.
 
 ## Model
 

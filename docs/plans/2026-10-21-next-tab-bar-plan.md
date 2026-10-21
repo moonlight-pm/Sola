@@ -151,9 +151,61 @@ the same.
 - [ ] Remaining: a dialog riding its parent; ⌘T, close, splits in a
       tab window, restart restores each terminal tab to its zone and place.
 
+## Phase 4 — Browser pages as tabs (slice 4)
+
+Mapped 2026-10-21 (`crates/sola-browser`, ~33k lines). Today every page
+paints into one shared texture (iced shares one shader pipeline across
+windows), any message redraws every window, and the CEF helper aims size,
+painting, input, find, navigation, edit and JS at its one active tab (~30
+sites). Design's boards already paint many pages at once, each at its own
+size with input by tab id: the template.
+
+**Decided (Joshua, 2026-10-21):** groups go (N7); **profiles move to
+desktop workspaces** — each workspace has its own profile (slice 5). Until
+then every page window uses the active profile, which is the router's
+one-front-profile model unchanged; the Profiles menu swaps the windows.
+**My calls:** ⌘-click and `target=_blank` open a window *behind* in the
+focused zone (a background tab; the shell is told via `Tab.background`);
+DevTools stay one per helper, so one page window at a time; the last page
+window closing quits, as Terminal.
+
+Order — the engine first, applied on its own with the old single-window
+chrome driving it, so the risky half is smoked before the chrome changes:
+
+- [ ] **4a Session:** a stable page id in `SessionTab` (`#[serde(default)]`
+      mints one for old files); groups and sidebar width read but unused.
+- [ ] **4b Helper:** per-tab view state (size, shown, focused) generalised
+      from boards; tab-addressed commands (resize, input, focus, nav, edit,
+      paste, find, JS, show/hide) beside the active-tab ones sola-wrapper
+      uses; events that lacked a tab id carry one (context menu, find
+      result, IME caret, clipboard, WebAuthn); history for every tab.
+- [ ] **4c Router:** forwards tab-addressed commands; no resize broadcast
+      for addressed resizes. **Apply + smoke** (single window, unchanged).
+- [ ] **4d Rendering:** a `FrameSlot` per window, the frame stream
+      demuxed by tab id, shader textures keyed by tab, per-window pump and
+      `NewFrame` coalescing (so one page's 60 fps does not redraw all).
+- [ ] **4e Chrome:** `App` split into app state + a `PageWindow` per page;
+      `iced::daemon` + `TabWindows` (key `sola-browser/<page id>`); menus
+      and keys to the focused window; per-window state for location bar,
+      find, dialogs, context menu, vault and downloads panels, DevTools;
+      process-wide statics keyed by window; the tab strip, groups and
+      sidebar go.
+- [ ] **4f Lifecycle:** ⌘T / close / ⌘⇧T; `window.open` popups and
+      ⌘-click as windows (behind); a second launch or `OpenUrl` opens a
+      window; notification and JS-dialog activation show their window
+      (`Topic::ShowTab { key }` → the shell shows and focuses it).
+- [ ] **4g Calls:** `tab.focus` / `--select` show the window; `group.*`
+      and `tab.move` go (docs, tests, sola-bots instructions).
+- [ ] **4h Hidden pages rest:** the shell says which tabs are shown
+      (`TabWindow.shown`); hidden page windows are `was_hidden` and paced
+      down, so a stack of pages costs nothing behind the shown one.
+- [ ] **Apply + smoke:** open, switch, split zones, popups, ⌘-click,
+      find, DevTools, vault, downloads, restart restore; sola-wrapper and
+      Design unchanged.
+
 ## Next phases — order (Joshua, 2026-10-21)
 
-1. **Browser pages as tabs** (slice 4) — next; planned below once mapped.
+1. **Browser pages as tabs** (slice 4) — next; Phase 4 below.
 2. Rename `sola-workspaces` → **Projects** (`sola-projects`; N5), then OS
    workspaces (board 04, slice 5) with a workspace bound to a project (N6).
 3. Projects sessions as tabs (slice 3).
