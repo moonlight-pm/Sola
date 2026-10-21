@@ -75,6 +75,13 @@ impl Shell {
                 self.on_tab(t, message.sticky);
                 Task::none()
             }
+            Topic::ShowTab(s) => {
+                match self.pairing.window_of(&s.key) {
+                    Some(wid) => self.activate_window(wid),
+                    None => tracing::debug!(key = %s.key, "ShowTab: no window"),
+                }
+                Task::none()
+            }
             Topic::WindowGeometry(g) => {
                 self.on_window_geometry(g);
                 Task::none()
@@ -86,16 +93,12 @@ impl Shell {
             // External links. Live sola-browser already subscribed to
             // OpenUrl and will open a tab. Only spawn if chrome is down
             // (otherwise we used to start a second process that reaped
-            // the live CEF helpers). When chrome is up and the request
-            // wants activation, raise the existing window to the top.
+            // the live CEF helpers). Each page is a window (Next): the new
+            // page's window opens in front on its own, so there is nothing
+            // to raise (raising the app would pull an older page forward).
             Topic::OpenUrl(req) => {
                 if sola_core::sola_browser_is_running() {
-                    if req.activate {
-                        tracing::info!(url = %req.url, "OpenUrl: chrome live, raising");
-                        self.raise_app("sola-browser");
-                    } else {
-                        tracing::debug!(url = %req.url, "OpenUrl: chrome live, not spawning");
-                    }
+                    tracing::debug!(url = %req.url, "OpenUrl: chrome live, it opens a window");
                 } else {
                     sola_core::open_url_logged(&req.url);
                 }
@@ -254,6 +257,7 @@ impl Shell {
             if let Some(key) = self.pairing.window_closed(wid) {
                 retract_tab_window(key);
             }
+            self.tab_shown_sent.remove(&wid);
         }
         self.zoning.forget_windows(&removed_wids);
 
@@ -296,7 +300,9 @@ impl Shell {
             }
             let floats = crate::zoning::floats_by_default(app_id) || self.zoning.remembers(app_id);
             let key = self.pairing.key_of(*wid).unwrap_or(app_id).to_string();
-            let placed = self.tabs.place(*wid, app_id, &key, floats, first_list, now);
+            // A background tab joins behind the shown one, like a returning one.
+            let behind = first_list || self.pairing.background(*wid);
+            let placed = self.tabs.place(*wid, app_id, &key, floats, behind, now);
             placed_any = true;
             tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
             if placed.zone == Zone::Float {
@@ -512,6 +518,7 @@ impl Shell {
             pid: tab.pid,
             seq: tab.seq,
             window_id: tab.window_id,
+            background: tab.background,
         });
         if self.pair_tabs(std::time::Instant::now()) {
             self.sync_floats();
@@ -542,11 +549,40 @@ impl Shell {
             if self.tabs.set_key(window_id, &key, now).is_some() {
                 moved = true;
             }
+            let shown = self.last_composition.contains(&window_id);
+            self.tab_shown_sent.insert(window_id, shown);
             super::with_bus(|bus| {
-                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow { key, window_id }));
+                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
+                    key,
+                    window_id,
+                    shown,
+                }));
             });
         }
         moved
+    }
+
+    /// Tell apps which of their tab windows went on or off screen (after a
+    /// Composition): a browser rests the pages behind.
+    pub(crate) fn sync_tab_shown(&mut self) {
+        let changes: Vec<(u32, String, bool)> = self
+            .pairing
+            .pairs()
+            .filter_map(|(wid, key)| {
+                let shown = self.last_composition.contains(&wid);
+                (self.tab_shown_sent.get(&wid) != Some(&shown)).then(|| (wid, key.to_string(), shown))
+            })
+            .collect();
+        for (window_id, key, shown) in changes {
+            self.tab_shown_sent.insert(window_id, shown);
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
+                    key,
+                    window_id,
+                    shown,
+                }));
+            });
+        }
     }
 
     /// Bring floating in line with the bar after windows moved zones
@@ -1478,6 +1514,10 @@ mod windows_identity_tests {
 /// Drop the sticky `TabWindow` for a tab whose window is gone.
 fn retract_tab_window(key: String) {
     super::with_bus(|bus| {
-        let _ = bus.retract(Topic::TabWindow(sola_bus::topics::TabWindow { key, window_id: 0 }));
+        let _ = bus.retract(Topic::TabWindow(sola_bus::topics::TabWindow {
+            key,
+            window_id: 0,
+            shown: false,
+        }));
     });
 }

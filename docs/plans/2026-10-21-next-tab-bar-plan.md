@@ -187,22 +187,31 @@ chrome driving it, so the risky half is smoked before the chrome changes:
       context menu, find result and IME caret carry their tab id. The
       single-window chrome sends neither, so nothing changes until 4e — no
       separate apply (2026-10-21).
-- [ ] **4d Rendering:** a `FrameSlot` per window, the frame stream
+- [x] **4d Rendering:** a `FrameSlot` per window, the frame stream
       demuxed by tab id, shader textures keyed by tab, per-window pump and
       `NewFrame` coalescing (so one page's 60 fps does not redraw all).
-- [ ] **4e Chrome:** `App` split into app state + a `PageWindow` per page;
+- [x] **4e Chrome** (built smaller than planned): no split of `App` — the
+      page window you are in is the active tab and keeps the whole chrome
+      (location bar, find, menus, dialogs, DevTools, vault, downloads); the
+      other page windows show their page live under a read-only address
+      bar, and focusing one makes it active (today's tab switch).
+      `page_windows.rs` keeps a window and a frame slot per page;
+      `sync_windows` opens and closes windows to match the pages, sends
+      `ShowPage` as the shell reports windows on and off screen, and asks
+      the shell to show the active page when it changed from outside its
+      window. Planned: `App` split into app state + a `PageWindow` per page;
       `iced::daemon` + `TabWindows` (key `sola-browser/<page id>`); menus
       and keys to the focused window; per-window state for location bar,
       find, dialogs, context menu, vault and downloads panels, DevTools;
       process-wide statics keyed by window; the tab strip, groups and
       sidebar go.
-- [ ] **4f Lifecycle:** ⌘T / close / ⌘⇧T; `window.open` popups and
+- [x] **4f Lifecycle:** ⌘T / close / ⌘⇧T; `window.open` popups and
       ⌘-click as windows (behind); a second launch or `OpenUrl` opens a
       window; notification and JS-dialog activation show their window
       (`Topic::ShowTab { key }` → the shell shows and focuses it).
 - [ ] **4g Calls:** `tab.focus` / `--select` show the window; `group.*`
       and `tab.move` go (docs, tests, sola-bots instructions).
-- [ ] **4h Hidden pages rest:** the shell says which tabs are shown
+- [x] **4h Hidden pages rest:** the shell says which tabs are shown
       (`TabWindow.shown`); hidden page windows are `was_hidden` and paced
       down, so a stack of pages costs nothing behind the shown one.
 - [ ] **Apply + smoke:** open, switch, split zones, popups, ⌘-click,

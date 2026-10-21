@@ -33,15 +33,23 @@ use crate::engine::{AbsorbDamage, ActiveHandle, Engine, FrameReceiver, FrameSlot
 // Frame stream
 // ---------------------------------------------------------------------------
 
+/// The frame slots a frame can go to: one per page window when the browser
+/// has a window per page, else the single page slot.
+pub type SlotRegistry<E> = Arc<std::sync::Mutex<Vec<Arc<FrameSlot<E>>>>>;
+
 /// Produces a `Stream<Item = Msg>` that reads decoded frames from the engine
-/// worker, drops frames from inactive tabs, and wakes the iced renderer for
-/// each frame belonging to the currently-active tab.
+/// worker and hands each to the slot that paints its tab (a page or the
+/// docked inspector), waking the iced renderer.
+///
+/// With one slot (the single-window chrome, sola-wrapper), frames of other
+/// tabs park in it for instant tab switches; with a slot per page window,
+/// a frame goes to its page's window and nowhere else.
 ///
 /// Parameters are owned `Arc`s cloned out of `App<E>` fields — no
 /// process-wide statics involved.
 pub fn frame_stream<E: Engine>(
     frames: FrameReceiver<E::Frame>,
-    slot: Arc<FrameSlot<E>>,
+    slots: SlotRegistry<E>,
     active: ActiveHandle,
 ) -> impl Stream<Item = Msg> {
     stream::channel(64, async move |mut output| {
@@ -64,13 +72,38 @@ pub fn frame_stream<E: Engine>(
             .expect("spawn browser-frames thread");
 
         while let Some(mut tagged) = rx.recv().await {
-            // Page and docked inspector may both update their shader slots.
-            // Other tabs park only (no GPU upload).
-            let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
-            let devtools_tab = slot.devtools_tab.load(Ordering::Relaxed);
             let tid = tagged.tab_id.0;
             let is_drag = E::frame_is_page_drag(&tagged.frame);
-            if tid == paint_tab {
+            let (slot, page) = {
+                let set = slots.lock().unwrap();
+                let page = set
+                    .iter()
+                    .find(|s| s.paint_tab.load(Ordering::Relaxed) == tid)
+                    .map(|s| (s.clone(), true));
+                let found = page.or_else(|| {
+                    set.iter()
+                        .find(|s| s.devtools_tab.load(Ordering::Relaxed) == tid)
+                        .map(|s| (s.clone(), false))
+                });
+                match found {
+                    Some(hit) => hit,
+                    // Single slot: other tabs park for an instant switch.
+                    None if set.len() == 1 => {
+                        let slot = &set[0];
+                        if !is_drag {
+                            slot.parked_frames
+                                .lock()
+                                .unwrap()
+                                .insert(tid, tagged.frame.clone());
+                        }
+                        slot.need_park_prime.lock().unwrap().remove(&tid);
+                        continue;
+                    }
+                    None => continue,
+                }
+            };
+            // Page and docked inspector may both update their shader slots.
+            if page {
                 slot.page_drag.store(is_drag, Ordering::Relaxed);
                 let mut g = slot.pending.lock().unwrap();
                 if let Some(old) = g.take() {
@@ -87,7 +120,7 @@ pub fn frame_stream<E: Engine>(
                     tab_id: tagged.tab_id,
                     frame: tagged.frame,
                 });
-            } else if tid == devtools_tab {
+            } else {
                 let mut g = slot.devtools_pending.lock().unwrap();
                 if let Some(old) = g.take() {
                     tagged.frame.absorb_damage(old.frame);
@@ -96,16 +129,6 @@ pub fn frame_stream<E: Engine>(
                     tab_id: tagged.tab_id,
                     frame: tagged.frame,
                 });
-            } else {
-                if !is_drag {
-                    slot.parked_frames
-                        .lock()
-                        .unwrap()
-                        .insert(tid, tagged.frame.clone());
-                }
-                let mut need = slot.need_park_prime.lock().unwrap();
-                need.remove(&tid);
-                continue;
             }
             slot.last_frame_ms
                 .store(crate::engine::monotonic_ms(), Ordering::Relaxed);
@@ -142,7 +165,7 @@ pub fn frame_stream<E: Engine>(
 /// correct and stable across re-renders.
 struct FrameStreamRecipe<E: Engine> {
     frames: FrameReceiver<E::Frame>,
-    slot: Arc<FrameSlot<E>>,
+    slots: SlotRegistry<E>,
     active: ActiveHandle,
 }
 
@@ -154,11 +177,11 @@ impl<E: Engine> Recipe for FrameStreamRecipe<E> {
     }
 
     fn stream(self: Box<Self>, _input: EventStream) -> iced_futures::BoxStream<Self::Output> {
-        frame_stream::<E>(self.frames, self.slot, self.active).boxed()
+        frame_stream::<E>(self.frames, self.slots, self.active).boxed()
     }
 }
 
-/// Build the frame-stream `Subscription` from owned `Arc`s.
+/// Build the frame-stream `Subscription` for one page slot.
 ///
 /// Uses a custom `Recipe` via `iced_futures::subscription::from_recipe`
 /// since `Subscription::run_with_id` is not available in iced 0.14.
@@ -167,9 +190,19 @@ pub fn frame_subscription<E: Engine>(
     slot: Arc<FrameSlot<E>>,
     active: ActiveHandle,
 ) -> Subscription<Msg> {
+    frame_subscription_slots(frames, Arc::new(std::sync::Mutex::new(vec![slot])), active)
+}
+
+/// Build the frame-stream `Subscription` over a set of slots (a window per
+/// page): the registry is read per frame, so slots can come and go.
+pub fn frame_subscription_slots<E: Engine>(
+    frames: FrameReceiver<E::Frame>,
+    slots: SlotRegistry<E>,
+    active: ActiveHandle,
+) -> Subscription<Msg> {
     subscription::from_recipe(FrameStreamRecipe::<E> {
         frames,
-        slot,
+        slots,
         active,
     })
 }
@@ -287,7 +320,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     let boot_groups = std::cell::RefCell::new(Some(boot_groups));
     let boot_closed = std::cell::RefCell::new(Some(boot_closed));
 
-    let result = iced::application(
+    // A window per page (Next): the daemon opens one per restored page.
+    let result = iced::daemon(
         move || {
             let engine = engine_cell
                 .take()
@@ -317,29 +351,20 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 groups,
                 closed,
             );
-            (
-                app,
-                sola_kit::window_ready_task(crate::app::Msg::WindowReady),
-            )
+            // Restore the saved pages now; each gets its window.
+            (app, iced::Task::done(crate::app::Msg::WindowReady(None)))
         },
         App::<E>::update,
         App::<E>::view,
     )
-    .title(move |app: &App<E>| {
-        let profile = crate::profiles::active().name;
-        match app.active_tab_info() {
-            Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
-            None => crate::util::browser_window_title(&profile, "", ""),
-        }
-    })
+    .title(App::<E>::title)
     .subscription(App::<E>::subscription)
     .theme(App::<E>::theme)
     .default_font(sola_kit::fonts::ui())
-    .window(sola_kit::app::window_settings_transparent(app_id))
     .run();
 
     if let Err(e) = result {
-        tracing::error!("iced::application returned: {e}");
+        tracing::error!("iced::daemon returned: {e}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS

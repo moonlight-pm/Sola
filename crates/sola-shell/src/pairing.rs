@@ -22,6 +22,8 @@ pub struct Announced {
     pub seq: u32,
     /// The window id the app says the tab is (from an earlier pairing).
     pub window_id: Option<u32>,
+    /// Opened in the background (placed behind, unfocused).
+    pub background: bool,
 }
 
 /// A window that could be a tab: `(window_id, app_id, pid)`.
@@ -62,6 +64,25 @@ impl Pairing {
 
     pub fn key_of(&self, window_id: u32) -> Option<&str> {
         self.paired.get(&window_id).map(String::as_str)
+    }
+
+    pub fn window_of(&self, key: &str) -> Option<u32> {
+        self.paired
+            .iter()
+            .find(|(_, k)| k.as_str() == key)
+            .map(|(w, _)| *w)
+    }
+
+    /// Was the tab this window is announced as opened in the background?
+    pub fn background(&self, window_id: u32) -> bool {
+        self.key_of(window_id)
+            .and_then(|k| self.tabs.get(k))
+            .is_some_and(|t| t.background)
+    }
+
+    /// Every paired window and its tab key.
+    pub fn pairs(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.paired.iter().map(|(w, k)| (*w, k.as_str()))
     }
 
     /// Pair tabs with windows: first those whose app named the window,
@@ -138,6 +159,7 @@ mod tests {
             pid,
             seq,
             window_id: None,
+            background: false,
         }
     }
 

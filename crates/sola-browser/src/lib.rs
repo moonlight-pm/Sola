@@ -22,6 +22,7 @@ pub mod media;
 pub mod notify;
 pub mod page_menu;
 pub mod page_paste;
+pub mod page_windows;
 pub mod paste_js;
 pub mod popup;
 pub mod profiles;

@@ -5,9 +5,8 @@
 //! `run()` via `sola_kit::app::BusSetup`; this module is the receive side.
 //! It reacts to:
 //!
-//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`);
-//!   a `chrome.sock` handoff re-emits this so the shell can raise the
-//!   window. Our own echo is ignored.
+//! - `Topic::OpenUrl` — open a fresh tab, a window of its own (in front
+//!   per `activate`). Our own echo is ignored.
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
 //!   menubar clicks (Profiles switch / manage included),
 //! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
@@ -75,12 +74,14 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Chord,
     TopicKind::ChordReleased,
     TopicKind::NotificationActivate,
+    // Which window each page is, and whether it is on screen (Next).
+    TopicKind::TabWindow,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 11] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (
@@ -88,7 +89,6 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 11] = [
         "Reopen Closed Tab",
         KeyCode::T.meta_shift(),
     ),
-    (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta().alt()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_HARD_RELOAD, "Hard Reload", KeyCode::R.meta_shift()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
@@ -257,22 +257,10 @@ pub enum BrowserIntent {
     None,
 }
 
-/// True when this `OpenUrl` is the chrome re-broadcasting a `chrome.sock`
-/// handoff so the shell will raise the window. The tab is already open.
+/// True when this `OpenUrl` came from this chrome (it opens its own pages;
+/// never open them twice).
 pub fn open_url_is_self_echo(source: &str, app_id: &str) -> bool {
     source == app_id
-}
-
-/// Re-broadcast a sock-handoff as `Topic::OpenUrl` so the shell raises
-/// the existing window (same path as mail / bus opens). The chrome
-/// ignores its own echo in [`handle_bus`].
-pub fn emit_open_url_for_raise(url: &str) {
-    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-        let _ = bus.emit(Topic::OpenUrl(OpenUrlRequest {
-            url: url.to_string(),
-            activate: true,
-        }));
-    }
 }
 
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
@@ -334,7 +322,6 @@ pub fn handle_bus<E: Engine>(
     }
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => {
-            // Sock handoff re-emits OpenUrl so the shell can raise us.
             // Ignore our own echo or we would open the tab twice.
             if open_url_is_self_echo(&message.source, app_id) {
                 tracing::debug!(url = %req.url, "OpenUrl self-echo — tab already opened");
@@ -560,10 +547,10 @@ mod tests {
         let ids: Vec<&str> = MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
         assert!(ids.contains(&ACTION_REOPEN_TAB));
         assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
-        assert!(ids.contains(&ACTION_NEW_GROUP));
-        assert_eq!(MENU_ITEMS[3].0, ACTION_NEW_GROUP);
+        // Groups went with the tab strip (a window per page).
+        assert!(!ids.contains(&ACTION_NEW_GROUP));
         assert!(ids.contains(&ACTION_HARD_RELOAD));
-        assert_eq!(MENU_ITEMS[5].0, ACTION_HARD_RELOAD);
+        assert_eq!(MENU_ITEMS[4].0, ACTION_HARD_RELOAD);
     }
 
     #[test]

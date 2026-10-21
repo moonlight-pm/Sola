@@ -178,14 +178,27 @@ pub struct Tab {
     /// The app announces the tab again with it, so a restarted shell pairs
     /// the tab directly instead of by order.
     pub window_id: Option<u32>,
+    /// Opened in the background (a ⌘-click): it joins its zone behind the
+    /// tab shown there and does not take focus.
+    pub background: bool,
 }
 
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
-/// `key`; retracted when the window closes.
+/// `key`; retracted when the window closes. Sent again when `shown` changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TabWindow {
     pub key: String,
     pub window_id: u32,
+    /// The window is on screen (its zone shows it, or it floats). An app can
+    /// rest a tab that is not (a browser page stops painting).
+    pub shown: bool,
+}
+
+/// Show a tab's window and focus it (app → shell): a notification click, a
+/// dialog in a page behind, `tab.focus`. Ephemeral.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShowTab {
+    pub key: String,
 }
 
 /// One zone of the shell's tab bar as last saved: its tabs' keys in bar
@@ -1403,6 +1416,9 @@ define_topics! {
     // key; retracted when the window closes. Appended last.
     #[sticky(keys = [key])]
     TabWindow(TabWindow),
+
+    // Show a tab's window and focus it (app → shell). Appended last.
+    ShowTab(ShowTab),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1417,6 +1433,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::TabLayout
             | TopicKind::Tab
             | TopicKind::TabWindow
+            | TopicKind::ShowTab
     )
 }
 

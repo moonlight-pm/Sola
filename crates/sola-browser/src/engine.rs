@@ -583,7 +583,15 @@ pub enum PaintSurface {
 
 /// Shared between `App` (fills `pending`) and the engine's shader Program
 /// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
+///
+/// One per page window when the browser has a window per page (Next):
+/// `windowed`, painting only its own tab, and the page commands its shader
+/// sends (resize, input, focus) are addressed to that tab.
 pub struct FrameSlot<E: Engine> {
+    /// Unique per slot: the shader keeps one page texture per key.
+    pub key: u64,
+    /// A page window's slot (see the type doc).
+    pub windowed: bool,
     /// Latest frame for the painted tab (and optional one-shot park primes).
     pub pending: Mutex<Option<PendingFrame<E>>>,
     /// Command channel to the engine worker (input, resize, nav, release, …).
@@ -643,7 +651,10 @@ impl<E: Engine> FrameSlot<E> {
         height: u32,
     ) -> Self {
         let dt_h = height.max(3) / 3;
+        static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
         Self {
+            key: NEXT_KEY.fetch_add(1, Ordering::Relaxed),
+            windowed: false,
             pending: Mutex::new(None),
             cmd_tx,
             last_size: Mutex::new((width, height)),
@@ -664,6 +675,36 @@ impl<E: Engine> FrameSlot<E> {
             osr: OsrChromeTelem::default(),
             last_frame_ms: AtomicU64::new(0),
             ime,
+        }
+    }
+
+    /// The slot of the window of page `tab` (a window per page).
+    pub fn for_page(
+        cmd_tx: Sender<Cmd<E>>,
+        cursor: CursorHandle,
+        ime: ImeHandle,
+        tab: TabId,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let slot = Self {
+            windowed: true,
+            ..Self::new(cmd_tx, cursor, ime, width, height)
+        };
+        slot.paint_tab.store(tab.0, Ordering::Relaxed);
+        slot
+    }
+
+    /// A page command from this slot's shader: addressed to its page when
+    /// the slot is a page window's, else to the active tab.
+    pub fn page_cmd(&self, cmd: Cmd<E>) -> Cmd<E> {
+        if self.windowed {
+            Cmd::Target {
+                tab: TabId(self.paint_tab.load(Ordering::Relaxed)),
+                cmd: Box::new(cmd),
+            }
+        } else {
+            cmd
         }
     }
 

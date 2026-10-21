@@ -310,6 +310,8 @@ pub struct Shell {
     pub tabs: Stacks,
     /// Announced tabs (`Topic::Tab`) and the windows they are.
     pub pairing: crate::pairing::Pairing,
+    /// Last on-screen state sent for each tab window (`TabWindow.shown`).
+    tab_shown_sent: HashMap<u32, bool>,
     pub tabbar: crate::tabbar::TabBarState,
     /// The saved `TabLayout` was taken (later replays are our own echo).
     tab_layout_loaded: bool,
@@ -474,6 +476,7 @@ impl Shell {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: tab_layout_ready,
             tab_layout_ready,
@@ -1456,6 +1459,7 @@ impl Shell {
         with_bus(|bus| {
             let _ = bus.emit(Topic::Composition(entries));
         });
+        self.sync_tab_shown();
     }
 
     /// Which top-level menu of `app_id` contains `action_id`, as a position
@@ -3002,6 +3006,7 @@ mod pending_launch_tests {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
@@ -3125,6 +3130,7 @@ mod hide_tests {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,

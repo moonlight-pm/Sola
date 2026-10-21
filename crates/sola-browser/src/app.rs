@@ -19,11 +19,9 @@ use iced::{
 use sola_kit::components::badge::{self, Tone as BadgeTone};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
-use sola_kit::components::divider::DIVIDER_HIT_PX;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
 use sola_kit::components::color_picker;
-use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::sidebar::{self, Event as SidebarEvent};
 use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
@@ -68,7 +66,7 @@ fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
     use sola_kit::components::style::{SPACE_MD, SPACE_SM};
     let pad = SPACE_MD;
     let gap = SPACE_SM;
-    let left = pad + sidebar_w + DIVIDER_HIT_PX + NAV_BTN_W * 4.0 + gap * 6.0;
+    let left = pad + sidebar_w + NAV_BTN_W * 4.0 + gap * 4.0;
     let vault = if cfg!(feature = "bitwarden") {
         NAV_BTN_W
     } else {
@@ -178,6 +176,10 @@ pub enum Msg {
     #[cfg(feature = "bitwarden")]
     VaultClipboardPaste(Option<String>),
     WindowReady(Option<iced::window::Id>),
+    /// A page window opened, resized, gained focus, or was asked to close.
+    PageWindow(iced::window::Id, iced::window::Event),
+    /// A task finished with nothing to do (a page window opened or closed).
+    Noop,
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
@@ -468,7 +470,16 @@ pub struct App<E: Engine> {
     /// The running web engine. Kept alive here so neither a static nor an
     /// `Arc` is needed to keep the worker alive.
     pub engine: E,
+    /// The page slot template (single-window paths, and where page
+    /// windows' slots take their channels). [`Self::slot`] is the live one.
     pub slot: Arc<FrameSlot<E>>,
+    /// A window per page (Next): each page's window and frame slot.
+    pub windows: crate::page_windows::PageWindows<E>,
+    /// The active page the shell was last asked to show: switching to a
+    /// page from outside its window (a notification, a call) shows it.
+    shown_active: TabId,
+    /// The last active switch came from a window gaining focus.
+    focus_switch: bool,
     /// Command channel to the engine worker.
     pub cmd_tx: Sender<Cmd<E>>,
     /// Live tab snapshot, owned by the engine. We re-read on
@@ -696,6 +707,9 @@ impl<E: Engine> App<E> {
         let front_profile = engine.front_profile_handle();
         let mut app = Self {
             engine,
+            windows: crate::page_windows::PageWindows::new(app_id, slot.clone()),
+            shown_active: TabId(u64::MAX),
+            focus_switch: false,
             slot,
             cmd_tx,
             tabs_handle,
@@ -928,9 +942,9 @@ impl<E: Engine> App<E> {
         if !scratch {
             return;
         }
-        self.slot.forget_tab(id);
-        self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
-        self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+        self.slot().forget_tab(id);
+        self.slot().drop_paint_tabs.lock().unwrap().push(id.0);
+        self.slot().need_park_prime.lock().unwrap().remove(&id.0);
         let _ = self.cmd_tx.send(Cmd::CloseTab(id));
         self.closed_tabs.insert(id);
         self.cached_tabs.retain(|t| t.id != id);
@@ -1350,7 +1364,7 @@ impl<E: Engine> App<E> {
                 ..TabInfo::chrome(id, url.clone(), title.clone())
             });
             // One background frame may be imported to seed park cache.
-            self.slot.need_park_prime.lock().unwrap().insert(id.0);
+            self.slot().need_park_prime.lock().unwrap().insert(id.0);
             let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
             ids.push(id);
         }
@@ -1456,9 +1470,9 @@ impl<E: Engine> App<E> {
 
         self.engine_tabs_seen = false;
         self.devtools = None;
-        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
-        self.slot.devtools_pending.lock().unwrap().take();
-        self.slot.input_devtools.store(false, Ordering::Relaxed);
+        self.slot().devtools_tab.store(u64::MAX, Ordering::Relaxed);
+        self.slot().devtools_pending.lock().unwrap().take();
+        self.slot().input_devtools.store(false, Ordering::Relaxed);
 
         let profile = crate::profiles::active();
         let resume_id = profile.id.clone();
@@ -1574,13 +1588,13 @@ impl<E: Engine> App<E> {
         self.active_handle
             .store(active.0, std::sync::atomic::Ordering::Relaxed);
         // Present *before* zeroing last_size so a same-size park hits.
-        self.slot.present_tab(active);
+        self.slot().present_tab(active);
         // Force the next shader prepare to re-send Resize. The router
         // would otherwise leave a newly-front helper at 1280×800 because
         // chrome last_size already matches the widget.
-        *self.slot.last_size.lock().unwrap() = (0, 0);
-        self.slot.need_park_prime.lock().unwrap().clear();
-        self.slot.drop_paint_tabs.lock().unwrap().clear();
+        *self.slot().last_size.lock().unwrap() = (0, 0);
+        self.slot().need_park_prime.lock().unwrap().clear();
+        self.slot().drop_paint_tabs.lock().unwrap().clear();
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
             self.url_field = if info.url == BLANK_URL {
                 String::new()
@@ -1600,7 +1614,7 @@ impl<E: Engine> App<E> {
         for id in victims {
             if let Some(snap) = self.workspace_cache.remove(&id) {
                 for t in snap.tabs {
-                    self.slot.forget_tab(t.id);
+                    self.slot().forget_tab(t.id);
                 }
             }
             self.favicon_park.remove(&id);
@@ -1643,7 +1657,7 @@ impl<E: Engine> App<E> {
             Some(ProfileDialog::DeleteConfirm) => {
                 let id = crate::profiles::active().id.clone();
                 for t in &self.cached_tabs {
-                    self.slot.forget_tab(t.id);
+                    self.slot().forget_tab(t.id);
                 }
                 self.workspace_cache.remove(&id);
                 match crate::profiles::delete(&id) {
@@ -1752,6 +1766,83 @@ impl<E: Engine> App<E> {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let task = self.update_msg(msg);
+        Task::batch([task, self.sync_windows()])
+    }
+
+    /// The page slot the chrome drives: the active page's window, else the
+    /// template (before any window).
+    pub fn slot(&self) -> Arc<FrameSlot<E>> {
+        self.windows
+            .slot_of(self.cached_active)
+            .unwrap_or_else(|| self.slot.clone())
+    }
+
+    /// Keep a window per page: open one for each page without, close the
+    /// windows of pages gone, tell the engine which pages are on screen,
+    /// and show the active page when it changed from outside its window.
+    fn sync_windows(&mut self) -> Task<Msg> {
+        let mut tasks = Vec::new();
+        let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
+        for id in &ids {
+            if !self.windows.has(*id) {
+                let page_id = self.page_id(*id);
+                let background = *id != self.cached_active;
+                tasks.push(
+                    self.windows
+                        .open(self.app_id, *id, &page_id, background)
+                        .map(|_| Msg::Noop),
+                );
+            }
+        }
+        for id in self.windows.open_tabs() {
+            if !ids.contains(&id) {
+                tasks.push(self.windows.close(id).map(|_| Msg::Noop));
+            }
+        }
+        for (id, shown) in self.windows.take_shown_changes() {
+            let _ = self.cmd_tx.send(Cmd::ShowPage { id, shown });
+        }
+        if self.cached_active != self.shown_active {
+            self.shown_active = self.cached_active;
+            if !std::mem::take(&mut self.focus_switch) {
+                self.windows.show(self.cached_active);
+            }
+        }
+        Task::batch(tasks)
+    }
+
+    /// A page window's lifecycle: focus makes its page the active tab;
+    /// its close button (or the compositor) closes the page.
+    fn on_page_window(&mut self, window: iced::window::Id, event: iced::window::Event) -> Task<Msg> {
+        use iced::window::Event as WE;
+        match event {
+            WE::Focused => {
+                self.windows.focused = Some(window);
+                if let Some(tab) = self.windows.tab_of(window) {
+                    if tab != self.cached_active {
+                        self.focus_switch = true;
+                        self.switch_active_tab(tab);
+                        self.persist_session();
+                    }
+                }
+                Task::none()
+            }
+            WE::CloseRequested => match self.windows.tab_of(window) {
+                Some(tab) => self.update_msg(Msg::CloseTab(tab)),
+                None => iced::window::close(window),
+            },
+            WE::Closed => {
+                if let Some(tab) = self.windows.closed(window) {
+                    tracing::warn!(tab = tab.0, "page window closed outside the browser");
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn update_msg(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::WindowReady(id) => {
                 self.window_id = id;
@@ -1761,13 +1852,16 @@ impl<E: Engine> App<E> {
                 }
                 return Task::none();
             }
-            Msg::TitleDrag => return sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => {
-                self.persist_session();
-                sola_kit::close_app(self.app_id);
-                return iced::exit();
+            Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
+            Msg::TitleResize(dir) => {
+                return sola_kit::drag_resize(self.windows.window_of(self.cached_active), dir);
             }
+            Msg::TitleClose => {
+                let id = self.cached_active;
+                return self.update_msg(Msg::CloseTab(id));
+            }
+            Msg::PageWindow(window, event) => return self.on_page_window(window, event),
+            Msg::Noop => {}
             Msg::VaultToggle => {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -2473,10 +2567,12 @@ impl<E: Engine> App<E> {
                 return crate::integration::focus_url_bar();
             }
             Msg::CloseTab(id) => {
-                // Never drop below one tab: open a blank replacement first.
-                // (Bus-integration last-tab contract: never drop below one tab.)
+                // A window per page: closing the last page quits (the
+                // session keeps it, as quitting does).
                 if self.cached_tabs.len() <= 1 {
-                    self.open_tab(BLANK_URL.to_string(), true);
+                    self.persist_session();
+                    sola_kit::close_app(self.app_id);
+                    return iced::exit();
                 }
                 self.remember_closed(id);
                 // If closing the active tab, pick a new active tab
@@ -2485,12 +2581,15 @@ impl<E: Engine> App<E> {
                 let was_active = self.cached_active == id;
                 if was_active {
                     if let Some(new_active) = self.pick_new_active_after_close(id) {
+                        // The shell shows and focuses the next page in the
+                        // closed window's zone; focus moves the active tab.
+                        self.focus_switch = true;
                         self.switch_active_tab(new_active);
                     }
                 }
-                self.slot.forget_tab(id);
-                self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
-                self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+                self.slot().forget_tab(id);
+                self.slot().drop_paint_tabs.lock().unwrap().push(id.0);
+                self.slot().need_park_prime.lock().unwrap().remove(&id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
                 // Drop from optimistic cache immediately so persist sees it
                 // and Tick cannot paint the row again.
@@ -2527,13 +2626,13 @@ impl<E: Engine> App<E> {
                 while let Some(h) = crate::instance::try_recv_handoff() {
                     match h {
                         crate::instance::Handoff::OpenUrl(url) => {
+                            // Its window opens in front and takes focus.
                             tracing::info!(%url, "opening handed-off URL in this chrome");
-                            self.open_tab(url.clone(), true);
-                            crate::integration::emit_open_url_for_raise(&url);
+                            self.open_tab(url, true);
                         }
                         crate::instance::Handoff::Activate => {
-                            tracing::info!("activate handoff — asking shell to raise");
-                            crate::integration::emit_open_url_for_raise("");
+                            tracing::info!("activate handoff — showing the active page");
+                            self.windows.show(self.cached_active);
                         }
                     }
                 }
@@ -2624,7 +2723,7 @@ impl<E: Engine> App<E> {
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
                 // clobbering optimistic activate (new-tab had no highlight).
-                let paint = self.slot.paint_tab.load(Ordering::Relaxed);
+                let paint = self.slot().paint_tab.load(Ordering::Relaxed);
                 let candidate = if paint != u64::MAX {
                     TabId(paint)
                 } else {
@@ -2741,6 +2840,7 @@ impl<E: Engine> App<E> {
                 return Task::batch([clip, js_dlg, http_auth, agent]);
             }
             Msg::Bus(message) => {
+                self.windows.update(&message);
                 return crate::integration::handle_bus(self, message, self.app_id);
             }
             Msg::Sidebar(m) => {
@@ -2834,14 +2934,14 @@ impl<E: Engine> App<E> {
                 // widget (caret blink / IME require SetFocus).
                 self.set_url_bar_focused(false);
                 self.find_field_focused = false;
-                self.slot.input_devtools.store(false, Ordering::Relaxed);
+                self.slot().input_devtools.store(false, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::Focus(true));
                 return crate::integration::unfocus_chrome();
             }
             Msg::DevToolsFocused => {
                 self.set_url_bar_focused(false);
                 self.find_field_focused = false;
-                self.slot.input_devtools.store(true, Ordering::Relaxed);
+                self.slot().input_devtools.store(true, Ordering::Relaxed);
                 let _ = self.cmd_tx.send(Cmd::DevToolsFocus(true));
                 return crate::integration::unfocus_chrome();
             }
@@ -3228,7 +3328,7 @@ impl<E: Engine> App<E> {
         }
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
-            self.slot.need_park_prime.lock().unwrap().insert(id.0);
+            self.slot().need_park_prime.lock().unwrap().insert(id.0);
         }
         let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
         if activate {
@@ -3269,8 +3369,12 @@ impl<E: Engine> App<E> {
         self.active_handle
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Same-size park → pending this frame. Miss → blank now (do not
-        // keep sampling the previous tab until CEF answers).
-        self.slot.present_tab(id);
+        // keep sampling the previous tab until CEF answers). A page window's
+        // slot only ever paints its own page.
+        let slot = self.slot();
+        if !slot.windowed {
+            slot.present_tab(id);
+        }
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
         if self.find_open && !self.find_query.trim().is_empty() {
             self.send_find(true, false);
@@ -3291,8 +3395,8 @@ impl<E: Engine> App<E> {
     }
 
     /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.
-    pub fn theme(&self) -> iced::Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+    pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
+        sola_kit::theme_for(self.window_floating(window), &self.theme)
     }
 
     pub fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
@@ -3311,8 +3415,91 @@ impl<E: Engine> App<E> {
             .map(|t| t.id)
     }
 
-    pub fn view(&self) -> Element<'_, Msg> {
-        let webview = Shader::new(E::make_program(self.slot.clone()))
+    /// A page window: the active page's window carries the full chrome,
+    /// any other shows its page live under a read-only bar.
+    pub fn view(&self, window: iced::window::Id) -> Element<'_, Msg> {
+        let Some(tab) = self.windows.tab_of(window) else {
+            return Space::new().into();
+        };
+        let Some(slot) = self.windows.slot_of(tab) else {
+            return Space::new().into();
+        };
+        if tab == self.cached_active {
+            self.view_active(window, slot)
+        } else {
+            self.view_passive(window, tab, slot)
+        }
+    }
+
+    /// A page window that is not the active page: its location (read only)
+    /// over the page. A click focuses the window, which makes it active.
+    fn view_passive(
+        &self,
+        window: iced::window::Id,
+        tab: TabId,
+        slot: Arc<FrameSlot<E>>,
+    ) -> Element<'_, Msg> {
+        let info = self.cached_tabs.iter().find(|t| t.id == tab);
+        let url = info
+            .map(|t| t.url.as_str())
+            .filter(|u| *u != BLANK_URL)
+            .unwrap_or("");
+        let muted = self.theme.extended_palette().background.strong.text;
+        let bar = container(
+            text(url.to_string())
+                .size(13)
+                .font(sola_kit::fonts::ui())
+                .wrapping(iced::widget::text::Wrapping::None)
+                .style(move |_t: &iced::Theme| iced::widget::text::Style { color: Some(muted) }),
+        )
+        .padding(Padding::from([0.0, sola_kit::components::style::SPACE_MD * 2.0]))
+        .height(Length::Fixed(CHROME_HEIGHT))
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .style(|_t: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(CHROME_SURFACE)),
+            ..Default::default()
+        });
+        let webview = Shader::new(E::make_program(slot))
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let content: Element<'_, Msg> = column![bar, horizontal_divider(), webview]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+        sola_kit::wrap_if_floating(
+            self.window_floating(window),
+            info.map(|t| t.title.clone()).unwrap_or_default(),
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            content,
+        )
+    }
+
+    /// Is this page window floating (it draws its own titlebar)?
+    fn window_floating(&self, window: iced::window::Id) -> bool {
+        self.windows
+            .river_id(window)
+            .is_some_and(|id| self.float.is_window_floating(id))
+    }
+
+    /// The window title: the page's title and address.
+    pub fn title(&self, window: iced::window::Id) -> String {
+        let profile = crate::profiles::active().name;
+        let info = self
+            .windows
+            .tab_of(window)
+            .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab));
+        match info {
+            Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
+            None => crate::util::browser_window_title(&profile, "", ""),
+        }
+    }
+
+    /// The active page's window, with all of the chrome.
+    fn view_active(&self, window: iced::window::Id, slot: Arc<FrameSlot<E>>) -> Element<'_, Msg> {
+        let webview = Shader::new(E::make_program(slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
         let chrome_keys = !self.url_bar_focused
@@ -3330,9 +3517,9 @@ impl<E: Engine> App<E> {
                     true
                 }
             };
-        let dt_keys = self.slot.input_devtools.load(Ordering::Relaxed);
+        let dt_keys = slot.input_devtools.load(Ordering::Relaxed);
         let page_owns_keys = chrome_keys && !dt_keys;
-        let webview = crate::cef::page_ime::page_ime(webview, self.slot.clone(), page_owns_keys);
+        let webview = crate::cef::page_ime::page_ime(webview, slot.clone(), page_owns_keys);
 
         let page: Element<'_, Msg> = if self.find_open {
             stack![webview, self.view_find_bar()].into()
@@ -3340,12 +3527,12 @@ impl<E: Engine> App<E> {
             webview.into()
         };
         let page: Element<'_, Msg> = if self.devtools == Some(self.cached_active) {
-            let inspector = Shader::new(E::make_devtools_program(self.slot.clone()))
+            let inspector = Shader::new(E::make_devtools_program(slot.clone()))
                 .width(Length::Fill)
                 .height(Length::Fill);
             let inspector = crate::cef::page_ime::page_ime(
                 inspector,
-                self.slot.clone(),
+                slot.clone(),
                 chrome_keys && dt_keys,
             );
             let canvas = self.theme.extended_palette().background.base.color;
@@ -3361,11 +3548,7 @@ impl<E: Engine> App<E> {
         } else {
             page
         };
-        let lower = row![
-            self.view_tab_sidebar(),
-            container(page).width(Length::Fill).height(Length::Fill),
-        ]
-        .height(Length::Fill);
+        let lower = container(page).width(Length::Fill).height(Length::Fill);
         let main = column![self.view_chrome_bar(), horizontal_divider(), lower]
             .width(Length::Fill)
             .height(Length::Fill);
@@ -3427,8 +3610,8 @@ impl<E: Engine> App<E> {
         };
 
         sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
-            crate::profiles::active().name.as_str(),
+            self.window_floating(window),
+            self.title(window),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
@@ -3473,25 +3656,25 @@ impl<E: Engine> App<E> {
             match ev {
                 crate::engine::DevToolsEvent::Opened { tab_id, paint_id } => {
                     self.devtools = Some(tab_id);
-                    self.slot.devtools_tab.store(paint_id.0, Ordering::Relaxed);
-                    self.slot.devtools_blank.store(true, Ordering::Relaxed);
-                    self.slot.input_devtools.store(true, Ordering::Relaxed);
-                    if let Some(frame) = self.slot.parked_frames.lock().unwrap().get(&paint_id.0) {
-                        *self.slot.devtools_pending.lock().unwrap() =
+                    self.slot().devtools_tab.store(paint_id.0, Ordering::Relaxed);
+                    self.slot().devtools_blank.store(true, Ordering::Relaxed);
+                    self.slot().input_devtools.store(true, Ordering::Relaxed);
+                    if let Some(frame) = self.slot().parked_frames.lock().unwrap().get(&paint_id.0) {
+                        *self.slot().devtools_pending.lock().unwrap() =
                             Some(crate::engine::PendingFrame {
                                 tab_id: paint_id,
                                 frame: frame.clone(),
                             });
-                        self.slot.devtools_blank.store(false, Ordering::Relaxed);
+                        self.slot().devtools_blank.store(false, Ordering::Relaxed);
                     }
                     tracing::info!(?tab_id, ?paint_id, "DevTools panel open");
                 }
                 crate::engine::DevToolsEvent::Closed { tab_id } => {
                     if self.devtools == Some(tab_id) || self.devtools.is_some() {
                         self.devtools = None;
-                        self.slot.devtools_tab.store(u64::MAX, Ordering::Relaxed);
-                        self.slot.devtools_pending.lock().unwrap().take();
-                        self.slot.input_devtools.store(false, Ordering::Relaxed);
+                        self.slot().devtools_tab.store(u64::MAX, Ordering::Relaxed);
+                        self.slot().devtools_pending.lock().unwrap().take();
+                        self.slot().input_devtools.store(false, Ordering::Relaxed);
                         tracing::info!(?tab_id, "DevTools panel closed");
                     }
                 }
@@ -3539,7 +3722,7 @@ impl<E: Engine> App<E> {
     /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
     pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
         let active_id = {
-            let paint = self.slot.paint_tab.load(Ordering::Relaxed);
+            let paint = self.slot().paint_tab.load(Ordering::Relaxed);
             if paint != u64::MAX {
                 TabId(paint)
             } else {
@@ -3637,35 +3820,6 @@ impl<E: Engine> App<E> {
     }
 
     /// Identity select — kit `select`, enamel mark per profile.
-    fn view_profile_picker(&self) -> Element<'_, Msg> {
-        let active = crate::profiles::active();
-        let options = self.profile_options.iter().map(|p| {
-            SelectOption::new(
-                p.name.clone(),
-                p.id == active.id,
-                Msg::ProfileSwitch(p.id.clone()),
-            )
-            .mark(p.id.clone())
-        });
-        let inner = (self.sidebar_w - 12.0).max(140.0);
-        select_sized(
-            active.name,
-            options,
-            self.profile_picker_open,
-            Msg::ProfilePickerToggle,
-            Msg::ProfilePickerDismiss,
-            inner,
-        )
-    }
-
-    /// Full-width chrome strip: profile (aligned to the tab column),
-    /// back / forward / reload, copy-url, omnibox, vault.
-    ///
-    /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
-    /// the click to place its caret, and `mouse_area` skips `on_press` for
-    /// captured events. Click-into-focus + select-all is handled instead via
-    /// the global press subscription (`Msg::LeftPressed`) plus a live focus
-    /// query, which sees the press regardless of widget capture.
     pub fn view_chrome_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
         let info = self.active_tab_info();
@@ -3726,14 +3880,7 @@ impl<E: Engine> App<E> {
 
         let downloads_btn = self.downloads_tool_btn(muted);
 
-        let profile = container(self.view_profile_picker())
-            .width(Length::Fixed(self.sidebar_w))
-            .padding(Padding::from([0, 6]))
-            .align_y(Alignment::Center);
-
         let bar = row![
-            profile,
-            Space::new().width(Length::Fixed(DIVIDER_HIT_PX)),
             back,
             forward,
             reload_or_stop,
@@ -3880,7 +4027,7 @@ impl<E: Engine> App<E> {
                 },
                 ..Default::default()
             });
-        let (left, right) = omnibox_tray_insets(self.sidebar_w);
+        let (left, right) = omnibox_tray_insets(0.0);
         container(tray)
             .width(Length::Fill)
             .padding(Padding {
@@ -6726,10 +6873,10 @@ impl<E: Engine> App<E> {
 
     pub fn subscription(&self) -> Subscription<Msg> {
         let frames = self.engine.frames();
-        let slot = self.slot.clone();
         let active = self.active_handle.clone();
         let mut subs = vec![
-            crate::run::frame_subscription::<E>(frames, slot, active),
+            crate::run::frame_subscription_slots::<E>(frames, self.windows.slots(), active),
+            iced::window::events().map(|(id, e)| Msg::PageWindow(id, e)),
             sola_kit::app::bus_subscription().map(Msg::Bus),
             sola_kit::call_subscription().map(Msg::Call),
             chrome_drain_subscription(),

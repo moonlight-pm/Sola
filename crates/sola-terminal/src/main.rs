@@ -1174,7 +1174,7 @@ impl App {
     fn open_tab_window(&mut self, tab_id: &str) -> Task<Msg> {
         let (window, task) = self
             .tab_windows
-            .open(tab_id, window_settings_transparent(APP_ID));
+            .open(tab_id, window_settings_transparent(APP_ID), false);
         self.window_of.insert(tab_id.to_string(), window);
         self.tab_of.insert(window, tab_id.to_string());
         task.map(|_| Msg::Noop)

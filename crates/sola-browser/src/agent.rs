@@ -564,9 +564,9 @@ impl<E: Engine> App<E> {
                 self.switch_active_tab(new_active);
             }
         }
-        self.slot.forget_tab(id);
-        self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
-        self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+        self.slot().forget_tab(id);
+        self.slot().drop_paint_tabs.lock().unwrap().push(id.0);
+        self.slot().need_park_prime.lock().unwrap().remove(&id.0);
         let _ = self.cmd_tx.send(Cmd::CloseTab(id));
         self.closed_tabs.insert(id);
         self.cached_tabs.retain(|t| t.id != id);
