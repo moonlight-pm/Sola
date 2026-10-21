@@ -114,22 +114,27 @@ the same.
 (new `tabs.rs`, `float.rs`), `crates/sola-terminal/src/` (`main.rs`,
 `menu.rs`, `sidebar.rs` goes).
 
-- [ ] Bus: `Tab` and `TabWindow`, appended; `TabLayout` entries are keys
+- [x] Bus: `Tab` and `TabWindow`, appended; `TabLayout` entries are keys
       (a tab key, or the app id for a window with no tab).
-- [ ] Shell: `pairing.rs` (pure, tested): pair by pid + order, stable while
+- [x] Shell: `pairing.rs` (pure, tested): pair by pid + order, stable while
       both live. Stacks keyed by tab key: a window paired late takes its
       key's waiting place (restore or restart). Retract `TabWindow` when
       its window closes.
-- [ ] Kit `tabs.rs`: open a window as a tab (announce, then
+- [x] Kit `tabs.rs`: open a window as a tab (announce, then
       `window::open`), close it (retract), map iced window ↔ sola-river id
       from `TabWindow`; `FloatState` answers per window.
-- [ ] Terminal on `iced::daemon`: a window per tab, sized and focused per
+- [x] Terminal on `iced::daemon`: a window per tab, sized and focused per
       window; keys and menu actions go to the focused window; the tab strip
       and its menu list go; ⌘T opens a tab window (the shell puts it in the
       focused zone); closing a window closes its tab; the last window
       closing quits; restore opens a window per saved `TerminalSession`;
       tab key `sola-terminal/<tab id>`.
-- [ ] Build, tests; **ask before** apply; smoke: ⌘T, close, splits in a
+- [x] Build, tests (shell 204, kit 163, bus 108, terminal 203; release stage of
+      every package).
+- [x] Terminal is one process: a second launch asks the running one for a
+      new tab (`MenuAction new_tab`) — a second process would reopen every
+      saved tab as windows.
+- [ ] **Ask before** apply; smoke: ⌘T, close, splits in a
       tab window, restart restores each terminal tab to its zone and place.
 
 ## Phase 3+ — outline
