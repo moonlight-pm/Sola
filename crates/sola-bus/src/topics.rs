@@ -161,9 +161,33 @@ pub struct WindowParent {
     pub parent: u32,
 }
 
-/// One zone of the shell's tab bar as last saved: its tabs' app ids in
-/// bar order, and which of them the zone shows (an index into `apps`).
-/// An app id can repeat (two windows of one app).
+/// A window an app opens as a tab (app → shell), announced just before
+/// the window opens. Carried by the sticky `Topic::Tab`, keyed by `key`;
+/// the app retracts it when the tab closes. The shell pairs each process's
+/// tabs (by `seq`) with that process's new windows (sola-river ids follow
+/// creation order) and answers with [`TabWindow`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tab {
+    /// Unique and stable across restarts: `<app_id>/<the app's tab id>`.
+    pub key: String,
+    pub app_id: String,
+    pub pid: u32,
+    /// How many windows this process had opened, this one included (from 1).
+    pub seq: u32,
+}
+
+/// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
+/// `key`; retracted when the window closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabWindow {
+    pub key: String,
+    pub window_id: u32,
+}
+
+/// One zone of the shell's tab bar as last saved: its tabs' keys in bar
+/// order, and which of them the zone shows (an index into `apps`). A key
+/// is a [`Tab::key`], or the app id for a window that is not an announced
+/// tab (and can then repeat: two windows of one app).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TabLayoutZone {
     pub zone: Zone,
@@ -1365,6 +1389,16 @@ define_topics! {
     // namespace so tab moves don't churn state.yaml. Appended last.
     #[persistent(namespace = "shell/tabs")]
     TabLayout(TabLayout),
+
+    // A window an app opens as a tab (app → shell). Sticky, keyed by key;
+    // retracted when the tab closes. Appended last.
+    #[sticky(keys = [key])]
+    Tab(Tab),
+
+    // Which sola-river window a tab is (shell → apps). Sticky, keyed by
+    // key; retracted when the window closes. Appended last.
+    #[sticky(keys = [key])]
+    TabWindow(TabWindow),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1377,6 +1411,8 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::CalendarConfig
             | TopicKind::WindowParent
             | TopicKind::TabLayout
+            | TopicKind::Tab
+            | TopicKind::TabWindow
     )
 }
 

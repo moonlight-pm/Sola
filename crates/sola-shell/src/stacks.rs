@@ -40,14 +40,17 @@ pub enum Present {
 pub struct Tab {
     pub window_id: u32,
     pub app_id: String,
+    /// What its place is remembered by: the tab key an app announced
+    /// (`Topic::Tab`), else the app id.
+    pub key: String,
 }
 
-/// A remembered place: a zone, an app, its index in that zone, and
+/// A remembered place: a zone, a key, its index in that zone, and
 /// whether the zone showed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Slot {
     zone: Zone,
-    app_id: String,
+    key: String,
     at: usize,
     shown: bool,
 }
@@ -129,10 +132,10 @@ impl Stacks {
             if !ZONES.contains(&z.zone) {
                 continue;
             }
-            for (at, app_id) in z.apps.iter().enumerate() {
+            for (at, key) in z.apps.iter().enumerate() {
                 self.restore.push(Slot {
                     zone: z.zone,
-                    app_id: app_id.clone(),
+                    key: key.clone(),
                     at,
                     shown: z.shown == Some(at as u32),
                 });
@@ -161,14 +164,14 @@ impl Stacks {
             .columns
             .iter()
             .map(|c| {
-                let mut apps: Vec<String> = c.tabs.iter().map(|t| t.app_id.clone()).collect();
+                let mut apps: Vec<String> = c.tabs.iter().map(|t| t.key.clone()).collect();
                 let mut shown = c
                     .shown
                     .and_then(|w| c.tabs.iter().position(|t| t.window_id == w))
                     .map(|i| i as u32);
                 for (g, _) in self.live_ghosts(now).filter(|(g, _)| g.zone == c.zone) {
                     let at = g.at.min(apps.len());
-                    apps.insert(at, g.app_id.clone());
+                    apps.insert(at, g.key.clone());
                     match shown {
                         Some(s) if s as usize >= at => shown = Some(s + 1),
                         _ => {}
@@ -178,7 +181,7 @@ impl Stacks {
                     }
                 }
                 for s in self.live_restore(now).filter(|s| s.zone == c.zone) {
-                    apps.push(s.app_id.clone());
+                    apps.push(s.key.clone());
                     if s.shown && shown.is_none() {
                         shown = Some(apps.len() as u32 - 1);
                     }
@@ -209,8 +212,8 @@ impl Stacks {
     // Windows arriving and leaving
     // ---------------------------------------------------------------------
 
-    /// Place a new window. In order: the place its app just left, its
-    /// app's saved place, Floating for `floats`, else the end of the last
+    /// Place a new window. In order: the place its key just left, its
+    /// key's saved place, Floating for `floats`, else the end of the last
     /// focused tiled zone (shown). `returning` windows (the ones present
     /// when the shell starts) take a remembered place if there is one and
     /// otherwise join without being shown over the zone's tab.
@@ -218,24 +221,27 @@ impl Stacks {
         &mut self,
         window_id: u32,
         app_id: &str,
+        key: &str,
         floats: bool,
         returning: bool,
         now: Instant,
     ) -> Placed {
         self.remove_quiet(window_id);
-        if let Some(slot) = self.claim_ghost(app_id, now) {
-            return self.insert_slot(window_id, app_id, slot.zone, slot.at, slot.shown, None);
+        let tab = Tab {
+            window_id,
+            app_id: app_id.to_string(),
+            key: key.to_string(),
+        };
+        if let Some(slot) = self.claim_ghost(key, now) {
+            return self.insert_slot(tab, slot.zone, slot.at, slot.shown, None);
         }
-        if let Some(slot) = self.claim_restore(app_id, now) {
+        if let Some(slot) = self.claim_restore(key, now) {
             let at = slot.at;
-            return self.insert_slot(window_id, app_id, slot.zone, at, slot.shown, Some(at));
+            return self.insert_slot(tab, slot.zone, at, slot.shown, Some(at));
         }
         let zone = if floats { Zone::Float } else { self.last_tiled };
         let col = self.column_mut(zone);
-        col.tabs.push(Tab {
-            window_id,
-            app_id: app_id.to_string(),
-        });
+        col.tabs.push(tab);
         let mut shown = true;
         if zone == Zone::Float {
             self.float_z.push(window_id);
@@ -253,13 +259,13 @@ impl Stacks {
 
     fn insert_slot(
         &mut self,
-        window_id: u32,
-        app_id: &str,
+        tab: Tab,
         zone: Zone,
         at: usize,
         was_shown: bool,
         rank: Option<usize>,
     ) -> Placed {
+        let window_id = tab.window_id;
         let ranks = &self.ranks;
         let col = self
             .columns
@@ -275,13 +281,7 @@ impl Stacks {
                 .unwrap_or(col.tabs.len()),
             None => at.min(col.tabs.len()),
         };
-        col.tabs.insert(
-            index,
-            Tab {
-                window_id,
-                app_id: app_id.to_string(),
-            },
-        );
+        col.tabs.insert(index, tab);
         let mut shown = true;
         if zone == Zone::Float {
             self.float_z.push(window_id);
@@ -300,20 +300,43 @@ impl Stacks {
         }
     }
 
-    fn claim_ghost(&mut self, app_id: &str, now: Instant) -> Option<Slot> {
-        self.ghosts
-            .retain(|(_, left)| now < *left + GHOST_GRACE);
-        let i = self.ghosts.iter().position(|(g, _)| g.app_id == app_id)?;
+    fn claim_ghost(&mut self, key: &str, now: Instant) -> Option<Slot> {
+        self.ghosts.retain(|(_, left)| now < *left + GHOST_GRACE);
+        let i = self.ghosts.iter().position(|(g, _)| g.key == key)?;
         Some(self.ghosts.remove(i).0)
     }
 
-    fn claim_restore(&mut self, app_id: &str, now: Instant) -> Option<Slot> {
+    fn claim_restore(&mut self, key: &str, now: Instant) -> Option<Slot> {
         if !self.restore_until.is_some_and(|until| now < until) {
             self.restore.clear();
             return None;
         }
-        let i = self.restore.iter().position(|s| s.app_id == app_id)?;
+        let i = self.restore.iter().position(|s| s.key == key)?;
         Some(self.restore.remove(i))
+    }
+
+    /// `window_id` turns out to be the tab `key` (paired after it was
+    /// placed). It is remembered by that key from now on, and when a place
+    /// is waiting for the key (a restore, a restart) it moves there.
+    pub fn set_key(&mut self, window_id: u32, key: &str, now: Instant) -> Option<Placed> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.tabs.iter().any(|t| t.window_id == window_id))?;
+        let tab = col.tabs.iter_mut().find(|t| t.window_id == window_id)?;
+        if tab.key == key {
+            return None;
+        }
+        tab.key = key.to_string();
+        let app_id = tab.app_id.clone();
+        let waiting = self.ghosts.iter().any(|(g, left)| g.key == key && now < *left + GHOST_GRACE)
+            || (self.restore_until.is_some_and(|until| now < until)
+                && self.restore.iter().any(|s| s.key == key));
+        if !waiting {
+            return None;
+        }
+        let floats = self.zone_of(window_id) == Some(Zone::Float);
+        Some(self.place(window_id, &app_id, key, floats, true, now))
     }
 
     /// A window closed. Its place waits [`GHOST_GRACE`] for its app to
@@ -321,11 +344,11 @@ impl Stacks {
     /// the previous). Returns the zone it was in.
     pub fn remove(&mut self, window_id: u32, now: Instant) -> Option<Zone> {
         self.parents.retain(|child, parent| *child != window_id && *parent != window_id);
-        let (zone, at, app_id, was_shown) = self.take(window_id)?;
+        let (zone, at, key, was_shown) = self.take(window_id)?;
         self.ghosts.push((
             Slot {
                 zone,
-                app_id,
+                key,
                 at,
                 shown: was_shown,
             },
@@ -360,7 +383,7 @@ impl Stacks {
                 .or_else(|| at.checked_sub(1).and_then(|i| col.tabs.get(i)))
                 .map(|t| t.window_id);
         }
-        Some((col.zone, at, tab.app_id, was_shown))
+        Some((col.zone, at, tab.key, was_shown))
     }
 
     /// `child` is a dialog of `parent`: it leaves any zone and rides above
@@ -430,19 +453,21 @@ impl Stacks {
         let Some(from) = self.zone_of(window_id) else {
             return false;
         };
-        let app_id = self
+        let Some(tab) = self
             .column(from)
             .tabs
             .iter()
             .find(|t| t.window_id == window_id)
-            .map(|t| t.app_id.clone())
-            .unwrap_or_default();
+            .cloned()
+        else {
+            return false;
+        };
         self.remove_quiet(window_id);
         let col = self.column_mut(zone);
         let index = before
             .and_then(|b| col.tabs.iter().position(|t| t.window_id == b))
             .unwrap_or(col.tabs.len());
-        col.tabs.insert(index, Tab { window_id, app_id });
+        col.tabs.insert(index, tab);
         if zone == Zone::Float {
             self.float_z.push(window_id);
         } else {
@@ -568,15 +593,15 @@ mod tests {
     fn new_windows_join_the_focused_zone_and_show() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        let p = s.place(1, "sola-terminal", false, false, t);
+        let p = s.place(1, "sola-terminal", "sola-terminal", false, false, t);
         assert_eq!(p, Placed { zone: Zone::Left, shown: true, returning: false });
-        s.place(2, "sola-browser", false, false, t);
+        s.place(2, "sola-browser", "sola-browser", false, false, t);
         assert_eq!(ids(&s, Zone::Left), vec![1, 2]);
         assert_eq!(s.shown(Zone::Left), Some(2));
 
         s.move_to(2, Zone::Right, None);
         s.focus(2);
-        s.place(3, "sola-mail", false, false, t);
+        s.place(3, "sola-mail", "sola-mail", false, false, t);
         assert_eq!(ids(&s, Zone::Right), vec![2, 3]);
         assert_eq!(s.shown(Zone::Right), Some(3));
         assert_eq!(s.shown(Zone::Left), Some(1));
@@ -586,13 +611,13 @@ mod tests {
     fn floats_and_dialogs() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        s.place(1, "sola-terminal", false, false, t);
-        let p = s.place(2, "sola-scope", true, false, t);
+        s.place(1, "sola-terminal", "sola-terminal", false, false, t);
+        let p = s.place(2, "sola-scope", "sola-scope", true, false, t);
         assert_eq!(p.zone, Zone::Float);
         assert!(s.is_floating(2));
         assert_eq!(s.float_order(), &[2]);
 
-        s.place(3, "sola-terminal", false, false, t);
+        s.place(3, "sola-terminal", "sola-terminal", false, false, t);
         assert!(s.set_parent(3, 1));
         assert_eq!(ids(&s, Zone::Left), vec![1]);
         assert!(s.is_floating(3));
@@ -607,7 +632,7 @@ mod tests {
         let t = Instant::now();
         let mut s = Stacks::new();
         for w in 1..=3 {
-            s.place(w, "app", false, false, t);
+            s.place(w, "app", "app", false, false, t);
         }
         s.show(2);
         s.remove(2, t);
@@ -622,19 +647,19 @@ mod tests {
     fn a_restarting_app_comes_back_to_its_place() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        s.place(1, "sola-terminal", false, false, t);
-        s.place(2, "sola-browser", false, false, t);
-        s.place(3, "sola-mail", false, false, t);
+        s.place(1, "sola-terminal", "sola-terminal", false, false, t);
+        s.place(2, "sola-browser", "sola-browser", false, false, t);
+        s.place(3, "sola-mail", "sola-mail", false, false, t);
         s.show(2);
         s.remove(2, t);
-        let p = s.place(9, "sola-browser", false, false, t + Duration::from_secs(3));
+        let p = s.place(9, "sola-browser", "sola-browser", false, false, t + Duration::from_secs(3));
         assert_eq!(p, Placed { zone: Zone::Left, shown: true, returning: true });
         assert_eq!(ids(&s, Zone::Left), vec![1, 9, 3]);
 
         // Past the grace, a new window is just new.
         s.remove(9, t);
         let later = t + GHOST_GRACE + Duration::from_secs(1);
-        let p = s.place(10, "sola-browser", false, false, later);
+        let p = s.place(10, "sola-browser", "sola-browser", false, false, later);
         assert!(!p.returning);
         assert_eq!(ids(&s, Zone::Left), vec![1, 3, 10]);
     }
@@ -663,11 +688,11 @@ mod tests {
         };
         let mut s = Stacks::new();
         s.load(&layout, t);
-        s.place(3, "mail", false, false, t);
-        s.place(2, "browser", false, false, t);
-        s.place(4, "design", false, false, t);
-        s.place(1, "term", false, false, t);
-        s.place(5, "scope", false, false, t);
+        s.place(3, "mail", "mail", false, false, t);
+        s.place(2, "browser", "browser", false, false, t);
+        s.place(4, "design", "design", false, false, t);
+        s.place(1, "term", "term", false, false, t);
+        s.place(5, "scope", "scope", false, false, t);
         assert_eq!(ids(&s, Zone::Left), vec![1, 2, 3]);
         assert_eq!(s.shown(Zone::Left), Some(2));
         assert_eq!(ids(&s, Zone::Right), vec![4]);
@@ -689,7 +714,7 @@ mod tests {
             },
             t,
         );
-        s.place(1, "term", false, false, t);
+        s.place(1, "term", "term", false, false, t);
         let l = s.layout(t);
         assert_eq!(l.zones[0].apps, vec!["term".to_string(), "mail".to_string()]);
         assert_eq!(l.zones[0].shown, Some(0));
@@ -699,11 +724,36 @@ mod tests {
     }
 
     #[test]
+    fn a_window_paired_late_takes_its_tabs_saved_place() {
+        let t = Instant::now();
+        let mut s = Stacks::new();
+        s.load(
+            &TabLayout {
+                zones: vec![TabLayoutZone {
+                    zone: Zone::Right,
+                    apps: vec!["sola-terminal/b".into()],
+                    shown: Some(0),
+                }],
+            },
+            t,
+        );
+        // Placed before its tab was known: by app id, a new window.
+        let p = s.place(4, "sola-terminal", "sola-terminal", false, false, t);
+        assert_eq!(p.zone, Zone::Left);
+        let p = s.set_key(4, "sola-terminal/b", t).expect("moved");
+        assert_eq!(p.zone, Zone::Right);
+        assert_eq!(s.tabs(Zone::Right)[0].key, "sola-terminal/b");
+        // No place waiting: only the key changes.
+        assert!(s.set_key(4, "sola-terminal/c", t).is_none());
+        assert_eq!(s.zone_of(4), Some(Zone::Right));
+    }
+
+    #[test]
     fn returning_windows_do_not_cover_the_zone() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        s.place(1, "term", false, true, t);
-        let p = s.place(2, "browser", false, true, t);
+        s.place(1, "term", "term", false, true, t);
+        let p = s.place(2, "browser", "browser", false, true, t);
         assert!(!p.shown);
         assert_eq!(s.shown(Zone::Left), Some(1));
     }
@@ -713,7 +763,7 @@ mod tests {
         let t = Instant::now();
         let mut s = Stacks::new();
         for w in 1..=3 {
-            s.place(w, "app", false, false, t);
+            s.place(w, "app", "app", false, false, t);
         }
         assert!(s.move_to(1, Zone::Right, None));
         assert_eq!(s.shown(Zone::Right), Some(1));
@@ -729,8 +779,8 @@ mod tests {
     fn hidden_apps_give_way() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        s.place(1, "term", false, false, t);
-        s.place(2, "mail", false, false, t);
+        s.place(1, "term", "term", false, false, t);
+        s.place(2, "mail", "mail", false, false, t);
         let hide_mail = |a: &str| a == "mail";
         assert_eq!(s.visible_shown(Zone::Left, &hide_mail), Some(1));
         assert_eq!(s.occupied(&none), vec![Zone::Left]);
@@ -742,7 +792,7 @@ mod tests {
     fn present_toggles_and_ends_when_the_window_moves() {
         let t = Instant::now();
         let mut s = Stacks::new();
-        s.place(1, "term", false, false, t);
+        s.place(1, "term", "term", false, false, t);
         assert_eq!(s.toggle_present(1, Present::Fullscreen), Some(Present::Fullscreen));
         assert_eq!(s.toggle_present(1, Present::Cinema), Some(Present::Cinema));
         assert_eq!(s.toggle_present(1, Present::Cinema), None);

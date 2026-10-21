@@ -71,6 +71,10 @@ impl Shell {
                 self.on_tab_layout(l);
                 Task::none()
             }
+            Topic::Tab(t) => {
+                self.on_tab(t, message.sticky);
+                Task::none()
+            }
             Topic::WindowGeometry(g) => {
                 self.on_window_geometry(g);
                 Task::none()
@@ -247,6 +251,9 @@ impl Shell {
         for &wid in &removed_wids {
             self.tabs.remove(wid, now);
             self.pending_parents.remove(&wid);
+            if let Some(key) = self.pairing.window_closed(wid) {
+                retract_tab_window(key);
+            }
         }
         self.zoning.forget_windows(&removed_wids);
 
@@ -272,6 +279,11 @@ impl Shell {
         // takes focus.
         let first_list = !self.windows_seen;
         self.windows_seen = true;
+        // Tabs announced for these windows: placed windows may move to their
+        // tab's place; new ones are placed by their tab's key below.
+        if self.pair_tabs(now) {
+            self.sync_floats();
+        }
         let mut float_frames = Vec::new();
         let mut take_focus: Option<(u32, String)> = None;
         let mut first_shown: Option<(u32, String)> = None;
@@ -283,7 +295,8 @@ impl Shell {
                 continue;
             }
             let floats = crate::zoning::floats_by_default(app_id) || self.zoning.remembers(app_id);
-            let placed = self.tabs.place(*wid, app_id, floats, first_list, now);
+            let key = self.pairing.key_of(*wid).unwrap_or(app_id).to_string();
+            let placed = self.tabs.place(*wid, app_id, &key, floats, first_list, now);
             placed_any = true;
             tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
             if placed.zone == Zone::Float {
@@ -468,7 +481,8 @@ impl Shell {
             .collect();
         for (wid, app_id) in windows {
             let floats = crate::zoning::floats_by_default(&app_id);
-            let placed = self.tabs.place(wid, &app_id, floats, true, now);
+            let key = self.pairing.key_of(wid).unwrap_or(&app_id).to_string();
+            let placed = self.tabs.place(wid, &app_id, &key, floats, true, now);
             if placed.zone == Zone::Float {
                 Self::emit_frames(self.zoning.float(&app_id, wid, true).into_iter().collect());
             } else {
@@ -479,6 +493,78 @@ impl Shell {
         self.sync_window_floating();
         self.emit_all_frames();
         self.emit_composition();
+    }
+
+    /// An app announced a tab it is opening as a window (or retracted one
+    /// it closed). Pair it with its window; a window that already has a
+    /// place may move to the tab's saved place.
+    fn on_tab(&mut self, tab: sola_bus::topics::Tab, sticky: bool) {
+        if !sticky {
+            if let Some(wid) = self.pairing.retract(&tab.key) {
+                tracing::info!(window_id = wid, key = %tab.key, "tab closed");
+                retract_tab_window(tab.key);
+            }
+            return;
+        }
+        self.pairing.announce(crate::pairing::Announced {
+            key: tab.key,
+            app_id: tab.app_id,
+            pid: tab.pid,
+            seq: tab.seq,
+        });
+        if self.pair_tabs(std::time::Instant::now()) {
+            self.sync_floats();
+            self.keep_focus_on_screen();
+            self.emit_all_frames();
+            self.emit_composition();
+        }
+        self.persist_tabs();
+    }
+
+    /// Pair announced tabs with their windows (see `pairing.rs`), tell the
+    /// apps which window each tab is (`TabWindow`), and remember placed
+    /// windows by their tab's key. True when one moved to a saved place.
+    fn pair_tabs(&mut self, now: std::time::Instant) -> bool {
+        let candidates: Vec<(u32, String, u32)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
+            .filter_map(|w| Some((w.window_id, w.app_id.clone(), w.pid?)))
+            .collect();
+        let refs: Vec<crate::pairing::Candidate<'_>> = candidates
+            .iter()
+            .map(|(w, a, p)| (*w, a.as_str(), *p))
+            .collect();
+        let mut moved = false;
+        for (window_id, key) in self.pairing.pair(&refs) {
+            tracing::info!(window_id, %key, "tab paired");
+            if self.tabs.set_key(window_id, &key, now).is_some() {
+                moved = true;
+            }
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow { key, window_id }));
+            });
+        }
+        moved
+    }
+
+    /// Bring floating in line with the bar after windows moved zones
+    /// outside `move_tab` (a tab taking its saved place).
+    fn sync_floats(&mut self) {
+        let mut frames = Vec::new();
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || self.tabs.parent_of(w.window_id).is_some() {
+                continue;
+            }
+            let float = self.tabs.zone_of(w.window_id) == Some(Zone::Float);
+            if float && !self.zoning.is_floating(w.window_id) {
+                frames.extend(self.zoning.float(&w.app_id, w.window_id, true));
+            } else if !float && self.zoning.is_floating(w.window_id) {
+                self.zoning.unfloat(w.window_id);
+            }
+        }
+        Self::emit_frames(frames);
+        self.sync_window_floating();
     }
 
     /// Keyboard focus stays on something on screen: a focused tab that is
@@ -1386,4 +1472,11 @@ mod windows_identity_tests {
         assert!(!Shell::windows_identity_eq(&a, &[win(1, "gamescope", "A")]));
         assert!(!Shell::windows_identity_eq(&a, &[]));
     }
+}
+
+/// Drop the sticky `TabWindow` for a tab whose window is gone.
+fn retract_tab_window(key: String) {
+    super::with_bus(|bus| {
+        let _ = bus.retract(Topic::TabWindow(sola_bus::topics::TabWindow { key, window_id: 0 }));
+    });
 }

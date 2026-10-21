@@ -308,6 +308,8 @@ pub struct Shell {
 
     /// The tab bar's model: zones, their tabs, what each shows.
     pub tabs: Stacks,
+    /// Announced tabs (`Topic::Tab`) and the windows they are.
+    pub pairing: crate::pairing::Pairing,
     pub tabbar: crate::tabbar::TabBarState,
     /// The saved `TabLayout` was taken (later replays are our own echo).
     tab_layout_loaded: bool,
@@ -471,6 +473,7 @@ impl Shell {
             shortcuts_window_id: None,
             tabbar_window_id: None,
             tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: tab_layout_ready,
             tab_layout_ready,
@@ -2998,6 +3001,7 @@ mod pending_launch_tests {
             shortcuts_window_id: None,
             tabbar_window_id: None,
             tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
@@ -3120,6 +3124,7 @@ mod hide_tests {
             shortcuts_window_id: None,
             tabbar_window_id: None,
             tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
@@ -3183,7 +3188,7 @@ mod hide_tests {
             .map(|w| (w.window_id, w.app_id.clone()))
             .collect();
         for (i, (wid, app)) in placed.iter().enumerate() {
-            shell.tabs.place(*wid, app, false, false, now);
+            shell.tabs.place(*wid, app, app, false, false, now);
             if i == 1 {
                 shell.tabs.move_to(*wid, Zone::Right, None);
             }

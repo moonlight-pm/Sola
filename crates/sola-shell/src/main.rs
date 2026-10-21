@@ -19,6 +19,7 @@ pub mod menu;
 pub mod menubar;
 pub mod mouse;
 pub mod notify;
+pub mod pairing;
 mod power;
 mod screenshot;
 pub mod selection;

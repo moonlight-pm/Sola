@@ -39,6 +39,7 @@ pub mod components;
 pub mod float;
 pub mod fonts;
 pub mod menu;
+pub mod tabs;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};

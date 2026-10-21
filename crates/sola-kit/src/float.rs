@@ -93,6 +93,12 @@ impl FloatState {
             .any(|id| self.floating.contains(id))
     }
 
+    /// Is the sola-river window `window_id` floating? For apps with a
+    /// window per tab ([`crate::tabs::TabWindows::river_id`]).
+    pub fn is_window_floating(&self, window_id: u32) -> bool {
+        self.floating.contains(&window_id)
+    }
+
     /// Any compositor `window_id` belonging to this app, if known.
     pub fn any_window_id(&self) -> Option<u32> {
         self.ids_by_title.values().copied().next()
