@@ -494,6 +494,8 @@ pub struct App<E: Engine> {
     engine_tabs_seen: bool,
     /// LIFO recently-closed tabs (⌘⇧T). Persisted in `session.json`.
     recently_closed: Vec<crate::session::ClosedTab>,
+    /// Each page's stable id ([`crate::session::SessionTab::id`]).
+    page_ids: HashMap<TabId, String>,
     /// Editable contents of the URL bar.
     pub url_field: String,
     /// The URL we last copied from the engine into `url_field`,
@@ -704,6 +706,7 @@ impl<E: Engine> App<E> {
             closed_tabs: HashSet::new(),
             engine_tabs_seen: false,
             recently_closed,
+            page_ids: HashMap::new(),
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
@@ -1325,6 +1328,7 @@ impl<E: Engine> App<E> {
         let mut ids = Vec::with_capacity(session_tabs.len());
         for tab in &session_tabs {
             let id = self.engine.alloc_tab_id();
+            self.page_ids.insert(id, tab.id.clone());
             let url = crate::util::normalize_url(&tab.url);
             let url = if url.is_empty() {
                 BLANK_URL.to_string()
@@ -1525,6 +1529,7 @@ impl<E: Engine> App<E> {
         let mut open_list = Vec::with_capacity(tabs.len().max(1));
         for tab in &tabs {
             let id = self.engine.alloc_tab_id();
+            self.page_ids.insert(id, tab.id.clone());
             let url = crate::util::normalize_url(&tab.url);
             let url = if url.is_empty() {
                 BLANK_URL.to_string()
@@ -1699,12 +1704,16 @@ impl<E: Engine> App<E> {
         } else {
             tabs[0].id
         };
+        for t in &tabs {
+            self.page_id(t.id);
+        }
         let session = session::session_from_tabs(
             &tabs,
             active,
             self.sidebar_w,
             &self.groups,
             &self.recently_closed,
+            &self.page_ids,
         );
         let fp = session::fingerprint(&session);
         if fp == self.session_fp {
@@ -3051,12 +3060,22 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
+    /// The stable id of a page (minted the first time it is asked for).
+    pub(crate) fn page_id(&mut self, id: TabId) -> String {
+        self.page_ids
+            .entry(id)
+            .or_insert_with(crate::profiles::new_uuid)
+            .clone()
+    }
+
     pub(crate) fn remember_closed(&mut self, id: TabId) {
         let Some(index) = self.cached_tabs.iter().position(|t| t.id == id) else {
             return;
         };
+        let page_id = self.page_id(id);
         let tab = &self.cached_tabs[index];
         let entry = crate::session::ClosedTab {
+            id: page_id,
             url: if tab.url.is_empty() {
                 BLANK_URL.to_string()
             } else {
@@ -3096,12 +3115,18 @@ impl<E: Engine> App<E> {
             closed.title.clone()
         };
         let session_tab = crate::session::SessionTab {
+            id: if closed.id.is_empty() {
+                crate::profiles::new_uuid()
+            } else {
+                closed.id.clone()
+            },
             url: url.clone(),
             title: title.clone(),
             group_id: closed.group_id.clone(),
             history: closed.history,
             history_index: closed.history_index,
         };
+        self.page_ids.insert(id, session_tab.id.clone());
         let (history, history_index) = session::history_from_session(&session_tab);
         let info = TabInfo {
             is_loading: url != BLANK_URL && !url.is_empty(),

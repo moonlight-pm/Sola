@@ -431,6 +431,9 @@ struct CefThreadState {
     /// Active tab id, also mirrored in `active_atomic` for the
     /// iced subscription's frame filter.
     active: std::cell::Cell<TabId>,
+    /// While a [`Cmd::Target`] runs: the tab it acts on instead of the
+    /// active one (a window per page addresses each page's commands).
+    target: Cell<Option<TabId>>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     /// Snapshot of `tabs` (id/url/title) — shared with iced for
     /// rendering the tab strip + URL bar.
@@ -588,6 +591,12 @@ struct CefTabState {
     agent_obs: RefCell<Option<cef::Registration>>,
     /// sola-design artboard view. `None` for every browser / wrapper tab.
     board: Cell<Option<BoardView>>,
+    /// A window per page (Next): this page's own view size, from a
+    /// [`Cmd::Target`] `Resize`. `None` shares [`CefThreadState::size`].
+    own_size: Cell<Option<(u32, u32)>>,
+    /// A window per page: the page's window is on screen, so it paints
+    /// whether or not it is the active tab ([`Cmd::ShowPage`]).
+    shown: Cell<bool>,
 }
 
 /// Keep a board page zoomed to its raster scale (zoom is per host in
@@ -706,6 +715,7 @@ pub(super) fn run_worker(
         cmd_rx: RefCell::new(Some(cmd_rx)),
         tabs: RefCell::new(Vec::new()),
         active: std::cell::Cell::new(TabId(u64::MAX)),
+        target: Cell::new(None),
         cursor,
         tabs_snapshot,
         active_atomic,
@@ -1107,9 +1117,9 @@ cef::wrap_render_handler! {
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
-            // sola-design artboards paint side by side; everything else
-            // paints only while it is the active tab.
-            if state.active.get() != tab_id && tab.board.get().is_none() {
+            // sola-design artboards and shown page windows paint side by
+            // side; everything else paints only while it is the active tab.
+            if !paints(&state, &tab) {
                 return;
             }
             if is_popup {
@@ -1177,7 +1187,7 @@ cef::wrap_render_handler! {
 
         fn on_ime_composition_range_changed(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _selected_range: Option<&cef::Range>,
             character_bounds: Option<&[cef::Rect]>,
         ) {
@@ -1186,19 +1196,23 @@ cef::wrap_render_handler! {
                 return;
             };
             let state = cef_state();
+            let tab_id = browser
+                .and_then(|b| tab_id_by_browser_id(&state, b.identifier()))
+                .map_or(0, |t| t.0);
             if let Some(tx) = &state.ipc_events {
                 let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
                     x: bounds.x,
                     y: bounds.y,
                     w: bounds.width.max(1),
                     h: bounds.height.max(1),
+                    tab_id,
                 });
             }
         }
 
         fn on_virtual_keyboard_requested(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             input_mode: cef::TextInputMode,
         ) {
             // Desktop IME is enabled whenever the page owns keys (chrome
@@ -1206,12 +1220,16 @@ cef::wrap_render_handler! {
             // Chromium says there is no text field.
             if *input_mode.as_ref() == cef::sys::cef_text_input_mode_t::CEF_TEXT_INPUT_MODE_NONE {
                 let state = cef_state();
+                let tab_id = browser
+                    .and_then(|b| tab_id_by_browser_id(&state, b.identifier()))
+                    .map_or(0, |t| t.0);
                 if let Some(tx) = &state.ipc_events {
                     let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
                         x: 0,
                         y: 0,
                         w: 0,
                         h: 0,
+                        tab_id,
                     });
                 }
             }
@@ -2344,10 +2362,12 @@ cef::wrap_context_menu_handler! {
                 can_go_forward: false,
                 x: params.xcoord(),
                 y: params.ycoord(),
+                tab_id: 0,
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;
                 ctx.can_go_forward = b.can_go_forward() != 0;
+                ctx.tab_id = tab_id_by_browser_id(&cef_state(), b.identifier()).map_or(0, |t| t.0);
             }
             if let Some(tx) = &cef_state().ipc_events {
                 let _ = tx.send(crate::cef::ipc::FromEngine::PageContext(ctx));
@@ -2767,7 +2787,7 @@ cef::wrap_find_handler! {
     impl FindHandler {
         fn on_find_result(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _identifier: ::std::os::raw::c_int,
             count: ::std::os::raw::c_int,
             _selection_rect: Option<&cef::Rect>,
@@ -2782,6 +2802,9 @@ cef::wrap_find_handler! {
                     crate::engine::FindResult {
                         count,
                         ordinal: active_match_ordinal,
+                        tab_id: browser
+                            .and_then(|b| tab_id_by_browser_id(&cef_state(), b.identifier()))
+                            .map_or(0, |t| t.0),
                     },
                 ));
             }
@@ -3285,7 +3308,10 @@ pub(super) fn conceal_agent_tab() {
     let state = cef_state();
     let still_front =
         tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
-    if still_front || is_board_browser(&state, bid) {
+    let shown_page = tab_id_by_browser_id(&state, bid)
+        .and_then(|id| tab_state_by_id(&state, id).map(|t| t.shown.get()))
+        .unwrap_or(false);
+    if still_front || shown_page || is_board_browser(&state, bid) {
         return;
     }
     if let Some(host) = host_for_browser_id(bid) {
@@ -3376,6 +3402,18 @@ cef::wrap_task! {
 /// active tab here — no side-channel.
 fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
     match cmd {
+        Cmd::Target { tab, cmd } => {
+            let outer = state.target.replace(Some(tab));
+            let keep = process_cmd(state, *cmd);
+            state.target.set(outer);
+            return keep;
+        }
+        Cmd::ShowPage { id, shown } => show_page(state, id, shown),
+        Cmd::Resize { width, height, .. } if state.target.get().is_some() => {
+            if let Some(id) = state.target.get() {
+                resize_page(state, id, width, height);
+            }
+        }
         Cmd::Resize {
             width,
             height,
@@ -3759,8 +3797,74 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
 /// active id doesn't match any open tab — e.g. between
 /// SetActiveTab on the iced side and the corresponding cmd
 /// landing on the worker.
+/// The tab commands act on: a [`Cmd::Target`]'s tab while one runs, else
+/// the active tab.
 fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
-    tab_state_by_id(state, state.active.get())
+    tab_state_by_id(state, state.target.get().unwrap_or(state.active.get()))
+}
+
+/// A page's view size: its own (a window per page), else the shared one.
+fn page_size(state: &CefThreadState, tab: &CefTabState) -> (u32, u32) {
+    tab.own_size
+        .get()
+        .unwrap_or_else(|| *state.size.lock().unwrap())
+}
+
+/// Does this tab paint: active, a board, or a shown page window?
+fn paints(state: &CefThreadState, tab: &CefTabState) -> bool {
+    state.active.get() == tab.id || tab.board.get().is_some() || tab.shown.get()
+}
+
+/// A page window's size changed: the page takes its own size from now on.
+fn resize_page(state: &CefThreadState, id: TabId, width: u32, height: u32) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    if tab.own_size.get() == Some((width, height)) {
+        return;
+    }
+    tab.own_size.set(Some((width, height)));
+    if state.is_front.get() && paints(state, &tab) {
+        if let Some(host) = tab.browser.host() {
+            host.was_resized();
+        }
+    }
+}
+
+/// A page window went on or off screen. A shown page paints whether or not
+/// it is active; a hidden one rests (unless it is the active tab).
+fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    if tab.shown.replace(shown) == shown || tab.board.get().is_some() {
+        return;
+    }
+    if !state.is_front.get() {
+        return;
+    }
+    let visible = shown || state.active.get() == id;
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    set_host_hidden(&host, !visible);
+    if shown {
+        // Instant content when the last composite still fits.
+        let want = page_size(state, &tab);
+        let replayed = tab.last_frame.borrow().clone().is_some_and(|mut frame| {
+            let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
+            if ok {
+                frame.dirty.clear();
+                frame.drag = false;
+                state.frames.push(TaggedFrame { tab_id: id, frame });
+            }
+            ok
+        });
+        if !replayed {
+            host.was_resized();
+        }
+        host.invalidate(cef::PaintElementType::VIEW);
+    }
 }
 
 pub(super) fn host_for_browser_id(browser_id: i32) -> Option<cef::BrowserHost> {
@@ -3989,7 +4093,18 @@ fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32
     if let Some(board) = board_view(state, browser) {
         return board.surface();
     }
+    if let Some(size) = browser.and_then(|b| own_view_size(state, b.identifier())) {
+        return size;
+    }
     *state.size.lock().unwrap()
+}
+
+/// A page window's own view size. `try_borrow`, as for [`board_view`].
+fn own_view_size(state: &CefThreadState, browser_id: i32) -> Option<(u32, u32)> {
+    let tabs = state.tabs.try_borrow().ok()?;
+    tabs.iter()
+        .find(|t| t.browser_id == browser_id)
+        .and_then(|t| t.own_size.get())
 }
 
 /// Board view for this browser, if it is a sola-design artboard. `try_borrow`
@@ -4076,6 +4191,8 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(None),
         board: Cell::new(None),
+        own_size: Cell::new(None),
+        shown: Cell::new(false),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -5012,8 +5129,8 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
             if let Some(host) = prev_tab.browser.host() {
                 // OSR multi-browser: hide inactive so CEF stops painting them
                 // and treats the next show as needing a full frame. Boards
-                // stay shown.
-                if prev_tab.board.get().is_none() {
+                // and shown page windows stay shown.
+                if prev_tab.board.get().is_none() && !prev_tab.shown.get() {
                     set_host_hidden(&host, true);
                 }
             }
@@ -5029,7 +5146,7 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
     // live widget. A 1280×800 park buffer stretched into a wide view
     // is the half-width "slender" flash on tab switch.
     if let Some(tab) = tab_state_by_id(state, id) {
-        let want = *state.size.lock().unwrap();
+        let want = page_size(state, &tab);
         let replayed = if let Some(mut frame) = tab.last_frame.borrow().clone() {
             let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
             if ok {
@@ -5295,6 +5412,21 @@ fn set_front(state: &CefThreadState, front: bool) {
     if state.tabs.borrow().iter().any(|t| t.id == id) {
         activate_tab(state, id);
     }
+    let shown: Vec<TabId> = state
+        .tabs
+        .borrow()
+        .iter()
+        .filter(|t| t.shown.get() && t.id != id)
+        .map(|t| t.id)
+        .collect();
+    for page in shown {
+        if let Some(tab) = tab_state_by_id(state, page) {
+            if let Some(host) = tab.browser.host() {
+                set_host_hidden(&host, false);
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -5478,6 +5610,8 @@ fn push_tab(
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(agent_obs),
         board: Cell::new(board),
+        own_size: Cell::new(None),
+        shown: Cell::new(false),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
@@ -5516,7 +5650,7 @@ fn rebuild_snapshot(state: &CefThreadState) {
         .borrow()
         .iter()
         .map(|t| {
-            let (history, history_index) = if t.id == state.active.get() {
+            let (history, history_index) = if t.id == state.active.get() || t.shown.get() {
                 collect_history(&t.browser)
             } else {
                 (Vec::new(), 0)

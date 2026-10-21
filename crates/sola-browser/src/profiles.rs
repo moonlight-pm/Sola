@@ -392,6 +392,11 @@ fn ensure_profile_dirs(id: &str) {
 }
 
 fn new_profile_id() -> String {
+    new_uuid()
+}
+
+/// A UUID v4 string (profiles, page ids).
+pub(crate) fn new_uuid() -> String {
     // UUID v4 without pulling uuid: 16 random bytes formatted.
     let mut b = [0u8; 16];
     fill_random(&mut b);

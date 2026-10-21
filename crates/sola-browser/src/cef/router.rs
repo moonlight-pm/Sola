@@ -662,9 +662,21 @@ fn handle_from(
                 crate::chrome_wake::wake();
             }
         }
-        FromEngine::ImeCaret { x, y, w, h } => {
+        FromEngine::ImeCaret {
+            x,
+            y,
+            w,
+            h,
+            tab_id,
+        } => {
             if is_front {
-                *shared.ime.lock().unwrap() = ImeCaret { x, y, w, h };
+                *shared.ime.lock().unwrap() = ImeCaret {
+                    x,
+                    y,
+                    w,
+                    h,
+                    tab_id,
+                };
             }
         }
         FromEngine::Download(ev) => {
@@ -892,6 +904,11 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         Cmd::BoardFocus { id, focused } => Some(ToEngine::BoardFocus { id: id.0, focused }),
         Cmd::BoardRepaint { id } => Some(ToEngine::BoardRepaint { id: id.0 }),
         Cmd::BoardPace { id, pace } => Some(ToEngine::BoardPace { id: id.0, pace }),
+        Cmd::Target { tab, cmd } => Some(ToEngine::Target {
+            tab: tab.0,
+            cmd: Box::new(to_wire(*cmd)?),
+        }),
+        Cmd::ShowPage { id, shown } => Some(ToEngine::ShowPage { id: id.0, shown }),
         Cmd::SwitchProfileWorkspace { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

@@ -149,6 +149,9 @@ pub struct PageContext {
     pub x: i32,
     #[serde(default)]
     pub y: i32,
+    /// The page right-clicked (a window per page shows the menu there).
+    #[serde(default)]
+    pub tab_id: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -397,6 +400,18 @@ pub enum Cmd<E: Engine> {
     BoardPace {
         id: TabId,
         pace: BoardPace,
+    },
+    /// A window per page (Next): run `cmd` against `tab` instead of the
+    /// active tab. A `Resize` inside gives that page its own view size.
+    Target {
+        tab: TabId,
+        cmd: Box<Cmd<E>>,
+    },
+    /// A window per page: the page's window is (not) on screen. A shown page
+    /// paints whether or not it is the active tab; a hidden one rests.
+    ShowPage {
+        id: TabId,
+        shown: bool,
     },
     Quit,
 }
@@ -754,6 +769,8 @@ pub struct ImeCaret {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    /// The page it is in (a window per page shows it in that window).
+    pub tab_id: u64,
 }
 
 impl ImeCaret {
@@ -782,6 +799,7 @@ mod ime_caret_tests {
             y: 80,
             w: 0,
             h: 0,
+            tab_id: 0,
         };
         let r = c.logical_rect(
             iced::Rectangle::new(iced::Point::new(10.0, 20.0), iced::Size::new(100.0, 100.0)),
@@ -844,6 +862,9 @@ pub enum DevToolsEvent {
 pub struct FindResult {
     pub count: i32,
     pub ordinal: i32,
+    /// The page searched.
+    #[serde(default)]
+    pub tab_id: u64,
 }
 
 #[derive(Debug, Clone)]

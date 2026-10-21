@@ -125,6 +125,16 @@ pub enum ToEngine {
         id: u64,
         pace: BoardPace,
     },
+    /// See `Cmd::Target`.
+    Target {
+        tab: u64,
+        cmd: Box<ToEngine>,
+    },
+    /// See `Cmd::ShowPage`.
+    ShowPage {
+        id: u64,
+        shown: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +153,7 @@ pub enum FromEngine {
         y: i32,
         w: i32,
         h: i32,
+        tab_id: u64,
     },
     Download(DownloadEvent),
     WebAuthn(WebAuthnEvent),
@@ -417,13 +428,14 @@ mod tests {
                 y: 16,
                 w: 2,
                 h: 18,
+                tab_id: 3,
             },
         )
         .unwrap();
         let got: FromEngine = read_msg(&mut b).unwrap();
         match got {
-            FromEngine::ImeCaret { x, y, w, h } => {
-                assert_eq!((x, y, w, h), (8, 16, 2, 18));
+            FromEngine::ImeCaret { x, y, w, h, tab_id } => {
+                assert_eq!((x, y, w, h, tab_id), (8, 16, 2, 18, 3));
             }
             other => panic!("{other:?}"),
         }
@@ -682,6 +694,7 @@ mod tests {
             &FromEngine::FindResult(crate::engine::FindResult {
                 count: 3,
                 ordinal: 2,
+                tab_id: 5,
             }),
         )
         .unwrap();

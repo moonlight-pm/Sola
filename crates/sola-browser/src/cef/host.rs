@@ -408,6 +408,14 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             pace,
         },
+        ToEngine::Target { tab, cmd } => Cmd::Target {
+            tab: TabId(tab),
+            cmd: Box::new(to_cmd(*cmd)?),
+        },
+        ToEngine::ShowPage { id, shown } => Cmd::ShowPage {
+            id: TabId(id),
+            shown,
+        },
         ToEngine::Shutdown => return None,
     })
 }

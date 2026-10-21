@@ -8,8 +8,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 /// One tab to restore. Title is best-effort (helps the strip before load).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionTab {
+    /// Stable across restarts: the page's window is the shell tab
+    /// `sola-browser/<id>`, and keeps its place by it. Minted for tabs saved
+    /// before ids existed.
+    #[serde(default = "crate::profiles::new_uuid")]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub title: String,
@@ -21,6 +26,19 @@ pub struct SessionTab {
     pub history: Vec<SessionHistory>,
     #[serde(default)]
     pub history_index: i32,
+}
+
+impl Default for SessionTab {
+    fn default() -> Self {
+        Self {
+            id: crate::profiles::new_uuid(),
+            url: String::new(),
+            title: String::new(),
+            group_id: None,
+            history: Vec::new(),
+            history_index: 0,
+        }
+    }
 }
 
 /// One back/forward entry persisted with the tab.
@@ -46,6 +64,9 @@ pub struct SessionGroup {
 /// A tab closed this session, restored LIFO by ⌘⇧T.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ClosedTab {
+    /// The page's id, so a reopened page takes its place back.
+    #[serde(default)]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub title: String,
@@ -249,10 +270,15 @@ pub fn session_from_tabs(
     sidebar_w: f32,
     groups: &crate::groups::Groups,
     closed: &[ClosedTab],
+    page_ids: &std::collections::HashMap<crate::engine::TabId, String>,
 ) -> BrowserSession {
     let session_tabs: Vec<SessionTab> = tabs
         .iter()
         .map(|t| SessionTab {
+            id: page_ids
+                .get(&t.id)
+                .cloned()
+                .unwrap_or_else(crate::profiles::new_uuid),
             url: if t.url.is_empty() {
                 crate::app::BLANK_URL.to_string()
             } else {
@@ -352,6 +378,15 @@ pub fn fingerprint(session: &BrowserSession) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tabs_saved_before_ids_get_one() {
+        let s: BrowserSession =
+            serde_json::from_str(r#"{"tabs":[{"url":"https://a/"},{"url":"https://b/"}]}"#)
+                .unwrap();
+        assert_eq!(s.tabs[0].id.len(), 36);
+        assert_ne!(s.tabs[0].id, s.tabs[1].id);
+    }
 
     #[test]
     fn bootstrap_strips_nul_from_restored_titles() {
@@ -466,6 +501,7 @@ mod tests {
             200.0,
             &crate::groups::Groups::default(),
             &[closed],
+            &std::collections::HashMap::new(),
         );
         assert_eq!(session.tabs[0].title, "badtitle");
         assert_eq!(session.closed[0].title, "closed");
@@ -496,7 +532,9 @@ mod tests {
             200.0,
             &crate::groups::Groups::default(),
             &[],
+            &std::collections::HashMap::from([(crate::engine::TabId(1), "page-b".to_string())]),
         );
+        assert_eq!(session.tabs[0].id, "page-b");
         assert_eq!(session.tabs[0].history.len(), 2);
         assert_eq!(session.tabs[0].history_index, 1);
         let (entries, idx) = history_from_session(&session.tabs[0]);

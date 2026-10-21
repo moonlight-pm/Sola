@@ -172,15 +172,21 @@ window closing quits, as Terminal.
 Order — the engine first, applied on its own with the old single-window
 chrome driving it, so the risky half is smoked before the chrome changes:
 
-- [ ] **4a Session:** a stable page id in `SessionTab` (`#[serde(default)]`
+- [x] **4a Session:** a stable page id in `SessionTab` (`#[serde(default)]`
       mints one for old files); groups and sidebar width read but unused.
-- [ ] **4b Helper:** per-tab view state (size, shown, focused) generalised
+- [x] **4b Helper:** per-tab view state (size, shown, focused) generalised
       from boards; tab-addressed commands (resize, input, focus, nav, edit,
       paste, find, JS, show/hide) beside the active-tab ones sola-wrapper
       uses; events that lacked a tab id carry one (context menu, find
       result, IME caret, clipboard, WebAuthn); history for every tab.
-- [ ] **4c Router:** forwards tab-addressed commands; no resize broadcast
-      for addressed resizes. **Apply + smoke** (single window, unchanged).
+- [x] **4c Router:** forwards tab-addressed commands; no resize broadcast
+      for addressed resizes. Built as `Cmd::Target { tab, cmd }` (runs any
+      active-tab command against `tab`; a `Resize` inside gives the page its
+      own size) and `Cmd::ShowPage { id, shown }` (a shown page paints
+      whether or not it is active), so the ~30 active-tab sites stay; the
+      context menu, find result and IME caret carry their tab id. The
+      single-window chrome sends neither, so nothing changes until 4e — no
+      separate apply (2026-10-21).
 - [ ] **4d Rendering:** a `FrameSlot` per window, the frame stream
       demuxed by tab id, shader textures keyed by tab, per-window pump and
       `NewFrame` coalescing (so one page's 60 fps does not redraw all).
