@@ -31,52 +31,54 @@ new `tabbar/` and `stacks.rs`), `crates/sola-bus/src/topics.rs`,
 
 ### 1a — Model and geometry (no new window yet)
 
-- [ ] `stacks.rs`: `ZoneId { Left, Right, Floating }`, the two-column
+- [x] `stacks.rs`: `ZoneId { Left, Right, Floating }`, the two-column
       layout constant (`[(Left, 0.5), (Right, 0.5)]`), per-zone ordered
       window ids + shown id; join (end of stack, shown), move, reorder,
       remove (shown → next, else previous), show, step (Super+\`).
       Pure; unit tests.
-- [ ] Geometry: `BAR_WIDTH = 240`; content area right of the bar under
+- [x] Geometry: `BAR_WIDTH = 240`; content area right of the bar under
       the menubar; zone rects from the layout with empty zones giving
       their width away; Fullscreen = content area, Cinema = output.
       Fresh floats inset from the content area. Unit tests at 1920 × 1080.
-- [ ] `build_composition_entries`: menubar, bar, each tiled zone's shown
+- [x] `build_composition_entries`: menubar, bar, each tiled zone's shown
       tab, then floats (MRU) with their child windows, then overlays.
       Hidden apps (Super+H) stay out as today.
-- [ ] `on_windows`: a new window joins the focused zone (or Floating for a
+- [x] `on_windows`: a new window joins the focused zone (or Floating for a
       remembered float, or rides its parent); a returning app takes its
       `TabLayout` place; departed windows leave their stacks.
-- [ ] Super+KP_4 / KP_6 / KP_* move between zones; KP_0 / KP_Enter
+- [x] Super+KP_4 / KP_6 / KP_* move between zones; KP_0 / KP_Enter
       toggle Fullscreen / Cinema; other numpad snaps unbound.
-- [ ] Super+\` / Super+Shift+\` step the focused zone's stack.
-- [ ] Switcher confirm, launcher-on-running-app, and click activation show
+- [x] Super+\` / Super+Shift+\` step the focused zone's stack.
+- [x] Switcher confirm, launcher-on-running-app, and click activation show
       the app's most recent tab in its zone.
 
 ### 1b — sola-river parent
 
-- [ ] Track River's `parent` event per window; `Window.parent:
-      Option<u32>` (`#[serde(default)]`) in `Topic::Windows`.
+- [x] Track River's `parent` event per window → sticky
+      `Topic::WindowParent { window_id, parent }` (keyed by window id,
+      retracted on close). Not a field on `Window`: postcard is positional
+      and every app decodes `Windows`.
 
 ### 1c — Persistence
 
-- [ ] `Topic::TabLayout` (persistent, appended to `TopicKind`): per zone,
+- [x] `Topic::TabLayout` (persistent, appended to `TopicKind`): per zone,
       ordered app ids + shown app id. Emitted on change; replayed at start.
-- [ ] Stop writing `Topic::Zones` on `next`; `FloatGeometry` unchanged.
+- [x] Stop writing `Topic::Zones` on `next`; `FloatGeometry` unchanged.
 
 ### 1d — The bar window
 
-- [ ] `WindowKind::TabBar`, title `tabbar`, opened at boot after the
+- [x] `WindowKind::TabBar`, title `tabbar`, opened at boot after the
       menubar; Frame `0, 28, 240 × (H − 28)`; excluded from focus-follows-
       mouse and click-raise like the menubar.
-- [ ] `tabbar/view.rs` on the kit sidebar: head (tab count), zone headers
+- [x] `tabbar/view.rs` on the kit sidebar: head (tab count), zone headers
       (glyph, name, count), rows (app icon, title; shown / focused /
       behind states), Hidden-app rows dimmed.
-- [ ] Click a row → show + focus (floats raise). Drag rows: reorder within
+- [x] Click a row → show + focus (floats raise). Drag rows: reorder within
       a zone, drop on another zone's header or rows to move.
 
 ### 1e — Verify
 
-- [ ] `cargo make build`; shell + bus + river unit tests.
+- [x] `cargo make build`; shell + bus + river unit tests (shell 200 pass).
 - [ ] **Ask before** `cargo make oath apply`; smoke on canto: open two
       Terminals and a Browser, stack them, switch from the bar and with
       Super+\`, move between zones, restart the shell and the apps (layout

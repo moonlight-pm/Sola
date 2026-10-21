@@ -214,10 +214,25 @@ swapchains in the background (see
 | Shortcuts | Super+K cheatsheet (parked 2×2 while dismissed; live Frame is the card + shadow pad, not the usable output) |
 | Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
+| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px), always mapped, composed right above the menubar. Kit `SidebarPanel`: a section per zone (Left, Right, Floating), a row per window (app icon, title); click shows, drag moves between zones. Model in `stacks.rs` |
 
-Zoning / floating is coordinated with `sola-river` over the bus:
-unassigned windows **default-float** (client size + `Topic::WindowFloating`);
-saved zones restore frames; Meta+numpad snaps assign zones.
+**On `next` (Next tab bar):** every app window is a tab in a zone. The two
+tiled zones (Left / Right, 50 / 50 of the content area right of the bar;
+an empty zone gives its width away) each show one tab; the shell leaves
+the other tabs out of `Topic::Composition`, so River hides them and they
+keep running. Floats (Floating zone; the loupe, Preview, gamescope, and
+apps floated with Super+KP_*) all show. A window with a River parent
+(sola-river's sticky `Topic::WindowParent`) is a dialog: no row, composed
+above its parent. A new window joins the focused zone; a window back from a
+restart or a session restore takes its app's place from the persistent
+`Topic::TabLayout` (`~/.config/sola/shell/tabs.yaml`). `Topic::Zones` is no
+longer read or written on `next`. Super+KP_4 / KP_6 move a tab, KP_0 /
+KP_Enter show it Fullscreen (content area) / Cinema (output).
+
+**On master:** zoning / floating is coordinated with `sola-river` over the
+bus: unassigned windows **default-float** (client size +
+`Topic::WindowFloating`); saved zones restore frames; Meta+numpad snaps
+assign zones.
 
 **Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
 `Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab

@@ -10,7 +10,8 @@ use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
     FocusTarget, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
-    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
+    OutputGeometry, TabLayout, Topic, UserAppExitedPayload, Window, WindowFloating,
+    WindowGeometry, WindowParent, Zone,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -62,8 +63,12 @@ impl Shell {
             Topic::MouseLeft => self.on_mouse_left(),
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
-            Topic::Zones(z) => {
-                self.on_zones(z);
+            Topic::WindowParent(p) => {
+                self.on_window_parent(p, message.sticky);
+                Task::none()
+            }
+            Topic::TabLayout(l) => {
+                self.on_tab_layout(l);
                 Task::none()
             }
             Topic::WindowGeometry(g) => {
@@ -185,38 +190,44 @@ impl Shell {
             return;
         }
 
-        // Collect old and new app_id sets (excluding the shell itself) to
-        // detect additions and removals.
-        let old_app_ids: HashSet<String> = self
+        let now = std::time::Instant::now();
+        // A window is the same window only with the same id *and* app: a
+        // restarted sola-river numbers windows from 1 again.
+        let old: std::collections::HashMap<u32, &str> = self
             .known_windows
             .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
+            .map(|w| (w.window_id, w.app_id.as_str()))
             .collect();
-        let new_app_ids: HashSet<String> = windows
+        let new: std::collections::HashMap<u32, &str> = windows
             .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
+            .map(|w| (w.window_id, w.app_id.as_str()))
+            .collect();
+        let removed_wids: Vec<u32> = old
+            .iter()
+            .filter(|(id, app)| new.get(id) != Some(app))
+            .map(|(id, _)| *id)
+            .collect();
+        let added: Vec<(u32, String)> = windows
+            .iter()
+            .filter(|w| {
+                w.app_id != Self::APP_ID && old.get(&w.window_id) != Some(&w.app_id.as_str())
+            })
+            .map(|w| (w.window_id, w.app_id.clone()))
             .collect();
 
-        let added: Vec<String> = new_app_ids
+        // Apps whose last window closed (MRU / hidden cleanup).
+        let new_app_ids: HashSet<&str> = windows
             .iter()
-            .filter(|id| !old_app_ids.contains(id.as_str()))
-            .cloned()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.as_str())
             .collect();
-        let removed: Vec<String> = old_app_ids
-            .iter()
-            .filter(|id| !new_app_ids.contains(id.as_str()))
-            .cloned()
-            .collect();
-
-        // Collect removed window IDs from the OLD known_windows before we overwrite it.
-        // Used to purge per-window config_applied entries from ZoningState.
-        let removed_wids: Vec<u32> = self
+        let removed_apps: Vec<String> = self
             .known_windows
             .iter()
-            .filter(|w| removed.iter().any(|r| r == &w.app_id))
-            .map(|w| w.window_id)
+            .filter(|w| w.app_id != Self::APP_ID && !new_app_ids.contains(w.app_id.as_str()))
+            .map(|w| w.app_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect();
 
         // Rebuild lookup map (includes shell surfaces so emit_composition works).
@@ -227,20 +238,23 @@ impl Shell {
         }
         self.known_windows = windows;
 
-        // Track removed apps: clean up MRU, zoning, and focused state.
-        let focused_app_was_removed = self
-            .focused_app_id
-            .as_deref()
-            .map(|f| removed.iter().any(|r| r == f))
-            .unwrap_or(false);
+        // Closed tabs leave their zones; each zone whose shown tab closed
+        // shows its next one. A place waits a moment for a restarting app.
+        let focused_closed = self
+            .focused_window_id
+            .is_some_and(|w| removed_wids.contains(&w));
+        let focused_zone = self.focused_window_id.and_then(|w| self.tabs.zone_of(w));
+        for &wid in &removed_wids {
+            self.tabs.remove(wid, now);
+            self.pending_parents.remove(&wid);
+        }
         self.zoning.forget_windows(&removed_wids);
 
-        for id in &removed {
+        for id in &removed_apps {
             self.mru_apps.retain(|m| m != id);
             self.mru_window_by_app.remove(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
-                self.focused_window_id = None;
             }
             // Last surface gone — drop AppHidden so a later map of this
             // app_id is not stuck hidden (Super+H / Arcade).
@@ -248,47 +262,124 @@ impl Shell {
                 self.retract_app_hidden(id);
             }
         }
+        if focused_closed {
+            self.focused_window_id = None;
+        }
 
-        // Clean up window-level zone tracking for windows that no longer exist.
-        let current_wids: HashSet<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
-        let orphaned_wids: Vec<u32> = self
-            .zoning
-            .window_zones
-            .keys()
-            .copied()
-            .filter(|wid| !current_wids.contains(wid))
-            .collect();
-        self.zoning.forget_windows(&orphaned_wids);
-        self.zoning
-            .window_zones
-            .retain(|wid, _| current_wids.contains(wid));
+        // Place new windows. A dialog rides its parent; a window that was
+        // up before this shell started, or whose app just restarted, takes
+        // its remembered place; anything else joins the focused zone and
+        // takes focus.
+        let first_list = !self.windows_seen;
+        self.windows_seen = true;
+        let mut float_frames = Vec::new();
+        let mut take_focus: Option<(u32, String)> = None;
+        let mut first_shown: Option<(u32, String)> = None;
+        let mut placed_any = false;
+        for (wid, app_id) in &added {
+            if let Some(parent) = self.pending_parents.remove(wid) {
+                self.tabs.set_parent(*wid, parent);
+                self.zoning.float(app_id, *wid, false);
+                continue;
+            }
+            let floats = crate::zoning::floats_by_default(app_id) || self.zoning.remembers(app_id);
+            let placed = self.tabs.place(*wid, app_id, floats, first_list, now);
+            placed_any = true;
+            tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
+            if placed.zone == Zone::Float {
+                let remembers = placed.returning || self.zoning.remembers(app_id);
+                float_frames.extend(self.zoning.float(app_id, *wid, remembers));
+            }
+            if !placed.returning {
+                take_focus = Some((*wid, app_id.clone()));
+            } else if placed.shown && placed.zone != Zone::Float && first_shown.is_none() {
+                first_shown = Some((*wid, app_id.clone()));
+            }
+        }
+        // Restored windows do not take focus — unless nothing has it.
+        if take_focus.is_none() && self.focused_window_id.is_none() {
+            take_focus = first_shown;
+        }
+        Self::emit_frames(float_frames);
+        if placed_any {
+            self.persist_tabs();
+        }
 
-        // Per non-shell window: restore a saved zone if any; otherwise
-        // default-float (client-requested size + WindowFloating for CSD).
-        // gamescope is framed like any other app (zone/float host size).
-        let mut zone_frames = Vec::new();
+        // Every known app is in MRU at least at the least-recent end, so
+        // Super+Tab is complete.
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
                 continue;
             }
-            if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
-                zone_frames.push(frame);
-            } else if let Some(frame) = self.zoning.ensure_default_float(&w.app_id, w.window_id) {
-                zone_frames.push(frame);
+            if !self.mru_apps.iter().any(|m| m == &w.app_id) {
+                self.mru_apps.push(w.app_id.clone());
             }
         }
-        if !zone_frames.is_empty() {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for f in zone_frames {
-                    let _ = bus.emit(Topic::Frame(f));
+
+        // Focus: a new window takes it. Screenshot cold-launch of
+        // sola-preview sets `suppress_map_focus_for` so the window shows
+        // without taking the seat (keyboard stays on the app that was
+        // focused when the chord fired). When the focused window closed,
+        // its zone's next tab takes focus, else the most recent app.
+        let prev_focused = self.focused_window_id;
+        if let Some((wid, app_id)) = take_focus.clone() {
+            let suppress = self
+                .suppress_map_focus_for
+                .as_deref()
+                .is_some_and(|s| s == app_id);
+            if suppress {
+                self.suppress_map_focus_for = None;
+                self.mru_apps.retain(|m| m != &app_id);
+                self.mru_apps.insert(0, app_id.clone());
+                self.mru_window_by_app.insert(app_id, wid);
+                let keep = self.screenshot_return_focus;
+                self.restore_app_focus(keep);
+            } else {
+                self.focus_window(wid, &app_id);
+            }
+        } else if focused_closed {
+            let hidden = |app: &str| self.is_app_hidden(app);
+            let next = focused_zone
+                .filter(|z| *z != Zone::Float)
+                .and_then(|z| self.tabs.visible_shown(z, &hidden))
+                .or_else(|| {
+                    let app = self
+                        .mru_apps
+                        .iter()
+                        .find(|a| !self.is_app_hidden(a))?;
+                    self.mru_window_by_app
+                        .get(app)
+                        .copied()
+                        .or_else(|| self.lookup_any_window_id(app))
+                });
+            let next_app = next.and_then(|w| self.app_id_for_window(w));
+            match (next, next_app) {
+                (Some(wid), Some(app_id)) => self.focus_window(wid, &app_id),
+                _ => {
+                    self.focused_app_id = None;
+                    self.emit_registered_chords();
                 }
             }
         }
 
+        // Drop hover if that window closed; then re-apply FFM over any
+        // programmatic focus steal above.
+        if let Some(wid) = self.pointer_window_id {
+            if !self.known_windows.iter().any(|w| w.window_id == wid) {
+                self.pointer_window_id = None;
+            }
+        }
+        if take_focus.is_some() || focused_closed {
+            self.sync_keyboard_focus_to_pointer();
+        }
+
+        // Dismiss open menu if the focused window changed.
+        if self.focused_window_id != prev_focused && self.dismiss_open_menu() {
+            self.emit_overlay_frames();
+        }
+
         // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
         self.sync_window_floating();
-
-        // Emit frames for menubar overlays and explicitly zoned (non-float) windows.
         self.emit_all_frames();
 
         // Re-derive the switcher app list whenever windows change while active.
@@ -300,106 +391,89 @@ impl Shell {
             );
         }
 
-        // Ensure every known non-shell app is tracked in mru_apps at least at
-        // the least-recent end. Without this, apps only pointer-focused (never
-        // click-raised) used to live outside MRU and were composition-stacked
-        // *above* every raised window — Helium/external apps looked "stuck"
-        // on top. New maps still raise via bus_set_focus below.
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
-            }
-            if !self.mru_apps.iter().any(|m| m == &w.app_id) {
-                self.mru_apps.push(w.app_id.clone());
-            }
-        }
-
-        // Raise + provisionally focus the newest app so it appears on top and
-        // is usable when the pointer is already over it (or nowhere). Then
-        // re-sync keyboard focus to the window under the pointer — if the
-        // cursor is still over another app, FFM wins and the new map keeps
-        // its raise without stealing input.
-        //
-        // If no new app appeared but the focused app was just closed, fall
-        // back to the next MRU app — or clear the menubar if none remain —
-        // then the same pointer resync applies.
-        //
-        // Screenshot cold-launch of sola-preview sets `suppress_map_focus_for`
-        // so we raise the window in MRU/composition without taking the seat
-        // (keyboard stays on the app that was focused when the chord fired).
-        let prev_focused = self.focused_window_id;
-        if let Some(id) = added.first() {
-            let suppress = self
-                .suppress_map_focus_for
-                .as_deref()
-                .is_some_and(|s| s == id.as_str());
-            if suppress {
-                self.suppress_map_focus_for = None;
-                // Still put the new app at the front of MRU so it is raised,
-                // but leave keyboard focus alone (and re-assert return focus).
-                self.mru_apps.retain(|m| m != id);
-                self.mru_apps.insert(0, id.clone());
-                if let Some(wid) = self.lookup_any_window_id(id) {
-                    self.mru_window_by_app.insert(id.clone(), wid);
-                }
-                let keep = self.screenshot_return_focus;
-                self.restore_app_focus(keep);
-            } else {
-                self.bus_set_focus(id);
-                if let Some(wid) = self.lookup_any_window_id(id) {
-                    self.focused_window_id = Some(wid);
-                    self.mru_window_by_app.insert(id.clone(), wid);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
-            }
-        } else if focused_app_was_removed {
-            if let Some(next) = self.mru_apps.first().cloned() {
-                self.bus_set_focus(&next);
-                let wid = self
-                    .mru_window_by_app
-                    .get(&next)
-                    .copied()
-                    .or_else(|| self.lookup_any_window_id(&next));
-                if let Some(wid) = wid {
-                    self.focused_window_id = Some(wid);
-                    self.mru_window_by_app.insert(next.clone(), wid);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
-            } else {
-                // No apps left — no focused app, re-emit chords without per-app bindings.
-                self.emit_registered_chords();
-            }
-        }
-
-        // Drop hover if that window closed; then re-apply FFM over any
-        // programmatic focus steal above.
-        if let Some(wid) = self.pointer_window_id {
-            if !self.known_windows.iter().any(|w| w.window_id == wid) {
-                self.pointer_window_id = None;
-            }
-        }
-        if added.first().is_some() || focused_app_was_removed {
-            self.sync_keyboard_focus_to_pointer();
-        }
-
-        // Dismiss open menu if the focused window changed.
-        if self.focused_window_id != prev_focused && self.dismiss_open_menu() {
-            self.emit_overlay_frames();
-        }
-
         self.emit_composition();
 
         // Always re-emit registered chords. At fresh boot, the shell sees
-        // only the menubar (added/removed are empty after the
-        // app_id filter), so the early-return paths that normally call
-        // `emit_registered_chords` never fire — and sola-river never
-        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+H / Meta+Grave /
-        // Meta+Numpad{…}, so no keyboard chord ever reaches the shell.
+        // only the menubar, so no other path has emitted them yet — and
+        // sola-river never learns about Meta+Space / Meta+Tab / Meta+Q /
+        // Meta+H / Meta+Grave / Meta+Numpad{…}, so no keyboard chord ever
+        // reaches the shell.
         self.emit_registered_chords();
+    }
+
+    /// Give `wid` keyboard focus and bump its app in MRU (no stack change).
+    fn focus_window(&mut self, wid: u32, app_id: &str) {
+        self.bus_set_focus(app_id);
+        self.focused_window_id = Some(wid);
+        self.tabs.focus(wid);
+        self.mru_window_by_app.insert(app_id.to_string(), wid);
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        }
+    }
+
+    /// River named a dialog's parent (or took it back). A dialog leaves the
+    /// bar and rides above its parent.
+    fn on_window_parent(&mut self, p: WindowParent, sticky: bool) {
+        let app_id = self.app_id_for_window(p.window_id);
+        if !sticky {
+            // Closing, usually (sola-river retracts on close, before the new
+            // Windows list). One left without a parent stays a float with
+            // no row.
+            self.pending_parents.remove(&p.window_id);
+            if self.tabs.clear_parent(p.window_id) {
+                self.emit_composition();
+            }
+            return;
+        }
+        let Some(app_id) = app_id else {
+            // Before its Windows entry: placed as a dialog when it comes.
+            self.pending_parents.insert(p.window_id, p.parent);
+            return;
+        };
+        tracing::info!(window_id = p.window_id, parent = p.parent, "dialog");
+        let was_tab = self.tabs.set_parent(p.window_id, p.parent);
+        self.zoning.float(&app_id, p.window_id, false);
+        self.sync_window_floating();
+        if was_tab {
+            self.emit_all_frames();
+            self.persist_tabs();
+        }
+        self.emit_composition();
+    }
+
+    /// The saved tab layout (persistent replay). Taken once; later
+    /// deliveries are our own echo. Windows already up are placed again so
+    /// they take their saved places.
+    fn on_tab_layout(&mut self, layout: TabLayout) {
+        if self.tab_layout_loaded {
+            return;
+        }
+        self.tab_layout_loaded = true;
+        self.tab_layout_ready = true;
+        let now = std::time::Instant::now();
+        tracing::info!(zones = layout.zones.len(), "tab layout loaded");
+        self.tabs.load(&layout, now);
+        self.last_tab_layout = Some(layout);
+        self.tabs.clear();
+        let windows: Vec<(u32, String)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
+            .map(|w| (w.window_id, w.app_id.clone()))
+            .collect();
+        for (wid, app_id) in windows {
+            let floats = crate::zoning::floats_by_default(&app_id);
+            let placed = self.tabs.place(wid, &app_id, floats, true, now);
+            if placed.zone == Zone::Float {
+                Self::emit_frames(self.zoning.float(&app_id, wid, true).into_iter().collect());
+            } else {
+                self.zoning.unfloat(wid);
+            }
+        }
+        self.sync_window_floating();
+        self.emit_all_frames();
+        self.emit_composition();
     }
 
     /// True when both lists describe the same set of surfaces (window_id +
@@ -457,7 +531,6 @@ impl Shell {
         }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
-        self.zoning.set_focused(app_id.to_string());
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
@@ -516,6 +589,7 @@ impl Shell {
         );
         self.set_pointer_focus(&app_id);
         self.focused_window_id = Some(window_id);
+        self.tabs.focus(window_id);
         self.emit_focus(window_id, prev_window);
     }
 
@@ -554,7 +628,12 @@ impl Shell {
             self.unhide_app(app_id);
             return;
         }
-        let Some(window_id) = self.lookup_any_window_id(app_id).or_else(|| {
+        let recent = self
+            .mru_window_by_app
+            .get(app_id)
+            .copied()
+            .filter(|w| self.known_windows.iter().any(|k| k.window_id == *w));
+        let Some(window_id) = recent.or_else(|| self.lookup_any_window_id(app_id)).or_else(|| {
             self.known_windows
                 .iter()
                 .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
@@ -566,11 +645,27 @@ impl Shell {
         self.raise_window_from_click(window_id);
     }
 
-    /// Click activation: focus + raise to front of the composition stack.
-    fn raise_window_from_click(&mut self, window_id: u32) {
+    /// Show `window_id` in its zone and focus it: a tab bar row, Super+`,
+    /// the switcher. Unhides a Super+H'd app first.
+    pub(crate) fn activate_window(&mut self, window_id: u32) {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
         };
+        if self.is_app_hidden(&app_id) {
+            self.retract_app_hidden(&app_id);
+            self.emit_all_frames();
+        }
+        self.raise_window_from_click(window_id);
+    }
+
+    /// Click activation: show the window in its zone (raise, for a float),
+    /// focus it, and re-stack.
+    pub(crate) fn raise_window_from_click(&mut self, window_id: u32) {
+        let Some(app_id) = self.app_id_for_window(window_id) else {
+            return;
+        };
+        self.tabs.show(window_id);
+        self.tabs.focus(window_id);
         // Cancel any dwell timer — click is authoritative for focus.
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         let prev_focused = self.focused_window_id;
@@ -583,6 +678,7 @@ impl Shell {
         // can still have another surface (same zone) visually on top.
         self.last_composition.clear();
         self.emit_composition();
+        self.persist_tabs();
     }
 
     /// Look up any window_id for an app_id (first match in known_windows).
@@ -718,6 +814,8 @@ impl Shell {
             tracing::info!(app_id = %h.app_id, "AppHidden: show (retract)");
             self.hidden_apps.remove(&key);
         }
+        // A zone whose tabs are all hidden gives its width away.
+        self.emit_all_frames();
         self.emit_composition();
     }
 
@@ -966,10 +1064,9 @@ impl Shell {
             return crate::screenshot::window(app_id, title);
         }
 
-        // Meta+`: cycle windows of the focused app.
+        // Meta+` / Meta+Shift+`: next / previous tab in the focused zone.
         if chord.meta && chord.keycode == sola_core::KeyCode::GRAVE {
-            tracing::info!("Meta+` — cycle app windows");
-            return Task::done(Msg::CycleAppWindows);
+            return Task::done(Msg::CycleTabs { back: chord.shift });
         }
 
         // Meta+Tab: activate or cycle switcher.
@@ -1176,37 +1273,6 @@ impl Shell {
     // -------------------------------------------------------------------------
     // Zone snapshot
     // -------------------------------------------------------------------------
-
-    /// Receive the current zone-assignment map from sola-session sticky replay.
-    /// Seeds `zoning.app_zone_config` so that apps launched after this have
-    /// their saved zones applied on first appearance.
-    fn on_zones(&mut self, zones: std::collections::HashMap<String, sola_bus::topics::Zone>) {
-        tracing::info!(count = zones.len(), "zones updated");
-        self.zoning.set_zones(zones.clone());
-        // Re-apply config zones to any windows already known.
-        let windows: Vec<(String, u32)> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| (w.app_id.clone(), w.window_id))
-            .collect();
-        let mut zone_frames = Vec::new();
-        for (app_id, wid) in windows {
-            if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
-                zone_frames.push(frame);
-            } else if let Some(frame) = self.zoning.ensure_default_float(&app_id, wid) {
-                zone_frames.push(frame);
-            }
-        }
-        if !zone_frames.is_empty() {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for f in zone_frames {
-                    let _ = bus.emit(Topic::Frame(f));
-                }
-            }
-        }
-        self.sync_window_floating();
-    }
 
     /// A window moved or resized (Topic::WindowGeometry from sola-river). If the
     /// window is currently floating, persist its rectangle per app_id so the

@@ -3,7 +3,7 @@
 use tracing::{error, info, warn};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
-use sola_bus::topics::{Topic, WindowGeometry};
+use sola_bus::topics::{Topic, WindowGeometry, WindowParent};
 
 use crate::client::{AppData, op};
 use crate::protocol::river_window_management_v1::{
@@ -173,6 +173,18 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     apps_dirty = true;
                 }
             }
+            Event::Parent { parent } => {
+                let parent = parent.and_then(|p| state.windows_by_object.get(&p.id()).copied());
+                info!(window_id, ?parent, "parent");
+                match parent {
+                    Some(parent) => {
+                        let _ = state
+                            .bus
+                            .emit(Topic::WindowParent(WindowParent { window_id, parent }));
+                    }
+                    None => retract_parent(state, window_id),
+                }
+            }
             Event::FullscreenRequested { output: _ } => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
                 info!(window_id, app_id, "fullscreen requested (client-initiated)");
@@ -285,9 +297,18 @@ pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
         width: 0,
         height: 0,
     }));
+    retract_parent(state, window_id);
     if let Some(window) = proxy {
         window.destroy();
     }
+}
+
+/// Drop `window_id`'s sticky `WindowParent` (closed, or no parent now).
+fn retract_parent(state: &mut AppData, window_id: u32) {
+    let _ = state.bus.retract(Topic::WindowParent(WindowParent {
+        window_id,
+        parent: 0,
+    }));
 }
 
 /// Drop compositor entries whose process is gone. A SIGKILL'd sola-shell

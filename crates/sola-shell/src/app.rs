@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use sola_bus::topics::{
     AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
-    MenuActionPayload, MenuItem, RegisteredChord, Topic, Window, Zone,
+    MenuActionPayload, MenuItem, RegisteredChord, TabLayout, Topic, Window, Zone,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -20,6 +20,7 @@ use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
 use crate::selection::state::SelectionState;
 use crate::shortcuts::state::ShortcutsState;
+use crate::stacks::{Present, Stacks};
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
@@ -58,6 +59,8 @@ pub enum WindowKind {
     Selection,
     Notify,
     Shortcuts,
+    /// The tab bar (Next), docked left.
+    TabBar,
 }
 
 /// Live-swapchain slots: menu, launcher, switcher, selection, notify, shortcuts.
@@ -198,8 +201,13 @@ pub enum Msg {
         window_id: u32,
         generation: u64,
     },
-    /// Cycle to the next window of the currently focused app (Meta+`).
-    CycleAppWindows,
+    /// Show the next (or, `back`, previous) tab in the focused tab's zone
+    /// (Super+` / Super+Shift+`).
+    CycleTabs { back: bool },
+    /// A tab bar row was clicked: show that window in its zone.
+    ShowTab(u32),
+    /// Tab bar pointer / drag gesture.
+    TabBar(sola_kit::components::SidebarMsg),
     /// Super+Shift+4: freeze the output, then open the selection marquee.
     OpenSelection,
     /// RGBA freeze for Super+Shift+4 finished (call plane). Overlay opens
@@ -296,6 +304,22 @@ pub struct Shell {
     pub selection_window_id: Option<iced::window::Id>,
     pub notify_window_id: Option<iced::window::Id>,
     pub shortcuts_window_id: Option<iced::window::Id>,
+    pub tabbar_window_id: Option<iced::window::Id>,
+
+    /// The tab bar's model: zones, their tabs, what each shows.
+    pub tabs: Stacks,
+    pub tabbar: crate::tabbar::TabBarState,
+    /// The saved `TabLayout` was taken (later replays are our own echo).
+    tab_layout_loaded: bool,
+    /// Safe to save the layout: the saved one was read, or there is none.
+    tab_layout_ready: bool,
+    /// Last `TabLayout` emitted; skip identical re-emits.
+    last_tab_layout: Option<TabLayout>,
+    /// `WindowParent` that came before its window's `Windows` entry.
+    pending_parents: HashMap<u32, u32>,
+    /// The first `Windows` list has been placed (windows in it were up
+    /// before this shell started).
+    windows_seen: bool,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -425,6 +449,12 @@ impl Shell {
             }
         }
 
+        // Save the tab bar's layout only after the saved one replays — or
+        // right away when there is none.
+        let tab_layout_ready = !sola_bus::topics::Topic::TabLayout(TabLayout::default())
+            .path_for()
+            .exists();
+
         let (menubar_id, menubar_task) = menubar::open_window();
         let task = menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id));
 
@@ -438,6 +468,14 @@ impl Shell {
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            tabbar: crate::tabbar::TabBarState::default(),
+            tab_layout_loaded: false,
+            tab_layout_ready,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -559,27 +597,176 @@ impl Shell {
         crate::menu::state::effective_app_menu(&self.menus, app_id, &label)
     }
 
-    /// Snap the focused window to `zone` (numpad, Window menu, Super+K).
+    /// The zone keys and the Window menu's zone items, for the focused tab:
+    /// Left / Right move it there, Float floats it, Fullscreen / Cinema
+    /// toggle showing it bigger. The other zones have no place on the
+    /// two-zone layout.
     pub fn snap_focused_zone(&mut self, zone: Zone) -> iced::Task<Msg> {
-        let Some(frame) = self.zoning.apply_zone(zone, self.focused_window_id) else {
+        let Some(wid) = self.focused_window_id else {
             return iced::Task::none();
         };
-        let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
-            (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
-                self.zoning.float_geometry.get(&app_id).cloned()
+        let wid = self.tabs.parent_of(wid).unwrap_or(wid);
+        match zone {
+            Zone::Left | Zone::Right | Zone::Float => self.move_tab(wid, zone, None),
+            Zone::Fullscreen | Zone::Cinema => {
+                let present = if zone == Zone::Cinema {
+                    Present::Cinema
+                } else {
+                    Present::Fullscreen
+                };
+                let now = self.tabs.toggle_present(wid, present);
+                tracing::info!(window_id = wid, ?now, "present");
+                if now.is_none() && self.tabs.is_floating(wid) {
+                    // Back to the float's own rectangle.
+                    if let Some(g) = self
+                        .known_windows
+                        .iter()
+                        .find(|w| w.window_id == wid)
+                        .and_then(|w| self.zoning.float_geometry.get(&w.app_id))
+                    {
+                        Self::emit_frames(vec![FrameUpdate {
+                            window_id: wid,
+                            x: g.x,
+                            y: g.y,
+                            width: g.width,
+                            height: g.height,
+                            fullscreen: false,
+                        }]);
+                    }
+                }
+                self.emit_all_frames();
+                self.last_composition.clear();
+                self.emit_composition();
+            }
+            other => tracing::info!(?other, "no such zone on the two-zone layout"),
+        }
+        iced::Task::none()
+    }
+
+    /// Move a tab to `zone` (in front of `before`, else at the end), show it
+    /// there and focus it. Floating it shrinks it in place from its tile.
+    pub(crate) fn move_tab(&mut self, wid: u32, zone: Zone, before: Option<u32>) {
+        let Some(app_id) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == wid)
+            .map(|w| w.app_id.clone())
+        else {
+            return;
+        };
+        let from = self.tabs.zone_of(wid);
+        let tile = match (from, self.zoning.output_size) {
+            (Some(z), Some((w, h))) if z != Zone::Float => {
+                let occupied = self.tabs.occupied(&|app: &str| self.is_app_hidden(app));
+                let f = crate::zoning::tile_frame(wid, z, &occupied, w, h);
+                Some((f.x, f.y, f.width, f.height))
             }
             _ => None,
         };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::Frame(frame));
-            if let Some(zones) = self.zoning.take_zones_update() {
-                let _ = bus.emit(Topic::Zones(zones));
+        if !self.tabs.move_to(wid, zone, before) {
+            return;
+        }
+        tracing::info!(window_id = wid, %app_id, ?from, to = ?zone, "move tab");
+        if zone == Zone::Float {
+            if from != Some(Zone::Float) {
+                if let Some(f) = self.zoning.float_in_place(&app_id, wid, tile) {
+                    let fg = self.zoning.float_geometry.get(&app_id).cloned();
+                    with_bus(|bus| {
+                        let _ = bus.emit(Topic::Frame(f));
+                        if let Some(fg) = fg {
+                            let _ = bus.emit(Topic::FloatGeometry(fg));
+                        }
+                    });
+                }
             }
-            if let Some(fg) = float_fg {
-                let _ = bus.emit(Topic::FloatGeometry(fg));
+        } else {
+            self.zoning.unfloat(wid);
+            // Out of Floating: its app stops coming back as a float.
+            if from == Some(Zone::Float) && self.zoning.forget_float(&app_id) {
+                with_bus(|bus| {
+                    let _ = bus.retract(Topic::FloatGeometry(sola_bus::topics::FloatGeometry {
+                        app_id: app_id.clone(),
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }));
+                });
             }
         }
         self.sync_window_floating();
+        self.emit_all_frames();
+        self.raise_window_from_click(wid);
+    }
+
+    /// Save the tab bar's layout when it changed — only once the saved one
+    /// has been read, so a start before its replay cannot wipe it.
+    pub(crate) fn persist_tabs(&mut self) {
+        if !self.tab_layout_ready {
+            return;
+        }
+        let layout = self.tabs.layout(std::time::Instant::now());
+        if self.last_tab_layout.as_ref() == Some(&layout) {
+            return;
+        }
+        self.last_tab_layout = Some(layout.clone());
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::TabLayout(layout));
+        });
+    }
+
+    fn open_tabbar(&mut self) -> iced::Task<Msg> {
+        if self.tabbar_window_id.is_some() {
+            return iced::Task::none();
+        }
+        let (id, task) = crate::tabbar::open_window();
+        self.tabbar_window_id = Some(id);
+        task.map(|opened| Msg::WindowOpened(WindowKind::TabBar, opened))
+    }
+
+    /// A tab bar gesture finished: show a row, or move a dragged row.
+    fn on_tabbar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> iced::Task<Msg> {
+        use crate::tabbar::{window_of_row, zone_of_section};
+        use sola_kit::components::{Dest, SidebarEvent};
+        match ev {
+            SidebarEvent::Activate { id } => {
+                if let Some(wid) = window_of_row(&id) {
+                    self.activate_window(wid);
+                }
+            }
+            SidebarEvent::Drop(drop) => {
+                let Some(wid) = window_of_row(&drop.id) else {
+                    return iced::Task::none();
+                };
+                let (zone, before) = match drop.dest {
+                    Dest::Join { section, before } => (
+                        zone_of_section(&section),
+                        before.as_deref().and_then(window_of_row),
+                    ),
+                    Dest::Loose { before: Some(b) } => {
+                        let b = window_of_row(&b);
+                        (b.and_then(|b| self.tabs.zone_of(b)), b)
+                    }
+                    Dest::Loose { before: None } => (Some(Zone::Float), None),
+                    // Above a zone's header: the end of the zone before it.
+                    Dest::BeforeGroup { id } => match zone_of_section(&id) {
+                        Some(Zone::Right) => (Some(Zone::Left), None),
+                        Some(Zone::Float) => (Some(Zone::Right), None),
+                        Some(Zone::Left) => (
+                            Some(Zone::Left),
+                            self.tabs.tabs(Zone::Left).first().map(|t| t.window_id),
+                        ),
+                        _ => (None, None),
+                    },
+                    // Zone headers do not move.
+                    _ => (None, None),
+                };
+                if let Some(zone) = zone {
+                    self.move_tab(wid, zone, before);
+                }
+            }
+            _ => {}
+        }
         iced::Task::none()
     }
 
@@ -589,7 +776,7 @@ impl Shell {
                 self.hide_focused_app();
                 iced::Task::none()
             }
-            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
             sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
         }
     }
@@ -633,7 +820,7 @@ impl Shell {
                 }
                 iced::Task::none()
             }
-            ShortcutAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            ShortcutAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
             ShortcutAction::ScreenshotFull => {
                 self.arm_screenshot_handoff();
                 crate::screenshot::full()
@@ -678,6 +865,7 @@ impl Shell {
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         self.hidden_apps
             .insert(app_id.to_ascii_lowercase(), app_id.clone());
+        self.emit_all_frames();
         with_bus(|bus| {
             let _ = bus.emit(Topic::AppHidden(sola_bus::topics::AppHidden {
                 app_id: app_id.clone(),
@@ -1108,53 +1296,73 @@ impl Shell {
 
     /// Build the composition list (bottom to top). See [`Self::emit_composition`].
     fn build_composition_entries(&self) -> Vec<CompositionEntry> {
-        let mut entries: Vec<CompositionEntry> = Vec::new();
+        let mut order: Vec<u32> = Vec::new();
 
-        // 1. Menubar — always at the bottom.
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
-            entries.push(CompositionEntry { window_id: wid });
+        // 1. Menubar and the tab bar — always at the bottom.
+        for title in ["menubar", "tabbar"] {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, title) {
+                order.push(wid);
+            }
         }
 
-        let mru_set: HashSet<&str> = self.mru_apps.iter().map(String::as_str).collect();
+        // 2. Each tiled zone's shown tab (a Super+H'd app gives way to the
+        //    zone's next tab); the other tabs stay out, so River hides them.
+        //    A tab shown bigger than its zone goes over the others.
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let present = self.tabs.present();
+        let mut fullscreen = None;
+        let mut cinema = None;
+        for (zone, _) in crate::stacks::TILED {
+            let Some(wid) = self.tabs.visible_shown(zone, &hidden) else {
+                continue;
+            };
+            match present {
+                Some((w, Present::Fullscreen)) if w == wid => fullscreen = Some(wid),
+                Some((w, Present::Cinema)) if w == wid => cinema = Some(wid),
+                _ => self.push_with_dialogs(&mut order, wid),
+            }
+        }
+        if let Some(wid) = fullscreen {
+            self.push_with_dialogs(&mut order, wid);
+        }
 
-        // 2. Apps not yet in MRU — bottom of the app stack (never auto-raised).
-        //    Skip composition-hidden apps (AppHidden sticky → River hide).
+        // 3. Floats, least recently raised first.
+        for &wid in self.tabs.float_order() {
+            if self.window_app_hidden(wid) {
+                continue;
+            }
+            match present {
+                Some((w, Present::Cinema)) if w == wid => cinema = Some(wid),
+                _ => self.push_with_dialogs(&mut order, wid),
+            }
+        }
+
+        // 4. Anything the bar has not placed (a dialog whose parent is
+        //    unknown), so nothing is lost; then a Cinema tab over it all.
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID
-                || mru_set.contains(w.app_id.as_str())
+                || order.contains(&w.window_id)
+                || self.tabs.zone_of(w.window_id).is_some()
                 || self.is_app_hidden(&w.app_id)
             {
                 continue;
             }
-            entries.push(CompositionEntry {
-                window_id: w.window_id,
-            });
+            let parent_placed = self
+                .tabs
+                .parent_of(w.window_id)
+                .is_some_and(|p| self.known_windows.iter().any(|k| k.window_id == p));
+            if !parent_placed {
+                order.push(w.window_id);
+            }
+        }
+        if let Some(wid) = cinema {
+            self.push_with_dialogs(&mut order, wid);
         }
 
-        // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
-        // Within each app, the per-app MRU window sits on top of its siblings.
-        for app_id in self.mru_apps.iter().rev() {
-            if app_id.as_str() == Self::APP_ID || self.is_app_hidden(app_id) {
-                continue;
-            }
-            let top_wid = self.mru_window_by_app.get(app_id).copied();
-            for w in &self.known_windows {
-                if w.app_id == *app_id && Some(w.window_id) != top_wid {
-                    entries.push(CompositionEntry {
-                        window_id: w.window_id,
-                    });
-                }
-            }
-            if let Some(wid) = top_wid {
-                if self
-                    .known_windows
-                    .iter()
-                    .any(|w| w.window_id == wid && w.app_id == *app_id)
-                {
-                    entries.push(CompositionEntry { window_id: wid });
-                }
-            }
-        }
+        let mut entries: Vec<CompositionEntry> = order
+            .into_iter()
+            .map(|window_id| CompositionEntry { window_id })
+            .collect();
 
         // 4. Shell overlays on top when active *and* already live-sized.
         //    Framing to the output happens while still hidden; joining the
@@ -1197,17 +1405,38 @@ impl Shell {
         entries
     }
 
+    /// `wid`, then its dialogs, unless its app is hidden.
+    fn push_with_dialogs(&self, order: &mut Vec<u32>, wid: u32) {
+        if self.window_app_hidden(wid) {
+            return;
+        }
+        order.push(wid);
+        for child in self.tabs.children_of(wid) {
+            if !self.window_app_hidden(child)
+                && self.known_windows.iter().any(|w| w.window_id == child)
+            {
+                order.push(child);
+            }
+        }
+    }
+
+    fn window_app_hidden(&self, wid: u32) -> bool {
+        self.known_windows
+            .iter()
+            .find(|w| w.window_id == wid)
+            .is_some_and(|w| self.is_app_hidden(&w.app_id))
+    }
+
     /// Build the composition list (bottom to top) and emit Topic::Composition.
     ///
     /// Stack order (bottom → top):
-    ///   1. Shell menubar — always at bottom.
-    ///   2. App windows not yet in MRU (never raised) — under everything raised,
-    ///      so focus-follows-mouse without a raise cannot leave an external app
-    ///      permanently stuck on top of activated windows.
-    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
-    ///      on top of its siblings. Only click / switcher / map activation bumps
-    ///      MRU (raise).
-    ///   4. Shell overlays when active (menu, switcher, launcher, selection —
+    ///   1. Shell menubar, then the tab bar.
+    ///   2. Each tiled zone's shown tab, with its dialogs (the rest of each
+    ///      zone's tabs are left out, so River hides them); a Fullscreen
+    ///      tab over the other zone.
+    ///   3. Floats, least recently raised first.
+    ///   4. Unplaced windows, then a Cinema tab.
+    ///   5. Shell overlays when active (menu, switcher, launcher, selection —
     ///      selection on top while capturing).
     ///
     /// No-op when the stack order is identical to the last emit — title-only
@@ -1369,7 +1598,8 @@ impl Shell {
 
         // Fixed shell chords.
         bindings.push(KeyCode::TAB.meta()); // Meta+Tab → switcher
-        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
+        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the focused zone
+        bindings.push(KeyCode::GRAVE.meta_shift()); // Meta+Shift+` → previous tab
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
@@ -1392,7 +1622,8 @@ impl Shell {
         bindings
     }
 
-    /// Emit Topic::Frame for mapped shell windows and zoned app windows.
+    /// Emit Topic::Frame for the menubar, the tab bar, the overlays, and
+    /// every tiled tab.
     ///
     /// Overlays stay mapped: live size while visible, 2×2 while dismissed
     /// (menu/shortcuts/notify are card-sized; launcher/switcher/selection
@@ -1407,24 +1638,41 @@ impl Shell {
                 frames.push(f);
             }
         }
-        self.collect_overlay_frames(&mut frames);
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
-            }
-            // Floating windows (assigned Float or default-float with no zone)
-            // keep client-requested / restore size — never re-frame them.
-            // Unassigned sola-* apps used to get default_app_frame (full usable
-            // area), which treated them like a zone; they now default-float.
-            if self.zoning.is_floating(w.window_id) {
-                continue;
-            }
-            if let Some(f) = self.zoning.window_frame(w.window_id) {
-                frames.push(f);
-            }
+        if let (Some(wid), Some((w, h))) = (
+            self.lookup_window_id(Self::APP_ID, "tabbar"),
+            self.zoning.output_size,
+        ) {
+            frames.push(crate::zoning::bar_frame(wid, w, h));
         }
-
+        self.collect_overlay_frames(&mut frames);
+        frames.extend(self.tab_frames());
         Self::emit_frames(frames);
+    }
+
+    /// Every tiled tab's zone rectangle — hidden tabs too, so showing one
+    /// needs no resize — and the rectangle of a tab shown bigger. Floats
+    /// keep their own size.
+    fn tab_frames(&self) -> Vec<FrameUpdate> {
+        let Some((w, h)) = self.zoning.output_size else {
+            return Vec::new();
+        };
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let occupied = self.tabs.occupied(&hidden);
+        let mut frames: Vec<FrameUpdate> = crate::stacks::TILED
+            .iter()
+            .flat_map(|(zone, _)| {
+                self.tabs
+                    .tabs(*zone)
+                    .iter()
+                    .map(|t| crate::zoning::tile_frame(t.window_id, *zone, &occupied, w, h))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if let Some((wid, present)) = self.tabs.present() {
+            frames.retain(|f| f.window_id != wid);
+            frames.push(crate::zoning::present_frame(wid, present, w, h));
+        }
+        frames
     }
 
     fn collect_overlay_frames(&self, frames: &mut Vec<FrameUpdate>) {
@@ -1491,7 +1739,7 @@ impl Shell {
             WindowKind::Selection => Some(3),
             WindowKind::Notify => Some(4),
             WindowKind::Shortcuts => Some(5),
-            WindowKind::Menubar => None,
+            WindowKind::Menubar | WindowKind::TabBar => None,
         }
     }
 
@@ -1602,6 +1850,9 @@ impl Shell {
         if Some(window) == self.shortcuts_window_id {
             return "shortcuts".to_string();
         }
+        if Some(window) == self.tabbar_window_id {
+            return "tabbar".to_string();
+        }
         Self::APP_ID.to_string()
     }
 
@@ -1615,6 +1866,9 @@ impl Shell {
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
         if Some(window) == self.menubar_window_id {
             return theme::menubar(&self.theme, self.style.menubar_bg);
+        }
+        if Some(window) == self.tabbar_window_id {
+            return self.theme.clone();
         }
         theme::overlay(&self.theme)
     }
@@ -1908,6 +2162,7 @@ impl Shell {
             WindowKind::Selection => self.selection_window_id,
             WindowKind::Notify => self.notify_window_id,
             WindowKind::Shortcuts => self.shortcuts_window_id,
+            WindowKind::TabBar => self.tabbar_window_id,
         }
     }
 
@@ -1920,12 +2175,13 @@ impl Shell {
             WindowKind::Selection => &mut self.selection_window_id,
             WindowKind::Notify => &mut self.notify_window_id,
             WindowKind::Shortcuts => &mut self.shortcuts_window_id,
+            WindowKind::TabBar => &mut self.tabbar_window_id,
         }
     }
 
     fn overlay_want(&self, kind: WindowKind) -> bool {
         match kind {
-            WindowKind::Menubar => true,
+            WindowKind::Menubar | WindowKind::TabBar => true,
             WindowKind::Menu => self.menu_open,
             WindowKind::Launcher => self.launcher.active,
             WindowKind::Switcher => self.switcher.active,
@@ -1947,7 +2203,9 @@ impl Shell {
     }
 
     fn open_overlay(&mut self, kind: WindowKind) -> iced::Task<Msg> {
-        if matches!(kind, WindowKind::Menubar) || self.overlay_id(kind).is_some() {
+        if matches!(kind, WindowKind::Menubar | WindowKind::TabBar)
+            || self.overlay_id(kind).is_some()
+        {
             return iced::Task::none();
         }
         let (id, task) = match kind {
@@ -1957,7 +2215,7 @@ impl Shell {
             WindowKind::Selection => crate::selection::open_window(),
             WindowKind::Notify => crate::notify::open_window(),
             WindowKind::Shortcuts => crate::shortcuts::open_window(),
-            WindowKind::Menubar => return iced::Task::none(),
+            WindowKind::Menubar | WindowKind::TabBar => return iced::Task::none(),
         };
         *self.overlay_id_mut(kind) = Some(id);
         task.map(move |opened| Msg::WindowOpened(kind, opened))
@@ -1967,7 +2225,7 @@ impl Shell {
         self.emit_all_frames();
         self.emit_composition();
         if kind == WindowKind::Menubar {
-            return self.ensure_overlay_windows();
+            return iced::Task::batch([self.ensure_overlay_windows(), self.open_tabbar()]);
         }
         if kind == WindowKind::Launcher && self.launcher.active {
             return iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
@@ -2651,46 +2909,24 @@ impl Shell {
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
-            Msg::CycleAppWindows => {
-                // Find all windows of the focused app and cycle to the next.
-                let Some(ref app_id) = self.focused_app_id.clone() else {
+            Msg::CycleTabs { back } => {
+                let Some(from) = self.focused_window_id else {
                     return iced::Task::none();
                 };
-                let mut app_windows: Vec<u32> = self
-                    .known_windows
-                    .iter()
-                    .filter(|w| &w.app_id == app_id && w.app_id != Self::APP_ID)
-                    .map(|w| w.window_id)
-                    .collect();
-                app_windows.sort(); // deterministic ordering
-                if app_windows.len() <= 1 {
-                    // Single window or no windows — nothing to cycle.
-                    return iced::Task::none();
+                if let Some(next) = self.tabs.step(from, back) {
+                    tracing::info!(from, to = next, back, "Super+` — next tab in zone");
+                    self.activate_window(next);
                 }
-                let current_idx = self
-                    .focused_window_id
-                    .and_then(|wid| app_windows.iter().position(|&w| w == wid))
-                    .unwrap_or(0);
-                let next_idx = (current_idx + 1) % app_windows.len();
-                let next_wid = app_windows[next_idx];
-                tracing::info!(
-                    app_id = %app_id,
-                    from = ?self.focused_window_id,
-                    to = next_wid,
-                    "Meta+` — cycling app window"
-                );
-                self.focused_window_id = Some(next_wid);
-                self.mru_window_by_app.insert(app_id.clone(), next_wid);
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    let _ = bus.emit(sola_bus::topics::Topic::Focus(
-                        sola_bus::topics::FocusTarget {
-                            window_id: next_wid,
-                        },
-                    ));
-                }
-                self.emit_composition();
                 iced::Task::none()
             }
+            Msg::ShowTab(wid) => {
+                self.activate_window(wid);
+                iced::Task::none()
+            }
+            Msg::TabBar(m) => match self.tabbar.gestures.update(m) {
+                Some(ev) => self.on_tabbar_event(ev),
+                None => iced::Task::none(),
+            },
             Msg::Noop => iced::Task::none(),
         }
     }
@@ -2717,6 +2953,9 @@ impl Shell {
         }
         if Some(window) == self.shortcuts_window_id {
             return crate::shortcuts::view::view(self);
+        }
+        if Some(window) == self.tabbar_window_id {
+            return crate::tabbar::view::view(self);
         }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
@@ -2756,6 +2995,14 @@ mod pending_launch_tests {
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            tabbar: crate::tabbar::TabBarState::default(),
+            tab_layout_loaded: false,
+            tab_layout_ready: false,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -2860,7 +3107,7 @@ mod hide_tests {
                 .find(|w| w.app_id == app)
                 .map(|w| w.window_id)
         });
-        Shell {
+        let mut shell = Shell {
             theme: theme::default_theme(),
             style: theme::ShellStyle::default(),
             menubar_window_id: None,
@@ -2870,6 +3117,14 @@ mod hide_tests {
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            tabbar: crate::tabbar::TabBarState::default(),
+            tab_layout_loaded: false,
+            tab_layout_ready: false,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: focused.map(str::to_string),
             focused_window_id,
             pointer_window_id: focused_window_id,
@@ -2913,9 +3168,30 @@ mod hide_tests {
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+        };
+        // Tabs: the first app on the Left, the second on the Right, the
+        // rest Left; the focused window shows.
+        let now = std::time::Instant::now();
+        let apps: Vec<&Window> = shell
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Shell::APP_ID)
+            .collect();
+        let placed: Vec<(u32, String)> = apps
+            .iter()
+            .map(|w| (w.window_id, w.app_id.clone()))
+            .collect();
+        for (i, (wid, app)) in placed.iter().enumerate() {
+            shell.tabs.place(*wid, app, false, false, now);
+            if i == 1 {
+                shell.tabs.move_to(*wid, Zone::Right, None);
+            }
         }
+        if let Some(wid) = shell.focused_window_id {
+            shell.tabs.show(wid);
+        }
+        shell
     }
-
     fn desktop() -> Shell {
         test_shell(
             vec![
@@ -3013,7 +3289,7 @@ mod hide_tests {
     #[test]
     fn hide_omits_app_from_composition_and_focuses_next() {
         let mut shell = desktop();
-        assert_eq!(composed_apps(&shell), vec![1, 3, 2]); // menubar, browser, terminal (MRU top)
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3]); // menubar, terminal (Left), browser (Right)
 
         shell.hide_focused_app();
 
@@ -3067,9 +3343,7 @@ mod hide_tests {
 
         assert!(!shell.is_app_hidden("sola-terminal"));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
-        let composed = composed_apps(&shell);
-        assert!(composed.contains(&2), "terminal must be in composition");
-        assert_eq!(*composed.last().unwrap(), 2, "unhide raises to top");
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3], "terminal is back in its zone");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 
 | | |
 |--|--|
-| **Implementation** | None yet. Slice 1 is sola-shell (+ one field from sola-river). |
+| **Implementation** | Slice 1 on `next` (built 2026-10-21, not applied): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. |
 | **Dogfood** | — (canto, branch `next`) |
 | **Gaps** | Everything below. |
 
@@ -149,9 +149,11 @@ No gaps and no titlebars on tiles yet (N8).
 
 ## sola-river and the compositor
 
-Slice 1 adds one thing: River's `parent` event, forwarded as
-`Window.parent: Option<u32>`. Show and hide already work through the
-composition.
+Slice 1 adds one thing: River's `parent` event, forwarded as the sticky
+`Topic::WindowParent { window_id, parent }` (keyed by window id, retracted
+on close) — a separate topic, not a field on `Window`, because postcard is
+positional and every app decodes `Windows`. Show and hide already work
+through the composition.
 
 **On canto the compositor is rivulet**, Oath's C port of River 0.4.5
 (`~/Projects/Oath/apps/rivulet`, `pkg:rivulet`, `svc:rivulet`). It serves

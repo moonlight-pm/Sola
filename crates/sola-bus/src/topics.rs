@@ -150,6 +150,36 @@ pub struct FloatGeometry {
     pub height: i32,
 }
 
+/// The window a dialog or picker belongs to (sola-river → shell), from
+/// River's `parent` event. Carried by the sticky `Topic::WindowParent`,
+/// keyed by `window_id`; sola-river retracts it when the window closes or
+/// loses its parent. A separate topic rather than a field on [`Window`],
+/// because postcard is positional and every app decodes `Windows`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowParent {
+    pub window_id: u32,
+    pub parent: u32,
+}
+
+/// One zone of the shell's tab bar as last saved: its tabs' app ids in
+/// bar order, and which of them the zone shows (an index into `apps`).
+/// An app id can repeat (two windows of one app).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabLayoutZone {
+    pub zone: Zone,
+    pub apps: Vec<String>,
+    pub shown: Option<u32>,
+}
+
+/// Where the shell's tab bar puts windows (`Topic::TabLayout`, persistent).
+/// A window that comes back (its app restarted, or the session restored
+/// it) takes its app's place. Keyed by app id while apps have one window
+/// each; per-tab keys come with window-per-tab apps.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TabLayout {
+    pub zones: Vec<TabLayoutZone>,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -1324,6 +1354,17 @@ define_topics! {
     // Appended last so TopicKind postcard discriminants stay stable.
     #[persistent]
     CalendarConfig(CalendarConfig),
+
+    // A dialog's parent window (sola-river → shell). Sticky, keyed by
+    // window_id; retracted on close. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowParent(WindowParent),
+
+    // The shell's tab bar: zones, their tabs' app ids, what each shows.
+    // Shell owns it; persistent so the layout survives a restart. Own
+    // namespace so tab moves don't churn state.yaml. Appended last.
+    #[persistent(namespace = "shell/tabs")]
+    TabLayout(TabLayout),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1331,7 +1372,11 @@ define_topics! {
 pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
     matches!(
         kind,
-        TopicKind::AppNotification | TopicKind::NotificationActivate | TopicKind::CalendarConfig
+        TopicKind::AppNotification
+            | TopicKind::NotificationActivate
+            | TopicKind::CalendarConfig
+            | TopicKind::WindowParent
+            | TopicKind::TabLayout
     )
 }
 
