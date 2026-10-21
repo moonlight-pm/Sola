@@ -79,7 +79,10 @@ new `tabbar/` and `stacks.rs`), `crates/sola-bus/src/topics.rs`,
 ### 1e — Verify
 
 - [x] `cargo make build`; shell + bus + river unit tests (shell 200 pass).
-- [ ] **Ask before** `cargo make oath apply`; smoke on canto: open two
+- [x] Applied twice with Joshua's OK (2026-10-21; `pkg:sola` a3236c19 from
+      `b91a8ca8`): bar draws, hidden tabs idle, a full restart restores order
+      and the shown tab.
+- [ ] Hands-on smoke on canto: open two
       Terminals and a Browser, stack them, switch from the bar and with
       Super+\`, move between zones, restart the shell and the apps (layout
       returns), check CPU with the browser hidden behind a tab.
