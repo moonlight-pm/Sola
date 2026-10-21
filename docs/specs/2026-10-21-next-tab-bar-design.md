@@ -36,8 +36,13 @@ shell's list, not to sola-river.
 
 Proposed on board 06 and accepted for now, confirmed at their slice:
 **N6** a workspace is bound to a project; **N7** the browser's tab groups
-are dropped. **Open:** N5, the word "workspace" (`sola-workspaces` owns it
-under a locked name) — decided before any workspace code.
+are dropped.
+
+Decided later (Joshua, 2026-10-21): **N5 — the agent app is renamed
+Projects** (`sola-workspaces` → `sola-projects`, as board 04 draws) so
+"workspace" means the OS concept; the rename lands before any workspace
+code and updates the **Workspaces names** lock in the same change.
+**Order:** the browser (slice 4) comes before Projects sessions (slice 3).
 
 ## Model
 

@@ -151,7 +151,10 @@ the same.
 - [ ] Remaining: a dialog riding its parent; ⌘T, close, splits in a
       tab window, restart restores each terminal tab to its zone and place.
 
-## Phase 3+ — outline
+## Next phases — order (Joshua, 2026-10-21)
 
-3 Workspaces sessions as tabs; 4 browser pages as tabs; 5 desks of
-windows (board 04); then titlebars, gaps, islands.
+1. **Browser pages as tabs** (slice 4) — next; planned below once mapped.
+2. Rename `sola-workspaces` → **Projects** (`sola-projects`; N5), then OS
+   workspaces (board 04, slice 5) with a workspace bound to a project (N6).
+3. Projects sessions as tabs (slice 3).
+4. Titlebars with menus, gaps, islands.
