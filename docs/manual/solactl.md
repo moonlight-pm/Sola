@@ -15,6 +15,9 @@ solactl compositor input click X Y [-b left|right|middle] [-t SECS]
 solactl compositor input move X Y [-t SECS]
 solactl compositor input scroll [-x DX] [-y DY] [-t SECS]
 solactl compositor input key CHORD [-t SECS]
+solactl compositor input press [X Y] [-b left|right|middle] [-t SECS]
+solactl compositor input release [X Y] [-b left|right|middle] [-t SECS]
+solactl compositor input drag X1 Y1 X2 Y2 [-b …] [-s STEPS] [-t SECS]
 solactl session launch APP_ID [-c COMMAND] [-t SECS]
 solactl session close APP_ID [-t SECS]
 solactl workspaces [METHOD [ARGS…]]
@@ -223,16 +226,26 @@ each value is an array of `{"title", "window_id", "pid"}`.
 | `input move X Y` | none | |
 | `input scroll` | `-x`, `--dx DX`; `-y`, `--dy DY` (decimal; down is positive) | `0`, `5` |
 | `input key CHORD` | none | |
+| `input press [X Y]` | `-b`, `--button` as for `click` | `left` |
+| `input release [X Y]` | `-b`, `--button` as for `click` | `left` |
+| `input drag X1 Y1 X2 Y2` | `-b`, `--button`; `-s`, `--steps N` (moves between press and release) | `left`, `12` |
 
-Each takes `-t`, `--timeout SECS` (default 5) and replies `{"ok": true}`.
-`X` and `Y` are integer output coordinates. The events go through the
-seat like real input, to whatever is under the pointer or focused.
+Each takes `-t`, `--timeout SECS` (default 5) and replies `{"ok": true}`
+(`drag` prints nothing). `X` and `Y` are integer output coordinates. The
+events go through the seat like real input, to whatever is under the
+pointer or focused. `press` holds the button until a `release`; with
+`X Y` either moves there first. `drag` is a press at `X1 Y1`, `STEPS`
+moves about 16 ms apart, and a release at `X2 Y2`, so it is seen as a drag
+(a tab bar row, a sidebar reorder) rather than a click.
 
 `CHORD` is `MODIFIER+…+KEY`, in any case. Modifiers: `Meta` (or `Super`,
 `Win`, `Cmd`), `Alt` (or `Option`), `Ctrl` (or `Control`), `Shift`. Keys:
 `Tab`, `Esc` or `Escape`, `Enter` or `Return`, `Backspace` or `BS`,
-`Space`, `Left`, `Right`, `A`–`Z`, `0`–`9`. Any other key is refused
-(`unknown key '…'`, status 3).
+`Space`, `Left`, `Right`, `A`–`Z`, `0`–`9`, `` ` `` (or `Grave`,
+`Backtick`), and the keypad: `KP0`, `KP2`, `KP4`, `KP5`, `KP6`, `KP8`,
+`KPEnter`, `KPMultiply` (or `KP*`), `KPAdd`, `KPEqual` (or `KP=`),
+`KPDecimal` (or `KP.`). Any other key is refused (`unknown key '…'`,
+status 3).
 
 ### Methods without a command
 

@@ -114,6 +114,40 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
             timeout_ms: None,
         },
         MethodSpec {
+            name: "input.press".into(),
+            summary: "Press a pointer button (and hold it), optionally moving first".into(),
+            args: vec![
+                arg("x", Some("x"), None, ArgType::Int, false, "move here first"),
+                arg("y", Some("y"), None, ArgType::Int, false, "move here first"),
+                arg(
+                    "button",
+                    Some("button"),
+                    Some('b'),
+                    ArgType::String,
+                    false,
+                    "left|right|middle",
+                ),
+            ],
+            timeout_ms: None,
+        },
+        MethodSpec {
+            name: "input.release".into(),
+            summary: "Release a pointer button, optionally moving first".into(),
+            args: vec![
+                arg("x", Some("x"), None, ArgType::Int, false, "move here first"),
+                arg("y", Some("y"), None, ArgType::Int, false, "move here first"),
+                arg(
+                    "button",
+                    Some("button"),
+                    Some('b'),
+                    ArgType::String,
+                    false,
+                    "left|right|middle",
+                ),
+            ],
+            timeout_ms: None,
+        },
+        MethodSpec {
             name: "input.move".into(),
             summary: "Move the pointer".into(),
             args: vec![
