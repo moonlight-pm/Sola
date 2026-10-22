@@ -184,7 +184,7 @@ novus runs River, so how novus gets it is settled before `next` merges.
 | Slice | What | Needs |
 |--|--|--|
 | 2 | Kit helpers for several windows per app; floating per window instead of by title; the `Tabs` topic; menu actions that name the window. Terminal opens a window per tab and drops its strip. | How a window learns its sola-river id (below) |
-| 3 | Each Workspaces session is a window; the rail goes; marks ride the rows. | N5, N6 |
+| 3 | **Changed (Joshua, 2026-10-21):** each *project* is a window (a tab in the bar, named for the project) and its tabs run along a top bar inside it; the rail goes. Closing a project window keeps the project (Project → Open reopens it). Built 2026-10-21. Marks on the bar's rows are later. | N5 |
 | 4 | Browser: a frame slot, page size, and input target per window, as board pages already work; the strip and groups come out. | N7 |
 | 5 | Desks of windows in the OS sense (board 04): the bar heads with the one showing; switching swaps it. | N5 |
 | — | Titlebars with menus (01), gaps (02), islands (03), dark grey base. | N8 |

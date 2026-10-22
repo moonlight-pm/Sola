@@ -352,9 +352,11 @@ the daemon, with a long `proxy_read_timeout`.
 Needs **Projects** running (owner `projects`, app id `sola-projects`).
 Fails if the app or `sola-call` is down; it does not launch a window. A
 tab is one checkout in a project: the project root, a `.worktrees/`
-worktree, or a folder. The app was called Workspaces, and a tab a
-workspace, until 2026-10-21; `solactl workspaces` and the `workspace.*`
-methods are gone, with no alias.
+worktree, or a folder. Each project is its own window (a tab in the
+shell's tab bar, named for the project), with its tabs along the top.
+The app was called Workspaces, and a tab a workspace, until 2026-10-21;
+`solactl workspaces` and the `workspace.*` methods are gone, with no
+alias.
 
 ```text
 solactl projects                           # list methods
@@ -403,8 +405,8 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 Required arguments: `project.add --path`; `project.rm`, `project.reorder`
 `--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
 `tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
-`project.startup` and `--tab` on `pane.list` default to what is selected
-in the rail; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
+`project.startup` and `--tab` on `pane.list` default to the focused
+project window's selected tab; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
 defaults to the focused pane, else the selected tab.
 
 Deadlines: `project.add` 15 s; `tab.spawn` and `tab.exec`
@@ -412,14 +414,15 @@ Deadlines: `project.add` 15 s; `tab.spawn` and `tab.exec`
 
 ### Spawn
 
-`--name` is the `.worktrees/<name>` folder and the default rail label.
+`--name` is the `.worktrees/<name>` folder and the default tab label.
 `--branch` defaults to that name; `--base-branch` defaults to `HEAD`.
-`--title` is the rail label. An empty `--title`, or a title equal to
+`--title` is the tab label. An empty `--title`, or a title equal to
 `--name`, falls back to the folder slug; the slug is not prefixed onto a
 custom title.
 
-Spawn runs in the background: the new row appears, and the rail and grid
-stay on the caller. `--select` jumps to the new tab (the same as **+** or
+Spawn runs in the background: the new tab appears in its project
+window's top bar, and the windows stay on what they show. `--select`
+shows the project's window and selects the new tab (the same as **+** or
 ⌘T in the UI). `tab.exec` does not select. When you spawn from a Projects
 pane, the parent defaults to `$SOLA_PANE_ID`. `--parent` takes a parent
 tab, pane, or path.
@@ -458,12 +461,13 @@ moved with force. The project root cannot be renamed. `--branch` runs
 an ad hoc tab, pass both:
 `--name sc-1234 --branch joshua/sc-1234/fix --title '…'`.
 
-Target a tab by id, slug, path, or rail label. `--before` reorders that
-tab within its project (`end` = last); the rail does the same
-with drag and drop. On a worktree tab, the hover pencil or a double-click
-sets `--title` (the label, not the folder). `project.reorder` moves a
-project group: `--before` another project, or omit it (or pass `end`) for
-last.
+Target a tab by id, slug, path, or label. `--before` reorders that tab
+within its project's top bar (`end` = last). On a worktree tab, a
+double-click on its chip sets `--title` (the label, not the folder).
+`project.reorder` moves a project in the project order (the order windows
+open in): `--before` another project, or omit it (or pass `end`) for
+last. `tab.select` shows the tab's project window (opening it if it was
+closed) and selects the tab.
 
 ### Lists, startup scripts, and sessions
 

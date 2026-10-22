@@ -50,7 +50,7 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, tabs (main / worktree / root / folder), agent-aware panes,
-spawn sibling (UI: name only, takes the rail; `solactl projects tab.spawn`
+spawn sibling (UI: name only, selects the new tab in its project's window; `solactl projects tab.spawn`
 is background unless `--select`; can pass `--agent grok|codex|claude` + `--prompt` /
 `--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok,
 Codex, and Claude hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok,
@@ -65,7 +65,7 @@ is still on disk), unfocused desk card
 `claude is done` / `needs attention`),
 `tab.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
 `tab.set --name` (`git worktree move` to `.worktrees/<name>`;
-`--title` is the rail label, defaulting to that slug; `--branch` is
+`--title` is the tab label, defaulting to that slug; `--branch` is
 `git branch -m`; `--before` reorders in the project).
 Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
 tabs inside a project and project groups (`project.reorder`).

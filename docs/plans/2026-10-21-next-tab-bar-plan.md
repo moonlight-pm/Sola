@@ -250,5 +250,7 @@ chrome driving it, so the risky half is smoked before the chrome changes:
    done 2026-10-21, applied (a workspace inside it is a **tab**: `tab.*`,
    `--tab`; clean break, no `solactl workspaces`). Then OS workspaces
    (board 04, slice 5) with a workspace bound to a project (N6).
-3. Projects sessions as tabs (slice 3).
+3. ~~Projects sessions as tabs (slice 3)~~ — changed by Joshua
+   (2026-10-21): a window per *project*, its tabs on a top bar inside it
+   (the rail goes). Built and applied 2026-10-21 (`f6ef9cf8`).
 4. Titlebars with menus, gaps, islands.

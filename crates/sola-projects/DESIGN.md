@@ -1,6 +1,6 @@
 ---
 name: sola-projects
-description: Operate rail — status marks are the product
+description: Operate top bar — status marks are the product
 colors:
   canvas: "#0c0e12"
   raised: "#151922"
@@ -54,9 +54,11 @@ sola-kit atoms — do not fork a private palette.
 
 ## Overview
 
-Operate mode. Left rail (projects as quiet section headers, tabs as
-rows) + right terminal grid. Status is the product. One signature: the
-reserved status mark. Everything else stays graphite and quiet.
+Operate mode. A window per project (a tab in the shell's tab bar,
+named for the project): its tabs as chips along a top bar, the
+terminal grid below. The left rail is gone (2026-10-21). Status is the
+product. One signature: the reserved status mark. Everything else stays
+graphite and quiet.
 
 ## Colors
 
@@ -76,7 +78,9 @@ open, otherwise the focused pane (same as sola-terminal). Startup is a per-proje
 worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
 and kills its tmux. Worktrees stay on disk.
-⌘W closes the focused **pane**. A tab is always one rail row —
+⌘W closes the focused **pane**; ⇧⌘W (Project → Close Window) closes the
+project's window and keeps the project (Project → Open brings it back).
+A tab is always one chip in its project's top bar —
 splits stay in the grid, not as child tabs. The mark rolls up every
 Grok or Codex pane in that tab (waiting beats working beats done beats idle).
 
@@ -138,7 +142,7 @@ terminal.
   checkpoints, then `signals.json` `compactionCount` (often stays 0).
   Codex: `type: compacted` records in `~/.codex/sessions/**/rollout-*-{id}.jsonl`.
   Shell panes do not contribute.
-- Do keep splits off the rail. One row per tab; the mark watches
+- Do keep splits off the top bar. One chip per tab; the mark watches
   every Grok or Codex pane in the tab. Waiting (needs attention) beats working
   beats done beats idle. A grok+shell split looks like a single pane.
 - Do return the mark to idle (grey disc) when no Grok pane is live
@@ -147,15 +151,15 @@ terminal.
 - Do remember the Grok session id on a live grok pane. After a reboot
   (tmux gone) attach with `grok -r <id>` when that session is still on
   disk. A shell after `/exit` does not resume.
-- Do put `+` on the project group, not a form in the rail.
-- Do rename a worktree tab with the hover pencil or a double-click
-  (`tab.set --title`). The rail is that label, defaulting to the
+- Do put `+` at the end of the top bar (the new-tab card), not a form.
+- Do rename a worktree tab with a double-click on its chip
+  (`tab.set --title`). The chip shows that label, defaulting to the
   worktree slug — do not prefix the slug onto a custom title. Root has
-  no pencil. Drag stays inside the project; drag a group header to
-  reorder projects. `--name` still moves `.worktrees/<slug>`.
+  no rename. Order is `tab.set --before` / `project.reorder` (no drag in
+  the top bar yet). `--name` still moves `.worktrees/<slug>`.
 - Do notify done and waiting only when unfocused (desk card, not
   menubar whisper): title `{project} · {tab}`, body `grok is done` /
-  `grok needs attention`. Tab is the rail label (`root`, slug, or
+  `grok needs attention`. Tab is the chip label (`root`, slug, or
   `root`, the worktree slug, or `--title` when set).
 - Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
   right, ⌘W close pane.

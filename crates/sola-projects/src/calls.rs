@@ -47,7 +47,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "project.reorder",
-            "Move a project group in the rail",
+            "Move a project in the project order (window order)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
                 opt_s(
@@ -70,7 +70,7 @@ pub fn methods() -> Vec<MethodSpec> {
                 req_s(
                     "name",
                     Some('n'),
-                    ".worktrees/ slug, or the tab name with --root (rail default)",
+                    ".worktrees/ slug, or the tab name with --root (default label)",
                 ),
                 arg(
                     "root",
@@ -81,7 +81,7 @@ pub fn methods() -> Vec<MethodSpec> {
                 ),
                 opt_s("branch", Some('b'), "Git branch (default: same as name)"),
                 opt_s("base-branch", None, "Start-point (default: HEAD)"),
-                opt_s("title", None, "Rail label (default: name)"),
+                opt_s("title", None, "Tab label (default: name)"),
                 opt_s("agent", Some('a'), "grok, codex, or claude"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
                 opt(
@@ -120,7 +120,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "tab.select",
-            "Focus a tab in the rail and attach",
+            "Show a tab's project window and select the tab",
             &[req_s("tab", Some('t'), "Tab id or name")],
         ),
         method(
@@ -131,12 +131,12 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s(
                     "name",
                     Some('n'),
-                    ".worktrees/<name> folder; git worktree move. Rail uses this when title is empty",
+                    ".worktrees/<name> folder; git worktree move. The label uses this when title is empty",
                 ),
                 opt_s(
                     "title",
                     None,
-                    "Rail label; empty clears (falls back to name)",
+                    "Tab label; empty clears (falls back to name)",
                 ),
                 opt_s(
                     "branch",
@@ -146,7 +146,7 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s(
                     "before",
                     None,
-                    "Rail order: sit in front of this tab (same project); `end` = last",
+                    "Top-bar order: sit in front of this tab (same project); `end` = last",
                 ),
             ],
         ),
