@@ -74,6 +74,7 @@ mod tests {
 
     fn project(root: PathBuf, script: &str) -> Project {
         Project {
+            selected: None,
             id: "proj".into(),
             name: "Illuno".into(),
             collapsed: false,

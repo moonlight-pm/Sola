@@ -43,6 +43,9 @@ pub struct Project {
     /// `/bin/sh -c` after each sibling worktree is created. Empty = skip.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub startup: String,
+    /// The tab its window last showed (each project has a window).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
 }
 
 /// Binary split tree. Omitted in the catalog when the tab is a
@@ -418,6 +421,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
         .unwrap_or("project")
         .to_string();
     let project = Project {
+        selected: None,
         id: project_id.into(),
         name,
         collapsed: false,
@@ -931,6 +935,7 @@ mod tests {
     #[test]
     fn resolve_project_by_name() {
         let projects = vec![Project {
+            selected: None,
             id: "proj-seed".into(),
             name: "Sola".into(),
             collapsed: false,
@@ -1102,6 +1107,7 @@ mod tests {
     fn move_project_before_reorders_rail() {
         let mut projects = vec![
             Project {
+                selected: None,
                 id: "a".into(),
                 name: "A".into(),
                 collapsed: false,
@@ -1109,6 +1115,7 @@ mod tests {
                 startup: String::new(),
             },
             Project {
+                selected: None,
                 id: "b".into(),
                 name: "B".into(),
                 collapsed: false,
@@ -1116,6 +1123,7 @@ mod tests {
                 startup: String::new(),
             },
             Project {
+                selected: None,
                 id: "c".into(),
                 name: "C".into(),
                 collapsed: false,
@@ -1136,6 +1144,7 @@ mod tests {
         let mut c = Catalog::empty();
         c.selected = Some("ws-kid".into());
         c.projects.push(Project {
+            selected: None,
             id: "proj-a".into(),
             name: "A".into(),
             collapsed: false,
@@ -1143,6 +1152,7 @@ mod tests {
             startup: String::new(),
         });
         c.projects.push(Project {
+            selected: None,
             id: "proj-b".into(),
             name: "B".into(),
             collapsed: false,
@@ -1300,6 +1310,7 @@ mod tests {
         c.version = 1;
         c.selected = Some("ws-main".into());
         c.projects.push(Project {
+            selected: None,
             id: "proj-seed".into(),
             name: "Sola".into(),
             collapsed: true,

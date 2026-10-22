@@ -123,6 +123,18 @@ pub fn status_notice(
     })
 }
 
+/// The pane a status desk card is about, from its id
+/// (`ws-<done|waiting>-<pane>-<millis>`, see `App::emit_notice`).
+pub fn notice_pane(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix("ws-")?;
+    let rest = rest
+        .strip_prefix("done-")
+        .or_else(|| rest.strip_prefix("waiting-"))?;
+    let (pane, millis) = rest.rsplit_once('-')?;
+    millis.parse::<u128>().ok()?;
+    (!pane.is_empty()).then_some(pane)
+}
+
 /// `{project} · {tab}` — drop a missing/duplicate project.
 pub fn place_label(project: Option<&str>, tab: &str) -> String {
     match project
@@ -506,5 +518,13 @@ mod tests {
         assert_eq!(v["agent"], "grok");
         let empty = pane_json("p", AgentStatus::Idle, None, None);
         assert!(empty["session_id"].is_null());
+    }
+
+    #[test]
+    fn a_status_card_id_names_its_pane() {
+        assert_eq!(notice_pane("ws-done-ws-main-2-1761100000000"), Some("ws-main-2"));
+        assert_eq!(notice_pane("ws-waiting-split-a-12"), Some("split-a"));
+        assert_eq!(notice_pane("ws-git-rm-ws-x-12"), None);
+        assert_eq!(notice_pane("ws-done-ws-main"), None);
     }
 }

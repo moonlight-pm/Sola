@@ -3,7 +3,56 @@ use sola_core::KeyCode;
 
 use crate::APP_ID;
 
-pub fn app_menu() -> AppMenuPayload {
+/// Menu action id prefix for Project → Open: `open-project:<project id>`.
+pub const OPEN_PREFIX: &str = "open-project:";
+
+/// The app menu. `closed` lists `(id, name)` of each project without a
+/// window, under Project → Open.
+pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
+    let mut project = vec![
+        MenuItem::Action {
+            id: "add-project".into(),
+            label: "New Project…".into(),
+            shortcut: Some(KeyCode::N.meta()),
+            disabled: false,
+            checked: false,
+        },
+        MenuItem::Action {
+            id: "startup-script".into(),
+            label: "Startup Script…".into(),
+            shortcut: None,
+            disabled: false,
+            checked: false,
+        },
+        MenuItem::Action {
+            id: "drop-project".into(),
+            label: "Drop Project".into(),
+            shortcut: None,
+            disabled: false,
+            checked: false,
+        },
+        MenuItem::Divider,
+        // Only the window: the project and its sessions stay (Open).
+        MenuItem::Action {
+            id: "close-window".into(),
+            label: "Close Window".into(),
+            shortcut: Some(KeyCode::W.meta_shift()),
+            disabled: false,
+            checked: false,
+        },
+    ];
+    if !closed.is_empty() {
+        project.push(MenuItem::Divider);
+        for (id, name) in closed {
+            project.push(MenuItem::Action {
+                id: format!("{OPEN_PREFIX}{id}"),
+                label: format!("Open {name}"),
+                shortcut: None,
+                disabled: false,
+                checked: false,
+            });
+        }
+    }
     AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![
@@ -12,7 +61,7 @@ pub fn app_menu() -> AppMenuPayload {
                 items: vec![
                     MenuItem::Action {
                         id: "spawn-sibling".into(),
-                        label: "Spawn Sibling".into(),
+                        label: "New Tab…".into(),
                         shortcut: Some(KeyCode::T.meta()),
                         disabled: false,
                         checked: false,
@@ -58,29 +107,7 @@ pub fn app_menu() -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "Project".into(),
-                items: vec![
-                    MenuItem::Action {
-                        id: "add-project".into(),
-                        label: "New Project…".into(),
-                        shortcut: Some(KeyCode::N.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "startup-script".into(),
-                        label: "Startup Script…".into(),
-                        shortcut: None,
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "drop-project".into(),
-                        label: "Drop Project".into(),
-                        shortcut: None,
-                        disabled: false,
-                        checked: false,
-                    },
-                ],
+                items: project,
             },
             MenuDefinition {
                 label: "Edit".into(),

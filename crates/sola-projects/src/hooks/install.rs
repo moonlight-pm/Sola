@@ -258,7 +258,7 @@ if [ -z "$payload" ]; then
 fi
 # Pane id may be missing: Codex runs the session in a shared app-server
 # whose env is whichever pane started the daemon. The payload cwd is enough
-# for Tabs to retarget. An empty header is fine.
+# for Projects to retarget. An empty header is fine.
 pane="${{SOLA_PANE_ID:-}}"
 sock="${{SOLA_WS_HOOKS_SOCK:-}}"
 if [ -z "$sock" ]; then

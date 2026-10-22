@@ -1,22 +1,21 @@
-//! sola-tabs — project / tab rail + agent-aware PTYs.
+//! sola-projects (Projects) — project / tab rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `tabs`.
+//! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `projects`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{canvas, container, mouse_area, row, stack};
+use iced::widget::{canvas, column, container, mouse_area, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
-use iced::{event, keyboard};
+use iced::{event, keyboard, window};
 
 use sola_bus::Message;
 use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
-    window_settings_transparent,
 };
 use sola_kit::fonts;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
@@ -28,16 +27,18 @@ use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, tmux};
 
 mod calls;
+mod cards;
+mod catalog;
 mod cli;
 mod hooks;
 mod menu;
 mod paths;
 mod presence;
-mod sidebar;
 mod spawn;
 mod startup;
 mod status;
-mod catalog;
+mod topbar;
+mod windows;
 
 const APP_ID: &str = "sola-projects";
 const WINDOW_TITLE: &str = "Projects";
@@ -54,6 +55,8 @@ const TMUX_UNIT: &str = "sola-ws-tmux.service";
 const TMUX_PREFIX: &str = "sws-";
 
 const DEFAULT_COLS: u16 = 80;
+/// A window's size before it reports one.
+const DEFAULT_WINDOW: iced::Size = iced::Size::new(1100.0, 720.0);
 const DEFAULT_ROWS: u16 = 24;
 const MIN_PANE_PX: f32 = 80.0;
 
@@ -74,22 +77,18 @@ fn main() -> iced::Result {
             TopicKind::CloseApp,
             TopicKind::Windows,
             TopicKind::WindowFloating,
+            TopicKind::TabWindow,
+            TopicKind::NotificationActivate,
         ])
         .calls(calls::OWNER, calls::methods())
         .install();
 
-    if let Ok(mut client) = bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(menu::app_menu())) {
-            tracing::warn!("app-menu publish failed: {e:?}");
-        }
-    }
-
-    iced::application(App::boot, App::update, App::view)
+    // A window per project: each is a tab in the shell's tab bar.
+    iced::daemon(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::mono())
-        .window(window_settings_transparent(APP_ID))
         .run()
 }
 
@@ -105,21 +104,27 @@ struct App {
     pane_grids: HashMap<String, (u16, u16)>,
     theme: Theme,
     palette: Palette,
-    sidebar: sidebar::SidebarState,
-    window_size: iced::Size,
     metrics: CellMetrics,
     cursor_on: bool,
     keyboard_mods: keyboard::Modifiers,
     keys_held_mods: keyboard::Modifiers,
     float: sola_kit::FloatState,
-    window_id: Option<iced::window::Id>,
+    /// A window per project, each a tab in the shell's tab bar.
+    windows: windows::ProjectWindows,
+    /// Each project's last selected tab; the focused window's is `selected`.
+    last_tab: HashMap<String, String>,
+    /// `(tab id, draft name)` while a top-bar tab is being renamed.
+    renaming: Option<(String, String)>,
+    /// The top-bar tab under the pointer.
+    hover_tab: Option<String>,
     pane_status: HashMap<String, status::PaneStatus>,
     hook_sock: String,
     /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
     adopted_from: Option<String>,
-    spawn: sidebar::SpawnDraft,
-    add: sidebar::AddDraft,
-    startup: sidebar::StartupDraft,
+    spawn: cards::SpawnDraft,
+    add: cards::AddDraft,
+    startup: cards::StartupDraft,
+    /// One of the app's windows has keyboard focus (desk cards wait).
     window_focused: bool,
     pending_waits: Vec<PendingWait>,
 }
@@ -140,21 +145,20 @@ enum Msg {
     PtyExit(String),
     Title(String, String),
     Input(iced::Event),
-    Resized(iced::Size),
     SelectionChanged,
     Scrolled(String),
     OpenUrl(String),
     WheelToPty(String, Vec<u8>),
     Pasted(Option<String>),
     BlinkTick,
-    Sidebar(sola_kit::components::SidebarMsg),
     CursorMoved(f32, f32),
     CursorReleased,
-    WindowReady(Option<iced::window::Id>),
-    TitleDrag,
-    TitleResize(iced::window::Direction),
-    TitleClose,
+    Window(window::Id, window::Event),
+    TitleDrag(window::Id),
+    TitleResize(window::Id, window::Direction),
+    TitleClose(window::Id),
     SelectTab(String),
+    HoverTab(Option<String>),
     BeginRename(String),
     RenameInput(String),
     RenameCommit,
@@ -189,7 +193,6 @@ enum Msg {
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
     Call(sola_call::Incoming),
-    WindowFocus(bool),
 }
 
 /// PTY taken off the iced state so `tmux kill-session` / `git worktree remove`
@@ -289,6 +292,11 @@ impl App {
             .find(|w| w.id == selected)
             .map(|w| w.active_pane_id())
             .unwrap_or_else(|| selected.clone());
+        let last_tab = catalog
+            .projects
+            .iter()
+            .filter_map(|p| p.selected.clone().map(|t| (p.id.clone(), t)))
+            .collect();
         let mut app = Self {
             projects: catalog.projects,
             tabs: catalog.tabs,
@@ -299,43 +307,47 @@ impl App {
             pane_grids: HashMap::new(),
             theme: default_theme(),
             palette: Palette::from_kit_theme(&Atoms::default()),
-            sidebar: sidebar::SidebarState::default(),
-            window_size: iced::Size::new(1100.0, 720.0),
             metrics: CellMetrics::for_font(15.0, fonts::mono_metrics()),
             cursor_on: true,
             keyboard_mods: keyboard::Modifiers::empty(),
             keys_held_mods: keyboard::Modifiers::empty(),
             float: sola_kit::FloatState::new(APP_ID),
-            window_id: None,
+            windows: windows::ProjectWindows::new(APP_ID),
+            last_tab,
+            renaming: None,
+            hover_tab: None,
             pane_status,
             hook_sock: hook_paths.socket_path.to_string_lossy().into_owned(),
             adopted_from,
-            spawn: sidebar::SpawnDraft::default(),
-            add: sidebar::AddDraft::default(),
-            startup: sidebar::StartupDraft::default(),
+            spawn: cards::SpawnDraft::default(),
+            add: cards::AddDraft::default(),
+            startup: cards::StartupDraft::default(),
             window_focused: true,
             pending_waits: Vec::new(),
         };
         app.sync_all_rows();
         let reap = app.reap_missing_worktrees();
-        let attach = if app.selected.is_empty() {
-            Task::none()
-        } else {
-            let id = app.selected.clone();
-            app.attach_tab(&id)
-        };
-        (
-            app,
-            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), reap, attach]),
-        )
+        let windows = app.open_all_windows();
+        (app, Task::batch([reap, windows]))
     }
 
-    fn title(&self) -> String {
-        WINDOW_TITLE.into()
+    /// A project window's title is the project's name.
+    fn title(&self, window: window::Id) -> String {
+        self.windows
+            .project_of(window)
+            .and_then(|id| catalog::find_project(&self.projects, id))
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| WINDOW_TITLE.into())
     }
 
-    fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+    fn theme(&self, window: window::Id) -> Theme {
+        sola_kit::theme_for(self.is_floating(window), &self.theme)
+    }
+
+    fn is_floating(&self, window: window::Id) -> bool {
+        self.windows
+            .river_id(window)
+            .is_some_and(|id| self.float.is_window_floating(id))
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -348,9 +360,8 @@ impl App {
             sola_kit::call_subscription().map(Msg::Call),
             sola_terminal::osc9999::subscription().map(|(id, payload)| Msg::Osc(id, payload)),
             iced::time::every(Duration::from_secs(1)).map(|_| Msg::PresenceTick),
+            window::events().map(|(id, e)| Msg::Window(id, e)),
             event::listen_with(|ev, status, _| match &ev {
-                Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
-                Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
                 Event::Keyboard(_) => Some(Msg::Input(ev.clone())),
                 // Mouse is handled by TermView / sidebar / the split-drag
                 // sub below. Mapping ignored motion to Input presented the
@@ -359,9 +370,7 @@ impl App {
                 _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(ev.clone())),
                 _ => None,
             }),
-            iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
-            self.sidebar.gestures.subscription().map(Msg::Sidebar),
             if self.dragging_split.is_some() {
                 event::listen_with(|ev, _, _| match ev {
                     Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
@@ -379,30 +388,28 @@ impl App {
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let task = self.update_msg(msg);
+        self.note_selected();
+        task
+    }
+
+    /// Remember the selected tab as its project's, so each project window
+    /// keeps showing its own tab while another window has focus.
+    fn note_selected(&mut self) {
+        if let Some(tab) = self.tabs.iter().find(|w| w.id == self.selected) {
+            self.last_tab
+                .insert(tab.project_id.clone(), self.selected.clone());
+        }
+    }
+
+    fn update_msg(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
-            Msg::WindowReady(id) => {
-                self.window_id = id;
-                Task::none()
-            }
-            Msg::TitleDrag => sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => {
-                sola_kit::close_app(APP_ID);
-                Task::none()
-            }
+            Msg::Window(id, event) => self.on_window(id, event),
+            Msg::TitleDrag(id) => sola_kit::drag(Some(id)),
+            Msg::TitleResize(id, dir) => sola_kit::drag_resize(Some(id), dir),
+            Msg::TitleClose(id) => self.close_window(id),
             Msg::Ignore => Task::none(),
-            Msg::WindowFocus(on) => {
-                self.window_focused = on;
-                if !on {
-                    // Super release is often eaten by River while we are
-                    // unfocused (switcher, another window). Drop the latch
-                    // so the next focus does not treat every key as ⌘.
-                    self.keyboard_mods = keyboard::Modifiers::empty();
-                    self.keys_held_mods = keyboard::Modifiers::empty();
-                }
-                Task::none()
-            }
             Msg::Call(incoming) => self.on_call(incoming),
             Msg::Hook(incoming) => {
                 let Some(id) = self.resolve_hook_pane(&incoming) else {
@@ -509,22 +516,24 @@ impl App {
                 self.flush_waits();
                 reap
             }
-            Msg::SelectTab(id) => {
-                if let Some(ws) = self.tabs.iter().find(|w| w.id == id) {
-                    self.selected = id.clone();
-                    self.focused = ws.active_pane_id();
-                    self.persist_catalog();
-                    return self.attach_tab(&id);
-                }
+            Msg::SelectTab(id) => self.select_tab(&id),
+            Msg::HoverTab(hovered) => {
+                self.hover_tab = hovered;
                 Task::none()
             }
             Msg::PaneFocused(pane_id) => {
                 // Hover focuses for typing. It must not spawn a shell —
                 // only the Start new shell button (or a sidebar click)
                 // attaches a missing PTY.
+                // Only in the window keys go to: hovering a pane in another
+                // project's window must not take the keyboard.
                 if let Some(ws) = self.tabs.iter().find(|w| w.owns_pane(&pane_id)) {
-                    let ws_id = ws.id.clone();
-                    self.set_focus(&ws_id, &pane_id);
+                    let in_focused = self.windows.focused.is_some()
+                        && self.windows.window_of(&ws.project_id) == self.windows.focused;
+                    if in_focused {
+                        let ws_id = ws.id.clone();
+                        self.set_focus(&ws_id, &pane_id);
+                    }
                 }
                 Task::none()
             }
@@ -540,10 +549,10 @@ impl App {
             }
             Msg::SaveStartup => self.save_startup(),
             Msg::DismissDialog => {
-                self.spawn = sidebar::SpawnDraft::default();
-                self.add = sidebar::AddDraft::default();
-                self.startup = sidebar::StartupDraft::default();
-                self.sidebar.renaming = None;
+                self.spawn = cards::SpawnDraft::default();
+                self.add = cards::AddDraft::default();
+                self.startup = cards::StartupDraft::default();
+                self.renaming = None;
                 Task::none()
             }
             Msg::SpawnName(s) => {
@@ -572,15 +581,9 @@ impl App {
                 Task::none()
             }
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
-            Msg::Sidebar(m) => {
-                if let Some(ev) = self.sidebar.gestures.update(m) {
-                    return self.on_sidebar_event(ev);
-                }
-                Task::none()
-            }
             Msg::BeginRename(id) => self.begin_rename(id),
             Msg::RenameInput(s) => {
-                if let Some((_, draft)) = &mut self.sidebar.renaming {
+                if let Some((_, draft)) = &mut self.renaming {
                     *draft = s;
                 }
                 Task::none()
@@ -637,11 +640,6 @@ impl App {
                 Task::none()
             }
             Msg::Input(event) => self.on_input(event),
-            Msg::Resized(size) => {
-                self.window_size = size;
-                self.resize_all_panes();
-                Task::none()
-            }
             Msg::SelectionChanged => {
                 if let Some(rt) = self.runtimes.get(&self.focused) {
                     rt.cache.clear();
@@ -680,34 +678,41 @@ impl App {
         }
     }
 
-    fn view(&self) -> Element<'_, Msg> {
-        let pane: Element<'_, Msg> = if self.tabs.is_empty() {
-            sidebar::empty_pane()
-        } else if let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) {
-            self.render_node(&ws.layout().to_node())
+    fn view(&self, window: window::Id) -> Element<'_, Msg> {
+        let project_id = self.windows.project_of(window).unwrap_or(windows::EMPTY);
+        let body: Element<'_, Msg> = if project_id.is_empty() {
+            cards::no_project()
         } else {
-            sidebar::empty_pane()
+            let selected = self.selected_of(project_id).unwrap_or("");
+            let pane: Element<'_, Msg> = match self.tabs.iter().find(|w| w.id == selected) {
+                Some(ws) => self.render_node(&ws.layout().to_node()),
+                None => cards::empty_pane(),
+            };
+            let bar = topbar::view(topbar::Bar {
+                project_id,
+                tabs: &self.tabs,
+                selected,
+                hovered: self.hover_tab.as_deref(),
+                renaming: self.renaming.as_ref(),
+                pane_status: &self.pane_status,
+            });
+            // Clipped: a terminal canvas paints outside its bounds (rows
+            // above the top while a grid catches up with its size), and
+            // the bar sits right above it.
+            let pane = container(pane)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .clip(true);
+            column![bar, sola_kit::components::horizontal_divider(), pane].into()
         };
 
-        let rail_pane: Element<'_, Msg> = row![
-            sidebar::view(
-                &self.sidebar,
-                &self.projects,
-                &self.tabs,
-                &self.selected,
-                &self.pane_status,
-                &self.theme,
-                self.palette.bg,
-            ),
-            pane,
-        ]
-        .into();
-
-        let body: Element<'_, Msg> =
-            match sidebar::overlay(&self.spawn, &self.add, &self.startup, &self.projects) {
-                Some(veil) => stack![rail_pane, veil].into(),
-                None => rail_pane,
-            };
+        let body: Element<'_, Msg> = match (self.card_window() == Some(window))
+            .then(|| cards::overlay(&self.spawn, &self.add, &self.startup, &self.projects))
+            .flatten()
+        {
+            Some(veil) => stack![body, veil].into(),
+            None => body,
+        };
 
         let bg = self.palette.bg;
         let framed = container(body)
@@ -719,17 +724,183 @@ impl App {
             });
 
         sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
-            WINDOW_TITLE,
-            Msg::TitleDrag,
-            Msg::TitleClose,
-            Msg::TitleResize,
+            self.is_floating(window),
+            self.title(window),
+            Msg::TitleDrag(window),
+            Msg::TitleClose(window),
+            move |dir| Msg::TitleResize(window, dir),
             framed.into(),
         )
     }
 
+    /// The window an open card shows in: the new-tab and startup cards in
+    /// their project's window, the add-project card in the focused one.
+    fn card_window(&self) -> Option<window::Id> {
+        let project = self
+            .spawn
+            .project_id
+            .as_deref()
+            .or(self.startup.project_id.as_deref());
+        project
+            .and_then(|p| self.windows.window_of(p))
+            .or(self.windows.focused)
+    }
+
+    /// Project `project_id`'s selected tab: the focused window's selection
+    /// if it is this project's, else the tab it last showed, else its root.
+    fn selected_of(&self, project_id: &str) -> Option<&str> {
+        let mine = |id: &str| {
+            self.tabs
+                .iter()
+                .any(|w| w.id == id && w.project_id == project_id)
+        };
+        if mine(&self.selected) {
+            return Some(self.selected.as_str());
+        }
+        if let Some(id) = self.last_tab.get(project_id).filter(|id| mine(id)) {
+            return Some(id.as_str());
+        }
+        catalog::ordered_for_project(project_id, &self.tabs)
+            .first()
+            .map(|w| w.id.as_str())
+    }
+
+    /// Open a window for every project (the one with the saved selection
+    /// in front), or the no-project window when there are none.
+    fn open_all_windows(&mut self) -> Task<Msg> {
+        let front = self
+            .tabs
+            .iter()
+            .find(|w| w.id == self.selected)
+            .map(|w| w.project_id.clone())
+            .or_else(|| self.projects.first().map(|p| p.id.clone()));
+        let ids: Vec<String> = self.projects.iter().map(|p| p.id.clone()).collect();
+        if ids.is_empty() {
+            return self.open_window(windows::EMPTY, false);
+        }
+        let mut tasks = Vec::new();
+        for id in ids {
+            let background = front.as_deref() != Some(id.as_str());
+            tasks.push(self.open_window(&id, background));
+        }
+        Task::batch(tasks)
+    }
+
+    /// Open project `project_id`'s window and attach its selected tab. The
+    /// no-project window goes once a project has one.
+    fn open_window(&mut self, project_id: &str, background: bool) -> Task<Msg> {
+        if self.windows.has(project_id) {
+            return Task::none();
+        }
+        let mut tasks = Vec::new();
+        if !project_id.is_empty() {
+            if let Some(empty) = self.windows.window_of(windows::EMPTY) {
+                self.windows.forget(empty);
+                tasks.push(window::close(empty));
+            }
+        }
+        tasks.push(self.windows.open(APP_ID, project_id, background).map(|_| Msg::Ignore));
+        if let Some(tab) = self.selected_of(project_id).map(str::to_string) {
+            tasks.push(self.attach_tab(&tab));
+        }
+        self.publish_menu();
+        Task::batch(tasks)
+    }
+
+    /// Close a project window. The project stays, and its tmux sessions
+    /// keep running; Project → Open brings it back. The last window
+    /// closing quits.
+    fn close_window(&mut self, window: window::Id) -> Task<Msg> {
+        let project = self.windows.forget(window);
+        tracing::info!(project = ?project, "project window closed");
+        self.publish_menu();
+        if self.windows.is_empty() {
+            return Task::batch([window::close(window), iced::exit()]);
+        }
+        window::close(window)
+    }
+
+    /// Window lifecycle: sizes, focus, and the close button / request.
+    fn on_window(&mut self, id: window::Id, event: window::Event) -> Task<Msg> {
+        match event {
+            window::Event::Opened { size, .. } | window::Event::Resized(size) => {
+                self.windows.set_size(id, size);
+                self.resize_all_panes();
+                Task::none()
+            }
+            window::Event::Focused => {
+                self.windows.focused = Some(id);
+                self.window_focused = true;
+                // Keys and menu actions go to this window's tab now.
+                if let Some(tab) = self
+                    .windows
+                    .project_of(id)
+                    .and_then(|p| self.selected_of(p))
+                    .map(str::to_string)
+                {
+                    if tab != self.selected {
+                        self.selected = tab.clone();
+                        if let Some(ws) = self.tabs.iter().find(|w| w.id == tab) {
+                            self.focused = ws.active_pane_id();
+                        }
+                        self.persist_catalog();
+                    }
+                }
+                Task::none()
+            }
+            window::Event::Unfocused => {
+                self.window_focused = false;
+                // Super release is often eaten by River while we are
+                // unfocused (switcher, another window). Drop the latch so
+                // the next focus does not treat every key as ⌘.
+                self.keyboard_mods = keyboard::Modifiers::empty();
+                self.keys_held_mods = keyboard::Modifiers::empty();
+                Task::none()
+            }
+            window::Event::CloseRequested => self.close_window(id),
+            window::Event::Closed => {
+                // Closed under us (not through close_window).
+                if self.windows.forget(id).is_some() {
+                    self.publish_menu();
+                }
+                if self.windows.is_empty() {
+                    return iced::exit();
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// The app menu, with Project → Open for each project without a window.
+    fn publish_menu(&self) {
+        let closed: Vec<(String, String)> = self
+            .projects
+            .iter()
+            .filter(|p| !self.windows.has(&p.id))
+            .map(|p| (p.id.clone(), p.name.clone()))
+            .collect();
+        if let Ok(mut client) = bus().lock() {
+            if let Err(e) = client.emit(Topic::SetAppMenu(menu::app_menu(&closed))) {
+                tracing::warn!("app-menu publish failed: {e:?}");
+            }
+        }
+    }
+
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
+        self.windows.update(m);
+        if let Some(Topic::NotificationActivate(a)) = Topic::parse(m) {
+            if a.app_id == APP_ID {
+                if let Some(tab) = cli::notice_pane(&a.id)
+                    .and_then(|pane| self.tab_for_pane(pane))
+                    .map(|w| w.id.clone())
+                {
+                    return self.show_tab(&tab);
+                }
+            }
+            return Task::none();
+        }
         if apply_theme_update(m, &mut self.theme) {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
                 self.palette = Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
@@ -757,6 +928,14 @@ impl App {
                         }
                     }
                     "add-project" => self.open_add(),
+                    "close-window" => match self.windows.focused {
+                        Some(window) => self.close_window(window),
+                        None => Task::none(),
+                    },
+                    open if open.starts_with(menu::OPEN_PREFIX) => {
+                        let id = open[menu::OPEN_PREFIX.len()..].to_string();
+                        self.open_window(&id, false)
+                    }
                     "startup-script" => self.open_startup(),
                     "split-down" => self.split_focused(SplitDir::Horizontal),
                     "split-right" => self.split_focused(SplitDir::Vertical),
@@ -788,17 +967,25 @@ impl App {
         Task::none()
     }
 
-    fn pane_size(&self) -> iced::Size {
-        let chrome = self.sidebar.width + sola_kit::components::DIVIDER_HIT_PX;
-        iced::Size::new(
-            (self.window_size.width - chrome).max(0.0),
-            self.window_size.height,
-        )
-    }
-
-    fn cols_rows(&self) -> (u16, u16) {
-        let (c, r) = term_view::cols_rows_for(self.pane_size(), self.metrics);
-        (c.max(2), r.max(1))
+    /// Grid (cols, rows) a pane should have in its project's window.
+    fn pane_grid(&self, pane_id: &str) -> (u16, u16) {
+        let fallback = (DEFAULT_COLS, DEFAULT_ROWS);
+        let Some(tab) = self.tab_for_pane(pane_id) else {
+            return fallback;
+        };
+        let Some(window) = self.windows.window_of(&tab.project_id) else {
+            return fallback;
+        };
+        let content = self.content_rect(window);
+        term_state::pane_rects(&tab.layout().to_node(), content)
+            .into_iter()
+            .find(|(id, _)| id == pane_id)
+            .map(|(_, rect)| {
+                let (c, r) =
+                    term_view::cols_rows_for(iced::Size::new(rect.w, rect.h), self.metrics);
+                (c.max(2), r.max(1))
+            })
+            .unwrap_or(fallback)
     }
 
     fn render_node(&self, node: &term_state::PaneNode) -> Element<'_, Msg> {
@@ -847,8 +1034,8 @@ impl App {
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
             }
-            None if self.is_sole_leaf(pane_id) => sidebar::exited_pane(pane_id),
-            None => sidebar::empty_pane(),
+            None if self.is_sole_leaf(pane_id) => cards::exited_pane(pane_id),
+            None => cards::empty_pane(),
         };
         mouse_area(inner)
             .on_enter(Msg::PaneFocused(pane_id.to_string()))
@@ -911,7 +1098,7 @@ impl App {
         else {
             return Task::none();
         };
-        let (cols, rows) = self.cols_rows();
+        let (cols, rows) = self.pane_grid(id);
         let cols = if cols == 0 { DEFAULT_COLS } else { cols };
         let rows = if rows == 0 { DEFAULT_ROWS } else { rows };
         let tmux_session = catalog::bind_session(id, &ws.path);
@@ -1129,6 +1316,15 @@ impl App {
     }
 
     fn persist_catalog(&self) {
+        // Each project keeps the tab its window last showed.
+        let projects = self
+            .projects
+            .iter()
+            .map(|p| catalog::Project {
+                selected: self.selected_of(&p.id).map(str::to_string),
+                ..p.clone()
+            })
+            .collect();
         catalog::save(&catalog::Catalog {
             version: 1,
             selected: if self.selected.is_empty() {
@@ -1136,69 +1332,9 @@ impl App {
             } else {
                 Some(self.selected.clone())
             },
-            projects: self.projects.clone(),
+            projects,
             tabs: self.tabs.clone(),
         });
-    }
-
-    fn on_sidebar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
-        use sola_kit::components::{Dest, SidebarEvent};
-        match ev {
-            SidebarEvent::Activate { id } => self.select_tab(&id),
-            SidebarEvent::ToggleSection { id } => {
-                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
-                    p.collapsed = !p.collapsed;
-                    self.persist_catalog();
-                }
-                Task::none()
-            }
-            SidebarEvent::Edit { id } => self.begin_rename(id),
-            SidebarEvent::Resize { width } => {
-                self.sidebar.width = width;
-                self.resize_all_panes();
-                Task::none()
-            }
-            SidebarEvent::Drop(drop) => {
-                match drop.dest {
-                    Dest::Join { before, .. } => {
-                        if let Err(e) = catalog::move_tab_before(
-                            &mut self.tabs,
-                            &drop.id,
-                            before.as_deref(),
-                        ) {
-                            tracing::warn!("rail drop: {e}");
-                        } else {
-                            self.persist_catalog();
-                        }
-                    }
-                    Dest::BlockBefore { before } => {
-                        let before = self.project_before_target(before.as_deref());
-                        if let Err(e) = catalog::move_project_before(
-                            &mut self.projects,
-                            &drop.id,
-                            before.as_deref(),
-                        ) {
-                            tracing::warn!("project drop: {e}");
-                        } else {
-                            self.persist_catalog();
-                        }
-                    }
-                    Dest::Loose { .. } | Dest::BeforeGroup { .. } | Dest::Sections(_) => {}
-                }
-                Task::none()
-            }
-        }
-    }
-
-    fn project_before_target(&self, before: Option<&str>) -> Option<String> {
-        let id = before?;
-        if self.projects.iter().any(|p| p.id == id) {
-            return Some(id.to_string());
-        }
-        self.tabs
-            .iter()
-            .find(|w| w.id == id)
-            .map(|w| w.project_id.clone())
     }
 
     fn begin_rename(&mut self, id: String) -> Task<Msg> {
@@ -1208,19 +1344,19 @@ impl App {
         if !catalog::can_close(ws) {
             return Task::none();
         }
-        self.sidebar.renaming = Some((id, cli::rail_label(ws)));
+        self.renaming = Some((id, cli::rail_label(ws)));
         Task::batch([
-            iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::RENAME_INPUT_ID)),
+            iced::widget::operation::focus::<Msg>(iced::widget::Id::new(topbar::RENAME_INPUT_ID)),
             iced::advanced::widget::operate(
                 iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                    iced::widget::Id::new(sidebar::RENAME_INPUT_ID),
+                    iced::widget::Id::new(topbar::RENAME_INPUT_ID),
                 ),
             ),
         ])
     }
 
     fn commit_rename(&mut self) -> Task<Msg> {
-        let Some((id, name)) = self.sidebar.renaming.take() else {
+        let Some((id, name)) = self.renaming.take() else {
             return Task::none();
         };
         if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == id) {
@@ -1237,13 +1373,38 @@ impl App {
         if self.tabs.iter().all(|w| w.id != id) {
             return Task::none();
         }
-        self.sidebar.renaming = None;
+        self.renaming = None;
         self.selected = id.to_string();
         if let Some(ws) = self.tabs.iter().find(|w| w.id == id) {
             self.focused = ws.active_pane_id();
         }
         self.persist_catalog();
-        self.attach_tab(id)
+        let attach = self.attach_tab(id);
+        // A newly shown tab takes its window's size.
+        self.note_selected();
+        self.resize_all_panes();
+        attach
+    }
+
+    /// Select tab `id` and bring its project's window up (opening it if it
+    /// was closed): `tab.select`, `--select`, a desk-card click.
+    fn show_tab(&mut self, id: &str) -> Task<Msg> {
+        let Some(project) = self.tabs.iter().find(|w| w.id == id).map(|w| w.project_id.clone())
+        else {
+            return Task::none();
+        };
+        let select = self.select_tab(id);
+        Task::batch([select, self.show_project(&project)])
+    }
+
+    /// Bring project `project_id`'s window up, opening it if it was closed.
+    fn show_project(&mut self, project_id: &str) -> Task<Msg> {
+        if self.windows.has(project_id) {
+            self.windows.show(project_id);
+            Task::none()
+        } else {
+            self.open_window(project_id, false)
+        }
     }
 
     fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
@@ -1251,23 +1412,23 @@ impl App {
             return Task::none();
         };
         let root_branch = spawn::current_branch(&project.root);
-        self.add = sidebar::AddDraft::default();
-        self.startup = sidebar::StartupDraft::default();
-        self.sidebar.renaming = None;
-        self.spawn = sidebar::SpawnDraft::open(project_id, root_branch);
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::SPAWN_INPUT_ID))
+        self.add = cards::AddDraft::default();
+        self.startup = cards::StartupDraft::default();
+        self.renaming = None;
+        self.spawn = cards::SpawnDraft::open(project_id, root_branch);
+        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::SPAWN_INPUT_ID))
     }
 
     fn open_add(&mut self) -> Task<Msg> {
-        self.spawn = sidebar::SpawnDraft::default();
-        self.startup = sidebar::StartupDraft::default();
-        self.sidebar.renaming = None;
-        self.add = sidebar::AddDraft {
+        self.spawn = cards::SpawnDraft::default();
+        self.startup = cards::StartupDraft::default();
+        self.renaming = None;
+        self.add = cards::AddDraft {
             open: true,
             path: String::new(),
             error: None,
         };
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(sidebar::ADD_INPUT_ID))
+        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::ADD_INPUT_ID))
     }
 
     fn selected_project_id(&self) -> Option<String> {
@@ -1288,9 +1449,9 @@ impl App {
             .find(|p| p.id == pid)
             .map(|p| p.startup.clone())
             .unwrap_or_default();
-        self.spawn = sidebar::SpawnDraft::default();
-        self.add = sidebar::AddDraft::default();
-        self.startup = sidebar::StartupDraft::open(pid, &script);
+        self.spawn = cards::SpawnDraft::default();
+        self.add = cards::AddDraft::default();
+        self.startup = cards::StartupDraft::open(pid, &script);
         Task::none()
     }
 
@@ -1303,7 +1464,7 @@ impl App {
             p.startup = text;
         }
         self.persist_catalog();
-        self.startup = sidebar::StartupDraft::default();
+        self.startup = cards::StartupDraft::default();
         Task::none()
     }
 
@@ -1325,7 +1486,7 @@ impl App {
             true,
         ) {
             Ok((id, startup_err)) => {
-                self.spawn = sidebar::SpawnDraft::default();
+                self.spawn = cards::SpawnDraft::default();
                 self.maybe_toast_startup(startup_err, &id);
                 self.attach_pane(&id, &[])
             }
@@ -1759,6 +1920,13 @@ impl App {
         if let Some(e) = startup_err {
             data["startup_error"] = serde_json::json!(e);
         }
+        let task = match self.tabs.iter().find(|w| w.id == id) {
+            Some(w) if select => {
+                let project = w.project_id.clone();
+                Task::batch([task, self.show_project(&project)])
+            }
+            _ => task,
+        };
         Ok((data, task))
     }
 
@@ -1811,16 +1979,7 @@ impl App {
         let id = catalog::resolve_tab(&self.tabs, q)?
             .id
             .clone();
-        let focused = self
-            .tabs
-            .iter()
-            .find(|w| w.id == id)
-            .map(|w| w.active_pane_id())
-            .unwrap_or_else(|| id.clone());
-        self.selected = id.clone();
-        self.focused = focused;
-        self.persist_catalog();
-        let task = self.attach_tab(&id);
+        let task = self.show_tab(&id);
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
     }
 
@@ -2017,6 +2176,8 @@ impl App {
 
     fn cli_add_project(&mut self, path: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
         let (project_id, main_id, task) = self.register_project(path)?;
+        // CLI adds stay quiet: the window joins its zone behind.
+        let task = Task::batch([task, self.open_window(&project_id, true)]);
         let project = self
             .projects
             .iter()
@@ -2264,9 +2425,12 @@ impl App {
     fn add_project(&mut self) -> Task<Msg> {
         let raw = self.add.path.clone();
         match self.register_project(&raw) {
-            Ok((_, _, task)) => {
-                self.add = sidebar::AddDraft::default();
-                task
+            Ok((project_id, main_id, task)) => {
+                self.add = cards::AddDraft::default();
+                // The new project's window, in front, on its root tab.
+                let open = self.open_window(&project_id, false);
+                let select = self.select_tab(&main_id);
+                Task::batch([task, open, select])
             }
             Err(e) => {
                 self.add.error = Some(e);
@@ -2286,7 +2450,7 @@ impl App {
             Err(e) => return Err(format!("path: {e}")),
         };
         if self.projects.iter().any(|p| p.root == root) {
-            return Err("already in the rail".into());
+            return Err("already a project".into());
         }
         let slug = spawn::slug(
             root.file_name()
@@ -2438,16 +2602,26 @@ impl App {
         self.tabs = catalog.tabs;
         self.selected = catalog.selected.unwrap_or_default();
         let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
+        // Its window goes; with no project left, the no-project window.
+        let mut tasks = Vec::new();
+        if self.projects.is_empty() {
+            tasks.push(self.open_window(windows::EMPTY, false));
+        }
+        if let Some(window) = self.windows.window_of(project_id) {
+            self.windows.forget(window);
+            tasks.push(window::close(window));
+        }
+        self.publish_menu();
         if removed.is_empty() {
-            return close_io_task(detached, None, project_id.to_string());
+            tasks.push(close_io_task(detached, None, project_id.to_string()));
+            return Task::batch(tasks);
         }
         self.persist_catalog();
         status::persist_all(&self.pane_status);
         let attach = self.attach_selected_if_needed();
-        Task::batch([
-            attach,
-            close_io_task(detached, None, project_id.to_string()),
-        ])
+        tasks.push(attach);
+        tasks.push(close_io_task(detached, None, project_id.to_string()));
+        Task::batch(tasks)
     }
 
     fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {
@@ -2517,11 +2691,23 @@ impl App {
     }
 
     fn drag_split(&mut self, split_id: &str, x: f32, y: f32) {
-        let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) else {
+        // The split is in a tab one of the windows shows.
+        let Some((window, tab_id)) = self.windows.iter().find_map(|(window, project_id)| {
+            let id = self.selected_of(project_id)?;
+            let ws = self.tabs.iter().find(|w| w.id == id)?;
+            ws.layout()
+                .split_ids()
+                .iter()
+                .any(|s| s == split_id)
+                .then(|| (window, id.to_string()))
+        }) else {
+            return;
+        };
+        let Some(ws) = self.tabs.iter().find(|w| w.id == tab_id) else {
             return;
         };
         let node = ws.layout().to_node();
-        let content = self.content_rect();
+        let content = self.content_rect(window);
         let Some((_, area, dir)) = term_state::split_rects(&node, content)
             .into_iter()
             .find(|(id, _, _)| id == split_id)
@@ -2529,7 +2715,7 @@ impl App {
             return;
         };
         let ratio = term_state::ratio_for_drag(area, dir, x, y, MIN_PANE_PX);
-        let Some(ws) = self.tabs.iter_mut().find(|w| w.id == self.selected) else {
+        let Some(ws) = self.tabs.iter_mut().find(|w| w.id == tab_id) else {
             return;
         };
         let mut node = ws.layout().to_node();
@@ -2540,31 +2726,36 @@ impl App {
         }
     }
 
-    fn content_rect(&self) -> term_state::Rect {
-        let chrome = self.sidebar.width + sola_kit::components::DIVIDER_HIT_PX;
-        let size = self.pane_size();
+    /// Where a project window's panes sit: under its top bar (and the
+    /// hairline below it).
+    fn content_rect(&self, window: window::Id) -> term_state::Rect {
+        let size = self.windows.size(window).unwrap_or(DEFAULT_WINDOW);
+        let top = topbar::HEIGHT + topbar::RULE;
         term_state::Rect {
-            x: chrome,
-            y: 0.0,
+            x: 0.0,
+            y: top,
             w: size.width,
-            h: size.height,
+            h: (size.height - top).max(0.0),
         }
     }
 
+    /// Size each window's shown panes to the window.
     fn resize_all_panes(&mut self) {
-        let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) else {
-            return;
-        };
-        let node = ws.layout().to_node();
-        let content = self.content_rect();
-        let targets: Vec<(String, u16, u16)> = term_state::pane_rects(&node, content)
-            .into_iter()
-            .map(|(id, rect)| {
+        let mut targets: Vec<(String, u16, u16)> = Vec::new();
+        for (window, project_id) in self.windows.iter() {
+            let Some(ws) = self
+                .selected_of(project_id)
+                .and_then(|id| self.tabs.iter().find(|w| w.id == id))
+            else {
+                continue;
+            };
+            let content = self.content_rect(window);
+            for (id, rect) in term_state::pane_rects(&ws.layout().to_node(), content) {
                 let (c, r) =
                     term_view::cols_rows_for(iced::Size::new(rect.w, rect.h), self.metrics);
-                (id, c.max(2), r.max(1))
-            })
-            .collect();
+                targets.push((id, c.max(2), r.max(1)));
+            }
+        }
         for (pane_id, cols, rows) in targets {
             if self.pane_grids.get(&pane_id) == Some(&(cols, rows)) {
                 continue;
@@ -2603,7 +2794,7 @@ impl App {
         if self.add.open && !self.add.path.is_empty() {
             return iced::clipboard::write(self.add.path.clone());
         }
-        if let Some((_, draft)) = &self.sidebar.renaming {
+        if let Some((_, draft)) = &self.renaming {
             if !draft.is_empty() {
                 return iced::clipboard::write(draft.clone());
             }
@@ -2643,7 +2834,7 @@ impl App {
             self.add.path.push_str(&text.replace('\n', ""));
             return Task::none();
         }
-        if let Some((_, draft)) = &mut self.sidebar.renaming {
+        if let Some((_, draft)) = &mut self.renaming {
             draft.push_str(&text.replace('\n', ""));
             return Task::none();
         }
@@ -2677,18 +2868,18 @@ impl App {
             ..
         }) = &event
         {
-            if self.sidebar.renaming.is_some() {
-                self.sidebar.renaming = None;
+            if self.renaming.is_some() {
+                self.renaming = None;
                 return Task::none();
             }
             if self.dialog_open() {
-                self.spawn = sidebar::SpawnDraft::default();
-                self.add = sidebar::AddDraft::default();
-                self.startup = sidebar::StartupDraft::default();
+                self.spawn = cards::SpawnDraft::default();
+                self.add = cards::AddDraft::default();
+                self.startup = cards::StartupDraft::default();
                 return Task::none();
             }
         }
-        if self.dialog_open() || self.sidebar.renaming.is_some() {
+        if self.dialog_open() || self.renaming.is_some() {
             return Task::none();
         }
 
