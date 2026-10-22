@@ -173,7 +173,8 @@ Order — the engine first, applied on its own with the old single-window
 chrome driving it, so the risky half is smoked before the chrome changes:
 
 - [x] **4a Session:** a stable page id in `SessionTab` (`#[serde(default)]`
-      mints one for old files); groups and sidebar width read but unused.
+      mints one for old files); groups and sidebar width read but unused
+      (dropped in 4g; old files still load).
 - [x] **4b Helper:** per-tab view state (size, shown, focused) generalised
       from boards; tab-addressed commands (resize, input, focus, nav, edit,
       paste, find, JS, show/hide) beside the active-tab ones sola-wrapper
@@ -209,8 +210,14 @@ chrome driving it, so the risky half is smoked before the chrome changes:
       ⌘-click as windows (behind); a second launch or `OpenUrl` opens a
       window; notification and JS-dialog activation show their window
       (`Topic::ShowTab { key }` → the shell shows and focuses it).
-- [ ] **4g Calls:** `tab.focus` / `--select` show the window; `group.*`
-      and `tab.move` go (docs, tests, sola-bots instructions).
+- [x] **4g Calls:** `tab.focus` / `--select` show the window; `group.*`
+      and `tab.move` go (docs, tests, sola-bots instructions). Done
+      2026-10-21: `groups.rs`, the dead strip view and its sidebar state,
+      the favicon cache, `group.*` / `tab.move`, `tab.open --group`, the
+      session's groups and sidebar width (old files load; the next save
+      drops them). Applied (`pkg:sola-browser` 7c2541c2); smoked: the
+      method list, a background `tab.open`, `tab.focus`, `--select`, ⌘W,
+      ⌘⇧T back in its place, an old `session.json` restoring.
 - [x] **4h Hidden pages rest:** the shell says which tabs are shown
       (`TabWindow.shown`); hidden page windows are `was_hidden` and paced
       down, so a stack of pages costs nothing behind the shown one.

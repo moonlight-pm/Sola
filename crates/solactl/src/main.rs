@@ -43,7 +43,7 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Browser: tabs, groups, snapshot, click/type/fill (chrome must be running).
+    /// Browser: tabs, snapshot, click/type/fill (chrome must be running).
     #[command(disable_help_flag = true)]
     Browser {
         /// Method and flags. Omit to list advertised methods.

@@ -15,14 +15,13 @@ pub const WAIT_DEFAULT_SECS: u64 = 30;
 
 pub fn methods() -> Vec<MethodSpec> {
     vec![
-        method("tabs", "List tabs (id, url, title, group, active)", &[]),
+        method("tabs", "List tabs (id, url, title, active)", &[]),
         method(
             "tab.open",
-            "Open a tab (does not focus unless --select)",
+            "Open a tab in its own window, behind (unless --select)",
             &[
                 req_s("url", Some('u'), "URL to load"),
-                opt_s("group", Some('g'), "Existing group id or name"),
-                flag("select", 's', "Focus the new tab (default: background)"),
+                flag("select", 's', "Show and focus the new tab (default: behind)"),
             ],
         ),
         method(
@@ -36,49 +35,8 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "tab.focus",
-            "Focus a tab (the only seat steal besides --select)",
+            "Show a tab's window and focus it (the only seat steal besides --select)",
             &[req_s("tab", Some('t'), "Tab id, url, or title")],
-        ),
-        method(
-            "tab.move",
-            "Move a tab into a group; omit --group to ungroup",
-            &[
-                req_s("tab", Some('t'), "Tab id, url, or title"),
-                opt_s("group", Some('g'), "Group id or name"),
-            ],
-        ),
-        method("group.list", "List tab groups", &[]),
-        method(
-            "group.create",
-            "Wrap a listed tab in a new group (ordinary pocket)",
-            &[
-                req_s("tab", Some('t'), "Tab id, url, or title"),
-                opt_s("name", Some('n'), "Group name (default: Group)"),
-            ],
-        ),
-        method(
-            "group.rename",
-            "Rename a group",
-            &[
-                req_s("group", Some('g'), "Group id or name"),
-                req_s("name", Some('n'), "New name"),
-            ],
-        ),
-        method(
-            "group.recolor",
-            "Set group pocket color (`#rrggbb`); empty clears",
-            &[
-                req_s("group", Some('g'), "Group id or name"),
-                opt_s("color", Some('c'), "Hex color; omit/empty = default well"),
-            ],
-        ),
-        method(
-            "group.collapse",
-            "Collapse or expand a group",
-            &[
-                req_s("group", Some('g'), "Group id or name"),
-                flag("collapsed", 'c', "Collapse (omit to expand)"),
-            ],
         ),
         method_ms(
             "goto",
@@ -376,12 +334,6 @@ mod tests {
             "tab.open",
             "tab.close",
             "tab.focus",
-            "tab.move",
-            "group.list",
-            "group.create",
-            "group.rename",
-            "group.recolor",
-            "group.collapse",
             "goto",
             "back",
             "forward",
@@ -404,6 +356,8 @@ mod tests {
         ] {
             assert!(names.contains(&need), "missing {need}");
         }
+        // Groups went with the tab strip (a window per page).
+        assert!(!names.iter().any(|n| n.starts_with("group.") || *n == "tab.move"));
         let open = methods.iter().find(|m| m.name == "tab.open").unwrap();
         let select = open.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));

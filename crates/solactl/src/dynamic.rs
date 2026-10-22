@@ -117,7 +117,6 @@ fn bot_browser_policy(
         "key",
         "scroll",
         "tab.close",
-        "tab.move",
     ];
     if NEED_TAB.contains(&method) {
         let tab = params.get("tab").and_then(|v| {

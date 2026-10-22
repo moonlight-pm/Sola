@@ -1,7 +1,6 @@
 //! Shared tab / profile-workspace cache policy.
 //!
-//! Active-profile tabs stay in the live strip (already hidden when not
-//! painting). Switching profiles **parks** the whole workspace (CEF browsers
+//! Active-profile pages stay live (hidden when not shown). Switching profiles **parks** the whole workspace (CEF browsers
 //! + chrome snapshot) so returning does not reload pages.
 //!
 //! Eviction is one policy for everything parked — not a special case per
@@ -15,20 +14,18 @@ use crate::engine::{TabId, TabInfo};
 /// Max profiles kept parked (not counting the one currently live).
 pub const MAX_PARKED_PROFILES: usize = 4;
 
-/// Max CEF tabs alive process-wide (live strip + all parks).
+/// Max CEF tabs alive process-wide (live pages + all parks).
 pub const MAX_TOTAL_TABS: usize = 48;
 
 /// Parked workspace idle time before it becomes eligible for eviction.
 pub const PARK_IDLE: Duration = Duration::from_secs(30 * 60);
 
-/// Chrome-side snapshot of a profile workspace (tab strip + focus).
+/// Chrome-side snapshot of a profile workspace (pages + focus).
 #[derive(Debug, Clone)]
 pub struct WorkspaceSnapshot {
     pub tabs: Vec<TabInfo>,
     pub active: TabId,
-    pub sidebar_w: f32,
     pub last_used: Instant,
-    pub groups: crate::groups::Groups,
     pub recently_closed: Vec<crate::session::ClosedTab>,
 }
 
@@ -99,9 +96,7 @@ mod tests {
                 .map(|i| TabInfo::chrome(TabId(i as u64), format!("https://x/{i}"), String::new()))
                 .collect(),
             active: TabId(0),
-            sidebar_w: 200.0,
             last_used,
-            groups: crate::groups::Groups::default(),
             recently_closed: Vec::new(),
         }
     }

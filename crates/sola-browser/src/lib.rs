@@ -12,7 +12,6 @@ pub mod cef;
 pub mod chrome_wake;
 pub mod downloads;
 pub mod engine;
-pub mod groups;
 pub mod http_auth;
 pub mod input;
 pub mod instance;

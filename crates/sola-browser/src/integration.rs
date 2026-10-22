@@ -35,7 +35,6 @@ use crate::profiles;
 pub const ACTION_NEW_TAB: &str = "new-tab";
 pub const ACTION_CLOSE_TAB: &str = "close-tab";
 pub const ACTION_REOPEN_TAB: &str = "reopen-tab";
-pub const ACTION_NEW_GROUP: &str = "new-group";
 pub const ACTION_RELOAD: &str = "reload";
 pub const ACTION_HARD_RELOAD: &str = "hard-reload";
 pub const ACTION_FOCUS_URL: &str = "focus-url";
@@ -229,8 +228,6 @@ pub enum BrowserIntent {
     NewBlankTab,
     CloseActiveTab,
     ReopenClosedTab,
-    /// Wrap the selected loose tab in a group and start renaming it (⌘⌥G).
-    NewGroup,
     Reload,
     HardReload,
     Back,
@@ -281,7 +278,6 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
         ACTION_REOPEN_TAB => BrowserIntent::ReopenClosedTab,
-        ACTION_NEW_GROUP => BrowserIntent::NewGroup,
         ACTION_FIND => BrowserIntent::Find,
         ACTION_FIND_NEXT => BrowserIntent::FindNext,
         ACTION_FIND_PREV => BrowserIntent::FindPrev,
@@ -387,7 +383,6 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             app.update(Msg::CloseTab(id))
         }
         BrowserIntent::ReopenClosedTab => app.update(Msg::ReopenClosedTab),
-        BrowserIntent::NewGroup => app.update(Msg::NewGroup),
         BrowserIntent::Find => app.update(Msg::FindOpen),
         BrowserIntent::FindNext => app.update(Msg::FindNext),
         BrowserIntent::FindPrev => app.update(Msg::FindPrev),
@@ -505,10 +500,6 @@ mod tests {
             intent_for_menu_action(ACTION_REOPEN_TAB),
             BrowserIntent::ReopenClosedTab
         );
-        assert_eq!(
-            intent_for_menu_action(ACTION_NEW_GROUP),
-            BrowserIntent::NewGroup
-        );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
         assert_eq!(
             intent_for_menu_action(ACTION_FORWARD),
@@ -548,7 +539,7 @@ mod tests {
         assert!(ids.contains(&ACTION_REOPEN_TAB));
         assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
         // Groups went with the tab strip (a window per page).
-        assert!(!ids.contains(&ACTION_NEW_GROUP));
+        assert!(!ids.contains(&"new-group"));
         assert!(ids.contains(&ACTION_HARD_RELOAD));
         assert_eq!(MENU_ITEMS[4].0, ACTION_HARD_RELOAD);
     }

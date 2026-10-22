@@ -170,7 +170,7 @@ the human's seat. A refusal exits 3 with a message naming the rule.
 - `browser` page methods need `--tab`; they never default to the focused
   tab: `snapshot`, `click`, `hover`, `type`, `fill`, `get`, `links`,
   `select`, `wait`, `screenshot`, `goto`, `back`, `forward`, `reload`,
-  `stop`, `find.page`, `find`, `key`, `scroll`, `tab.close`, `tab.move`.
+  `stop`, `find.page`, `find`, `key`, `scroll`, `tab.close`.
 - `compositor screenshot`, `sample`, and `input` are refused;
   `compositor windows` is allowed.
 
@@ -515,22 +515,16 @@ working spinner left behind.
 ## Browser (`solactl browser`)
 
 Needs the **Browser** (`sola-browser`) running (owner `browser`). Fails if
-the Browser or `sola-call` is down; it does not launch a window. The tab
-strip is the same one the human uses; an **Agent** group is an ordinary
-group that a skill may create.
+the Browser or `sola-call` is down; it does not launch a window. Each tab
+is a page with its own window, a row in the shell's tab bar, the same
+pages the human uses.
 
 ```text
 solactl browser                         # list methods
 solactl browser tabs
-solactl browser tab.open --url https://example.com [--group Agent] [--select]
+solactl browser tab.open --url https://example.com [--select]
 solactl browser tab.focus --tab 3
 solactl browser tab.close [--tab 3]
-solactl browser tab.move --tab 3 [--group Agent]      # omit --group to ungroup
-solactl browser group.list
-solactl browser group.create --tab 3 [--name Agent]
-solactl browser group.rename --group Agent --name Research
-solactl browser group.recolor --group Agent [--color '#4c8bf5']
-solactl browser group.collapse --group Agent [--collapsed]
 solactl browser goto --url https://example.com/path [--tab 3] [--select]
 solactl browser back|forward|stop [--tab 3]
 solactl browser reload [--tab 3] [--hard]
@@ -556,11 +550,9 @@ solactl browser screenshot [--tab 3] [-o PATH]
 | Short | Long | Methods |
 |---|---|---|
 | `-u` | `--url` | `tab.open`, `goto` |
-| `-g` | `--group` | `tab.open`, `tab.move`, `group.rename`, `group.recolor`, `group.collapse` |
 | `-s` | `--select` | `tab.open`, `goto` |
 | `-t` | `--tab` | every method that takes a tab |
-| `-n` | `--name` | `group.create`, `group.rename` |
-| `-c` | `--color`, `--collapsed`, `--chord` | `group.recolor`, `group.collapse`, `key` |
+| `-c` | `--chord` | `key` |
 | `-q` | `--text` | `find.page`, `find`, `wait` |
 | `-x` | `--text` | `type`, `fill`, `get` |
 | `-b` | `--back` | `find.page` |
@@ -577,13 +569,11 @@ solactl browser screenshot [--tab 3] [-o PATH]
 
 `--tab` is an id, or a unique URL or title substring. Without it, page
 methods use the focused tab, except `click`, `hover`, `type`, `fill`,
-`get`, and `select`, which use the tab of the last snapshot. `--group` is
-an id or a name. `tab.open` appends a tab and does **not** focus it unless
-you pass `--select`; `goto` does not focus either. `tab.close` never closes
-the last tab. `group.create` names the group `Group` without `--name`.
-`group.recolor` takes `#rrggbb`; an empty or omitted `--color` returns the
-group to the default color. `group.collapse` without `--collapsed`
-expands.
+`get`, and `select`, which use the tab of the last snapshot. `tab.open`
+opens the page in its own window behind the shown one in the focused zone,
+and does **not** focus it unless you pass `--select`; `goto` does not focus
+either. `tab.focus` and `--select` show the page's window and focus it.
+`tab.close` never closes the last tab.
 
 Deadlines: `snapshot`, `goto`, `click`, `hover`, `key`, `scroll`, `type`,
 `fill`, `get`, `links`, `select`, and `screenshot` 15 s; `wait` 32 s, or
@@ -644,7 +634,7 @@ writes `--path` (default `~/.cache/sola/browser/shot-<ms>.png`, under
 ### Waiting
 
 `wait` and `wait --load` return when `document.readyState` is `complete`
-on a committed URL (not when the tab-strip spinner stops). `wait --text`
+on a committed URL (not when the loading spinner stops). `wait --text`
 snapshots until that string appears. `wait --control Create` snapshots
 until that named control is in the actions list, or times out naming the
 missing control; it does not succeed just because CEF fired load.

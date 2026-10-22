@@ -41,9 +41,8 @@ Loop (always pass `--tab <id>`; never the focused tab by default):
 
 1. `solactl browser tabs` — reuse a tab if the site is already open.
 2. Else `solactl browser tab.open --url https://…` — stays in the
-   **background**. Never `--select`, never `tab.focus`. Joshua may be
-   reading another tab. Prefer `group.create --tab N --name <this bot>`
-   and `tab.move --tab N --group <this bot>`.
+   **background** (its own window, behind the shown one). Never
+   `--select`, never `tab.focus`. Joshua may be reading another tab.
 3. `solactl browser wait --control Create --tab N` (or `--text`) until
    the app is usable — `wait --load` is CEF load, not “Create exists”.
 4. `solactl browser snapshot --tab N` — **this is the page description**

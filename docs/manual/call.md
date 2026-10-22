@@ -221,7 +221,7 @@ right rail is the live catalog.
 | `session` | `sola-session` | Whole session | `launch`, `close` |
 | `bots` | `sola-botsd` | Whole session | `list`, `poll`, `new`, `send`, `transcript`, `rm`, `cancel` |
 | `workspaces` | `sola-workspaces` | While **Workspaces** is open | `ps`, `project.list`, `project.add`, `project.rm`, `project.startup`, `project.reorder`, `workspace.list`, `workspace.spawn`, `workspace.rm`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
-| `browser` | `sola-browser` | While the **Browser** is open | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `tab.move`, `group.list`, `group.create`, `group.rename`, `group.recolor`, `group.collapse`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
+| `browser` | `sola-browser` | While the **Browser** is open | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
 | `design` | `sola-design` | While **Design** is open | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 
 The compositor, session, and bots owners belong to processes the process

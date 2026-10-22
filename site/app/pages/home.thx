@@ -73,7 +73,7 @@ fn controlLines() -> Array<Line> {
     [
         Line(command: "solactl compositor windows          ", note: "# every window, by application"),
         Line(command: "solactl compositor screenshot       ", note: "# the screen, as PNG"),
-        Line(command: "solactl browser tabs                ", note: "# id, URL, title, and group of each tab"),
+        Line(command: "solactl browser tabs                ", note: "# id, URL, and title of each tab"),
         Line(command: "solactl open https://example.com    ", note: "# in Sola's browser"),
         Line(command: "claude mcp add sola -- solactl mcp  ", note: "# every live method as an MCP tool"),
     ]
@@ -126,7 +126,7 @@ fn appList() -> Array<Entry> {
         Entry(name: "Shell", detail: "Menubar with application menus and system status, launcher (Super+Space), window switcher (Super+Tab), notifications, and window zones."),
         Entry(name: "Terminal", detail: "A terminal on Alacritty's grid, with tabs."),
         Entry(name: "Workspaces", detail: "Projects and their git worktrees in a rail, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
-        Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: vertical tabs and tab groups, profiles, a Bitwarden vault, downloads, and developer tools."),
+        Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, and developer tools."),
         Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
         Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
         Entry(name: "Settings", detail: "Applications in the launcher, website wrappers, and mail and calendar accounts."),

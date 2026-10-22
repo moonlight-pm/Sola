@@ -2,6 +2,11 @@
 
 **Date:** 2026-09-11  
 **Status:** **Frozen** — call owner `browser` + snapshot/act implemented; confirm **D3**; parked-tab composite still helper-side AX (no raise); vault fill not shipped; agent viewport not locked  
+**Superseded in part (2026-10-21, branch `next`):** a window per page
+([Next tab bar](2026-10-21-next-tab-bar-design.md)) removed the tab strip,
+tab groups, `group.*` and `tab.move`; `tab.open` opens a window behind,
+`tab.focus` / `--select` show and focus it. The rows on the strip and
+groups below describe master.  
 **Related:** [call plane](2026-08-13-sola-call-plane-design.md); [Workspaces CLI](2026-08-18-workspaces-cli-design.md); [tab groups](2026-08-15-sola-browser-tab-groups-design.md); **D3** in [open-questions](../open-questions.md)
 
 | | |

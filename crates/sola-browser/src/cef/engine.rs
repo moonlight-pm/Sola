@@ -425,8 +425,8 @@ struct CefThreadState {
     devtools_jobs: Arc<Mutex<Vec<DevToolsOpenJob>>>,
     frames: FrameReceiver<CefFrame>,
     cmd_rx: RefCell<Option<Receiver<Cmd<CefEngine>>>>,
-    /// Live tabs. Ordering is presentation order in the tab strip
-    /// (iced chrome controls insert/remove positions).
+    /// Live tabs, in the chrome's page order (it controls insert/remove
+    /// positions).
     tabs: RefCell<Vec<CefTabState>>,
     /// Active tab id, also mirrored in `active_atomic` for the
     /// iced subscription's frame filter.
@@ -435,8 +435,8 @@ struct CefThreadState {
     /// active one (a window per page addresses each page's commands).
     target: Cell<Option<TabId>>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    /// Snapshot of `tabs` (id/url/title) — shared with iced for
-    /// rendering the tab strip + URL bar.
+    /// Snapshot of `tabs` (id/url/title) — shared with iced for the
+    /// window titles and URL bar.
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     /// Shared mirror of `active` for the iced side.
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
@@ -5500,9 +5500,7 @@ fn cef_evict_parks(state: &CefThreadState) {
                         .map(|i| TabInfo::chrome(TabId(i as u64), String::new(), String::new()))
                         .collect(),
                     active: TabId(0),
-                    sidebar_w: 0.0,
                     last_used: p.last_used,
-                    groups: crate::groups::Groups::default(),
                     recently_closed: Vec::new(),
                 },
             );

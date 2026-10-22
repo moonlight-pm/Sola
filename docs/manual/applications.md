@@ -15,7 +15,7 @@ do and what it lacks. Applications that offer methods on the
 |-------------|--------|------------|-------|
 | Terminal | `sola-terminal` | A terminal on Alacritty's grid, with tabs | — |
 | Workspaces | `sola-workspaces` | Projects and their git worktrees in a rail, each with terminal panes; shows whether the coding agent in a pane (Claude Code, Codex, Grok) is working, waiting, or done. Call owner `workspaces`. | [solactl](solactl.md#workspaces-solactl-workspaces) |
-| Browser | `sola-browser` | Chromium's engine (CEF) under Sola's own chrome: vertical tabs and groups, profiles, a Bitwarden vault, downloads, developer tools. The default for web links. Call owner `browser`. | [notes](sola-browser.md) |
+| Browser | `sola-browser` | Chromium's engine (CEF) under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, developer tools. The default for web links. Call owner `browser`. | [notes](sola-browser.md) |
 | Mail | `sola-mail` | IMAP and SMTP for several accounts, with drafts and attachments | [notes](sola-mail.md) |
 | Calendar | `sola-calendar` | Month, week, and day views of local, Google, iCloud, CalDAV, and ICS calendars, with reminders | [notes](sola-calendar.md) |
 | Settings | `sola-settings` | Applications in the launcher (website wrappers included), and mail and calendar accounts | — |

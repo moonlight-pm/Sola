@@ -252,7 +252,7 @@ pub enum Cmd<E: Engine> {
     /// tab so a parked profile stops compositing (and stops sending frames).
     SetFront(bool),
     Nav(NavCmd),
-    /// `title` seeds the tab strip before WebKit reports one (session restore).
+    /// `title` names the page's window before CEF reports one (session restore).
     OpenTab {
         id: TabId,
         url: String,

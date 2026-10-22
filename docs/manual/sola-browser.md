@@ -87,75 +87,44 @@ again). Closed tabs stay closed across a restart; `⌘⇧T` reopens them.
 
 ### Switching profiles
 
-Switching profiles is **instant** in the **same window**. The shell still
-shows one **Browser** app. Each profile keeps its own CEF cookie store in
-a headless engine process (no extra switcher entries). The tab strip and
-location bar update immediately; the page area blanks until the new
+Switching profiles is **instant**. The shell still shows one **Browser**
+app. Each profile keeps its own CEF cookie store in a headless engine
+process (no extra switcher entries). The location bar updates
+immediately; the page area blanks until the new
 profile's tab paints (it does not keep showing the previous identity). A
 tab you have already opened this session appears instantly; one that has
 not painted yet stays blank until it does. Switching back restores the
-parked helper's live tabs; they do not reload. Closing the window quits
-the browser and those helpers. Tabs restore from `session.json`.
+parked helper's live tabs; they do not reload. Closing the last page
+window quits the browser and those helpers. Tabs restore from
+`session.json`.
 
-The **profile name** sits at the left of the full-width top bar (aligned
-with the tab column). Each profile has a small enamel mark; the menu hangs
-under the name as a darker card. Click to switch. New, rename, and delete
-stay under **Menubar → Profiles**.
+Switch, create, rename, and delete profiles under **Menubar → Profiles**.
 
 **Cold start** with an empty session opens a single **blank** tab.
 
 ## Tabs
 
-The left strip is the tab list (`⌘T` for a new blank tab). Each row has a
-**16px site icon** (the page favicon; a quiet globe until it arrives;
-empty on a blank tab). **Drag a row** to reorder; a click (no drag) still
-selects. Titles fill the column and ellipsize at the edge (they grow if
-you widen the strip). Close removes the row immediately, with no flash
-back. Closing the tab you are looking at selects the neighbor to the
-right (or the left if it was last). The last tab is replaced by a blank
-rather than closing the window.
+Each tab is a **page with its own window**: a row in the shell's tab bar
+like any other window. The browser has no tab strip of its own and no tab
+groups. The page window you are in is the active page and carries the
+whole top bar (location bar, find, menus, DevTools, vault, downloads).
+Another page window on screen shows its page live under a read-only
+address bar; click into it to make it the active page. Pages stacked
+behind the shown one in a zone rest until shown.
 
-`⌘⇧T` (Browser → **Reopen Closed Tab**) restores the most recently closed
-tab; press it again for the one before that. The stack is per profile, up
-to 25, and is saved in `session.json`. The order of open tabs is saved
-there too.
+`⌘T` opens a blank page window in the focused zone. `⌘W` closes the page
+and its window; closing the last page window quits the browser.
 
-`⌘T` and links from other apps (`xdg-open`, `solactl open`) always make a
-**loose** tab at the **bottom** of the strip. `⌘`-click inserts a
-background tab under the current one. A page `window.open` (database
-consoles, SSH terminals, and similar) or a `target=_blank` link opens a
-**new tab** under the current one and switches to it; there is no
-separate popup window.
+`⌘⇧T` (Browser → **Reopen Closed Tab**) reopens the most recently closed
+page in a new window; press it again for the one before that. The stack is
+per profile, up to 25, and is saved in `session.json`. The open pages are
+saved there too, each with a stable id, so every page window keeps its
+place in the tab bar across restarts.
 
-The current tab is a quiet lift of the column or pocket, with a 1px lip.
-
-### Groups
-
-**Groups** are named folders in the strip; they sit among loose tabs.
-Each group is a quiet pocket with a hairline rim; members sit flush under
-the header. A hair of air between pockets stays put while you drag.
-Hovering members or the floor of a pocket grows that well by one row.
-Dropping on a group **title** is ignored (the tab returns). Dragging the
-**header** moves the whole pocket. Taking a tab out shrinks the well.
-Loose tabs stay in one run underneath.
-
-`⌘⌥G` (Browser → **New Group**) wraps the **selected loose tab** in a new
-group, focuses the name, and selects `Group` (then `Group 2`, …) so the
-next keystroke replaces it. Enter keeps it; Esc reverts. The chord does
-nothing when the current tab is already in a group.
-
-Hover a group header for a **pencil** to rename it later. Rename also
-shows a **color chip** (an ink ring on the pocket fill) and a **check** to
-save (Enter still works if the name is focused). Click the chip to open or
-close the color picker (it sits beside the check). The color is saved with
-the session. Titles on light fills are black and a step heavier so they
-match loose-tab type. Esc reverts the name.
-
-Click the header to collapse a group; the page stays if you were on a tab
-inside. Drag a loose tab into a group to join it; drag a member into the
-loose run to leave. Empty groups disappear.
-
-The strip has no right-click menu. There are no nested groups or spaces.
+Links from other apps (`xdg-open`, `solactl open`) open a new page window.
+`⌘`-click opens a page window behind the current one. A page
+`window.open` (database consoles, SSH terminals, and similar) or a
+`target=_blank` link opens a page window in front, focused.
 
 ## Location bar
 
@@ -377,8 +346,8 @@ In-page **Copy** buttons (`navigator.clipboard.writeText` and
 copied text are kept. Triple-click selects a line or field the way
 Chromium expects. The location bar and vault fields stay text-only.
 
-`⌘`-click (or Ctrl-click) a link to open it in a **background tab** just
-below the current tab (in the same group, if the current tab is in one).
+`⌘`-click (or Ctrl-click) a link to open it in a **page window behind**
+the current one.
 A right-click on the page opens a small kit menu (open and copy link;
 cut, copy, and paste when editing; back, forward, and reload) instead of
 Chromium's empty off-screen popup. Click back or forward to go one step;

@@ -10,34 +10,25 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    Shader, Space, button, column, container, image, mouse_area, row, scrollable, stack, text,
+    Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
 };
-use iced::{
-    Alignment, ContentFit, Element, Event, Length, Padding, Subscription, Task, event, keyboard,
-    mouse,
-};
+use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::badge::{self, Tone as BadgeTone};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
-use sola_kit::components::color_picker;
-use sola_kit::components::sidebar::{self, Event as SidebarEvent};
 use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
-use sola_kit::components::{
-    ColorPicker, DividerColors, MenuItem, SidebarDensity, SidebarItem, SidebarPanel,
-    SidebarSection, SidebarState, field, group_well_fill, horizontal_divider, menu_at,
-};
+use sola_kit::components::{DividerColors, MenuItem, field, horizontal_divider, menu_at};
 
 use crate::engine::{
     Cmd, EditCmd, Engine, FrameSlot, NavCmd, PageContext, PageMenusHandle, TabId, TabInfo,
     TabsHandle,
 };
-use crate::groups::Groups;
 use crate::page_menu::{self, PageMenuKind};
-use crate::session::{self, SessionGroup, SessionTab};
+use crate::session::{self, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
     CustomDraft, ItemDraft, ItemFilter, ItemKind, ItemRecord, ItemSummary, MatchSummary,
@@ -60,13 +51,13 @@ pub const CHROME_HEIGHT: f32 = 46.0;
 const NAV_BTN_W: f32 = 34.0;
 
 /// Left/right padding so the history tray matches the location field.
-/// Mirrors `view_chrome_bar`: pad + profile + divider + 4 nav buttons
-/// before the omnibox, vault + downloads after.
-fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
+/// Mirrors `view_chrome_bar`: pad + 4 nav buttons before the omnibox,
+/// vault + downloads after.
+fn omnibox_tray_insets() -> (f32, f32) {
     use sola_kit::components::style::{SPACE_MD, SPACE_SM};
     let pad = SPACE_MD;
     let gap = SPACE_SM;
-    let left = pad + sidebar_w + NAV_BTN_W * 4.0 + gap * 4.0;
+    let left = pad + NAV_BTN_W * 4.0 + gap * 4.0;
     let vault = if cfg!(feature = "bitwarden") {
         NAV_BTN_W
     } else {
@@ -77,11 +68,6 @@ fn omnibox_tray_insets(sidebar_w: f32) -> (f32, f32) {
 }
 /// How long the copy-URL glyph stays on the check after a successful copy.
 const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
-/// Tab sidebar width (logical px) — the value the draggable divider
-/// edits, clamped to `[MIN, MAX]`.
-pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
-pub const SIDEBAR_W_MIN: f32 = 120.0;
-pub const SIDEBAR_W_MAX: f32 = 420.0;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -113,7 +99,6 @@ pub enum Msg {
     CloseTab(TabId),
     /// ⌘⇧T — pop the recently-closed stack.
     ReopenClosedTab,
-    ActivateTab(TabId),
     /// Drain helper queues (tabs, downloads, copy, menus, vault). Fired
     /// by [`crate::chrome_wake`] or a short-lived 250 ms timer (copy-URL
     /// flash / TOTP / fill wait) — never as an idle vsync pump.
@@ -123,28 +108,11 @@ pub enum Msg {
     Bus(Arc<sola_bus::Message>),
     /// `solactl browser` invoke.
     Call(sola_call::Incoming),
-    /// Kit sidebar gesture. Forward into [`SidebarState::update`].
-    Sidebar(sidebar::Msg),
-
-    /// Global cursor moved (nav-hold / leftover chrome). Sidebar gestures
-    /// do not use this.
+    /// Global cursor moved (nav-hold, the DevTools divider).
     CursorMoved(f32, f32),
-    /// Global left-button released — ends a nav-hold, not a sidebar drag.
+    /// Global left-button released — ends a nav-hold or a divider drag.
     CursorReleased,
-    ToggleGroup(String),
     MenuDismiss,
-    /// ⌘G: wrap the selected loose tab in a group and start renaming.
-    NewGroup,
-    /// Hover pencil on a group header.
-    RenameGroup(String),
-    /// Second tick after the rename field is mounted: select the name.
-    RenameSelectAll,
-    RenameInput(String),
-    RenameCommit,
-    /// Toggle the edit-mode group color picker.
-    GroupColor(String),
-    GroupColorMsg(color_picker::Message),
-    GroupColorDismiss,
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
@@ -513,20 +481,12 @@ pub struct App<E: Engine> {
     /// so we only overwrite on actual change.
     pub last_seen_url: String,
     /// Active iced theme, refreshed live from `Topic::Theme` so the
-    /// chrome (tab strip, URL bar, buttons) tracks the system theme.
+    /// chrome (URL bar, buttons) tracks the system theme.
     pub theme: iced::Theme,
-    /// Tab sidebar width; edited by the draggable divider.
-    pub sidebar_w: f32,
-    /// Kit-owned hover / drag / animation.
-    sidebar: SidebarState,
-    pub(crate) groups: Groups,
     pub(crate) agent: crate::agent::AgentState,
     context_menu: Option<(iced::Point, CtxTarget)>,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
-    renaming: Option<(String, String)>,
-    /// Color picker anchored to the edit-mode group swatch.
-    group_color: Option<(String, ColorPicker)>,
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
@@ -556,7 +516,7 @@ pub struct App<E: Engine> {
     /// Last written session fingerprint — skip disk when unchanged.
     session_fp: String,
     /// Tabs to open after the iced Wayland window exists (session restore).
-    pending_session: Option<(Vec<SessionTab>, usize, Vec<SessionGroup>)>,
+    pending_session: Option<(Vec<SessionTab>, usize)>,
     /// Bitwarden vault worker + login panel state.
     #[cfg(feature = "bitwarden")]
     vault: VaultHandle,
@@ -677,11 +637,6 @@ pub struct App<E: Engine> {
     devtools_dragging: bool,
     /// Logical window height for divider drag.
     window_h: f32,
-    /// Live tab favicons (CEF PNG → iced handle).
-    pub(crate) favicons: HashMap<TabId, iced::widget::image::Handle>,
-    /// Parked favicons per profile so a switch does not wait for CEF.
-    favicon_park: HashMap<String, HashMap<TabId, iced::widget::image::Handle>>,
-    globe: iced::widget::svg::Handle,
 }
 
 impl<E: Engine> App<E> {
@@ -699,8 +654,6 @@ impl<E: Engine> App<E> {
         app_id: &'static str,
         tabs: Vec<SessionTab>,
         active_index: usize,
-        sidebar_w: f32,
-        session_groups: Vec<SessionGroup>,
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
@@ -724,15 +677,10 @@ impl<E: Engine> App<E> {
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
-            sidebar_w,
-            sidebar: SidebarState::new(),
-            groups: Groups::default(),
             agent: crate::agent::AgentState::default(),
             context_menu: None,
             nav_hold: None,
             page_menus,
-            renaming: None,
-            group_color: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
             app_id,
@@ -748,7 +696,7 @@ impl<E: Engine> App<E> {
             find_ordinal: 0,
             find_field_focused: false,
             session_fp: String::new(),
-            pending_session: Some((tabs, active_index, session_groups)),
+            pending_session: Some((tabs, active_index)),
             #[cfg(feature = "bitwarden")]
             vault: VaultHandle::spawn(),
             #[cfg(feature = "bitwarden")]
@@ -844,9 +792,6 @@ impl<E: Engine> App<E> {
             devtools_ratio: 0.62,
             devtools_dragging: false,
             window_h: VIEW_H as f32,
-            favicons: HashMap::new(),
-            favicon_park: HashMap::new(),
-            globe: icon_handle("lucide/globe"),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -858,7 +803,7 @@ impl<E: Engine> App<E> {
         let seed: Vec<(String, String)> = app
             .pending_session
             .as_ref()
-            .map(|(tabs, _, _)| {
+            .map(|(tabs, _)| {
                 let mut v = Vec::new();
                 for tab in tabs {
                     for h in tab.history.iter().rev() {
@@ -948,8 +893,6 @@ impl<E: Engine> App<E> {
         let _ = self.cmd_tx.send(Cmd::CloseTab(id));
         self.closed_tabs.insert(id);
         self.cached_tabs.retain(|t| t.id != id);
-        self.groups.on_tab_closed(id);
-        self.favicons.remove(&id);
     }
 
     fn navigate_to(&mut self, url: String) -> Task<Msg> {
@@ -1331,12 +1274,7 @@ impl<E: Engine> App<E> {
     /// Clear compositor env so WebKit child processes cannot open a Wayland
     /// window. Safe after iced has already connected (WindowReady).
     /// Open restored tabs in order and focus `active_index`.
-    fn bootstrap_tabs(
-        &mut self,
-        tabs: Vec<SessionTab>,
-        active_index: usize,
-        session_groups: Vec<SessionGroup>,
-    ) {
+    fn bootstrap_tabs(&mut self, tabs: Vec<SessionTab>, active_index: usize) {
         debug_assert!(!tabs.is_empty(), "bootstrap always has ≥1 tab");
         let session_tabs = tabs;
         let mut ids = Vec::with_capacity(session_tabs.len());
@@ -1349,7 +1287,7 @@ impl<E: Engine> App<E> {
             } else {
                 url
             };
-            // Optimistic chrome snapshot so the strip isn't empty for a tick.
+            // Optimistic chrome snapshot so the window has a title at once.
             // Title from session is kept until WebKit reports a non-empty one.
             let title = if url == BLANK_URL && tab.title.is_empty() {
                 "New Tab".to_string()
@@ -1374,8 +1312,6 @@ impl<E: Engine> App<E> {
             .or_else(|| ids.first().copied())
             .unwrap_or(TabId(0));
         self.switch_active_tab(active);
-        self.groups = Groups::restore(&session_tabs, &ids, &session_groups);
-        self.groups.normalize(&mut self.cached_tabs);
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
             self.url_field = if info.url == BLANK_URL {
                 String::new()
@@ -1458,14 +1394,10 @@ impl<E: Engine> App<E> {
                 WorkspaceSnapshot {
                     tabs: self.cached_tabs.clone(),
                     active: self.cached_active,
-                    sidebar_w: self.sidebar_w,
                     last_used: Instant::now(),
-                    groups: self.groups.clone(),
                     recently_closed: self.recently_closed.clone(),
                 },
             );
-            let parked = std::mem::take(&mut self.favicons);
-            self.favicon_park.insert(park_as_profile_id.clone(), parked);
         }
 
         self.engine_tabs_seen = false;
@@ -1481,12 +1413,9 @@ impl<E: Engine> App<E> {
         if !force_cold {
             if let Some(snap) = self.workspace_cache.remove(&resume_id) {
                 let active = snap.active;
-                self.sidebar_w = snap.sidebar_w;
                 self.cached_tabs = snap.tabs;
                 self.cached_active = active;
-                self.groups = snap.groups;
                 self.recently_closed = snap.recently_closed;
-                self.favicons = self.favicon_park.remove(&resume_id).unwrap_or_default();
                 self.apply_workspace_chrome_focus();
                 // Helper already has these browsers. Pass the parked list
                 // only as a fallback if the helper was evicted/died.
@@ -1516,7 +1445,6 @@ impl<E: Engine> App<E> {
             }
         }
 
-        self.favicons.clear();
         let (create_tabs, active) = self.cold_workspace_from_session();
         let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
             park_as_profile_id,
@@ -1534,10 +1462,8 @@ impl<E: Engine> App<E> {
 
     fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
         let session = crate::session::BrowserSession::load();
-        let session_groups = session.groups.clone();
         self.recently_closed = session.closed.clone();
-        let (tabs, active_index, sidebar_w) = session.bootstrap(None, BLANK_URL);
-        self.sidebar_w = sidebar_w;
+        let (tabs, active_index) = session.bootstrap(None, BLANK_URL);
 
         let mut new_cached = Vec::with_capacity(tabs.len().max(1));
         let mut open_list = Vec::with_capacity(tabs.len().max(1));
@@ -1576,9 +1502,6 @@ impl<E: Engine> App<E> {
 
         self.cached_tabs = new_cached;
         self.cached_active = active;
-        let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
-        self.groups = Groups::restore(&tabs, &ids, &session_groups);
-        self.groups.normalize(&mut self.cached_tabs);
         self.apply_workspace_chrome_focus();
         (open_list, active)
     }
@@ -1617,7 +1540,6 @@ impl<E: Engine> App<E> {
                     self.slot().forget_tab(t.id);
                 }
             }
-            self.favicon_park.remove(&id);
             let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
                 profile_id: id.clone(),
             });
@@ -1724,8 +1646,6 @@ impl<E: Engine> App<E> {
         let session = session::session_from_tabs(
             &tabs,
             active,
-            self.sidebar_w,
-            &self.groups,
             &self.recently_closed,
             &self.page_ids,
         );
@@ -1735,30 +1655,6 @@ impl<E: Engine> App<E> {
         }
         session.save();
         self.session_fp = fp;
-    }
-
-    fn on_sidebar_event(&mut self, ev: SidebarEvent) {
-        match ev {
-            SidebarEvent::Activate { id } => {
-                if let Ok(n) = id.parse::<u64>() {
-                    self.switch_active_tab(TabId(n));
-                    self.persist_session();
-                }
-            }
-            SidebarEvent::ToggleSection { id } => {
-                self.groups.toggle(&id);
-                self.persist_session();
-            }
-            SidebarEvent::Resize { width } => {
-                self.sidebar_w = width;
-                self.persist_session();
-            }
-            SidebarEvent::Drop(drop) => {
-                self.groups.apply_kit_drop(&mut self.cached_tabs, &drop);
-                self.persist_session();
-            }
-            SidebarEvent::Edit { .. } => {}
-        }
     }
 
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
@@ -1847,8 +1743,8 @@ impl<E: Engine> App<E> {
             Msg::WindowReady(id) => {
                 self.window_id = id;
                 // Iced is connected; open restored tabs now.
-                if let Some((tabs, active_index, groups)) = self.pending_session.take() {
-                    self.bootstrap_tabs(tabs, active_index, groups);
+                if let Some((tabs, active_index)) = self.pending_session.take() {
+                    self.bootstrap_tabs(tabs, active_index);
                 }
                 return Task::none();
             }
@@ -2494,10 +2390,6 @@ impl<E: Engine> App<E> {
                     };
                     return crate::integration::unfocus_chrome();
                 }
-                if self.renaming.is_some() {
-                    self.clear_group_rename();
-                    return crate::integration::unfocus_chrome();
-                }
                 if self.context_menu.is_some() {
                     self.context_menu = None;
                     return Task::none();
@@ -2598,16 +2490,10 @@ impl<E: Engine> App<E> {
                 // and Tick cannot paint the row again.
                 self.closed_tabs.insert(id);
                 self.cached_tabs.retain(|t| t.id != id);
-                self.groups.on_tab_closed(id);
-                self.favicons.remove(&id);
                 self.persist_session();
             }
             Msg::ReopenClosedTab => {
                 self.reopen_closed_tab();
-            }
-            Msg::ActivateTab(id) => {
-                self.switch_active_tab(id);
-                self.persist_session();
             }
             Msg::Call(inc) => return self.on_call(inc),
             Msg::Tick => {
@@ -2686,14 +2572,9 @@ impl<E: Engine> App<E> {
                         merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs);
                     self.closed_tabs
                         .retain(|id| live.iter().any(|t| t.id == *id));
-                    let new_popups = place_engine_popup_tabs(
-                        &mut self.groups,
-                        &mut self.cached_tabs,
-                        &prev_ids,
-                        opener,
-                    );
+                    let new_popups =
+                        place_engine_popup_tabs(&mut self.cached_tabs, &prev_ids, opener);
                     if !new_popups.is_empty() {
-                        self.groups.normalize(&mut self.cached_tabs);
                         let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
                         let focus = new_popups
                             .iter()
@@ -2846,13 +2727,6 @@ impl<E: Engine> App<E> {
                 self.windows.update(&message);
                 return crate::integration::handle_bus(self, message, self.app_id);
             }
-            Msg::Sidebar(m) => {
-                if let Some(ev) = self.sidebar.update(m) {
-                    self.on_sidebar_event(ev);
-                }
-                DIVIDER_DRAGGING.store(self.sidebar.resizing(), Ordering::Relaxed);
-                REORDER_TRACKING.store(self.sidebar.capturing(), Ordering::Relaxed);
-            }
             Msg::CursorMoved(_x, y) => {
                 if self.devtools_dragging {
                     let h = (self.window_h - CHROME_HEIGHT).max(120.0);
@@ -2862,74 +2736,13 @@ impl<E: Engine> App<E> {
             Msg::CursorReleased => {
                 if self.devtools_dragging {
                     self.devtools_dragging = false;
-                    if !self.sidebar.resizing() {
-                        DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
-                    }
+                    DIVIDER_DRAGGING.store(false, Ordering::Relaxed);
                 }
                 return self.finish_nav_hold();
-            }
-            Msg::ToggleGroup(id) => {
-                self.groups.toggle(&id);
-                self.persist_session();
             }
             Msg::MenuDismiss => {
                 self.context_menu = None;
                 self.nav_hold = None;
-            }
-            Msg::NewGroup => {
-                self.context_menu = None;
-                return self.new_group_from_active();
-            }
-            Msg::RenameGroup(id) => {
-                self.context_menu = None;
-                return self.begin_group_rename(id);
-            }
-            Msg::RenameSelectAll => {
-                if self.renaming.is_none() {
-                    return Task::none();
-                }
-                return iced::advanced::widget::operate(
-                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                        group_rename_id(),
-                    ),
-                );
-            }
-            Msg::RenameInput(s) => {
-                if let Some((_, draft)) = &mut self.renaming {
-                    *draft = s;
-                }
-            }
-            Msg::RenameCommit => {
-                if let Some((id, name)) = self.take_group_rename() {
-                    self.groups.rename(&id, name);
-                    self.persist_session();
-                    return crate::integration::unfocus_chrome();
-                }
-            }
-            Msg::GroupColor(id) => {
-                if self.group_color.as_ref().is_some_and(|(gid, _)| gid == &id) {
-                    self.group_color = None;
-                } else {
-                    let seed = self
-                        .groups
-                        .group(&id)
-                        .and_then(|g| g.color.as_deref())
-                        .and_then(sola_kit::theme::try_parse)
-                        .unwrap_or_else(group_well_fill);
-                    self.group_color = Some((id, ColorPicker::new(seed)));
-                }
-            }
-            Msg::GroupColorMsg(m) => {
-                if let Some((gid, picker)) = &mut self.group_color {
-                    picker.update(m);
-                    let hex = persist_group_color(picker.color());
-                    let gid = gid.clone();
-                    self.groups.set_color(&gid, hex);
-                    self.persist_session();
-                }
-            }
-            Msg::GroupColorDismiss => {
-                self.group_color = None;
             }
             Msg::WebViewFocused => {
                 // Page took the click: drop iced chrome focus so keys go to
@@ -3185,7 +2998,6 @@ impl<E: Engine> App<E> {
                 tab.url.clone()
             },
             title: tab.title.clone(),
-            group_id: self.groups.of_tab(id).map(str::to_string),
             index,
             history: tab
                 .history
@@ -3225,7 +3037,6 @@ impl<E: Engine> App<E> {
             },
             url: url.clone(),
             title: title.clone(),
-            group_id: closed.group_id.clone(),
             history: closed.history,
             history_index: closed.history_index,
         };
@@ -3239,79 +3050,25 @@ impl<E: Engine> App<E> {
         };
         let idx = closed.index.min(self.cached_tabs.len());
         self.cached_tabs.insert(idx, info);
-        if let Some(gid) = closed.group_id.as_deref() {
-            self.groups.add_to(id, gid);
-        }
-        self.groups.normalize(&mut self.cached_tabs);
         let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
         self.switch_active_tab(id);
         self.persist_session();
         tracing::info!(id = id.0, "reopened closed tab");
     }
 
-    /// ⌘G: wrap the selected tab if it is loose. No-op when the current
-    /// tab is already in a group (or the strip is empty).
-    fn new_group_from_active(&mut self) -> Task<Msg> {
-        let id = self.cached_active;
-        if self.groups.of_tab(id).is_some() {
-            return Task::none();
-        }
-        if !self.cached_tabs.iter().any(|t| t.id == id) {
-            return Task::none();
-        }
-        let gid = self.groups.new_group(id);
-        self.groups.normalize(&mut self.cached_tabs);
-        self.persist_session();
-        self.begin_group_rename(gid)
-    }
-
-    fn begin_group_rename(&mut self, id: String) -> Task<Msg> {
-        let name = self
-            .groups
-            .group(&id)
-            .map(|g| g.name.clone())
-            .unwrap_or_default();
-        self.renaming = Some((id, name));
-        self.group_color = None;
-        GROUP_RENAMING.store(true, Ordering::Relaxed);
-        self.set_url_bar_focused(false);
-        // Drop CEF host focus so keys land in iced, not the page.
-        let _ = self.cmd_tx.send(Cmd::Focus(false));
-        // `State::focus` parks the caret at the end; select-all on the
-        // next tick (after the field is mounted and focused).
-        Task::batch([
-            iced::widget::operation::focus(group_rename_id()),
-            Task::done(Msg::RenameSelectAll),
-        ])
-    }
-
-    fn clear_group_rename(&mut self) {
-        self.renaming = None;
-        self.group_color = None;
-        GROUP_RENAMING.store(false, Ordering::Relaxed);
-    }
-
-    fn take_group_rename(&mut self) -> Option<(String, String)> {
-        let value = self.renaming.take();
-        self.group_color = None;
-        GROUP_RENAMING.store(false, Ordering::Relaxed);
-        value
-    }
-
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
     /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
-    /// `integration::run_intent`. Always loose, at the bottom of the strip.
-    pub fn open_tab(&mut self, url: String, activate: bool) {
-        self.mint_tab(url, activate, false);
+    /// `integration::run_intent`. Last in the page list.
+    pub fn open_tab(&mut self, url: String, activate: bool) -> TabId {
+        self.mint_tab(url, activate, false)
     }
 
-    /// ⌘-click background tab: insert immediately under the current tab
-    /// (same group if the current tab is in one).
-    pub fn open_tab_beside(&mut self, url: String, activate: bool) {
-        self.mint_tab(url, activate, true);
+    /// ⌘-click or `target=_blank`: next to the current tab in the page list.
+    pub fn open_tab_beside(&mut self, url: String, activate: bool) -> TabId {
+        self.mint_tab(url, activate, true)
     }
 
-    fn mint_tab(&mut self, url: String, activate: bool, beside: bool) {
+    fn mint_tab(&mut self, url: String, activate: bool, beside: bool) -> TabId {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
         let title = if url == BLANK_URL {
@@ -3324,10 +3081,9 @@ impl<E: Engine> App<E> {
             ..TabInfo::chrome(id, url.clone(), title.clone())
         };
         if beside {
-            self.groups
-                .insert_beside(&mut self.cached_tabs, self.cached_active, info);
+            insert_beside(&mut self.cached_tabs, self.cached_active, info);
         } else {
-            self.groups.append_loose(&mut self.cached_tabs, info);
+            self.cached_tabs.push(info);
         }
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
@@ -3338,6 +3094,7 @@ impl<E: Engine> App<E> {
             self.switch_active_tab(id);
         }
         self.persist_session();
+        id
     }
 
     pub fn active_is_loading(&self) -> bool {
@@ -3685,144 +3442,13 @@ impl<E: Engine> App<E> {
         }
     }
 
+    /// Page favicons were for the tab strip; with a window per page nothing
+    /// shows them yet, so they are dropped as they arrive.
     fn drain_favicons(&mut self) {
-        let evs: Vec<crate::engine::FaviconIpc> = self
-            .engine
-            .favicons_handle()
-            .lock()
-            .unwrap()
-            .drain(..)
-            .collect();
-        for ev in evs {
-            if ev.png.is_empty() {
-                self.favicons.remove(&ev.tab_id);
-            } else {
-                self.favicons
-                    .insert(ev.tab_id, iced::widget::image::Handle::from_bytes(ev.png));
-            }
-        }
+        self.engine.favicons_handle().lock().unwrap().clear();
     }
 
-    fn tab_leading(&self, tab: &TabInfo) -> Element<'_, Msg> {
-        if let Some(handle) = self.favicons.get(&tab.id) {
-            image(handle.clone())
-                .width(Length::Fixed(16.0))
-                .height(Length::Fixed(16.0))
-                .content_fit(ContentFit::Contain)
-                .border_radius(2.0)
-                .into()
-        } else if crate::util::tab_url_has_site_icon(&tab.url) {
-            icon_svg_colored(self.globe.clone(), 14, {
-                let t = self.theme.extended_palette().background.base.text;
-                iced::Color { a: 0.42, ..t }
-            })
-        } else {
-            Space::new().width(16).height(16).into()
-        }
-    }
-
-    /// Left vertical tab column. Profile switch lives in the full-width
-    /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
-    pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
-        let active_id = {
-            let paint = self.slot().paint_tab.load(Ordering::Relaxed);
-            if paint != u64::MAX {
-                TabId(paint)
-            } else {
-                self.cached_active
-            }
-        };
-        let mk_tab = |t: &TabInfo| {
-            let label = crate::util::tab_strip_label(&t.title, &t.url, self.sidebar_w);
-            SidebarItem::new(label, Msg::ActivateTab(t.id))
-                .active(t.id == active_id)
-                .on_close(Msg::CloseTab(t.id))
-                .id(t.id.0.to_string())
-                .leading(self.tab_leading(t))
-        };
-        let mut sections: Vec<SidebarSection<'_, Msg>> = Vec::new();
-        let mut i = 0usize;
-        let tabs = &self.cached_tabs;
-        while i < tabs.len() {
-            if let Some(gid) = self.groups.of_tab(tabs[i].id).map(str::to_string) {
-                let g = match self.groups.group(&gid) {
-                    Some(g) => g,
-                    None => {
-                        i += 1;
-                        continue;
-                    }
-                };
-                let members: Vec<SidebarItem<'_, Msg>> = tabs
-                    .iter()
-                    .filter(|t| self.groups.of_tab(t.id) == Some(gid.as_str()))
-                    .map(&mk_tab)
-                    .collect();
-                let n = members.len();
-                let header_active =
-                    g.collapsed && self.groups.of_tab(active_id).is_some_and(|id| id == gid);
-                let mut section = SidebarSection::new(g.name.clone(), members)
-                    .id(g.id.clone())
-                    .collapsible(g.collapsed, Msg::ToggleGroup(g.id.clone()))
-                    .header_active(header_active)
-                    .header_count(n)
-                    .color(g.color.as_deref().and_then(sola_kit::theme::try_parse));
-                let renaming_this = self.renaming.as_ref().is_some_and(|(rid, _)| rid == &g.id);
-                if renaming_this {
-                    let draft = self
-                        .renaming
-                        .as_ref()
-                        .map(|(_, d)| d.as_str())
-                        .unwrap_or("");
-                    let field = text_input("Group name", draft)
-                        .id(group_rename_id())
-                        .size(12)
-                        .font(sola_kit::fonts::ui_medium())
-                        .line_height(iced::widget::text::LineHeight::Relative(1.2))
-                        .on_input(Msg::RenameInput)
-                        .on_submit(Msg::RenameCommit)
-                        .style(sola_kit::components::text_input::style)
-                        .padding(Padding::from([1, 4]))
-                        .width(Length::Fill);
-                    section = section
-                        .header_content(field)
-                        .header_color(Msg::GroupColor(g.id.clone()))
-                        .header_commit(Msg::RenameCommit);
-                    if let Some((pid, picker)) = &self.group_color {
-                        if pid == &g.id {
-                            section = section.header_color_picker(
-                                picker.view().map(Msg::GroupColorMsg),
-                                Msg::GroupColorDismiss,
-                            );
-                        }
-                    }
-                } else {
-                    section = section.header_edit(Msg::RenameGroup(g.id.clone()));
-                }
-                sections.push(section);
-                while i < tabs.len() && self.groups.of_tab(tabs[i].id) == Some(gid.as_str()) {
-                    i += 1;
-                }
-            } else {
-                let mut loose = Vec::new();
-                while i < tabs.len() && self.groups.of_tab(tabs[i].id).is_none() {
-                    loose.push(mk_tab(&tabs[i]));
-                    i += 1;
-                }
-                sections.push(SidebarSection::unlabeled(loose));
-            }
-        }
-        if sections.is_empty() {
-            sections.push(SidebarSection::unlabeled(Vec::new()));
-        }
-        SidebarPanel::new(sections)
-            .density(SidebarDensity::Large)
-            .controller(&self.sidebar, Msg::Sidebar)
-            .resizable_with(self.sidebar_w, DividerColors::raised_to_canvas(&self.theme))
-            .reorderable()
-            .build()
-    }
-
-    /// Identity select — kit `select`, enamel mark per profile.
+    /// The active page window's top bar: nav, location bar, vault, downloads.
     pub fn view_chrome_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
         let info = self.active_tab_info();
@@ -4030,7 +3656,7 @@ impl<E: Engine> App<E> {
                 },
                 ..Default::default()
             });
-        let (left, right) = omnibox_tray_insets(0.0);
+        let (left, right) = omnibox_tray_insets();
         container(tray)
             .width(Length::Fill)
             .padding(Padding {
@@ -6883,7 +6509,6 @@ impl<E: Engine> App<E> {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             sola_kit::call_subscription().map(Msg::Call),
             chrome_drain_subscription(),
-            self.sidebar.subscription().map(Msg::Sidebar),
             event::listen_with(|event, status, _| {
                 match &event {
                     Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
@@ -6908,10 +6533,8 @@ impl<E: Engine> App<E> {
                         CURSOR_X_BITS.store(position.x.to_bits(), Ordering::Relaxed);
                         CURSOR_Y_BITS.store(position.y.to_bits(), Ordering::Relaxed);
                         // Rebuilding chrome on every pixel move starved menus and
-                        // typing. Divider resize and tab reorder both need samples.
-                        if DIVIDER_DRAGGING.load(Ordering::Relaxed)
-                            || REORDER_TRACKING.load(Ordering::Relaxed)
-                        {
+                        // typing. Only a divider drag needs samples.
+                        if DIVIDER_DRAGGING.load(Ordering::Relaxed) {
                             Some(Msg::CursorMoved(position.x, position.y))
                         } else {
                             None
@@ -6998,7 +6621,6 @@ impl<E: Engine> App<E> {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
                     }) if FIND_OPEN.load(Ordering::Relaxed)
-                        || GROUP_RENAMING.load(Ordering::Relaxed)
                         || status == event::Status::Ignored =>
                     {
                         Some(Msg::NavStop)
@@ -7060,8 +6682,6 @@ impl<E: Engine> App<E> {
 
 /// Divider drag: `listen_with` is a fn pointer and cannot close over App.
 static DIVIDER_DRAGGING: AtomicBool = AtomicBool::new(false);
-/// Group-name field is up — Escape must cancel even when the input captured it.
-static GROUP_RENAMING: AtomicBool = AtomicBool::new(false);
 static FIND_OPEN: AtomicBool = AtomicBool::new(false);
 static URL_BAR_FOCUSED: AtomicBool = AtomicBool::new(false);
 
@@ -7100,8 +6720,6 @@ fn chrome_drain_stream() -> impl iced::futures::Stream<Item = Msg> {
     rx.map(|()| Msg::Tick)
 }
 
-/// Tab-reorder press is live (before and after the movement threshold).
-static REORDER_TRACKING: AtomicBool = AtomicBool::new(false);
 /// Last pointer x (bits) so DividerPress has a current anchor without
 /// emitting CursorMoved on every pixel.
 static CURSOR_X_BITS: AtomicU32 = AtomicU32::new(0);
@@ -7381,20 +6999,6 @@ fn vault_kind_icon(kind: ItemKind) -> iced::widget::svg::Handle {
     }
 }
 
-fn group_rename_id() -> iced::widget::Id {
-    iced::widget::Id::new("sola-browser-group-rename")
-}
-
-/// Persist a pocket fill; omit when it matches the kit default well.
-fn persist_group_color(color: iced::Color) -> Option<String> {
-    let hex = sola_kit::theme::color_to_hex(color);
-    if hex == sola_kit::theme::color_to_hex(group_well_fill()) {
-        None
-    } else {
-        Some(hex)
-    }
-}
-
 fn nav_icon_back() -> iced::widget::svg::Handle {
     static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
     H.get_or_init(|| icon_handle("lucide/arrow-left")).clone()
@@ -7621,10 +7225,9 @@ fn omnibox_progress_overlay<'a>(frac: f32) -> Element<'a, Msg> {
 }
 
 /// Engine-created browsers (`window.open` / NEW_POPUP) appear in the live
-/// snapshot with ids chrome did not mint. Move each beside `after` (same
-/// group as the opener) and return those ids.
+/// snapshot with ids chrome did not mint. Move each beside `after` and
+/// return those ids.
 fn place_engine_popup_tabs(
-    groups: &mut Groups,
     tabs: &mut Vec<TabInfo>,
     prev_ids: &HashSet<TabId>,
     after: TabId,
@@ -7638,11 +7241,19 @@ fn place_engine_popup_tabs(
     for id in &new {
         if let Some(pos) = tabs.iter().position(|t| t.id == *id) {
             let info = tabs.remove(pos);
-            groups.insert_beside(tabs, after, info);
+            insert_beside(tabs, after, info);
             after = *id;
         }
     }
     new
+}
+
+/// Put `info` just after page `after` (at the end when it is gone).
+fn insert_beside(tabs: &mut Vec<TabInfo>, after: TabId, info: TabInfo) {
+    match tabs.iter().position(|t| t.id == after) {
+        Some(pos) => tabs.insert(pos + 1, info),
+        None => tabs.push(info),
+    }
 }
 
 /// Chrome owns which tabs exist and their order. Engine owns field updates
@@ -7868,35 +7479,8 @@ mod tests {
             tab(9, "https://popup.example/", "Popup"),
         ];
         let prev = HashSet::from([TabId(1), TabId(2)]);
-        let mut groups = Groups::default();
-        let new = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
+        let new = place_engine_popup_tabs(&mut tabs, &prev, TabId(1));
         assert_eq!(new, vec![TabId(9)]);
-        assert_eq!(
-            tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
-            vec![TabId(1), TabId(9), TabId(2)]
-        );
-    }
-
-    #[test]
-    fn engine_popup_joins_the_opener_group() {
-        let mut tabs = vec![
-            tab(1, "https://a.example/", "A"),
-            tab(2, "https://a.example/b", "B"),
-            tab(9, "https://popup.example/", "Popup"),
-        ];
-        let prev = HashSet::from([TabId(1), TabId(2)]);
-        let mut groups = Groups::default();
-        groups.groups.push(crate::groups::TabGroup {
-            id: "g1".into(),
-            name: "Work".into(),
-            collapsed: false,
-            color: None,
-        });
-        groups.member.insert(TabId(1), "g1".into());
-        groups.member.insert(TabId(2), "g1".into());
-        let _ = place_engine_popup_tabs(&mut groups, &mut tabs, &prev, TabId(1));
-        assert_eq!(groups.of_tab(TabId(9)), Some("g1"));
-        groups.normalize(&mut tabs);
         assert_eq!(
             tabs.iter().map(|t| t.id).collect::<Vec<_>>(),
             vec![TabId(1), TabId(9), TabId(2)]
