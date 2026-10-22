@@ -526,6 +526,23 @@ fn should_pump(slot: &FrameSlot<CefEngine>, surface: PaintSurface) -> bool {
     false
 }
 
+impl CefPrimitive {
+    /// A page window got its page at another size (CEF painted a stale
+    /// size last): ask for the window's size again, once per stray size.
+    fn ask_size_again(&self, got: (u32, u32), req_w: u32, req_h: u32, scale: f32) {
+        let mut stray = self.slot.stray_size.lock().unwrap();
+        if *stray == Some(got) {
+            return;
+        }
+        *stray = Some(got);
+        let _ = self.slot.cmd_tx.send(self.slot.page_cmd(Cmd::Resize {
+            width: req_w,
+            height: req_h,
+            scale: scale as f64,
+        }));
+    }
+}
+
 impl shader::Primitive for CefPrimitive {
     type Pipeline = CefPipeline;
 
@@ -561,6 +578,23 @@ impl shader::Primitive for CefPrimitive {
         let pipe = pipeline.surface_mut(self.surface, self.slot.key, device, queue);
         let pending = self.slot.take_pending_of(self.surface);
         if let Some(pending) = pending {
+            let got = (pending.frame.width, pending.frame.height);
+            if pending.tab_id.0 != paint_tab || !crate::shader::size_matches(got, want) {
+                tracing::debug!(
+                    surface = ?self.surface,
+                    frame_tab = pending.tab_id.0,
+                    paint_tab,
+                    ?got,
+                    ?want,
+                    "frame dropped"
+                );
+                if self.slot.windowed
+                    && self.surface == PaintSurface::Page
+                    && pending.tab_id.0 == paint_tab
+                {
+                    self.ask_size_again(got, req_w, req_h, scale);
+                }
+            }
             if pending.tab_id.0 == paint_tab
                 && crate::shader::size_matches((pending.frame.width, pending.frame.height), want)
             {
@@ -576,6 +610,7 @@ impl shader::Primitive for CefPrimitive {
                     pipe.sample.note_frame();
                     pipe.painted_tab = paint_tab;
                     self.slot.clear_blank(self.surface);
+                    *self.slot.stray_size.lock().unwrap() = None;
                     return;
                 }
             }

@@ -3820,14 +3820,16 @@ fn resize_page(state: &CefThreadState, id: TabId, width: u32, height: u32) {
     let Some(tab) = tab_state_by_id(state, id) else {
         return;
     };
-    if tab.own_size.get() == Some((width, height)) {
-        return;
-    }
-    tracing::debug!(?id, width, height, "page window size");
-    tab.own_size.set(Some((width, height)));
+    // The same size again: the window got a frame at another size (a
+    // stale paint), so repaint it whole at this one.
+    let again = tab.own_size.replace(Some((width, height))) == Some((width, height));
+    tracing::debug!(?id, width, height, again, "page window size");
     if state.is_front.get() && paints(state, &tab) {
         if let Some(host) = tab.browser.host() {
             host.was_resized();
+            if again {
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
         }
     }
 }

@@ -640,6 +640,11 @@ pub struct FrameSlot<E: Engine> {
     pub last_frame_ms: AtomicU64,
     /// Composition caret (helper) / last pointer fallback (chrome).
     pub ime: ImeHandle,
+    /// A page window's slot: the size of the last frame of its page that
+    /// was not the window's size. CEF can paint a stale size last (a new
+    /// window is sized more than once), so the window asks for its size
+    /// again, once per stray size until a frame fits.
+    pub stray_size: Mutex<Option<(u32, u32)>>,
 }
 
 impl<E: Engine> FrameSlot<E> {
@@ -675,6 +680,7 @@ impl<E: Engine> FrameSlot<E> {
             osr: OsrChromeTelem::default(),
             last_frame_ms: AtomicU64::new(0),
             ime,
+            stray_size: Mutex::new(None),
         }
     }
 
