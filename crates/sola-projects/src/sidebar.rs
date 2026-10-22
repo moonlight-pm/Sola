@@ -1,4 +1,4 @@
-//! Project groups + workspace rows. `+` on the group opens a name modal.
+//! Project groups + tab rows. `+` on the group opens a name modal.
 
 use iced::widget::{checkbox, column, container, mouse_area, row, text_editor};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
@@ -15,7 +15,7 @@ use sola_kit::fonts;
 use crate::Msg;
 use crate::spawn;
 use crate::status::PaneStatus;
-use crate::workspace::{self, Project, Workspace};
+use crate::catalog::{self, Project, Tab};
 
 pub const SIDEBAR_W_DEFAULT: f32 = 240.0;
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
@@ -25,7 +25,7 @@ pub const RENAME_INPUT_ID: &str = "ws-tab-rename";
 pub struct SidebarState {
     pub width: f32,
     pub gestures: sola_kit::components::SidebarState,
-    /// `(workspace id, draft name)` while a tab is being renamed.
+    /// `(tab id, draft name)` while a tab is being renamed.
     pub renaming: Option<(String, String)>,
 }
 
@@ -102,7 +102,7 @@ impl StartupDraft {
 pub fn view<'a>(
     state: &'a SidebarState,
     projects: &'a [Project],
-    workspaces: &'a [Workspace],
+    tabs: &'a [Tab],
     selected: &str,
     pane_status: &'a std::collections::HashMap<String, PaneStatus>,
     theme: &Theme,
@@ -112,8 +112,8 @@ pub fn view<'a>(
     for project in projects {
         let mut items = Vec::new();
         if !project.collapsed {
-            for ws in workspace::ordered_for_project(&project.id, workspaces) {
-                items.push(workspace_row(
+            for ws in catalog::ordered_for_project(&project.id, tabs) {
+                items.push(tab_row(
                     ws,
                     selected,
                     pane_status,
@@ -145,8 +145,8 @@ pub fn view<'a>(
     panel.resizable_with(state.width, divider).build()
 }
 
-fn workspace_row<'a>(
-    ws: &'a Workspace,
+fn tab_row<'a>(
+    ws: &'a Tab,
     selected: &str,
     pane_status: &'a std::collections::HashMap<String, PaneStatus>,
     renaming: Option<&(String, String)>,
@@ -154,7 +154,7 @@ fn workspace_row<'a>(
     let title = crate::cli::rail_label(ws);
     let leaves = ws.layout().leaves();
     let panes = leaves.iter().filter_map(|id| pane_status.get(id));
-    let mut item = SidebarItem::new(title, Msg::SelectWorkspace(ws.id.clone()))
+    let mut item = SidebarItem::new(title, Msg::SelectTab(ws.id.clone()))
         .active(ws.id == selected)
         .indicator(ws.status.indicator())
         .id(ws.id.clone());
@@ -165,8 +165,8 @@ fn workspace_row<'a>(
     // Kit list `on_close` — hover × (lucide/x), vertically
     // centered. Not `hover_action` (session-card trash).
     // Root stays; Drop Project unregisters the project.
-    if workspace::can_close(ws) {
-        item = item.on_close(Msg::CloseWorkspace(ws.id.clone()));
+    if catalog::can_close(ws) {
+        item = item.on_close(Msg::CloseTab(ws.id.clone()));
     }
     let editing = renaming.is_some_and(|(id, _)| id == &ws.id);
     if editing {
@@ -186,7 +186,7 @@ fn workspace_row<'a>(
             .align_y(Alignment::Center)
             .width(Length::Fill);
         item = item.content(body);
-    } else if workspace::can_close(ws) {
+    } else if catalog::can_close(ws) {
         // Worktree and root tabs: hover pencil (and double-click via kit Event::Edit).
         item = item.on_edit(Msg::BeginRename(ws.id.clone()));
     }
@@ -243,7 +243,7 @@ pub fn overlay<'a>(
         let project_name = spawn
             .project_id
             .as_ref()
-            .and_then(|id| workspace::find_project(projects, id))
+            .and_then(|id| catalog::find_project(projects, id))
             .map(|p| p.name.as_str())
             .unwrap_or("project");
         return Some(veil(spawn_card(spawn, project_name)));
@@ -255,7 +255,7 @@ pub fn overlay<'a>(
         let project_name = startup
             .project_id
             .as_ref()
-            .and_then(|id| workspace::find_project(projects, id))
+            .and_then(|id| catalog::find_project(projects, id))
             .map(|p| p.name.as_str())
             .unwrap_or("project");
         return Some(veil(startup_card(startup, project_name)));
@@ -294,7 +294,7 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
     card::modal(
         container(
             column![
-                sola_kit::components::text::body(format!("New workspace · {project_name}")),
+                sola_kit::components::text::body(format!("New tab · {project_name}")),
                 field(
                     "Name",
                     text_input("kvm-perf", &draft.name)
@@ -359,7 +359,7 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
                 )
                 .padding(0),
                 sola_kit::components::text::caption(
-                    "A git checkout. Workspaces land in .worktrees/"
+                    "A git checkout. Tabs land in .worktrees/"
                 )
                 .style(sola_kit::components::text::muted),
                 row![

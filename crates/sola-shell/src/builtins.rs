@@ -38,9 +38,9 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
-            app_id: "sola-workspaces".into(),
-            label: "Workspaces".into(),
-            command: kit_command("sola-workspaces"),
+            app_id: "sola-projects".into(),
+            label: "Projects".into(),
+            command: kit_command("sola-projects"),
             // `folders` — stacked project groups. Distinct from Terminal
             // (`terminal`).
             icon: "lucide/folders".into(),

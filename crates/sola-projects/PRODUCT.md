@@ -24,9 +24,9 @@ without opening each one.
 ## Product Purpose
 
 Run CLI coding agents in real terminals, grouped by **project** and
-**workspace**. Status is visible at a glance. **Spawn sibling** creates a
+**tab** (one checkout each). Status is visible at a glance. **Spawn sibling** creates a
 parallel checkout + pane, optionally already briefed. Success is: open a
-project, see every live workspace’s state, type the next prompt or spawn a
+project, see every live tab’s state, type the next prompt or spawn a
 sibling, restart the app and nothing is gone.
 
 ## Positioning
@@ -49,12 +49,12 @@ becoming this product.
 
 ## Capabilities and Constraints
 
-**In:** projects, workspaces (main / worktree / folder), agent-aware panes,
-spawn sibling (UI: name only, takes the rail; `solactl workspaces workspace.spawn`
+**In:** projects, tabs (main / worktree / root / folder), agent-aware panes,
+spawn sibling (UI: name only, takes the rail; `solactl projects tab.spawn`
 is background unless `--select`; can pass `--agent grok|codex|claude` + `--prompt` /
 `--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok,
 Codex, and Claude hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok,
-Codex, and Claude panes in a workspace, sola-call owner `workspaces` (`solactl workspaces …` is
+Codex, and Claude panes in a tab, sola-call owner `projects` (`solactl projects …` is
 first-class — verbs stay in lockstep with the app), per-project startup
 script after spawn (Project → Startup Script…),
 tmux persist on socket `sola-ws` (a Grok or Claude pane’s session id is in
@@ -63,8 +63,8 @@ tmux persist on socket `sola-ws` (a Grok or Claude pane’s session id is in
 is still on disk), unfocused desk card
 (title `{project} · {tab}`, body `grok is done` / `codex is done` /
 `claude is done` / `needs attention`),
-`workspace.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
-`workspace.set --name` (`git worktree move` to `.worktrees/<name>`;
+`tab.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
+`tab.set --name` (`git worktree move` to `.worktrees/<name>`;
 `--title` is the rail label, defaulting to that slug; `--branch` is
 `git branch -m`; `--before` reorders in the project).
 Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
@@ -81,7 +81,8 @@ Claude are decided: first-class. D4 is closed.
 
 ## Brand Commitments
 
-- Crate / app id: `sola-workspaces`. Window title: **Workspaces**.
+- Crate / app id: `sola-projects`. Window title: **Projects** (named
+  Workspaces until 2026-10-21; "workspace" now means a desktop workspace).
 - Design law: impeccable Operate + frontend-design before UI; kit may be refined
 - Theme rides the Sola bus; do not silently restyle other apps
 - Voice: operator-plain. “Spawn sibling,” “working,” “done.” No marketplace copy
@@ -92,7 +93,7 @@ Claude are decided: first-class. D4 is closed.
 - Freeze: `docs/specs/2026-08-13-sola-agent-terminal-design.md`
 - Incumbent grid: `crates/sola-terminal`
 - Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `status_mark`, `SidebarPanel`)
-- Surface record: `crates/sola-workspaces/DESIGN.md` (status chrome)
+- Surface record: `crates/sola-projects/DESIGN.md` (status chrome)
 - Grok hooks: `~/.grok/hooks/sola-status.json` (do not touch `orca-status.json`)
 - Codex hooks: merged into `~/.codex/hooks.json` (do not drop Impeccable groups)
 - No customer quotes, screenshots of this app, or usage stats. Do not fabricate.
@@ -101,7 +102,7 @@ Claude are decided: first-class. D4 is closed.
 
 1. The sidebar is the orchestrator; status is the product.
 2. Spawn sibling is the only fan-out protocol; a prompt file is the handoff.
-   `solactl workspaces` is the same protocol agents use.
+   `solactl projects` is the same protocol agents use.
 3. Terminals stay terminals — no inferred state from titles.
 4. One signature (the status mark); everything else is quiet and scannable.
 5. Refuse Orca cruft. Refuse rebuilding `sola-agent`.

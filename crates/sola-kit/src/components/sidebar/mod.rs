@@ -2366,7 +2366,7 @@ where
     }
 
     /// Drag-to-reorder, but items cannot leave their section. Group
-    /// headers still move as blocks. Workspaces uses this so a tab stays
+    /// headers still move as blocks. Projects uses this so a tab stays
     /// in its project.
     pub fn reorder_within_sections(mut self) -> Self {
         self.reorder = ReorderMode::Sections;

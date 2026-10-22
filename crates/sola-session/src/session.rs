@@ -519,18 +519,35 @@ fn session_apps_from_pairs(
     apps
 }
 
-/// The subset of `persisted` to relaunch on restore: apps that aren't
-/// already running (per the sticky `Windows` list) and aren't already a
-/// tracked child. Keeps restore from duplicating live apps.
+/// Apps renamed since a session was saved: `(old app id, new app id)`. A
+/// saved command that names the old binary runs the new one.
+const RENAMED: &[(&str, &str)] = &[("sola-workspaces", "sola-projects")];
+
+fn renamed(app: &SessionApp) -> SessionApp {
+    match RENAMED.iter().find(|(old, _)| *old == app.app_id) {
+        Some((old, new)) => SessionApp {
+            app_id: new.to_string(),
+            command: app.command.replace(old, new),
+        },
+        None => app.clone(),
+    }
+}
+
+/// The subset of `persisted` to relaunch on restore (renamed apps under
+/// their new names): apps that aren't already running (per the sticky
+/// `Windows` list) and aren't already a tracked child. Keeps restore from
+/// duplicating live apps.
 fn restore_plan(
     persisted: &[SessionApp],
     running: &HashSet<String>,
     children_keys: &HashSet<String>,
 ) -> Vec<SessionApp> {
+    let mut seen = HashSet::new();
     persisted
         .iter()
+        .map(renamed)
         .filter(|a| !running.contains(&a.app_id) && !children_keys.contains(&a.app_id))
-        .cloned()
+        .filter(|a| seen.insert(a.app_id.clone()))
         .collect()
 }
 
@@ -715,5 +732,15 @@ mod tests {
         let persisted = vec![app("a", "a"), app("b", "b")];
         let plan = restore_plan(&persisted, &HashSet::new(), &HashSet::new());
         assert_eq!(plan, persisted);
+    }
+
+    #[test]
+    fn restore_plan_runs_a_renamed_app_under_its_new_name() {
+        let persisted = vec![
+            app("sola-workspaces", "/bin/sola-workspaces"),
+            app("sola-projects", "/bin/sola-projects"),
+        ];
+        let plan = restore_plan(&persisted, &HashSet::new(), &HashSet::new());
+        assert_eq!(plan, vec![app("sola-projects", "/bin/sola-projects")]);
     }
 }

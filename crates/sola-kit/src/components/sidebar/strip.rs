@@ -56,7 +56,7 @@ pub struct LeafMeta {
     pub group: Option<String>,
     pub color: Option<Color>,
     /// Morph2 collapsible pocket. Labeled (non-collapse) groups stay
-    /// flat so Workspaces section headers do not pick up a well.
+    /// flat so Projects section headers do not pick up a well.
     pub pocket: bool,
     /// Item may emit [`SidebarEvent::Edit`] on double-click.
     pub editable: bool,

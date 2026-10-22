@@ -1,8 +1,8 @@
 //! Create a sibling git worktree under `<project-root>/.worktrees/<slug>`.
 //!
 //! D4.2: the worktree base is always the project's `.worktrees` folder.
-//! Hover × / plain `workspace.rm` still leave the checkout. `--worktree`
-//! and a gone path call [`remove_worktree`]. `workspace.set --name` calls
+//! Hover × / plain `tab.rm` still leave the checkout. `--worktree`
+//! and a gone path call [`remove_worktree`]. `tab.set --name` calls
 //! [`move_worktree`].
 
 use std::fs;

@@ -22,7 +22,7 @@ where it went, click here, open this tab, tell me if it worked. The call
 plane gives each request an id, a deadline, a named owner, and one reply.
 When the owner is not connected, the caller gets an error at once. The
 host never starts an application to answer a call. Screenshots, synthetic
-input, and app control (Workspaces, Browser, Design, Bots) are calls; none
+input, and app control (Projects, Browser, Design, Bots) are calls; none
 of them are bus topics.
 
 The bus, the call plane, and Wayland are the three planes of a session
@@ -220,7 +220,7 @@ right rail is the live catalog.
 | `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | Whole session | `launch`, `close` |
 | `bots` | `sola-botsd` | Whole session | `list`, `poll`, `new`, `send`, `transcript`, `rm`, `cancel` |
-| `workspaces` | `sola-workspaces` | While **Workspaces** is open | `ps`, `project.list`, `project.add`, `project.rm`, `project.startup`, `project.reorder`, `workspace.list`, `workspace.spawn`, `workspace.rm`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
+| `projects` | `sola-projects` | While **Projects** is open | `ps`, `project.list`, `project.add`, `project.rm`, `project.startup`, `project.reorder`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
 | `browser` | `sola-browser` | While the **Browser** is open | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
 | `design` | `sola-design` | While **Design** is open | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 
@@ -236,7 +236,7 @@ is open; the plane does not open it for you. Every method and flag is in
 - **Compiled commands**, `compositor` and `session`, are parsed by
   `solactl` itself: fixed flags, defaults, and `--help` that works with
   nothing running. `solactl` builds the params and invokes the method.
-- **Live-owner commands**, `workspaces`, `browser`, `bots`, `design`, and
+- **Live-owner commands**, `projects`, `browser`, `bots`, `design`, and
   any other name, are read from the catalog. `solactl <owner>` lists the
   owner's methods and `solactl <owner> <method> --help` its flags, both
   from the advertised specs. The name may be the owner or its app id.
@@ -247,8 +247,8 @@ method's `ArgSpec`s: `--long VALUE` or `-s VALUE`, bool flags with no
 value, a bare word for the next required argument not yet given, or a
 single JSON object instead of flags. Values are converted by `type`, and
 `path` values are made absolute against your working directory. It adds a
-little context of its own: in a Workspaces pane, `whoami` and
-`workspace.spawn` get your pane from `$SOLA_PANE_ID` (and `whoami` your
+little context of its own: in a Projects pane, `whoami` and
+`tab.spawn` get your pane from `$SOLA_PANE_ID` (and `whoami` your
 checkout from `$SOLA_WS_PATH`); `design canvas.new` without `--path` uses
 your working directory.
 
@@ -283,7 +283,7 @@ the same methods, not a second protocol: what a tool may do is what
 - **Calls.** Arguments must be a JSON object or absent. They are passed as
   sent, with no type conversion, except that `path` arguments are made
   absolute against the server's working directory (the agent's). The
-  Workspaces and Design context, the bot rules for the Browser, and the
+  Projects and Design context, the bot rules for the Browser, and the
   deadline are the same as for `solactl`. A Design page call without
   `canvas` goes to the canvas this server last opened or created. Each call
   runs on its own thread, so `ping` and `tools/list` are answered while a

@@ -5,7 +5,7 @@
 
 use std::process::Command;
 
-use crate::workspace::{Project, Workspace};
+use crate::catalog::{Project, Tab};
 
 pub const PROJECT: &str = "PROJECT";
 pub const WORKTREE: &str = "WORKTREE";
@@ -33,7 +33,7 @@ pub const VARS: &[Var] = &[
 ];
 
 /// Run `project.startup` in `ws.path`. `Ok` when empty or the shell exits 0.
-pub fn run(project: &Project, ws: &Workspace) -> Result<(), String> {
+pub fn run(project: &Project, ws: &Tab) -> Result<(), String> {
     let script = project.startup.trim();
     if script.is_empty() {
         return Ok(());
@@ -70,7 +70,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::status::AgentStatus;
-    use crate::workspace::Kind;
+    use crate::catalog::Kind;
 
     fn project(root: PathBuf, script: &str) -> Project {
         Project {
@@ -82,8 +82,8 @@ mod tests {
         }
     }
 
-    fn ws(path: PathBuf) -> Workspace {
-        Workspace {
+    fn ws(path: PathBuf) -> Tab {
+        Tab {
             id: "ws-kid".into(),
             project_id: "proj".into(),
             name: "kid".into(),

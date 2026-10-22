@@ -246,7 +246,9 @@ chrome driving it, so the risky half is smoked before the chrome changes:
 ## Next phases — order (Joshua, 2026-10-21)
 
 1. **Browser pages as tabs** (slice 4) — next; Phase 4 below.
-2. Rename `sola-workspaces` → **Projects** (`sola-projects`; N5), then OS
-   workspaces (board 04, slice 5) with a workspace bound to a project (N6).
+2. ~~Rename `sola-workspaces` → **Projects** (`sola-projects`; N5)~~ —
+   done 2026-10-21, applied (a workspace inside it is a **tab**: `tab.*`,
+   `--tab`; clean break, no `solactl workspaces`). Then OS workspaces
+   (board 04, slice 5) with a workspace bound to a project (N6).
 3. Projects sessions as tabs (slice 3).
 4. Titlebars with menus, gaps, islands.

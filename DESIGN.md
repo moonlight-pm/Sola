@@ -242,7 +242,7 @@ lists ten proposals (P1 to P10). None of them is in the code yet.
 - **One signal.** Cyan (`accent`) marks focus, the one primary action in a
   group, and live work: the working ring, RX, unread. It is never a region, a
   heading, or decoration. Selection is graphite (`selection`), except in
-  terminal and Workspaces grids, where it is cyan at 55%.
+  terminal and Projects grids, where it is cyan at 55%.
 - **The ladder.** Depth is a step up the graphite ladder: well, canvas, chrome,
   raised, hover, selection. Edges are opaque white mixes at 7% (`hairline`)
   and 12% (`hairline-strong`), because iced inflates translucent white on a 1px
@@ -345,7 +345,7 @@ family behind it.
 | Caption | 11 / 400 | `text::caption` | Sources, timestamps, field help |
 | Badge | 10 / 500 / +0.8 caps | `ui_medium` | Badges, count marks, rail section caps |
 | Code | 12 mono | `text::code` | Paths, ids, JSON |
-| Terminal | 15 mono | terminal grid | Terminal and Workspaces panes |
+| Terminal | 15 mono | terminal grid | Terminal and Projects panes |
 
 The menubar is all 13px chrome at regular weight. The focused app name is the
 only bold word in the bar. Stat labels are text at 62%.
@@ -459,7 +459,7 @@ Each is a separate decision. The sheet already draws the proposed side.
 | P4 | Focus halo on fields: accent 14%, blur 8, around the existing edge | `sola-kit` `text_input/mod.rs` |
 | P5 | `text-tertiary` `#6b7385` → `#7d8597` (3.7:1 → 4.8:1 on raised) | `sola-core` palette |
 | P6 | Meter warn/crit and stat drops use `warning`, `danger`, `accent`, `success`, and the ladder | `sola-shell` `stats/mod.rs`, `stats/view.rs` |
-| P7 | Every modal veil reads `shell-backdrop-dim` | `sola-workspaces` `sidebar.rs`, `sola-browser`, `sola-arcade` |
+| P7 | Every modal veil reads `shell-backdrop-dim` | `sola-projects` `sidebar.rs`, `sola-browser`, `sola-arcade` |
 | P8 | Capture marquee reads `accent`, not `#00d4ff` | `sola-shell` `selection/view.rs` |
 | P9 | Terminal magenta and cyan from `enamel-dusk` and `enamel-teal` | `sola-terminal` `term_view.rs` |
 | P10 | Calendar fallback color is the calendar id's enamel plate, not `#7aa3f7` | `sola-calendar` `ui.rs`, `sola-settings` `calendar.rs` |

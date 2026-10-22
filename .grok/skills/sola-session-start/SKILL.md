@@ -30,7 +30,7 @@ description: >
 - State in one short paragraph: priority, holds, dogfood facts, capability
   gaps, and any D* that blocks inventing policy.  
 - Start work (or ask the human first if blocked on a decision point).  
-- Work where your tab is (see AGENTS). A root tab (`solactl workspaces
+- Work where your tab is (see AGENTS). A root tab (`solactl projects
   whoami` → `kind: main` or `kind: root`) works on master right there;
   open a worktree only when the user asks.  
 - When finishing, invoke **sola-progress-docs** (or follow that skill’s

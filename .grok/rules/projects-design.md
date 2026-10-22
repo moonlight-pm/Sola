@@ -1,7 +1,7 @@
-# sola-workspaces — design law
+# sola-projects — design law
 
-Applies when touching **`crates/sola-workspaces`** UI, or kit tokens /
-components / atoms **in service of that app**.
+Applies when touching **`crates/sola-projects`** (the Projects app) UI, or
+kit tokens / components / atoms **in service of that app**.
 
 Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/ideas/2026-08-12-sola-agent-terminal.md) (Design law).
 
@@ -19,11 +19,12 @@ Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/id
 5. **Grok, Codex, and Claude are first-class CLIs.** Implement and test Grok
    first (hooks, presence, OSC, spawn `--agent`). Codex and Claude get the
    same spawn / exec / hook path. OpenCode stays presence-only.
-6. **`solactl workspaces` is a first-class surface.** Any change to verbs, args,
+6. **`solactl projects` is a first-class surface.** Any change to verbs, args,
    payloads, targeting, or timeouts updates `calls.rs`, dispatch, tests,
    and `docs/manual/solactl.md` in the **same change**. Do not ship a
    rail-only orchestration verb. Freeze:
-   [`docs/specs/2026-08-18-workspaces-cli-design.md`](../../docs/specs/2026-08-18-workspaces-cli-design.md).
+   [`docs/specs/2026-08-18-workspaces-cli-design.md`](../../docs/specs/2026-08-18-workspaces-cli-design.md)
+   (written under the old Workspaces names).
 
 ## Do not
 

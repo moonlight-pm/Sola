@@ -1,10 +1,10 @@
 [package]
-name = "sola-workspaces"
+name = "sola-projects"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "sola-workspaces"
+name = "sola-projects"
 path = "src/main.rs"
 
 [dependencies]

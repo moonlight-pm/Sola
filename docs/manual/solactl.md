@@ -20,7 +20,7 @@ solactl compositor input release [X Y] [-b left|right|middle] [-t SECS]
 solactl compositor input drag X1 Y1 X2 Y2 [-b …] [-s STEPS] [-t SECS]
 solactl session launch APP_ID [-c COMMAND] [-t SECS]
 solactl session close APP_ID [-t SECS]
-solactl workspaces [METHOD [ARGS…]]
+solactl projects [METHOD [ARGS…]]
 solactl browser [METHOD [ARGS…]]
 solactl bots [METHOD [ARGS…]]
 solactl design [METHOD [ARGS…]]
@@ -36,7 +36,7 @@ solactl help [COMMAND…]
 | Command | Goes through | Needs |
 |---|---|---|
 | `compositor`, `session` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
-| `workspaces`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
+| `projects`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
 | `emit` | Bus | `sola-bus` |
 | `logs` | Files in `/opt/sola/log` | nothing |
@@ -82,8 +82,8 @@ misspelt command reports `<name> is not running`.
 | `SOLA_BUS_PATH` | `emit` | Bus socket. Default `$XDG_RUNTIME_DIR/sola-bus` |
 | `XDG_RUNTIME_DIR` | call commands, `mcp`, `emit` | Directory of the default sockets; `/tmp` when unset |
 | `SOLA_BOT` | `compositor`, `browser`, `mcp` | `1`, `true`, `TRUE`, or `yes` turns on the [bot rules](#bot-rules) |
-| `SOLA_PANE_ID` | `workspaces whoami`, `workspaces workspace.spawn` | Default `--pane` and `--parent` |
-| `SOLA_WS_PATH` | `workspaces whoami` | Default `--path` |
+| `SOLA_PANE_ID` | `projects whoami`, `projects tab.spawn` | Default `--pane` and `--parent`. Projects sets it in each pane |
+| `SOLA_WS_PATH` | `projects whoami` | Default `--path`. Projects sets it in each pane to the tab's checkout path |
 | `HOME` | path arguments, `open` | `~` expansion; default location of `chrome.sock` |
 | `XDG_DATA_HOME` | `open` | The Browser's handoff socket is `$XDG_DATA_HOME/sola/browser/chrome.sock` (default `~/.local/share/…`) |
 | `SOLA_BROWSER` | `open` | Browser binary to start. Default `/opt/sola/bin/sola-browser` |
@@ -96,7 +96,7 @@ against it, and `design canvas.new` makes its canvas in it by default.
 
 ## Live-owner commands
 
-`solactl workspaces`, `browser`, `bots`, and `design`, and `solactl NAME`
+`solactl projects`, `browser`, `bots`, and `design`, and `solactl NAME`
 for any other owner, take their methods and flags from what the running
 owner advertises ([The call plane](call.md#methods-and-arguments)). The
 sections below list each owner's methods as they are advertised today.
@@ -142,7 +142,7 @@ and `(required)` or `(optional)`; bool flags have no `<value>`. `-h` or
 
 Arguments of type `path` are resolved by `solactl` before the call: `~`
 and `~/…` expand, and a relative path is taken from **your** working
-directory, not the owner's. They are `workspaces` `--path` and
+directory, not the owner's. They are `projects` `--path` and
 `--prompt-file`; `browser` `--file` and screenshot `--path`; and `design`
 `--path`, `--canvas`, and `--out`. Other arguments are sent as typed.
 
@@ -156,9 +156,9 @@ directory, not the owner's. They are `workspaces` `--path` and
 
 ### Context
 
-- `workspaces whoami` without `--pane` or `--path` sends `$SOLA_PANE_ID`
+- `projects whoami` without `--pane` or `--path` sends `$SOLA_PANE_ID`
   and `$SOLA_WS_PATH`.
-- `workspaces workspace.spawn` without `--parent` sends `$SOLA_PANE_ID`.
+- `projects tab.spawn` without `--parent` sends `$SOLA_PANE_ID`.
 - `design canvas.new` without `--path` sends your working directory.
 
 ### Bot rules
@@ -316,7 +316,7 @@ The write fence is enforced by the prompt only. By default a bot writes
 only inside its home. To open the fence for one task, say “drop the write
 fence” or “work on the whole computer”, or name a path outside the home.
 Seat steal is refused even then. A bot is not a coding agent, and it does
-not use Workspaces unless you ask for that rail.
+not use Projects unless you ask for that rail.
 
 ### Phone API
 
@@ -347,50 +347,53 @@ The TLS proxy must not buffer the response body (`proxy_buffering off`,
 and honor `X-Accel-Buffering: no`). It should speak HTTP/1.1 or later to
 the daemon, with a long `proxy_read_timeout`.
 
-## Workspaces (`solactl workspaces`)
+## Projects (`solactl projects`)
 
-Needs **Workspaces** running (owner `workspaces`, app id
-`sola-workspaces`). Fails if the app or `sola-call` is down; it does not
-launch a window.
+Needs **Projects** running (owner `projects`, app id `sola-projects`).
+Fails if the app or `sola-call` is down; it does not launch a window. A
+tab is one checkout in a project: the project root, a `.worktrees/`
+worktree, or a folder. The app was called Workspaces, and a tab a
+workspace, until 2026-10-21; `solactl workspaces` and the `workspace.*`
+methods are gone, with no alias.
 
 ```text
-solactl workspaces                         # list methods
-solactl workspaces ps
-solactl workspaces project.list
-solactl workspaces project.add --path ~/Workspace/Sola
-solactl workspaces project.startup [--project Illuno]
-solactl workspaces project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
-solactl workspaces project.rm --project Sola
-solactl workspaces project.reorder --project Sola [--before Illuno]
-solactl workspaces workspace.list [--project Sola]
-solactl workspaces workspace.spawn --project Sola --name ticket-123 \
+solactl projects                           # list methods
+solactl projects ps
+solactl projects project.list
+solactl projects project.add --path ~/Workspace/Sola
+solactl projects project.startup [--project Illuno]
+solactl projects project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
+solactl projects project.rm --project Sola
+solactl projects project.reorder --project Sola [--before Illuno]
+solactl projects tab.list [--project Sola]
+solactl projects tab.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
     [--agent grok|codex|claude] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
-solactl workspaces workspace.spawn --project Sola --name hotfix --root   # no worktree
-solactl workspaces workspace.set --workspace ticket-123 --title 'fix login'
-solactl workspaces workspace.set --workspace adhoc --name sc-1234 \
+solactl projects tab.spawn --project Sola --name hotfix --root   # no worktree
+solactl projects tab.set --tab ticket-123 --title 'fix login'
+solactl projects tab.set --tab adhoc --name sc-1234 \
     [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
-solactl workspaces workspace.exec --workspace ticket-123 [--agent grok|codex|claude] \
+solactl projects tab.exec --tab ticket-123 [--agent grok|codex|claude] \
     [--prompt '…' | --prompt-file FILE]
-solactl workspaces workspace.select --workspace ticket-123
-solactl workspaces workspace.rm --workspace ticket-123 [--worktree] [--force]
-solactl workspaces pane.list [--workspace ticket-123]
-solactl workspaces pane.send --text 'follow up' --enter [--pane ticket-123]
-solactl workspaces pane.read [--pane ticket-123] [--lines 40]
-solactl workspaces pane.wait [--pane ticket-123] [--status done] [--timeout 300] [--fresh]
-solactl workspaces whoami                  # from a Workspaces pane; or --pane / --path
+solactl projects tab.select --tab ticket-123
+solactl projects tab.rm --tab ticket-123 [--worktree] [--force]
+solactl projects pane.list [--tab ticket-123]
+solactl projects pane.send --text 'follow up' --enter [--pane ticket-123]
+solactl projects pane.read [--pane ticket-123] [--lines 40]
+solactl projects pane.wait [--pane ticket-123] [--status done] [--timeout 300] [--fresh]
+solactl projects whoami                    # from a Projects pane; or --pane / --path
 ```
 
 | Short | Long | Methods |
 |---|---|---|
-| `-p` | `--project` | `project.rm`, `project.startup`, `project.reorder`, `workspace.list`, `workspace.spawn` |
+| `-p` | `--project` | `project.rm`, `project.startup`, `project.reorder`, `tab.list`, `tab.spawn` |
 | `-p` | `--path` | `project.add` |
-| `-n` | `--name` | `workspace.spawn`, `workspace.set` |
-| `-b` | `--branch` | `workspace.spawn`, `workspace.set` |
-| `-a` | `--agent` | `workspace.spawn`, `workspace.exec` |
-| `-s` | `--select` | `workspace.spawn` |
-| `-w` | `--workspace` | `workspace.rm`, `workspace.select`, `workspace.set`, `workspace.exec`, `pane.list` |
-| `-f` | `--force` | `workspace.rm` |
+| `-n` | `--name` | `tab.spawn`, `tab.set` |
+| `-b` | `--branch` | `tab.spawn`, `tab.set` |
+| `-a` | `--agent` | `tab.spawn`, `tab.exec` |
+| `-s` | `--select` | `tab.spawn` |
+| `-t` | `--tab` | `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list` |
+| `-f` | `--force` | `tab.rm` |
 | `-t` | `--text` | `pane.send` |
 | `-e` | `--enter` | `pane.send` |
 | `-l` | `--lines` | `pane.read` |
@@ -398,14 +401,13 @@ solactl workspaces whoami                  # from a Workspaces pane; or --pane /
 | `-f` | `--fresh` | `pane.wait` |
 
 Required arguments: `project.add --path`; `project.rm`, `project.reorder`
-`--project`; `workspace.spawn --project --name`; `--workspace` on
-`workspace.rm`, `workspace.select`, `workspace.set`, `workspace.exec`;
-`pane.send --text`. `--project` on `project.startup` and `--workspace` on
-`pane.list` default to what is selected in the rail; `--pane` on
-`pane.send`, `pane.read`, and `pane.wait` defaults to the focused pane,
-else the selected workspace.
+`--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
+`tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
+`project.startup` and `--tab` on `pane.list` default to what is selected
+in the rail; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
+defaults to the focused pane, else the selected tab.
 
-Deadlines: `project.add` 15 s; `workspace.spawn` and `workspace.exec`
+Deadlines: `project.add` 15 s; `tab.spawn` and `tab.exec`
 60 s; `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
 
 ### Spawn
@@ -417,42 +419,47 @@ Deadlines: `project.add` 15 s; `workspace.spawn` and `workspace.exec`
 custom title.
 
 Spawn runs in the background: the new row appears, and the rail and grid
-stay on the caller. `--select` jumps to the new workspace (the same as
-**+** or ⌘T in the UI). `workspace.exec` does not select. When you spawn
-from a Workspaces pane, the parent defaults to `$SOLA_PANE_ID`.
+stay on the caller. `--select` jumps to the new tab (the same as **+** or
+⌘T in the UI). `tab.exec` does not select. When you spawn from a Projects
+pane, the parent defaults to `$SOLA_PANE_ID`. `--parent` takes a parent
+tab, pane, or path.
 
 `--agent` is `grok`, `codex`, or `claude`. Other names are an error
 (OpenCode is presence-only). `--prompt` without `--agent` implies Grok.
 `--prompt` and `--prompt-file` are exclusive. The first Codex session may
 need `/hooks` in its TUI to trust the Sola status hook. Claude hooks are
 merged into `~/.claude/settings.json` and apply to the next Claude
-session.
+session. On start, Projects finds its existing Codex and Claude hook
+entries by script file name and rewrites them in place (status message
+"Sola Projects status"). Its catalog, last status, and hook scripts live
+in `~/.config/sola/projects/`, moved there once from
+`~/.config/sola/workspaces/`.
 
 ### Root tabs
 
 `--root` opens the tab in the project root checkout instead of a new
-worktree (the **No worktree** box on the New workspace card). Its `kind`
+worktree (the **No worktree** box on the New tab card). Its `kind`
 is `root`, its `path` is the project root, and work lands on whatever
 branch the root has checked out (usually master). `--branch` and
 `--base-branch` are refused with `--root`, and the startup script does not
 run.
 
-A root tab closes with plain `workspace.rm` (`--worktree` is refused).
-`workspace.set` takes `--title` and `--before` on a root tab; `--name` and
+A root tab closes with plain `tab.rm` (`--worktree` is refused).
+`tab.set` takes `--title` and `--before` on a root tab; `--name` and
 `--branch` need a worktree. Hover × and the pencil work as on a worktree
 tab.
 
 ### Rename and reorder
 
-`workspace.set --name` runs `git worktree move` to `.worktrees/<name>`.
+`tab.set --name` runs `git worktree move` to `.worktrees/<name>`.
 The id stays, so tmux sessions keep working; live or dirty checkouts are
 moved with force. The project root cannot be renamed. `--branch` runs
 `git branch -m` in that checkout and does not move the folder. To promote
 an ad hoc tab, pass both:
 `--name sc-1234 --branch joshua/sc-1234/fix --title '…'`.
 
-Target a workspace by id, slug, path, or rail label. `--before` reorders
-that workspace within its project (`end` = last); the rail does the same
+Target a tab by id, slug, path, or rail label. `--before` reorders that
+tab within its project (`end` = last); the rail does the same
 with drag and drop. On a worktree tab, the hover pencil or a double-click
 sets `--title` (the label, not the folder). `project.reorder` moves a
 project group: `--before` another project, or omit it (or pass `end`) for
@@ -460,7 +467,10 @@ last.
 
 ### Lists, startup scripts, and sessions
 
-Lists include `path`, `kind`, and `parent`. `kind` is one of:
+`tab.list` replies `{"tabs": […]}`; `ps` nests each project's tabs under
+`projects[].tabs[]`; `whoami` names the tab as `tab` (id) and `tab_name`;
+`project.add` and `tab.exec` replies carry `tab`. Lists include `path`,
+`kind`, and `parent`. `kind` is one of:
 
 - `main` — the project's own tab
 - `worktree`
@@ -479,13 +489,13 @@ after a reboot loses tmux.
 
 ### Panes
 
-A workspace name prefers the Grok leaf when sending, reading, waiting, or
+A tab name prefers the Grok leaf when sending, reading, waiting, or
 exec-ing (the Codex leaf with `--agent codex`, the Claude leaf with
-`--agent claude`). `pane.send`, `pane.read`, and `workspace.exec --prompt`
-address that workspace’s tmux session exactly (`=session:` current pane),
+`--agent claude`). `pane.send`, `pane.read`, and `tab.exec --prompt`
+address that tab’s tmux session exactly (`=session:` current pane),
 so a split leaf `…-p` is not confused with its parent.
 
-`pane.send` and `workspace.exec --prompt` **paste** into the live agent
+`pane.send` and `tab.exec --prompt` **paste** into the live agent
 (tmux bracketed paste, then Enter), so a multiline brief does not submit
 on the first newline and a long prompt is not truncated. A failed paste
 returns the tmux error, not a bare `send failed`.
@@ -499,17 +509,17 @@ seconds (default 300). `--fresh` waits for a transition onto that status.
 
 ### Remove
 
-`workspace.rm` unregisters the tab. It does not run `git worktree remove`
+`tab.rm` unregisters the tab. It does not run `git worktree remove`
 unless you pass `--worktree`; add `--force` to discard a dirty checkout.
 
-`workspace.rm` replies first, then drops the tab on the next tick, so a
+`tab.rm` replies first, then drops the tab on the next tick, so a
 call from inside that pane can finish instead of hanging.
 `tmux kill-session` and `git worktree remove` then run off the UI thread,
-and the rest of Workspaces stays live.
+and the rest of Projects stays live.
 
 Do **not** run `git worktree remove` yourself from inside that pane: the
 working directory vanishes and the next tool cannot run. Use `--worktree`
-instead. If the checkout is already gone, Workspaces reaps the tab, with no
+instead. If the checkout is already gone, Projects reaps the tab, with no
 working spinner left behind.
 
 ## Browser (`solactl browser`)
@@ -816,7 +826,7 @@ claude mcp add sola -- /opt/sola/bin/solactl mcp
 
 - Every method a running app advertises is a tool named
   `<owner>_<method>` (dots become `_`): `design_screenshot`,
-  `browser_tab_open`, `workspaces_pane_send`, … The list follows the apps
+  `browser_tab_open`, `projects_pane_send`, … The list follows the apps
   that are up: start Design and its tools appear (the server checks every
   2 s and sends `tools/list_changed`).
 - Each tool takes the same arguments as the `solactl <owner> <method>`
@@ -826,7 +836,7 @@ claude mcp add sola -- /opt/sola/bin/solactl mcp
 - A reply with a `path` to a PNG or JPEG (screenshots) also returns the
   image inline, up to 3,700,000 bytes; larger ones return the path and a
   note.
-- The deadline, the Workspaces and Design context, and the Browser's bot
+- The deadline, the Projects and Design context, and the Browser's bot
   rules are the same as for `solactl`. A Design page call without `canvas`
   goes to the canvas this server last opened or made.
 - The compositor's bot refusals are part of `solactl compositor`, not of

@@ -1,6 +1,6 @@
 //! Design's own project list: `~/.config/sola/design/projects.json`.
 //!
-//! Separate from the Workspaces catalog by decision (2026-10-12). A
+//! Separate from the Projects app's catalog by decision (2026-10-12). A
 //! project is a folder; its canvases live under `<root>/design/`.
 
 use std::path::{Path, PathBuf};

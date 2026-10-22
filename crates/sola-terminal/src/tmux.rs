@@ -188,7 +188,7 @@ pub fn kill_orphaned_clients() {
             continue;
         }
 
-        // A live sola-terminal / sola-workspaces still owns this client.
+        // A live sola-terminal / sola-projects still owns this client.
         // LaunchApp always spawns a new process; sweeping those clients
         // hangs up the other window's PTY (which then kills the tmux
         // session on PtyExit). Ghosts from a dead app are reparented to

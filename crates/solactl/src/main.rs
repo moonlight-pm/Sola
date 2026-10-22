@@ -1,6 +1,6 @@
 //! solactl — operator CLI for Sola.
 //!
-//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`, `bots`,
+//! Compiled owners (`compositor`, `session`, `projects`, `browser`, `bots`,
 //! `design`) are a real clap tree. Other live owners appear as
 //! `solactl <app-id>` from the call registry.
 
@@ -36,9 +36,9 @@ enum Command {
         #[command(subcommand)]
         cmd: session::Command,
     },
-    /// Workspaces: projects, tabs (worktree or root checkout), panes (app must be running).
+    /// Projects: projects, tabs (worktree or root checkout), panes (app must be running).
     #[command(disable_help_flag = true)]
-    Workspaces {
+    Projects {
         /// Method and flags. Omit to list advertised methods.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -105,8 +105,8 @@ fn main() {
     let exit = match cli.command {
         Command::Compositor { cmd } => compositor::run(cmd),
         Command::Session { cmd } => session::run(cmd),
-        Command::Workspaces { args } => {
-            let mut all = vec!["workspaces".into()];
+        Command::Projects { args } => {
+            let mut all = vec!["projects".into()];
             all.extend(args);
             dynamic::run(all)
         }
@@ -142,14 +142,14 @@ mod tests {
     use super::Cli;
 
     #[test]
-    fn help_lists_workspaces() {
+    fn help_lists_projects() {
         let mut cmd = Cli::command();
         let mut buf = Vec::new();
         cmd.write_long_help(&mut buf).unwrap();
         let help = String::from_utf8(buf).unwrap();
         assert!(
-            help.contains("workspaces"),
-            "solactl help must list workspaces:\n{help}"
+            help.contains("projects"),
+            "solactl help must list projects:\n{help}"
         );
         assert!(
             help.contains("browser"),

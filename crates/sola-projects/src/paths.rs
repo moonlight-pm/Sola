@@ -1,18 +1,23 @@
-//! App config dir. One-shot migrate from the `agent-terminal` name.
+//! App config dir. One-shot migrate from the app's earlier names
+//! (`workspaces`, before that `agent-terminal`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
-const DIR: &str = "workspaces";
-const LEGACY: &str = "agent-terminal";
+const DIR: &str = "projects";
+/// Newest first: the first that exists moves to [`DIR`].
+const LEGACY: &[&str] = &["workspaces", "agent-terminal"];
 
 static MIGRATE: Once = Once::new();
 
 pub fn config_dir() -> PathBuf {
     let root = sola_core::config::sola_config_dir();
     let new = root.join(DIR);
-    let old = root.join(LEGACY);
-    MIGRATE.call_once(|| migrate(&old, &new));
+    MIGRATE.call_once(|| {
+        if let Some(old) = LEGACY.iter().map(|d| root.join(d)).find(|d| d.exists()) {
+            migrate(&old, &new);
+        }
+    });
     new
 }
 
@@ -27,12 +32,12 @@ fn migrate(old: &Path, new: &Path) {
         Ok(()) => tracing::info!(
             from = %old.display(),
             to = %new.display(),
-            "migrated workspaces config from agent-terminal"
+            "migrated the Projects config dir"
         ),
         Err(e) => tracing::warn!(
             from = %old.display(),
             to = %new.display(),
-            "workspaces config migrate failed: {e}"
+            "Projects config migrate failed: {e}"
         ),
     }
 }
@@ -49,7 +54,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!("sola-ws-cfg-{n}"));
-        let old = root.join(LEGACY);
+        let old = root.join(LEGACY[0]);
         let new = root.join(DIR);
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("catalog.json"), "{}").unwrap();
@@ -66,7 +71,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!("sola-ws-cfg-keep-{n}"));
-        let old = root.join(LEGACY);
+        let old = root.join(LEGACY[0]);
         let new = root.join(DIR);
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&new).unwrap();

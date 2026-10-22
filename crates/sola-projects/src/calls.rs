@@ -1,4 +1,4 @@
-//! Advertised sola-call methods for owner `workspaces`.
+//! Advertised sola-call methods for owner `projects`.
 //!
 //! First-class surface: keep this list, dispatch, tests, and
 //! `docs/manual/solactl.md` in the same change.
@@ -6,7 +6,7 @@
 
 use sola_call::{ArgSpec, ArgType, MethodSpec};
 
-pub const OWNER: &str = "workspaces";
+pub const OWNER: &str = "projects";
 
 pub const SPAWN_TIMEOUT_MS: u64 = 60_000;
 pub const ADD_TIMEOUT_MS: u64 = 15_000;
@@ -15,7 +15,7 @@ pub const WAIT_DEFAULT_SECS: u64 = 300;
 
 pub fn methods() -> Vec<MethodSpec> {
     vec![
-        method("ps", "Project → workspace → state table", &[]),
+        method("ps", "Project → tab → state table", &[]),
         method("project.list", "List projects", &[]),
         method_ms(
             "project.add",
@@ -58,12 +58,12 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
-            "workspace.list",
-            "List workspaces",
+            "tab.list",
+            "List tabs",
             &[opt_s("project", Some('p'), "Project id or name")],
         ),
         method_ms(
-            "workspace.spawn",
+            "tab.spawn",
             "Open a sibling tab: a new worktree, or the project root (--root)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
@@ -90,20 +90,20 @@ pub fn methods() -> Vec<MethodSpec> {
                     ArgType::Path,
                     "Read prompt from this file",
                 ),
-                opt_s("parent", None, "Parent workspace, pane, or path"),
+                opt_s("parent", None, "Parent tab, pane, or path"),
                 flag(
                     "select",
                     's',
-                    "Focus the new workspace (CLI default is background)",
+                    "Focus the new tab (CLI default is background)",
                 ),
             ],
             SPAWN_TIMEOUT_MS,
         ),
         method(
-            "workspace.rm",
-            "Unregister a workspace and kill its tmux session",
+            "tab.rm",
+            "Unregister a tab and kill its tmux session",
             &[
-                req_s("workspace", Some('w'), "Workspace id or name"),
+                req_s("tab", Some('t'), "Tab id or name"),
                 arg(
                     "worktree",
                     false,
@@ -119,15 +119,15 @@ pub fn methods() -> Vec<MethodSpec> {
             ],
         ),
         method(
-            "workspace.select",
-            "Focus a workspace in the rail and attach",
-            &[req_s("workspace", Some('w'), "Workspace id or name")],
+            "tab.select",
+            "Focus a tab in the rail and attach",
+            &[req_s("tab", Some('t'), "Tab id or name")],
         ),
         method(
-            "workspace.set",
-            "Set workspace name, title, and/or branch",
+            "tab.set",
+            "Set tab name, title, and/or branch",
             &[
-                req_s("workspace", Some('w'), "Workspace id or name"),
+                req_s("tab", Some('t'), "Tab id or name"),
                 opt_s(
                     "name",
                     Some('n'),
@@ -146,15 +146,15 @@ pub fn methods() -> Vec<MethodSpec> {
                 opt_s(
                     "before",
                     None,
-                    "Rail order: sit in front of this workspace (same project); `end` = last",
+                    "Rail order: sit in front of this tab (same project); `end` = last",
                 ),
             ],
         ),
         method_ms(
-            "workspace.exec",
-            "Start or brief Grok, Codex, or Claude in an existing workspace",
+            "tab.exec",
+            "Start or brief Grok, Codex, or Claude in an existing tab",
             &[
-                req_s("workspace", Some('w'), "Workspace id or name"),
+                req_s("tab", Some('t'), "Tab id or name"),
                 opt_s("agent", Some('a'), "grok, codex, or claude (default grok)"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
@@ -168,14 +168,14 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "pane.list",
-            "List panes in a workspace",
-            &[opt_s("workspace", Some('w'), "Workspace id or name")],
+            "List panes in a tab",
+            &[opt_s("tab", Some('t'), "Tab id or name")],
         ),
         method(
             "pane.send",
             "Paste into a pane (bracketed; Enter optional)",
             &[
-                opt_s("pane", None, "Workspace / pane id"),
+                opt_s("pane", None, "Tab / pane id"),
                 req_s("text", Some('t'), "Text to paste"),
                 flag("enter", 'e', "Submit after the paste"),
             ],
@@ -184,7 +184,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "pane.read",
             "Read pane scrollback",
             &[
-                opt_s("pane", None, "Workspace / pane id"),
+                opt_s("pane", None, "Tab / pane id"),
                 opt("lines", Some('l'), ArgType::Int, "Last N lines"),
             ],
         ),
@@ -192,7 +192,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "pane.wait",
             "Wait until a pane reaches a status",
             &[
-                opt_s("pane", None, "Workspace / pane id"),
+                opt_s("pane", None, "Tab / pane id"),
                 opt_s(
                     "status",
                     Some('s'),
@@ -210,12 +210,12 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "whoami",
-            "Resolve this pane / path to a workspace",
+            "Resolve this pane / path to a tab",
             &[
                 opt_s(
                     "pane",
                     None,
-                    "Pane or workspace id (default: $SOLA_PANE_ID)",
+                    "Pane or tab id (default: $SOLA_PANE_ID)",
                 ),
                 opt(
                     "path",
@@ -292,12 +292,12 @@ mod tests {
             "project.rm",
             "project.startup",
             "project.reorder",
-            "workspace.list",
-            "workspace.spawn",
-            "workspace.rm",
-            "workspace.select",
-            "workspace.set",
-            "workspace.exec",
+            "tab.list",
+            "tab.spawn",
+            "tab.rm",
+            "tab.select",
+            "tab.set",
+            "tab.exec",
             "pane.list",
             "pane.send",
             "pane.read",
@@ -308,7 +308,7 @@ mod tests {
         }
         let spawn = methods
             .iter()
-            .find(|m| m.name == "workspace.spawn")
+            .find(|m| m.name == "tab.spawn")
             .unwrap();
         assert_eq!(spawn.timeout_ms, Some(SPAWN_TIMEOUT_MS));
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
@@ -320,12 +320,12 @@ mod tests {
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
-        let rm = methods.iter().find(|m| m.name == "workspace.rm").unwrap();
+        let rm = methods.iter().find(|m| m.name == "tab.rm").unwrap();
         assert!(rm.args.iter().any(|a| a.name == "worktree"));
         let force = rm.args.iter().find(|a| a.name == "force").unwrap();
         assert!(matches!(force.ty, ArgType::Bool));
         assert!(!force.required);
-        let set = methods.iter().find(|m| m.name == "workspace.set").unwrap();
+        let set = methods.iter().find(|m| m.name == "tab.set").unwrap();
         assert!(set.args.iter().any(|a| a.name == "name"));
         assert!(set.args.iter().any(|a| a.name == "title"));
         assert!(set.args.iter().any(|a| a.name == "branch"));

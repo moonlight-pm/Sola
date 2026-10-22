@@ -85,7 +85,7 @@ application writes into its code does not follow the theme.
 | `danger` | `#f07178` | `danger` | Status |
 | `selection` | `#2c333e` | None; read with `sola_kit::theme::selection()` | Selected rows and text selection |
 
-Colour values are `#rrggbb` or `#rrggbbaa`. Terminal and Workspaces also
+Colour values are `#rrggbb` or `#rrggbbaa`. Terminal and Projects also
 derive their terminal colours from these tokens: the default foreground and
 background, the ANSI colours except magenta and cyan, and the selection
 wash (from `accent`). Colours a program sets with 256-colour or 24-bit
@@ -110,7 +110,7 @@ draw, and the theme assigns a family to each role.
 | `font-ui-medium` | `fonts::ui_medium()` | Medium (500) | Emphasis: the focused app's title, the active row | SF Pro Text |
 | `font-display` | `fonts::display()` | Medium (500) | Page titles and large headings | SF Pro Text |
 | `font-chrome` | `fonts::chrome()` | Regular | Menubar labels and section headers | SF Pro Text |
-| `font-mono` | `fonts::mono()` | Regular | Code, JSON, Terminal, Workspaces | Iosevka Term Slab |
+| `font-mono` | `fonts::mono()` | Regular | Code, JSON, Terminal, Projects | Iosevka Term Slab |
 
 ### How a family is chosen
 
@@ -126,7 +126,7 @@ or names a family that is not installed, the role falls back:
 
 Each process keeps the five roles in one table. `fonts::install(table)`
 replaces it, and the next frame draws with the new families; every `Theme`
-message does this. Terminal and Workspaces also measure the new mono font's
+message does this. Terminal and Projects also measure the new mono font's
 cell size and reflow their panes.
 
 ## Shell tokens
@@ -239,7 +239,7 @@ wiring.
 - Iced's default font, used by widgets that set no font, is chosen when an
   application starts, before the theme arrives: the default UI family in
   most applications, Inter in Kit and the shell, the default mono family in
-  Terminal and Workspaces. It does not follow `font-ui`. Text that a
+  Terminal and Projects. It does not follow `font-ui`. Text that a
   component draws with a role does follow the theme.
 - Iced treats every theme as dark, whatever its colours.
 - Kit is the only editor. `solactl emit Theme` can publish a whole theme

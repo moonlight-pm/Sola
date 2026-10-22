@@ -74,7 +74,7 @@ pub mod hex {
     /// this atom is a slate step above raised (distinct from `BG_HOVER`)
     /// and neon stays full-chroma for accent only.
     ///
-    /// Terminal / Workspaces **cell** selection is not this atom: those
+    /// Terminal / Projects **cell** selection is not this atom: those
     /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
     /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
     pub const SELECTION: &str = "#2c333e";

@@ -225,7 +225,7 @@ Canonical map: `AGENTS.md` and `docs/architecture.md`. Headline pieces:
 - `crates/sola-shell/` — menubar, launcher, switcher, zoning.
 - `crates/sola-river/` — River ↔ bus bridge.
 - `crates/sola-kit/` — Iced app kit + storybook.
-- `crates/sola-*` — apps (browser, terminal, mail, workspaces, settings, …).
+- `crates/sola-*` — apps (browser, terminal, mail, projects, settings, …).
 - `crates/sola-make/` — `cargo make …`.
 - `crates/sola-assets/` — third-party icon/cursor pulls (fonts are **not**
   bundled; see `docs/manual/distribution.md`).

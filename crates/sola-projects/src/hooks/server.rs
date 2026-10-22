@@ -17,7 +17,7 @@ pub struct Incoming {
     pub mapped: MappedHook,
     /// Session cwd from the hook payload, when the CLI sent one.
     /// Codex's app-server daemon inherits whichever pane started it, so
-    /// `X-Sola-Pane-Id` can name the wrong workspace. Callers retarget
+    /// `X-Sola-Pane-Id` can name the wrong tab. Callers retarget
     /// when this path disagrees with that pane.
     pub cwd: Option<String>,
 }
@@ -208,7 +208,7 @@ fn string_cwd(event: &Value) -> Option<String> {
 
 /// Where a hook should land.
 ///
-/// Keep the header pane when its workspace path is the event cwd. Otherwise
+/// Keep the header pane when its tab path is the event cwd. Otherwise
 /// pick the leaf on that path, preferring the one already named `agent` or
 /// already bound to the event session.
 pub fn resolve_hook_target(
@@ -259,7 +259,7 @@ fn paths_same(a: &Path, b: &Path) -> bool {
     a.components().eq(b.components())
 }
 
-/// One workspace leaf the hook resolver can see.
+/// One tab leaf the hook resolver can see.
 pub struct HookLeaf<'a> {
     pub id: &'a str,
     pub path: &'a Path,

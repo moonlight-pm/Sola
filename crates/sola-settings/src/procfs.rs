@@ -26,7 +26,7 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-calendar",
     "sola-preview",
     "sola-paint",
-    "sola-workspaces",
+    "sola-projects",
     "sola-arcade",
     "sola-wrapper",
     "sola-scope",

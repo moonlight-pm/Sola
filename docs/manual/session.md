@@ -141,7 +141,7 @@ ignoring case. Each entry has:
 
 ### Built-in entries
 
-The shell defines these in code: Settings, Monitor, Terminal, Workspaces,
+The shell defines these in code: Settings, Monitor, Terminal, Projects,
 Browser, Kit, Preview, Paint, Mail, Calendar, Bots, Arcade, Scope, Design,
 and Spotify. Each app id is `sola-` and the name in lower case
 (`sola-settings`, `sola-browser`), and each runs `/opt/sola/bin/<app_id>`.
@@ -249,8 +249,10 @@ applications open at **Quit Sola** are the ones restored.
 When it starts, `sola-session` spends 750 ms collecting the stored
 `SessionApps` and the current `Windows`. Then it launches every listed
 application that has no window with that app id and is not already
-tracked, once, with its stored command. After a fresh start everything on
-the list opens. After a restart of `sola-session` alone, the applications
+tracked, once, with its stored command. A stored entry for an application
+that has since been renamed launches under the new name (`sola-workspaces`
+runs as `sola-projects`). After a fresh start everything on the list
+opens. After a restart of `sola-session` alone, the applications
 are still open and nothing is launched.
 
 Restore does not place windows: the shell puts each window back in its

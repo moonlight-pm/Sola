@@ -187,7 +187,7 @@ fn our_handler(command: &str) -> Value {
         "command": command,
         "timeout": 3,
         "async": true,
-        "statusMessage": "Sola Workspaces status"
+        "statusMessage": "Sola Projects status"
     })
 }
 
@@ -258,7 +258,7 @@ if [ -z "$payload" ]; then
 fi
 # Pane id may be missing: Codex runs the session in a shared app-server
 # whose env is whichever pane started the daemon. The payload cwd is enough
-# for Workspaces to retarget. An empty header is fine.
+# for Tabs to retarget. An empty header is fine.
 pane="${{SOLA_PANE_ID:-}}"
 sock="${{SOLA_WS_HOOKS_SOCK:-}}"
 if [ -z "$sock" ]; then
@@ -393,7 +393,7 @@ mod tests {
         assert!(text.contains("impeccable hook"));
         assert!(text.contains("codex-hook.sh"));
         assert!(text.contains("PermissionRequest"));
-        assert!(text.contains("Sola Workspaces status"));
+        assert!(text.contains("Sola Projects status"));
         assert!(paths.codex_script_path.is_file());
         let again = fs::read_to_string(&paths.codex_hooks_json).unwrap();
         install(&paths).unwrap();

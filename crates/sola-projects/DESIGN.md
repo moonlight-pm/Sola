@@ -1,5 +1,5 @@
 ---
-name: sola-workspaces
+name: sola-projects
 description: Operate rail — status marks are the product
 colors:
   canvas: "#0c0e12"
@@ -54,7 +54,7 @@ sola-kit atoms — do not fork a private palette.
 
 ## Overview
 
-Operate mode. Left rail (projects as quiet section headers, workspaces as
+Operate mode. Left rail (projects as quiet section headers, tabs as
 rows) + right terminal grid. Status is the product. One signature: the
 reserved status mark. Everything else stays graphite and quiet.
 
@@ -68,7 +68,7 @@ state from hue alone — shape differs too.
 ## Typography
 
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
-Workspace title 14. No agent name on the row — status is the mark, the
+Tab title 14. No agent name on the row — status is the mark, the
 desk card names project, tab, and agent. Sibling rows use the kit hover × (`on_close`, lucide/x).
 Root has no row close. **Project** menu: New Project…, Startup Script…,
 Drop Project. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
@@ -76,7 +76,7 @@ open, otherwise the focused pane (same as sola-terminal). Startup is a per-proje
 worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
 `$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
 and kills its tmux. Worktrees stay on disk.
-⌘W closes the focused **pane**. A workspace is always one rail row —
+⌘W closes the focused **pane**. A tab is always one rail row —
 splits stay in the grid, not as child tabs. The mark rolls up every
 Grok or Codex pane in that tab (waiting beats working beats done beats idle).
 
@@ -85,7 +85,7 @@ Grok or Codex pane in that tab (waiting beats working beats done beats idle).
 ```
 [ PROJECT                    + ]
 [ ●  root                      ]
-[ ●  workspace-a               ]
+[ ●  worktree-a                ]
 [ NEXT PROJECT               + ]
               terminal grid →
 ```
@@ -95,7 +95,7 @@ top; a lone project may fill to scroll. Group `+` opens a name-only
 modal (worktree + branch). The new pane is a shell — start grok yourself.
 Drag a worktree row to reorder it inside that project; drag a project
 header to reorder groups. Hover a worktree for a pencil (or double-click)
-to rename — same as `workspace.set --name` (slug + worktree move). Root
+to rename — same as `tab.set --name` (slug + worktree move). Root
 has no pencil. Escape cancels the field.
 
 ## Shapes
@@ -126,19 +126,19 @@ terminal.
 - Do use the kit hover × on siblings only; never on root.
 - Do drop the **project** from the menu only (unregister + kill every
   tmux session in the group). Hover × never `git worktree remove`.
-  CLI `workspace.rm --worktree` is the explicit checkout delete; a gone
+  CLI `tab.rm --worktree` is the explicit checkout delete; a gone
   path reaps the tab. Do not run `tmux kill-session` or
   `git worktree remove` on the iced thread (the rail freezes).
 - Do show **Start new shell** only when the **last** pane's PTY has
   exited (Ctrl-D). A split leaf that dies just closes. Hover must not
   start a shell — only the button (or a sidebar click that attaches
   every live leaf).
-- Do show a quiet `×N` on the workspace row when a Grok or Codex pane
+- Do show a quiet `×N` on the tab row when a Grok or Codex pane
   in that tab has compacted (loudest session). Grok: `compaction/segment_*.md`,
   checkpoints, then `signals.json` `compactionCount` (often stays 0).
   Codex: `type: compacted` records in `~/.codex/sessions/**/rollout-*-{id}.jsonl`.
   Shell panes do not contribute.
-- Do keep splits off the rail. One row per workspace; the mark watches
+- Do keep splits off the rail. One row per tab; the mark watches
   every Grok or Codex pane in the tab. Waiting (needs attention) beats working
   beats done beats idle. A grok+shell split looks like a single pane.
 - Do return the mark to idle (grey disc) when no Grok pane is live
@@ -149,7 +149,7 @@ terminal.
   disk. A shell after `/exit` does not resume.
 - Do put `+` on the project group, not a form in the rail.
 - Do rename a worktree tab with the hover pencil or a double-click
-  (`workspace.set --title`). The rail is that label, defaulting to the
+  (`tab.set --title`). The rail is that label, defaulting to the
   worktree slug — do not prefix the slug onto a custom title. Root has
   no pencil. Drag stays inside the project; drag a group header to
   reorder projects. `--name` still moves `.worktrees/<slug>`.

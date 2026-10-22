@@ -11,15 +11,15 @@ use crate::storybook::Msg;
 use crate::storybook::pages::chrome::{lede, panel, scene};
 
 const SAMPLE: &str = r#"{
-  "owner": "workspaces",
-  "method": "workspace.spawn",
+  "owner": "projects",
+  "method": "tab.spawn",
   "ok": true,
   "duration_ms": 42,
   "params": { "name": "monitor-polish", "agent": false },
   "data": { "id": "sws-1", "count": 1, "ready": null }
 }"#;
 
-const LINE: &str = r#"{"owner":"workspaces","ok":true,"count":1}"#;
+const LINE: &str = r#"{"owner":"projects","ok":true,"count":1}"#;
 
 pub fn view(theme: &Theme) -> Element<'static, Msg> {
     column![

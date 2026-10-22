@@ -95,7 +95,7 @@ launch raises the open window.
 
 ## Projects and canvases
 
-Projects are your own list (not Workspaces'). **Project → Add Project…**
+Projects are your own list (not the Projects app's). **Project → Add Project…**
 (⌘N) takes a folder (`~` ok). The rail lists each project's canvases —
 every `design/<name>/` with a `canvas.toml` — and picks up new ones within
 a couple of seconds. `+` on a project makes an empty canvas

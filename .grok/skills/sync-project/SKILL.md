@@ -12,10 +12,10 @@ description: >
 # Sync project (worktrees ↔ master)
 
 Run from the **project-root** Grok (master checkout). This project only.
-Leave git worktrees and Workspaces tabs in place. Do not `--select`. Do not
+Leave git worktrees and Projects tabs in place. Do not `--select`. Do not
 install. Do not push `master` unless the user asked.
 
-Load [`sola-workspaces-cli`](../sola-workspaces-cli/SKILL.md) for exec/wait
+Load [`sola-projects-cli`](../sola-projects-cli/SKILL.md) for exec/wait
 verbs. Sibling checkpoints use the user [`checkpoint`](file:///home/joshua/.grok/skills/checkpoint/SKILL.md)
 skill — do not nest `grok --cwd`.
 
@@ -24,8 +24,8 @@ skill — do not nest `grok --cwd`.
 ```bash
 git worktree list
 git status -sb
-solactl workspaces whoami
-solactl workspaces ps
+solactl projects whoami
+solactl projects ps
 ```
 
 Targets = every checkout under `.worktrees/` for **this** repo. Skip the
@@ -52,7 +52,7 @@ Unique commits already on the branch do **not** need a checkpoint.
 
 If not needed: skip 1a.
 
-If needed: `workspace.exec --workspace SLUG --prompt-file` with a brief that
+If needed: `tab.exec --tab SLUG --prompt-file` with a brief that
 says, in this order:
 
 1. Load and run `/checkpoint` **only if** there is something to checkpoint
@@ -64,7 +64,7 @@ says, in this order:
 Then:
 
 ```bash
-solactl workspaces pane.wait --pane SLUG --status done --timeout 600 --fresh
+solactl projects pane.wait --pane SLUG --status done --timeout 600 --fresh
 ```
 
 `--fresh` waits for a transition onto `done` after the brief. If exec fails
@@ -93,7 +93,7 @@ git merge --no-ff BRANCH
 
 Only after Pass 1 finished for **every** target.
 
-For each target, `workspace.exec --prompt-file`:
+For each target, `tab.exec --prompt-file`:
 
 - `git merge master` (expect fast-forward; unique work is already on master).
 - If `CURRENT.md` / `docs/capabilities.md` conflict, keep master's combined
@@ -107,7 +107,7 @@ misses the transition, poll `pane.list` + `git rev-parse HEAD`.
 
 ### Exec failed / no tab
 
-Retry `workspace.exec` once. If it still fails (app down, no tab, dead
+Retry `tab.exec` once. If it still fails (app down, no tab, dead
 tmux): do **not** `--select` and do **not** paste with raw tmux. Merge
 from here and note it.
 

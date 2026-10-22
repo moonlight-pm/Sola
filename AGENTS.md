@@ -26,7 +26,7 @@ pointer to `CURRENT.md` (auto-load reminder).
 
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
-- `sola-workspaces-cli` — `solactl workspaces` control plane (review/work
+- `sola-projects-cli` — `solactl projects` control plane (review/work
   ticket, create worktree, tell a pane, merge/cleanup — fan-out stays off
   the rail)  
 - `sync-project` — checkpoint each sibling worktree (if needed), merge
@@ -100,7 +100,7 @@ crates/
   sola-oath/           # Oath catalog app (`oath --json`); launcher entry only on Oath
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
-  sola-workspaces/     # Project / workspace rail + agent-aware PTYs
+  sola-projects/       # Projects: project / tab rail + agent-aware PTYs
   sola-mail/           # Kit-native mail client
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
@@ -136,16 +136,16 @@ docs/
 
 ### Worktrees
 - **Work where your tab is. Root tabs do not open worktrees unless asked.**
-  A root tab is the project's own tab (`solactl workspaces whoami` →
+  A root tab is the project's own tab (`solactl projects whoami` →
   `kind: main`) or an extra tab opened with **No worktree** (`kind:
   root`). In one, do the work right there on the root's branch (usually
-  master). Do **not** open a worktree (`workspace.spawn`, `git worktree
+  master). Do **not** open a worktree (`tab.spawn`, `git worktree
   add`) or fan out to a sibling unless the user asks for one (create a
-  worktree / fan out / spawn a sibling / new workspace). Same in the root
-  checkout outside Workspaces.
+  worktree / fan out / spawn a sibling / new worktree tab). Same in the root
+  checkout outside Projects.
 - Root tabs share one checkout — commit only your own changes; never
   stash, reset, or discard edits you did not make. Close an extra root
-  tab with plain `workspace.rm` (never `--worktree`).
+  tab with plain `tab.rm` (never `--worktree`).
 - Worktrees, when asked for, live in `.worktrees/`. A worktree tab
   (`kind: worktree`) works on its own branch.
 - Only merge worktree branches to master with explicit user permission.
@@ -154,12 +154,12 @@ docs/
   "ship it", "LGTM", "perfect" — in a root tab, commit on that branch; in a
   worktree, commit any uncommitted work if needed and merge the branch to
   master. Do **not** wait for a second explicit "please merge" (unless they
-  say hold off). Leave the git worktree **and** the Workspaces tab unless
+  say hold off). Leave the git worktree **and** the Projects tab unless
   they asked to remove them.
-- **Do not remove a worktree or workspace tab unless they asked.** There is
+- **Do not remove a worktree or Projects tab unless they asked.** There is
   no default cleanup after merge. If a git worktree is removed, close the
   tab unless they said keep it. Phrases and sequence:
-  [`.grok/skills/sola-workspaces-cli/SKILL.md`](.grok/skills/sola-workspaces-cli/SKILL.md)
+  [`.grok/skills/sola-projects-cli/SKILL.md`](.grok/skills/sola-projects-cli/SKILL.md)
   (Merge / cleanup).
 
 ### Installing
@@ -305,7 +305,7 @@ bounds or reference bus types). Operator-level detail:
   changes, so `cargo make install` picks up new code live; skipped when
   `SOLA_NO_SELF_WATCH=1`).
 - **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
-  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("workspaces", methods).install()`
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("projects", methods).install()`
   Advertises call-plane methods; fold `call_subscription()` into iced. Or use
   `CallSetup::new(owner, app_id).methods(…).install()` alone.
   hands the connected client to the kit's global slot.

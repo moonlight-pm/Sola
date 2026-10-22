@@ -254,7 +254,7 @@ their files if they exist.
 | `OpenUrl` | `url`, `activate` | Browser, re-sending a URL handed to it so the shell raises it | Browser (new tab; ignores its own echo); Shell (raises Browser if running and `activate` is set, otherwise starts it with the URL) | Ephemeral |
 | `OpenImage` | `path`, `activate`, optional `app_id` (absent means Paint) | A second Paint launch, handing paths to the running one | Paint, Preview (each only when addressed) | Ephemeral |
 | `AppToast` | `text` | Nothing in Sola; `solactl emit` can | Shell (menubar, 5 seconds) | Ephemeral |
-| `AppNotification` | `id`, `app_id`, `source`, `title`, `body`, optional `tag`, `tab_id`, `url` | Browser, website wrappers, Calendar, Workspaces | Shell | Ephemeral |
+| `AppNotification` | `id`, `app_id`, `source`, `title`, `body`, optional `tag`, `tab_id`, `url` | Browser, website wrappers, Calendar, Projects | Shell | Ephemeral |
 | `NotificationActivate` | The clicked notification's `id`, `app_id`, `tab_id`, `url` | Shell | The app named by `app_id` | Ephemeral |
 | `ClientConnected` | An app id | `sola-bus` on `$identify`; replayed as the roster | No app; Monitor shows it | Ephemeral |
 | `ClientDisconnected` | An app id | `sola-bus` when an identified connection closes | No app; Monitor shows it | Ephemeral |

@@ -1,4 +1,4 @@
-//! Pane / workspace status vocabulary.
+//! Pane / tab status vocabulary.
 //!
 //! Hooks (Grok, Codex, and Claude) and OSC 9999 write this. Process-tree
 //! only names *who*. Never infer from OSC 0/2 titles.
@@ -21,7 +21,7 @@ use crate::hooks::Incoming;
 use crate::presence::Presence;
 use sola_terminal::osc9999::{OscState, OscStatus};
 
-/// What a pane (or the workspace roll-up) is doing.
+/// What a pane (or the tab roll-up) is doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStatus {
@@ -42,7 +42,7 @@ impl AgentStatus {
         }
     }
 
-    /// Workspace row: waiting (needs attention) beats working beats
+    /// Tab row: waiting (needs attention) beats working beats
     /// done beats idle. Shell panes are filtered out by [`rollup_tracked`].
     pub fn rollup(statuses: impl IntoIterator<Item = Self>) -> Self {
         let mut best = Self::Idle;
@@ -58,7 +58,7 @@ impl AgentStatus {
     }
 }
 
-/// Mark for a workspace tab: Grok, Codex, and Claude panes. A sibling
+/// Mark for a tab tab: Grok, Codex, and Claude panes. A sibling
 /// shell stays off the disc even if it still holds a leftover status.
 pub fn rollup_tracked<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> AgentStatus {
     AgentStatus::rollup(
@@ -69,7 +69,7 @@ pub fn rollup_tracked<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Ag
     )
 }
 
-/// Agent name for desk cards / `workspace.agent`: the tracked pane whose
+/// Agent name for desk cards / `tab.agent`: the tracked pane whose
 /// status matches the roll-up (waiting first).
 pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Option<String> {
     let panes: Vec<&PaneStatus> = panes.into_iter().filter(|p| p.is_tracked()).collect();
@@ -81,7 +81,7 @@ pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Opt
         .or_else(|| panes.first().and_then(|p| p.agent.clone()))
 }
 
-/// Quiet `×N` on the workspace row: loudest Grok, Codex, or Claude session.
+/// Quiet `×N` on the tab row: loudest Grok, Codex, or Claude session.
 pub fn rail_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
     panes
         .into_iter()

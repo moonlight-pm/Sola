@@ -47,7 +47,7 @@ install from agent sessions.
 
 ### D3 — Which call-plane methods need a human confirm (P1)
 
-**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Workspaces spawn).
+**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Projects tab spawn).
 
 **Ask:**
 
@@ -146,7 +146,7 @@ speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
 
 **Ask:**
 
-1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`.  
+1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`. **Renamed 2026-10-21** (branch `next`) to free "workspace" for desktop workspaces ([Next N5](specs/2026-10-21-next-tab-bar-design.md)): crate / app id `sola-projects`, window **Projects**, owner `projects` (`solactl projects`, no alias), a workspace is now a tab (`tab.*`), config `~/.config/sola/projects/`; tmux names unchanged.  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
 4. ~~Claude in v1~~ **decided 2026-10-08:** first-class, same path as Codex.
@@ -158,7 +158,7 @@ speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
 
 **Closed.** OpenCode is presence-only by design, not an open fork.
 
-**Related:** `workspaces` capability;
+**Related:** `projects` capability (was `workspaces`);
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
 
 ---

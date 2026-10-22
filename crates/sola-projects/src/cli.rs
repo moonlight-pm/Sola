@@ -5,7 +5,7 @@
 
 use crate::calls::WAIT_DEFAULT_SECS;
 use crate::status::AgentStatus;
-use crate::workspace::{Kind, Project, Workspace};
+use crate::catalog::{Kind, Project, Tab};
 
 pub fn project_json(p: &Project) -> serde_json::Value {
     serde_json::json!({
@@ -16,7 +16,7 @@ pub fn project_json(p: &Project) -> serde_json::Value {
     })
 }
 
-pub fn workspace_json(w: &Workspace, selected: Option<&str>) -> serde_json::Value {
+pub fn tab_json(w: &Tab, selected: Option<&str>) -> serde_json::Value {
     let title = display_name(w);
     let mut v = serde_json::json!({
         "id": w.id,
@@ -50,7 +50,7 @@ pub fn pane_json(
     })
 }
 
-pub fn spawn_json(w: &Workspace, selected: bool) -> serde_json::Value {
+pub fn spawn_json(w: &Tab, selected: bool) -> serde_json::Value {
     serde_json::json!({
         "id": w.id,
         "name": w.name,
@@ -64,7 +64,7 @@ pub fn spawn_json(w: &Workspace, selected: bool) -> serde_json::Value {
     })
 }
 
-pub fn display_name(w: &Workspace) -> &str {
+pub fn display_name(w: &Tab) -> &str {
     if w.kind == Kind::Main {
         "root"
     } else {
@@ -74,7 +74,7 @@ pub fn display_name(w: &Workspace) -> &str {
 
 /// Rail label: `root`, the worktree slug, or `--title` when set.
 /// The folder slug is not prefixed onto a custom title.
-pub fn rail_label(w: &Workspace) -> String {
+pub fn rail_label(w: &Tab) -> String {
     if w.kind == Kind::Main {
         return "root".into();
     }
@@ -86,7 +86,7 @@ pub fn rail_label(w: &Workspace) -> String {
 
 /// Set the rail display. Empty or equal to the worktree slug clears
 /// `title` so the row tracks `--name`.
-pub fn apply_rail_title(ws: &mut Workspace, raw: &str) {
+pub fn apply_rail_title(ws: &mut Tab, raw: &str) {
     if ws.kind == Kind::Main {
         return;
     }
@@ -215,7 +215,7 @@ pub fn prefer_agent_pane(
         .unwrap_or_else(|| active.to_string())
 }
 
-/// Workspace name prefers the Grok leaf, else `active`.
+/// Tab name prefers the Grok leaf, else `active`.
 #[cfg(test)]
 pub fn prefer_grok_pane(
     leaves: &[String],
@@ -323,8 +323,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn ws(id: &str, name: &str, kind: Kind) -> Workspace {
-        Workspace {
+    fn ws(id: &str, name: &str, kind: Kind) -> Tab {
+        Tab {
             id: id.into(),
             project_id: "proj".into(),
             name: name.into(),
@@ -381,10 +381,10 @@ mod tests {
     fn main_display_name_is_root() {
         let w = ws("ws-main", "Sola", Kind::Main);
         assert_eq!(display_name(&w), "root");
-        assert_eq!(workspace_json(&w, Some("ws-main"))["name"], "root");
-        assert_eq!(workspace_json(&w, Some("ws-main"))["label"], "root");
-        assert_eq!(workspace_json(&w, Some("ws-main"))["selected"], true);
-        assert_eq!(workspace_json(&w, Some("ws-main"))["kind"], "main");
+        assert_eq!(tab_json(&w, Some("ws-main"))["name"], "root");
+        assert_eq!(tab_json(&w, Some("ws-main"))["label"], "root");
+        assert_eq!(tab_json(&w, Some("ws-main"))["selected"], true);
+        assert_eq!(tab_json(&w, Some("ws-main"))["kind"], "main");
     }
 
     #[test]
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(rail_label(&w), "hotfix");
         apply_rail_title(&mut w, "quick fix");
         assert_eq!(rail_label(&w), "quick fix");
-        assert_eq!(workspace_json(&w, None)["kind"], "root");
+        assert_eq!(tab_json(&w, None)["kind"], "root");
         assert_eq!(spawn_json(&w, false)["kind"], "root");
     }
 

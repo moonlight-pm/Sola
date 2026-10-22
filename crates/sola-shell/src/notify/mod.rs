@@ -429,8 +429,8 @@ mod tests {
     fn n(id: &str, tag: Option<&str>) -> AppNotification {
         AppNotification {
             id: id.into(),
-            app_id: "sola-workspaces".into(),
-            source: "Workspaces".into(),
+            app_id: "sola-projects".into(),
+            source: "Projects".into(),
             title: "done".into(),
             body: String::new(),
             tag: tag.map(|s| s.into()),
@@ -612,9 +612,9 @@ mod tests {
         s.ack_app("slack");
         assert_eq!(s.attention_count("slack"), 0);
         assert_eq!(s.pile_count(), 3, "pile is history, not the badge");
-        assert_eq!(s.attention_count("sola-workspaces"), 1);
+        assert_eq!(s.attention_count("sola-projects"), 1);
         s.acknowledge();
-        assert_eq!(s.attention_count("sola-workspaces"), 0);
+        assert_eq!(s.attention_count("sola-projects"), 0);
         assert_eq!(s.pile_count(), 3);
         pile_into(&mut s, slack("c"));
         assert_eq!(s.attention_count("slack"), 1, "new item badges again");

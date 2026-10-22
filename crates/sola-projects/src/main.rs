@@ -1,7 +1,7 @@
-//! sola-workspaces — project / workspace rail + agent-aware PTYs.
+//! sola-tabs — project / tab rail + agent-aware PTYs.
 //!
 //! Persist + spawn: catalog on disk, siblings under `.worktrees/`.
-//! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `workspaces`.
+//! Grok + Codex hooks, OSC 9999, process-tree. Calls on sola-call owner `tabs`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -37,10 +37,10 @@ mod sidebar;
 mod spawn;
 mod startup;
 mod status;
-mod workspace;
+mod catalog;
 
-const APP_ID: &str = "sola-workspaces";
-const WINDOW_TITLE: &str = "Workspaces";
+const APP_ID: &str = "sola-projects";
+const WINDOW_TITLE: &str = "Projects";
 
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
@@ -94,8 +94,8 @@ fn main() -> iced::Result {
 }
 
 struct App {
-    projects: Vec<workspace::Project>,
-    workspaces: Vec<workspace::Workspace>,
+    projects: Vec<catalog::Project>,
+    tabs: Vec<catalog::Tab>,
     selected: String,
     focused: String,
     runtimes: HashMap<String, PaneRuntime>,
@@ -154,7 +154,7 @@ enum Msg {
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
-    SelectWorkspace(String),
+    SelectTab(String),
     BeginRename(String),
     RenameInput(String),
     RenameCommit,
@@ -169,7 +169,7 @@ enum Msg {
     Spawn,
     AddPath(String),
     AddProject,
-    CloseWorkspace(String),
+    CloseTab(String),
     /// Close the tab and `git worktree remove` the checkout (`--worktree`).
     RmCheckout {
         id: String,
@@ -215,7 +215,7 @@ impl DetachedPane {
 fn close_io_task(
     panes: Vec<DetachedPane>,
     checkout: Option<(PathBuf, PathBuf, bool)>,
-    workspace_id: String,
+    tab_id: String,
 ) -> Task<Msg> {
     Task::perform(
         async move {
@@ -232,7 +232,7 @@ fn close_io_task(
             {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::error!(%e, "workspace teardown worker panicked");
+                    tracing::error!(%e, "tab teardown worker panicked");
                     Ok(())
                 }
             }
@@ -240,7 +240,7 @@ fn close_io_task(
         move |result| match result {
             Ok(()) => Msg::Ignore,
             Err(error) => Msg::GitRmFailed {
-                id: workspace_id,
+                id: tab_id,
                 error,
             },
         },
@@ -251,32 +251,32 @@ impl App {
     fn boot() -> (Self, Task<Msg>) {
         let hook_paths = hooks::start();
         let _ = sola_terminal::osc9999::sender();
-        let mut catalog = workspace::load();
+        let mut catalog = catalog::load();
         if catalog.projects.is_empty() {
-            if let Some((project, ws)) = workspace::seed_from_cwd() {
+            if let Some((project, ws)) = catalog::seed_from_cwd() {
                 catalog.selected = Some(ws.id.clone());
                 catalog.projects.push(project);
-                catalog.workspaces.push(ws);
-                workspace::save(&catalog);
+                catalog.tabs.push(ws);
+                catalog::save(&catalog);
             }
         }
         let selected = catalog
             .selected
             .clone()
-            .filter(|id| catalog.workspaces.iter().any(|w| w.id == *id))
-            .or_else(|| catalog.workspaces.first().map(|w| w.id.clone()))
+            .filter(|id| catalog.tabs.iter().any(|w| w.id == *id))
+            .or_else(|| catalog.tabs.first().map(|w| w.id.clone()))
             .unwrap_or_default();
         let adopted_from = catalog
-            .workspaces
+            .tabs
             .iter()
-            .find(|w| w.id == workspace::LIVE_ID)
+            .find(|w| w.id == catalog::LIVE_ID)
             .and_then(|w| {
                 let claimed: HashSet<String> =
-                    catalog.workspaces.iter().map(|x| x.id.clone()).collect();
-                workspace::adopt_orphan_session(&w.path, &claimed)
+                    catalog.tabs.iter().map(|x| x.id.clone()).collect();
+                catalog::adopt_orphan_session(&w.path, &claimed)
             });
         let mut pane_status = HashMap::new();
-        for ws in &catalog.workspaces {
+        for ws in &catalog.tabs {
             for pane_id in ws.layout().leaves() {
                 if let Some(st) = status::hydrate(&pane_id) {
                     pane_status.insert(pane_id, st);
@@ -284,14 +284,14 @@ impl App {
             }
         }
         let focused = catalog
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.id == selected)
             .map(|w| w.active_pane_id())
             .unwrap_or_else(|| selected.clone());
         let mut app = Self {
             projects: catalog.projects,
-            workspaces: catalog.workspaces,
+            tabs: catalog.tabs,
             selected: selected.clone(),
             focused,
             runtimes: HashMap::new(),
@@ -322,7 +322,7 @@ impl App {
             Task::none()
         } else {
             let id = app.selected.clone();
-            app.attach_workspace(&id)
+            app.attach_tab(&id)
         };
         (
             app,
@@ -419,7 +419,7 @@ impl App {
                     .get(&id)
                     .map(|s| s.status)
                     .unwrap_or_default();
-                let cwd = self.workspace_for_pane(&id).map(|w| w.path.clone());
+                let cwd = self.tab_for_pane(&id).map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
                 st.apply_hook(&incoming);
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
@@ -459,7 +459,7 @@ impl App {
             Msg::PresenceTick => {
                 let reap = self.reap_missing_worktrees();
                 let ids: Vec<String> = self
-                    .workspaces
+                    .tabs
                     .iter()
                     .flat_map(|w| w.layout().leaves())
                     .collect();
@@ -481,7 +481,7 @@ impl App {
                 for id in ids {
                     let tmux_session = tmux::session_name(&id);
                     let who = presence::scan_session(&tmux_session);
-                    let cwd = self.workspace_for_pane(&id).map(|w| w.path.clone());
+                    let cwd = self.tab_for_pane(&id).map(|w| w.path.clone());
                     let st = self.pane_status.entry(id).or_default();
                     let before = (st.status, st.agent.clone());
                     st.apply_presence(who);
@@ -509,12 +509,12 @@ impl App {
                 self.flush_waits();
                 reap
             }
-            Msg::SelectWorkspace(id) => {
-                if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
+            Msg::SelectTab(id) => {
+                if let Some(ws) = self.tabs.iter().find(|w| w.id == id) {
                     self.selected = id.clone();
                     self.focused = ws.active_pane_id();
                     self.persist_catalog();
-                    return self.attach_workspace(&id);
+                    return self.attach_tab(&id);
                 }
                 Task::none()
             }
@@ -522,7 +522,7 @@ impl App {
                 // Hover focuses for typing. It must not spawn a shell —
                 // only the Start new shell button (or a sidebar click)
                 // attaches a missing PTY.
-                if let Some(ws) = self.workspaces.iter().find(|w| w.owns_pane(&pane_id)) {
+                if let Some(ws) = self.tabs.iter().find(|w| w.owns_pane(&pane_id)) {
                     let ws_id = ws.id.clone();
                     self.set_focus(&ws_id, &pane_id);
                 }
@@ -563,11 +563,11 @@ impl App {
                 Task::none()
             }
             Msg::AddProject => self.add_project(),
-            Msg::CloseWorkspace(id) => self.close_workspace(&id, false, false),
-            Msg::RmCheckout { id, force } => self.close_workspace(&id, true, force),
+            Msg::CloseTab(id) => self.close_tab(&id, false, false),
+            Msg::RmCheckout { id, force } => self.close_tab(&id, true, force),
             Msg::DropProject(id) => self.drop_project(&id),
             Msg::GitRmFailed { id, error } => {
-                tracing::warn!(workspace = %id, %error, "git worktree remove failed");
+                tracing::warn!(tab = %id, %error, "git worktree remove failed");
                 self.emit_notice("Worktree leftover".into(), error, format!("git-rm-{id}"));
                 Task::none()
             }
@@ -598,7 +598,7 @@ impl App {
                 self.runtimes.remove(&id);
                 // Tab already dropped (CLI / hover). The session is being
                 // killed off-thread — do not list-sessions or reattach.
-                if self.workspace_for_pane(&id).is_none() {
+                if self.tab_for_pane(&id).is_none() {
                     self.pane_status.remove(&id);
                     status::persist_all(&self.pane_status);
                     return Task::none();
@@ -621,7 +621,7 @@ impl App {
                 }
                 // A split leaf that dies retracts. Start new shell only
                 // on the last remaining pane (`close_pane` handles that).
-                if self.workspace_for_pane(&id).is_some() {
+                if self.tab_for_pane(&id).is_some() {
                     return self.close_pane(&id);
                 }
                 self.sync_row(&id);
@@ -681,9 +681,9 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        let pane: Element<'_, Msg> = if self.workspaces.is_empty() {
+        let pane: Element<'_, Msg> = if self.tabs.is_empty() {
             sidebar::empty_pane()
-        } else if let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) {
+        } else if let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) {
             self.render_node(&ws.layout().to_node())
         } else {
             sidebar::empty_pane()
@@ -693,7 +693,7 @@ impl App {
             sidebar::view(
                 &self.sidebar,
                 &self.projects,
-                &self.workspaces,
+                &self.tabs,
                 &self.selected,
                 &self.pane_status,
                 &self.theme,
@@ -746,7 +746,7 @@ impl App {
                 return match p.action_id.as_str() {
                     "spawn-sibling" => {
                         let pid = self
-                            .workspaces
+                            .tabs
                             .iter()
                             .find(|w| w.id == self.selected)
                             .map(|w| w.project_id.clone())
@@ -768,9 +768,9 @@ impl App {
                             self.close_pane(&id)
                         }
                     }
-                    "drop-workspace" => {
+                    "drop-project" => {
                         let pid = self
-                            .workspaces
+                            .tabs
                             .iter()
                             .find(|w| w.id == self.selected)
                             .map(|w| w.project_id.clone());
@@ -855,11 +855,11 @@ impl App {
             .into()
     }
 
-    fn attach_workspace(&mut self, workspace_id: &str) -> Task<Msg> {
+    fn attach_tab(&mut self, tab_id: &str) -> Task<Msg> {
         let leaves = self
-            .workspaces
+            .tabs
             .iter()
-            .find(|w| w.id == workspace_id)
+            .find(|w| w.id == tab_id)
             .map(|w| w.layout().leaves())
             .unwrap_or_default();
         let mut tasks = Vec::new();
@@ -870,7 +870,7 @@ impl App {
     }
 
     fn is_sole_leaf(&self, pane_id: &str) -> bool {
-        self.workspace_for_pane(pane_id)
+        self.tab_for_pane(pane_id)
             .map(|w| {
                 let leaves = w.layout().leaves();
                 leaves.len() <= 1 && leaves.first().map(String::as_str) == Some(pane_id)
@@ -879,17 +879,17 @@ impl App {
     }
 
     /// Record focus. Does not attach a PTY (hover must not spawn).
-    fn set_focus(&mut self, workspace_id: &str, pane_id: &str) -> bool {
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == workspace_id) else {
+    fn set_focus(&mut self, tab_id: &str, pane_id: &str) -> bool {
+        let Some(ws) = self.tabs.iter().find(|w| w.id == tab_id) else {
             return false;
         };
         if !ws.owns_pane(pane_id) {
             return false;
         }
-        let same = self.selected == workspace_id && self.focused == pane_id;
-        self.selected = workspace_id.to_string();
+        let same = self.selected == tab_id && self.focused == pane_id;
+        self.selected = tab_id.to_string();
         self.focused = pane_id.to_string();
-        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+        if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == tab_id) {
             let node = ws.layout().to_node();
             ws.set_tree(node, pane_id.to_string());
         }
@@ -905,7 +905,7 @@ impl App {
             return Task::none();
         }
         let Some(ws) = self
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.owns_pane(id) || w.id == id)
         else {
@@ -914,7 +914,7 @@ impl App {
         let (cols, rows) = self.cols_rows();
         let cols = if cols == 0 { DEFAULT_COLS } else { cols };
         let rows = if rows == 0 { DEFAULT_ROWS } else { rows };
-        let tmux_session = workspace::bind_session(id, &ws.path);
+        let tmux_session = catalog::bind_session(id, &ws.path);
         if tmux_session.is_empty() {
             tracing::error!(pane = %id, "refusing attach; leftover tmux is another checkout");
             return Task::none();
@@ -952,7 +952,7 @@ impl App {
         let env = [
             ("SOLA_PANE_ID", id),
             ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
-            (workspace::SOLA_WS_PATH, cwd.as_str()),
+            (catalog::SOLA_WS_PATH, cwd.as_str()),
         ];
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
@@ -1021,10 +1021,10 @@ impl App {
         let header = self.resolve_pane(&incoming.pane_id);
         let header_path = header
             .as_deref()
-            .and_then(|id| self.workspace_for_pane(id))
+            .and_then(|id| self.tab_for_pane(id))
             .map(|ws| ws.path.clone());
         let located: Vec<(String, std::path::PathBuf)> = self
-            .workspaces
+            .tabs
             .iter()
             .flat_map(|ws| {
                 let path = ws.path.clone();
@@ -1068,32 +1068,32 @@ impl App {
 
     fn resolve_pane(&self, id: &str) -> Option<String> {
         if self
-            .workspaces
+            .tabs
             .iter()
             .any(|w| w.owns_pane(id) || w.id == id)
         {
             return Some(id.to_string());
         }
         if self.adopted_from.as_deref() == Some(id)
-            && self.workspaces.iter().any(|w| w.id == workspace::LIVE_ID)
+            && self.tabs.iter().any(|w| w.id == catalog::LIVE_ID)
         {
-            return Some(workspace::LIVE_ID.into());
+            return Some(catalog::LIVE_ID.into());
         }
         None
     }
 
-    fn workspace_for_pane(&self, pane_id: &str) -> Option<&workspace::Workspace> {
-        self.workspaces
+    fn tab_for_pane(&self, pane_id: &str) -> Option<&catalog::Tab> {
+        self.tabs
             .iter()
             .find(|w| w.owns_pane(pane_id) || w.id == pane_id)
     }
 
     fn sync_row(&mut self, pane_id: &str) {
-        let Some(ws_id) = self.workspace_for_pane(pane_id).map(|w| w.id.clone()) else {
+        let Some(ws_id) = self.tab_for_pane(pane_id).map(|w| w.id.clone()) else {
             return;
         };
         let leaves = self
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.id == ws_id)
             .map(|w| w.layout().leaves())
@@ -1108,17 +1108,17 @@ impl App {
                 status::loudest_agent(panes.iter().copied()),
             )
         };
-        if let Some(ws) = workspace::find_workspace_mut(&mut self.workspaces, &ws_id) {
+        if let Some(ws) = catalog::find_tab_mut(&mut self.tabs, &ws_id) {
             ws.status = rolled;
             ws.agent = agent;
         }
     }
 
     fn sync_all_rows(&mut self) {
-        let ids: Vec<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
+        let ids: Vec<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
         for id in ids {
             if let Some(first) = self
-                .workspaces
+                .tabs
                 .iter()
                 .find(|w| w.id == id)
                 .and_then(|w| w.layout().leaves().into_iter().next())
@@ -1129,7 +1129,7 @@ impl App {
     }
 
     fn persist_catalog(&self) {
-        workspace::save(&workspace::Catalog {
+        catalog::save(&catalog::Catalog {
             version: 1,
             selected: if self.selected.is_empty() {
                 None
@@ -1137,14 +1137,14 @@ impl App {
                 Some(self.selected.clone())
             },
             projects: self.projects.clone(),
-            workspaces: self.workspaces.clone(),
+            tabs: self.tabs.clone(),
         });
     }
 
     fn on_sidebar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
         use sola_kit::components::{Dest, SidebarEvent};
         match ev {
-            SidebarEvent::Activate { id } => self.select_workspace(&id),
+            SidebarEvent::Activate { id } => self.select_tab(&id),
             SidebarEvent::ToggleSection { id } => {
                 if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
                     p.collapsed = !p.collapsed;
@@ -1161,8 +1161,8 @@ impl App {
             SidebarEvent::Drop(drop) => {
                 match drop.dest {
                     Dest::Join { before, .. } => {
-                        if let Err(e) = workspace::move_workspace_before(
-                            &mut self.workspaces,
+                        if let Err(e) = catalog::move_tab_before(
+                            &mut self.tabs,
                             &drop.id,
                             before.as_deref(),
                         ) {
@@ -1173,7 +1173,7 @@ impl App {
                     }
                     Dest::BlockBefore { before } => {
                         let before = self.project_before_target(before.as_deref());
-                        if let Err(e) = workspace::move_project_before(
+                        if let Err(e) = catalog::move_project_before(
                             &mut self.projects,
                             &drop.id,
                             before.as_deref(),
@@ -1195,17 +1195,17 @@ impl App {
         if self.projects.iter().any(|p| p.id == id) {
             return Some(id.to_string());
         }
-        self.workspaces
+        self.tabs
             .iter()
             .find(|w| w.id == id)
             .map(|w| w.project_id.clone())
     }
 
     fn begin_rename(&mut self, id: String) -> Task<Msg> {
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+        let Some(ws) = self.tabs.iter().find(|w| w.id == id) else {
             return Task::none();
         };
-        if !workspace::can_close(ws) {
+        if !catalog::can_close(ws) {
             return Task::none();
         }
         self.sidebar.renaming = Some((id, cli::rail_label(ws)));
@@ -1223,8 +1223,8 @@ impl App {
         let Some((id, name)) = self.sidebar.renaming.take() else {
             return Task::none();
         };
-        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
-            if !workspace::can_close(ws) {
+        if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == id) {
+            if !catalog::can_close(ws) {
                 return Task::none();
             }
             cli::apply_rail_title(ws, &name);
@@ -1233,17 +1233,17 @@ impl App {
         Task::none()
     }
 
-    fn select_workspace(&mut self, id: &str) -> Task<Msg> {
-        if self.workspaces.iter().all(|w| w.id != id) {
+    fn select_tab(&mut self, id: &str) -> Task<Msg> {
+        if self.tabs.iter().all(|w| w.id != id) {
             return Task::none();
         }
         self.sidebar.renaming = None;
         self.selected = id.to_string();
-        if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
+        if let Some(ws) = self.tabs.iter().find(|w| w.id == id) {
             self.focused = ws.active_pane_id();
         }
         self.persist_catalog();
-        self.attach_workspace(id)
+        self.attach_tab(id)
     }
 
     fn open_spawn(&mut self, project_id: &str) -> Task<Msg> {
@@ -1271,7 +1271,7 @@ impl App {
     }
 
     fn selected_project_id(&self) -> Option<String> {
-        self.workspaces
+        self.tabs
             .iter()
             .find(|w| w.id == self.selected)
             .map(|w| w.project_id.clone())
@@ -1313,7 +1313,7 @@ impl App {
         };
         let name = self.spawn.name.clone();
         let in_root = self.spawn.in_root;
-        match self.spawn_workspace(
+        match self.spawn_tab(
             &project_id,
             &name,
             None,
@@ -1338,9 +1338,9 @@ impl App {
 
     /// Create a worktree (or a root tab when `in_root`) + catalog row.
     /// Does not attach a PTY. Second value is a startup-script error
-    /// (workspace still exists). `select` takes the rail (UI /
+    /// (tab still exists). `select` takes the rail (UI /
     /// `--select`). CLI default is false.
-    fn spawn_workspace(
+    fn spawn_tab(
         &mut self,
         project_q: &str,
         name: &str,
@@ -1352,7 +1352,7 @@ impl App {
         in_root: bool,
         select: bool,
     ) -> Result<(String, Option<String>), String> {
-        let project = workspace::resolve_project(&self.projects, project_q)?.clone();
+        let project = catalog::resolve_project(&self.projects, project_q)?.clone();
         let slug = spawn::slug(name);
         if slug.is_empty() {
             return Err("name needs a letter or number".into());
@@ -1363,33 +1363,33 @@ impl App {
             if given(branch) || given(base) {
                 return Err("--branch / --base-branch need a worktree (drop --root)".into());
             }
-            if workspace::worktree_name_taken(&self.workspaces, &project.id, &slug, "") {
-                return Err(format!("workspace '{slug}' already exists"));
+            if catalog::worktree_name_taken(&self.tabs, &project.id, &slug, "") {
+                return Err(format!("tab '{slug}' already exists"));
             }
-            (project.root.clone(), workspace::Kind::Root)
+            (project.root.clone(), catalog::Kind::Root)
         } else {
             let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
-            (dest, workspace::Kind::Worktree)
+            (dest, catalog::Kind::Worktree)
         };
-        let taken: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
-        let id = workspace::unique_id("ws", &slug, &taken);
+        let taken: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
+        let id = catalog::unique_id("ws", &slug, &taken);
         let parent = match parent {
             Some(p) => Some(
-                workspace::resolve_workspace(&self.workspaces, &p)?
+                catalog::resolve_tab(&self.tabs, &p)?
                     .id
                     .clone(),
             ),
             None => self
-                .workspaces
+                .tabs
                 .iter()
-                .find(|w| w.project_id == project.id && w.kind == workspace::Kind::Main)
+                .find(|w| w.project_id == project.id && w.kind == catalog::Kind::Main)
                 .map(|w| w.id.clone()),
         };
         let title = title
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let ws = workspace::Workspace {
+        let ws = catalog::Tab {
             id: id.clone(),
             project_id: project.id.clone(),
             name: name.trim().to_string(),
@@ -1409,20 +1409,20 @@ impl App {
             startup::run(&project, &ws).err()
         };
         if let Some(e) = &startup_err {
-            tracing::warn!(workspace = %ws.id, "{e}");
+            tracing::warn!(tab = %ws.id, "{e}");
         }
-        self.workspaces.push(ws);
-        workspace::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, select);
+        self.tabs.push(ws);
+        catalog::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, select);
         self.persist_catalog();
         Ok((id, startup_err))
     }
 
     fn toast_place(&self, pane_id: &str) -> (Option<String>, String) {
-        let Some(ws) = self.workspace_for_pane(pane_id) else {
+        let Some(ws) = self.tab_for_pane(pane_id) else {
             return (None, pane_id.to_string());
         };
         let project =
-            workspace::find_project(&self.projects, &ws.project_id).map(|p| p.name.clone());
+            catalog::find_project(&self.projects, &ws.project_id).map(|p| p.name.clone());
         (project, cli::rail_label(ws))
     }
 
@@ -1431,7 +1431,7 @@ impl App {
             let _ = client.emit(Topic::AppNotification(AppNotification {
                 id: format!("ws-{tag}-{}", now_millis()),
                 app_id: APP_ID.into(),
-                source: "Workspaces".into(),
+                source: "Projects".into(),
                 title,
                 body,
                 tag: Some(tag),
@@ -1542,11 +1542,11 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "workspace.list" => (
-                self.cli_workspace_list(param_str(params, "project").as_deref()),
+            "tab.list" => (
+                self.cli_tab_list(param_str(params, "project").as_deref()),
                 Task::none(),
             ),
-            "workspace.spawn" => {
+            "tab.spawn" => {
                 let Some(project) = param_str(params, "project") else {
                     return (Err("missing project".into()), Task::none());
                 };
@@ -1573,9 +1573,9 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "workspace.rm" => {
-                let Some(ws) = param_str(params, "workspace") else {
-                    return (Err("missing workspace".into()), Task::none());
+            "tab.rm" => {
+                let Some(ws) = param_str(params, "tab") else {
+                    return (Err("missing tab".into()), Task::none());
                 };
                 let checkout = param_bool(params, "worktree");
                 let force = param_bool(params, "force");
@@ -1591,24 +1591,24 @@ impl App {
                         if checkout {
                             Task::done(Msg::RmCheckout { id, force })
                         } else {
-                            Task::done(Msg::CloseWorkspace(id))
+                            Task::done(Msg::CloseTab(id))
                         },
                     ),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "workspace.select" => {
-                let Some(q) = param_str(params, "workspace") else {
-                    return (Err("missing workspace".into()), Task::none());
+            "tab.select" => {
+                let Some(q) = param_str(params, "tab") else {
+                    return (Err("missing tab".into()), Task::none());
                 };
                 match self.cli_select(&q) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "workspace.set" => {
-                let Some(q) = param_str(params, "workspace") else {
-                    return (Err("missing workspace".into()), Task::none());
+            "tab.set" => {
+                let Some(q) = param_str(params, "tab") else {
+                    return (Err("missing tab".into()), Task::none());
                 };
                 (
                     self.cli_set(
@@ -1630,9 +1630,9 @@ impl App {
                     Task::none(),
                 )
             }
-            "workspace.exec" => {
-                let Some(q) = param_str(params, "workspace") else {
-                    return (Err("missing workspace".into()), Task::none());
+            "tab.exec" => {
+                let Some(q) = param_str(params, "tab") else {
+                    return (Err("missing tab".into()), Task::none());
                 };
                 match self.cli_exec(
                     &q,
@@ -1645,7 +1645,7 @@ impl App {
                 }
             }
             "pane.list" => (
-                self.cli_pane_list(param_str(params, "workspace").as_deref()),
+                self.cli_pane_list(param_str(params, "tab").as_deref()),
                 Task::none(),
             ),
             "pane.send" => {
@@ -1693,31 +1693,31 @@ impl App {
             .projects
             .iter()
             .map(|p| {
-                let workspaces: Vec<serde_json::Value> =
-                    workspace::ordered_for_project(&p.id, &self.workspaces)
+                let tabs: Vec<serde_json::Value> =
+                    catalog::ordered_for_project(&p.id, &self.tabs)
                         .into_iter()
-                        .map(|w| cli::workspace_json(w, Some(&self.selected)))
+                        .map(|w| cli::tab_json(w, Some(&self.selected)))
                         .collect();
                 let mut row = cli::project_json(p);
-                row["workspaces"] = serde_json::Value::Array(workspaces);
+                row["tabs"] = serde_json::Value::Array(tabs);
                 row
             })
             .collect();
         serde_json::json!({ "projects": projects, "selected": self.selected })
     }
 
-    fn cli_workspace_list(&self, project: Option<&str>) -> Result<serde_json::Value, String> {
+    fn cli_tab_list(&self, project: Option<&str>) -> Result<serde_json::Value, String> {
         let filter = match project {
-            Some(q) => Some(workspace::resolve_project(&self.projects, q)?.id.clone()),
+            Some(q) => Some(catalog::resolve_project(&self.projects, q)?.id.clone()),
             None => None,
         };
         let list: Vec<serde_json::Value> = self
-            .workspaces
+            .tabs
             .iter()
             .filter(|w| filter.as_ref().is_none_or(|id| w.project_id == *id))
-            .map(|w| cli::workspace_json(w, None))
+            .map(|w| cli::tab_json(w, None))
             .collect();
-        Ok(serde_json::json!({ "workspaces": list }))
+        Ok(serde_json::json!({ "tabs": list }))
     }
 
     fn cli_spawn(
@@ -1740,7 +1740,7 @@ impl App {
             (None, Some(_)) => Some("grok"),
             (None, None) => None,
         };
-        let (id, startup_err) = self.spawn_workspace(
+        let (id, startup_err) = self.spawn_tab(
             project, name, parent, agent, branch, base, title, in_root, select,
         )?;
         let task = if let Some(a) = agent {
@@ -1751,7 +1751,7 @@ impl App {
             self.attach_pane(&id, &[])
         };
         let mut data = self
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.id == id)
             .map(|w| cli::spawn_json(w, select))
@@ -1774,14 +1774,14 @@ impl App {
                 .selected_project_id()
                 .ok_or_else(|| "no project selected".to_string())?,
         };
-        let id = workspace::resolve_project(&self.projects, &q)?.id.clone();
+        let id = catalog::resolve_project(&self.projects, &q)?.id.clone();
         if set {
             if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
                 p.startup = script.unwrap_or("").to_string();
             }
             self.persist_catalog();
         }
-        let p = workspace::resolve_project(&self.projects, &id)?;
+        let p = catalog::resolve_project(&self.projects, &id)?;
         Ok(serde_json::json!({
             "project": p.id,
             "name": p.name,
@@ -1790,11 +1790,11 @@ impl App {
     }
 
     fn cli_rm(&self, q: &str, checkout: bool) -> Result<String, String> {
-        let ws = workspace::resolve_workspace(&self.workspaces, q)?;
-        if !workspace::can_close(ws) {
+        let ws = catalog::resolve_tab(&self.tabs, q)?;
+        if !catalog::can_close(ws) {
             return Err("cannot close the project root".into());
         }
-        if checkout && !workspace::has_worktree(ws) {
+        if checkout && !catalog::has_worktree(ws) {
             return Err(format!(
                 "{} has no worktree (root tab) — drop --worktree to close the tab",
                 ws.id
@@ -1804,15 +1804,15 @@ impl App {
     }
 
     fn cli_rm_project(&self, q: &str) -> Result<String, String> {
-        Ok(workspace::resolve_project(&self.projects, q)?.id.clone())
+        Ok(catalog::resolve_project(&self.projects, q)?.id.clone())
     }
 
     fn cli_select(&mut self, q: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?
+        let id = catalog::resolve_tab(&self.tabs, q)?
             .id
             .clone();
         let focused = self
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.id == id)
             .map(|w| w.active_pane_id())
@@ -1820,7 +1820,7 @@ impl App {
         self.selected = id.clone();
         self.focused = focused;
         self.persist_catalog();
-        let task = self.attach_workspace(&id);
+        let task = self.attach_tab(&id);
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
     }
 
@@ -1832,24 +1832,24 @@ impl App {
         branch: Option<&str>,
         before: Option<Option<String>>,
     ) -> Result<serde_json::Value, String> {
-        let id = workspace::resolve_workspace(&self.workspaces, q)?
+        let id = catalog::resolve_tab(&self.tabs, q)?
             .id
             .clone();
         let mut err = None;
         if let Some(raw) = name {
-            if let Err(e) = self.rename_workspace(&id, raw) {
+            if let Err(e) = self.rename_tab(&id, raw) {
                 err = Some(e);
             }
         }
         if err.is_none() {
             if let Some(raw) = branch {
-                if let Err(e) = self.rename_workspace_branch(&id, raw) {
+                if let Err(e) = self.rename_tab_branch(&id, raw) {
                     err = Some(e);
                 }
             }
         }
         if let Some(raw) = title {
-            if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+            if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == id) {
                 cli::apply_rail_title(ws, raw);
             }
         }
@@ -1858,13 +1858,13 @@ impl App {
                 let before_id = match before.as_deref() {
                     None => None,
                     Some(q) => Some(
-                        workspace::resolve_workspace(&self.workspaces, q)?
+                        catalog::resolve_tab(&self.tabs, q)?
                             .id
                             .clone(),
                     ),
                 };
-                if let Err(e) = workspace::move_workspace_before(
-                    &mut self.workspaces,
+                if let Err(e) = catalog::move_tab_before(
+                    &mut self.tabs,
                     &id,
                     before_id.as_deref(),
                 ) {
@@ -1876,8 +1876,8 @@ impl App {
         if let Some(e) = err {
             return Err(e);
         }
-        let ws = workspace::resolve_workspace(&self.workspaces, &id)?;
-        Ok(cli::workspace_json(ws, Some(&self.selected)))
+        let ws = catalog::resolve_tab(&self.tabs, &id)?;
+        Ok(cli::tab_json(ws, Some(&self.selected)))
     }
 
     fn cli_reorder_project(
@@ -1885,77 +1885,77 @@ impl App {
         q: &str,
         before: Option<Option<String>>,
     ) -> Result<serde_json::Value, String> {
-        let id = workspace::resolve_project(&self.projects, q)?.id.clone();
+        let id = catalog::resolve_project(&self.projects, q)?.id.clone();
         let before_id = match before {
             None => None,
             Some(None) => None,
-            Some(Some(q)) => Some(workspace::resolve_project(&self.projects, &q)?.id.clone()),
+            Some(Some(q)) => Some(catalog::resolve_project(&self.projects, &q)?.id.clone()),
         };
         // Missing --before still moves to end when the method is called.
-        workspace::move_project_before(&mut self.projects, &id, before_id.as_deref())?;
+        catalog::move_project_before(&mut self.projects, &id, before_id.as_deref())?;
         self.persist_catalog();
-        Ok(cli::project_json(workspace::resolve_project(
+        Ok(cli::project_json(catalog::resolve_project(
             &self.projects,
             &id,
         )?))
     }
 
     /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
-    fn rename_workspace(&mut self, id: &str, raw: &str) -> Result<(), String> {
+    fn rename_tab(&mut self, id: &str, raw: &str) -> Result<(), String> {
         let slug = spawn::slug(raw);
         spawn::check_slug(&slug)?;
-        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind == workspace::Kind::Root {
+        let ws = catalog::resolve_tab(&self.tabs, id)?;
+        if ws.kind == catalog::Kind::Root {
             return Err("this tab has no worktree to move — use --title for the rail label".into());
         }
-        if !workspace::has_worktree(ws) {
+        if !catalog::has_worktree(ws) {
             return Err("cannot rename the project root".into());
         }
         let project_id = ws.project_id.clone();
         let from = ws.path.clone();
-        if workspace::worktree_name_taken(&self.workspaces, &project_id, &slug, id) {
-            return Err(format!("workspace '{slug}' already exists"));
+        if catalog::worktree_name_taken(&self.tabs, &project_id, &slug, id) {
+            return Err(format!("tab '{slug}' already exists"));
         }
-        let root = workspace::resolve_project(&self.projects, &project_id)?
+        let root = catalog::resolve_project(&self.projects, &project_id)?
             .root
             .clone();
         let dest = spawn::worktree_path(&root, &slug);
-        let path_changed = !workspace::path_same(&from, &dest);
+        let path_changed = !catalog::path_same(&from, &dest);
         if path_changed {
             spawn::move_worktree(&root, &from, &slug)?;
         }
-        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == id) {
+        if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == id) {
             ws.name = slug;
             ws.path = dest;
         } else {
-            return Err(format!("unknown workspace '{id}'"));
+            return Err(format!("unknown tab '{id}'"));
         }
         if path_changed {
-            self.restamp_workspace_path(id);
+            self.restamp_tab_path(id);
         }
         Ok(())
     }
 
-    fn rename_workspace_branch(&self, id: &str, raw: &str) -> Result<(), String> {
-        let ws = workspace::resolve_workspace(&self.workspaces, id)?;
-        if ws.kind == workspace::Kind::Root {
+    fn rename_tab_branch(&self, id: &str, raw: &str) -> Result<(), String> {
+        let ws = catalog::resolve_tab(&self.tabs, id)?;
+        if ws.kind == catalog::Kind::Root {
             return Err("this tab has no worktree — it uses the project root's branch".into());
         }
-        if !workspace::has_worktree(ws) {
+        if !catalog::has_worktree(ws) {
             return Err("cannot rename the project root branch".into());
         }
         spawn::rename_branch(&ws.path, raw)
     }
 
-    fn restamp_workspace_path(&self, id: &str) {
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == id) else {
+    fn restamp_tab_path(&self, id: &str) {
+        let Some(ws) = self.tabs.iter().find(|w| w.id == id) else {
             return;
         };
         let cwd = ws.path.to_string_lossy();
         for pane in ws.layout().leaves() {
             let session = tmux::session_name(&pane);
             if tmux::has_session(&session) {
-                tmux::set_environment(&session, workspace::SOLA_WS_PATH, cwd.as_ref());
+                tmux::set_environment(&session, catalog::SOLA_WS_PATH, cwd.as_ref());
             }
         }
     }
@@ -1969,7 +1969,7 @@ impl App {
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let agent = cli::first_class_agent(agent)?.unwrap_or("grok");
         let prompt = cli::read_prompt(prompt, prompt_file)?;
-        let ws_id = workspace::resolve_workspace(&self.workspaces, q)?
+        let ws_id = catalog::resolve_tab(&self.tabs, q)?
             .id
             .clone();
         let pane = self.preferred_pane_for(Some(&ws_id), Some(agent))?;
@@ -1984,7 +1984,7 @@ impl App {
             }
             return Ok((
                 serde_json::json!({
-                    "workspace": ws_id,
+                    "tab": ws_id,
                     "pane": pane,
                     "started": false,
                     "sent": prompt.is_some(),
@@ -2006,7 +2006,7 @@ impl App {
         };
         Ok((
             serde_json::json!({
-                "workspace": ws_id,
+                "tab": ws_id,
                 "pane": pane,
                 "started": true,
                 "sent": false,
@@ -2023,22 +2023,22 @@ impl App {
             .find(|p| p.id == project_id)
             .ok_or_else(|| "project vanished".to_string())?;
         let mut data = cli::project_json(project);
-        data["workspace"] = serde_json::json!(main_id);
+        data["tab"] = serde_json::json!(main_id);
         Ok((data, task))
     }
 
-    fn cli_pane_list(&self, workspace: Option<&str>) -> Result<serde_json::Value, String> {
-        let id = match workspace {
-            Some(q) => workspace::resolve_workspace(&self.workspaces, q)?
+    fn cli_pane_list(&self, tab: Option<&str>) -> Result<serde_json::Value, String> {
+        let id = match tab {
+            Some(q) => catalog::resolve_tab(&self.tabs, q)?
                 .id
                 .clone(),
             None => self.selected.clone(),
         };
         if id.is_empty() {
-            return Err("no workspace selected".into());
+            return Err("no tab selected".into());
         }
         let leaves = self
-            .workspaces
+            .tabs
             .iter()
             .find(|w| w.id == id)
             .map(|w| w.layout().leaves())
@@ -2080,10 +2080,10 @@ impl App {
         prefer: Option<&str>,
     ) -> Result<String, String> {
         if let Some(q) = hint {
-            if self.workspaces.iter().any(|w| w.owns_pane(q) && w.id != q) {
+            if self.tabs.iter().any(|w| w.owns_pane(q) && w.id != q) {
                 return Ok(q.to_string());
             }
-            let ws = workspace::resolve_workspace(&self.workspaces, q)?;
+            let ws = catalog::resolve_tab(&self.tabs, q)?;
             let leaves = ws.layout().leaves();
             let agents = self.pane_agents(&leaves);
             return Ok(cli::prefer_agent_pane(
@@ -2142,12 +2142,12 @@ impl App {
         path: Option<&str>,
     ) -> Result<serde_json::Value, String> {
         let ws = if let Some(q) = pane {
-            workspace::resolve_workspace(&self.workspaces, q)?
+            catalog::resolve_tab(&self.tabs, q)?
         } else if let Some(p) = path {
-            workspace::resolve_workspace(&self.workspaces, p)?
+            catalog::resolve_tab(&self.tabs, p)?
         } else {
             return Err(
-                "not in a workspaces pane (pass --pane/--path or run from a Workspaces PTY)".into(),
+                "not in a Projects pane (pass --pane/--path or run from a Projects PTY)".into(),
             );
         };
         let pane_id = if let Some(q) = pane {
@@ -2160,11 +2160,11 @@ impl App {
             self.preferred_pane(Some(&ws.id))?
         };
         let st = self.pane_status.get(&pane_id);
-        let project = workspace::resolve_project(&self.projects, &ws.project_id).ok();
+        let project = catalog::resolve_project(&self.projects, &ws.project_id).ok();
         Ok(serde_json::json!({
             "pane": pane_id,
-            "workspace": ws.id,
-            "workspace_name": cli::display_name(ws),
+            "tab": ws.id,
+            "tab_name": cli::display_name(ws),
             "project": ws.project_id,
             "project_name": project.map(|p| p.name.as_str()),
             "path": ws.path,
@@ -2280,7 +2280,7 @@ impl App {
         if raw.is_empty() {
             return Err("folder path required".into());
         }
-        let root = match workspace::expand_user_path(raw).canonicalize() {
+        let root = match catalog::expand_user_path(raw).canonicalize() {
             Ok(p) if p.is_dir() => p,
             Ok(_) => return Err("not a folder".into()),
             Err(e) => return Err(format!("path: {e}")),
@@ -2294,21 +2294,21 @@ impl App {
                 .unwrap_or("project"),
         );
         let taken_p: HashSet<String> = self.projects.iter().map(|p| p.id.clone()).collect();
-        let project_id = workspace::unique_id("proj", &slug, &taken_p);
-        let mut taken_w: HashSet<String> = self.workspaces.iter().map(|w| w.id.clone()).collect();
-        let main_id = workspace::main_workspace_id(&root, &taken_w);
+        let project_id = catalog::unique_id("proj", &slug, &taken_p);
+        let mut taken_w: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
+        let main_id = catalog::main_tab_id(&root, &taken_w);
         taken_w.insert(main_id.clone());
-        let (project, ws) = workspace::project_from_root(&root, &project_id, &main_id);
+        let (project, ws) = catalog::project_from_root(&root, &project_id, &main_id);
         self.projects.push(project);
         if self.selected.is_empty() {
             self.selected = ws.id.clone();
             self.focused = ws.active_pane_id();
         }
         let attach_id = ws.id.clone();
-        self.workspaces.push(ws);
+        self.tabs.push(ws);
         self.persist_catalog();
         let task = if self.selected == attach_id {
-            self.attach_workspace(&attach_id)
+            self.attach_tab(&attach_id)
         } else {
             Task::none()
         };
@@ -2337,11 +2337,11 @@ impl App {
             self.focused.clear();
             return Task::none();
         }
-        if let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) {
+        if let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) {
             self.focused = ws.active_pane_id();
         }
         let next = self.selected.clone();
-        self.attach_workspace(&next)
+        self.attach_tab(&next)
     }
 
     /// Close a sibling tab. `checkout` also `git worktree remove`s (after
@@ -2351,15 +2351,15 @@ impl App {
     /// The rail and catalog update here; `tmux kill-session` and git run
     /// off the iced thread so a `solactl` rm (or hover ×) does not freeze
     /// every other pane.
-    fn close_workspace(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
+    fn close_tab(&mut self, id: &str, checkout: bool, force: bool) -> Task<Msg> {
         let Some((panes, path, project_id, has_worktree)) =
-            self.workspaces.iter().find(|w| w.id == id).and_then(|ws| {
-                workspace::can_close(ws).then(|| {
+            self.tabs.iter().find(|w| w.id == id).and_then(|ws| {
+                catalog::can_close(ws).then(|| {
                     (
                         ws.layout().leaves(),
                         ws.path.clone(),
                         ws.project_id.clone(),
-                        workspace::has_worktree(ws),
+                        catalog::has_worktree(ws),
                     )
                 })
             })
@@ -2368,17 +2368,17 @@ impl App {
         };
         // A root tab's path is the project root — never `git worktree remove` it.
         let checkout = checkout && has_worktree;
-        tracing::info!(workspace = %id, checkout, "closing workspace");
+        tracing::info!(tab = %id, checkout, "closing tab");
         let detached: Vec<DetachedPane> = panes.iter().map(|pane| self.detach_pane(pane)).collect();
-        self.workspaces.retain(|w| w.id != id);
-        for w in &mut self.workspaces {
+        self.tabs.retain(|w| w.id != id);
+        for w in &mut self.tabs {
             if w.parent.as_deref() == Some(id) {
                 w.parent = None;
             }
         }
         if self.selected == id {
             self.selected = self
-                .workspaces
+                .tabs
                 .first()
                 .map(|w| w.id.clone())
                 .unwrap_or_default();
@@ -2399,31 +2399,31 @@ impl App {
 
     /// If a sibling's checkout is already gone (`git worktree remove` from
     /// inside the pane, or a deleted folder), drop the tab. The pane cannot
-    /// call `workspace.rm` after its cwd vanishes — the rail used to keep
+    /// call `tab.rm` after its cwd vanishes — the rail used to keep
     /// a working spinner forever.
     fn reap_missing_worktrees(&mut self) -> Task<Msg> {
-        let gone = workspace::missing_worktree_ids(&self.workspaces);
+        let gone = catalog::missing_worktree_ids(&self.tabs);
         if gone.is_empty() {
             return Task::none();
         }
         let mut tasks = Vec::with_capacity(gone.len());
         for id in gone {
-            tracing::info!(workspace = %id, "worktree path gone; closing tab");
-            tasks.push(self.close_workspace(&id, true, false));
+            tracing::info!(tab = %id, "worktree path gone; closing tab");
+            tasks.push(self.close_tab(&id, true, false));
         }
         Task::batch(tasks)
     }
 
-    /// Unregister the project and every workspace under it. Kills those
+    /// Unregister the project and every tab under it. Kills those
     /// tmux sessions. Leaves git worktrees and folders on disk.
     fn drop_project(&mut self, project_id: &str) -> Task<Msg> {
         let pane_ids: Vec<String> = self
-            .workspaces
+            .tabs
             .iter()
             .filter(|w| w.project_id == project_id)
             .flat_map(|w| w.layout().leaves())
             .collect();
-        let mut catalog = workspace::Catalog {
+        let mut catalog = catalog::Catalog {
             version: 1,
             selected: if self.selected.is_empty() {
                 None
@@ -2431,11 +2431,11 @@ impl App {
                 Some(self.selected.clone())
             },
             projects: std::mem::take(&mut self.projects),
-            workspaces: std::mem::take(&mut self.workspaces),
+            tabs: std::mem::take(&mut self.tabs),
         };
-        let removed = workspace::unregister_project(&mut catalog, project_id);
+        let removed = catalog::unregister_project(&mut catalog, project_id);
         self.projects = catalog.projects;
-        self.workspaces = catalog.workspaces;
+        self.tabs = catalog.tabs;
         self.selected = catalog.selected.unwrap_or_default();
         let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
         if removed.is_empty() {
@@ -2451,48 +2451,48 @@ impl App {
     }
 
     fn split_focused(&mut self, dir: SplitDir) -> Task<Msg> {
-        let Some(ws_idx) = self.workspaces.iter().position(|w| w.id == self.selected) else {
+        let Some(ws_idx) = self.tabs.iter().position(|w| w.id == self.selected) else {
             return Task::none();
         };
-        let source = self.workspaces[ws_idx].active_pane_id();
-        if !self.workspaces[ws_idx].owns_pane(&source) && source != self.workspaces[ws_idx].id {
+        let source = self.tabs[ws_idx].active_pane_id();
+        if !self.tabs[ws_idx].owns_pane(&source) && source != self.tabs[ws_idx].id {
             return Task::none();
         }
         let mut taken: HashSet<String> = self
-            .workspaces
+            .tabs
             .iter()
             .flat_map(|w| w.layout().leaves())
             .collect();
-        for w in &self.workspaces {
+        for w in &self.tabs {
             taken.insert(w.id.clone());
             taken.extend(w.layout().split_ids());
         }
-        let ws_id = self.workspaces[ws_idx].id.clone();
-        let new_pane = workspace::unique_id(&ws_id, "p", &taken);
-        let split_id = workspace::unique_id("split", &ws_id, &taken);
-        let mut node = self.workspaces[ws_idx].layout().to_node();
+        let ws_id = self.tabs[ws_idx].id.clone();
+        let new_pane = catalog::unique_id(&ws_id, "p", &taken);
+        let split_id = catalog::unique_id("split", &ws_id, &taken);
+        let mut node = self.tabs[ws_idx].layout().to_node();
         if !term_state::split_leaf(&mut node, &source, &split_id, dir, &new_pane) {
             return Task::none();
         }
-        self.workspaces[ws_idx].set_tree(node, new_pane.clone());
+        self.tabs[ws_idx].set_tree(node, new_pane.clone());
         self.focused = new_pane.clone();
         self.persist_catalog();
         self.attach_pane(&new_pane, &[])
     }
 
     fn close_pane(&mut self, pane_id: &str) -> Task<Msg> {
-        let Some(ws_idx) = self.workspaces.iter().position(|w| w.owns_pane(pane_id)) else {
+        let Some(ws_idx) = self.tabs.iter().position(|w| w.owns_pane(pane_id)) else {
             return Task::none();
         };
-        let ws_id = self.workspaces[ws_idx].id.clone();
-        let node = self.workspaces[ws_idx].layout().to_node();
+        let ws_id = self.tabs[ws_idx].id.clone();
+        let node = self.tabs[ws_idx].layout().to_node();
         let next_focus = term_state::sibling_first_leaf(&node, pane_id);
         match term_state::close_leaf(node, pane_id) {
             None => {
-                // Last leaf: kill the shell, keep the workspace, reuse
-                // the stable workspace id for the next Start new shell.
+                // Last leaf: kill the shell, keep the tab, reuse
+                // the stable tab id for the next Start new shell.
                 self.teardown_pane(pane_id);
-                self.workspaces[ws_idx]
+                self.tabs[ws_idx]
                     .set_tree(term_state::PaneNode::Leaf(ws_id.clone()), ws_id.clone());
                 self.focused = ws_id;
                 self.sync_all_rows();
@@ -2505,7 +2505,7 @@ impl App {
                     .or_else(|| term_state::leaves_of(&kept).into_iter().next())
                     .unwrap_or_else(|| ws_id.clone());
                 self.teardown_pane(pane_id);
-                self.workspaces[ws_idx].set_tree(kept, focus.clone());
+                self.tabs[ws_idx].set_tree(kept, focus.clone());
                 self.focused = focus;
                 self.sync_all_rows();
                 self.persist_catalog();
@@ -2517,7 +2517,7 @@ impl App {
     }
 
     fn drag_split(&mut self, split_id: &str, x: f32, y: f32) {
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) else {
+        let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) else {
             return;
         };
         let node = ws.layout().to_node();
@@ -2529,7 +2529,7 @@ impl App {
             return;
         };
         let ratio = term_state::ratio_for_drag(area, dir, x, y, MIN_PANE_PX);
-        let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == self.selected) else {
+        let Some(ws) = self.tabs.iter_mut().find(|w| w.id == self.selected) else {
             return;
         };
         let mut node = ws.layout().to_node();
@@ -2552,7 +2552,7 @@ impl App {
     }
 
     fn resize_all_panes(&mut self) {
-        let Some(ws) = self.workspaces.iter().find(|w| w.id == self.selected) else {
+        let Some(ws) = self.tabs.iter().find(|w| w.id == self.selected) else {
             return;
         };
         let node = ws.layout().to_node();

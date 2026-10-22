@@ -2,9 +2,10 @@
 
 **Date:** 2026-08-18  
 **Status:** approved for implementation  
+**Renamed (2026-10-21, branch `next`):** the app is Projects (`sola-projects`, owner `projects`, `solactl projects`); a workspace is now a tab (`tab.*`, `--tab`, JSON `tabs` / `tab` / `tab_name`). Runtime names (tmux `sola-ws` / `sws-`, `SOLA_WS_PATH`, `ws-*` ids) are unchanged. The body below uses the old names.  
 **Parent:** [`2026-08-13-sola-agent-terminal-design.md`](2026-08-13-sola-agent-terminal-design.md)  
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
-**Product:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)
+**Product:** [`crates/sola-projects/PRODUCT.md`](../../crates/sola-projects/PRODUCT.md)
 
 **Implementation:** methods + payloads + `solactl` invoke timeouts in this slice; `workspace.rm` / `project.rm` reply before tearing down tmux (self-close from a pane does not hang); the tab drops on the next tick, then `tmux kill-session` and `git worktree remove` run off the iced thread (the rail stays live); `workspace.rm --worktree` also `git worktree remove`s after the tab closes (gone checkouts reap the tab even without the call); `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--branch` is `git branch -m`; `pane.send` / `workspace.exec --prompt` bracketed-paste via tmux then Enter; tmux pane/window `-t` is `=session:` (session commands stay `=session`); `pane.list` / `whoami` include `session_id` (Grok or Claude owner session; new tmux after reboot runs `grok -r` or `claude --resume`); `--agent grok|codex|claude` on spawn/exec (that agent's leaf when requested)
 **Dogfood:** split-tab `pane.read` smoked 2026-09-11; rest of `solactl workspaces` desk smoke pending; grok `-r` after reboot unsmoked; rm teardown off iced thread unsmoked; `--agent claude` **installed** `workspaces` release 2026-10-08, unsmoked  

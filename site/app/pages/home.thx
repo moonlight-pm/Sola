@@ -56,12 +56,12 @@ fn desk() -> Node {
             src="/desk.png"
             width="1296"
             height="760"
-            alt="The Sola desk: a menubar across the top; Workspaces with a Claude Code session waiting on a build; Mail with a letter open; a notification card; a floating Preview window."
+            alt="The Sola desk: a menubar across the top; Projects with a Claude Code session waiting on a build; Mail with a letter open; a notification card; a floating Preview window."
         />
         <figcaption>
             The desk, drawn at 1:1 in Sola's
             <a href={"{repository}/blob/master/design/foundation/07-desk.html"}>design foundation</a>:
-            Workspaces and Mail in zones, Preview floating.
+            Projects and Mail in zones, Preview floating.
         </figcaption>
     </figure>
 }
@@ -125,7 +125,7 @@ fn appList() -> Array<Entry> {
     [
         Entry(name: "Shell", detail: "Menubar with application menus and system status, launcher (Super+Space), window switcher (Super+Tab), notifications, and window zones."),
         Entry(name: "Terminal", detail: "A terminal on Alacritty's grid, with tabs."),
-        Entry(name: "Workspaces", detail: "Projects and their git worktrees in a rail, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
+        Entry(name: "Projects", detail: "Projects and their git worktrees in a rail, one tab per checkout, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
         Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, and developer tools."),
         Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
         Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),

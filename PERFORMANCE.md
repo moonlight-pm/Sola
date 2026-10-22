@@ -70,7 +70,7 @@ windows are actually restarted.
 | Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, vault TOTP on the open item, vault fill-wait. Helpers wake Tick. |
 | Working ring `At` ~20 Hz | `sola-kit` `status_mark` | **In code.** `RedrawRequest::At(50ms)`, not `NextFrame`. |
 | Volume spectrum `At` ~20 Hz | `sola-shell` audio meter | **Installed** `shell` release 2026-09-02. `pw-cat` tap → FFT → 12 warped-log bands + pink weight; canvas `RedrawRequest::At(50ms)` only while bands are live. No iced `time::every`. |
-| Workspaces pointer gated | `sola-workspaces` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
+| Projects pointer gated | `sola-projects` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
 | Morph2 drag-only vsync | `sola-kit` `sidebar/strip.rs` | **Dogfooded** for tab reorder (stutter fixed by re-enabling vsync *during* drag). Idle must not leave `request_redraw` on. |
 | Overlay first-show at live output | `sola-shell` `overlay_open_rect` | **Dogfooded.** No 1920-wide placeholder / default-center jump. |
 | River hide until Composition | `sola-river` `last_composition` | **Dogfooded** with overlay park (no center flash of hidden surfaces). |
@@ -96,10 +96,10 @@ Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 
 | Item | Why it is still open |
 |------|----------------------|
-| Opaque-region / GLES scanout | Session-spawned kit apps did not re-exec on the 2026-08-25 install. Restart workspaces, terminal, mail, browser chrome, kit, arcade, preview, then watch **river SM %** at idle. |
+| Opaque-region / GLES scanout | Session-spawned kit apps did not re-exec on the 2026-08-25 install. Restart projects, terminal, mail, browser chrome, kit, arcade, preview, then watch **river SM %** at idle. |
 | Self-watch on `cargo make install` | Those same PIDs stayed up for hours after the binary was replaced. Shell and CEF engines did restart. Need to know why session children missed the inode swap. |
 | First overlay after a **fresh shell** | Parked 2×2 surfaces still have to map once before Super+Space can skip create/map. Later opens are Frame + stack. |
-| Workspaces blink | `BlinkTick` every **530 ms** is still a full-window present (~2 Hz) while a cursor is blinking. Visible in the 2026-08-25 sample (workspaces ~11% SM, ~16% CPU). |
+| Projects blink | `BlinkTick` every **530 ms** is still a full-window present (~2 Hz) while a cursor is blinking. Visible in the 2026-08-25 sample (then `workspaces`, ~11% SM, ~16% CPU). |
 | Browser click | `LeftPressed` / `CursorReleased` still present chrome once per click. Marked acceptable. |
 | Working ring at desk | Storybook Sidebar / a Working Grok row can still pin GPU if `RedrawRequested` is left chained. |
 | Overlay `Resized` hang | If iced never reports ≥64×64 after Frame, Super+Space would not join Composition. Not seen after the iced-`Resized` slice. |
@@ -118,7 +118,7 @@ shows, compare only rows CEF's rect actually crosses per tile column.
 
 **Later / park**
 
-- Workspaces (and terminal) **cursor blink** without a process-wide
+- Projects (and terminal) **cursor blink** without a process-wide
   present — `request_redraw` only on the cell that blinks, or a cheaper
   tick that does not redraw the whole 5K window.
 - Find and fix **session self-watch** so `cargo make install <app>`
@@ -147,8 +147,8 @@ done
 nvidia-smi pmon -c 5 -s um
 
 # Did this process pick up the last install?
-stat -c '%y' /opt/sola/bin/sola-workspaces
-ps -o lstart,etime,args -C sola-workspaces
+stat -c '%y' /opt/sola/bin/sola-projects
+ps -o lstart,etime,args -C sola-projects
 ```
 
 Compare against the baseline (~30–40%) and the 2026-08-25 row above.

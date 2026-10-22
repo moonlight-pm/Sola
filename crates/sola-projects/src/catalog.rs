@@ -1,4 +1,4 @@
-//! Projects, workspaces, catalog persist.
+//! Projects, tabs, catalog persist.
 //!
 //! Live status stays off the catalog. Demo rows are gone — hooks
 //! supply the marks. Worktree paths are `<root>/.worktrees/<slug>` (D4.2).
@@ -19,7 +19,7 @@ use crate::status::AgentStatus;
 pub const LIVE_ID: &str = "ws-main";
 
 /// Stamped on every pane so restart can refuse a leftover session
-/// from a deleted / other workspace that reused the same id.
+/// from a deleted / other tab that reused the same id.
 pub const SOLA_WS_PATH: &str = "SOLA_WS_PATH";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,8 +45,8 @@ pub struct Project {
     pub startup: String,
 }
 
-/// Binary split tree. Omitted in the catalog when the workspace is a
-/// single leaf whose id is the workspace id (the pre-split shape).
+/// Binary split tree. Omitted in the catalog when the tab is a
+/// single leaf whose id is the tab id (the pre-split shape).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Layout {
@@ -129,7 +129,7 @@ fn collect_split_ids(layout: &Layout, out: &mut Vec<String>) {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Workspace {
+pub struct Tab {
     pub id: String,
     pub project_id: String,
     pub name: String,
@@ -151,7 +151,7 @@ pub struct Workspace {
     pub agent: Option<String>,
 }
 
-impl Workspace {
+impl Tab {
     pub fn layout(&self) -> Layout {
         self.layout
             .clone()
@@ -196,7 +196,9 @@ pub struct Catalog {
     pub version: u32,
     pub selected: Option<String>,
     pub projects: Vec<Project>,
-    pub workspaces: Vec<Workspace>,
+    /// Saved as `workspaces` before the app was Projects.
+    #[serde(alias = "workspaces")]
+    pub tabs: Vec<Tab>,
 }
 
 impl Catalog {
@@ -205,7 +207,7 @@ impl Catalog {
             version: 1,
             selected: None,
             projects: Vec::new(),
-            workspaces: Vec::new(),
+            tabs: Vec::new(),
         }
     }
 }
@@ -276,13 +278,13 @@ pub struct OrphanCandidate {
 
 /// If `sws-ws-main` is missing, rename a leftover session that already
 /// sits in **this** checkout and is not claimed by another catalog
-/// workspace. Never adopts the newest session blindly — a sibling or
+/// tab. Never adopts the newest session blindly — a sibling or
 /// another project can be more recently active.
 ///
 /// Returns the previous pane id so hooks from a still-running Grok
 /// still match, or `None`.
 pub fn adopt_orphan_session(
-    workspace_path: &Path,
+    tab_path: &Path,
     catalog_ids: &HashSet<String>,
 ) -> Option<String> {
     let want = sola_terminal::tmux::session_name(LIVE_ID);
@@ -302,7 +304,7 @@ pub fn adopt_orphan_session(
             activity,
         })
         .collect();
-    let old = pick_adoptable(&candidates, &want, workspace_path, &claimed)?;
+    let old = pick_adoptable(&candidates, &want, tab_path, &claimed)?;
     if !sola_terminal::tmux::rename_session(&old, &want) {
         tracing::warn!(from = %old, to = %want, "failed to adopt orphan tmux session");
         return None;
@@ -331,11 +333,11 @@ pub fn pick_adoptable(
 }
 
 /// Ensure `sws-{id}` is safe to `new-session -A`. A leftover session
-/// from a deleted workspace (or another checkout that reused the id)
+/// from a deleted tab (or another checkout that reused the id)
 /// is renamed out of the way so this tab starts clean.
-pub fn bind_session(id: &str, workspace_path: &Path) -> String {
+pub fn bind_session(id: &str, tab_path: &Path) -> String {
     let name = sola_terminal::tmux::session_name(id);
-    if session_is_free_or_ours(&name, workspace_path) {
+    if session_is_free_or_ours(&name, tab_path) {
         return name;
     }
     if quarantine_session(&name, id) {
@@ -343,25 +345,25 @@ pub fn bind_session(id: &str, workspace_path: &Path) -> String {
     }
     tracing::error!(
         session = %name,
-        workspace = %workspace_path.display(),
+        tab = %tab_path.display(),
         "tmux session belongs to another checkout and could not be quarantined"
     );
     String::new()
 }
 
-fn session_is_free_or_ours(session: &str, workspace_path: &Path) -> bool {
+fn session_is_free_or_ours(session: &str, tab_path: &Path) -> bool {
     if !sola_terminal::tmux::has_session(session) {
         return true;
     }
-    session_matches_workspace(session, workspace_path)
+    session_matches_tab(session, tab_path)
 }
 
-fn session_matches_workspace(session: &str, workspace_path: &Path) -> bool {
+fn session_matches_tab(session: &str, tab_path: &Path) -> bool {
     if let Some(stamped) = sola_terminal::tmux::get_environment(session, SOLA_WS_PATH) {
-        return path_same(Path::new(&stamped), workspace_path);
+        return path_same(Path::new(&stamped), tab_path);
     }
     sola_terminal::tmux::pane_current_path(session)
-        .is_some_and(|cwd| path_belongs(Path::new(&cwd), workspace_path))
+        .is_some_and(|cwd| path_belongs(Path::new(&cwd), tab_path))
 }
 
 fn session_bind_path(session: &str) -> Option<PathBuf> {
@@ -378,7 +380,7 @@ fn quarantine_session(session: &str, id: &str) -> bool {
     tracing::warn!(
         from = %session,
         to = %dest,
-        "quarantined tmux session (path does not match workspace)"
+        "quarantined tmux session (path does not match tab)"
     );
     true
 }
@@ -398,17 +400,17 @@ fn unused_orphan_name(id: &str) -> String {
 }
 
 /// First launch: one project from `cwd` when that folder is a git checkout.
-pub fn seed_from_cwd() -> Option<(Project, Workspace)> {
+pub fn seed_from_cwd() -> Option<(Project, Tab)> {
     let cwd = std::env::current_dir().ok()?;
     if !spawn::is_git_checkout(&cwd) {
         return None;
     }
     let taken = HashSet::new();
-    let main_id = main_workspace_id(&cwd, &taken);
+    let main_id = main_tab_id(&cwd, &taken);
     Some(project_from_root(&cwd, "proj-seed", &main_id))
 }
 
-pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Project, Workspace) {
+pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Project, Tab) {
     let name = root
         .file_name()
         .and_then(|s| s.to_str())
@@ -427,7 +429,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
     } else {
         Kind::Folder
     };
-    let ws = Workspace {
+    let ws = Tab {
         id: main_id.into(),
         project_id: project.id.clone(),
         name: "root".into(),
@@ -446,7 +448,7 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
 /// Reuse `ws-main` only when that tmux session is free or already in
 /// this checkout. Stops a first-added other project from stealing a
 /// leftover pane — including when the path query fails.
-pub fn main_workspace_id(root: &Path, taken: &HashSet<String>) -> String {
+pub fn main_tab_id(root: &Path, taken: &HashSet<String>) -> String {
     let session = sola_terminal::tmux::session_name(LIVE_ID);
     let live = if !sola_terminal::tmux::has_session(&session) {
         LiveSession::Absent
@@ -476,12 +478,12 @@ pub fn choose_main_id(root: &Path, taken: &HashSet<String>, live: LiveSession) -
     unique_id("ws", "main", taken)
 }
 
-/// `got` is this workspace, or a directory under it (user `cd`'d in).
+/// `got` is this tab, or a directory under it (user `cd`'d in).
 /// Component-aware — `/proj-old` does not belong to `/proj`.
-pub fn path_belongs(got: &Path, workspace: &Path) -> bool {
-    match (canon(got), canon(workspace)) {
+pub fn path_belongs(got: &Path, tab: &Path) -> bool {
+    match (canon(got), canon(tab)) {
         (Ok(g), Ok(w)) => g == w || g.starts_with(&w),
-        _ => got == workspace || got.starts_with(workspace),
+        _ => got == tab || got.starts_with(tab),
     }
 }
 
@@ -517,7 +519,7 @@ pub fn unique_id(prefix: &str, slug: &str, taken: &HashSet<String>) -> String {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn lineage_depth(ws: &Workspace, all: &[Workspace]) -> u8 {
+pub fn lineage_depth(ws: &Tab, all: &[Tab]) -> u8 {
     let mut d = 0u8;
     let mut cur = ws.parent.as_deref();
     let mut guard = 0u8;
@@ -537,7 +539,7 @@ pub fn lineage_depth(ws: &Workspace, all: &[Workspace]) -> u8 {
 
 /// Catalog encounter order for this project (rail + `ps`). Drag-reorder
 /// writes that order back; spawn appends.
-pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Workspace]) -> Vec<&'a Workspace> {
+pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Tab]) -> Vec<&'a Tab> {
     all.iter().filter(|w| w.project_id == project_id).collect()
 }
 
@@ -549,10 +551,10 @@ fn splice_ids(ids: &mut Vec<String>, id: &str, before: Option<&str>) {
     ids.insert(at.min(ids.len()), id.to_string());
 }
 
-/// Reorder `id` among this project's workspaces. `before` is another
-/// workspace in the same project (`None` = end).
-pub fn move_workspace_before(
-    all: &mut Vec<Workspace>,
+/// Reorder `id` among this project's tabs. `before` is another
+/// tab in the same project (`None` = end).
+pub fn move_tab_before(
+    all: &mut Vec<Tab>,
     id: &str,
     before: Option<&str>,
 ) -> Result<(), String> {
@@ -560,14 +562,14 @@ pub fn move_workspace_before(
         .iter()
         .find(|w| w.id == id)
         .map(|w| w.project_id.clone())
-        .ok_or_else(|| format!("unknown workspace '{id}'"))?;
+        .ok_or_else(|| format!("unknown tab '{id}'"))?;
     if let Some(b) = before {
         let other = all
             .iter()
             .find(|w| w.id == b)
-            .ok_or_else(|| format!("unknown workspace '{b}'"))?;
+            .ok_or_else(|| format!("unknown tab '{b}'"))?;
         if other.project_id != project_id {
-            return Err("cannot move a workspace into another project".into());
+            return Err("cannot move a tab into another project".into());
         }
         if other.id == id {
             return Ok(());
@@ -579,12 +581,12 @@ pub fn move_workspace_before(
         .map(|w| w.id.clone())
         .collect();
     splice_ids(&mut order, id, before);
-    apply_workspace_order(all, &project_id, &order);
+    apply_tab_order(all, &project_id, &order);
     Ok(())
 }
 
-fn apply_workspace_order(all: &mut Vec<Workspace>, project_id: &str, order: &[String]) {
-    let mut mine: Vec<Workspace> = Vec::new();
+fn apply_tab_order(all: &mut Vec<Tab>, project_id: &str, order: &[String]) {
+    let mut mine: Vec<Tab> = Vec::new();
     let mut slots = Vec::new();
     for (i, w) in all.iter().enumerate() {
         if w.project_id == project_id {
@@ -636,25 +638,25 @@ pub fn move_project_before(
 
 /// Sibling worktrees and root tabs can close from the row. The project's
 /// main tab cannot — drop the whole project instead (`unregister_project`).
-pub fn can_close(ws: &Workspace) -> bool {
+pub fn can_close(ws: &Tab) -> bool {
     matches!(ws.kind, Kind::Worktree | Kind::Root)
 }
 
 /// This tab owns a `.worktrees/<slug>` checkout (rename / branch /
 /// `git worktree remove` apply). Root tabs share the project root.
-pub fn has_worktree(ws: &Workspace) -> bool {
+pub fn has_worktree(ws: &Tab) -> bool {
     ws.kind == Kind::Worktree
 }
 
-/// Another workspace in this project already uses this worktree slug or
+/// Another tab in this project already uses this worktree slug or
 /// `.worktrees/<slug>` folder. `except_id` is the row being renamed.
 pub fn worktree_name_taken(
-    workspaces: &[Workspace],
+    tabs: &[Tab],
     project_id: &str,
     slug: &str,
     except_id: &str,
 ) -> bool {
-    workspaces.iter().any(|w| {
+    tabs.iter().any(|w| {
         w.id != except_id
             && w.project_id == project_id
             && (w.name.eq_ignore_ascii_case(slug)
@@ -667,36 +669,36 @@ pub fn worktree_name_taken(
 
 /// Worktree tabs whose checkout is already gone. The rail should reap
 /// them — `git worktree remove` from inside the pane cannot call
-/// `workspace.rm` afterward (cwd vanished).
-pub fn missing_worktree_ids(workspaces: &[Workspace]) -> Vec<String> {
-    workspaces
+/// `tab.rm` afterward (cwd vanished).
+pub fn missing_worktree_ids(tabs: &[Tab]) -> Vec<String> {
+    tabs
         .iter()
         .filter(|w| has_worktree(w) && !w.path.exists())
         .map(|w| w.id.clone())
         .collect()
 }
 
-/// Unregister a project and every workspace under it. Returns the
-/// workspace ids that left the catalog so the caller can kill tmux.
+/// Unregister a project and every tab under it. Returns the
+/// tab ids that left the catalog so the caller can kill tmux.
 /// Does not touch git worktrees or folders on disk.
 pub fn unregister_project(catalog: &mut Catalog, project_id: &str) -> Vec<String> {
     if !catalog.projects.iter().any(|p| p.id == project_id) {
         return Vec::new();
     }
     let removed: Vec<String> = catalog
-        .workspaces
+        .tabs
         .iter()
         .filter(|w| w.project_id == project_id)
         .map(|w| w.id.clone())
         .collect();
-    catalog.workspaces.retain(|w| w.project_id != project_id);
+    catalog.tabs.retain(|w| w.project_id != project_id);
     catalog.projects.retain(|p| p.id != project_id);
     if catalog
         .selected
         .as_ref()
         .is_some_and(|id| removed.iter().any(|r| r == id))
     {
-        catalog.selected = catalog.workspaces.first().map(|w| w.id.clone());
+        catalog.selected = catalog.tabs.first().map(|w| w.id.clone());
     }
     removed
 }
@@ -742,38 +744,38 @@ pub fn resolve_project<'a>(projects: &'a [Project], q: &str) -> Result<&'a Proje
     }
 }
 
-pub fn resolve_workspace<'a>(
-    workspaces: &'a [Workspace],
+pub fn resolve_tab<'a>(
+    tabs: &'a [Tab],
     q: &str,
-) -> Result<&'a Workspace, String> {
-    if let Some(w) = workspaces.iter().find(|w| w.id == q) {
+) -> Result<&'a Tab, String> {
+    if let Some(w) = tabs.iter().find(|w| w.id == q) {
         return Ok(w);
     }
-    if let Some(w) = workspaces.iter().find(|w| w.owns_pane(q)) {
+    if let Some(w) = tabs.iter().find(|w| w.owns_pane(q)) {
         return Ok(w);
     }
     let as_path = Path::new(q);
     if as_path.is_absolute() {
-        let hits: Vec<&Workspace> = workspaces
+        let hits: Vec<&Tab> = tabs
             .iter()
             .filter(|w| path_matches(w, as_path))
             .collect();
         match hits.as_slice() {
             [one] => return Ok(one),
             [] => {}
-            _ => return Err(format!("workspace path '{q}' is ambiguous")),
+            _ => return Err(format!("tab path '{q}' is ambiguous")),
         }
     }
-    let hits: Vec<&Workspace> = workspaces
+    let hits: Vec<&Tab> = tabs
         .iter()
         .filter(|w| w.name.eq_ignore_ascii_case(q))
         .collect();
     match hits.as_slice() {
         [one] => return Ok(one),
         [] => {}
-        _ => return Err(format!("workspace '{q}' is ambiguous")),
+        _ => return Err(format!("tab '{q}' is ambiguous")),
     }
-    let hits: Vec<&Workspace> = workspaces
+    let hits: Vec<&Tab> = tabs
         .iter()
         .filter(|w| {
             w.title
@@ -785,19 +787,19 @@ pub fn resolve_workspace<'a>(
         .collect();
     match hits.as_slice() {
         [one] => Ok(one),
-        [] => Err(format!("unknown workspace '{q}'")),
-        _ => Err(format!("workspace '{q}' is ambiguous")),
+        [] => Err(format!("unknown tab '{q}'")),
+        _ => Err(format!("tab '{q}' is ambiguous")),
     }
 }
 
-pub fn find_workspace_mut<'a>(
-    workspaces: &'a mut [Workspace],
+pub fn find_tab_mut<'a>(
+    tabs: &'a mut [Tab],
     id: &str,
-) -> Option<&'a mut Workspace> {
-    workspaces.iter_mut().find(|w| w.id == id)
+) -> Option<&'a mut Tab> {
+    tabs.iter_mut().find(|w| w.id == id)
 }
 
-pub fn path_matches(ws: &Workspace, path: &Path) -> bool {
+pub fn path_matches(ws: &Tab, path: &Path) -> bool {
     if ws.path == path {
         return true;
     }
@@ -941,8 +943,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_workspace_by_pane_and_path() {
-        let ws = Workspace {
+    fn resolve_tab_by_pane_and_path() {
+        let ws = Tab {
             id: "ws-kid".into(),
             project_id: "p".into(),
             name: "kid".into(),
@@ -956,20 +958,20 @@ mod tests {
             agent: None,
         };
         let all = vec![ws];
-        assert_eq!(resolve_workspace(&all, "kid").unwrap().id, "ws-kid");
-        assert_eq!(resolve_workspace(&all, "ws-kid-p2").unwrap().id, "ws-kid");
+        assert_eq!(resolve_tab(&all, "kid").unwrap().id, "ws-kid");
+        assert_eq!(resolve_tab(&all, "ws-kid-p2").unwrap().id, "ws-kid");
         assert_eq!(
-            resolve_workspace(&all, "/tmp/sola-ws-kid-resolve")
+            resolve_tab(&all, "/tmp/sola-ws-kid-resolve")
                 .unwrap()
                 .id,
             "ws-kid"
         );
-        assert!(resolve_workspace(&all, "nope").is_err());
+        assert!(resolve_tab(&all, "nope").is_err());
     }
 
     #[test]
-    fn resolve_workspace_by_title_after_name() {
-        let named = Workspace {
+    fn resolve_tab_by_title_after_name() {
+        let named = Tab {
             id: "ws-kid".into(),
             project_id: "p".into(),
             name: "kid".into(),
@@ -982,7 +984,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let other = Workspace {
+        let other = Tab {
             id: "ws-other".into(),
             project_id: "p".into(),
             name: "other".into(),
@@ -996,9 +998,9 @@ mod tests {
             agent: None,
         };
         let all = vec![named, other];
-        assert_eq!(resolve_workspace(&all, "kid").unwrap().id, "ws-kid");
-        assert_eq!(resolve_workspace(&all, "fix login").unwrap().id, "ws-kid");
-        assert_eq!(resolve_workspace(&all, "other").unwrap().id, "ws-other");
+        assert_eq!(resolve_tab(&all, "kid").unwrap().id, "ws-kid");
+        assert_eq!(resolve_tab(&all, "fix login").unwrap().id, "ws-kid");
+        assert_eq!(resolve_tab(&all, "other").unwrap().id, "ws-other");
     }
 
     #[test]
@@ -1013,7 +1015,7 @@ mod tests {
     #[test]
     fn lineage_orders_children_under_parent() {
         let p = "p".to_string();
-        let main = Workspace {
+        let main = Tab {
             id: "ws-main".into(),
             project_id: p.clone(),
             name: "main".into(),
@@ -1026,7 +1028,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let child = Workspace {
+        let child = Tab {
             id: "ws-kid".into(),
             project_id: p.clone(),
             name: "kid".into(),
@@ -1039,7 +1041,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let other = Workspace {
+        let other = Tab {
             id: "ws-z".into(),
             project_id: p.clone(),
             name: "zeta".into(),
@@ -1062,8 +1064,8 @@ mod tests {
         assert_eq!(lineage_depth(&main, &all), 0);
     }
 
-    fn ws(id: &str, project: &str, name: &str, kind: Kind) -> Workspace {
-        Workspace {
+    fn ws(id: &str, project: &str, name: &str, kind: Kind) -> Tab {
+        Tab {
             id: id.into(),
             project_id: project.into(),
             name: name.into(),
@@ -1079,21 +1081,21 @@ mod tests {
     }
 
     #[test]
-    fn move_workspace_before_stays_in_project() {
+    fn move_tab_before_stays_in_project() {
         let mut all = vec![
             ws("a-root", "a", "root", Kind::Main),
             ws("a-kid", "a", "kid", Kind::Worktree),
             ws("b-root", "b", "root", Kind::Main),
             ws("a-z", "a", "z", Kind::Worktree),
         ];
-        move_workspace_before(&mut all, "a-z", Some("a-kid")).unwrap();
+        move_tab_before(&mut all, "a-z", Some("a-kid")).unwrap();
         let ids: Vec<&str> = ordered_for_project("a", &all)
             .into_iter()
             .map(|w| w.id.as_str())
             .collect();
         assert_eq!(ids, ["a-root", "a-z", "a-kid"]);
         assert_eq!(all[2].id, "b-root");
-        assert!(move_workspace_before(&mut all, "a-z", Some("b-root")).is_err());
+        assert!(move_tab_before(&mut all, "a-z", Some("b-root")).is_err());
     }
 
     #[test]
@@ -1147,7 +1149,7 @@ mod tests {
             root: PathBuf::from("/b"),
             startup: String::new(),
         });
-        c.workspaces.push(Workspace {
+        c.tabs.push(Tab {
             id: "ws-main".into(),
             project_id: "proj-a".into(),
             name: "root".into(),
@@ -1160,7 +1162,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         });
-        c.workspaces.push(Workspace {
+        c.tabs.push(Tab {
             id: "ws-kid".into(),
             project_id: "proj-a".into(),
             name: "kid".into(),
@@ -1173,7 +1175,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         });
-        c.workspaces.push(Workspace {
+        c.tabs.push(Tab {
             id: "ws-b".into(),
             project_id: "proj-b".into(),
             name: "root".into(),
@@ -1190,15 +1192,15 @@ mod tests {
         assert_eq!(gone, ["ws-main", "ws-kid"]);
         assert_eq!(c.projects.len(), 1);
         assert_eq!(c.projects[0].id, "proj-b");
-        assert_eq!(c.workspaces.len(), 1);
-        assert_eq!(c.workspaces[0].id, "ws-b");
+        assert_eq!(c.tabs.len(), 1);
+        assert_eq!(c.tabs[0].id, "ws-b");
         assert_eq!(c.selected.as_deref(), Some("ws-b"));
         assert!(unregister_project(&mut c, "nope").is_empty());
     }
 
     #[test]
     fn worktrees_and_root_tabs_can_close() {
-        let main = Workspace {
+        let main = Tab {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
@@ -1211,16 +1213,16 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let folder = Workspace {
+        let folder = Tab {
             kind: Kind::Folder,
             ..main.clone()
         };
-        let tree = Workspace {
+        let tree = Tab {
             id: "ws-kid".into(),
             kind: Kind::Worktree,
             ..main.clone()
         };
-        let root_tab = Workspace {
+        let root_tab = Tab {
             id: "ws-hotfix".into(),
             kind: Kind::Root,
             ..main.clone()
@@ -1244,7 +1246,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let live = Workspace {
+        let live = Tab {
             id: "ws-kid".into(),
             project_id: "p".into(),
             name: "kid".into(),
@@ -1257,18 +1259,18 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let gone = Workspace {
+        let gone = Tab {
             id: "ws-gone".into(),
             path: dir.join("nope"),
             ..live.clone()
         };
-        let root = Workspace {
+        let root = Tab {
             id: "ws-main".into(),
             path: PathBuf::from("/no/such/root"),
             kind: Kind::Main,
             ..live.clone()
         };
-        let root_tab = Workspace {
+        let root_tab = Tab {
             id: "ws-hotfix".into(),
             path: PathBuf::from("/no/such/root"),
             kind: Kind::Root,
@@ -1304,7 +1306,7 @@ mod tests {
             root: PathBuf::from("/tmp/sola"),
             startup: String::new(),
         });
-        c.workspaces.push(Workspace {
+        c.tabs.push(Tab {
             id: "ws-main".into(),
             project_id: "proj-seed".into(),
             name: "main".into(),
@@ -1323,15 +1325,15 @@ mod tests {
         let back: Catalog = serde_json::from_str(&text).unwrap();
         assert_eq!(back.projects[0].name, "Sola");
         assert!(back.projects[0].collapsed);
-        assert_eq!(back.workspaces[0].kind, Kind::Main);
-        assert_eq!(back.workspaces[0].status, AgentStatus::Idle);
-        assert!(back.workspaces[0].layout.is_none());
-        assert!(back.workspaces[0].agent.is_none());
+        assert_eq!(back.tabs[0].kind, Kind::Main);
+        assert_eq!(back.tabs[0].status, AgentStatus::Idle);
+        assert!(back.tabs[0].layout.is_none());
+        assert!(back.tabs[0].agent.is_none());
     }
 
     #[test]
     fn layout_omitted_is_single_leaf() {
-        let ws = Workspace {
+        let ws = Tab {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
@@ -1352,7 +1354,7 @@ mod tests {
 
     #[test]
     fn set_tree_clears_trivial_layout() {
-        let mut ws = Workspace {
+        let mut ws = Tab {
             id: "ws-main".into(),
             project_id: "p".into(),
             name: "root".into(),
@@ -1382,7 +1384,7 @@ mod tests {
 
     #[test]
     fn worktree_name_taken_matches_name_or_folder() {
-        let kid = Workspace {
+        let kid = Tab {
             id: "ws-kid".into(),
             project_id: "p".into(),
             name: "adhoc".into(),
@@ -1395,7 +1397,7 @@ mod tests {
             status: AgentStatus::Idle,
             agent: None,
         };
-        let other = Workspace {
+        let other = Tab {
             id: "ws-other".into(),
             project_id: "p".into(),
             name: "Fix Login".into(),
@@ -1414,5 +1416,18 @@ mod tests {
         assert!(!worktree_name_taken(&all, "p", "adhoc", "ws-kid"));
         assert!(!worktree_name_taken(&all, "p", "sc-1234", "ws-kid"));
         assert!(!worktree_name_taken(&all, "other", "adhoc", "ws-new"));
+    }
+
+    #[test]
+    fn a_catalog_saved_as_workspaces_still_loads() {
+        let c: Catalog = serde_json::from_str(
+            r#"{"version":1,"selected":"ws-main","projects":[],"workspaces":[
+                {"id":"ws-main","project_id":"proj-sola","name":"root",
+                 "path":"/tmp/sola","kind":"main"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(c.tabs.len(), 1);
+        assert_eq!(c.tabs[0].id, "ws-main");
+        assert!(serde_json::to_string(&c).unwrap().contains("\"tabs\""));
     }
 }

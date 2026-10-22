@@ -137,7 +137,7 @@ For Sola:
 - Secondary: soft fill + strong hairline — not a bare outline.
 - Field / letter text selection uses the quiet `selection` atom
   (graphite lift, not darkened neon), not `primary.weak`.
-- Terminal / Workspaces **grid** selection overlays the neon `accent`
+- Terminal / Projects **grid** selection overlays the neon `accent`
   (`#3dd6f5`) at alpha — same chroma as focus, not the graphite atom
   and not a darkened-cyan mix.
 - Cards: soft hairline + light shadow; use `card::plain` when elevation is

@@ -507,7 +507,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
              drag starts. Hover a group header for a pencil — edit mode \
              shows a color swatch and a check to save. Hover a row for a \
              pencil, or double-click, to rename it. `.reorder_within_sections()` \
-             keeps items in their group (Workspaces); `.reorderable()` still \
+             keeps items in their group (Projects); `.reorderable()` still \
              lets tabs join, leave, and mix with loose rows (browser). \
              Labeled (non-pocket) section headers are also strip rows so \
              project groups can drag. Selected rows lift the column or \

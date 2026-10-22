@@ -8,7 +8,7 @@ pub fn app_menu() -> AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![
             MenuDefinition {
-                label: "Workspaces".into(),
+                label: "Projects".into(),
                 items: vec![
                     MenuItem::Action {
                         id: "spawn-sibling".into(),
@@ -41,7 +41,7 @@ pub fn app_menu() -> AppMenuPayload {
                     MenuItem::Divider,
                     MenuItem::Action {
                         id: "about".into(),
-                        label: "About Workspaces".into(),
+                        label: "About Projects".into(),
                         shortcut: None,
                         disabled: false,
                         checked: false,
@@ -49,7 +49,7 @@ pub fn app_menu() -> AppMenuPayload {
                     MenuItem::Divider,
                     MenuItem::Action {
                         id: "quit".into(),
-                        label: "Quit Workspaces".into(),
+                        label: "Quit Projects".into(),
                         shortcut: Some(KeyCode::Q.meta()),
                         disabled: false,
                         checked: false,
@@ -74,7 +74,7 @@ pub fn app_menu() -> AppMenuPayload {
                         checked: false,
                     },
                     MenuItem::Action {
-                        id: "drop-workspace".into(),
+                        id: "drop-project".into(),
                         label: "Drop Project".into(),
                         shortcut: None,
                         disabled: false,

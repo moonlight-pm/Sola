@@ -34,7 +34,7 @@ login shell on a console
 | `sola-session` | Launching, tracking, and closing applications, and relaunching the previous session's applications at start. Call owner `session`. See [Session manager](session.md). |
 | `sola-botsd` | Named agent sessions. Call owner `bots`, and an HTTP API on port 27419. See [solactl](solactl.md). |
 | `sola-kvm` | Sharing this machine's keyboard and mouse with another machine. See [KVM](sola-kvm-operator.md). |
-| Applications | Their own windows. Sola's applications are built on sola-kit and are Wayland clients and bus clients; `sola-workspaces`, `sola-browser`, and `sola-design` are also call owners. Other programs started through the session manager are plain Wayland or X11 clients. See [Applications](applications.md). |
+| Applications | Their own windows. Sola's applications are built on sola-kit and are Wayland clients and bus clients; `sola-projects`, `sola-browser`, and `sola-design` are also call owners. Other programs started through the session manager are plain Wayland or X11 clients. See [Applications](applications.md). |
 
 ## The three planes
 
@@ -52,7 +52,7 @@ process that starts late, or restarts, therefore learns the current state as
 soon as it subscribes.
 
 The call plane carries requests. An owner (`compositor`, `session`,
-`workspaces`, …) advertises its methods. A caller names an owner and a
+`projects`, …) advertises its methods. A caller names an owner and a
 method and gets exactly one reply, or an error: `<owner> is not running`,
 `<owner> has no method <method>`, or `timeout` (8 seconds unless the caller
 sets another). The bus has no reply path, so requests do not travel on it.

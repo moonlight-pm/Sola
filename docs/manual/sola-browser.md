@@ -227,7 +227,7 @@ A page that calls `Notification.requestPermission()` gets a chrome dialog
 (**Allow** / **Block**). The choice is stored per profile in
 `notifications.json`. After **Allow**, `new Notification(title, { body })`
 shows a Sola desk card at the **screen** top-right under the menubar (the
-same place as Workspaces' done cards), not a banner over the page. Click
+same place as Projects' done cards), not a banner over the page. Click
 the card to raise Browser and that tab. Missed cards collect behind the
 menubar bell.
 
