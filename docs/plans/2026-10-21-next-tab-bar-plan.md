@@ -227,7 +227,14 @@ chrome driving it, so the risky half is smoked before the chrome changes:
         2026-10-21 (`pkg:sola-browser` cb88b909). Smoked: a page opened
         behind paints when shown, DevTools opens and closes with page and
         pane painting, a restart restores the pages, Design renders.
-      - Not smoked: popups, ⌘-click, vault, downloads, sola-wrapper.
+      - A `target=_blank` popup opened as its window, focused, but stayed
+        black until repainted: a new window is sized twice and CEF can
+        paint a stale size last. Fixed in `f035991e` (the window asks for
+        its size again per stray size; the engine repaints when asked),
+        applied (`pkg:sola-browser` 2e1f63db): 6 of 6 popups painted,
+        DevTools on a popup too.
+      - Not smoked: ⌘-click (no injector holds ⌘ over a click), vault,
+        downloads, sola-wrapper.
 
 ## Next phases — order (Joshua, 2026-10-21)
 
