@@ -51,9 +51,10 @@ const RING_TICK: Duration = Duration::from_millis(50);
 
 /// Leading status mark sized to [`STATUS_MARK_SLOT`].
 ///
-/// Drawn as tinted SVG, not canvas geometry: on wgpu's GL backend (canto,
-/// no Vulkan driver) each small canvas drew with another mesh's
-/// transform, so marks landed elsewhere on the window or not at all.
+/// Drawn as tinted SVG, not canvas geometry: on wgpu's GL backend
+/// (canto before Oath shipped RADV, or `WGPU_BACKEND=gl`) each small
+/// canvas drew with another mesh's transform, so marks landed elsewhere
+/// on the window or not at all. The same canvas draws right on Vulkan.
 pub fn status_mark<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
     Element::new(Mark { kind: indicator })
 }
