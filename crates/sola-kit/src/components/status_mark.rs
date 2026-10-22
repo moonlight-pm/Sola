@@ -8,13 +8,18 @@
 //! [`SidebarIndicator::Active`] keeps the older filled success disc so
 //! generic apps that already used it do not change.
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::svg::{Handle, Renderer as _, Svg};
+use iced::advanced::widget::{Tree, Widget};
+use iced::advanced::{Clipboard, Shell, renderer};
 use iced::theme::palette::Extended;
-use iced::widget::canvas::path::Arc;
-use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
 use iced::window;
-use iced::{Color, Element, Event, Length, Point, Radians, Rectangle, Theme, Vector, mouse};
+use iced::{Color, Element, Event, Length, Radians, Rectangle, Size, Theme, mouse};
+
+
 
 /// Leading status mark for a sidebar row (activity / health, not selection).
 ///
@@ -40,70 +45,134 @@ pub enum SidebarIndicator {
 pub const STATUS_MARK_SLOT: f32 = 12.0;
 
 const RING_PERIOD_S: f32 = 0.85;
-const RING_SWEEP: f32 = std::f32::consts::TAU * 0.72;
-const STROKE_W: f32 = 1.65;
 /// Working-ring cadence. `request_redraw()` (NextFrame) presents the whole
 /// window at vsync; `At` keeps the spin readable without a 60 Hz loop.
 const RING_TICK: Duration = Duration::from_millis(50);
 
 /// Leading status mark sized to [`STATUS_MARK_SLOT`].
+///
+/// Drawn as tinted SVG, not canvas geometry: on wgpu's GL backend (canto,
+/// no Vulkan driver) each small canvas drew with another mesh's
+/// transform, so marks landed elsewhere on the window or not at all.
 pub fn status_mark<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
-    iced::widget::canvas(Mark { kind: indicator })
-        .width(Length::Fixed(STATUS_MARK_SLOT))
-        .height(Length::Fixed(STATUS_MARK_SLOT))
-        .into()
+    Element::new(Mark { kind: indicator })
 }
 
 struct Mark {
     kind: SidebarIndicator,
 }
 
-impl<Message> canvas::Program<Message> for Mark {
-    type State = ();
+impl<Message> Widget<Message, Theme, iced::Renderer> for Mark {
+    fn size(&self) -> Size<Length> {
+        Size::new(
+            Length::Fixed(STATUS_MARK_SLOT),
+            Length::Fixed(STATUS_MARK_SLOT),
+        )
+    }
 
-    fn update(
-        &self,
-        _state: &mut Self::State,
-        _event: &Event,
-        _bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Option<canvas::Action<Message>> {
-        if self.kind != SidebarIndicator::Working {
-            return None;
-        }
-        // Only reschedule from the redraw itself so pointer motion does
-        // not fight the cadence. First paint after a status change still
-        // delivers `RedrawRequested`.
-        matches!(_event, Event::Window(window::Event::RedrawRequested(_)))
-            .then(|| canvas::Action::request_redraw_at(Instant::now() + RING_TICK))
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &iced::Renderer,
+        _limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(Size::new(STATUS_MARK_SLOT, STATUS_MARK_SLOT))
     }
 
     fn draw(
         &self,
-        _state: &Self::State,
-        renderer: &iced::Renderer,
+        _tree: &Tree,
+        renderer: &mut iced::Renderer,
         theme: &Theme,
-        bounds: Rectangle,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
         _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let p = theme.extended_palette();
-        let color = mark_color(self.kind, p);
-        let cx = bounds.width * 0.5;
-        let cy = bounds.height * 0.5;
-        match self.kind {
-            SidebarIndicator::Working => draw_working(&mut frame, cx, cy, color),
-            SidebarIndicator::Waiting => draw_waiting(&mut frame, cx, cy, color),
-            SidebarIndicator::Done => draw_done(&mut frame, cx, cy, color),
-            SidebarIndicator::Active => {
-                frame.fill(&Path::circle(Point::new(cx, cy), 3.0), color);
-            }
-            SidebarIndicator::Idle => {
-                frame.fill(&Path::circle(Point::new(cx, cy), 2.25), color);
-            }
-        }
-        vec![frame.into_geometry()]
+        _viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let color = mark_color(self.kind, theme.extended_palette());
+        let (handle, rotation) = match self.kind {
+            SidebarIndicator::Working => (ring(), working_angle()),
+            SidebarIndicator::Waiting => (diamond(), Radians(0.0)),
+            SidebarIndicator::Done => (check(), Radians(0.0)),
+            SidebarIndicator::Active => (dot_active(), Radians(0.0)),
+            SidebarIndicator::Idle => (dot_idle(), Radians(0.0)),
+        };
+        renderer.draw_svg(Svg::new(handle).color(color).rotation(rotation), bounds, bounds);
     }
+
+    fn update(
+        &mut self,
+        _tree: &mut Tree,
+        event: &Event,
+        _layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        if let Some(at) = spin_redraw(self.kind, event) {
+            shell.request_redraw_at(at);
+        }
+    }
+}
+
+/// When the working ring wants its next frame. Only rescheduled from the
+/// redraw itself so pointer motion does not fight the cadence; the first
+/// paint after a status change still delivers `RedrawRequested`.
+fn spin_redraw(kind: SidebarIndicator, event: &Event) -> Option<window::RedrawRequest> {
+    (kind == SidebarIndicator::Working
+        && matches!(event, Event::Window(window::Event::RedrawRequested(_))))
+    .then(|| window::RedrawRequest::At(Instant::now() + RING_TICK))
+}
+
+/// White shapes on a 12×12 view box; [`Svg::color`] tints them.
+fn mark_svg(body: &str) -> Handle {
+    Handle::from_memory(
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">{body}</svg>"#)
+            .into_bytes(),
+    )
+}
+
+/// Open ring: radius 4.15, a 72% sweep from 0.4 rad, 1.65 stroke; turned
+/// by [`working_angle`] when drawn.
+fn ring() -> Handle {
+    static H: OnceLock<Handle> = OnceLock::new();
+    H.get_or_init(|| {
+        mark_svg(
+            r##"<path d="M 9.822 7.616 A 4.15 4.15 0 1 1 6.871 1.942" fill="none" stroke="#fff" stroke-width="1.65" stroke-linecap="round"/>"##,
+        )
+    })
+    .clone()
+}
+
+fn diamond() -> Handle {
+    static H: OnceLock<Handle> = OnceLock::new();
+    H.get_or_init(|| mark_svg(r##"<path d="M 6 1.8 L 10.2 6 L 6 10.2 L 1.8 6 Z" fill="#fff"/>"##))
+        .clone()
+}
+
+fn check() -> Handle {
+    static H: OnceLock<Handle> = OnceLock::new();
+    H.get_or_init(|| {
+        mark_svg(
+            r##"<path d="M 2.6 6.15 L 4.95 8.55 L 9.55 3.45" fill="none" stroke="#fff" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/>"##,
+        )
+    })
+    .clone()
+}
+
+fn dot_active() -> Handle {
+    static H: OnceLock<Handle> = OnceLock::new();
+    H.get_or_init(|| mark_svg(r##"<circle cx="6" cy="6" r="3" fill="#fff"/>"##))
+        .clone()
+}
+
+fn dot_idle() -> Handle {
+    static H: OnceLock<Handle> = OnceLock::new();
+    H.get_or_init(|| mark_svg(r##"<circle cx="6" cy="6" r="2.25" fill="#fff"/>"##))
+        .clone()
 }
 
 fn mark_color(kind: SidebarIndicator, p: &Extended) -> Color {
@@ -116,57 +185,6 @@ fn mark_color(kind: SidebarIndicator, p: &Extended) -> Color {
             ..p.background.base.text
         },
     }
-}
-
-fn draw_working(frame: &mut Frame, cx: f32, cy: f32, color: Color) {
-    let angle = working_angle();
-    frame.with_save(|frame| {
-        frame.translate(Vector::new(cx, cy));
-        frame.rotate(angle);
-        let path = Path::new(|b| {
-            b.arc(Arc {
-                center: Point::new(0.0, 0.0),
-                radius: 4.15,
-                start_angle: Radians(0.4),
-                end_angle: Radians(0.4 + RING_SWEEP),
-            });
-        });
-        frame.stroke(
-            &path,
-            Stroke::default()
-                .with_width(STROKE_W)
-                .with_color(color)
-                .with_line_cap(LineCap::Round),
-        );
-    });
-}
-
-fn draw_waiting(frame: &mut Frame, cx: f32, cy: f32, color: Color) {
-    let r = 4.2;
-    let path = Path::new(|b| {
-        b.move_to(Point::new(cx, cy - r));
-        b.line_to(Point::new(cx + r, cy));
-        b.line_to(Point::new(cx, cy + r));
-        b.line_to(Point::new(cx - r, cy));
-        b.close();
-    });
-    frame.fill(&path, color);
-}
-
-fn draw_done(frame: &mut Frame, cx: f32, cy: f32, color: Color) {
-    let path = Path::new(|b| {
-        b.move_to(Point::new(cx - 3.4, cy + 0.15));
-        b.line_to(Point::new(cx - 1.05, cy + 2.55));
-        b.line_to(Point::new(cx + 3.55, cy - 2.55));
-    });
-    frame.stroke(
-        &path,
-        Stroke::default()
-            .with_width(STROKE_W)
-            .with_color(color)
-            .with_line_cap(LineCap::Round)
-            .with_line_join(LineJoin::Round),
-    );
 }
 
 fn working_angle() -> Radians {
@@ -236,23 +254,9 @@ mod tests {
 
     #[test]
     fn working_mark_schedules_at_not_next_frame() {
-        let mark = Mark {
-            kind: SidebarIndicator::Working,
-        };
         let event = Event::Window(window::Event::RedrawRequested(Instant::now()));
-        let action = canvas::Program::<()>::update(
-            &mark,
-            &mut (),
-            &event,
-            Rectangle::default(),
-            mouse::Cursor::Unavailable,
-        )
-        .expect("working mark must keep spinning");
-        let (msg, redraw, _) = action.into_inner();
-        assert!(
-            msg.is_none(),
-            "spin must not publish a message (that rebuilds the window)"
-        );
+        let redraw = spin_redraw(SidebarIndicator::Working, &event)
+            .expect("working mark must keep spinning");
         assert!(
             matches!(redraw, window::RedrawRequest::At(_)),
             "expected At cadence, got {redraw:?}"
@@ -261,19 +265,9 @@ mod tests {
 
     #[test]
     fn idle_mark_does_not_request_redraw() {
-        let mark = Mark {
-            kind: SidebarIndicator::Idle,
-        };
         let event = Event::Window(window::Event::RedrawRequested(Instant::now()));
-        assert!(
-            canvas::Program::<()>::update(
-                &mark,
-                &mut (),
-                &event,
-                Rectangle::default(),
-                mouse::Cursor::Unavailable,
-            )
-            .is_none()
-        );
+        assert!(spin_redraw(SidebarIndicator::Idle, &event).is_none());
+        let moved = Event::Mouse(mouse::Event::CursorLeft);
+        assert!(spin_redraw(SidebarIndicator::Working, &moved).is_none());
     }
 }

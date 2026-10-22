@@ -117,6 +117,8 @@ struct App {
     renaming: Option<(String, String)>,
     /// The top-bar tab under the pointer.
     hover_tab: Option<String>,
+    /// The top-bar tab being dragged (from its press until the release).
+    chip_drag: Option<String>,
     pane_status: HashMap<String, status::PaneStatus>,
     hook_sock: String,
     /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
@@ -157,8 +159,15 @@ enum Msg {
     TitleDrag(window::Id),
     TitleResize(window::Id, window::Direction),
     TitleClose(window::Id),
-    SelectTab(String),
-    HoverTab(Option<String>),
+    /// The pointer came onto / left a top-bar tab.
+    HoverIn(String),
+    HoverOut(String),
+    /// A press on a top-bar tab: select it, and start a drag.
+    ChipPress(String),
+    /// The button came up during a tab drag: drop it on the tab under it.
+    ChipDrop,
+    /// The wheel over a project's top bar.
+    BarScroll(String, iced::mouse::ScrollDelta),
     BeginRename(String),
     RenameInput(String),
     RenameCommit,
@@ -316,6 +325,7 @@ impl App {
             last_tab,
             renaming: None,
             hover_tab: None,
+            chip_drag: None,
             pane_status,
             hook_sock: hook_paths.socket_path.to_string_lossy().into_owned(),
             adopted_from,
@@ -371,6 +381,16 @@ impl App {
                 _ => None,
             }),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
+            if self.chip_drag.is_some() {
+                event::listen_with(|ev, _, _| match ev {
+                    Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                        Some(Msg::ChipDrop)
+                    }
+                    _ => None,
+                })
+            } else {
+                Subscription::none()
+            },
             if self.dragging_split.is_some() {
                 event::listen_with(|ev, _, _| match ev {
                     Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
@@ -516,10 +536,38 @@ impl App {
                 self.flush_waits();
                 reap
             }
-            Msg::SelectTab(id) => self.select_tab(&id),
-            Msg::HoverTab(hovered) => {
-                self.hover_tab = hovered;
+            Msg::HoverIn(id) => {
+                self.hover_tab = Some(id);
                 Task::none()
+            }
+            Msg::HoverOut(id) => {
+                // Moving leftwards, the next tab's enter comes before this
+                // exit (left to right order): only clear our own hover.
+                if self.hover_tab.as_deref() == Some(id.as_str()) {
+                    self.hover_tab = None;
+                }
+                Task::none()
+            }
+            Msg::ChipPress(id) => {
+                self.chip_drag = Some(id.clone());
+                self.select_tab(&id)
+            }
+            Msg::ChipDrop => {
+                if let (Some(from), Some(onto)) = (self.chip_drag.take(), self.hover_tab.clone()) {
+                    self.drop_tab_on(&from, &onto);
+                }
+                Task::none()
+            }
+            Msg::BarScroll(project_id, delta) => {
+                let (dx, dy) = match delta {
+                    iced::mouse::ScrollDelta::Lines { x, y } => (x * 40.0, y * 40.0),
+                    iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
+                };
+                // Wheel down (or right) moves along to the later tabs.
+                iced::widget::operation::scroll_by(
+                    topbar::strip_id(&project_id),
+                    iced::widget::scrollable::AbsoluteOffset { x: -(dx + dy), y: 0.0 },
+                )
             }
             Msg::PaneFocused(pane_id) => {
                 // Hover focuses for typing. It must not spawn a shell —
@@ -694,6 +742,7 @@ impl App {
                 selected,
                 hovered: self.hover_tab.as_deref(),
                 renaming: self.renaming.as_ref(),
+                dragging: self.chip_drag.as_deref(),
                 pane_status: &self.pane_status,
             });
             // Clipped: a terminal canvas paints outside its bounds (rows
@@ -1386,6 +1435,29 @@ impl App {
         attach
     }
 
+    /// A top-bar drag let go over `onto`: `from` takes its place (after it
+    /// when dragged rightwards, before it when leftwards).
+    fn drop_tab_on(&mut self, from: &str, onto: &str) {
+        if from == onto {
+            return;
+        }
+        let Some(project) = self.tabs.iter().find(|w| w.id == from).map(|w| w.project_id.clone())
+        else {
+            return;
+        };
+        let order: Vec<String> = catalog::ordered_for_project(&project, &self.tabs)
+            .iter()
+            .map(|w| w.id.clone())
+            .collect();
+        let Some(before) = catalog::drop_place(&order, from, onto) else {
+            return;
+        };
+        match catalog::move_tab_before(&mut self.tabs, from, before.as_deref()) {
+            Ok(()) => self.persist_catalog(),
+            Err(e) => tracing::warn!(%from, %onto, "tab drop: {e}"),
+        }
+    }
+
     /// Select tab `id` and bring its project's window up (opening it if it
     /// was closed): `tab.select`, `--select`, a desk-card click.
     fn show_tab(&mut self, id: &str) -> Task<Msg> {
@@ -1394,7 +1466,30 @@ impl App {
             return Task::none();
         };
         let select = self.select_tab(id);
-        Task::batch([select, self.show_project(&project)])
+        Task::batch([select, self.show_project(&project), self.reveal_tab(id)])
+    }
+
+    /// Scroll a project window's top bar to tab `id` (by its place in the
+    /// order) when it was selected from elsewhere: the card, the CLI, a
+    /// desk card. A clicked tab is already in view.
+    fn reveal_tab(&self, id: &str) -> Task<Msg> {
+        let Some(project) = self.tabs.iter().find(|w| w.id == id).map(|w| w.project_id.clone())
+        else {
+            return Task::none();
+        };
+        let order = catalog::ordered_for_project(&project, &self.tabs);
+        let Some(at) = order.iter().position(|w| w.id == id) else {
+            return Task::none();
+        };
+        let x = if order.len() <= 1 {
+            0.0
+        } else {
+            at as f32 / (order.len() - 1) as f32
+        };
+        iced::widget::operation::snap_to(
+            topbar::strip_id(&project),
+            iced::widget::scrollable::RelativeOffset { x: Some(x), y: None },
+        )
     }
 
     /// Bring project `project_id`'s window up, opening it if it was closed.
@@ -1488,7 +1583,7 @@ impl App {
             Ok((id, startup_err)) => {
                 self.spawn = cards::SpawnDraft::default();
                 self.maybe_toast_startup(startup_err, &id);
-                self.attach_pane(&id, &[])
+                Task::batch([self.attach_pane(&id, &[]), self.reveal_tab(&id)])
             }
             Err(e) => {
                 self.spawn.error = Some(e);
@@ -1923,7 +2018,7 @@ impl App {
         let task = match self.tabs.iter().find(|w| w.id == id) {
             Some(w) if select => {
                 let project = w.project_id.clone();
-                Task::batch([task, self.show_project(&project)])
+                Task::batch([task, self.show_project(&project), self.reveal_tab(&id)])
             }
             _ => task,
         };

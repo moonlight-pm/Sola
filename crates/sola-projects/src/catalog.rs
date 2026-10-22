@@ -555,6 +555,20 @@ fn splice_ids(ids: &mut Vec<String>, id: &str, before: Option<&str>) {
     ids.insert(at.min(ids.len()), id.to_string());
 }
 
+/// Where a tab dragged from `from` and let go over `onto` goes, as the
+/// `before` of [`move_tab_before`]: it takes `onto`'s place, so after it
+/// when dragged rightwards and before it when leftwards. `None` when
+/// nothing moves.
+pub fn drop_place(order: &[String], from: &str, onto: &str) -> Option<Option<String>> {
+    let i = order.iter().position(|id| id == from)?;
+    let j = order.iter().position(|id| id == onto)?;
+    match i.cmp(&j) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Less => Some(order.get(j + 1).cloned()),
+        std::cmp::Ordering::Greater => Some(Some(onto.to_string())),
+    }
+}
+
 /// Reorder `id` among this project's tabs. `before` is another
 /// tab in the same project (`None` = end).
 pub fn move_tab_before(
@@ -1440,5 +1454,17 @@ mod tests {
         assert_eq!(c.tabs.len(), 1);
         assert_eq!(c.tabs[0].id, "ws-main");
         assert!(serde_json::to_string(&c).unwrap().contains("\"tabs\""));
+    }
+
+    #[test]
+    fn a_dropped_tab_takes_the_place_it_lands_on() {
+        let order: Vec<String> = ["root", "a", "b", "c"].map(String::from).to_vec();
+        // Rightwards: after the target.
+        assert_eq!(drop_place(&order, "a", "b"), Some(Some("c".into())));
+        assert_eq!(drop_place(&order, "a", "c"), Some(None));
+        // Leftwards: before the target.
+        assert_eq!(drop_place(&order, "c", "a"), Some(Some("a".into())));
+        assert_eq!(drop_place(&order, "b", "b"), None);
+        assert_eq!(drop_place(&order, "x", "b"), None);
     }
 }

@@ -520,7 +520,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
             "Reserved 12px slot. Working is an accent ring that spins (~0.85s \
              period, ~20 Hz redraw — not a vsync loop); waiting a warning \
              diamond; done a success check; idle a dim disc. Who stays off \
-             the mark."
+             the mark. Drawn as tinted SVG, not canvas geometry, so they \
+             land in place on wgpu's GL backend too."
         )
         .style(muted),
         marks_demo(),

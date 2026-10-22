@@ -1,12 +1,13 @@
-//! A project window's tabs, along its top (Next): the root tab first, then
-//! the worktree and folder tabs in their saved order. Each shows its agent
-//! mark and `×N`; hover shows ×, a double-click renames, `+` opens the
-//! new-tab card.
+//! A project window's tabs, along its top (Next), in their saved order.
+//! Each shows its agent mark and `×N`; hover shows ×, a double-click
+//! renames, a drag onto another tab takes its place, `+` opens the new-tab
+//! card. The wheel scrolls the strip when the tabs pass the width.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use iced::widget::{Space, button, container, mouse_area, row, svg, text};
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{Space, button, container, mouse_area, row, scrollable, svg, text};
 use iced::{Alignment, Background, Element, Length, Padding, Theme};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::sidebar::item_style;
@@ -33,6 +34,8 @@ pub struct Bar<'a> {
     pub hovered: Option<&'a str>,
     /// `(tab id, draft name)` while a tab is being renamed.
     pub renaming: Option<&'a (String, String)>,
+    /// The tab being dragged, if any.
+    pub dragging: Option<&'a str>,
     pub pane_status: &'a HashMap<String, PaneStatus>,
 }
 
@@ -43,17 +46,27 @@ pub fn view<'a>(bar: Bar<'a>) -> Element<'a, Msg> {
             .renaming
             .filter(|(id, _)| *id == tab.id)
             .map(|(_, draft)| draft.as_str());
+        let hovered = bar.hovered == Some(tab.id.as_str());
+        let drop_target = hovered && bar.dragging.is_some_and(|d| d != tab.id);
         chips = chips.push(chip(
             tab,
             tab.id == bar.selected,
-            bar.hovered == Some(tab.id.as_str()),
+            hovered,
+            drop_target,
             renaming,
             bar.pane_status,
         ));
     }
-    // Clipped, not scrolled: a canvas (the agent mark) inside a scrollable
-    // did not draw.
-    let strip = container(chips.clip(true)).width(Length::Fill).clip(true);
+    // A plain wheel scrolls sideways (a horizontal scrollable only takes
+    // Shift+wheel).
+    let project = bar.project_id.to_string();
+    let wheel = mouse_area(chips).on_scroll(move |delta| Msg::BarScroll(project.clone(), delta));
+    let strip = scrollable(wheel)
+        .id(strip_id(bar.project_id))
+        .direction(Direction::Horizontal(
+            Scrollbar::new().width(0).scroller_width(0),
+        ))
+        .width(Length::Fill);
     let add = toolbar_icon_tip(
         plus_icon(),
         "New tab",
@@ -75,10 +88,16 @@ pub fn view<'a>(bar: Bar<'a>) -> Element<'a, Msg> {
     .into()
 }
 
+/// The strip's scrollable, per project window.
+pub fn strip_id(project_id: &str) -> iced::widget::Id {
+    iced::widget::Id::from(format!("topbar-{project_id}"))
+}
+
 fn chip<'a>(
     tab: &'a Tab,
     selected: bool,
     hovered: bool,
+    drop_target: bool,
     renaming: Option<&'a str>,
     pane_status: &'a HashMap<String, PaneStatus>,
 ) -> Element<'a, Msg> {
@@ -140,17 +159,27 @@ fn chip<'a>(
         .padding(Padding::from([5, 10]))
         .style(move |theme: &Theme| {
             let s = item_style(theme, status, selected);
+            // A dragged tab dropped here takes this place.
+            let border = if drop_target {
+                iced::Border {
+                    color: theme.extended_palette().primary.base.color,
+                    width: 1.0,
+                    ..s.border
+                }
+            } else {
+                s.border
+            };
             container::Style {
                 background: s.background,
                 text_color: Some(s.text_color),
-                border: s.border,
+                border,
                 ..container::Style::default()
             }
         });
     let mut area = mouse_area(body)
-        .on_press(Msg::SelectTab(tab.id.clone()))
-        .on_enter(Msg::HoverTab(Some(tab.id.clone())))
-        .on_exit(Msg::HoverTab(None));
+        .on_press(Msg::ChipPress(tab.id.clone()))
+        .on_enter(Msg::HoverIn(tab.id.clone()))
+        .on_exit(Msg::HoverOut(tab.id.clone()));
     if catalog::can_close(tab) {
         area = area.on_double_click(Msg::BeginRename(tab.id.clone()));
     }
