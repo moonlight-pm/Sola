@@ -3823,6 +3823,7 @@ fn resize_page(state: &CefThreadState, id: TabId, width: u32, height: u32) {
     if tab.own_size.get() == Some((width, height)) {
         return;
     }
+    tracing::debug!(?id, width, height, "page window size");
     tab.own_size.set(Some((width, height)));
     if state.is_front.get() && paints(state, &tab) {
         if let Some(host) = tab.browser.host() {
@@ -3844,6 +3845,7 @@ fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
         return;
     }
     let visible = shown || state.active.get() == id;
+    tracing::debug!(?id, shown, size = ?tab.own_size.get(), "page shown");
     let Some(host) = tab.browser.host() else {
         return;
     };

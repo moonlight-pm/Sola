@@ -2391,12 +2391,15 @@ impl<E: Engine> App<E> {
             Msg::NewFrame => {
                 // Allow the next kick if the shader pump stops. While the
                 // shader is request_redraw-pumping, frame_stream skips this.
-                self.slot
-                    .redraw_queued
-                    .store(false, std::sync::atomic::Ordering::Release);
-                self.slot
-                    .pumping
-                    .store(true, std::sync::atomic::Ordering::Release);
+                // Every window redraws after an update, so this serves each
+                // page window's slot that queued a kick, not only one.
+                self.slot.redraw_queued.store(false, Ordering::Release);
+                self.slot.pumping.store(true, Ordering::Release);
+                for slot in self.windows.slots().lock().unwrap().iter() {
+                    if slot.redraw_queued.swap(false, Ordering::AcqRel) {
+                        slot.pumping.store(true, Ordering::Release);
+                    }
+                }
             }
             Msg::NavBack => {
                 self.nav_hold = None;

@@ -678,18 +678,20 @@ impl<E: Engine> FrameSlot<E> {
         }
     }
 
-    /// The slot of the window of page `tab` (a window per page).
+    /// The slot of the window of page `tab` (a window per page). It starts
+    /// unsized, so its first draw sizes the page (and DevTools) to the
+    /// window: a page opened behind gets its size when first shown.
     pub fn for_page(
         cmd_tx: Sender<Cmd<E>>,
         cursor: CursorHandle,
         ime: ImeHandle,
         tab: TabId,
-        width: u32,
-        height: u32,
     ) -> Self {
         let slot = Self {
             windowed: true,
-            ..Self::new(cmd_tx, cursor, ime, width, height)
+            last_size: Mutex::new((0, 0)),
+            devtools_last_size: Mutex::new((0, 0)),
+            ..Self::new(cmd_tx, cursor, ime, 0, 0)
         };
         slot.paint_tab.store(tab.0, Ordering::Relaxed);
         slot

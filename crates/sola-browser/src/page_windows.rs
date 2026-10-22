@@ -57,14 +57,11 @@ impl<E: Engine> PageWindows<E> {
         page_id: &str,
         background: bool,
     ) -> Task<window::Id> {
-        let (w, h) = *self.template.last_size.lock().unwrap();
         let slot = Arc::new(FrameSlot::for_page(
             self.template.cmd_tx.clone(),
             self.template.cursor.clone(),
             self.template.ime.clone(),
             tab,
-            w,
-            h,
         ));
         let settings = sola_kit::app::window_settings_transparent(app_id);
         let (window, task) = self.tabs.open(page_id, settings, background);
