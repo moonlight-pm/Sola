@@ -217,6 +217,17 @@ chrome driving it, so the risky half is smoked before the chrome changes:
 - [ ] **Apply + smoke:** open, switch, split zones, popups, ⌘-click,
       find, DevTools, vault, downloads, restart restore; sola-wrapper and
       Design unchanged.
+      - Applied 2026-10-21 (`pkg:sola-browser` bab0cc35 from `5f8c89d8`).
+        Smoked by injection: restore, ⌘T, `solactl browser goto`, a
+        background open joins its zone behind, ⌘W, focus follows, find.
+        Found: a page opened behind stayed blank when shown; DevTools
+        blanked the page and its pane.
+      - Fixed in `e6c0c8e2` (a page window's slot stopped asking for
+        redraws after its first frame; page slots start unsized), applied
+        2026-10-21 (`pkg:sola-browser` cb88b909). Smoked: a page opened
+        behind paints when shown, DevTools opens and closes with page and
+        pane painting, a restart restores the pages, Design renders.
+      - Not smoked: popups, ⌘-click, vault, downloads, sola-wrapper.
 
 ## Next phases — order (Joshua, 2026-10-21)
 
